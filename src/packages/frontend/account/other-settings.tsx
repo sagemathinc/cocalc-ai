@@ -62,7 +62,6 @@ import type { AccountState } from "./types";
 interface Props {
   other_settings: AccountState["other_settings"];
   is_stripe_customer: boolean;
-  kucalc: string;
   mode: "appearance" | "ai" | "other";
 }
 
@@ -80,18 +79,6 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   function on_change(name: string, value: any): void {
     redux.getActions("account").set_other_settings(name, value);
   }
-
-  //   private render_first_steps(): Rendered {
-  //     if (props.kucalc !== KUCALC_COCALC_COM) return;
-  //     return (
-  //       <Switch
-  //         checked={!!props.other_settings.get("first_steps")}
-  //         onChange={(e) => on_change("first_steps", e.target.checked)}
-  //       >
-  //         Offer the First Steps guide
-  //       </Switch>
-  //     );
-  //   }
 
   function render_confirm(): Rendered {
     if (!IS_MOBILE) {

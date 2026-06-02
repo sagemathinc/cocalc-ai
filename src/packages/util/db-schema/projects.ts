@@ -486,7 +486,7 @@ Table({
     },
     addons: {
       type: "map",
-      desc: "Configure (kucalc specific) addons for projects. (e.g. academic software, license keys, ...)",
+      desc: "Configure project-runtime addons, e.g. academic software or license keys.",
     },
     lti_id: {
       type: "array",

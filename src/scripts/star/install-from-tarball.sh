@@ -28,7 +28,7 @@ Defaults:
   STAR_INSTALL_SOURCE=$STAR_INSTALL_ROOT/source
   STAR_RELEASES_DIR=$STAR_INSTALL_ROOT/releases
   STAR_RELEASE_ID=<utc timestamp>-<tarball sha256 prefix>
-  STAR_USER=<existing Star user, sudo caller, or USER>
+  STAR_USER=<existing Star user or cocalc-star>
   STAR_ASSUME_YES=0
 
 Set STAR_ASSUME_YES=1 for non-interactive installs.
@@ -79,12 +79,19 @@ resolve_star_user() {
       return
     fi
   fi
-  if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-    STAR_USER="$SUDO_USER"
-  else
-    STAR_USER="${USER:-root}"
-  fi
+  STAR_USER="cocalc-star"
   export STAR_USER
+}
+
+ensure_star_user() {
+  case "$STAR_USER" in
+    "" | *[!A-Za-z0-9._-]*) die "invalid STAR_USER: $STAR_USER" ;;
+  esac
+  if getent passwd "$STAR_USER" >/dev/null; then
+    return
+  fi
+  log "creating Star runtime user $STAR_USER"
+  useradd --create-home --shell /bin/bash "$STAR_USER"
 }
 
 replace_symlink() {
@@ -109,7 +116,7 @@ command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required"
 
 require_root
 resolve_star_user
-getent passwd "$STAR_USER" >/dev/null || die "STAR_USER does not exist: $STAR_USER"
+ensure_star_user
 confirm_destructive_install
 
 tarball_sha256="$(sha256sum "$TARBALL" | awk '{print $1}')"

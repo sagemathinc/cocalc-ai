@@ -77,6 +77,8 @@ function actionForStep(step: SiteSetupStep):
     }
   | undefined {
   switch (step.id) {
+    case "admin-account":
+      return { label: "Open account settings", href: "/settings/profile" };
     case "admin-2fa":
       return { label: "Open account security", href: "/settings/profile" };
     case "domain-cloudflare":
@@ -94,13 +96,19 @@ function actionForStep(step: SiteSetupStep):
       return { label: "Create a project host", href: "/hosts" };
     case "rootfs":
       return { label: "Manage RootFS images", href: "/admin/rootfs" };
+    case "custom-rootfs":
+      return { label: "Customize RootFS images", href: "/admin/rootfs" };
     case "smoke-test":
-      return { label: "Create smoke-test project", href: "/projects" };
+      return { label: "Create or open a project", href: "/projects" };
     case "backups":
       return {
         label: "Review project backups",
         href: "/admin/project-backup-shards",
       };
+    case "tls-public-url":
+      return { label: "Configure public URL", href: "/admin/site-settings" };
+    case "license":
+      return { label: "Review site settings", href: "/admin/site-settings" };
     default:
       if (step.admin_section) {
         return {
@@ -114,6 +122,8 @@ function actionForStep(step: SiteSetupStep):
 
 function stepIcon(step: SiteSetupStep): ReactNode {
   switch (step.id) {
+    case "admin-account":
+      return <Icon name="user" />;
     case "admin-2fa":
       return <Icon name="lock" />;
     case "domain-cloudflare":
@@ -127,6 +137,12 @@ function stepIcon(step: SiteSetupStep): ReactNode {
       return <Icon name="database" />;
     case "smoke-test":
       return <Icon name="play" />;
+    case "license":
+      return <Icon name="key" />;
+    case "tls-public-url":
+      return <Icon name="global" />;
+    case "custom-rootfs":
+      return <Icon name="cogs" />;
     default:
       return <Icon name="check-square" />;
   }
@@ -187,10 +203,7 @@ function StepCard({
 }
 
 function nextRequiredStep(status: SiteSetupStatus): SiteSetupStep | undefined {
-  return (
-    status.steps.find((step) => step.hard_gate && step.state !== "done") ??
-    status.steps.find((step) => step.state !== "done")
-  );
+  return status.steps.find((step) => step.hard_gate && step.state !== "done");
 }
 
 function SetupHero({ status }: { status?: SiteSetupStatus }) {
@@ -206,14 +219,14 @@ function SetupHero({ status }: { status?: SiteSetupStatus }) {
             </Tag>
             <Title level={2} style={{ color: "white", margin: 0 }}>
               {isStar
-                ? "Confirm this single-VM CoCalc appliance is ready."
+                ? "Get this single-VM CoCalc appliance usable with almost no configuration."
                 : "Bring this CoCalc site online without guessing the sequence."}
             </Title>
             <Paragraph
               style={{ color: "white", fontSize: 16, marginBottom: 0 }}
             >
               {isStar
-                ? "CoCalc Star runs the control plane and project execution on one dedicated VM. This setup checks admin security, the local project host, the default project image, and the first manual browser smoke test."
+                ? "CoCalc Star runs the control plane and project execution on one dedicated VM. Setup requires only the first admin account and a working smoke-test path; email, TLS, backups, license entry, and custom images are supported follow-ups."
                 : "You need a Cloudflare account with a domain you control, plus a GCP project or Nebius account with CLI access. This setup will validate the public URL, provider credentials, first host, official RootFS, and smoke-test path."}
             </Paragraph>
             {nextStep ? (
@@ -244,10 +257,14 @@ function SetupHero({ status }: { status?: SiteSetupStatus }) {
               </Text>
               {isStar ? (
                 <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
-                  <li>A dedicated Ubuntu VM.</li>
-                  <li>One local project host on this VM.</li>
-                  <li>A default project image with Jupyter and LaTeX.</li>
-                  <li>A backup or VM snapshot plan.</li>
+                  <li>Create the first admin account.</li>
+                  <li>Run one project smoke test.</li>
+                  <li>
+                    No domain, email, cloud account, or provider setup required.
+                  </li>
+                  <li>
+                    Add TLS, backups, email, and custom images when needed.
+                  </li>
                 </ul>
               ) : (
                 <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
@@ -297,6 +314,9 @@ function ProgressSummary({ status }: { status: SiteSetupStatus }) {
                   "done"
                     ? "default image ready"
                     : "default image pending"}
+                </Tag>
+                <Tag>
+                  {status.ready ? "usable appliance" : "smoke path pending"}
                 </Tag>
               </>
             ) : (
@@ -422,12 +442,12 @@ export function SiteSetupAdmin() {
           status?.ready
             ? "All derived hard gates are satisfied."
             : isStar
-              ? "Follow these checks before treating this Star appliance as ready for users."
+              ? "Finish the short Star checklist, then use the appliance. Everything else here is optional hardening or customization."
               : "Follow these gates in order before treating this cloud-backed Launchpad/Rocket site as ready."
         }
         description={
           isStar
-            ? "This setup profile assumes one dedicated VM with a local project host. It intentionally skips Cloudflare and cloud-provider setup."
+            ? "Required: admin account and smoke test. Supported but optional: email, TLS via Caddy/Let's Encrypt, backups, license entry, and custom RootFS images."
             : "This setup profile assumes Cloudflare plus GCP or Nebius. CoCalc Star uses a separate, much shorter single-VM path."
         }
       />

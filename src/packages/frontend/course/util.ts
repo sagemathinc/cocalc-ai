@@ -16,7 +16,7 @@ import {
   useWindowDimensions,
 } from "@cocalc/frontend/app-framework";
 import { labels } from "@cocalc/frontend/i18n";
-import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
+import { PLATFORM_MODE_CLOUD } from "@cocalc/util/db-schema/site-defaults";
 import {
   cmp,
   defaults,
@@ -350,8 +350,8 @@ export function projectStatus(
   }
   const store = redux.getStore("projects");
   const state = ` (${store.get_state(project_id)})`;
-  const kucalc = redux.getStore("customize").get("kucalc");
-  if (kucalc === KUCALC_COCALC_COM) {
+  const platformMode = redux.getStore("customize").get("platform_mode");
+  if (platformMode === PLATFORM_MODE_CLOUD) {
     return projectStatusCoCalcCom({ project_id, state, store, intl });
   } else {
     const tip = intl.formatMessage(

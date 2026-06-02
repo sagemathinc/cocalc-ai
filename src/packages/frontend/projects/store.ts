@@ -399,14 +399,14 @@ export class ProjectsStore extends Store<ProjectsState> {
     return { kind, upgraded };
   }
 
-  // we allow URLs in projects, which have member hosting or internet access
-  // this must harmonize with packages/hub/client → mesg_invite_noncloud_collaborators
+  // cocalc-ai projects have network by default. Preserve explicit legacy
+  // false/0 values only for compatibility/security paths.
   public allow_urls_in_emails(project_id: string): boolean {
     const quotas = this.get_total_project_quotas(project_id);
     if (quotas == null) {
-      return false;
+      return true;
     } else {
-      return !!(quotas.network || quotas.member_host);
+      return quotas.network !== 0 || quotas.member_host !== false;
     }
   }
 

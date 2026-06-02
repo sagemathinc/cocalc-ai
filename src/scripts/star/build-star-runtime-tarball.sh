@@ -6,6 +6,7 @@ SRC_ROOT="$(realpath "${SCRIPT_DIR}/../..")"
 REPO_ROOT="$(realpath "${SRC_ROOT}/..")"
 OUTPUT="${1:-${STAR_RUNTIME_TARBALL:-/tmp/cocalc-star-runtime.tar.gz}}"
 STAR_RUNTIME_BUILD="${STAR_RUNTIME_BUILD:-1}"
+COCALC_STAR_RELEASE_ARCH="${COCALC_STAR_RELEASE_ARCH:-}"
 STAR_HELPER_BUILD_DIR=""
 
 log() {
@@ -27,6 +28,9 @@ installer. It intentionally does not include the workspace node_modules tree.
 
 Set STAR_RUNTIME_BUILD=0 to skip the local build step and package the current
 workspace state.
+
+Set COCALC_STAR_RELEASE_ARCH=x64 or arm64 to choose the matching project tools
+bundle. Defaults from uname -m.
 EOF
 }
 
@@ -73,6 +77,22 @@ build_runtime() {
     pnpm --dir packages/project build:bundle
     pnpm --dir packages/project build:tools
   )
+}
+
+runtime_tools_arch() {
+  local arch="${COCALC_STAR_RELEASE_ARCH}"
+  if [ -z "$arch" ]; then
+    case "$(uname -m)" in
+      x86_64 | amd64) arch="x64" ;;
+      aarch64 | arm64) arch="arm64" ;;
+      *) die "unsupported architecture $(uname -m); set COCALC_STAR_RELEASE_ARCH=x64 or arm64" ;;
+    esac
+  fi
+  case "$arch" in
+    x64) printf 'amd64\n' ;;
+    arm64) printf 'arm64\n' ;;
+    *) die "unsupported COCALC_STAR_RELEASE_ARCH=$arch; expected x64 or arm64" ;;
+  esac
 }
 
 build_star_helper_bundles() {
@@ -216,14 +236,15 @@ copy_runtime_payload() {
     "$runtime_src/packages/launchpad/build/"
   cp -a "$SRC_ROOT/packages/cli/build/bundle" \
     "$runtime_src/packages/cli/build/"
-  mkdir -p "$runtime_src/packages/launchpad/build/bundle"
   cp -a "$STAR_HELPER_BUILD_DIR/api-v2-routes" \
-    "$runtime_src/packages/launchpad/build/bundle/api-v2-routes-bundle"
+    "$runtime_src/scripts/star-poc/build/api-v2-routes-bundle"
   cp "$SRC_ROOT/packages/project-host/build/bundle-linux.tar.xz" \
     "$runtime_src/packages/project-host/build/"
   cp "$SRC_ROOT/packages/project/build/bundle-linux.tar.xz" \
     "$runtime_src/packages/project/build/"
-  cp "$SRC_ROOT/packages/project/build"/tools-linux-*.tar.xz \
+  local tools_arch
+  tools_arch="$(runtime_tools_arch)"
+  cp "$SRC_ROOT/packages/project/build/tools-linux-${tools_arch}.tar.xz" \
     "$runtime_src/packages/project/build/"
   cp "$SRC_ROOT/packages/server/cloud/bootstrap/bootstrap.py" \
     "$runtime_src/packages/server/cloud/bootstrap/"
@@ -245,8 +266,7 @@ build_api_v2_routes_bundle
 [ -f "$SRC_ROOT/packages/cli/build/bundle/index.js" ] || die "missing cli bundle"
 [ -f "$SRC_ROOT/packages/project-host/build/bundle-linux.tar.xz" ] || die "missing project-host bundle tarball"
 [ -f "$SRC_ROOT/packages/project/build/bundle-linux.tar.xz" ] || die "missing project bundle tarball"
-[ -f "$SRC_ROOT/packages/project/build/tools-linux-amd64.tar.xz" ] || die "missing amd64 tools bundle"
-[ -f "$SRC_ROOT/packages/project/build/tools-linux-arm64.tar.xz" ] || die "missing arm64 tools bundle"
+[ -f "$SRC_ROOT/packages/project/build/tools-linux-$(runtime_tools_arch).tar.xz" ] || die "missing $(runtime_tools_arch) tools bundle"
 [ -f "$STAR_HELPER_BUILD_DIR/seed-star-poc/index.cjs" ] || die "missing bundled seed helper"
 [ -f "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache/index.cjs" ] || die "missing bundled rootfs cache helper"
 [ -f "$STAR_HELPER_BUILD_DIR/api-v2-routes/index.cjs" ] || die "missing bundled api/v2 route manifest"

@@ -27,7 +27,6 @@ export const ACCOUNT_PREFERENCES_OTHER_PAGE = {
 export function AccountPreferencesOther() {
   const other_settings = useTypedRedux("account", "other_settings");
   const stripe_customer = useTypedRedux("account", "stripe_customer");
-  const kucalc = useTypedRedux("customize", "kucalc");
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -36,7 +35,6 @@ export function AccountPreferencesOther() {
         is_stripe_customer={
           !!stripe_customer?.getIn(["subscriptions", "total_count"])
         }
-        kucalc={kucalc}
         mode="other"
       />
       {!lite && <BlobCleanupButton mode="account" />}

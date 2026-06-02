@@ -13,13 +13,9 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
-import {
-  KUCALC_COCALC_COM,
-  KUCALC_DISABLED,
-  KUCALC_ON_PREMISES,
-} from "@cocalc/util/db-schema/site-defaults";
+import { PLATFORM_MODE_ON_PREMISES } from "@cocalc/util/db-schema/site-defaults";
 import { round1, seconds2hms } from "@cocalc/util/misc";
-import { PROJECT_UPGRADES, FAIR_CPU_MODE } from "@cocalc/util/schema";
+import { PROJECT_UPGRADES } from "@cocalc/util/schema";
 import {
   Upgrades,
   quota2upgrade_key,
@@ -230,38 +226,21 @@ export function useCurrentUsage({
   return currentUsage;
 }
 
-// on non cocalc.com setups, we hider the member hosting entry
+const COCALC_AI_DISPLAYED_FIELDS: readonly string[] = ["disk_quota", "memory"];
+const ON_PREMISES_DISPLAYED_FIELDS: readonly string[] = [
+  "ext_rw",
+  "patch",
+  "gpu",
+];
+
 export function useDisplayedFields(): string[] {
-  const kucalc = useTypedRedux("customize", "kucalc");
+  const platformMode = useTypedRedux("customize", "platform_mode");
 
   return useMemo(() => {
-    // we have to make a copy, because we might modify it below
-    const fields: string[] = [...PROJECT_UPGRADES.field_order];
-
-    // on kucalc on-prem, we add ext_rw, patch and gpu
-    if (kucalc === KUCALC_ON_PREMISES) {
-      fields.push(...["ext_rw", "patch", "gpu"]);
+    const fields = [...COCALC_AI_DISPLAYED_FIELDS];
+    if (platformMode === PLATFORM_MODE_ON_PREMISES) {
+      fields.push(...ON_PREMISES_DISPLAYED_FIELDS);
     }
-
-    return fields.filter((key: keyof Upgrades) => {
-      if (key === "mintime" || key === "always_running") {
-        return false;
-      }
-      if (FAIR_CPU_MODE && (key.startsWith("cpu") || key == "cores")) {
-        return false;
-      }
-      // don't show these, because we collect dedicated quotas in the overall limit
-      if (key === "cpu_shares" || key === "memory_request") return false;
-
-      switch (kucalc) {
-        case KUCALC_COCALC_COM:
-          return true; // show everything except the two above
-        case KUCALC_ON_PREMISES:
-          // there is no member hosting and no disk quota
-          return "member_host" !== key && "disk_quota" !== key;
-        case KUCALC_DISABLED:
-          return false;
-      }
-    });
-  }, [kucalc]);
+    return fields;
+  }, [platformMode]);
 }

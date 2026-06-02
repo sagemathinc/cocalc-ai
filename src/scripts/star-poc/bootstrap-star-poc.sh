@@ -14,6 +14,7 @@ STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
 STAR_DATA="${STAR_DATA:-${STAR_ROOT}/launchpad}"
 STAR_PROJECT_HOST_DATA="${STAR_PROJECT_HOST_DATA:-${STAR_ROOT}/project-host/0}"
 STAR_HOST_ID="${STAR_HOST_ID:-11111111-1111-4111-8111-111111111111}"
+STAR_PROJECT_HOST_REGION="${STAR_PROJECT_HOST_REGION:-wnam}"
 STAR_BASE_PORT="${STAR_BASE_PORT:-9100}"
 STAR_BASE_URL="${STAR_BASE_URL:-http://127.0.0.1:${STAR_BASE_PORT}}"
 STAR_BTRFS_IMAGE="${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}"
@@ -23,6 +24,8 @@ STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:26.04}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
+STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
+STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
 
 log() {
   printf '[star] %s\n' "$*" >&2
@@ -58,6 +61,131 @@ install_packages() {
   systemctl disable --now postgresql >/dev/null 2>&1 || true
 }
 
+host_has_nvidia_gpu() {
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    return 0
+  fi
+  if ls /dev/nvidia0 >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+install_nvidia_cdi_normalizer() {
+  cat >/usr/local/sbin/cocalc-nvidia-cdi-normalize <<'PY'
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+COMPAT_VERSION = "0.5.0"
+CDI_PATHS = (Path("/etc/cdi/nvidia.yaml"), Path("/var/run/cdi/nvidia.yaml"))
+
+
+def strip_yaml_field(lines, field):
+    out = []
+    i = 0
+    needle = f"{field}:"
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if stripped == needle:
+            indent = len(line) - len(line.lstrip(" "))
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                next_stripped = next_line.strip()
+                if not next_stripped:
+                    i += 1
+                    continue
+                next_indent = len(next_line) - len(next_line.lstrip(" "))
+                if next_indent > indent:
+                    i += 1
+                    continue
+                break
+            continue
+        out.append(line)
+        i += 1
+    return out
+
+
+def normalize(path):
+    if not path.exists():
+        return False
+    original = path.read_text(encoding="utf-8")
+    lines = original.splitlines(keepends=True)
+    lines = strip_yaml_field(lines, "additionalGids")
+    changed_version = False
+    for i, line in enumerate(lines):
+        if line.startswith("cdiVersion:"):
+            replacement = f"cdiVersion: {COMPAT_VERSION}\n"
+            if line != replacement:
+                lines[i] = replacement
+                changed_version = True
+            break
+    updated = "".join(lines)
+    if updated == original and not changed_version:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    path.chmod(0o644)
+    return True
+
+
+changed = False
+paths = [Path(arg) for arg in sys.argv[1:]] or list(CDI_PATHS)
+for path in paths:
+    changed = normalize(path) or changed
+raise SystemExit(0)
+PY
+  chmod 0755 /usr/local/sbin/cocalc-nvidia-cdi-normalize
+}
+
+install_gpu_support() {
+  STAR_HAS_GPU=0
+  if ! host_has_nvidia_gpu; then
+    return
+  fi
+  STAR_HAS_GPU=1
+  log "NVIDIA GPU detected; configuring Podman CDI support"
+  run apt-get install -y ca-certificates gnupg
+  rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  run bash -lc "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
+  run bash -lc "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
+  run apt-get update
+  run apt-get install -y --allow-change-held-packages nvidia-container-toolkit
+  ldconfig || true
+  install_nvidia_cdi_normalizer
+  mkdir -p /etc/cdi
+  run nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+  /usr/local/sbin/cocalc-nvidia-cdi-normalize || true
+  [ -f /etc/cdi/nvidia.yaml ] || die "nvidia CDI generation did not create /etc/cdi/nvidia.yaml"
+  usermod -aG video,render "$STAR_USER" || true
+  cat >/usr/local/sbin/cocalc-nvidia-cdi <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  exit 0
+fi
+if [ ! -x /usr/bin/nvidia-ctk ]; then
+  exit 0
+fi
+if [ -f /etc/cdi/nvidia.yaml ]; then
+  /usr/local/sbin/cocalc-nvidia-cdi-normalize || true
+  exit 0
+fi
+ldconfig || true
+if command -v nvidia-smi >/dev/null 2>&1 || ldconfig -p 2>/dev/null | grep -q libnvidia-ml.so.1; then
+  /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml || exit 0
+  /usr/local/sbin/cocalc-nvidia-cdi-normalize || true
+fi
+exit 0
+EOF
+  chmod 0755 /usr/local/sbin/cocalc-nvidia-cdi
+  cat >/etc/cron.d/cocalc-nvidia-cdi <<'EOF'
+*/5 * * * * root /usr/local/sbin/cocalc-nvidia-cdi >/dev/null 2>&1
+EOF
+  chmod 0644 /etc/cron.d/cocalc-nvidia-cdi
+}
+
 stop_existing_services() {
   systemctl stop cocalc-star-project-host.service >/dev/null 2>&1 || true
   systemctl stop cocalc-star-hub.service >/dev/null 2>&1 || true
@@ -69,6 +197,48 @@ install_node() {
   fi
   as_star_user 'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash'
   as_star_user 'source "$HOME/.nvm/nvm.sh" && nvm install 26 && nvm alias default 26 && if command -v corepack >/dev/null 2>&1; then corepack enable; else npm install -g pnpm@10.33.0; fi'
+}
+
+ensure_exact_subid_file() {
+  local path="$1"
+  local tmp expected current line
+  tmp="$(mktemp)"
+  expected=""
+  for range in $STAR_SUBID_RANGES; do
+    expected="${expected}${STAR_USER}:${range}
+"
+  done
+  current=""
+  if [ -f "$path" ]; then
+    current="$(grep -E "^${STAR_USER}:" "$path" || true)"
+    current="${current}${current:+
+}"
+  fi
+
+  if [ "$current" = "$expected" ]; then
+    rm -f "$tmp"
+    return
+  fi
+
+  if [ -f "$path" ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        "${STAR_USER}:"*) ;;
+        *) printf '%s\n' "$line" >>"$tmp" ;;
+      esac
+    done <"$path"
+  fi
+
+  printf '%s' "$expected" >>"$tmp"
+  install -m 0644 -o root -g root "$tmp" "$path"
+  rm -f "$tmp"
+  log "set rootless subid allocation for $STAR_USER in $path to $STAR_SUBID_RANGES"
+}
+
+ensure_subuids() {
+  ensure_exact_subid_file /etc/subuid
+  ensure_exact_subid_file /etc/subgid
+  as_star_user 'podman system migrate >/dev/null 2>&1 || true'
 }
 
 build_source() {
@@ -209,20 +379,30 @@ configure_users_and_dirs() {
     "$STAR_PROJECT_HOST_DATA/cache/images" \
     "$STAR_PROJECT_HOST_DATA/cache/project-roots" \
     "$STAR_PROJECT_HOST_DATA/secrets" \
+    "$STAR_ROOT/backup" \
     /etc/cocalc/star
   chmod 700 "$STAR_PROJECT_HOST_DATA/tmp"
   # Do not recursively chown STAR_ROOT. It contains cached RootFS trees whose
   # numeric ownership is part of the container runtime contract.
+  chown -R "$STAR_USER:$STAR_USER" \
+    "$STAR_DATA" \
+    "$STAR_ROOT/backup" \
+    "$STAR_PROJECT_HOST_DATA/secrets" \
+    "$STAR_PROJECT_HOST_DATA/tmp"
   chown "$STAR_USER:$STAR_USER" \
     "$STAR_ROOT" \
-    "$STAR_DATA" \
-    "$STAR_DATA/secrets" \
     "$STAR_PROJECT_HOST_DATA" \
     "$STAR_PROJECT_HOST_DATA/tmp" \
     "$STAR_PROJECT_HOST_DATA/cache" \
     "$STAR_PROJECT_HOST_DATA/cache/images" \
     "$STAR_PROJECT_HOST_DATA/cache/project-roots" \
     "$STAR_PROJECT_HOST_DATA/secrets"
+  find "$STAR_ROOT" -maxdepth 1 -type f \
+    -exec chown "$STAR_USER:$STAR_USER" {} +
+  find "$STAR_PROJECT_HOST_DATA" -maxdepth 1 -type f \
+    -exec chown "$STAR_USER:$STAR_USER" {} +
+  find "$STAR_PROJECT_HOST_DATA/cache/images" -maxdepth 1 -type f -name '.*.json' \
+    -exec chown "$STAR_USER:$STAR_USER" {} +
   chown -R "$STAR_USER:$STAR_USER" /mnt/cocalc/data
 }
 
@@ -315,6 +495,7 @@ write_env_files() {
     printf 'STAR_BASE_PORT=%q\n' "$STAR_BASE_PORT"
     printf 'STAR_BASE_URL=%q\n' "$STAR_BASE_URL"
     printf 'STAR_API=%q\n' "$STAR_BASE_URL"
+    printf 'STAR_PROJECT_HOST_REGION=%q\n' "$STAR_PROJECT_HOST_REGION"
     printf 'STAR_INSTALL_ROOT=%q\n' "${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
     printf 'STAR_DEFAULT_ROOTFS_IMAGE=%q\n' "$STAR_DEFAULT_ROOTFS_IMAGE"
   } >/etc/cocalc/star/config.env
@@ -329,6 +510,7 @@ COCALC_DB=postgres
 COCALC_LOCAL_POSTGRES=1
 DATA=${STAR_DATA}
 COCALC_DATA_DIR=${STAR_DATA}
+COCALC_LOCAL_POSTGRES_ADMIN_USER=smc
 COCALC_LOCAL_PG_SOCKET_DIR=${STAR_DATA}/postgres-socket
 COCALC_LOCAL_PG_ENV_FILE=${STAR_DATA}/local-postgres.env
 COCALC_BACKUP_ROOT=${STAR_ROOT}/backup
@@ -353,7 +535,7 @@ EOF
 PROJECT_HOST_ID=${STAR_HOST_ID}
 PROJECT_HOST_NAME=star-local
 COCALC_ROOT=${SRC_ROOT}
-PROJECT_HOST_REGION=local
+PROJECT_HOST_REGION=${STAR_PROJECT_HOST_REGION}
 PROJECT_HOST_PUBLIC_URL=http://127.0.0.1:9002
 PROJECT_HOST_INTERNAL_URL=http://127.0.0.1:9002
 PROJECT_HOST_SSH_SERVER=127.0.0.1:2222
@@ -388,7 +570,7 @@ seed_database() {
   if [ -f "$SRC_ROOT/scripts/star-poc/build/seed-star-poc/index.cjs" ]; then
     script="scripts/star-poc/build/seed-star-poc/index.cjs"
   fi
-  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' node '$script'"
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' STAR_HAS_GPU='${STAR_HAS_GPU:-0}' node '$script'"
 }
 
 install_systemd() {
@@ -400,7 +582,10 @@ install_systemd() {
     hub_workdir="$SRC_ROOT/packages/launchpad/build/bundle"
     hub_exec='exec node bundle/index.js --hostname=127.0.0.1'
     hub_bundle_env="Environment=COCALC_BUNDLE_DIR=${hub_workdir}"
-    api_v2_routes_bundle="${hub_workdir}/api-v2-routes-bundle/index.cjs"
+    api_v2_routes_bundle="$SRC_ROOT/scripts/star-poc/build/api-v2-routes-bundle/index.cjs"
+    if [ ! -f "$api_v2_routes_bundle" ]; then
+      api_v2_routes_bundle="${hub_workdir}/api-v2-routes-bundle/index.cjs"
+    fi
     if [ -f "$api_v2_routes_bundle" ]; then
       hub_bundle_env="${hub_bundle_env}
 Environment=COCALC_API_V2_ROUTES_BUNDLE=${api_v2_routes_bundle}"
@@ -525,17 +710,19 @@ start_services() {
 
 require_root
 install_packages
+install_gpu_support
+ensure_subuids
 install_node
 build_source
 prepare_runtime_artifacts
 stop_existing_services
 ensure_btrfs
 install_wrappers
+configure_sudoers
 configure_users_and_dirs
 build_default_rootfs_image
 write_env_files
 ensure_default_rootfs_cache
 seed_database
 install_systemd
-configure_sudoers
 start_services

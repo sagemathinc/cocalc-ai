@@ -57,6 +57,10 @@ import {
 const INVITE_MESSAGE_MAX_LENGTH = 1000;
 type InviteRole = "collaborator" | "viewer";
 
+function legacyEnabledByDefault(value: unknown): boolean {
+  return value !== false && value !== 0;
+}
+
 interface RegisteredUser {
   sort?: string;
   account_id: string;
@@ -170,7 +174,10 @@ export const AddCollaborators: React.FC<Props> = ({
   const { runQuota } = useProjectRunQuota(project_id);
 
   const allow_urls = useMemo(
-    () => !!(runQuota?.network || runQuota?.member_host),
+    () =>
+      runQuota == null ||
+      legacyEnabledByDefault(runQuota.network) ||
+      legacyEnabledByDefault(runQuota.member_host),
     [runQuota],
   );
 

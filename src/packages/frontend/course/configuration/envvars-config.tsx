@@ -14,8 +14,8 @@ import { ConfigurationActions } from "./actions";
 import { Card, Typography, Switch, Form, Button } from "antd";
 import { EnvVars, EnvVarsRecord } from "@cocalc/frontend/projects/actions";
 import {
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
+  PLATFORM_MODE_CLOUD,
+  PLATFORM_MODE_ON_PREMISES,
 } from "@cocalc/util/db-schema/site-defaults";
 import { Icon } from "@cocalc/frontend/components";
 import { ENV_VARS_ICON } from "@cocalc/frontend/project/settings/environment";
@@ -48,7 +48,7 @@ export function EnvironmentVariablesConfig({
   project_id,
 }: Props) {
   const envvars1 = normalizeTypeAndValue(envvars);
-  const customize_kucalc = useTypedRedux("customize", "kucalc");
+  const platformMode = useTypedRedux("customize", "platform_mode");
   const [needSave, setNeedSave] = useState<boolean>(false);
 
   // By default, we inherit the environment variables.
@@ -65,10 +65,10 @@ export function EnvironmentVariablesConfig({
     setNextVal(inherit);
   }, [inherit]);
 
-  // this selector only make sense for cocalc.com and cocalc-onprem
+  // this selector only makes sense for managed cloud and on-premises platforms.
   if (
-    customize_kucalc !== KUCALC_COCALC_COM &&
-    customize_kucalc !== KUCALC_ON_PREMISES
+    platformMode !== PLATFORM_MODE_CLOUD &&
+    platformMode !== PLATFORM_MODE_ON_PREMISES
   )
     return null;
 

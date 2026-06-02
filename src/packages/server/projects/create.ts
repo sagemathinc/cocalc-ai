@@ -28,6 +28,7 @@ import {
   cloneProjectRootfsStates,
   initializeProjectRootfsStates,
 } from "@cocalc/server/projects/rootfs-state";
+import { assertValidRootfsImageName } from "@cocalc/util/rootfs-images";
 import { copyProjectSecrets } from "@cocalc/server/projects/project-secrets";
 import {
   DEFAULT_R2_REGION,
@@ -375,7 +376,9 @@ export default async function createProject(opts: CreateProjectOptions) {
     preferredBackupRepoId = rows[0]?.backup_repo_id ?? null;
   }
 
-  const projectRootfsImage = opts.rootfs_image ?? rootfs_image;
+  const projectRootfsImage = assertValidRootfsImageName(
+    opts.rootfs_image ?? rootfs_image,
+  );
   const projectRootfsImageId = opts.rootfs_image_id ?? rootfs_image_id ?? null;
   if (account_id && projectRootfsImage) {
     await assertCanSelectProjectRootfsImage({

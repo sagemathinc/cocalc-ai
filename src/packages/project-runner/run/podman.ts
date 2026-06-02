@@ -40,7 +40,9 @@ import {
   copyFile,
   mkdtemp,
   rename,
+  access,
 } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
 import { type RestoreMode } from "@cocalc/conat/files/file-server";
@@ -88,6 +90,7 @@ import { resolveSharedScratchMount } from "./shared-scratch";
 export { resolveSharedScratchMount } from "./shared-scratch";
 
 const logger = getLogger("project-runner:podman");
+let podmanRuntimeArgsCache: string[] | undefined = undefined;
 // Restores can be large; allow the RPC to stay open while rustic runs.
 const RESTORE_RPC_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const STOP_RM_TIMEOUT_S = 10;
@@ -904,6 +907,34 @@ export function networkArgument() {
     : "--network=slirp4netns";
 }
 
+async function executableExists(path: string): Promise<boolean> {
+  try {
+    await access(path, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function podmanRuntimeArgs(): Promise<string[]> {
+  if (podmanRuntimeArgsCache != null) {
+    return podmanRuntimeArgsCache;
+  }
+  const configured = `${process.env.COCALC_PODMAN_RUNTIME ?? ""}`.trim();
+  if (configured) {
+    podmanRuntimeArgsCache =
+      configured === "default" ? [] : ["--runtime", configured];
+    return podmanRuntimeArgsCache;
+  }
+  // crun is preferred where available, but some Ubuntu/cloud images ship
+  // Podman configured with runc and no crun package. In that case do not pass
+  // --runtime at all; Podman's configured default is the portable choice.
+  podmanRuntimeArgsCache = (await executableExists("/usr/bin/crun"))
+    ? ["--runtime", "/usr/bin/crun"]
+    : [];
+  return podmanRuntimeArgsCache;
+}
+
 function pastaConatHost(): string | undefined {
   const host =
     `${process.env.COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST ?? ""}`.trim();
@@ -1327,7 +1358,7 @@ export async function start({
 
     const args: string[] = [];
     args.push("run");
-    args.push("--runtime", "/usr/bin/crun");
+    args.push(...(await podmanRuntimeArgs()));
     // Leave setuid/setgid working inside the project so passwordless sudo can
     // elevate to container root under the rootless user namespace.
     args.push(

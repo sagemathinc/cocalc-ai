@@ -43,6 +43,10 @@ Implementation status as of 2026-06-01:
   can be available before local Postgres, the customize endpoint, and Conat
   health checks are ready. The GCE validator now retries `star.sh doctor` after
   reset and after final release restore.
+- Phase 3 setup profile now uses the zero-conf appliance contract: the only
+  required setup gates are the first admin account and a working smoke-test
+  path. Email, TLS/public URL, backups, license entry, 2FA, resource tuning, and
+  custom RootFS images are supported follow-up checks, not first-run blockers.
 - Current implementation is a validated tarball + installer deployment, not a
   final marketplace image or SEA binary. SEA is now optional rather than a hard
   product requirement.
@@ -905,22 +909,29 @@ Admin setup:
 
 ## Star Onboarding UI
 
-Star should have a separate setup profile from Launchpad/Rocket cloud setup.
+Star should have a separate zero-conf setup profile from Launchpad/Rocket cloud
+setup.
 
-Hard gates:
+Required:
 
 1. Admin account exists.
-2. Admin has 2FA.
-3. Local project-host is healthy.
-4. Shared `/scratch` is mounted, bounded, and visible to projects.
-5. Default RootFS exists or a bundled default is installed.
-6. Smoke-test project starts and can read/write `/scratch`.
+2. Smoke-test path is ready and the operator can create/start a project, open a
+   terminal, and open Jupyter.
 
-Optional:
+Supported but optional:
 
-- Email provider.
-- Public URL / TLS.
-- External backup target.
+- Admin 2FA, recommended before inviting real users.
+- Local project-host health details.
+- Default RootFS status.
+- Shared `/scratch` status.
+- VM resource budget and recommended operating envelope.
+- Email provider for password resets, invites, and notifications.
+- Public URL / TLS, preferably Caddy plus Let's Encrypt once DNS points at the
+  VM.
+- License code entry, deferred until it unlocks limits/functionality/upgrades
+  or support.
+- Custom RootFS images, including GPU-specific images for GPU VMs.
+- Backups, with VM/disk snapshots as the V1 recommendation.
 
 The cloud-backed Launchpad/Rocket wizard should not ask Star users for
 Cloudflare, GCP, or Nebius.
@@ -1143,15 +1154,19 @@ Deliverable:
 - Star installer sets `COCALC_SETUP_PROFILE=star` while preserving
   `COCALC_PRODUCT=launchpad` for existing server/runtime behavior.
 
-Status: initial implementation in progress.
+Status: initial zero-conf implementation complete.
 
 Validation:
 
 - Star users never see GCP/Nebius/Cloudflare as required setup.
 - Launchpad/Rocket users still see cloud setup.
-- Star setup readiness is derived from admin 2FA, local project-host health,
-  and a configured default project image; manual smoke test and backups are
-  shown as non-blocking follow-up checks.
+- Star setup readiness is derived from the first admin account and a working
+  local smoke-test path. The smoke path currently means local project-host and
+  default project image readiness; a follow-up should persist the most recent
+  browser smoke-test result.
+- Admin 2FA, local project-host health, default RootFS, email, TLS/public URL,
+  license entry, backups, resource budget, and custom RootFS are shown as
+  optional/manual follow-up checks, not blockers.
 
 ### Phase 4: Packaged Runtime
 

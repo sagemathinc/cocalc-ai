@@ -453,6 +453,24 @@ Completed first slice:
   `member_host` values as enabled, while preserving explicit false/0 values for
   compatibility.
 
+Completed second slice:
+
+- project run-quota display now shows cocalc-ai runtime fields instead of the
+  legacy `PROJECT_UPGRADES.field_order` product model;
+- invite email URL validation and project internet-access checks default to
+  enabled unless a compatibility path explicitly disables network/member-host;
+- removed unused no-network, non-member-host, and trial warning components.
+
+Completed third slice:
+
+- restored the existing "Usage and Quotas" panel to the revamped project
+  settings Runtime section, so the RAM/disk run-quota display is reachable in
+  both the full settings page and the flyout;
+- cocalc-ai baseline RAM/disk quota rows now render on every platform mode;
+  only on-premises extras remain gated on the on-premises platform mode;
+- added regression coverage that the settings flyout includes the runtime quota
+  usage surface and that single-node deployments still show RAM/disk quota rows.
+
 After the editor is usable:
 
 - make project defaults emit only cocalc-ai-supported fields;

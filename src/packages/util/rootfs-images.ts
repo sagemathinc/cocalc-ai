@@ -502,6 +502,21 @@ export function isManagedRootfsImageName(image?: string): boolean {
   return `${image ?? ""}`.trim().startsWith(MANAGED_ROOTFS_IMAGE_PREFIX);
 }
 
+export function assertValidRootfsImageName(image?: string): string {
+  const value = `${image ?? ""}`.trim();
+  if (!value) return "";
+  if (
+    isManagedRootfsImageName(value) ||
+    value.includes(":") ||
+    value.includes("/")
+  ) {
+    return value;
+  }
+  throw new Error(
+    `invalid rootfs OCI image '${value}'; use a valid image reference such as 'ubuntu:26.04'`,
+  );
+}
+
 export function managedRootfsContentKey(image?: string): string | undefined {
   const value = `${image ?? ""}`.trim();
   if (!value.startsWith(MANAGED_ROOTFS_IMAGE_PREFIX)) return;
@@ -574,10 +589,10 @@ export const DEFAULT_ROOTFS_CATALOG_URL = "/rootfs/catalog.json";
 export const BUILTIN_ROOTFS_IMAGES: RootfsImageEntry[] = [
   {
     id: "official-cocalc-base",
-    label: "CoCalc Base",
-    image: "buildpack-deps:noble-scm",
+    label: "Ubuntu 26.04",
+    image: "ubuntu:26.04",
     description:
-      "Official minimal CoCalc base image for projects. This is the default launch image.",
+      "Official Ubuntu 26.04 base image for projects. This is the default launch image.",
     priority: 1000,
     prepull: true,
     official: true,
@@ -586,7 +601,7 @@ export const BUILTIN_ROOTFS_IMAGES: RootfsImageEntry[] = [
     warning: "none",
     tags: ["official", "cpu", "base"],
     theme: {
-      title: "CoCalc Base",
+      title: "Ubuntu 26.04",
       color: "#4474c0",
       accent_color: "#14b8a6",
       icon: "cube",

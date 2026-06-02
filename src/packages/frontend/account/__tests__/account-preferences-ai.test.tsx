@@ -50,7 +50,7 @@ describe("AccountPreferencesAI", () => {
       if (store === "account" && key === "stripe_customer") {
         return null;
       }
-      if (store === "customize" && key === "kucalc") {
+      if (store === "customize" && key === "platform_mode") {
         return "launchpad";
       }
       return undefined;

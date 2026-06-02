@@ -18,7 +18,7 @@ export type NewFilenameTypes =
 export const NEW_FILENAMES = "new_filenames";
 export const DEFAULT_NEW_FILENAMES: NewFilenameTypes = "iso";
 
-export const DEFAULT_PROJECT_IMAGE = "buildpack-deps:noble-scm";
+export const DEFAULT_PROJECT_IMAGE = "ubuntu:26.04";
 
 // Directory that contains overlay modifications to the root filesystem image.
 // Obviously do NOT change this willy nilly for an existing install, since

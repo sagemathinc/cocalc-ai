@@ -45,7 +45,7 @@ import {
 import { TerminalModeDisplay } from "@cocalc/frontend/project/explorer/file-listing/terminal-mode-display";
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
+import { PLATFORM_MODE_CLOUD } from "@cocalc/util/db-schema/site-defaults";
 import { separate_file_extension, strictMod } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../common";
@@ -164,7 +164,7 @@ export function FilesHeader({
   const [mode, setMode] = modeState;
 
   const uploadClassName = `upload-button-flyout-${project_id}`;
-  const kucalc = useTypedRedux("customize", "kucalc");
+  const platformMode = useTypedRedux("customize", "platform_mode");
   const file_search = useTypedRedux({ project_id }, "file_search") ?? "";
   const hidden = useTypedRedux({ project_id }, "show_hidden");
   const file_creation_error = useTypedRedux(
@@ -893,7 +893,7 @@ export function FilesHeader({
                 </span>
               </Tooltip>
             ) : null}
-            {kucalc === KUCALC_COCALC_COM ? (
+            {platformMode === PLATFORM_MODE_CLOUD ? (
               <CloneProject project_id={project_id} flyout />
             ) : null}
           </Space.Compact>

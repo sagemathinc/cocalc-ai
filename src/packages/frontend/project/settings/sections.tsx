@@ -14,8 +14,8 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectCollaboratorsContent } from "@cocalc/frontend/project/page/project-collaborators";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import {
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
+  PLATFORM_MODE_CLOUD,
+  PLATFORM_MODE_ON_PREMISES,
 } from "@cocalc/util/db-schema/site-defaults";
 
 import { useProjectCourseInfo } from "../use-project-course";
@@ -28,6 +28,7 @@ import { RecoveryPanel } from "./recovery-panel";
 import type { ProjectSettingsNavItem } from "./section-nav";
 import { SSHPanel } from "./ssh";
 import type { Project } from "./types";
+import { UpgradeUsage } from "./upgrade-usage";
 
 const CourseRuntimeSponsorSummary = lazy(async () => {
   const module = await import("./runtime-sponsor-controls");
@@ -68,7 +69,7 @@ export function useProjectSettingsSections({
 } {
   const { projectAccess } = useProjectContext();
   const isViewer = projectAccess?.role === "viewer";
-  const kucalc = useTypedRedux("customize", "kucalc");
+  const platformMode = useTypedRedux("customize", "platform_mode");
   const { course } = useProjectCourseInfo(project_id, undefined, {
     enabled: !isViewer,
   });
@@ -77,8 +78,8 @@ export function useProjectSettingsSections({
 
   const showSSH = !lite && !student.disableSSH;
   const showDatastore =
-    kucalc === KUCALC_COCALC_COM ||
-    (kucalc === KUCALC_ON_PREMISES && datastore);
+    platformMode === PLATFORM_MODE_CLOUD ||
+    (platformMode === PLATFORM_MODE_ON_PREMISES && datastore);
   const showNonMemberWarning = false;
   const showNoInternetWarning = false;
   const showCourseSection = course != null;
@@ -155,12 +156,19 @@ export function useProjectSettingsSections({
       description:
         "Control the active project process and review host diagnostics.",
       children: (
-        <ProjectControl
-          project={project}
-          mode={componentMode}
-          showRootFilesystemImage={false}
-          embedded={embeddedInSection}
-        />
+        <Space direction="vertical" size={sectionGap} style={{ width: "100%" }}>
+          <ProjectControl
+            project={project}
+            mode={componentMode}
+            showRootFilesystemImage={false}
+            embedded={embeddedInSection}
+          />
+          <UpgradeUsage
+            project_id={project_id}
+            project={project}
+            mode={flyout ? "flyout" : "project"}
+          />
+        </Space>
       ),
     },
   ];
