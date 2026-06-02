@@ -22,4 +22,13 @@ describe("slides fixed elements", () => {
       expect(element.y + element.h).toBeLessThanOrEqual(slideBottom);
     }
   });
+
+  it("uses plain styled text for editable title and subtitle placeholders", () => {
+    for (const element of SLIDE_TEMPLATE_ELEMENTS) {
+      expect(element.data?.placeholder).not.toContain("#");
+      expect(element.data?.initStr).toBeUndefined();
+      expect(element.data?.color).toBeTruthy();
+      expect(element.data?.fontSize).toBeGreaterThan(20);
+    }
+  });
 });

@@ -13,10 +13,9 @@ const TEXT_BOX_X = -TEXT_BOX_WIDTH / 2;
 export const SLIDE_TEMPLATE_ELEMENTS: ReadonlyArray<TemplateElement> = [
   {
     data: {
-      color: "#252937",
-      fontSize: 24,
-      placeholder: "# Click to edit title\n\n",
-      initStr: "\n# \n",
+      color: "#9f9f9f",
+      fontSize: 65,
+      placeholder: "Click to edit title",
     },
     h: 123,
     id: "be9e3736",
@@ -29,9 +28,8 @@ export const SLIDE_TEMPLATE_ELEMENTS: ReadonlyArray<TemplateElement> = [
   {
     data: {
       color: "#525252",
-      fontSize: 18,
-      placeholder: "## Click to edit subtitle\n\n",
-      initStr: "\n## \n",
+      fontSize: 36,
+      placeholder: "Click to edit subtitle",
     },
     h: 110,
     id: "cdf12aea",
