@@ -422,7 +422,6 @@ export async function deleteBackup({
 
 export async function restoreBackup({
   account_id,
-  session_hash,
   project_id,
   id,
   path,
@@ -441,10 +440,6 @@ export async function restoreBackup({
   service: string;
   stream_name: string;
 }> {
-  await requireDangerousProjectMutationAuth({
-    account_id,
-    session_hash,
-  });
   await assertCollab({ account_id, project_id });
   await assertProjectOwnerCanIncreaseAccountStorage({ project_id });
   const op = await createLro({

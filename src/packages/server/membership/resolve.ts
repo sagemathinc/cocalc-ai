@@ -54,7 +54,7 @@ async function buildMembershipCandidates(
   tiers: Record<string, MembershipTierRecord>,
 ): Promise<MembershipCandidate[]> {
   const pool = getPool("medium");
-  const [subResult, adminResult, grants] = await Promise.all([
+  const [subResult, adminResult, adminGroupResult, grants] = await Promise.all([
     pool.query(
       `SELECT id, metadata, current_period_end, status
        FROM subscriptions
@@ -72,6 +72,13 @@ async function buildMembershipCandidates(
        WHERE account_id=$1
          AND (expires_at IS NULL OR expires_at > NOW())
        LIMIT 1`,
+      [account_id],
+    ),
+    pool.query(
+      `SELECT 'admin' = ANY(groups) AS is_admin
+       FROM accounts
+       WHERE account_id=$1
+         AND coalesce(deleted,false)=false`,
       [account_id],
     ),
     listActiveMembershipGrantsForAccount(account_id),
@@ -109,6 +116,19 @@ async function buildMembershipCandidates(
       entitlements: tierToEntitlements(tier),
       effective_limits: normalizeMembershipEffectiveLimits(tier?.usage_limits),
       expires: admin.expires_at ?? undefined,
+    });
+  }
+
+  const adminTier = tiers["admin"];
+  if (adminGroupResult.rows[0]?.is_admin && adminTier && !adminTier.disabled) {
+    candidates.push({
+      class: "admin" as MembershipClass,
+      source: "admin",
+      priority: adminTier.priority ?? 0,
+      entitlements: tierToEntitlements(adminTier),
+      effective_limits: normalizeMembershipEffectiveLimits(
+        adminTier.usage_limits,
+      ),
     });
   }
 

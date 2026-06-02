@@ -308,8 +308,11 @@ id
 command -v jupyter
 command -v latexmk
 test -d /scratch
+test -w /scratch/shared
 sudo -n id
 mkdir -p star-smoke
+printf "%s\n" "$marker" >/scratch/shared/star-smoke-write-test.txt
+test "$(cat /scratch/shared/star-smoke-write-test.txt)" = "$marker"
 if [ ! -f star-smoke/persistence.txt ]; then
   printf "%s\n" "$marker" > star-smoke/persistence.txt
 fi

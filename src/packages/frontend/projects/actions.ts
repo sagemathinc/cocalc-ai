@@ -220,6 +220,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
   private static REALTIME_FEED_BATCH_MS = 50;
   private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
+  private static PROJECT_ROW_RECONCILE_DELAYS_MS = [1_000, 5_000] as const;
   private static MOVE_TRANSITION_GRACE_MS = 5 * 60_000;
   private static ACTIVE_MOVE_RETENTION_MS = 8 * 60 * 60_000;
   private signedInListener?: () => void;
@@ -425,6 +426,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
     void refresh_projects_table();
     void this.loadProjectedProjectsForCurrentAccount(this.getAccountId());
   };
+
+  private scheduleProjectedProjectReconcile(project_id: string): void {
+    for (const delay of ProjectsActions.PROJECT_ROW_RECONCILE_DELAYS_MS) {
+      const timer = setTimeout(() => {
+        void this.loadProjectedProjectForCurrentAccount(project_id);
+      }, delay);
+      (timer as any).unref?.();
+    }
+  }
 
   private observeAccountStoreReady(): void {
     const onReady = this.accountStoreReadyListener;
@@ -676,6 +686,133 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
+  private loadProjectedProjectForCurrentAccount = reuseInFlight(
+    async (project_id: string): Promise<void> => {
+      const account_id = this.getAccountId();
+      if (!account_id || !project_id || !webapp_client.is_signed_in()) {
+        return;
+      }
+      let resp: any;
+      try {
+        resp = await webapp_client.async_query({
+          query: {
+            account_project_index: [
+              {
+                account_id,
+                project_id,
+                owning_bay_id: null,
+                host_id: null,
+                title: null,
+                description: null,
+                theme: null,
+                users_summary: null,
+                state_summary: null,
+                last_edited: null,
+                last_backup: null,
+                last_activity_at: null,
+                sort_key: null,
+                updated_at: null,
+                is_hidden: null,
+              },
+            ],
+          },
+          options: [{ limit: 1 }],
+        });
+      } catch (err) {
+        console.warn("project projected row reconcile failed", {
+          project_id,
+          err,
+        });
+        return;
+      }
+      const row = resp?.query?.account_project_index?.[0] as
+        | ProjectIndexBootstrapRow
+        | undefined;
+      if (row?.project_id !== project_id || row.is_hidden === true) {
+        return;
+      }
+
+      let project_map = store.get("project_map") ?? Map<string, any>();
+      const currentProject = project_map.get(project_id) ?? Map<string, any>();
+      const currentHostId = currentProject.get("host_id");
+      const projectedRecord = buildProjectRecordFromFeedRow({
+        project_id: row.project_id,
+        title: row.title ?? "",
+        description: row.description ?? "",
+        theme: row.theme ?? null,
+        host_id: row.host_id ?? null,
+        owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
+        users: row.users_summary ?? {},
+        state: row.state_summary ?? {},
+        last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
+        last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
+        last_active:
+          row.last_activity_at == null
+            ? {}
+            : { [account_id]: row.last_activity_at },
+      });
+      let nextProject = currentProject.mergeDeep(projectedRecord);
+      if (
+        typeof currentHostId === "string" &&
+        currentHostId &&
+        this.shouldPreserveLocalHostIdAfterMove({
+          project_id,
+          current_host_id: currentHostId,
+          incoming_host_id:
+            typeof row.host_id === "string" && row.host_id
+              ? row.host_id
+              : undefined,
+          incoming_updated_at: row.updated_at ?? row.sort_key,
+        })
+      ) {
+        nextProject = nextProject.set("host_id", currentHostId);
+      }
+      if (
+        this.shouldPreserveNewerLocalState({
+          currentProject,
+          incomingState: row.state_summary ?? undefined,
+        })
+      ) {
+        nextProject = nextProject.set("state", currentProject.get("state"));
+      }
+      if (
+        this.shouldPreserveNewerLocalLastEdited({
+          currentProject,
+          incomingLastEdited: row.last_edited ?? undefined,
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_edited",
+          currentProject.get("last_edited"),
+        );
+      }
+      if (
+        this.shouldPreserveNewerLocalLastBackup({
+          currentProject,
+          incomingLastBackup: row.last_backup ?? undefined,
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_backup",
+          currentProject.get("last_backup"),
+        );
+      }
+      nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
+      if (currentProject.get(PROJECTION_ONLY_FIELD) === true) {
+        nextProject = nextProject.set(PROJECTION_ONLY_FIELD, true);
+      } else {
+        nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
+      }
+      this.releaseRoutingIfCurrentAccountRegainedMembership({
+        project_id,
+        currentProject,
+        nextProject,
+      });
+      project_map = project_map.set(project_id, nextProject);
+      this.setState({ project_map } as ProjectsState);
+    },
+  );
+
   private shouldPreserveLocalHostIdAfterMove({
     project_id,
     current_host_id,
@@ -734,6 +871,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     const currentState = currentProject.get("state");
     if (currentState == null) {
+      return false;
+    }
+    const currentStateName = readMaybeImmutable(currentState, "state");
+    const incomingStateName = readMaybeImmutable(incomingState, "state");
+    if (currentStateName === "starting" && incomingStateName === "running") {
+      return false;
+    }
+    if (currentStateName === "stopping" && incomingStateName === "opened") {
       return false;
     }
     const currentMs = stateTimeMs(currentState);
@@ -2503,6 +2648,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
       const actions = redux.getProjectActions(project_id);
       try {
+        this.optimisticProjectStateUpdate(project_id, "starting");
         const resp = await webapp_client.conat_client.hub.projects.start({
           project_id,
           ...(opts.autostart ? { autostart: true } : {}),
@@ -2524,9 +2670,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
             control_error: `Error starting project -- ${err}`,
           });
         }
+        this.optimisticProjectStateUpdate(
+          project_id,
+          lifecycleState ?? "opened",
+        );
         throw err;
       }
       actions.setState({ control_error: "" });
+      this.scheduleProjectedProjectReconcile(project_id);
 
       this.project_log(project_id, {
         event: "project_started",
@@ -2914,6 +3065,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       actions.setState({ control_error: "" });
       this.optimisticProjectStateUpdate(project_id, "opened");
+      this.scheduleProjectedProjectReconcile(project_id);
       this.project_log(project_id, {
         event: "project_stopped",
         duration_ms: webapp_client.server_time().getTime() - t0,
@@ -3142,6 +3294,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     await this.resetProjectRuntimeAfterArchiveCycle(project_id, {
       closeOpenFiles: true,
     });
+    this.scheduleProjectedProjectReconcile(project_id);
     this.project_log(project_id, {
       event: "project_archived",
       ...store.classify_project(project_id),

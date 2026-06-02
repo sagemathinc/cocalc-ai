@@ -331,6 +331,7 @@ ensure_btrfs() {
   fi
   chown root:root /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
   chmod 0755 /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
+  install -d -o "$STAR_USER" -g "$STAR_USER" -m 0775 /mnt/cocalc/shared-scratch/shared
 }
 
 install_wrappers() {
