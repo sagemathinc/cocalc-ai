@@ -366,10 +366,7 @@ describe("project-backups.restoreBackup", () => {
       account_id: "acct-1",
       project_id: "proj-1",
     });
-    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
-      account_id: "acct-1",
-      session_hash: "session-1",
-    });
+    expect(requireDangerousProjectMutationAuthMock).not.toHaveBeenCalled();
     expect(
       assertProjectOwnerCanIncreaseAccountStorageMock,
     ).toHaveBeenCalledWith({

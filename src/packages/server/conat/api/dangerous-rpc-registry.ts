@@ -464,8 +464,9 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "projects.restoreBackup": {
-    decision: "fresh-auth-required",
-    reason: "project backup restore",
+    decision: "fresh-auth-not-required",
+    reason:
+      "collaborator-authorized restore of backup files into a project; same impact class as normal project file writes",
   },
   "projects.restoreSnapshot": {
     decision: "fresh-auth-required",
