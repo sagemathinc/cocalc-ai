@@ -992,6 +992,7 @@ export class BaseEditorActions<
           this._syncstring != null &&
           !this.isFakeSyncdoc(this._syncstring),
         isConnected: () => this.areSyncdocsLiveConnected(),
+        probeOnForeground: () => !!this.store?.get("visible"),
         priority: () =>
           this.store?.get("visible") ? "foreground" : "background",
         reconnect: async () => {
@@ -1039,13 +1040,20 @@ export class BaseEditorActions<
     syncdoc?,
     priority: ReconnectPriority = "background",
   ): Promise<boolean> {
+    if (
+      syncdoc != null &&
+      !this.isFakeSyncdoc(syncdoc) &&
+      syncdoc.get_state?.() === "init"
+    ) {
+      await this.recover_syncdoc_now(syncdoc, priority, true);
+    }
     if (!(await this.wait_until_syncdoc_ready(syncdoc))) {
       return false;
     }
     if (syncdoc == null || this.isFakeSyncdoc(syncdoc)) {
       return true;
     }
-    await this.recover_syncdoc_now(syncdoc, priority);
+    await this.recover_syncdoc_now(syncdoc, priority, true);
     if (typeof syncdoc.wait_until_live_connected === "function") {
       try {
         await syncdoc.wait_until_live_connected();
@@ -1068,8 +1076,9 @@ export class BaseEditorActions<
   private async recover_syncdoc_now(
     syncdoc,
     priority: ReconnectPriority,
+    force = false,
   ): Promise<void> {
-    if (this.isSyncdocLiveConnected(syncdoc)) {
+    if (!force && this.isSyncdocLiveConnected(syncdoc)) {
       return;
     }
     const recoverNow = syncdoc?.recoverNow;
@@ -1077,6 +1086,7 @@ export class BaseEditorActions<
       return;
     }
     await recoverNow.call(syncdoc, {
+      force,
       priority,
       reason: "editor_resource_reconnect",
     });

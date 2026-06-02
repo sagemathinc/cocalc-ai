@@ -237,8 +237,8 @@ class PersistStreamClient extends EventEmitter {
         this.client.recoveryScheduler.registerResource({
           canRecover: () => !this.recoveryPaused && !this.isClosed(),
           isConnected: () => this.getRecoveryState() === "ready",
-          recover: async () => {
-            await this.recoverNow({ reason: "scheduler" });
+          recover: async ({ force, reason } = {}) => {
+            await this.recoverNow({ force, reason: reason ?? "scheduler" });
           },
         });
     }
@@ -288,6 +288,7 @@ class PersistStreamClient extends EventEmitter {
   recoverNow = async (
     opts: {
       epoch?: number;
+      force?: boolean;
       priority?: "foreground" | "background";
       reason?: string;
     } = {},
@@ -299,6 +300,12 @@ class PersistStreamClient extends EventEmitter {
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
+    }
+    if (opts.force) {
+      this.reconnecting = true;
+      this.setRecoveryState("recovering");
+      this.init();
+      return;
     }
     if (
       this.socket == null ||
@@ -660,8 +667,12 @@ class PersistStreamClient extends EventEmitter {
   } = {}): Promise<Changefeed> => {
     stats.changefeedCalls += 1;
     // an iterator over any updates that are published.
-    const iter = new EventIterator<ChangefeedEvent>(this, "changefeed", {
+    let iter!: EventIterator<ChangefeedEvent>;
+    iter = new EventIterator<ChangefeedEvent>(this, "changefeed", {
       map: (args) => args[0],
+      onEnd: () => {
+        this.unregisterChangefeed(iter);
+      },
     });
     this.changefeeds.push(iter);
     this.changefeedDesired = true;
@@ -687,6 +698,17 @@ class PersistStreamClient extends EventEmitter {
       }
       iter.close();
       throw err;
+    }
+  };
+
+  private unregisterChangefeed = (iter: Changefeed): void => {
+    const i = this.changefeeds.indexOf(iter);
+    if (i >= 0) {
+      this.changefeeds.splice(i, 1);
+    }
+    if (this.changefeeds.length === 0) {
+      this.changefeedDesired = false;
+      this.changefeedActive = false;
     }
   };
 

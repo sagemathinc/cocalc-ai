@@ -283,6 +283,9 @@ export class CoreStream<T = any> extends EventEmitter {
   private recoveryState: RecoveryState = "recovering";
   private recoveryPaused = false;
   private listening = false;
+  private listenPromise?: Promise<void>;
+  private listenGeneration = 0;
+  private restartingChangefeed = false;
   private recoveryRegistration?: RegisteredRecoverableResource;
 
   constructor({
@@ -322,8 +325,8 @@ export class CoreStream<T = any> extends EventEmitter {
     this.recoveryRegistration = this.client.recoveryScheduler.registerResource({
       canRecover: () => !this.recoveryPaused && !this.isClosed(),
       isConnected: () => this.getRecoveryState() === "ready",
-      recover: async () => {
-        await this.recoverNow({ reason: "scheduler" });
+      recover: async ({ force, reason } = {}) => {
+        await this.recoverNow({ force, reason: reason ?? "scheduler" });
       },
     });
     return new Proxy(this, {
@@ -392,7 +395,14 @@ export class CoreStream<T = any> extends EventEmitter {
       return;
     }
     this.listening = true;
-    void this.listen();
+    const generation = ++this.listenGeneration;
+    const promise = this.listen(generation);
+    this.listenPromise = promise;
+    void promise.finally(() => {
+      if (this.listenPromise === promise) {
+        this.listenPromise = undefined;
+      }
+    });
   };
 
   init = async () => {
@@ -505,6 +515,7 @@ export class CoreStream<T = any> extends EventEmitter {
   recoverNow = async (
     opts: {
       epoch?: number;
+      force?: boolean;
       priority?: "foreground" | "background";
       reason?: string;
     } = {},
@@ -514,6 +525,9 @@ export class CoreStream<T = any> extends EventEmitter {
     }
     this.recoveryPaused = false;
     this.setRecoveryState("recovering");
+    if (opts.force) {
+      await this.restartChangefeedForRecovery();
+    }
     await this.persistClient?.recoverNow(opts);
     if (this.isClosed()) {
       return;
@@ -532,6 +546,34 @@ export class CoreStream<T = any> extends EventEmitter {
       this.startListen();
       this.setRecoveryState("ready");
     }
+  };
+
+  private restartChangefeedForRecovery = async (): Promise<void> => {
+    const changefeed = this.changefeed;
+    const listenPromise = this.listenPromise;
+    if (changefeed == null && !this.listening) {
+      return;
+    }
+    this.restartingChangefeed = true;
+    changefeed?.close();
+    if (listenPromise != null) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        listenPromise.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, PERSIST_RECOVERY_WAIT_SLICE_MS);
+          timer.unref?.();
+        }),
+      ]);
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+    }
+    if (this.changefeed === changefeed) {
+      delete this.changefeed;
+    }
+    this.listening = false;
+    this.restartingChangefeed = false;
   };
 
   private waitUntilPersistClientRecovered = async (
@@ -1124,8 +1166,9 @@ export class CoreStream<T = any> extends EventEmitter {
     this.emit("change", e);
   };
 
-  private listen = async () => {
+  private listen = async (generation: number) => {
     stats.listenLoops += 1;
+    let changefeed: Changefeed | undefined;
     try {
       if (this.changefeed == null) {
         this.changefeed = await this.persistClient.changefeed({
@@ -1135,8 +1178,9 @@ export class CoreStream<T = any> extends EventEmitter {
           return;
         }
       }
+      changefeed = this.changefeed;
 
-      for await (const updates of this.changefeed) {
+      for await (const updates of changefeed) {
         this.processPersistentMessages(updates, {
           noEmit: false,
           noSeqCheck: false,
@@ -1154,12 +1198,19 @@ export class CoreStream<T = any> extends EventEmitter {
         log(`WARNING: core-stream changefeed error -- ${err}`, this.storage);
       }
     } finally {
-      this.listening = false;
+      if (this.listenGeneration === generation) {
+        this.listening = false;
+      }
     }
 
-    delete this.changefeed;
+    if (this.changefeed === changefeed) {
+      delete this.changefeed;
+    }
 
     if (this.client == null) {
+      return;
+    }
+    if (this.restartingChangefeed) {
       return;
     }
     stats.listenRecoveries += 1;

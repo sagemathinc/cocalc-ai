@@ -85,6 +85,7 @@ export type State = "init" | "ready" | "closed";
 export type DataServer = "project" | "database";
 type SyncDocTableRecoverOptions = {
   epoch?: number;
+  force?: boolean;
   priority?: "foreground" | "background";
   reason?: string;
 };
@@ -1714,6 +1715,7 @@ export class SyncDoc extends EventEmitter {
   recoverNow = async (
     opts: {
       epoch?: number;
+      force?: boolean;
       priority?: "foreground" | "background";
       reason?: string;
     } = {},
