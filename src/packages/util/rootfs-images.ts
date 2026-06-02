@@ -502,6 +502,21 @@ export function isManagedRootfsImageName(image?: string): boolean {
   return `${image ?? ""}`.trim().startsWith(MANAGED_ROOTFS_IMAGE_PREFIX);
 }
 
+export function assertValidRootfsImageName(image?: string): string {
+  const value = `${image ?? ""}`.trim();
+  if (!value) return "";
+  if (
+    isManagedRootfsImageName(value) ||
+    value.includes(":") ||
+    value.includes("/")
+  ) {
+    return value;
+  }
+  throw new Error(
+    `invalid rootfs OCI image '${value}'; use a valid image reference such as 'ubuntu:26.04'`,
+  );
+}
+
 export function managedRootfsContentKey(image?: string): string | undefined {
   const value = `${image ?? ""}`.trim();
   if (!value.startsWith(MANAGED_ROOTFS_IMAGE_PREFIX)) return;

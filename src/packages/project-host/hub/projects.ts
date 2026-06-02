@@ -91,7 +91,10 @@ import {
   imageCachePath,
   inspectFilePath,
 } from "@cocalc/project-runner/run/rootfs-base";
-import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
+import {
+  assertValidRootfsImageName,
+  isManagedRootfsImageName,
+} from "@cocalc/util/rootfs-images";
 import {
   pullRootfsCacheEntry,
   type RootfsCachePullProgress,
@@ -588,16 +591,13 @@ function createPhaseTimingRecorder() {
   };
 }
 
-// Preserve explicit rootfs/docker image names. Older non-OCI labels such as
-// "ubuntu2404" are not valid container image references for the project
-// runner, so fall them back to the default runtime image.
+// Preserve explicit rootfs/docker image names, but do not silently fall back
+// when a user supplied an invalid image string. "ubuntu26.04" is not a valid
+// OCI reference; use "ubuntu:26.04" instead.
 function normalizeImage(image?: string): string {
   const trimmed = image?.trim();
   if (!trimmed) return DEFAULT_PROJECT_IMAGE;
-  if (trimmed.includes(":") || trimmed.includes("/")) {
-    return trimmed;
-  }
-  return DEFAULT_PROJECT_IMAGE;
+  return assertValidRootfsImageName(trimmed);
 }
 
 type StartMetadata = {
