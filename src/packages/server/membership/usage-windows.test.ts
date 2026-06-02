@@ -44,7 +44,7 @@ describe("account usage fixed windows", () => {
         if (!epochs.has(key)) epochs.set(key, 1);
         return { rows: [] };
       }
-      if (sql.includes("SELECT family, window, epoch")) {
+      if (sql.includes('SELECT family, "window" AS window, epoch')) {
         const key = epochKey(params[1]);
         return {
           rows: [
@@ -56,7 +56,9 @@ describe("account usage fixed windows", () => {
           ],
         };
       }
-      if (sql.includes("SELECT id, account_id, family, window, epoch")) {
+      if (
+        sql.includes('SELECT id, account_id, family, "window" AS window, epoch')
+      ) {
         const [account_id, family, window, epoch, at] = params;
         return {
           rows: windows

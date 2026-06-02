@@ -18,6 +18,7 @@ import {
   getDedicatedHostWindowUsageForHostLocal,
   reconcileDedicatedHostPurchaseSessionLocal,
 } from "./spend";
+import { ensureAccountUsageWindowsForEvent } from "@cocalc/server/membership/usage-windows";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -25,8 +26,13 @@ beforeAll(async () => {
 afterAll(after);
 
 describe("dedicated host spend accounting", () => {
-  it("computes rolling prepaid and credit windows from metered host purchases", async () => {
+  it("computes prepaid and credit spend from shared fixed account windows", async () => {
     const account_id = uuid();
+    const windowStart = dayjs().subtract(3, "hour").toDate();
+    await ensureAccountUsageWindowsForEvent({
+      account_id,
+      occurred_at: windowStart,
+    });
     await createPurchase({
       account_id,
       service: "dedicated-host",
@@ -39,7 +45,7 @@ describe("dedicated host spend accounting", () => {
       } as any,
       client: null,
       cost_per_hour: "10",
-      period_start: dayjs().subtract(3, "hour").toDate(),
+      period_start: dayjs(windowStart).add(1, "hour").toDate(),
       tag: `dedicated-host:${uuid()}`,
     });
     await createPurchase({
@@ -54,22 +60,27 @@ describe("dedicated host spend accounting", () => {
       } as any,
       client: null,
       cost_per_hour: "5",
-      period_start: dayjs().subtract(10, "hour").toDate(),
-      period_end: dayjs().subtract(1, "hour").toDate(),
+      period_start: dayjs(windowStart).add(30, "minute").toDate(),
+      period_end: dayjs(windowStart).add(150, "minute").toDate(),
       tag: `dedicated-host:${uuid()}`,
     });
 
     const usage = await getDedicatedHostWindowUsageLocal(account_id);
-    expect(toDecimal(usage.prepaid_5h_usd).toNumber()).toBeCloseTo(30, 1);
-    expect(toDecimal(usage.prepaid_7d_usd).toNumber()).toBeCloseTo(30, 1);
-    expect(toDecimal(usage.credit_5h_usd).toNumber()).toBeCloseTo(20, 1);
-    expect(toDecimal(usage.credit_7d_usd).toNumber()).toBeCloseTo(45, 1);
+    expect(toDecimal(usage.prepaid_5h_usd).toNumber()).toBeCloseTo(20, 1);
+    expect(toDecimal(usage.prepaid_7d_usd).toNumber()).toBeCloseTo(20, 1);
+    expect(toDecimal(usage.credit_5h_usd).toNumber()).toBeCloseTo(10, 1);
+    expect(toDecimal(usage.credit_7d_usd).toNumber()).toBeCloseTo(10, 1);
   });
 
-  it("computes rolling spend windows for a specific host", async () => {
+  it("computes fixed-window spend for a specific host", async () => {
     const account_id = uuid();
     const host_id = uuid();
     const other_host_id = uuid();
+    const windowStart = dayjs().subtract(3, "hour").toDate();
+    await ensureAccountUsageWindowsForEvent({
+      account_id,
+      occurred_at: windowStart,
+    });
     await createPurchase({
       account_id,
       service: "dedicated-host",
@@ -82,7 +93,7 @@ describe("dedicated host spend accounting", () => {
       } as any,
       client: null,
       cost_per_hour: "10",
-      period_start: dayjs().subtract(3, "hour").toDate(),
+      period_start: dayjs(windowStart).add(1, "hour").toDate(),
       tag: `dedicated-host:${host_id}`,
     });
     await createPurchase({
@@ -97,7 +108,7 @@ describe("dedicated host spend accounting", () => {
       } as any,
       client: null,
       cost_per_hour: "50",
-      period_start: dayjs().subtract(3, "hour").toDate(),
+      period_start: dayjs(windowStart).add(1, "hour").toDate(),
       tag: `dedicated-host:${other_host_id}`,
     });
 
@@ -105,8 +116,8 @@ describe("dedicated host spend accounting", () => {
       account_id,
       host_id,
     });
-    expect(toDecimal(usage.spend_5h_usd).toNumber()).toBeCloseTo(30, 1);
-    expect(toDecimal(usage.spend_7d_usd).toNumber()).toBeCloseTo(30, 1);
+    expect(toDecimal(usage.spend_5h_usd).toNumber()).toBeCloseTo(20, 1);
+    expect(toDecimal(usage.spend_7d_usd).toNumber()).toBeCloseTo(20, 1);
   });
 
   it("reconciles one open purchase session per host and closes the old one on rate change", async () => {

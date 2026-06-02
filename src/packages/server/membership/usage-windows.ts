@@ -77,7 +77,7 @@ export async function ensureAccountUsageWindowSchema(): Promise<void> {
           id UUID PRIMARY KEY,
           account_id UUID NOT NULL,
           family TEXT NOT NULL,
-          window TEXT NOT NULL,
+          "window" TEXT NOT NULL,
           epoch BIGINT NOT NULL,
           starts_at TIMESTAMPTZ NOT NULL,
           resets_at TIMESTAMPTZ NOT NULL,
@@ -85,7 +85,7 @@ export async function ensureAccountUsageWindowSchema(): Promise<void> {
         )
       `);
       await getPool().query(
-        `CREATE INDEX IF NOT EXISTS ${WINDOWS_TABLE}_account_family_window_idx ON ${WINDOWS_TABLE}(account_id, family, window, epoch, resets_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS ${WINDOWS_TABLE}_account_family_window_idx ON ${WINDOWS_TABLE}(account_id, family, "window", epoch, resets_at DESC)`,
       );
       await getPool().query(
         `CREATE INDEX IF NOT EXISTS ${WINDOWS_TABLE}_resets_idx ON ${WINDOWS_TABLE}(resets_at DESC)`,
@@ -93,19 +93,19 @@ export async function ensureAccountUsageWindowSchema(): Promise<void> {
       await getPool().query(`
         CREATE TABLE IF NOT EXISTS ${EPOCHS_TABLE} (
           family TEXT NOT NULL,
-          window TEXT NOT NULL,
+          "window" TEXT NOT NULL,
           epoch BIGINT NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_by UUID,
           reason TEXT,
-          PRIMARY KEY (family, window)
+          PRIMARY KEY (family, "window")
         )
       `);
       await getPool().query(`
         CREATE TABLE IF NOT EXISTS ${RESET_TABLE} (
           id UUID PRIMARY KEY,
           family TEXT NOT NULL,
-          window TEXT NOT NULL,
+          "window" TEXT NOT NULL,
           previous_epoch BIGINT NOT NULL,
           new_epoch BIGINT NOT NULL,
           reset_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -114,7 +114,7 @@ export async function ensureAccountUsageWindowSchema(): Promise<void> {
         )
       `);
       await getPool().query(
-        `CREATE INDEX IF NOT EXISTS ${RESET_TABLE}_family_window_idx ON ${RESET_TABLE}(family, window, reset_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS ${RESET_TABLE}_family_window_idx ON ${RESET_TABLE}(family, "window", reset_at DESC)`,
       );
     })();
   }
@@ -130,10 +130,10 @@ export async function getAccountUsageEpoch({
   await getPool("medium").query(
     `
       INSERT INTO ${EPOCHS_TABLE}
-        (family, window, epoch, reason)
+        (family, "window", epoch, reason)
       VALUES
         ($1, $2, 1, 'initial')
-      ON CONFLICT (family, window) DO NOTHING
+      ON CONFLICT (family, "window") DO NOTHING
     `,
     [MEMBERSHIP_USAGE_SCOPE, window],
   );
@@ -143,9 +143,9 @@ export async function getAccountUsageEpoch({
     epoch: string | number;
   }>(
     `
-      SELECT family, window, epoch
+      SELECT family, "window" AS window, epoch
       FROM ${EPOCHS_TABLE}
-      WHERE family = $1 AND window = $2
+      WHERE family = $1 AND "window" = $2
     `,
     [MEMBERSHIP_USAGE_SCOPE, window],
   );
@@ -194,10 +194,10 @@ export async function getActiveAccountUsageWindow({
   }>(
     `
       INSERT INTO ${WINDOWS_TABLE}
-        (id, account_id, family, window, epoch, starts_at, resets_at)
+        (id, account_id, family, "window", epoch, starts_at, resets_at)
       VALUES
         (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
-      RETURNING id, account_id, family, window, epoch, starts_at, resets_at
+      RETURNING id, account_id, family, "window" AS window, epoch, starts_at, resets_at
     `,
     [account_id, MEMBERSHIP_USAGE_SCOPE, window, epoch, startsAt, resetsAt],
   );
@@ -225,11 +225,11 @@ async function selectActiveAccountUsageWindow({
     resets_at: Date | string;
   }>(
     `
-      SELECT id, account_id, family, window, epoch, starts_at, resets_at
+      SELECT id, account_id, family, "window" AS window, epoch, starts_at, resets_at
       FROM ${WINDOWS_TABLE}
       WHERE account_id = $1
         AND family = $2
-        AND window = $3
+        AND "window" = $3
         AND epoch = $4
         AND starts_at <= $5
         AND resets_at > $5
@@ -305,14 +305,14 @@ export async function resetAccountUsageEpoch({
           updated_at = now(),
           updated_by = $4,
           reason = $5
-      WHERE family = $1 AND window = $2
+      WHERE family = $1 AND "window" = $2
     `,
     [MEMBERSHIP_USAGE_SCOPE, window, newEpoch, reset_by ?? null, trimmedReason],
   );
   await getPool("medium").query(
     `
       INSERT INTO ${RESET_TABLE}
-        (id, family, window, previous_epoch, new_epoch, reset_by, reason)
+        (id, family, "window", previous_epoch, new_epoch, reset_by, reason)
       VALUES
         (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
     `,

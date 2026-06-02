@@ -401,14 +401,14 @@ Completed first backend slice:
 - changed account AI, managed CPU, and managed egress usage reads to aggregate
   against the account's active shared fixed window instead of a sliding
   `now() - interval ...` window;
+- changed dedicated-host prepaid/postpaid spend windows and owner-configured
+  host spend caps to aggregate against the same shared account windows;
 - preserved historical event/log tables for admin history and audit;
 - added backend helper support for epoch bumps/global reset semantics, but not
   yet the fresh-auth admin RPC/UI.
 
 Remaining:
 
-- convert dedicated-host prepaid/postpaid spend windows and owner spend caps to
-  the same shared account usage windows;
 - add the fresh-auth admin reset RPC and audit-facing tests;
 - add the normalized `AccountUsageOverview` DTO;
 - build the user-facing dashboard.
@@ -416,7 +416,7 @@ Remaining:
 - Replace user-facing sliding-window accounting with shared fixed account
   windows for AI, managed CPU, and managed egress. (first slice complete)
 - Replace dedicated-host spend window accounting with the same shared fixed
-  account windows. (pending)
+  account windows. (complete)
 - Add epoch/global reset tables and backend helpers. (helper complete; admin RPC
   pending)
 - Add an `AccountUsageOverview` builder that combines:
