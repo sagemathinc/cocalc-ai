@@ -915,7 +915,9 @@ export async function startMasterRegistration({
     client,
     impl: {
       async createProject(opts) {
-        await awaitReadyForControl("createProject", waitUntilReady);
+        if (opts.start || opts.ensure_volume !== false) {
+          await awaitReadyForControl("createProject", waitUntilReady);
+        }
         if (!hubApi.projects?.createProject) {
           throw Error("createProject not available");
         }
