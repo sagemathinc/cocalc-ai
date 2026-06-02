@@ -15,6 +15,12 @@ describe("settings-routing", () => {
     expect(parseAccountSettingsRoute("settings/profile")).toEqual({
       page: "profile",
     });
+    expect(parseAccountSettingsRoute("settings/membership")).toEqual({
+      page: "membership",
+    });
+    expect(parseAccountSettingsRoute("settings/usage-limits")).toEqual({
+      page: "usage-limits",
+    });
     expect(parseAccountSettingsRoute("settings/vouchers")).toEqual({
       page: "vouchers",
     });
@@ -31,6 +37,9 @@ describe("settings-routing", () => {
   it("builds canonical settings paths from leaf pages", () => {
     expect(getSettingsTargetPath({ page: "index" })).toBe("settings");
     expect(getSettingsTargetPath({ page: "store" })).toBe("settings/store");
+    expect(getSettingsTargetPath({ page: "membership" })).toBe(
+      "settings/membership",
+    );
     expect(getSettingsTargetPath({ page: "appearance" })).toBe(
       "settings/appearance",
     );

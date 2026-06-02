@@ -141,6 +141,16 @@ export const labels = defineMessages({
     defaultMessage: "Profile",
     description: "User profile settings and information",
   },
+  membership: {
+    id: "labels.membership",
+    defaultMessage: "Membership",
+    description: "Membership settings and account limits source",
+  },
+  usage_limits: {
+    id: "labels.usage_limits",
+    defaultMessage: "Usage & Limits",
+    description: "Settings page for account resource usage and limits",
+  },
   billing: {
     id: "labels.billing",
     defaultMessage: "Billing",
