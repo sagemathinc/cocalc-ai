@@ -269,12 +269,26 @@ status() {
 }
 
 smoke() {
-  sudo install -d -o "$STAR_USER" -g "$STAR_USER" -m 700 "${STAR_ROOT}/smoke"
+  local smoke_state
+  smoke_state="${STAR_SMOKE_STATE:-${STAR_ROOT}/smoke}"
+  if [ "$(id -un)" = "$STAR_USER" ]; then
+    install -d -m 700 "$smoke_state"
+    exec env \
+      STAR_API="$STAR_API" \
+      STAR_ROOT="$STAR_ROOT" \
+      SRC_ROOT="$SRC_ROOT" \
+      STAR_SMOKE_STATE="$smoke_state" \
+      STAR_BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}" \
+      STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-$STAR_DEFAULT_ROOTFS_IMAGE}" \
+      STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}" \
+      "${SCRIPT_DIR}/smoke-star-poc.sh"
+  fi
+  sudo install -d -o "$STAR_USER" -g "$STAR_USER" -m 700 "$smoke_state"
   exec sudo -Hiu "$STAR_USER" env \
     STAR_API="$STAR_API" \
     STAR_ROOT="$STAR_ROOT" \
     SRC_ROOT="$SRC_ROOT" \
-    STAR_SMOKE_STATE="${STAR_SMOKE_STATE:-${STAR_ROOT}/smoke}" \
+    STAR_SMOKE_STATE="$smoke_state" \
     STAR_BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}" \
     STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-$STAR_DEFAULT_ROOTFS_IMAGE}" \
     STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}" \

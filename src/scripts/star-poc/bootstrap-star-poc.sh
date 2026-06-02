@@ -22,7 +22,7 @@ STAR_BTRFS_SIZE="${STAR_BTRFS_SIZE:-100G}"
 STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
-STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:26.04}"
+STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-docker.io/buildpack-deps:26.04}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
 STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
 STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
@@ -293,18 +293,24 @@ prepare_runtime_artifacts() {
     ln -sfn "$SRC_ROOT/packages/project/build/bundle" \
       "$SRC_ROOT/packages/project/build/current"
   fi
-  local arch tools_tarball tools_release tools_current
+  local arch tools_tarball tools_release tools_current fallback_tools
   arch="$(host_arch)"
   tools_tarball="$SRC_ROOT/packages/project/build/tools-linux-${arch}.tar.xz"
+  tools_current="$SRC_ROOT/packages/project/build/tools/current"
   if [ -f "$tools_tarball" ]; then
     tools_release="$SRC_ROOT/packages/project/build/tools/${STAR_RELEASE_ID:-runtime}"
-    tools_current="$SRC_ROOT/packages/project/build/tools/current"
     if [ ! -x "$tools_release/bin/dropbear" ]; then
       rm -rf "$tools_release"
       mkdir -p "$tools_release"
       run tar -C "$tools_release" -Jxf "$tools_tarball"
     fi
     ln -sfn "$tools_release/bin" "$tools_current"
+  else
+    fallback_tools="$SRC_ROOT/packages/backend/node_modules/.bin"
+    if [ -x "$fallback_tools/rustic" ]; then
+      mkdir -p "$(dirname "$tools_current")"
+      ln -sfn "$fallback_tools" "$tools_current"
+    fi
   fi
   chown -R "$STAR_USER:$STAR_USER" "$SRC_ROOT/packages" "$SRC_ROOT/scripts/star-poc/build" 2>/dev/null || true
 }
@@ -475,7 +481,7 @@ ensure_default_rootfs_cache() {
   elif [ -f "$SRC_ROOT/scripts/star-poc/ensure-rootfs-cache.cjs" ]; then
     script="scripts/star-poc/ensure-rootfs-cache.cjs"
   fi
-  as_star_user "set -a && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
+  as_star_user "set -a && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
 }
 
 write_env_files() {
@@ -571,7 +577,7 @@ seed_database() {
   if [ -f "$SRC_ROOT/scripts/star-poc/build/seed-star-poc/index.cjs" ]; then
     script="scripts/star-poc/build/seed-star-poc/index.cjs"
   fi
-  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' STAR_HAS_GPU='${STAR_HAS_GPU:-0}' node '$script'"
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' STAR_HAS_GPU='${STAR_HAS_GPU:-0}' node '$script'"
 }
 
 install_systemd() {
@@ -685,12 +691,47 @@ EOF
 ${STAR_USER} ALL=(root) NOPASSWD: /bin/systemctl *, /bin/journalctl *, /usr/bin/tee *, /usr/bin/install *, /bin/mount *, /bin/umount *, /usr/bin/loginctl *
 EOF
   chmod 0440 /etc/sudoers.d/cocalc-star-admin
+  remove_broad_sudoers_for_star_user
   if [ "$STAR_REMOVE_GCP_SUDOERS" = "1" ]; then
     if id -nG "$STAR_USER" | tr ' ' '\n' | grep -qx google-sudoers; then
       gpasswd -d "$STAR_USER" google-sudoers || true
     fi
     rm -f /etc/sudoers.d/google-sudoers /etc/sudoers.d/google_sudoers
   fi
+}
+
+remove_broad_sudoers_for_star_user() {
+  local path tmp
+  shopt -s nullglob
+  for path in /etc/sudoers.d/*; do
+    [ -f "$path" ] || continue
+    case "$(basename "$path")" in
+      cocalc-*) continue ;;
+    esac
+    if ! awk -v user="$STAR_USER" '
+      $1 == user && $0 ~ /NOPASSWD:[[:space:]]*ALL([[:space:]]|$|,)/ {
+        found = 1
+      }
+      END { exit found ? 0 : 1 }
+    ' "$path"; then
+      continue
+    fi
+    log "removing broad sudoers grant for ${STAR_USER} from ${path}"
+    tmp="$(mktemp)"
+    awk -v user="$STAR_USER" '
+      $1 == user && $0 ~ /NOPASSWD:[[:space:]]*ALL([[:space:]]|$|,)/ {
+        next
+      }
+      { print }
+    ' "$path" >"$tmp"
+    if [ -s "$tmp" ]; then
+      install -m 0440 -o root -g root "$tmp" "$path"
+    else
+      rm -f "$path"
+    fi
+    rm -f "$tmp"
+  done
+  shopt -u nullglob
 }
 
 start_services() {
