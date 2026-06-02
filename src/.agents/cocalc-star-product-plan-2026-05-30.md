@@ -2,7 +2,7 @@
 
 Status: `active implementation plan`
 
-Implementation status as of 2026-06-01:
+Implementation status as of 2026-06-02:
 
 - Phase 1 is substantially proven on fresh Ubuntu 24.04 x86_64 GCP VMs.
 - A tarball installer path exists and has been validated from a clean VM.
@@ -47,6 +47,19 @@ Implementation status as of 2026-06-01:
   required setup gates are the first admin account and a working smoke-test
   path. Email, TLS/public URL, backups, license entry, 2FA, resource tuning, and
   custom RootFS images are supported follow-up checks, not first-run blockers.
+- The public GitHub-release installer path works on fresh GCP, Lambda Cloud, and
+  Hyperstack VMs in the current testing cycle. Install time is typically about
+  2-3 minutes after the VM is ready.
+- GPU passthrough works on tested Lambda Cloud GPU VMs: `nvidia-smi`, PyTorch,
+  and TensorFlow all detected the GPU inside projects after Star project-host
+  GPU auto-detection was enabled.
+- The default RootFS image is now `buildpack-deps:26.04`, and the installer
+  caches/publishes the managed default RootFS so project backups work without
+  asking the operator to publish the launch image first.
+- Current major UX gap: after installation succeeds, the terminal output must
+  give a clear, copy/pasteable next step for reaching the private bootstrap URL.
+  Today the operator still has to remember or derive the SSH `-L` port-forward
+  command.
 - Current implementation is a validated tarball + installer deployment, not a
   final marketplace image or SEA binary. SEA is now optional rather than a hard
   product requirement.
@@ -116,7 +129,8 @@ The current working implementation is deliberately simple:
 - Run the project-host managed Conat router on `127.0.0.1:9112`.
 - Run the project-host Conat persist health endpoint on `127.0.0.1:9212`.
 - Use local Postgres for the hub/control-plane database.
-- Build/cache a default RootFS from `ubuntu:26.04` with Jupyter and LaTeX.
+- Build/cache a default RootFS from `buildpack-deps:26.04` with Jupyter and
+  LaTeX.
 - Mount the backend tools bundle into project containers so tools such as
   `dropbear` come from the CoCalc tools bundle, not from the RootFS image.
 
@@ -467,10 +481,14 @@ Important validated issue:
   `9102` after reboot. Star must set `COCALC_PROJECT_HOST_CONAT_ROUTER_PORT`
   explicitly.
 
-V1 should include HTTPS automation.
+V1 should make private first-run access completely explicit, and should support
+HTTPS automation as an optional follow-up.
 
 Recommendation:
 
+- For initial install, bind the hub to loopback and print a complete SSH
+  `-L <local-port>:127.0.0.1:9100` command plus the matching localhost
+  bootstrap URL.
 - Use Caddy or another standard small reverse proxy for automatic Let's Encrypt
   when the admin provides a DNS name that resolves to the VM.
 - Keep TLS out of the CoCalc Node.js processes; terminate at the proxy.
@@ -481,8 +499,10 @@ Recommendation:
 Reasoning:
 
 - Remote HTTP-only WebSockets are fragile in real browsers and networks.
-- Expecting users to SSH-forward ports to use a shared appliance is not a viable
-  product experience.
+- Expecting users to invent SSH-forwarding commands is not a viable product
+  experience. Printing the exact command is acceptable for the initial private
+  testing path, but Star still needs a first-class public URL story for broad
+  non-technical adoption.
 - Caddy-style HTTPS is a standard solved problem and should be easier than
   debugging many insecure-transport edge cases.
 
@@ -889,15 +909,22 @@ V1 interactive flow:
 11. Register local project-host.
 12. Start project-host.
 13. Wait for health.
-14. Print admin registration link.
+14. Print admin registration link and the exact access instructions.
 
 The first visible user experience should be:
 
 ```text
 CoCalc Star is running.
 
-Open this link to create the first admin account:
-http://<host>:<port>/auth/sign-up?token=<registration-token>
+From your laptop, open a tunnel to this VM:
+ssh -L 9100:127.0.0.1:9100 <ssh-user>@<vm-ip-or-hostname>
+
+Then open this local URL to create the first admin account:
+http://127.0.0.1:9100/auth/sign-up?registrationToken=<registration-token>&bootstrap=1
+
+If port 9100 is already in use on your laptop, use a different local port:
+ssh -L 9500:127.0.0.1:9100 <ssh-user>@<vm-ip-or-hostname>
+http://127.0.0.1:9500/auth/sign-up?registrationToken=<registration-token>&bootstrap=1
 
 Admin setup:
 - Create account.
@@ -906,6 +933,16 @@ Admin setup:
 - Create or import a RootFS.
 - Start a smoke-test project.
 ```
+
+The installer should avoid ambiguous hostnames in this output. For private
+first-run access, the safest default is always a local tunnel to
+`127.0.0.1:9100` on the VM. If the installer can infer the SSH user and public
+IP, it should print a complete command. If not, it should print placeholders
+with a short explanation.
+
+This is the immediate V1 access path. It is acceptable for the first public
+testing release because it avoids requiring DNS, TLS, Caddy, Cloudflare, or an
+open public HTTP port. It is not the final product-grade public access story.
 
 ## Star Onboarding UI
 
@@ -928,6 +965,8 @@ Supported but optional:
 - Email provider for password resets, invites, and notifications.
 - Public URL / TLS, preferably Caddy plus Let's Encrypt once DNS points at the
   VM.
+- SSH port-forwarding guidance for private first-run access, including a way to
+  re-display the bootstrap URL and tunnel command from `star.sh status`.
 - License code entry, deferred until it unlocks limits/functionality/upgrades
   or support.
 - Custom RootFS images, including GPU-specific images for GPU VMs.
@@ -975,7 +1014,16 @@ If public HTTPS is needed, handle it later via:
 - operator-provided reverse proxy,
 - Caddy/Let's Encrypt,
 - marketplace public IP + manual DNS,
+- optional CoCalc-managed DNS/reverse-tunnel service,
 - or an optional Star Pro feature.
+
+Future option:
+
+- `cocalc.ai` can offer an opt-in registration service that gives Star users a
+  managed subdomain and reverse tunnel. This would make public access easier,
+  provide a registration/support funnel, and avoid forcing operators to learn
+  DNS/TLS immediately. It is explicitly post-initial-release work, not a V1
+  blocker.
 
 ### Does Star Need A Cloud Provider Adapter?
 
@@ -1010,7 +1058,9 @@ V1:
 
 - Recommend provider VM/disk snapshots.
 - Provide local export/check commands.
-- Tell user: copy this master key and periodically copy this rustic directory somewhere, and that's your backups. Of course restore from master key + rustic must be a part of our workflow and plan. It's important and good to test.
+- Tell user: copy this master key and periodically copy this rustic directory
+  somewhere, and that's your backups. Restore from master key + rustic must be
+  part of the supported workflow and test plan.
 
 V2:
 
@@ -1025,9 +1075,21 @@ Star avoids cloud-specific APIs. Marketplace integration only needs:
 - VM sizing recommendations.
 - Firewall/security-group defaults.
 - First-boot service that prints or exposes the admin registration link.
+- Clear private bootstrap access instructions when the image has no DNS/TLS yet.
 
 This makes AWS/Azure/GCP/Nebius marketplaces all mostly packaging/business work,
 not provider feature development.
+
+Packaging options to evaluate after the script installer is boring:
+
+- Marketplace appliance images for the main lead-generation path.
+- `.deb` package and optional apt repository for operators who prefer normal
+  Linux lifecycle tooling.
+- GitHub release tarball + `curl | sudo bash` for early testing and direct
+  installs.
+
+The marketplace appliance is the strategic product surface. The `.deb` is a
+distribution convenience, not a substitute for a focused appliance experience.
 
 ## Product Decisions Needed
 
@@ -1039,9 +1101,10 @@ not provider feature development.
    - paid cap - 25 accounts,
    - enforcement location - (not sure).
 3. Public URL/TLS:
-   - defer,
-   - Caddy &lt;-- this,
-   - or operator-managed.
+   - immediate V1: private SSH tunnel instructions printed by installer,
+   - supported follow-up: Caddy + Let's Encrypt once DNS points at the VM,
+   - later opt-in: CoCalc-managed subdomain/reverse tunnel,
+   - operator-managed reverse proxy remains supported.
 4. Email:
    - optional &lt;-- this; not part of onboarding, but the functionality exists,
    - hidden email-verification UI when disabled,
@@ -1066,6 +1129,16 @@ not provider feature development.
    - what build fingerprint must be provided,
    - and whether support can request rollback to an official release before
      debugging.
+10. Product focus:
+
+   - hide or disable SaaS/cloud-provider features that do not make sense in a
+     single-VM appliance, including Stripe sales flows, Cloudflare setup, cloud
+     host creation, and provider-specific launch flows,
+   - keep the underlying code paths where they are shared with Launchpad/Rocket,
+     but give Star a focused admin/product profile instead of exposing every
+     technically possible control-plane feature,
+   - discuss and decide the exact disabled feature list before the initial
+     public/product demo.
 
 ## Implementation Phases
 
@@ -1328,7 +1401,14 @@ VM", is complete.
 
 Current recommended next step:
 
-1. Polish the Star setup/admin profile so a Star operator sees local appliance
+1. Polish the post-install terminal output:
+   - print `CoCalc Star is running`,
+   - print a complete `ssh -L 9100:127.0.0.1:9100 ...` command when possible,
+   - print the matching `http://127.0.0.1:9100/...` bootstrap URL,
+   - show the alternate local-port pattern when `9100` is already used locally,
+   - make `star.sh status` reprint the bootstrap/access instructions while the
+     bootstrap token remains valid.
+2. Polish the Star setup/admin profile so a Star operator sees local appliance
    readiness, not Launchpad/Rocket cloud-provider setup:
    - first admin and 2FA,
    - local project-host health,
@@ -1336,17 +1416,27 @@ Current recommended next step:
    - shared `/scratch` status,
    - smoke-test project action,
    - optional email/public URL/backup reminders.
-2. Build the local source deploy lane:
+3. Harden the installer across random clouds:
+   - detect apt/dpkg locks from `unattended-upgrades`,
+   - wait with useful status messages instead of failing opaquely,
+   - print clear guidance when package installation is blocked for too long,
+   - keep the release directory rollback behavior on any failure.
+4. Build the local source deploy lane:
    - put a CoCalc checkout on the same VM,
    - build a Star-compatible release from that checkout,
    - deploy it through the same versioned release/rollback mechanism,
    - confirm `star.sh status` reports the custom build fingerprint.
-3. Decide the external packaging surface:
+5. Decide the external packaging surface:
    - tarball + `install.sh`,
    - `.deb`/apt repository,
    - SEA wrapper,
    - marketplace image.
-4. Keep using `src/scripts/star/validate-gce-release-upgrade.sh` as the release
+6. Decide the Star product surface:
+   - disable or hide cloud-provider setup,
+   - disable or hide SaaS sales/Stripe flows,
+   - keep Star focused on "one VM appliance" rather than "everything Launchpad
+     can technically do".
+7. Keep using `src/scripts/star/validate-gce-release-upgrade.sh` as the release
    gate for any packaging or installer change.
 
 That proves Star is not only an appliance, but also a safe single-VM development
