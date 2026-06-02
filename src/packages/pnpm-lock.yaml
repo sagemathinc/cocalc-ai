@@ -2020,7 +2020,7 @@ importers:
         version: 19.2.1
       react-intl:
         specifier: ^7.1.11
-        version: 7.1.14(react@19.2.1)(typescript@5.9.3)
+        version: 7.1.14(react@19.2.1)(typescript@6.0.3)
       redux:
         specifier: ^4.2.1
         version: 4.2.1
@@ -2064,6 +2064,9 @@ importers:
       tsd:
         specifier: ^0.22.0
         version: 0.22.0
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
 
 packages:
 
@@ -11666,6 +11669,16 @@ snapshots:
     optionalDependencies:
       typescript: 5.9.3
 
+  '@formatjs/intl@3.1.8(typescript@6.0.3)':
+    dependencies:
+      '@formatjs/ecma402-abstract': 2.3.6
+      '@formatjs/fast-memoize': 2.2.7
+      '@formatjs/icu-messageformat-parser': 2.11.4
+      intl-messageformat: 10.7.18
+      tslib: 2.8.1
+    optionalDependencies:
+      typescript: 6.0.3
+
   '@google-cloud/compute@6.9.1':
     dependencies:
       google-gax: 5.0.6
@@ -20027,6 +20040,20 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       typescript: 5.9.3
+
+  react-intl@7.1.14(react@19.2.1)(typescript@6.0.3):
+    dependencies:
+      '@formatjs/ecma402-abstract': 2.3.6
+      '@formatjs/icu-messageformat-parser': 2.11.4
+      '@formatjs/intl': 3.1.8(typescript@6.0.3)
+      '@types/hoist-non-react-statics': 3.3.7(@types/react@19.2.7)
+      '@types/react': 19.2.7
+      hoist-non-react-statics: 3.3.2
+      intl-messageformat: 10.7.18
+      react: 19.2.1
+      tslib: 2.8.1
+    optionalDependencies:
+      typescript: 6.0.3
 
   react-is@16.13.1: {}
 
