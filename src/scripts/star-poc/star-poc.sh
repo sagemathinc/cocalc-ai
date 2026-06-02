@@ -423,13 +423,85 @@ logs() {
   sudo journalctl -u "$svc" -n "$lines" --no-pager
 }
 
+local_bootstrap_url() {
+  local url="$1"
+  local local_port="${2:-9100}"
+  node - "$url" "$local_port" <<'NODE'
+const [url, localPort] = process.argv.slice(2);
+const parsed = new URL(url);
+parsed.protocol = "http:";
+parsed.hostname = "127.0.0.1";
+parsed.port = localPort;
+process.stdout.write(parsed.toString());
+NODE
+}
+
+print_access_instructions() {
+  local bootstrap_url="$1"
+  local local_port="${2:-9100}"
+  local ssh_target="${STAR_SSH_TARGET:-}"
+  local localhost_url
+
+  [ -n "$bootstrap_url" ] || return 0
+  localhost_url="$(local_bootstrap_url "$bootstrap_url" "$local_port")"
+
+  cat <<EOF
+
+CoCalc Star is running.
+
+From your laptop, open an SSH tunnel to this VM:
+EOF
+
+  if [ -n "$ssh_target" ]; then
+    cat <<EOF
+  ssh -L ${local_port}:127.0.0.1:9100 ${ssh_target}
+EOF
+  else
+    cat <<EOF
+  ssh -L ${local_port}:127.0.0.1:9100 <ssh-user>@<vm-ip-or-hostname>
+EOF
+  fi
+
+  cat <<EOF
+
+Then open this local URL to create the first admin account:
+  ${localhost_url}
+
+If port ${local_port} is already in use on your laptop, choose another local port,
+for example:
+EOF
+
+  if [ -n "$ssh_target" ]; then
+    cat <<EOF
+  ssh -L 9500:127.0.0.1:9100 ${ssh_target}
+EOF
+  else
+    cat <<EOF
+  ssh -L 9500:127.0.0.1:9100 <ssh-user>@<vm-ip-or-hostname>
+EOF
+  fi
+
+  cat <<EOF
+  $(local_bootstrap_url "$bootstrap_url" 9500)
+
+You can reprint this later with:
+  sudo /opt/cocalc-star/source/src/scripts/star/star.sh bootstrap-link
+EOF
+}
+
 bootstrap_link() {
   local result="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}"
+  local url
   [ -f "$result" ] || {
     log "missing bootstrap result: $result"
     exit 1
   }
-  jq -r '.bootstrap_url // empty' "$result"
+  url="$(jq -r '.bootstrap_url // empty' "$result")"
+  [ -n "$url" ] || {
+    log "bootstrap link is not present in $result"
+    exit 1
+  }
+  print_access_instructions "$url"
 }
 
 case "${1:-}" in

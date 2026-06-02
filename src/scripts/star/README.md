@@ -94,11 +94,27 @@ RUN_UPGRADE_ROLLBACK_TEST=1 RUN_RESET_TEST=1 src/scripts/star-poc/gcp-create-sta
 For browser access from your laptop, port-forward to the VM:
 
 ```sh
-ssh -L 7001:127.0.0.1:9100 user@vm
+ssh -L 9100:127.0.0.1:9100 user@vm
 ```
 
-Then open `http://127.0.0.1:7001` and use the bootstrap link to create the
+Then open `http://127.0.0.1:9100` and use the bootstrap link to create the
 first admin account.
+
+If port `9100` is already used on your laptop, choose another local port:
+
+```sh
+ssh -L 9500:127.0.0.1:9100 user@vm
+```
+
+Then replace `127.0.0.1:9100` in the bootstrap link with `127.0.0.1:9500`.
+
+If the installer knows the SSH target, pass it so the final instructions are
+fully copy/pasteable:
+
+```sh
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \
+  | sudo STAR_ASSUME_YES=1 STAR_SSH_TARGET=ubuntu@1.2.3.4 bash
+```
 
 ## Useful Overrides
 

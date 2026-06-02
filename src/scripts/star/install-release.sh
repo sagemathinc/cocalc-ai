@@ -42,6 +42,8 @@ Environment:
   STAR_ASSUME_YES=1         Required for non-interactive installs.
   STAR_INSTALL_ROOT         Passed through to the release installer.
   STAR_USER                 Passed through to the release installer.
+  STAR_SSH_TARGET           Optional SSH target to show in post-install tunnel
+                            instructions, e.g. ubuntu@1.2.3.4.
 
 Run only on a dedicated Ubuntu VM. The release installer changes system
 packages, systemd services, sudoers, mounts, and local runtime data.
