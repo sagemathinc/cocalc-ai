@@ -182,6 +182,8 @@ doctor() {
   check "standard podman runtime dir exists" test -d "/run/user/${star_uid}"
   check "btrfs data mount is active" mountpoint -q /mnt/cocalc
   check "shared scratch mount is active" mountpoint -q /mnt/cocalc-scratch
+  check "shared scratch shared directory exists" test -d /mnt/cocalc-scratch/shared
+  check "shared scratch shared directory is writable" as_star_user bash -lc 'test -w /mnt/cocalc-scratch/shared'
   check "runtime storage wrapper is installed" test -x /usr/local/sbin/cocalc-runtime-storage
   check "project-host rootctl wrapper is installed" test -x /usr/local/sbin/cocalc-project-host-rootctl
   check "project bundle exists" test -d "${SRC_ROOT}/packages/project/build"
