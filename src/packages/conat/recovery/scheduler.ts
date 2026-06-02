@@ -11,6 +11,7 @@ const DEFAULT_INITIAL_CONCURRENT_RECOVERIES = 4;
 export type RecoveryPriority = "foreground" | "background";
 
 export interface RecoveryRequest {
+  force?: boolean;
   reason?: string;
   resetBackoff?: boolean;
 }
@@ -19,7 +20,7 @@ export interface RecoverableResourceOptions {
   canRecover?: () => boolean;
   isConnected?: () => boolean;
   priority?: () => RecoveryPriority;
-  recover: () => Promise<void>;
+  recover: (request?: RecoveryRequest) => Promise<void>;
 }
 
 export interface RegisteredRecoverableResource {
@@ -40,6 +41,7 @@ export interface RecoverySchedulerOptions {
 
 interface PendingRecoverableResource {
   attempts: number;
+  force?: boolean;
   options: RecoverableResourceOptions;
   pendingAt?: number;
   pendingReason?: string;
@@ -109,7 +111,11 @@ export class RecoveryScheduler extends EventEmitter {
 
   private requestRecovery = (
     resource: PendingRecoverableResource,
-    { reason = "recover", resetBackoff = false }: RecoveryRequest,
+    {
+      force = false,
+      reason = "recover",
+      resetBackoff = false,
+    }: RecoveryRequest,
   ) => {
     if (resource.options.canRecover?.() === false) {
       return;
@@ -121,6 +127,7 @@ export class RecoveryScheduler extends EventEmitter {
     const readyAt = now + this.computeDelay(resource);
     resource.pendingReason = reason;
     resource.pendingAt ??= now;
+    resource.force ||= force;
     resource.readyAt =
       resource.readyAt == null ? readyAt : Math.min(resource.readyAt, readyAt);
     this.schedulePendingRecoveries();
@@ -169,8 +176,13 @@ export class RecoveryScheduler extends EventEmitter {
   private runOneRecovery = async (resource: PendingRecoverableResource) => {
     this.recoveriesInFlight += 1;
     resource.readyAt = undefined;
+    const request: RecoveryRequest = {
+      force: resource.force,
+      reason: resource.pendingReason,
+    };
     try {
-      await resource.options.recover();
+      await resource.options.recover(request);
+      resource.force = false;
       resource.pendingAt = undefined;
       resource.pendingReason = undefined;
       resource.attempts = 0;
@@ -193,7 +205,7 @@ export class RecoveryScheduler extends EventEmitter {
       if (resource.options.canRecover?.() === false) {
         return false;
       }
-      if (resource.options.isConnected?.()) {
+      if (!resource.force && resource.options.isConnected?.()) {
         resource.readyAt = undefined;
         resource.pendingAt = undefined;
         resource.pendingReason = undefined;

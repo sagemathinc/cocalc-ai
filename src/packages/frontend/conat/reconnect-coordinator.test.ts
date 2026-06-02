@@ -136,6 +136,66 @@ describe("ReconnectCoordinator", () => {
     }
   });
 
+  it("runs forced resource reconnects even when the resource reports connected", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const reconnect = jest.fn(async () => {});
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect: jest.fn(async () => {}),
+      isConnected: () => true,
+    });
+    const resource = coordinator.registerResource({
+      isConnected: () => true,
+      priority: () => "foreground",
+      reconnect,
+    });
+
+    try {
+      resource.requestReconnect({
+        force: true,
+        reason: "stale_connected_probe",
+      });
+
+      await jest.advanceTimersByTimeAsync(999);
+      expect(reconnect).toHaveBeenCalledTimes(0);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(reconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      resource.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("probes foreground resources when the tab becomes foreground", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const reconnect = jest.fn(async () => {});
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect: jest.fn(async () => {}),
+      isConnected: () => true,
+    });
+    const resource = coordinator.registerResource({
+      isConnected: () => true,
+      priority: () => "foreground",
+      probeOnForeground: () => true,
+      reconnect,
+    });
+
+    try {
+      window.dispatchEvent(new Event("focus"));
+
+      await jest.advanceTimersByTimeAsync(999);
+      expect(reconnect).toHaveBeenCalledTimes(0);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(reconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      resource.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
+
   it("reconnects foreground resources before background ones", async () => {
     const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
     const order: string[] = [];

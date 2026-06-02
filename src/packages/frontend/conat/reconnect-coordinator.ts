@@ -13,6 +13,7 @@ const MAX_RESOURCE_RECONNECT_DELAY_MS = 30_000;
 const DEFAULT_RESOURCE_RECONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_CONCURRENT_RESOURCE_RECONNECTS = 32;
 const DEFAULT_INITIAL_CONCURRENT_RESOURCE_RECONNECTS = 8;
+const FOREGROUND_RESOURCE_PROBE_INTERVAL_MS = 60_000;
 
 export type ReconnectPriority = "foreground" | "background";
 export type StandbyStage = "active" | "soft" | "hard";
@@ -39,11 +40,13 @@ export interface ReconnectCoordinatorOptions {
 export interface ReconnectResourceOptions {
   canReconnect?: () => boolean;
   isConnected?: () => boolean;
+  probeOnForeground?: () => boolean;
   priority?: () => ReconnectPriority;
   reconnect: () => Promise<void>;
 }
 
 export interface ReconnectResourceRequest {
+  force?: boolean;
   reason?: string;
   resetBackoff?: boolean;
 }
@@ -56,6 +59,8 @@ export interface RegisteredReconnectResource {
 interface PendingReconnectResource {
   attempts: number;
   options: ReconnectResourceOptions;
+  force?: boolean;
+  lastForegroundProbeAt?: number;
   pendingAt?: number;
   pendingReason?: string;
   readyAt?: number;
@@ -83,6 +88,9 @@ export class ReconnectCoordinator extends EventEmitter {
       return;
     }
     if (!this.options.canReconnect() || this.options.isConnected()) {
+      if (this.options.canReconnect() && this.options.isConnected()) {
+        this.requestForegroundResourceProbes();
+      }
       this.schedulePendingResourceReconnects();
       return;
     }
@@ -298,6 +306,7 @@ export class ReconnectCoordinator extends EventEmitter {
   private requestResourceReconnect = (
     resource: PendingReconnectResource,
     {
+      force = false,
       reason = "resource_reconnect",
       resetBackoff = false,
     }: ReconnectResourceRequest,
@@ -312,9 +321,38 @@ export class ReconnectCoordinator extends EventEmitter {
     const readyAt = now + this.computeResourceDelay(resource);
     resource.pendingReason = reason;
     resource.pendingAt ??= now;
+    resource.force ||= force;
     resource.readyAt =
       resource.readyAt == null ? readyAt : Math.min(resource.readyAt, readyAt);
     this.schedulePendingResourceReconnects();
+  };
+
+  private requestForegroundResourceProbes = () => {
+    const now = Date.now();
+    for (const resource of this.resources.values()) {
+      if (resource.options.canReconnect?.() === false) {
+        continue;
+      }
+      if (resource.options.probeOnForeground?.() !== true) {
+        continue;
+      }
+      if (resource.options.priority?.() === "background") {
+        continue;
+      }
+      if (
+        resource.lastForegroundProbeAt != null &&
+        now - resource.lastForegroundProbeAt <
+          FOREGROUND_RESOURCE_PROBE_INTERVAL_MS
+      ) {
+        continue;
+      }
+      resource.lastForegroundProbeAt = now;
+      this.requestResourceReconnect(resource, {
+        force: true,
+        reason: "tab_became_foreground_resource_probe",
+        resetBackoff: true,
+      });
+    }
   };
 
   private schedulePendingResourceReconnects = () => {
@@ -354,7 +392,7 @@ export class ReconnectCoordinator extends EventEmitter {
       if (resource.options.canReconnect?.() === false) {
         return false;
       }
-      if (resource.options.isConnected?.()) {
+      if (!resource.force && resource.options.isConnected?.()) {
         resource.readyAt = undefined;
         resource.pendingAt = undefined;
         resource.pendingReason = undefined;
@@ -415,6 +453,7 @@ export class ReconnectCoordinator extends EventEmitter {
     resource.readyAt = undefined;
     try {
       await this.runResourceReconnectWithTimeout(resource);
+      resource.force = false;
       resource.pendingAt = undefined;
       resource.pendingReason = undefined;
       resource.attempts = 0;

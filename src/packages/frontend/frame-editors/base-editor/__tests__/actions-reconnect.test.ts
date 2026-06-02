@@ -151,10 +151,65 @@ describe("BaseEditorActions reconnect coordination", () => {
 
     expect(connected).toBe(true);
     expect(syncdoc.recoverNow).toHaveBeenCalledWith({
+      force: true,
       priority: "foreground",
       reason: "editor_resource_reconnect",
     });
     expect(syncdoc.wait_until_live_connected).toHaveBeenCalled();
+  });
+
+  it("forces recovery even when a syncdoc still reports live", async () => {
+    const actions = new BaseEditorActions(
+      "test-syncdoc-force-recover",
+      makeRedux(),
+    ) as any;
+    const syncdoc = {
+      get_state: () => "ready",
+      is_live_connected: () => true,
+      recoverNow: jest.fn(async () => {}),
+      wait_until_live_connected: jest.fn(async () => {}),
+    };
+    actions.wait_until_syncdoc_ready = jest.fn(async () => true);
+    actions.isClosed = jest.fn(() => false);
+
+    const connected = await actions.wait_until_syncdoc_live_connected(
+      syncdoc,
+      "foreground",
+    );
+
+    expect(connected).toBe(true);
+    expect(syncdoc.recoverNow).toHaveBeenCalledWith({
+      force: true,
+      priority: "foreground",
+      reason: "editor_resource_reconnect",
+    });
+  });
+
+  it("tries forced recovery before waiting on an initializing syncdoc", async () => {
+    const actions = new BaseEditorActions(
+      "test-syncdoc-init-recover",
+      makeRedux(),
+    ) as any;
+    const syncdoc = {
+      get_state: () => "init",
+      is_live_connected: () => false,
+      recoverNow: jest.fn(async () => {}),
+    };
+    actions.wait_until_syncdoc_ready = jest.fn(async () => false);
+    actions.isClosed = jest.fn(() => false);
+
+    const connected = await actions.wait_until_syncdoc_live_connected(
+      syncdoc,
+      "foreground",
+    );
+
+    expect(connected).toBe(false);
+    expect(syncdoc.recoverNow).toHaveBeenCalledWith({
+      force: true,
+      priority: "foreground",
+      reason: "editor_resource_reconnect",
+    });
+    expect(actions.wait_until_syncdoc_ready).toHaveBeenCalledWith(syncdoc);
   });
 
   it("closes the editor action when a syncstring closes unexpectedly", () => {

@@ -367,6 +367,7 @@ export class DStream<T = any> extends EventEmitter {
   resumeRecovery = async (
     opts: {
       epoch?: number;
+      force?: boolean;
       priority?: "foreground" | "background";
     } = {},
   ) => {
@@ -379,6 +380,7 @@ export class DStream<T = any> extends EventEmitter {
   recoverNow = async (
     opts: {
       epoch?: number;
+      force?: boolean;
       priority?: "foreground" | "background";
       reason?: string;
     } = {},

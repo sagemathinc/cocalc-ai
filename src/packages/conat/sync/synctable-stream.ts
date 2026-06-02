@@ -282,6 +282,7 @@ export class SyncTableStream extends EventEmitter {
   recoverNow = async (
     opts: {
       epoch?: number;
+      force?: boolean;
       priority?: "foreground" | "background";
       reason?: string;
     } = {},
