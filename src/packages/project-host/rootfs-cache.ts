@@ -9,6 +9,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   writeFile,
@@ -366,29 +367,65 @@ async function chownManagedRootfsPath(path: string): Promise<void> {
   });
 }
 
-async function createManagedRootfsRestoreSubvolume(
-  path: string,
-): Promise<void> {
-  await btrfs({
-    args: ["subvolume", "create", path],
-    err_on_exit: true,
-    verbose: false,
-  });
-  await chownManagedRootfsPath(path);
+function isNonBtrfsError(err: unknown): boolean {
+  const text = `${err}`;
+  return (
+    text.includes("not a btrfs filesystem") ||
+    text.includes("Not a Btrfs filesystem")
+  );
 }
 
-async function snapshotManagedRootfsReadonly({
+async function isBtrfsSubvolumeIfAvailable(path: string): Promise<boolean> {
+  try {
+    return await isBtrfsSubvolume(path);
+  } catch (err) {
+    if (isNonBtrfsError(err)) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function createManagedRootfsRestorePath(path: string): Promise<void> {
+  try {
+    await btrfs({
+      args: ["subvolume", "create", path],
+      err_on_exit: true,
+      verbose: false,
+    });
+    await chownManagedRootfsPath(path);
+    return;
+  } catch (err) {
+    if (!isNonBtrfsError(err)) {
+      throw err;
+    }
+    logger.info(
+      "managed RootFS cache is not on btrfs; using plain restore directory",
+      {
+        path,
+      },
+    );
+  }
+  await mkdir(path, { recursive: true });
+}
+
+async function finalizeManagedRootfsCacheEntry({
   source,
   dest,
 }: {
   source: string;
   dest: string;
 }): Promise<void> {
-  await btrfs({
-    args: ["subvolume", "snapshot", "-r", source, dest],
-    err_on_exit: true,
-    verbose: false,
-  });
+  if (await isBtrfsSubvolumeIfAvailable(source)) {
+    await btrfs({
+      args: ["subvolume", "snapshot", "-r", source, dest],
+      err_on_exit: true,
+      verbose: false,
+    });
+    return;
+  }
+  await rm(dest, { recursive: true, force: true, maxRetries: 3 });
+  await rename(source, dest);
 }
 
 async function restoreManagedRootfsRustic({
@@ -841,7 +878,7 @@ async function downloadManagedRootfsArtifact({
                 release_id: access.release_id,
               },
             });
-            await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
+            await createManagedRootfsRestorePath(stagedRootfsPath);
             const restoreStarted = Date.now();
             reportPullProgress(onProgress, {
               message: "restoring RootFS image from rustic",
@@ -926,7 +963,7 @@ async function downloadManagedRootfsArtifact({
                   release_id: access.release_id,
                 },
               });
-              await snapshotManagedRootfsReadonly({
+              await finalizeManagedRootfsCacheEntry({
                 source: stagedRootfsPath,
                 dest: finalPath,
               });
@@ -1012,7 +1049,7 @@ async function deleteCachedRootfsPath(path: string): Promise<void> {
   if (!(await exists(path))) {
     return;
   }
-  if (await isBtrfsSubvolume(path)) {
+  if (await isBtrfsSubvolumeIfAvailable(path)) {
     await btrfs({
       args: ["subvolume", "delete", path],
       err_on_exit: true,

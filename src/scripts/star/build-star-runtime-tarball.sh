@@ -72,6 +72,7 @@ build_runtime() {
     ./workspaces.py build --dev
     pnpm python-api
     pnpm --filter @cocalc/launchpad build:tarball
+    rm -rf packages/cli/build/test
     pnpm --filter @cocalc/cli build:bundle
     pnpm --filter @cocalc/project-host build:bundle
     pnpm --dir packages/project build:bundle

@@ -1951,7 +1951,7 @@ deny() {
 allow_path() {
   local path="${1//\\\\:/:}"
   case "$path" in
-    /mnt/cocalc|/mnt/cocalc/*|/mnt/cocalc-scratch|/mnt/cocalc-scratch/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/var/lib/cocalc/star/project-host/0/cache|/var/lib/cocalc/star/project-host/0/cache/*|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
+    /mnt/cocalc|/mnt/cocalc/*|/mnt/cocalc-scratch|/mnt/cocalc-scratch/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/var/lib/cocalc/star/project-host/0/cache|/var/lib/cocalc/star/project-host/0/cache/*|/var/lib/cocalc/star/project-host/0/secrets/rustic/rootfs-images|/var/lib/cocalc/star/project-host/0/secrets/rustic/rootfs-images/*|/var/lib/cocalc/star/project-host/0/secrets/rustic/project-*.toml|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
       return 0
       ;;
     *)
@@ -2036,6 +2036,19 @@ check_args() {
       done
     fi
   done
+}
+
+rustic_binary() {
+  if [ -x /opt/cocalc/tools/current/rustic ]; then
+    printf '%s\n' /opt/cocalc/tools/current/rustic
+    return 0
+  fi
+  if [ -x /opt/cocalc-star/source/src/packages/project/build/tools/current/rustic ]; then
+    printf '%s\n' /opt/cocalc-star/source/src/packages/project/build/tools/current/rustic
+    return 0
+  fi
+  echo "SECURITY_DENY code=rustic-not-found detail=/opt/cocalc/tools/current/rustic" >&2
+  exit 2
 }
 
 escape_overlay_path() {
@@ -2569,7 +2582,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     if [[ "$repo_profile" == *.toml ]]; then
       repo_profile="${repo_profile%.toml}"
     fi
-    rustic_cmd=(/opt/cocalc/tools/current/rustic -P "$repo_profile")
+    rustic_cmd=("$(rustic_binary)" -P "$repo_profile")
     cd "$src"
     if "${rustic_cmd[@]}" backup --json --no-scan --host "$host_name" "$@" .; then
       exit 0
@@ -2600,7 +2613,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     if [[ "$repo_profile" == *.toml ]]; then
       repo_profile="${repo_profile%.toml}"
     fi
-    exec /opt/cocalc/tools/current/rustic -P "$repo_profile" restore "$@" "$snapshot" "$dest"
+    exec "$(rustic_binary)" -P "$repo_profile" restore "$@" "$snapshot" "$dest"
     ;;
   project-rustic-backup)
     if [ "$#" -lt 3 ]; then
@@ -2648,7 +2661,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     if [[ "$repo_profile" == *.toml ]]; then
       repo_profile="${repo_profile%.toml}"
     fi
-    rustic_cmd=(/opt/cocalc/tools/current/rustic -P "$repo_profile")
+    rustic_cmd=("$(rustic_binary)" -P "$repo_profile")
     cd "$src"
     if "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" "${parent_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .; then
       exit 0
@@ -2681,7 +2694,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     if [[ "$repo_profile" == *.toml ]]; then
       repo_profile="${repo_profile%.toml}"
     fi
-    exec /opt/cocalc/tools/current/rustic -P "$repo_profile" restore "$snapshot" "$dest"
+    exec "$(rustic_binary)" -P "$repo_profile" restore "$snapshot" "$dest"
     ;;
   rootfs-manifest)
     if [ "$#" -ne 1 ]; then

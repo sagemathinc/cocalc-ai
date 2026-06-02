@@ -20,7 +20,8 @@
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "ts-jest": "29.4.9"
+    "ts-jest": "29.4.9",
+    "typescript": "^6.0.3"
   },
   "license": "SEE LICENSE.md"
 }
