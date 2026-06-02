@@ -88,7 +88,9 @@ export function useMembershipSettingsData(): {
           await Promise.all([
             api("purchases/get-membership"),
             api("purchases/get-membership-tiers"),
-            webapp_client.conat_client.hub.purchases.getMembershipDetails({}),
+            webapp_client.conat_client.hub.purchases.getMembershipDetails({
+              refresh_usage_status: true,
+            }),
           ]);
         if (!isMounted()) return;
         setMembership(membershipResult as MembershipResolution);

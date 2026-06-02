@@ -27,8 +27,9 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ManagedEgressHistoryButton } from "@cocalc/frontend/purchases/managed-egress-history";
 import { formatManagedEgressCategory } from "@cocalc/frontend/purchases/managed-egress-recent-events";
 import type {
-  AIUsageStatus,
-  AIUsageWindowStatus,
+  AccountUsageMeter,
+  AccountUsageOverview,
+  AccountUsageSummaryPressure,
   MembershipUsageStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import { humanSize } from "@cocalc/util/misc";
@@ -108,6 +109,12 @@ type UsageWindowRow = {
   loading?: boolean;
   unavailable?: boolean;
   used?: number;
+};
+
+type UsageOverviewState = {
+  error: string;
+  loading: boolean;
+  overview: AccountUsageOverview | null;
 };
 
 function renderSectionLabel(label: string): ReactElement {
@@ -204,29 +211,32 @@ function renderResetTimes({
   });
 }
 
-function useAIUsageStatus(): {
-  error: boolean;
-  loading: boolean;
-  status: AIUsageStatus | null;
-} {
-  const [status, setStatus] = useState<AIUsageStatus | null>(null);
-  const [error, setError] = useState(false);
+function useAccountUsageOverview(account_id?: string): UsageOverviewState {
+  const [overview, setOverview] = useState<AccountUsageOverview | null>(null);
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let canceled = false;
     async function load() {
+      if (!account_id) {
+        setOverview(null);
+        setError("");
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
       try {
         const result =
-          await webapp_client.conat_client.hub.purchases.getAIUsage();
+          await webapp_client.conat_client.hub.purchases.getAccountUsageOverview();
         if (!canceled) {
-          setStatus(result);
-          setError(false);
+          setOverview(result);
+          setError("");
         }
-      } catch {
+      } catch (err) {
         if (!canceled) {
-          setStatus(null);
-          setError(true);
+          setOverview(null);
+          setError(`${err}`);
         }
       } finally {
         if (!canceled) {
@@ -238,9 +248,9 @@ function useAIUsageStatus(): {
     return () => {
       canceled = true;
     };
-  }, []);
+  }, [account_id]);
 
-  return { error, loading, status };
+  return { error, loading, overview };
 }
 
 function formatUsagePercent(percent: number): string {
@@ -327,11 +337,11 @@ function renderUsageWindowRows(rows: UsageWindowRow[]): ReactElement {
   );
 }
 
-function findAIUsageWindow(
-  status: AIUsageStatus | null,
-  window: AIUsageWindowStatus["window"],
-): AIUsageWindowStatus | undefined {
-  return status?.windows.find((item) => item.window === window);
+function findUsageMeter(
+  overview: AccountUsageOverview | null,
+  id: string,
+): AccountUsageMeter | undefined {
+  return overview?.meters.find((meter) => meter.id === id);
 }
 
 function AIAndCPUUsageContent({
@@ -339,48 +349,135 @@ function AIAndCPUUsageContent({
   aiLimit7d,
   cpuLimit5h,
   cpuLimit7d,
+  overview,
+  overviewError,
+  overviewLoading,
   usageStatus,
 }: {
   aiLimit5h?: number;
   aiLimit7d?: number;
   cpuLimit5h?: number;
   cpuLimit7d?: number;
+  overview: AccountUsageOverview | null;
+  overviewError: string;
+  overviewLoading: boolean;
   usageStatus?: MembershipUsageStatus | null;
 }): ReactElement {
-  const aiUsage = useAIUsageStatus();
-  const ai5h = findAIUsageWindow(aiUsage.status, "5h");
-  const ai7d = findAIUsageWindow(aiUsage.status, "7d");
+  const ai5h = findUsageMeter(overview, "ai-5h");
+  const ai7d = findUsageMeter(overview, "ai-7d");
+  const cpu5h = findUsageMeter(overview, "managed-cpu-5h");
+  const cpu7d = findUsageMeter(overview, "managed-cpu-7d");
 
   return renderUsageWindowRows([
     {
       key: "ai_5h",
       label: "AI 5-hour usage limit",
       limit: ai5h?.limit ?? aiLimit5h,
-      loading: aiUsage.loading,
-      unavailable: aiUsage.error,
+      loading: overviewLoading,
+      unavailable: !!overviewError && !ai5h,
       used: ai5h?.used,
     },
     {
       key: "ai_7d",
       label: "AI weekly usage limit",
       limit: ai7d?.limit ?? aiLimit7d,
-      loading: aiUsage.loading,
-      unavailable: aiUsage.error,
+      loading: overviewLoading,
+      unavailable: !!overviewError && !ai7d,
       used: ai7d?.used,
     },
     {
       key: "cpu_5h",
       label: "CPU 5-hour usage limit",
-      limit: cpuLimit5h,
-      used: usageStatus?.managed_cpu_5h_seconds,
+      limit: cpu5h?.limit ?? cpuLimit5h,
+      loading: overviewLoading,
+      used: cpu5h?.used ?? usageStatus?.managed_cpu_5h_seconds,
     },
     {
       key: "cpu_7d",
       label: "CPU weekly usage limit",
-      limit: cpuLimit7d,
-      used: usageStatus?.managed_cpu_7d_seconds,
+      limit: cpu7d?.limit ?? cpuLimit7d,
+      loading: overviewLoading,
+      used: cpu7d?.used ?? usageStatus?.managed_cpu_7d_seconds,
     },
   ]);
+}
+
+function severityProgressStatus(
+  severity?: AccountUsageSummaryPressure["severity"],
+): "normal" | "exception" | "success" {
+  if (severity === "over") return "exception";
+  if (severity === "near") return "normal";
+  return "success";
+}
+
+function UsagePressureCard({
+  label,
+  pressure,
+}: {
+  label: string;
+  pressure?: AccountUsageSummaryPressure;
+}): ReactElement {
+  if (!pressure) {
+    return (
+      <Card size="small" title={label} style={{ height: "100%" }}>
+        <Text type="secondary">No active limited usage yet.</Text>
+      </Card>
+    );
+  }
+  return (
+    <Card size="small" title={label} style={{ height: "100%" }}>
+      <Space direction="vertical" size="small" style={{ width: "100%" }}>
+        <Progress
+          percent={Math.min(100, Math.max(0, pressure.percent))}
+          status={severityProgressStatus(pressure.severity)}
+        />
+        <div>
+          <Text strong>{pressure.limiting_meter_label ?? "Closest limit"}</Text>
+          <br />
+          <Text type="secondary">
+            {formatUsagePercent(pressure.percent)} of limit used
+          </Text>
+        </div>
+        {pressure.resets_at || pressure.reset_in ? (
+          <Text type="secondary">
+            Resets{" "}
+            {pressure.resets_at ? formatResetAt(pressure.resets_at) : "later"}
+            {pressure.reset_in ? ` · in ${pressure.reset_in}` : ""}
+          </Text>
+        ) : null}
+      </Space>
+    </Card>
+  );
+}
+
+function UsagePressureSummary({
+  overview,
+}: {
+  overview: AccountUsageOverview | null;
+}): ReactElement | null {
+  if (!overview) return null;
+  return (
+    <Row gutter={[16, 16]}>
+      <Col xs={24} md={8}>
+        <UsagePressureCard
+          label="5-hour pressure"
+          pressure={overview.summary.pressure_5h}
+        />
+      </Col>
+      <Col xs={24} md={8}>
+        <UsagePressureCard
+          label="7-day pressure"
+          pressure={overview.summary.pressure_7d}
+        />
+      </Col>
+      <Col xs={24} md={8}>
+        <UsagePressureCard
+          label="Storage pressure"
+          pressure={overview.summary.storage}
+        />
+      </Col>
+    </Row>
+  );
 }
 
 function renderManagedEgressResetTimes(
@@ -609,6 +706,11 @@ function renderAlertsGrid({
 function UsageLimitsSettingsContent(): ReactElement | null {
   const { account_id, details, error, loading, membership } =
     useMembershipSettingsData();
+  const {
+    error: overviewError,
+    loading: overviewLoading,
+    overview,
+  } = useAccountUsageOverview(account_id);
   const { token } = theme.useToken();
 
   if (!account_id) return null;
@@ -672,6 +774,9 @@ function UsageLimitsSettingsContent(): ReactElement | null {
           aiLimit7d={aiLimit7d}
           cpuLimit5h={cpuLimit5h}
           cpuLimit7d={cpuLimit7d}
+          overview={overview}
+          overviewError={overviewError}
+          overviewLoading={overviewLoading}
           usageStatus={details?.usage_status}
         />
       ),
@@ -739,6 +844,29 @@ function UsageLimitsSettingsContent(): ReactElement | null {
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      {overviewError ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="Usage pressure summary is unavailable"
+          description={overviewError}
+        />
+      ) : null}
+      <UsagePressureSummary overview={overview} />
+      {overview?.measurement_warnings?.length ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="Some usage measurements are incomplete"
+          description={
+            <Space direction="vertical" size={0}>
+              {overview.measurement_warnings.map((warning) => (
+                <Text key={warning}>{warning}</Text>
+              ))}
+            </Space>
+          }
+        />
+      ) : null}
       {renderAlertsGrid({ alerts: usageStatusAlerts, gutter: gridGutter })}
       {renderDashboardGrid({
         cards,

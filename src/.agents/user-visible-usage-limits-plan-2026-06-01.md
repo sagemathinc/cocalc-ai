@@ -415,7 +415,8 @@ Completed first backend slice:
 
 Remaining:
 
-- build the user-facing dashboard.
+- continue hardening the user-facing dashboard and wire contextual warnings to
+  the normalized overview.
 
 - Replace user-facing sliding-window accounting with shared fixed account
   windows for AI, managed CPU, and managed egress. (first slice complete)
@@ -441,6 +442,18 @@ Remaining:
 - Keep old APIs unchanged.
 
 ### Phase 2: Dashboard Page
+
+Status: started.
+
+Completed first frontend slice:
+
+- merged PR 47's account settings membership and `Usage & Limits` pages;
+- added top-level 5-hour, 7-day, and storage pressure cards using the
+  normalized `AccountUsageOverview` RPC;
+- changed the account membership settings data loader to request fresh usage
+  status for usage-facing pages;
+- kept PR 47's clean card-based detail layout for project/storage, runtime, AI,
+  CPU, and network transfer drill-downs.
 
 - Add `Usage & Limits` in account settings.
 - Render composite gauges first.
