@@ -490,6 +490,8 @@ export interface MembershipUsageStatus {
   managed_egress_7d_bytes?: number;
   managed_egress_5h_remaining_bytes?: number;
   managed_egress_7d_remaining_bytes?: number;
+  managed_egress_5h_starts_at?: Date;
+  managed_egress_7d_starts_at?: Date;
   managed_egress_5h_reset_at?: Date;
   managed_egress_7d_reset_at?: Date;
   managed_egress_5h_reset_in?: string;
@@ -503,6 +505,8 @@ export interface MembershipUsageStatus {
   managed_cpu_7d_seconds?: number;
   managed_cpu_5h_remaining_seconds?: number;
   managed_cpu_7d_remaining_seconds?: number;
+  managed_cpu_5h_starts_at?: Date;
+  managed_cpu_7d_starts_at?: Date;
   managed_cpu_5h_reset_at?: Date;
   managed_cpu_7d_reset_at?: Date;
   managed_cpu_5h_reset_in?: string;
@@ -779,6 +783,8 @@ export interface AIUsageWindowStatus {
   used: number;
   limit?: number;
   remaining?: number;
+  starts_at?: Date;
+  resets_at?: Date;
   reset_at?: Date;
   reset_in?: string;
 }

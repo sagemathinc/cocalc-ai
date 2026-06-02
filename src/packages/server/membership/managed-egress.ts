@@ -18,6 +18,10 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import { listActiveAbuseReviewAnnotations } from "./abuse-review-annotations";
 import { getProjectUsageAccountId } from "./project-usage";
+import {
+  ensureAccountUsageWindowsForEvent,
+  getActiveAccountUsageWindows,
+} from "./usage-windows";
 
 export {
   getProjectOwnerAccountId,
@@ -40,6 +44,8 @@ type ManagedEgressUsage = {
   managed_egress_7d_bytes: number;
   managed_egress_5h_remaining_bytes?: number;
   managed_egress_7d_remaining_bytes?: number;
+  managed_egress_5h_starts_at?: Date;
+  managed_egress_7d_starts_at?: Date;
   managed_egress_5h_reset_at?: Date;
   managed_egress_7d_reset_at?: Date;
   managed_egress_5h_reset_in?: string;
@@ -113,6 +119,11 @@ export async function recordManagedProjectEgress(opts: {
   if (!account_id) {
     return { recorded: false };
   }
+  await ensureAccountUsageWindowsForEvent({
+    account_id,
+    family: "managed_egress",
+    occurred_at: opts.occurred_at,
+  });
   await getPool("medium").query(
     `
       INSERT INTO ${TABLE}
@@ -138,6 +149,12 @@ export async function getManagedEgressUsageForAccount(opts: {
   limit7d?: number;
 }): Promise<ManagedEgressUsage> {
   await ensureSchema();
+  const windows = await getActiveAccountUsageWindows({
+    account_id: opts.account_id,
+    family: "managed_egress",
+  });
+  const window5h = windows["5h"];
+  const window7d = windows["7d"];
   const { rows } = await getPool("medium").query<{
     category: string;
     bytes_5h: string | number;
@@ -149,7 +166,9 @@ export async function getManagedEgressUsageForAccount(opts: {
         COALESCE(
           SUM(
             CASE
-              WHEN occurred_at >= now() - interval '5 hours' THEN bytes
+              WHEN $2::timestamptz IS NOT NULL
+               AND occurred_at >= $2::timestamptz
+               AND occurred_at < $3::timestamptz THEN bytes
               ELSE 0
             END
           ),
@@ -158,7 +177,9 @@ export async function getManagedEgressUsageForAccount(opts: {
         COALESCE(
           SUM(
             CASE
-              WHEN occurred_at >= now() - interval '7 days' THEN bytes
+              WHEN $4::timestamptz IS NOT NULL
+               AND occurred_at >= $4::timestamptz
+               AND occurred_at < $5::timestamptz THEN bytes
               ELSE 0
             END
           ),
@@ -166,11 +187,20 @@ export async function getManagedEgressUsageForAccount(opts: {
         ) AS bytes_7d
       FROM ${TABLE}
       WHERE account_id = $1
-        AND occurred_at >= now() - interval '7 days'
+        AND (
+          ($2::timestamptz IS NOT NULL AND occurred_at >= $2::timestamptz AND occurred_at < $3::timestamptz)
+          OR ($4::timestamptz IS NOT NULL AND occurred_at >= $4::timestamptz AND occurred_at < $5::timestamptz)
+        )
       GROUP BY category
       ORDER BY category
     `,
-    [opts.account_id],
+    [
+      opts.account_id,
+      window5h?.starts_at ?? null,
+      window5h?.resets_at ?? null,
+      window7d?.starts_at ?? null,
+      window7d?.resets_at ?? null,
+    ],
   );
 
   const managed_egress_categories_5h_bytes: Record<string, number> = {};
@@ -186,17 +216,8 @@ export async function getManagedEgressUsageForAccount(opts: {
     managed_egress_7d_bytes += bytes7d;
   }
 
-  const [managed_egress_5h_reset_at, managed_egress_7d_reset_at] =
-    await Promise.all([
-      getManagedEgressWindowResetAt({
-        account_id: opts.account_id,
-        period: "5 hours",
-      }),
-      getManagedEgressWindowResetAt({
-        account_id: opts.account_id,
-        period: "7 days",
-      }),
-    ]);
+  const managed_egress_5h_reset_at = window5h?.resets_at;
+  const managed_egress_7d_reset_at = window7d?.resets_at;
 
   return {
     managed_egress_5h_bytes,
@@ -209,6 +230,8 @@ export async function getManagedEgressUsageForAccount(opts: {
       typeof opts.limit7d === "number" && Number.isFinite(opts.limit7d)
         ? opts.limit7d - managed_egress_7d_bytes
         : undefined,
+    managed_egress_5h_starts_at: window5h?.starts_at,
+    managed_egress_7d_starts_at: window7d?.starts_at,
     managed_egress_5h_reset_at,
     managed_egress_7d_reset_at,
     managed_egress_5h_reset_in:
@@ -234,35 +257,6 @@ export async function getManagedEgressUsageForAccount(opts: {
     managed_egress_categories_5h_bytes,
     managed_egress_categories_7d_bytes,
   };
-}
-
-async function getManagedEgressWindowResetAt({
-  account_id,
-  period,
-}: {
-  account_id: string;
-  period: "5 hours" | "7 days";
-}): Promise<Date | undefined> {
-  const { rows } = await getPool("short").query<{
-    occurred_at?: string | Date;
-  }>(
-    `
-      SELECT occurred_at
-      FROM ${TABLE}
-      WHERE account_id = $1
-        AND occurred_at >= now() - interval '${period}'
-      ORDER BY occurred_at ASC
-      LIMIT 1
-    `,
-    [account_id],
-  );
-  const oldest = rows[0]?.occurred_at;
-  if (!oldest) return;
-  const oldestMs = new Date(oldest).getTime();
-  if (!Number.isFinite(oldestMs)) return;
-  const windowMs =
-    period === "5 hours" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
-  return new Date(oldestMs + windowMs);
 }
 
 function formatDuration(ms: number): string {

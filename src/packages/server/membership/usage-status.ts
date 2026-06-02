@@ -318,6 +318,8 @@ export async function getMembershipUsageStatusForAccount({
         managedCpu.managed_cpu_5h_remaining_seconds,
       managed_cpu_7d_remaining_seconds:
         managedCpu.managed_cpu_7d_remaining_seconds,
+      managed_cpu_5h_starts_at: managedCpu.managed_cpu_5h_starts_at,
+      managed_cpu_7d_starts_at: managedCpu.managed_cpu_7d_starts_at,
       managed_cpu_5h_reset_at: managedCpu.managed_cpu_5h_reset_at,
       managed_cpu_7d_reset_at: managedCpu.managed_cpu_7d_reset_at,
       managed_cpu_5h_reset_in: managedCpu.managed_cpu_5h_reset_in,

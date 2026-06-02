@@ -6,6 +6,8 @@
 const queryMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
 const listActiveAbuseReviewAnnotationsMock = jest.fn();
+const ensureAccountUsageWindowsForEventMock = jest.fn();
+const getActiveAccountUsageWindowsMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -22,6 +24,13 @@ jest.mock("./project-usage", () => ({
 jest.mock("./abuse-review-annotations", () => ({
   listActiveAbuseReviewAnnotations: (...args: any[]) =>
     listActiveAbuseReviewAnnotationsMock(...args),
+}));
+
+jest.mock("./usage-windows", () => ({
+  ensureAccountUsageWindowsForEvent: (...args: any[]) =>
+    ensureAccountUsageWindowsForEventMock(...args),
+  getActiveAccountUsageWindows: (...args: any[]) =>
+    getActiveAccountUsageWindowsMock(...args),
 }));
 
 function mockSchemaQueries() {
@@ -42,7 +51,20 @@ describe("managed CPU usage accounting", () => {
     queryMock.mockReset();
     getProjectUsageAccountIdMock.mockReset();
     listActiveAbuseReviewAnnotationsMock.mockReset();
+    ensureAccountUsageWindowsForEventMock.mockReset();
+    getActiveAccountUsageWindowsMock.mockReset();
     listActiveAbuseReviewAnnotationsMock.mockResolvedValue([]);
+    ensureAccountUsageWindowsForEventMock.mockResolvedValue({});
+    getActiveAccountUsageWindowsMock.mockResolvedValue({
+      "5h": {
+        starts_at: new Date("2026-05-30T08:00:00.000Z"),
+        resets_at: new Date("2026-05-30T13:00:00.000Z"),
+      },
+      "7d": {
+        starts_at: new Date("2026-05-29T08:00:00.000Z"),
+        resets_at: new Date("2026-06-05T08:00:00.000Z"),
+      },
+    });
     mockSchemaQueries();
   });
 
@@ -82,6 +104,11 @@ describe("managed CPU usage accounting", () => {
         metadata: { runtime_key: "runtime-1" },
       }),
     ).resolves.toEqual({ recorded: true, account_id: "account-1" });
+    expect(ensureAccountUsageWindowsForEventMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      family: "managed_cpu",
+      occurred_at: new Date("2026-05-30T10:01:00.000Z"),
+    });
   });
 
   it("ignores invalid CPU deltas", async () => {
@@ -96,7 +123,7 @@ describe("managed CPU usage accounting", () => {
   });
 
   it("aggregates 5-hour and 7-day windows for an account", async () => {
-    queryMock.mockImplementation(async (sql: string) => {
+    queryMock.mockImplementation(async (sql: string, params?: any[]) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_cpu_usage_events") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_cpu_usage_events_")
@@ -104,24 +131,15 @@ describe("managed CPU usage accounting", () => {
         return { rows: [] };
       }
       if (sql.includes("AS seconds_5h")) {
+        expect(params).toEqual([
+          "account-1",
+          new Date("2026-05-30T08:00:00.000Z"),
+          new Date("2026-05-30T13:00:00.000Z"),
+          new Date("2026-05-29T08:00:00.000Z"),
+          new Date("2026-06-05T08:00:00.000Z"),
+        ]);
         return {
           rows: [{ seconds_5h: "120.5", seconds_7d: "900.25" }],
-        };
-      }
-      if (
-        sql.includes("SELECT sample_ended_at") &&
-        sql.includes("interval '5 hours'")
-      ) {
-        return {
-          rows: [{ sample_ended_at: "2026-05-30T08:00:00.000Z" }],
-        };
-      }
-      if (
-        sql.includes("SELECT sample_ended_at") &&
-        sql.includes("interval '7 days'")
-      ) {
-        return {
-          rows: [{ sample_ended_at: "2026-05-29T08:00:00.000Z" }],
         };
       }
       throw new Error(`unhandled query: ${sql}`);

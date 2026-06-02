@@ -380,9 +380,31 @@ Contextual integration points:
 
 ### Phase 1: Inventory And DTO
 
+Status: started.
+
+Completed first backend slice:
+
+- added lazy-created fixed account usage window tables and epoch/reset audit
+  tables in `src/packages/server/membership/usage-windows.ts`;
+- added fixed 5h/7d window creation on first account-attributed AI, managed
+  CPU, and managed egress usage;
+- changed account AI, managed CPU, and managed egress usage reads to aggregate
+  against the active fixed window instead of a sliding `now() - interval ...`
+  window;
+- preserved historical event/log tables for admin history and audit;
+- added backend helper support for epoch bumps/global reset semantics, but not
+  yet the fresh-auth admin RPC/UI.
+
+Remaining:
+
+- add the fresh-auth admin reset RPC and audit-facing tests;
+- add the normalized `AccountUsageOverview` DTO;
+- build the user-facing dashboard.
+
 - Replace user-facing sliding-window accounting with fixed account windows for
-  AI, managed CPU, and managed egress.
-- Add epoch/global reset tables and backend helpers.
+  AI, managed CPU, and managed egress. (first slice complete)
+- Add epoch/global reset tables and backend helpers. (helper complete; admin RPC
+  pending)
 - Add an `AccountUsageOverview` builder that combines:
   - `getMembershipDetails({ refresh_usage_status: true })`;
   - `getAIUsageStatus`;
