@@ -1,105 +1,105 @@
-# CoCalc-ai Docs and Deep Actions Plan
+# CoCalc-ai Docs and Actions Release Plan
 
-Status: active implementation plan, implementation is launchable beta
+Status: launchable beta; production hardening remains
 Date: 2026-06-01
 
-## Goal
+## Purpose
 
-Build a CoCalc-ai documentation system that matches the running product,
-answers user and agent questions accurately, and can drive users directly to
-the relevant UI state.
+CoCalc-ai now has integrated documentation that is versioned with the running
+product, searchable by humans and agents, and connected to safe UI actions. This
+replaces links to the legacy `https://doc.cocalc.com/` documentation, which
+describes the previous generation of CoCalc and is misleading for CoCalc-ai.
 
-This replaces links to the legacy `https://doc.cocalc.com/` documentation,
-which describes the previous generation of CoCalc and is misleading for
-CoCalc-ai.
+The system supports three surfaces:
 
-The system should support three related surfaces:
+- Public human docs at `/docs`, available without sign-in.
+- Signed-in docs at `/app-docs` and in the project flyout.
+- Agent-readable docs and safe UI actions through `cocalc docs ...`,
+  `cocalc browser action docs ...`, and the CoCalc docs Codex skill.
 
-- Human docs at `/docs`, served by the same CoCalc-ai instance and therefore
-  matching the deployed product version.
-- Agent-readable docs and search exposed through `cocalc-cli` and a Codex
-  skill.
-- Deep actions that let docs and agents open specific CoCalc UI destinations,
-  such as `settings.environment.secrets`, without brittle selector automation.
+## Release Readiness
 
-## Current Implementation Snapshot
+This is ready for a first production release as a beta. The core product surface
+exists, static release gates are green, and every executable docs action has a
+live verification scenario.
 
-As of 2026-06-01, the docs system is a launchable beta, not just a vertical
-slice:
+Current static docs verification:
 
-- `src/packages/docs` owns bundled docs entries, topic-split content, chapter
-  metadata, search, action metadata, and static/live verification.
-- Public `/docs` exists and does not require sign-in.
-- In-app `/app-docs` exists with refresh-safe routing, persisted selected page,
-  and a global navbar tab.
-- Project-level docs exist in the project flyout. Project-context actions can
-  preselect the current project.
-- Public docs and in-app docs share the same source content but use different
-  routes so refreshes do not fall through to the public landing app.
+- Entries: 61.
+- Actions: 53.
+- Live scenarios: 53.
+- Legacy `doc.cocalc.com` links: 0.
+- `/app-docs` links: 27.
+- Categories without chapters: 0.
+- Pages without actions: 0.
+- Pages without asserted live verification: 0.
+- Pages with stale `lastReviewed`: 0.
+- Intentionally actionless pages: 13.
+
+The intentionally actionless pages are reference, troubleshooting, or
+context-dependent workflows where a single safe UI destination would be
+misleading. For example, course assignment creation requires choosing a
+specific `.course` file, and a project may contain many courses or none.
+
+## Implemented Surface
+
+- `src/packages/docs` owns docs entries, topic-split content, chapter metadata,
+  search, action metadata, and static/live verification.
+- Public `/docs` does not require sign-in.
+- In-app `/app-docs` has refresh-safe routing, persisted selected page, and a
+  global navbar tab.
+- Project flyout docs can preselect the current project for project-scoped
+  actions.
+- Public and in-app docs share the same source content but use separate routes.
 - Lite/cocalc-plus filtering hides or adapts pages that do not apply to the
   single-user local desktop model.
-- The docs browser has:
-  - image-backed cards;
-  - chapter landing cards with summaries, workflows, and start/continue/review
-    actions;
-  - a table-of-contents overview;
-  - linear next/previous navigation inside chapters;
-  - next/previous chapter navigation;
-  - subtle viewed link coloring;
-  - explicit "Done - I learned this page" progress;
-  - private notes and star state;
-  - JSON import/export of private state.
+- The docs browser includes image-backed cards, chapter landing cards, table of
+  contents, linear next/previous navigation, next/previous chapter navigation,
+  explicit learned progress, viewed link coloring, private notes, stars, and
+  JSON import/export.
 - Print-friendly docs exist for public and in-app contexts.
 - In-app docs can open a standalone print/download window and can download a
   self-contained HTML file with embedded images.
-- `cocalc docs list/search/show/actions/action/verify` exists for local bundled
-  docs.
+- `cocalc docs list/search/show/actions/action/verify/skill-context` exists for
+  bundled docs.
 - `cocalc browser action docs-list` and `cocalc browser action docs <id>` expose
   live action availability and execution in a target browser session.
 - The docs action registry supports project parameters and project-host
-  parameters, including selecting a specific host or project before opening the
-  target UI.
-- Project-host documentation is now substantial: access/RAM, moving projects,
-  lifecycle, spot recovery, change rules, reliability, software/daemon
-  lifecycle, storage, shared `/scratch`, and logs.
-- Static verification is green as of this snapshot:
-  - 61 entries
-  - 53 actions
-  - 53 live scenarios
-  - 0 legacy `doc.cocalc.com` links
+  parameters.
+- Project-host docs cover access/RAM, moving projects, lifecycle, spot
+  recovery, change rules, reliability, software and daemon lifecycle, storage,
+  shared `/scratch`, backups, snapshots, logs, and host selection.
+- Admin docs are modeled with admin visibility and are hidden from public docs.
+- Legacy docs links are blocked by static verification.
 
-The remaining work is production hardening: broader docs coverage, more
-executable actions where the destination is unambiguous, full live
-verification runs against real project and host parameters, Codex skill
-integration, broader private-state UI checks, and continued coverage of
-settings surfaces that mount asynchronously.
+## Verification Commands
 
-Current docs gap report:
-
-- Categories without a chapter: 0.
-- Pages without actions: 0.
-- Pages without asserted live verification: 0.
-- Intentionally actionless pages: 13.
-- Pages with stale `lastReviewed`: 0.
-- Legacy `doc.cocalc.com` links: 0.
-
-The old `course.assignment.create` action was removed intentionally. Opening
-"create assignment" requires selecting one course from possibly many `.course`
-files, and some projects have none. That is better documented as a workflow
-until there is a real course-scoped action target.
-
-## Verification Workflow
-
-The docs action system has two verification layers.
-
-Static verification checks bundled docs metadata, links, and action ids:
+Run static verification:
 
 ```sh
-cocalc docs verify
+pnpm -C src/packages/docs verify
 ```
 
-Live verification checks that executable docs actions still open the expected
-UI destinations in a real browser session:
+Run the docs gap report:
+
+```sh
+pnpm -C src/packages/docs gaps
+```
+
+The root `src` test command also runs the static docs checks:
+
+```sh
+pnpm -C src test
+```
+
+Run live verification against the active browser session:
+
+```sh
+cd src && eval "$(pnpm -s dev:hub:env)"
+cocalc docs verify --live --project-id "$COCALC_PROJECT_ID"
+```
+
+Run live verification with a dedicated spawned Chromium session:
 
 ```sh
 cd src && eval "$(pnpm -s dev:hub:env)"
@@ -108,852 +108,181 @@ cocalc docs verify --live --spawn-browser \
   --host-id "$COCALC_DOCS_VERIFY_HOST_ID"
 ```
 
-The spawned-browser mode launches a dedicated Chromium session, discovers its
-browser id, runs every live scenario through `cocalc browser action docs <id>`,
-then destroys the spawned session. This is the preferred manual QA command for
-docs actions because it avoids depending on whatever browser tab the developer
-happens to have open.
-
-When the local API origin is `localhost` but the signed-in account belongs to
-an externally reachable home bay, the verifier asks `/api/v2/auth/bootstrap`
-for `home_bay_url` and opens Chromium on that external project URL. This avoids
-the localhost-only failure mode where the frontend changes its Conat control
-plane to the external home bay before the spawned browser registers.
-
-For debugging, keep the spawned browser alive:
+Keep the spawned browser alive for debugging:
 
 ```sh
 cocalc docs verify --live --spawn-browser --keep-browser \
   --project-id "$COCALC_PROJECT_ID"
 ```
 
-## Product Principles
+Before using live hub, project-host, or browser automation commands, refresh the
+matching dev environment:
 
-1. Docs are versioned with the product.
-2. Docs are structured Markdown, not a separate CMS.
-3. Docs are optimized for both humans and agents.
-4. Screenshots are optional and rare; stable UI paths, action ids, and source
-   references matter more.
-5. Docs should be testable. A task doc should eventually have a Playwright or
-   browser-session verification scenario.
-6. UI actions should be typed and centralized, not arbitrary strings.
-7. Source code is context, not the primary support interface. Docs answer what
-   users should do; code is a fallback for exact implementation details.
-
-## Current Codebase Facts
-
-Relevant existing pieces:
-
-- Public app routing lives in `src/packages/frontend/public/app.tsx` and
-  `src/packages/frontend/public/routes.ts`.
-- The public shell and footer are in
-  `src/packages/frontend/public/layout/shell.tsx`.
-- Public navigation is in `src/packages/frontend/public/layout/top-nav.tsx`.
-- Legacy docs links are spread widely. `rg doc.cocalc.com src/packages` finds
-  links in public pages, editor help buttons, billing, course UI, Jupyter,
-  terminal, markdown, SSH key screens, project warnings, etc.
-- `DOC_URL` is currently defined as `https://doc.cocalc.com/` in
-  `src/packages/util/theme.ts`.
-- Field guides use
-  `FIELD_GUIDES_URL = "https://sagemathinc.github.io/cocalc-guides/"`.
-- Browser-session automation is already substantial:
-  - `src/packages/frontend/conat/browser-session`
-  - QuickJS sandbox support in `index.ts`
-  - typed browser action engine in `action-engine.ts`
-  - CLI support in `src/packages/cli/src/bin/commands/browser.ts`
-  - `cocalc browser exec-api`, `browser exec`, `browser files`, screenshot, etc.
-- Backend live document access already exists through
-  `src/packages/cli/src/bin/commands/exec.ts`, including `api.text`.
-- The old docs repo is available at `/home/user/upstream/cocalc-doc`, useful as
-  raw source material only. It should not be treated as authoritative for
-  CoCalc-ai.
-
-## Architecture Overview
-
-```text
-src/packages/docs
-  content/*.md
-  schema.ts
-  manifest.ts
-  build-index.ts
-  generated/manifest.json
-  generated/search-index.json
-        |
-        +--> public /docs renderer
-        +--> cocalc docs search/show/action
-        +--> generated Codex skill context
-        +--> docs verification scenarios
-
-src/packages/frontend/deep-actions
-  registry.ts
-  run.ts
-  browser-session-action.ts
-        |
-        +--> docs buttons
-        +--> command palette/help UI
-        +--> browser-session QuickJS action
-        +--> Codex CLI/browser integration
+```sh
+cd src && eval "$(pnpm -s dev:hub:env)"
 ```
 
-## Docs Package
+For local dev operations requiring fresh auth:
 
-Create a new package:
-
-```text
-src/packages/docs
+```sh
+cocalc auth elevate --dev
 ```
 
-This package owns docs content and generated indexes. It should not depend on
-React. It should be usable from:
+## Action Design
 
-- `@cocalc/frontend` for rendering `/docs`.
-- `@cocalc/cli` for local search/show commands.
-- tests and future docs verification tooling.
+Docs actions are stable product-level UI actions. They are not CSS selectors and
+not arbitrary browser JavaScript.
 
-Initial package shape:
+Current implementation:
 
-```text
-src/packages/docs/
-  package.json
-  tsconfig.json
-  src/
-    index.ts
-    schema.ts
-    parse.ts
-    search.ts
-    actions.ts
-    generated/
-      manifest.json
-      search-index.json
-  content/
-    index.md
-    getting-started/create-project.md
-    projects/project-secrets.md
-    projects/install-software.md
-    projects/ssh.md
-    jupyter/durable-notebooks.md
-    terminal/collaborative-terminal.md
-    teaching/course-workflow.md
-    agents/codex-chat.md
-```
-
-The first implementation can keep generated JSON checked in. A later build step
-can regenerate it automatically.
-
-## Markdown Format
-
-Use plain Markdown plus frontmatter. Avoid MDX initially.
-
-Example:
-
-~~~md
----
-id: projects.project-secrets
-slug: /docs/projects/project-secrets
-title: Project secrets
-summary: Store API keys, SSH keys, and other credentials outside project files.
-status: current
-audiences:
-  - users
-  - agents
-  - researchers
-products:
-  - cocalc-cloud
-  - launchpad
-  - rocket
-actions:
-  - settings.environment.secrets
-source_refs:
-  - src/.agents/project-secrets-design-plan-2026-05-13.md
-  - src/packages/frontend/project/settings
-verification:
-  scenario: docs/projects/project-secrets.verify.ts
-last_reviewed: 2026-05-24
----
-
-# Project secrets
-
-Use project secrets for API keys, tokens, SSH keys, and other credentials that
-should not be committed into files.
-
-```steps
-1. Open the project.
-2. Open Settings.
-3. Choose Environment.
-4. Open Secrets.
-5. Add a secret or create a project SSH key.
-```
-
-```action
-settings.environment.secrets
-```
-
-~~~
-
-Supported custom fenced blocks in v1:
-
-- `steps`
-- `callout`
-- `action`
-- `related`
-- `source-refs`
-- `verify`
-
-The parser should preserve them as structured blocks. The renderer can turn
-them into polished UI. The CLI and Codex skill can expose them as plain text.
-
-## Docs Metadata Schema
-
-Recommended TypeScript shape:
-
-```ts
-export type DocsAudience =
-  | "users"
-  | "agents"
-  | "students"
-  | "instructors"
-  | "researchers"
-  | "admins"
-  | "developers";
-
-export type DocsStatus = "current" | "draft" | "legacy" | "planned";
-
-export type DocsEntry = {
-  id: string;
-  slug: string;
-  title: string;
-  summary: string;
-  status: DocsStatus;
-  audiences: DocsAudience[];
-  products: string[];
-  actions?: DeepActionId[];
-  source_refs?: string[];
-  verification?: {
-    scenario?: string;
-    last_passed_commit?: string;
-    last_passed_at?: string;
-  };
-  last_reviewed?: string;
-  body: string;
-  blocks: DocsBlock[];
-};
-```
+- Frontend action registry:
+  `src/packages/frontend/project/docs-actions.ts`
+- Docs action metadata:
+  `src/packages/docs/src/entries/*`
+- Docs types:
+  `src/packages/docs/src/types.ts`
+- Browser-session action support:
+  `src/packages/frontend/conat/browser-session`
 
 Rules:
 
-- `id` is stable and never reused.
-- `slug` is the public route.
-- `status: legacy` is allowed only for historical compatibility pages that
-  explicitly warn the user.
-- `actions` must refer to registered deep action ids.
-- `source_refs` are source-code or `.agents` references, not external marketing
-  links.
-
-## Public `/docs`
-
-Add a docs route to the public app:
-
-- Add `PublicDocsApp` lazy import in `src/packages/frontend/public/app.tsx`.
-- Add `docs` to `PublicRoute` and `getPublicRouteFromPath` in
-  `src/packages/frontend/public/routes.ts`.
-- Add `Docs` to top nav and footer.
-- Change `DOC_URL` in `src/packages/util/theme.ts` to an app-relative docs path
-  helper or remove it in favor of a `DOCS_PATH` constant.
-- Replace public footer `Documentation` link with `/docs`.
-
-The first renderer is implemented and should stay simple:
-
-- Done: index grouped by category.
-- Done: main Markdown body.
-- Done: action buttons when an action id is available.
-- Done: chapter landing cards, table of contents, progress, linear reading,
-  and printable/downloadable single-page docs.
-- Pending: richer related-doc suggestions.
-- Pending: source/reference foldout visible to admins/developers or always
-  visible in a compact way.
-
-Do not block v1 on full-text search in the browser. A simple index page plus
-client-side filtering is enough initially; the in-app version now also searches
-account-private note text.
-
-## Legacy Docs Link Migration
-
-Before launch, remove all direct links to `https://doc.cocalc.com/` from the
-new CoCalc-ai UI.
-
-Suggested phases:
-
-1. Public pages and footer:
-   - `src/packages/frontend/public/layout/shell.tsx`
-   - `src/packages/frontend/public/support/*`
-   - `src/packages/frontend/public/features/*`
-   - `src/packages/frontend/public/features/catalog.ts`
-2. Project/editor help buttons:
-   - terminal, jupyter, latex, markdown, whiteboard, slides, course editor.
-3. Account/project operational links:
-   - SSH keys, low memory, OOM, project settings, API keys.
-4. Billing/course docs:
-   - replace with `/docs` pages only where accurate; otherwise remove or mark
-     as pending.
-
-The current static verifier treats legacy docs links as a release gate:
-
-```sh
-pnpm -C src/packages/docs verify
-```
-
-It fails if `https://doc.cocalc.com/` appears in scanned CoCalc-ai source.
-Exceptions must be explicit and temporary.
-
-## Deep Actions
-
-Deep actions are stable product-level UI actions. They are not CSS selectors and
-not arbitrary browser JavaScript.
-
-Current implementation lives in:
-
-```text
-src/packages/frontend/project/docs-actions.ts
-src/packages/docs/src/entries/*
-src/packages/docs/src/types.ts
-```
-
-The original plan described a separate `frontend/deep-actions` package. That
-may still be a reasonable future extraction, but the working implementation is
-docs-action centered and is already shared by the docs UI, browser-session
-actions, CLI verification, and tests.
-
-Current action shape:
-
-```ts
-type DocsAppAction = {
-  id: DocsActionId;
-  isAvailable?: (context: {
-    includeAdmin?: boolean;
-    projectId: string;
-  }) => string | true;
-  run: (context: {
-    includeAdmin?: boolean;
-    parameters?: DocsActionParameters;
-    projectId: string;
-  }) => DocsActionRevealResult | Promise<DocsActionRevealResult>;
-};
-```
-
-Example registry row:
-
-```ts
-{
-  id: "settings.environment.secrets",
-  label: "Open project secrets",
-  description: "Open project settings to Environment -> Secrets.",
-  isAvailable: ({ projectId }) => validateProjectId(projectId),
-  run: ({ projectId }) => revealProjectSecrets(projectId),
-}
-```
-
-Design rules:
-
 - Action ids are stable and semantic.
-- Actions may open UI, focus panels, or open modals.
-- Actions should not directly mutate dangerous state in v1.
+- Actions may open UI, focus panels, expand flyouts, or open modals.
+- Actions should not directly mutate dangerous state.
 - Destructive or credential-sensitive actions require normal UI confirmation.
-- Every registered action should have a unit test for validation and a minimal
-  browser-session smoke test when feasible.
+- Ambiguous actions should remain documented workflows until the action target
+  includes the missing context.
+- Every executable action should have static metadata validation and a live
+  browser-session scenario.
 
-### Action Acknowledgement Protocol
+### Acknowledgement Protocol
 
-Opening a mounted UI destination is easy. Opening a UI destination that first
-requires switching project tabs, opening a flyout, expanding a settings section,
-and then signaling a nested component is inherently asynchronous.
-
-For scalable docs actions, prefer the generic "open parent, signal child"
-pattern over making every modal globally independent:
+Some destinations require switching project tabs, opening a flyout, expanding a
+settings section, and signaling a nested component. Use the generic
+open-parent/signal-child pattern:
 
 1. Open the parent component that should receive the signal.
-2. Send a typed `CustomEvent` with:
-   - action id,
-   - project id or host id,
-   - target surface,
-   - request id.
-3. The receiving component performs the local UI action and dispatches a typed
+2. Send a typed `CustomEvent` containing action id, relevant id, target surface,
+   and request id.
+3. The receiving component performs the local UI action and dispatches an
    acknowledgement event with the same request id.
 4. The action runner waits up to 1 second for acknowledgement.
 5. If no acknowledgement arrives, it sends the signal again.
 6. If the second attempt also has no acknowledgement, the action returns
    `opened: true` with a warning instead of claiming full success.
 
-This keeps the system scalable: most actions only need to know how to open the
-parent surface and send a semantic event. Components that already own the modal
-or focused state simply acknowledge the event when they handle it.
+Prefer independent modal entry points only when a modal is genuinely shared
+across unrelated surfaces or when parent-surface routing becomes more fragile
+than a small centralized wrapper.
 
-Use independent modal entry points only when the modal is genuinely shared
-across many unrelated surfaces or when parent-surface routing becomes more
-fragile than a small centralized modal wrapper.
+## Current Backlog
 
-## Browser-Session Integration
+### Release Hardening
 
-Browser-session QuickJS already exposes:
+- Wire the root static docs checks into CI/release workflows so production
+  deploys fail on broken docs metadata, stale legacy links, or docs gaps.
+- Run full live verification regularly against real project and project-host
+  parameters.
+- Keep improving spawned-browser/fresh-auth reliability for local dev and CI.
+- Add focused CLI tests for `cocalc docs` commands.
+- Ensure the CoCalc Codex runtime includes or can discover the CoCalc docs
+  skill automatically.
 
-```js
-api.action(name, payload)
-api.navigate(...)
-api.click(...)
-api.type(...)
-```
+### Test Coverage
 
-Extend the allowed browser action set with a typed action:
+- Add broader browser/UI checks for in-app private docs state:
+  - note editing;
+  - import/export;
+  - filters;
+  - note-aware search;
+  - learned progress.
+- Add no-side-effects live verification mode for actions that create files or
+  terminals.
+- Keep expanding post-action DOM/state assertions as actions become more
+  specific.
 
-```ts
-name: "deep_action"
-payload: {
-  id: DeepActionId;
-  context?: DeepActionContext;
-}
-```
+### Content Coverage
 
-Then QuickJS/Codex can do:
+- Keep adding account settings, billing, licenses, cocalc-plus/lite caveats,
+  and common troubleshooting pages.
+- Expand detailed admin user sub-workflows.
+- Expand deeper admin project-host operations.
+- Add provider-specific project-host bootstrap troubleshooting.
+- Add DNS, tunnel, and network-path details for project hosts.
+- Add richer related-doc suggestions.
+- Add a compact source/reference foldout, visible either always or only to
+  admins/developers.
 
-```js
-return await api.action("deep_action", {
-  id: "settings.environment.secrets",
-  context: { project_id: api.projectId },
-});
-```
+### Future Product Integrations
 
-Add corresponding TypeScript to `BROWSER_EXEC_API_DECLARATION`, ideally with a
-convenience method:
+- Add contextual help buttons in editors and settings panels that open specific
+  docs ids.
+- Add "Ask Codex about this" from docs pages with doc id and project context.
+- Let Codex answers render trusted action buttons from docs metadata or typed
+  tool results.
+- Consider extracting docs actions into a separate deep-action package once
+  other product areas want the same action registry.
+- Consider a docs search API or static `/docs/manifest.json` and
+  `/docs/search-index.json` for tools that need the running deployment's docs.
 
-```ts
-api.deepAction("settings.environment.secrets", { project_id: api.projectId });
-```
+## Product Principles
 
-Implementation details:
+1. Docs are versioned with the product.
+2. Docs are structured data, not a separate CMS.
+3. Docs are optimized for both humans and agents.
+4. Screenshots are optional and rare; stable UI paths, action ids, and source
+   references matter more.
+5. Docs should be testable.
+6. UI actions should be typed and centralized.
+7. Source code is context, not the primary support interface.
 
-- Add `deep_action` to the browser action type definitions in
-  `@cocalc/conat/service/browser-session`.
-- Add action policy checks in `exec-utils.ts` or the existing action policy
-  location.
-- Implement in `action-engine.ts` by importing the deep action runner.
-- Audit events should include `action_name: "deep_action"` and the deep action
-  id.
-- In production posture, only allow registered actions. No raw function names.
+## Legacy Link Policy
 
-## CLI Surface
+No new `https://doc.cocalc.com/` links should be added to scanned CoCalc-ai
+source. Static verification fails on these links.
 
-Add a new top-level command:
+Use one of these replacements:
 
-```sh
-cocalc docs
-```
-
-Subcommands:
-
-```sh
-cocalc docs search <query>
-cocalc docs show <id-or-slug>
-cocalc docs list [--audience users|agents|instructors]
-cocalc docs actions [id-or-slug]
-cocalc docs action <action-id> [--project-id <id>] [--browser <id>]
-cocalc docs skill-context [--query <query>] [--limit 8]
-```
-
-Behavior:
-
-- `docs search` uses the local generated index by default.
-- Later, add `--remote` to query the running site docs API so CLI can target a
-  remote deployment version.
-- `docs action` uses browser-session automation to run a registered deep action
-  in the user’s current browser session.
-- `docs skill-context` prints compact Markdown suitable for agent context.
-
-Example:
-
-```sh
-cocalc docs search "project secrets"
-cocalc docs show projects.project-secrets
-cocalc docs action settings.environment.secrets --project-id "$COCALC_PROJECT_ID"
-```
-
-## Docs Search AI
-
-Expose a small site-local API so agents and external tools can query docs that
-match the running deployment:
-
-```text
-GET /api/docs/search?q=project%20secrets
-GET /api/docs/show?id=projects.project-secrets
-GET /api/docs/actions?id=projects.project-secrets
-```
-
-If CoCalc-ai continues to avoid new Next API routes for many domains, this can
-instead be a Conat/public hub API. For public documentation, a static JSON
-manifest served by the frontend may be enough in v1:
-
-```text
-/docs/manifest.json
-/docs/search-index.json
-```
-
-Prefer static JSON first unless authentication-sensitive docs appear.
+- `/docs/...` for public docs.
+- `/app-docs/...` for signed-in docs.
+- Project flyout docs for project-context help.
+- A field guide only when it is accurate for CoCalc-ai and intentionally
+  external.
 
 ## Codex Skill
 
-Create a generated or hand-written skill:
+The CoCalc docs skill lives at:
 
 ```text
 src/.agents/skills/cocalc-docs/SKILL.md
 ```
 
-The skill should instruct Codex to:
+Expected behavior:
 
-1. Search docs before reading source for user-facing CoCalc behavior.
+1. Search versioned docs before source code for user-facing CoCalc behavior.
 2. Use `cocalc docs search` and `cocalc docs show`.
-3. Use `cocalc docs action` or browser-session `api.deepAction` when the user
-   asks to open a specific CoCalc UI.
+3. Use `cocalc docs action` or browser-session docs actions for safe UI
+   navigation when the user asks to open a destination.
 4. Fall back to source-code search only when docs are missing or ambiguous.
-5. Report when docs are missing and propose a new task doc.
+5. Report missing docs and propose a new task doc when appropriate.
 
-Minimal skill body:
-
-```md
-# CoCalc Docs
-
-When answering how to use CoCalc-ai, search the versioned CoCalc docs first:
-
-`cocalc docs search "<query>"`
-
-Then read the relevant page:
-
-`cocalc docs show <id>`
-
-If a docs page exposes a deep action and the user asks to open the UI, use:
-
-`cocalc docs action <action-id> --project-id "$COCALC_PROJECT_ID"`
-
-If docs are absent or conflict with visible UI/source, say so and inspect the
-repo.
-```
-
-This skill can later be installed into user projects or bundled into the
-CoCalc Codex runtime.
-
-## In-App Help and Chat Integration
-
-Once docs and deep actions exist, add lightweight app integrations:
-
-- Help menu item opens `/docs`.
-- Contextual “Help” buttons in editors open specific docs ids.
-- Docs pages include “Ask Codex about this” that opens a chat thread with the
-  doc id and current project context.
-- Codex answers can render action buttons for allowed deep actions.
-
-The chat renderer should not execute actions automatically from arbitrary model
-text. It should render trusted action references only when they come from:
-
-- docs metadata,
-- a typed tool result,
-- or an explicit structured assistant message field produced by the CoCalc
-  integration.
-
-## Verification
-
-Docs should gradually become executable.
-
-For each task doc:
-
-```yaml
-verification:
-  scenario: docs/projects/project-secrets.verify.ts
-```
-
-Scenario types:
-
-- Browser-session QuickJS smoke tests for opening UI panels.
-- Playwright tests for longer flows.
-- CLI command smoke tests.
-- Static lint checks for action ids, source refs, links, and stale
-  `doc.cocalc.com` references.
-
-Initial verification gates:
-
-1. Done: all docs metadata parses.
-2. Done: all `actions` exist in the docs action registry.
-3. Done: all internal docs links resolve.
-4. Done: all `/app-docs/...` links point at real docs pages.
-5. Done: no `https://doc.cocalc.com/` links remain in scanned CoCalc-ai
-   source.
-6. Done: every executable action has a live verification scenario.
-
-Current harness:
-
-- Static checks live in `src/packages/docs/src/verification.ts`.
-- The Node entry point is `src/packages/docs/src/verify.ts`.
-- Run static checks with:
+Useful commands:
 
 ```sh
-pnpm -C src test
-pnpm -C src/packages/docs verify
-cocalc docs verify
+cocalc docs search "project secrets"
+cocalc docs show projects.project-secrets
+cocalc docs action settings.environment.secrets --project-id "$COCALC_PROJECT_ID"
+cocalc docs skill-context --query "project hosts" --limit 8
 ```
 
-- List live browser-session scenarios with:
+## Open Decisions
 
-```sh
-cocalc docs verify --list-live
-```
-
-- Run live scenarios against the active browser session with:
-
-```sh
-cd src && eval "$(pnpm -s dev:hub:env)"
-cocalc docs verify --live --project-id "$COCALC_PROJECT_ID"
-```
-
-Live verification intentionally uses docs actions instead of CSS selectors:
-
-```sh
-cocalc --json browser action docs settings.environment.secrets \
-  --project-id "$COCALC_PROJECT_ID"
-```
-
-Next verification improvements:
-
-- Keep expanding post-action DOM/state assertions as actions become more
-  specific.
-- Add a no-side-effects mode that skips actions that create files, such as
-  `project.terminal.open` and `project.jupyter.create`.
-- Done: wire root `src` `pnpm test` to static docs verification and gap
-  reporting.
-- Add CI release gates that invoke the root static docs checks before release.
-- Record scenario metadata back into docs entries once docs content moves from
-  inline TypeScript to Markdown/content files.
-
-## Initial Task Docs
-
-Start with a small set that directly matches launch questions:
-
-1. `projects.project-secrets`
-2. `projects.create-project`
-3. `projects.install-software`
-4. `projects.ssh`
-5. `projects.rootfs`
-6. `terminal.collaborative-terminal`
-7. `jupyter.durable-notebooks`
-8. `agents.codex-chat`
-9. `agents.browser-session`
-10. `teaching.course-workflow`
-11. `teaching.nbgrader`
-12. `latex.build-papers`
-13. `python.notebook-script-paper`
-14. `self-host.launchpad`
-15. `self-host.cocalc-plus`
-
-Use the field guides as narrative source material, but keep task docs short and
-operational.
-
-## Implementation Phases
-
-### Phase 0: Inventory and Redirect Strategy
-
-- Add this plan.
-- Generate an inventory of all `doc.cocalc.com` links.
-- Decide replacements:
-  - remove,
-  - replace with field guide,
-  - replace with new `/docs` task doc,
-  - temporarily mark as legacy.
-
-### Phase 1: Docs Package and Static Content
-
-- Done: Create `src/packages/docs`.
-- Done: Add typed docs entries and search helpers.
-- Done: Add initial docs pages:
-  - docs home,
-  - project secrets,
-  - open terminal,
-  - create notebook,
-  - runtime image,
-  - Codex chat.
-- Done: split docs entries and content by topic so the docs package is
-  maintainable.
-- In progress: add generated manifest/search JSON if static artifacts become
-  useful.
-- Done: add the first verification harness for schema/action/link checks.
-
-### Phase 2: Public `/docs`
-
-- Done: Add public docs route.
-- Done: Add docs renderer.
-- Done: Add a category-grouped docs index/table of contents.
-- Done: Add nav/footer links to `/docs`.
-- Done: Keep public docs free of signed-in private notes/stars UI.
-- Done: replace remaining scanned `doc.cocalc.com` links and add a static
-  verification gate.
-
-### Phase 3: CLI Docs Search
-
-- Done: Add `cocalc docs search/show/list/actions/action`.
-- Done: Package docs with CLI via `@cocalc/docs`.
-- Done: Add `cocalc docs verify`.
-- Done: Add `cocalc docs verify --live --spawn-browser`.
-- Done: Add `cocalc docs skill-context`.
-- Pending: Add focused CLI tests for docs commands.
-
-### Phase 4: Deep Action Registry
-
-- Done: Add docs action registry in `src/packages/frontend/project/docs-actions.ts`.
-- Done: Implement `settings.environment.secrets`.
-- Done: Implement `project.terminal.open`.
-- Done: Implement `project.jupyter.create`.
-- Done: Implement `settings.runtime.rootfs`.
-- Done: Implement project-host actions with optional host selector parameters.
-- Done: Implement project selector parameters for project-scoped actions.
-- Done: Implement account, billing, admin, docs navigation, files, terminal,
-  Jupyter, and common file-creation actions.
-- Done: Remove `course.assignment.create` because the target is ambiguous
-  without choosing a specific `.course` file.
-- Done: Add docs action block renderer.
-- Done: Add unit tests for action registry validity.
-- Done: Add acknowledgement/retry for actions that signal components after
-  opening flyouts or settings panels.
-
-### Phase 5: Browser-Session Deep Actions
-
-- Done: Add `docs_action` to browser-session action engine.
-- Done: Add `cocalc browser action docs-list`.
-- Done: Add `cocalc browser action docs <id>`.
-- Done: Add QuickJS convenience wrapper `api.docsAction(...)`.
-- Done: Verify executable docs actions can run in a live browser session.
-- Done: Add DOM/state assertions for the current executable action set,
-  including parameterized project and project-host actions.
-- Pending: Run full live verification regularly against real project and host
-  parameters.
-
-### Phase 6: Codex Skill
-
-- Done: Add `src/.agents/skills/cocalc-docs/SKILL.md`.
-- Pending: Ensure CoCalc Codex runtime includes or can discover the skill.
-- Add examples:
-  - “How do I set a project secret?”
-  - “Open the project secrets UI.”
-  - “How do I install a Python package?”
-
-### Phase 7: Private In-App Docs State
-
-- Done: Add account-private stars and Markdown notes for in-app docs pages.
-- Done: Add compact detail-page controls: Star and Add Note, with composer only
-  after the user asks to add a note.
-- Done: Add all/starred/unstarred/with-notes filters.
-- Done: Add note-aware in-app docs search and a "matched your private notes"
-  indicator.
-- Done: Add viewed link coloring, explicit learned checkboxes, learned progress,
-  and chapter progress affordances.
-- Done: Add JSON export/import for backup and cross-site transfer.
-- Done: Implement account conat-persist/DKV move during account rehome.
-- Done: Smoke-test account rehome from `bay-1` to `bay-0` with docs private
-  state present.
-- Pending: Add broader browser/UI checks for note editing, import/export, and
-  filter/search behavior.
-
-### Phase 8: Replace Remaining Legacy Links
-
-- Done: systematically replace or remove remaining scanned `doc.cocalc.com`
-  links.
-- Done: add a static release gate that fails on new legacy docs links.
-- Done: include the legacy-link gate in root `src` `pnpm test`.
-- Pending: keep the root test gate wired into CI/release workflows.
-
-### Phase 9: Admin Docs And Project-Host Guides
-
-Admin docs should be treated as first-class operational docs, not as public
-marketing/help pages. They should be visible by default only inside the signed-in
-app for site admins, and hidden from public `/docs`, public search, anonymous
-docs output, and SEO indexes.
-
-Add explicit docs visibility:
-
-```ts
-type DocsVisibility = "public" | "signed-in" | "admin";
-```
-
-The first admin slice should include:
-
-- Done: model/render/search support for `visibility: "admin"`;
-- Done: in-app docs filtering based on the signed-in account's admin status;
-- Done: browser docs actions that open admin destinations, so Codex can guide an
-  admin directly to the right UI;
-- Done: a few short source-derived admin pages that can later grow into many
-  "mini-skill" docs.
-- Done: global signed-in docs tab outside the project flyout, so account,
-  billing, admin, and configuration docs do not require a selected project.
-
-Initial admin docs backlog:
-
-- Done: Admin overview and safety model.
-- Done: Post system messages and urgent notices.
-- Done: Create and edit public news and event items.
-- Done: Site settings and configuration workflows.
-- Done: User management: search, impersonation, password reset, remove 2FA, ban, and
-  membership/purchase-related tools.
-- Done: Admin `cocalc-cli` cookbook: fresh auth, bay inspection, account location,
-  account rehome, project/host inspection, and smoke-test workflows.
-- Done: Bay Operations, RootFS image administration, backup shards,
-  registration tokens, and membership/software license admin docs.
-- Done: SSO and managed egress overview docs.
-- Pending: detailed user sub-workflows and deeper admin project-host operations.
-
-Project-host docs should become their own cluster because both admins and users
-interact with them:
-
-- Done: what project hosts are and how they relate to bays/projects;
-- Done: access controls and RAM;
-- Done: project moves, including region/zone caveats;
-- Done: host lifecycle/start/stop/restart/deprovision/delete;
-- Done: spot recovery strategy;
-- Done: change rules for disk, spot/standard, instance type, and region/zone;
-- Done: reliability modal concepts;
-- Done: software and daemon lifecycle;
-- Done: storage, backups, snapshots, shared `/scratch`, and logs;
-- Pending: provider-specific bootstrap troubleshooting, DNS/tunnel details, and
-  deeper admin host operations.
-
-Docs media should support both small icon-like visual hooks and larger workflow
-diagrams. Prefer optimized `.webp` assets with short hashes in filenames, plus
-stored prompt/source notes when imagegen2 is used, so regenerated assets can be
-reviewed and cache-busted intentionally.
-
-## Open Questions
-
-- Resolved: docs content and metadata live in `src/packages/docs/src`.
-- Resolved: there is both public `/docs` and signed-in `/app-docs`, plus
-  project flyout docs.
-- Resolved for v1: docs search is local/static, shared by frontend and CLI.
-- Resolved for v1: safe navigation/open-panel actions may run directly;
-  mutating, course-scoped, or otherwise ambiguous actions should stay as
-  documented workflows until they have an explicit target.
-- How much docs content should ship in the CLI bundle? I recommend title,
-  summary, headings, actions, and compact body text for all current docs.
-- Should Codex be allowed to execute deep actions automatically? I recommend
-  “show a button or ask confirmation” by default, with direct execution only
-  for safe navigation/open-panel actions.
-
-## First Concrete Milestone
-
-The original first concrete milestone is complete enough to use:
-
-1. Done: `src/packages/docs` with `projects.project-secrets`.
-2. Done: `/docs/projects/project-secrets` page.
-3. Done: `settings.environment.secrets` docs action in frontend.
-4. Done: `cocalc docs search project secrets`.
-5. Done: `cocalc docs show projects.project-secrets`.
-6. Done: `cocalc browser action docs settings.environment.secrets`.
-7. Done: Codex skill instruction for using the docs command.
-8. Done: browser-session verification harness with live execution and selected
-   UI assertions.
-
-The current milestone is to harden the launch surface: wire the root docs gate
-into CI/release workflows, run live verification against real project and host
-parameters regularly, ensure the CoCalc Codex runtime discovers the docs skill,
-and continue filling launch-critical account, billing, admin, project-host,
-teaching, and troubleshooting docs.
+- How much docs content should ship in the CLI bundle long term? Current
+  recommendation: title, summary, headings, actions, and compact body text for
+  all current docs.
+- Should Codex execute safe docs actions automatically? Current recommendation:
+  direct execution is acceptable for safe navigation/open-panel actions when the
+  user explicitly asks; otherwise render a button or ask confirmation.
+- Should source references be visible to all users or only admins/developers?
+  Current recommendation: keep them compact and available, but not visually
+  dominant.
