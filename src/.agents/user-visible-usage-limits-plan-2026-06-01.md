@@ -408,11 +408,13 @@ Completed first backend slice:
 - added a fresh-auth-required admin RPC for resetting one or both shared account
   usage windows;
 - added a fresh-auth admin UI control in `CPU & Abuse Signals` for resetting
-  the shared 5-hour window, 7-day window, or both with a required audit reason.
+  the shared 5-hour window, 7-day window, or both with a required audit reason;
+- added the normalized `AccountUsageOverview` backend DTO and purchases RPC for
+  AI, managed CPU, managed egress, dedicated-host prepaid/postpaid spend,
+  project storage, project count, RootFS, and blob meters.
 
 Remaining:
 
-- add the normalized `AccountUsageOverview` DTO;
 - build the user-facing dashboard.
 
 - Replace user-facing sliding-window accounting with shared fixed account
@@ -425,6 +427,7 @@ Remaining:
   - `getMembershipDetails({ refresh_usage_status: true })`;
   - `getAIUsageStatus`;
   - normalized effective membership limits.
+    (complete for currently available meters)
 - Add focused unit tests for:
   - fixed-window creation on first metered usage;
   - fixed-window aggregation;
@@ -541,6 +544,7 @@ Start with backend fixed-window semantics before building the user dashboard:
    - projects;
    - RootFS;
    - blobs.
+     (complete)
 5. Build the `Usage & Limits` page from that DTO.
 
 This gives the user-visible page with high value and low implementation risk.

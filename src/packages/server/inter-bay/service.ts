@@ -164,6 +164,7 @@ import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
+import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import {
   clearAccountEntitlementOverrideLocal,
   getAccountEntitlementOverrideLocal,
@@ -742,6 +743,8 @@ async function startAccountLocalService(): Promise<void> {
       await resolveMembershipDetailsForAccount(account_id, {
         refresh_usage_status,
       }),
+    getAccountUsageOverview: async ({ account_id }) =>
+      await getAccountUsageOverviewForAccount({ account_id }),
     getAccountEntitlementOverride: async ({ account_id }) =>
       await getAccountEntitlementOverrideLocal(account_id),
     setAccountEntitlementOverride: async ({
