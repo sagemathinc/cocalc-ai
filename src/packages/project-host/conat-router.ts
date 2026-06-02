@@ -33,6 +33,22 @@ import { createProxyHandlers } from "@cocalc/project-proxy/proxy";
 import { createProjectHostConatAuth } from "./conat-auth";
 
 const logger = getLogger("project-host:conat-router");
+const LONG_LIVED_HTTP_TIMEOUT_MS = Math.max(
+  60_000,
+  Number(
+    process.env.COCALC_PROJECT_HOST_HTTP_KEEPALIVE_TIMEOUT_MS ?? 120_000,
+  ) || 120_000,
+);
+
+function configureLongLivedHttpServer(httpServer: HttpServer): void {
+  // Project-host ingress carries socket.io websocket traffic. Node's short
+  // default keep-alive timeout can otherwise close quiet upgraded connections
+  // before socket.io's own ping interval gets a chance to run.
+  httpServer.keepAliveTimeout = LONG_LIVED_HTTP_TIMEOUT_MS;
+  httpServer.headersTimeout = LONG_LIVED_HTTP_TIMEOUT_MS + 5_000;
+  httpServer.requestTimeout = 0;
+  httpServer.setTimeout(0);
+}
 
 function parsePositiveInteger(
   raw: string | undefined,
@@ -290,6 +306,7 @@ export async function startStandaloneProjectHostConatRouter({
     res.json({ ok: true, ready: true });
   });
   const httpServer = createHttpServer(app);
+  configureLongLivedHttpServer(httpServer);
   httpServer.listen(bindPort, bindHost);
   await once(httpServer, "listening");
   const conatServer = await startProjectHostConatRouterServer({
@@ -313,6 +330,7 @@ export async function startStandaloneProjectHostConatRouter({
       res.json({ ok: true, ready: true });
     });
     ingressHttpServer = createHttpServer(ingressApp);
+    configureLongLivedHttpServer(ingressHttpServer);
     attachProjectHostConatRouterProxy({
       app: ingressApp,
       httpServer: ingressHttpServer,

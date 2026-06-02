@@ -30,6 +30,7 @@ import {
 } from "@cocalc/project-runner/run/rootfs";
 import {
   networkArgument,
+  podmanRuntimeArgs,
   resolveSharedScratchMount,
 } from "@cocalc/project-runner/run/podman";
 import { mountArg } from "@cocalc/backend/podman";
@@ -993,7 +994,7 @@ async function ensureContainer({
   }
 
   const args: string[] = [];
-  args.push("run", "--runtime", "/usr/bin/crun", "--detach", "--rm");
+  args.push("run", ...(await podmanRuntimeArgs()), "--detach", "--rm");
   // Codex should see the same sudo-capable project environment as terminals.
   args.push(
     `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,

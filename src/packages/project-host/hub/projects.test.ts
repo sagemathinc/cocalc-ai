@@ -179,7 +179,10 @@ describe("project host start ACP rehydrate ordering", () => {
     const { resetPortBindStateForTesting } = await import("./projects");
     resetPortBindStateForTesting();
     (hubApi.projects as any) = {};
-    getProject.mockReturnValue({ image: "ubuntu2404", run_quota: undefined });
+    getProject.mockReturnValue({
+      image: DEFAULT_PROJECT_IMAGE,
+      run_quota: undefined,
+    });
     getOrCreateProjectLocalSecretToken.mockReturnValue("secret");
     applyPendingCopies.mockResolvedValue(undefined);
     writeManagedAuthorizedKeys.mockResolvedValue(undefined);
@@ -440,6 +443,32 @@ describe("project host start ACP rehydrate ordering", () => {
     });
   });
 
+  it("rejects invalid explicit rootfs image names on createProject", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(
+      hubApi.projects.createProject({
+        project_id,
+        image: "ubuntu26.04",
+        start: true,
+      }),
+    ).rejects.toThrow(
+      "invalid rootfs OCI image 'ubuntu26.04'; use a valid image reference such as 'ubuntu:26.04'",
+    );
+
+    expect(runnerApi.start).not.toHaveBeenCalled();
+  });
+
   it("preserves explicit rootfs image names on start()", async () => {
     const runnerApi = {
       start: jest.fn(async () => ({
@@ -464,6 +493,27 @@ describe("project host start ACP rehydrate ordering", () => {
         http_port: 45123,
       }),
     });
+  });
+
+  it("rejects invalid persisted rootfs image names on start()", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({ image: "ubuntu26.04", run_quota: undefined });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(hubApi.projects.start({ project_id })).rejects.toThrow(
+      "invalid rootfs OCI image 'ubuntu26.04'; use a valid image reference such as 'ubuntu:26.04'",
+    );
+
+    expect(runnerApi.start).not.toHaveBeenCalled();
   });
 
   it("retries start with rotated ports when pasta reports a bind collision", async () => {

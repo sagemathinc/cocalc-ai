@@ -586,7 +586,10 @@ export async function ensureLocalPostgres(opts?: {
   let socketDir = resolveSocketDir(dataDir);
   ensureDir(dataDir, 0o700);
 
-  const adminUser = process.env.USER ?? "postgres";
+  const adminUser =
+    process.env.COCALC_LOCAL_POSTGRES_ADMIN_USER ??
+    process.env.USER ??
+    "postgres";
   const pgVersionFile = join(dataDir, "PG_VERSION");
   if (!existsSync(pgVersionFile)) {
     if (isSocketActive(socketDir, adminUser, bins.pgIsReady, bins.psql)) {

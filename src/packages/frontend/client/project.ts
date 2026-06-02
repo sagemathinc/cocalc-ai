@@ -11,9 +11,9 @@ import { readFile, type ReadFileOptions } from "@cocalc/conat/files/read";
 import { writeFile, type WriteFileOptions } from "@cocalc/conat/files/write";
 import { projectSubject, EXEC_STREAM_SERVICE } from "@cocalc/conat/names";
 import { redux } from "@cocalc/frontend/app-framework";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { dialogs } from "@cocalc/frontend/i18n";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
+import { projectReadFileURL } from "@cocalc/frontend/lib/cocalc-urls";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { API } from "@cocalc/frontend/project/websocket/api";
 import { connection_to_project } from "@cocalc/frontend/project/websocket/connect";
@@ -30,7 +30,6 @@ import {
 import {
   copy_without,
   defaults,
-  encode_path,
   is_valid_uuid_string,
   required,
 } from "@cocalc/util/misc";
@@ -125,12 +124,7 @@ export class ProjectClient {
     project_id: string; // string or array of strings
     path: string; // string or array of strings
   }): string => {
-    const base_path = appBasePath;
-    const encodedPath = opts.path.startsWith("/")
-      ? `%2F${encode_path(opts.path.slice(1))}`
-      : encode_path(opts.path);
-    const base = base_path.endsWith("/") ? base_path.slice(0, -1) : base_path;
-    return `${base}/${opts.project_id}/files/${encodedPath}`;
+    return projectReadFileURL(opts);
   };
 
   copyPathBetweenProjects = async (opts: {

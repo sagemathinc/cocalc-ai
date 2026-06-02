@@ -9,7 +9,10 @@ import type {
   ProjectRootfsStateEntry,
   ProjectRootfsStateRole,
 } from "@cocalc/util/rootfs-images";
-import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
+import {
+  assertValidRootfsImageName,
+  isManagedRootfsImageName,
+} from "@cocalc/util/rootfs-images";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 
 type RootfsStateRow = {
@@ -64,7 +67,7 @@ async function resolveManagedBinding({
   image_id?: string;
 }): Promise<ProjectRootfsBinding> {
   const pool = getPool("medium");
-  const runtimeImage = trimString(image);
+  const runtimeImage = assertValidRootfsImageName(image);
   if (!runtimeImage) {
     throw new Error("rootfs image is required");
   }

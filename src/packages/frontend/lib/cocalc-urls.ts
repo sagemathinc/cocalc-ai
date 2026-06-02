@@ -7,6 +7,14 @@ import { join } from "path";
 import { encode_path } from "@cocalc/util/misc";
 
 // URL to use http to download a file from a project that you collaborate on.
+export function projectFileBasePath(project_id: string): string {
+  const normalizedBase =
+    appBasePath.length > 1 ? appBasePath.replace(/\/+$/, "") : appBasePath;
+  return normalizedBase.endsWith(`/${project_id}`)
+    ? normalizedBase
+    : join(appBasePath, project_id);
+}
+
 export function fileURL({
   project_id,
   path,
@@ -16,11 +24,24 @@ export function fileURL({
   path: string;
   param?: string;
 }): string {
-  let url = join(appBasePath, project_id, "files", encode_path(path));
+  let url = join(projectFileBasePath(project_id), "files", encode_path(path));
   if (param) {
     url += "?" + param;
   }
   return url;
+}
+
+export function projectReadFileURL({
+  project_id,
+  path,
+}: {
+  project_id: string;
+  path: string;
+}): string {
+  const encodedPath = path.startsWith("/")
+    ? `%2F${encode_path(path.slice(1))}`
+    : encode_path(path);
+  return `${projectFileBasePath(project_id)}/files/${encodedPath}`;
 }
 
 function getOrigin(): string {

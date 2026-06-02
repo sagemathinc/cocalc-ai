@@ -4,7 +4,7 @@ import { argsJoin } from "@cocalc/util/args";
 import { localPath } from "./filesystem";
 import { getImageNamePath, mount as mountRootFs, unmount } from "./rootfs";
 import { readFile } from "fs/promises";
-import { networkArgument } from "./podman";
+import { networkArgument, podmanRuntimeArgs } from "./podman";
 import { mountArg } from "@cocalc/backend/podman";
 import { getEnvironment } from "./env";
 import { join } from "node:path";
@@ -141,7 +141,7 @@ export async function sandboxExec({
       });
 
       // Build a one-off container run.
-      args.push("run", "--runtime", "/usr/bin/crun", "--rm", "-i");
+      args.push("run", ...(await podmanRuntimeArgs()), "--rm", "-i");
       // Match the main project runtime so sudo and setuid helpers behave the
       // same way in ephemeral sidecars.
       args.push(

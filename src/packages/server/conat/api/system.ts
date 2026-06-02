@@ -2926,7 +2926,7 @@ function emailSetupState(settings: any): SiteSetupStep {
       hard_gate: false,
       admin_section: "site-settings",
       summary:
-        "Email is skipped. This is acceptable for small Launchpad/Rocket sites where users can coordinate out of band.",
+        "Email is skipped. This is acceptable for small sites where users can coordinate out of band.",
       details: [
         "Email verification UI stays hidden when email is disabled.",
         "Admins can still generate password reset links for users.",
@@ -3031,23 +3031,50 @@ export async function getSiteSetupStatus({
     const rootfsReady =
       !!defaultRootfsImage &&
       (!prepullImages || prepullImages.includes(defaultRootfsImage));
+    const smokeReady = healthyProjectHosts > 0 && rootfsReady;
     const steps: SiteSetupStep[] = [
       setupStep({
+        id: "admin-account",
+        title: "Admin Account",
+        state: "done",
+        summary:
+          "The first administrator account exists and can manage this Star appliance.",
+        details: [
+          "This is the only account requirement for a usable zero-conf Star install.",
+          "Keep normal signups closed until the local smoke path has been checked.",
+        ],
+      }),
+      setupStep({
+        id: "smoke-test",
+        title: "Smoke Test",
+        state: smokeReady ? "done" : "blocked",
+        summary: smokeReady
+          ? "The local host and default project image are ready for the required smoke test."
+          : "Smoke testing is blocked until the local project host and default project image are ready.",
+        details: [
+          "Required operator check: create a project, start it, open a terminal, and open Jupyter.",
+          "The installer-level smoke test covers project creation, file listing, exec, SSH info, Jupyter executable, and LaTeX executable.",
+          "A follow-up should persist the most recent browser smoke-test result instead of deriving this from prerequisites.",
+        ],
+      }),
+      setupStep({
         id: "admin-2fa",
-        title: "Admin Account Security",
-        state: has2fa ? "done" : "blocked",
+        title: "Admin Two-Factor Authentication",
+        state: has2fa ? "done" : "warning",
+        hard_gate: false,
         summary: has2fa
           ? "Your admin account has an active second factor."
-          : "Enable 2FA before inviting users; admin operations require it.",
+          : "2FA is recommended before inviting users, but it is not required for initial Star setup.",
         details: [
-          "The first account is the Star appliance admin.",
-          "Keep normal signups closed until the local smoke path is checked.",
+          "Star should be useful immediately after bootstrap; 2FA belongs in the recommended-before-users checklist.",
+          "Some high-risk admin operations may still require fresh authentication.",
         ],
       }),
       setupStep({
         id: "project-host",
         title: "Local Project Host",
-        state: healthyProjectHosts > 0 ? "done" : "blocked",
+        state: healthyProjectHosts > 0 ? "done" : "warning",
+        hard_gate: false,
         summary:
           healthyProjectHosts > 0
             ? `${healthyProjectHosts} local project host${healthyProjectHosts === 1 ? "" : "s"} healthy.`
@@ -3055,6 +3082,9 @@ export async function getSiteSetupStatus({
         details: [
           "Star should have one local project host created by the installer.",
           "No Cloudflare, GCP, Nebius, AWS, or Azure setup is needed for this profile.",
+          healthyProjectHosts > 0
+            ? "This supports the required smoke test."
+            : "A broken local host means projects will not start, but the fix is appliance repair rather than cloud-provider setup.",
         ],
       }),
       setupStep({
@@ -3074,7 +3104,8 @@ export async function getSiteSetupStatus({
       setupStep({
         id: "rootfs",
         title: "Default Project Image",
-        state: rootfsReady ? "done" : "blocked",
+        state: rootfsReady ? "done" : "warning",
+        hard_gate: false,
         admin_section: "rootfs",
         summary: rootfsReady
           ? `Default project image is ${defaultRootfsImage}.`
@@ -3086,19 +3117,44 @@ export async function getSiteSetupStatus({
           "The image should be prepulled or locally cached so first project startup is predictable.",
         ],
       }),
-      emailSetupState(settings),
       setupStep({
-        id: "smoke-test",
-        title: "Manual Smoke Test",
-        state: healthyProjectHosts > 0 && rootfsReady ? "manual" : "blocked",
+        id: "license",
+        title: "License Code",
+        state: "optional",
         hard_gate: false,
         summary:
-          healthyProjectHosts > 0 && rootfsReady
-            ? "Create a project, start it, open a terminal, and open Jupyter."
-            : "Smoke testing is blocked until the local host and default image are ready.",
+          "License entry is deferred; the free appliance should remain useful without a code.",
         details: [
-          "The installer-level smoke test already covers project creation, file listing, exec, SSH info, Jupyter executable, and LaTeX executable.",
-          "This UI step is the human browser-level confirmation.",
+          "Later, a license should unlock higher limits, supported upgrades, or paid support.",
+          "It should not block first successful install, project start, or local Jupyter usage.",
+        ],
+      }),
+      emailSetupState(settings),
+      setupStep({
+        id: "tls-public-url",
+        title: "TLS And Public URL",
+        state: siteDns ? "manual" : "optional",
+        hard_gate: false,
+        admin_section: "site-settings",
+        summary: siteDns
+          ? `Public URL/DNS setting is ${siteDns}; configure Caddy/Let's Encrypt when exposing this VM.`
+          : "TLS and DNS are optional. Star can be tested over localhost, LAN, VPN, or SSH tunnel.",
+        details: [
+          "Supported path: Caddy with Let's Encrypt after DNS points at the VM.",
+          "Do not require DNS or TLS for the first useful appliance experience.",
+        ],
+      }),
+      setupStep({
+        id: "custom-rootfs",
+        title: "Custom RootFS",
+        state: "optional",
+        hard_gate: false,
+        admin_section: "rootfs",
+        summary:
+          "Custom project images are supported after the default image works.",
+        details: [
+          "The default image should be enough for terminal, Jupyter, and LaTeX smoke testing.",
+          "GPU-specific images should be tested on GPU VMs during manual provider validation.",
         ],
       }),
       setupStep({

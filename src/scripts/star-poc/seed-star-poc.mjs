@@ -9,8 +9,10 @@ const require = createRequire(import.meta.url);
 const hostId =
   process.env.STAR_PROJECT_HOST_ID ?? "11111111-1111-4111-8111-111111111111";
 const hostName = process.env.STAR_PROJECT_HOST_NAME ?? "star-local";
+const hostRegion = process.env.STAR_PROJECT_HOST_REGION ?? "wnam";
 const baseUrl = process.env.STAR_BASE_URL ?? "http://127.0.0.1:9100";
 const defaultRootfsImage = process.env.STAR_DEFAULT_ROOTFS_IMAGE;
+const hasGpu = process.env.STAR_HAS_GPU === "1";
 const masterTokenPath =
   process.env.STAR_MASTER_CONAT_TOKEN_PATH ??
   "/var/lib/cocalc/star/project-host/0/secrets/master-conat-token";
@@ -84,7 +86,7 @@ await upsertProjectHost({
   id: hostId,
   bay_id: "bay-0",
   name: hostName,
-  region: "local",
+  region: hostRegion,
   public_url: null,
   internal_url: "http://127.0.0.1:9002",
   ssh_server: "127.0.0.1:2222",
@@ -95,8 +97,10 @@ await upsertProjectHost({
     local: true,
     machine: {
       cloud: "self-host",
+      ...(hasGpu ? { gpu_type: "nvidia", gpu_count: 1 } : {}),
       metadata: {
         self_host_mode: "local",
+        ...(hasGpu ? { gpu_detected: true } : {}),
       },
     },
     self_host: {

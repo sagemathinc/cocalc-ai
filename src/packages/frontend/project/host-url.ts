@@ -20,6 +20,19 @@ export function getProjectHostBase(project_id: string): string {
   return info.get("connect_url") || "";
 }
 
+function pathAlreadyStartsWithProject(
+  project_id: string,
+  path: string,
+): boolean {
+  return path === `/${project_id}` || path.startsWith(`/${project_id}/`);
+}
+
+function projectScopedBrowserPath(project_id: string, path: string): string {
+  return pathAlreadyStartsWithProject(project_id, path)
+    ? path
+    : `/${project_id}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 export function withProjectHostBase(
   project_id: string,
   url?: string,
@@ -34,7 +47,7 @@ export function withProjectHostBase(
       if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") {
         const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
         const path = parsed.pathname + parsed.search + parsed.hash;
-        return `${window.location.origin}${basePath}/${project_id}${path}`;
+        return `${window.location.origin}${basePath}${projectScopedBrowserPath(project_id, path)}`;
       }
     } catch {
       return url;
@@ -47,7 +60,7 @@ export function withProjectHostBase(
       const parsed = new URL(url);
       const baseTrimmed = base.endsWith("/") ? base.slice(0, -1) : base;
       const path = parsed.pathname + parsed.search + parsed.hash;
-      return `${baseTrimmed}${path}`;
+      return `${baseTrimmed}${projectScopedBrowserPath(project_id, path)}`;
     } catch {
       return url;
     }
