@@ -1,7 +1,27 @@
 #!/usr/bin/env node
 
-const rootfsBase = require("@cocalc/project-runner/run/rootfs-base");
-const rootfsNormalize = require("@cocalc/project-runner/run/rootfs-normalize");
+const { join } = require("node:path");
+
+function requireProjectRunner(module) {
+  try {
+    return require(`@cocalc/project-runner/run/${module}`);
+  } catch (err) {
+    if (err?.code !== "MODULE_NOT_FOUND") {
+      throw err;
+    }
+    return require(join(
+      process.cwd(),
+      "packages",
+      "project-runner",
+      "dist",
+      "run",
+      `${module}.js`,
+    ));
+  }
+}
+
+const rootfsBase = requireProjectRunner("rootfs-base");
+const rootfsNormalize = requireProjectRunner("rootfs-normalize");
 
 async function main() {
   const image = `${process.env.STAR_DEFAULT_ROOTFS_IMAGE ?? ""}`.trim();

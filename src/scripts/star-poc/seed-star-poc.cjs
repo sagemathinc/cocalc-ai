@@ -1,7 +1,32 @@
 #!/usr/bin/env node
 
 const { mkdirSync, writeFileSync, chmodSync } = require("node:fs");
-const { dirname } = require("node:path");
+const { dirname, join } = require("node:path");
+
+const WORKSPACE_EXPORTS = {
+  "@cocalc/database/postgres/dev":
+    "packages/database/dist/postgres/dev.js",
+  "@cocalc/database/postgres/schema":
+    "packages/database/dist/postgres/schema/index.js",
+  "@cocalc/database/pool": "packages/database/dist/pool/index.js",
+  "@cocalc/database/postgres/project-hosts":
+    "packages/database/dist/postgres/project-hosts.js",
+  "@cocalc/server/auth/bootstrap-admin":
+    "packages/server/dist/auth/bootstrap-admin.js",
+  "@cocalc/server/project-host/bootstrap-token":
+    "packages/server/dist/project-host/bootstrap-token.js",
+};
+
+function requireWorkspace(spec) {
+  try {
+    return require(spec);
+  } catch (err) {
+    if (err?.code !== "MODULE_NOT_FOUND" || WORKSPACE_EXPORTS[spec] == null) {
+      throw err;
+    }
+    return require(join(process.cwd(), WORKSPACE_EXPORTS[spec]));
+  }
+}
 
 async function main() {
   const hostId =
@@ -27,27 +52,29 @@ async function main() {
     }
     process.env.PGUSER ??= "smc";
     process.env.PGDATABASE ??= "smc";
-    const { ensureLocalPostgres } = require("@cocalc/database/postgres/dev");
+    const { ensureLocalPostgres } = requireWorkspace(
+      "@cocalc/database/postgres/dev",
+    );
     await ensureLocalPostgres({ enabled: true, logExports: false });
   } else if (process.env.COCALC_DB !== "pglite") {
     throw new Error("CoCalc Star requires COCALC_DB=pglite or local postgres");
   }
 
-  const { syncSchema } = require("@cocalc/database/postgres/schema");
-  const poolModule = require("@cocalc/database/pool");
+  const { syncSchema } = requireWorkspace("@cocalc/database/postgres/schema");
+  const poolModule = requireWorkspace("@cocalc/database/pool");
   const getPool = poolModule.default?.default ?? poolModule.default;
   if (typeof getPool !== "function") {
     throw new Error("database pool module did not export getPool");
   }
   const {
     upsertProjectHost,
-  } = require("@cocalc/database/postgres/project-hosts");
+  } = requireWorkspace("@cocalc/database/postgres/project-hosts");
   const {
     ensureBootstrapAdminToken,
-  } = require("@cocalc/server/auth/bootstrap-admin");
+  } = requireWorkspace("@cocalc/server/auth/bootstrap-admin");
   const {
     createProjectHostMasterConatToken,
-  } = require("@cocalc/server/project-host/bootstrap-token");
+  } = requireWorkspace("@cocalc/server/project-host/bootstrap-token");
 
   await syncSchema();
 
