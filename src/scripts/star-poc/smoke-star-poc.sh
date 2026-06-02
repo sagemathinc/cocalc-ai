@@ -8,6 +8,9 @@ BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-/var/lib/cocalc/star/bootstrap-result
 STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 SMOKE_NOTEBOOK_PATH="${STAR_SMOKE_NOTEBOOK_PATH:-star-smoke/smoke.ipynb}"
 STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}"
+STAR_SMOKE_NOTEBOOK="${STAR_SMOKE_NOTEBOOK:-1}"
+STAR_SMOKE_BROWSER="${STAR_SMOKE_BROWSER:-0}"
+STAR_SMOKE_BROWSER_BASE_URL="${STAR_SMOKE_BROWSER_BASE_URL:-$STAR_API}"
 
 log() {
   printf '[star-smoke] %s\n' "$*" >&2
@@ -218,6 +221,44 @@ EOF
   printf '%s\n' "$dest"
 }
 
+create_viewer_smoke_files() {
+  local project_id="$1"
+  log "creating PDF/JPEG viewer smoke files"
+  cocalc_cli --timeout 3m --rpc-timeout 2m project exec -w "$project_id" -- \
+    bash -lc 'set -euo pipefail
+mkdir -p star-smoke
+cat > star-smoke/viewer-test.tex <<'"'"'EOF'"'"'
+\documentclass{article}
+\title{Viewer Test}
+\author{CoCalc Star}
+\begin{document}
+\maketitle
+Hello PDF
+\end{document}
+EOF
+latexmk -pdf -interaction=nonstopmode -outdir=star-smoke star-smoke/viewer-test.tex >/tmp/star-smoke-latexmk.log
+cat <<'"'"'EOF'"'"' | base64 -d > star-smoke/viewer-test.jpg
+/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EFBQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EFBQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EFBABAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z
+EOF
+test -s star-smoke/viewer-test.pdf
+test -s star-smoke/viewer-test.jpg
+ls -l star-smoke/viewer-test.pdf star-smoke/viewer-test.jpg' \
+    >"${STATE_DIR}/viewer-files.json"
+  require_json_field_equals "${STATE_DIR}/viewer-files.json" data.exit_code 0
+}
+
+run_browser_smoke() {
+  local project_id="$1"
+  local cookie_header
+  cookie_header="$(cat "${STATE_DIR}/cookie-header")"
+  log "running browser PDF/JPEG smoke"
+  node "${SRC_ROOT}/scripts/star-poc/browser-smoke-star-poc.mjs" \
+    --base-url "$STAR_SMOKE_BROWSER_BASE_URL" \
+    --project-id "$project_id" \
+    --cookie-header "$cookie_header" \
+    >"${STATE_DIR}/browser-smoke.json"
+}
+
 main() {
   source_node_env
   wait_for_api
@@ -282,15 +323,22 @@ echo star-ok' \
     >"${STATE_DIR}/project-exec.json"
   require_json_field_equals "${STATE_DIR}/project-exec.json" data.exit_code 0
 
-  log "uploading and running smoke notebook"
-  local notebook_src
-  notebook_src="$(write_smoke_notebook)"
-  cocalc_cli --timeout 2m --rpc-timeout 1m project file put -w "$project_id" \
-    "$notebook_src" "$SMOKE_NOTEBOOK_PATH" \
-    >"${STATE_DIR}/project-notebook-put.json"
-  cocalc_cli --timeout 4m --rpc-timeout 2m project jupyter run -w "$project_id" \
-    --path "$SMOKE_NOTEBOOK_PATH" --all-code --limit 2000 \
-    >"${STATE_DIR}/project-jupyter-run.json"
+  create_viewer_smoke_files "$project_id"
+  if [ "$STAR_SMOKE_BROWSER" = "1" ]; then
+    run_browser_smoke "$project_id"
+  fi
+
+  if [ "$STAR_SMOKE_NOTEBOOK" = "1" ]; then
+    log "uploading and running smoke notebook"
+    local notebook_src
+    notebook_src="$(write_smoke_notebook)"
+    cocalc_cli --timeout 2m --rpc-timeout 1m project file put -w "$project_id" \
+      "$notebook_src" "$SMOKE_NOTEBOOK_PATH" \
+      >"${STATE_DIR}/project-notebook-put.json"
+    cocalc_cli --timeout 4m --rpc-timeout 2m project jupyter run -w "$project_id" \
+      --path "$SMOKE_NOTEBOOK_PATH" --all-code --limit 2000 \
+      >"${STATE_DIR}/project-jupyter-run.json"
+  fi
 
   log "checking ssh-info"
   cocalc_cli --timeout 2m --rpc-timeout 1m project ssh-info -w "$project_id" >"${STATE_DIR}/project-ssh-info.json"

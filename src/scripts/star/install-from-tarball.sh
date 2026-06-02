@@ -88,10 +88,20 @@ ensure_star_user() {
     "" | *[!A-Za-z0-9._-]*) die "invalid STAR_USER: $STAR_USER" ;;
   esac
   if getent passwd "$STAR_USER" >/dev/null; then
+    local star_home
+    star_home="$(getent passwd "$STAR_USER" | cut -d: -f6)"
+    [ -n "$star_home" ] || die "could not determine home directory for $STAR_USER"
+    if [ ! -d "$star_home" ]; then
+      log "creating Star runtime home $star_home"
+      install -d -o "$STAR_USER" -g "$STAR_USER" -m 0750 "$star_home"
+    else
+      chown "$STAR_USER:$STAR_USER" "$star_home"
+    fi
     return
   fi
   log "creating Star runtime user $STAR_USER"
   useradd --create-home --shell /bin/bash "$STAR_USER"
+  chown "$STAR_USER:$STAR_USER" "$(getent passwd "$STAR_USER" | cut -d: -f6)"
 }
 
 replace_symlink() {
@@ -131,6 +141,7 @@ esac
 release_dir="${STAR_RELEASES_DIR}/${STAR_RELEASE_ID}"
 release_source="${release_dir}/source"
 previous_source=""
+release_dir_created=0
 
 [ ! -e "$release_dir" ] || die "release already exists: $release_dir"
 mkdir -p "$STAR_RELEASES_DIR"
@@ -211,6 +222,9 @@ restore_previous_release() {
   if [ "$status" -ne 0 ]; then
     log "install failed; restoring previous source link"
     rm -rf "$tmp_release"
+    if [ "$release_dir_created" = "1" ]; then
+      rm -rf "$release_dir"
+    fi
     if [ -n "$previous_source" ]; then
       replace_symlink "$previous_source" "$STAR_INSTALL_SOURCE"
     else
@@ -236,6 +250,7 @@ cat >"$tmp_release/release.json" <<EOF
 EOF
 chown -R "$STAR_USER:$STAR_USER" "$tmp_release"
 mv "$tmp_release" "$release_dir"
+release_dir_created=1
 replace_symlink "$release_source" "$STAR_INSTALL_SOURCE"
 
 INSTALLER="${STAR_INSTALL_SOURCE}/src/scripts/star/install-star.sh"
