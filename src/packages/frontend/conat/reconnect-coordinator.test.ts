@@ -420,4 +420,42 @@ describe("ReconnectCoordinator", () => {
       randomSpy.mockRestore();
     }
   });
+
+  it("can force all registered resources to reconnect in place", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const foregroundReconnect = jest.fn(async () => {});
+    const backgroundReconnect = jest.fn(async () => {});
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect: jest.fn(async () => {}),
+      isConnected: () => true,
+    });
+    const foreground = coordinator.registerResource({
+      isConnected: () => true,
+      priority: () => "foreground",
+      reconnect: foregroundReconnect,
+    });
+    const background = coordinator.registerResource({
+      isConnected: () => true,
+      priority: () => "background",
+      reconnect: backgroundReconnect,
+    });
+
+    try {
+      coordinator.requestResourceReconnects({
+        force: true,
+        includeBackground: true,
+        reason: "browser_wake",
+        resetBackoff: true,
+      });
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(foregroundReconnect).toHaveBeenCalledTimes(1);
+      expect(backgroundReconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      foreground.close();
+      background.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
 });

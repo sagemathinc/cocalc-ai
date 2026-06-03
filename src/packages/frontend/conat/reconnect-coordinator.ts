@@ -204,6 +204,24 @@ export class ReconnectCoordinator extends EventEmitter {
     };
   };
 
+  requestResourceReconnects = ({
+    includeBackground = false,
+    ...request
+  }: ReconnectResourceRequest & { includeBackground?: boolean } = {}) => {
+    for (const resource of this.resources.values()) {
+      if (resource.options.canReconnect?.() === false) {
+        continue;
+      }
+      if (
+        !includeBackground &&
+        resource.options.priority?.() === "background"
+      ) {
+        continue;
+      }
+      this.requestResourceReconnect(resource, request);
+    }
+  };
+
   requestReconnect = ({
     reason,
     priority = this.tabPriority(),
