@@ -278,13 +278,16 @@ stage_release() {
 
 restart_and_health_check() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
-    local hub_units=()
+    local restart_command="sudo systemctl daemon-reload"
     local worker_id
     for worker_id in $(seq 1 "$WORKER_COUNT"); do
-      hub_units+=("cocalc-bay-hub@${worker_id}.service")
+      restart_command+=" && sudo systemctl restart cocalc-bay-hub@${worker_id}.service"
+      restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-worker-health ${worker_id}"
     done
-    log "Restart hub workers and run health checks"
-    remote_exec "sudo systemctl restart $(printf '%q ' "${hub_units[@]}") && sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
+    restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-status"
+    restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-health"
+    log "Restart hub workers one at a time and run health checks"
+    remote_exec "$restart_command" \
       | tee "${REPORT_DIR}/bay-health.txt"
   else
     log "Restart bay services and run health checks"
