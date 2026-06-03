@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import {
   ClaimableMembershipPackagesPanel,
@@ -37,6 +43,28 @@ const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
 
 let accountId = "owner-1";
 let isAdmin = false;
+
+function getSiteLicenseSummaryRow(name: string): HTMLElement {
+  const row = screen
+    .getAllByRole("row")
+    .find(
+      (row) =>
+        row.getAttribute("data-site-license-id") != null &&
+        row.querySelectorAll("td").length > 1 &&
+        within(row).queryByText(name),
+    );
+  if (row == null) {
+    throw Error(`unable to find site license summary row for ${name}`);
+  }
+  return row;
+}
+
+function expectTextNotVisible(text: string): void {
+  const element = screen.queryByText(text);
+  if (element != null) {
+    expect(element).not.toBeVisible();
+  }
+}
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (_store: string, key: string) =>
@@ -623,14 +651,27 @@ describe("MembershipPackageManager", () => {
       expect(screen.getByText("Showing 2 of 2")).toBeTruthy();
       expect(screen.getByText("1 / 10")).toBeTruthy();
       expect(screen.getByText("3 / 20")).toBeTruthy();
-      expect(screen.getByText("Students")).toBeTruthy();
+      expect(screen.queryByText("Students")).toBeNull();
       expect(screen.queryByText("Researchers")).toBeNull();
     });
 
-    fireEvent.click(screen.getByText("Research License"));
+    fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Students")).toBeVisible();
+    });
+
+    fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
+
+    await waitFor(() => {
+      expectTextNotVisible("Students");
+    });
+
+    fireEvent.click(getSiteLicenseSummaryRow("Research License"));
 
     await waitFor(() => {
       expect(screen.getAllByText("Researchers").length).toBeGreaterThan(0);
+      expectTextNotVisible("Students");
     });
   });
 
@@ -689,6 +730,12 @@ describe("MembershipPackageManager", () => {
     });
 
     render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Campus License")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Campus License"));
 
     await waitFor(() => {
       expect(screen.getByText("Edit pool")).toBeTruthy();
@@ -910,6 +957,12 @@ describe("MembershipPackageManager", () => {
     });
 
     render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Campus License")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Campus License"));
 
     await waitFor(() => {
       expect(screen.getByText("Add pool")).toBeTruthy();

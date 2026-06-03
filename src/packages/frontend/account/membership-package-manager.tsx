@@ -1296,16 +1296,86 @@ export function SiteLicenseAdminPanel({
       return;
     }
     if (
+      selectedSiteLicenseId &&
       !filteredOverviews.some(
         (overview) => overview.site_license.id === selectedSiteLicenseId,
       )
     ) {
-      setSelectedSiteLicenseId(filteredOverviews[0].site_license.id);
+      setSelectedSiteLicenseId("");
     }
   }, [filteredOverviews, selectedSiteLicenseId]);
 
-  const selectedOverview = filteredOverviews.find(
-    (overview) => overview.site_license.id === selectedSiteLicenseId,
+  const renderAdminDashboard = (dashboardOverviews: SiteLicenseOverview[]) => (
+    <SiteLicenseDashboard
+      overviews={dashboardOverviews}
+      loading={false}
+      error=""
+      tiers={tiers}
+      accountNames={accountNames}
+      accountId={account_id}
+      isAdmin={true}
+      reviewingRequestId={reviewingRequestId}
+      showIntro={false}
+      onEditPool={(pool) => setEditTarget(pool)}
+      onAddPool={async (site_license_id, pool) => {
+        await runFreshAuthAction(async () => {
+          await addSiteLicensePool({ site_license_id, pool });
+          await handleChanged();
+        });
+      }}
+      onReview={async (_overview, request, action) => {
+        setReviewingRequestId(request.id);
+        setError("");
+        try {
+          await runFreshAuthAction(async () => {
+            await reviewSiteLicensePoolRequest({
+              request_id: request.id,
+              action,
+            });
+            await handleChanged();
+          });
+        } catch (err) {
+          setError(`${err}`);
+        } finally {
+          setReviewingRequestId("");
+        }
+      }}
+      onRevokeSeat={async (pool, assignment) => {
+        await runFreshAuthAction(async () => {
+          await revokeMembershipPackageSeat({
+            package_id: pool.id,
+            target_account_id: assignment.account_id ?? undefined,
+            target_email_address: assignment.email_address ?? undefined,
+          });
+          await handleChanged();
+        });
+      }}
+      onUpdateLicense={async (site_license_id, updates) => {
+        await runFreshAuthAction(async () => {
+          await updateSiteLicense({ site_license_id, ...updates });
+          await handleChanged();
+        });
+      }}
+      onSetManager={async (site_license_id, target_account_id, role) => {
+        await runFreshAuthAction(async () => {
+          await setSiteLicenseManager({
+            site_license_id,
+            target_account_id,
+            role,
+          });
+          await handleChanged();
+        });
+      }}
+      onRemoveManager={async (site_license_id, target_account_id) => {
+        await runFreshAuthAction(async () => {
+          await removeSiteLicenseManager({
+            site_license_id,
+            target_account_id,
+          });
+          await handleChanged();
+        });
+      }}
+    />
   );
 
   return (
@@ -1340,7 +1410,12 @@ export function SiteLicenseAdminPanel({
           overviews={filteredOverviews}
           selectedSiteLicenseId={selectedSiteLicenseId}
           totalCount={overviews.length}
-          onSelect={setSelectedSiteLicenseId}
+          onToggle={(siteLicenseId) =>
+            setSelectedSiteLicenseId((currentSiteLicenseId) =>
+              currentSiteLicenseId === siteLicenseId ? "" : siteLicenseId,
+            )
+          }
+          renderExpandedRow={(overview) => renderAdminDashboard([overview])}
         />
       ) : null}
       {overviews.length > 0 && filteredOverviews.length === 0 ? (
@@ -1351,75 +1426,6 @@ export function SiteLicenseAdminPanel({
           description="Clear the search to show all configured site licenses."
         />
       ) : null}
-      <SiteLicenseDashboard
-        overviews={selectedOverview ? [selectedOverview] : []}
-        loading={loading}
-        error=""
-        tiers={tiers}
-        accountNames={accountNames}
-        accountId={account_id}
-        isAdmin={true}
-        reviewingRequestId={reviewingRequestId}
-        onEditPool={(pool) => setEditTarget(pool)}
-        onAddPool={async (site_license_id, pool) => {
-          await runFreshAuthAction(async () => {
-            await addSiteLicensePool({ site_license_id, pool });
-            await handleChanged();
-          });
-        }}
-        onReview={async (_overview, request, action) => {
-          setReviewingRequestId(request.id);
-          setError("");
-          try {
-            await runFreshAuthAction(async () => {
-              await reviewSiteLicensePoolRequest({
-                request_id: request.id,
-                action,
-              });
-              await handleChanged();
-            });
-          } catch (err) {
-            setError(`${err}`);
-          } finally {
-            setReviewingRequestId("");
-          }
-        }}
-        onRevokeSeat={async (pool, assignment) => {
-          await runFreshAuthAction(async () => {
-            await revokeMembershipPackageSeat({
-              package_id: pool.id,
-              target_account_id: assignment.account_id ?? undefined,
-              target_email_address: assignment.email_address ?? undefined,
-            });
-            await handleChanged();
-          });
-        }}
-        onUpdateLicense={async (site_license_id, updates) => {
-          await runFreshAuthAction(async () => {
-            await updateSiteLicense({ site_license_id, ...updates });
-            await handleChanged();
-          });
-        }}
-        onSetManager={async (site_license_id, target_account_id, role) => {
-          await runFreshAuthAction(async () => {
-            await setSiteLicenseManager({
-              site_license_id,
-              target_account_id,
-              role,
-            });
-            await handleChanged();
-          });
-        }}
-        onRemoveManager={async (site_license_id, target_account_id) => {
-          await runFreshAuthAction(async () => {
-            await removeSiteLicenseManager({
-              site_license_id,
-              target_account_id,
-            });
-            await handleChanged();
-          });
-        }}
-      />
       <ProvisionSiteLicenseModal
         open={provisionOpen}
         tiers={tiers}
@@ -1483,12 +1489,14 @@ function SiteLicenseSummaryTable({
   overviews,
   selectedSiteLicenseId,
   totalCount,
-  onSelect,
+  onToggle,
+  renderExpandedRow,
 }: {
   overviews: SiteLicenseOverview[];
   selectedSiteLicenseId: string;
   totalCount: number;
-  onSelect: (siteLicenseId: string) => void;
+  onToggle: (siteLicenseId: string) => void;
+  renderExpandedRow: (overview: SiteLicenseOverview) => ReactNode;
 }) {
   return (
     <Card size="small">
@@ -1501,22 +1509,22 @@ function SiteLicenseSummaryTable({
         </Space>
         <Table<SiteLicenseOverview>
           dataSource={overviews}
-          pagination={false}
-          rowKey={(overview) => overview.site_license.id}
-          rowSelection={{
-            onChange: (keys) => {
-              const [key] = keys;
-              if (key != null) {
-                onSelect(`${key}`);
-              }
-            },
-            selectedRowKeys: selectedSiteLicenseId
+          expandable={{
+            expandedRowKeys: selectedSiteLicenseId
               ? [selectedSiteLicenseId]
               : [],
-            type: "radio",
+            expandedRowRender: (overview) =>
+              selectedSiteLicenseId === overview.site_license.id
+                ? renderExpandedRow(overview)
+                : null,
+            showExpandColumn: false,
           }}
+          pagination={false}
+          rowKey={(overview) => overview.site_license.id}
           onRow={(overview) => ({
-            onClick: () => onSelect(overview.site_license.id),
+            "aria-expanded": selectedSiteLicenseId === overview.site_license.id,
+            "data-site-license-id": overview.site_license.id,
+            onClick: () => onToggle(overview.site_license.id),
             style: { cursor: "pointer" },
           })}
           scroll={{ x: true }}
@@ -1617,6 +1625,7 @@ function SiteLicenseDashboard({
   onUpdateLicense,
   onSetManager,
   onRemoveManager,
+  showIntro = true,
 }: {
   overviews: SiteLicenseOverview[];
   loading: boolean;
@@ -1667,6 +1676,7 @@ function SiteLicenseDashboard({
     site_license_id: string,
     target_account_id: string,
   ) => Promise<void>;
+  showIntro?: boolean;
 }) {
   const [revokingSeat, setRevokingSeat] = useState<string>("");
   const [editingLicense, setEditingLicense] =
@@ -1710,15 +1720,17 @@ function SiteLicenseDashboard({
   }
   return (
     <Space orientation="vertical" size="large" style={{ width: "100%" }}>
-      <Space orientation="vertical" size={2}>
-        <Title level={4} style={{ margin: 0 }}>
-          Site-license manager dashboard
-        </Title>
-        <Text type="secondary">
-          Review access requests, monitor seat usage, and manage active seats
-          for each institutional license.
-        </Text>
-      </Space>
+      {showIntro ? (
+        <Space orientation="vertical" size={2}>
+          <Title level={4} style={{ margin: 0 }}>
+            Site-license manager dashboard
+          </Title>
+          <Text type="secondary">
+            Review access requests, monitor seat usage, and manage active seats
+            for each institutional license.
+          </Text>
+        </Space>
+      ) : null}
       {overviews.map((overview) => {
         const totals = getOverviewSeatTotals(overview);
         const overviewRequests = requests.filter(
