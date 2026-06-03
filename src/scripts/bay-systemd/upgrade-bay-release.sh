@@ -8,6 +8,7 @@ REPO_ROOT="$(cd "${SRC_ROOT}/.." && pwd)"
 REMOTE=""
 BUNDLE_PATH=""
 BUILD_BUNDLE=0
+STATIC_ONLY=0
 API_URL=""
 PUBLIC_URL=""
 BAY_ID="bay-0"
@@ -53,9 +54,13 @@ This is an operational wrapper around the proven manual lifecycle:
 Required:
   --remote <ssh-target>       SSH target, e.g. ubuntu@10.206.15.209
   --api <url>                 public API URL, e.g. https://delta.cocalc.ai
-  --bundle <tarball>          local cocalc-bay-runtime-linux-x64.tar.xz
+  --bundle <tarball>          local cocalc-bay-runtime-linux-x64.tar.xz, or
+                              cocalc-bay-static-linux-*.tar.xz with --static-only
     or
   --build-bundle              build the bundle before upgrading
+  --static-only               deploy only frontend/static assets by creating a
+                              new release from the current VM release and
+                              restarting hub workers only
 
 Auth for project-host upgrade:
   --cookie <header>           existing Cookie header for CLI auth
@@ -146,6 +151,8 @@ parse_args() {
         BUNDLE_PATH="$2"; shift 2 ;;
       --build-bundle)
         BUILD_BUNDLE=1; shift ;;
+      --static-only)
+        STATIC_ONLY=1; shift ;;
       --api)
         API_URL="$2"; shift 2 ;;
       --public-url)
@@ -201,6 +208,9 @@ validate_args() {
   if [[ "$BUILD_BUNDLE" -eq 0 && -z "$BUNDLE_PATH" ]]; then
     die "specify --bundle or --build-bundle"
   fi
+  if [[ "$STATIC_ONLY" -eq 1 ]]; then
+    SKIP_HOST_UPGRADE=1
+  fi
   if [[ "$SKIP_HOST_UPGRADE" -eq 0 ]]; then
     if [[ -z "$COOKIE_HEADER" && -z "$ADMIN_ACCOUNT_ID" && -z "$ADMIN_EMAIL" ]]; then
       die "host upgrade needs --cookie, --admin-account-id, --admin-email, or --skip-host-upgrade"
@@ -215,19 +225,39 @@ validate_args() {
 }
 
 build_bundle() {
-  log "Build bay runtime bundle"
-  (cd "$REPO_ROOT" && pnpm -C src/packages --filter @cocalc/rocket run build:bay-bundle)
-  BUNDLE_PATH="${SRC_ROOT}/packages/rocket/build/cocalc-bay-runtime-linux-x64.tar.xz"
+  local name_glob
+  if [[ "$STATIC_ONLY" -eq 1 ]]; then
+    log "Build bay static/frontend bundle"
+    (cd "$REPO_ROOT" && pnpm -C src/packages --filter @cocalc/rocket run build:bay-static-bundle)
+    name_glob='cocalc-bay-static-linux-*.tar.xz'
+  else
+    log "Build bay runtime bundle"
+    (cd "$REPO_ROOT" && pnpm -C src/packages --filter @cocalc/rocket run build:bay-bundle)
+    name_glob='cocalc-bay-runtime-linux-*.tar.xz'
+  fi
+  BUNDLE_PATH="$(
+    find "${SRC_ROOT}/packages/rocket/build" \
+      -name "$name_glob" \
+      -printf '%T@ %p\n' 2>/dev/null \
+      | sort -nr \
+      | awk 'NR==1 {print $2}'
+  )"
+  [[ -n "$BUNDLE_PATH" && -f "$BUNDLE_PATH" ]] || die "bundle build did not produce ${name_glob}"
 }
 
 stage_release() {
   [[ -f "$BUNDLE_PATH" ]] || die "bundle not found: $BUNDLE_PATH"
   mkdir -p "$REPORT_DIR"
-  cp "${SRC_ROOT}/packages/rocket/build/bay-runtime/bay-runtime-manifest.json" \
-    "${REPORT_DIR}/bay-runtime-manifest.json" 2>/dev/null || true
+  if [[ "$STATIC_ONLY" -eq 1 ]]; then
+    cp "${SRC_ROOT}/packages/rocket/build/bay-static/bay-static-manifest.json" \
+      "${REPORT_DIR}/bay-static-manifest.json" 2>/dev/null || true
+  else
+    cp "${SRC_ROOT}/packages/rocket/build/bay-runtime/bay-runtime-manifest.json" \
+      "${REPORT_DIR}/bay-runtime-manifest.json" 2>/dev/null || true
+  fi
 
   REMOTE_WORK_DIR="/tmp/cocalc-bay-upgrade-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-  REMOTE_BUNDLE="${REMOTE_WORK_DIR}/cocalc-bay-runtime-linux-x64.tar.xz"
+  REMOTE_BUNDLE="${REMOTE_WORK_DIR}/$(basename "$BUNDLE_PATH")"
   REMOTE_SCRIPT_DIR="${REMOTE_WORK_DIR}/bay-systemd"
 
   log "Upload bay scaffold and bundle to ${REMOTE}:${REMOTE_WORK_DIR}"
@@ -235,15 +265,32 @@ stage_release() {
   scp -r "$SCRIPT_DIR" "$REMOTE:${REMOTE_SCRIPT_DIR}"
   scp "$BUNDLE_PATH" "$REMOTE:${REMOTE_BUNDLE}"
 
-  log "Stage bay release"
-  remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID") --worker-count $(q "$WORKER_COUNT") --public-url $(q "$PUBLIC_URL") --force-overlay --retain-releases $(q "$RETAIN_RELEASES") --start" \
-    | tee "${REPORT_DIR}/stage-release.log"
+  if [[ "$STATIC_ONLY" -eq 1 ]]; then
+    log "Stage bay static/frontend release"
+    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --static-bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID") --worker-count $(q "$WORKER_COUNT") --public-url $(q "$PUBLIC_URL") --retain-releases $(q "$RETAIN_RELEASES")" \
+      | tee "${REPORT_DIR}/stage-release.log"
+  else
+    log "Stage bay release"
+    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID") --worker-count $(q "$WORKER_COUNT") --public-url $(q "$PUBLIC_URL") --force-overlay --retain-releases $(q "$RETAIN_RELEASES") --start" \
+      | tee "${REPORT_DIR}/stage-release.log"
+  fi
 }
 
 restart_and_health_check() {
-  log "Restart bay services and run health checks"
-  remote_exec "sudo systemctl daemon-reload && sudo systemctl restart cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-conat-router.service cocalc-bay-conat-persist.service cocalc-bay-hub@1.service cocalc-bay-hub@2.service && sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
-    | tee "${REPORT_DIR}/bay-health.txt"
+  if [[ "$STATIC_ONLY" -eq 1 ]]; then
+    local hub_units=()
+    local worker_id
+    for worker_id in $(seq 1 "$WORKER_COUNT"); do
+      hub_units+=("cocalc-bay-hub@${worker_id}.service")
+    done
+    log "Restart hub workers and run health checks"
+    remote_exec "sudo systemctl restart $(printf '%q ' "${hub_units[@]}") && sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
+      | tee "${REPORT_DIR}/bay-health.txt"
+  else
+    log "Restart bay services and run health checks"
+    remote_exec "sudo systemctl daemon-reload && sudo systemctl restart cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-conat-router.service cocalc-bay-conat-persist.service cocalc-bay-hub@1.service cocalc-bay-hub@2.service && sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
+      | tee "${REPORT_DIR}/bay-health.txt"
+  fi
 }
 
 resolve_admin_account_id() {
@@ -383,6 +430,7 @@ remote=${REMOTE}
 api=${API_URL}
 public_url=${PUBLIC_URL}
 bay_id=${BAY_ID}
+static_only=${STATIC_ONLY}
 bundle=${BUNDLE_PATH}
 report_dir=${REPORT_DIR}
 EOF

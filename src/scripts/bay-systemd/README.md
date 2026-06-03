@@ -124,6 +124,21 @@ For frontend/static-only changes, build a smaller artifact locally:
 pnpm -C src/packages --filter @cocalc/rocket run build:bay-static-bundle
 ```
 
+The operational wrapper can build and deploy that artifact directly:
+
+```sh
+./src/scripts/bay-systemd/upgrade-bay-release.sh \
+  --remote ubuntu@10.206.15.209 \
+  --api https://delta.cocalc.ai \
+  --build-bundle \
+  --static-only
+```
+
+This stages a normal hardlinked release from the current VM release, replaces
+only frontend/static assets, flips `/opt/cocalc/bay/current`, restarts only hub
+workers, and skips Postgres, migrations, router/persist, and project-host
+rollout.
+
 Then copy the generated tarball to the VM and stage a new versioned release
 from the current release:
 
