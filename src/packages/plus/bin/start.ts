@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { reflectVersion } from "../reflect/manager";
 import { main as sshMain } from "./ssh";
+import { main as starMain } from "./star";
 
 const dynamicImport = new Function("p", "return import(p);") as (
   p: string,
@@ -33,6 +34,7 @@ function usage() {
   cocalc-plus reflect-sync [args...]
   cocalc-plus ssh user@host[:port] [options]
   cocalc-plus ssh --target user@host[:port] [options]
+  cocalc-plus star user@host[:port] [options]
   cocalc-plus [--daemon] [--write-connection-info PATH] [--pidfile PATH]
 
 Examples:
@@ -44,6 +46,7 @@ Examples:
   cocalc-plus ssh user@host
   cocalc-plus ssh --target list
   cocalc-plus ssh user@host --local-port 42800 --no-open
+  cocalc-plus star ubuntu@1.2.3.4
 `);
 }
 
@@ -322,6 +325,7 @@ async function runCli() {
     (arg.startsWith("-") ||
       arg === "cli" ||
       arg === "ssh" ||
+      arg === "star" ||
       arg === "version" ||
       arg === "reflect" ||
       arg === "reflect-sync");
@@ -358,6 +362,10 @@ async function runCli() {
   }
   if (argv[0] === "ssh") {
     await sshMain(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "star") {
+    await starMain(argv.slice(1));
     return;
   }
   if (argv[0] === "cli") {

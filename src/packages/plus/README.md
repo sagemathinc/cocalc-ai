@@ -20,6 +20,30 @@ CoCalc Plus is the productized wrapper around the lightweight core shipped in `@
 - Build with `pnpm --filter @cocalc/plus build`.
 - At runtime this package re-uses Lite’s entry points; product-specific CLI and packaging live here.
 
+## CoCalc Star Remote Installer
+
+`cocalc-plus` can also manage the zero-conf Star install path on a dedicated
+remote Ubuntu VM:
+
+```sh
+cocalc-plus star ubuntu@1.2.3.4
+```
+
+This SSHs to the target, checks whether CoCalc Star is already installed, runs
+the public `install-cocalc-star.sh` installer with passwordless `sudo` when
+needed, and opens an SSH tunnel from your laptop to the remote Star instance.
+
+Useful variants:
+
+```sh
+cocalc-plus star ubuntu@1.2.3.4 --status-only
+cocalc-plus star ubuntu@1.2.3.4 --local-port 9500 --no-open
+cocalc-plus star ubuntu@1.2.3.4 --upgrade
+```
+
+Star is a whole-machine appliance install. Run this only on a VM intended for
+CoCalc Star; it requires SSH access and passwordless `sudo` on the target.
+
 ## Base URL / Proxy Behavior
 
 `cocalc-plus` now follows a code-server style model for URL prefixing:
