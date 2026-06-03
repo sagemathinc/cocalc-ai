@@ -5,12 +5,12 @@
 
 import { fromJS, type Map } from "immutable";
 import type { CourseInfo } from "@cocalc/util/db-schema/projects";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
-  getProjectUserRole,
-  isCollaboratorProjectRole,
-} from "./realtime-access";
+  useProjectMapField,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { isCollaboratorProjectRole } from "./realtime-access";
 import {
   createProjectFieldState,
   ensureProjectFieldValue,
@@ -69,12 +69,11 @@ export function useProjectCourseInfo(
 ) {
   const account_id = useTypedRedux("account", "account_id");
   const is_admin = !!useTypedRedux("account", "is_admin");
-  const project_map = useTypedRedux("projects", "project_map");
-  const role = getProjectUserRole({
-    account_id,
-    project_id,
-    projectsStore: { getIn: (path) => project_map?.getIn(path) },
-  });
+  const role = useProjectMapField<string>(project_id, [
+    "users",
+    account_id ?? "",
+    "group",
+  ]);
   const collaboratorEnabled =
     enabled && (is_admin || isCollaboratorProjectRole(role));
   const {

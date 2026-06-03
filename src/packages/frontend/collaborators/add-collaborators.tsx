@@ -17,7 +17,7 @@ import {
   useActions,
   useEffect,
   useIsMountedRef,
-  useMemo,
+  useProjectFromMap,
   useRef,
   useTypedRedux,
   useState,
@@ -120,11 +120,7 @@ export const AddCollaborators: React.FC<Props> = ({
     | { disableCollaborators?: boolean }
     | undefined;
   const user_map = useTypedRedux("users", "user_map");
-  const project_map = useTypedRedux("projects", "project_map");
-  const project: Project | undefined = useMemo(
-    () => project_map?.get(project_id),
-    [project_id, project_map],
-  );
+  const project: Project | undefined = useProjectFromMap(project_id);
   const project_users = project?.get("users");
 
   // search that user has typed in so far

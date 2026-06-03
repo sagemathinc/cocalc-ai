@@ -40,6 +40,8 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useActions: (...args) => useActions(...args),
   useState: React.useState,
   useTypedRedux: (...args) => useTypedRedux(...args),
+  useProjectFromMap: (project_id: string) =>
+    useTypedRedux("projects", "project_map")?.get(project_id),
 }));
 
 jest.mock("@cocalc/frontend/components/error", () => () => null);

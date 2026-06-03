@@ -13,6 +13,7 @@ import {
   React,
   Rendered,
   useActions,
+  useProjectFromMap,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -102,8 +103,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     );
     // this is @cocalc/conn/project-status/types::ProjectStatus
     const project_status = useTypedRedux({ project_id }, "status");
-    const project_map = useTypedRedux("projects", "project_map");
-    const project = project_map?.get(project_id);
+    const project = useProjectFromMap(project_id);
     const [project_state, set_project_state] = useState<string | undefined>();
     const [start_ts, set_start_ts] = useState<number | undefined>(undefined);
     const [ptree, set_ptree] = useState<ProcessRow[] | undefined>(undefined);

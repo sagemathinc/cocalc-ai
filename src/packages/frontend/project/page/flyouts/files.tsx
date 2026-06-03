@@ -11,6 +11,7 @@ import {
   React,
   redux,
   useAccountOtherSetting,
+  useProjectMapField,
   usePrevious,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -141,10 +142,12 @@ export function FilesFlyout({
   );
   const { flyoutPath: effective_current_path, navigateFlyout } =
     useFlyoutNavigation(project_id);
-  const project_map = useTypedRedux("projects", "project_map");
-  const host_id = project_map?.getIn([project_id, "host_id"]) as
-    | string
-    | undefined;
+  const host_id = useProjectMapField<string>(project_id, "host_id");
+  const projectStateName = useProjectMapField<string>(project_id, [
+    "state",
+    "state",
+  ]);
+  const lastBackup = useProjectMapField(project_id, "last_backup");
   const hostInfo = useHostInfo(host_id);
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
@@ -266,10 +269,10 @@ export function FilesFlyout({
   const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
   const effectiveError = inBackupsPath ? backupsError : listingError;
   const lifecycle = getProjectLifecycleView({
-    projectState: project_map?.getIn([project_id, "state", "state"]),
+    projectState: projectStateName,
     hostId: host_id,
     hostInfo,
-    lastBackup: project_map?.getIn([project_id, "last_backup"]),
+    lastBackup,
   });
   const projectIsArchived = lifecycle.isArchived;
   const projectIsNew = lifecycle.isNew;

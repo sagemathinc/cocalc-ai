@@ -5,7 +5,12 @@
 
 import { Space } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
-import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  React,
+  Rendered,
+  useProjectMapField,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import {
   Icon,
   LabeledRow,
@@ -54,7 +59,11 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const projectStatus = useTypedRedux({ project_id }, "status");
-  const projectMap = useTypedRedux("projects", "project_map");
+  const projectState = useProjectMapField<string>(project_id, [
+    "state",
+    "state",
+  ]);
+  const lastBackup = useProjectMapField(project_id, "last_backup");
   const hostId = project.get("host_id") as string | undefined;
   const hostInfo = useHostInfo(hostId);
   const hostOperational = React.useMemo(
@@ -71,14 +80,10 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     hostInfo,
   });
   const lifecycle = getProjectLifecycleView({
-    projectState:
-      projectMap?.getIn([project_id, "state", "state"]) ??
-      project.getIn(["state", "state"]),
+    projectState: projectState ?? project.getIn(["state", "state"]),
     hostId,
     hostInfo,
-    lastBackup:
-      projectMap?.getIn([project_id, "last_backup"]) ??
-      project.get("last_backup"),
+    lastBackup: lastBackup ?? project.get("last_backup"),
   });
   const displayProjectState = React.useMemo(() => {
     const rawState = project.get("state");

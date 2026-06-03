@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   redux,
   useActions,
+  useProjectMapField,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
@@ -438,11 +439,10 @@ export function NavigatorShell({
     { project_id },
     "available_features",
   );
-  const projectState = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
+  const projectState = useProjectMapField<string>(project_id, [
     "state",
     "state",
-  ]) as string | undefined;
+  ]);
 
   const homeDirectory = useMemo(() => {
     const resolvedHome = available_features?.get?.("homeDirectory");

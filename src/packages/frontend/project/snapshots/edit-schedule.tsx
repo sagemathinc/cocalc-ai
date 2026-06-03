@@ -8,7 +8,10 @@ import {
   DEFAULT_SNAPSHOT_COUNTS,
   type SnapshotSchedule,
 } from "@cocalc/util/consts/snapshots";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useProjectFromMap,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 export default function EditSchedule() {
@@ -20,7 +23,7 @@ export default function EditSchedule() {
   const openSchedule = useTypedRedux({ project_id }, "open_snapshot_schedule");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
-  const project = useTypedRedux("projects", "project_map")?.get(project_id);
+  const project = useProjectFromMap(project_id);
   const [schedule0, setSchedule] = useState<SnapshotSchedule | null>(null);
   const [limit, setLimit] = useState<number | null>(null);
   const canEditSchedule =

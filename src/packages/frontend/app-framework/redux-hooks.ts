@@ -142,6 +142,26 @@ export function useAccountOtherSetting<T = any>(key: string): T | undefined {
   return useRedux(["account", "other_settings", key]) as T | undefined;
 }
 
+export function useProjectFromMap<T = any>(
+  project_id: string | undefined,
+): T | undefined {
+  return useRedux(["projects", "project_map", project_id ?? ""]) as
+    | T
+    | undefined;
+}
+
+export function useProjectMapField<T = any>(
+  project_id: string | undefined,
+  path: string | string[],
+): T | undefined {
+  return useRedux([
+    "projects",
+    "project_map",
+    project_id ?? "",
+    ...(Array.isArray(path) ? path : [path]),
+  ]) as T | undefined;
+}
+
 export function useEditorRedux<State>(editor: {
   project_id: string;
   path: string;

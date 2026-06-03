@@ -85,6 +85,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     if (key === "email_address") return "user@example.com";
     return undefined;
   },
+  useProjectFromMap: (project_id: string) => projectMap?.get(project_id),
+  useProjectMapField: (project_id: string, path: string | string[]) =>
+    projectMap?.getIn([project_id, ...(Array.isArray(path) ? path : [path])]),
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({

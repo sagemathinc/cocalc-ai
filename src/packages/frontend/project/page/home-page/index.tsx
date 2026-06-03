@@ -9,7 +9,7 @@ import { FormattedMessage } from "react-intl";
 import {
   redux,
   useAccountOtherSetting,
-  useTypedRedux,
+  useProjectMapField,
 } from "@cocalc/frontend/app-framework";
 import { Title } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
@@ -22,10 +22,14 @@ import { NavigatorShell } from "../../new/navigator-shell";
 
 export default function HomePage() {
   const { project_id, actions, projectAccess } = useProjectContext();
-  const project_map = useTypedRedux("projects", "project_map");
+  const projectState = useProjectMapField<string>(project_id, [
+    "state",
+    "state",
+  ]);
+  const lastBackup = useProjectMapField(project_id, "last_backup");
   const lifecycle = getProjectLifecycleView({
-    projectState: project_map?.getIn([project_id, "state", "state"]),
-    lastBackup: project_map?.getIn([project_id, "last_backup"]),
+    projectState,
+    lastBackup,
   });
   const navigator_target_project_id = useAccountOtherSetting<string>(
     "navigator_target_project_id",

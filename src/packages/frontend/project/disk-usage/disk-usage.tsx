@@ -38,7 +38,7 @@ import { Icon } from "@cocalc/frontend/components";
 import {
   redux,
   useAsyncEffect,
-  useTypedRedux,
+  useProjectMapField,
 } from "@cocalc/frontend/app-framework";
 import { dirname, posix } from "path";
 import { COLORS } from "@cocalc/util/theme";
@@ -657,8 +657,7 @@ export default function DiskUsage({
   buttonText?: string;
   buttonSize?: "small" | "middle" | "large";
 }) {
-  const projectMap = useTypedRedux("projects", "project_map");
-  const lastBackup = projectMap?.getIn([project_id, "last_backup"]);
+  const lastBackup = useProjectMapField(project_id, "last_backup");
   const backupSummary = useMemo(
     () => describeLastBackup(lastBackup),
     [lastBackup],

@@ -3,7 +3,10 @@ import { Alert, Button, Flex, InputNumber, Modal, Spin, Switch } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useProjectFromMap,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import {
   DEFAULT_BACKUP_COUNTS,
@@ -20,7 +23,7 @@ export default function EditBackupSchedule() {
   const openSchedule = useTypedRedux({ project_id }, "open_backup_schedule");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
-  const project = useTypedRedux("projects", "project_map")?.get(project_id);
+  const project = useProjectFromMap(project_id);
   const [schedule0, setSchedule] = useState<SnapshotSchedule | null>(null);
   const [limit, setLimit] = useState<number | null>(null);
   const canEditSchedule =

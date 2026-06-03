@@ -16,7 +16,12 @@ import { Alert, Button, Modal, Progress, Space, Spin } from "antd";
 import type { ButtonProps } from "antd";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
-import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useMemo,
+  useProjectFromMap,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { Icon, ProjectState, Tooltip } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { capitalize } from "@cocalc/util/misc";
@@ -76,13 +81,10 @@ export function StartButton({
   const { project_id: contextProjectId, is_active } = useProjectContext();
   const project_id = projectIdProp ?? contextProjectId;
   const resolvedProjectId = project_id ?? "";
-  const project_map = useTypedRedux("projects", "project_map");
-  const project = project_map?.get(resolvedProjectId);
+  const project = useProjectFromMap(resolvedProjectId);
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
-  const host_id = project_map?.get(resolvedProjectId)?.get("host_id") as
-    | string
-    | undefined;
+  const host_id = project?.get("host_id") as string | undefined;
   const startPolicyBlock = useMemo(
     () =>
       getProjectStartPolicyBlock({
@@ -138,7 +140,7 @@ export function StartButton({
       moveLro.summary.status === "running");
 
   const state = useMemo(() => {
-    const rawState = project_map?.get(resolvedProjectId)?.get("state");
+    const rawState = project?.get("state");
     const displayState = normalizeProjectStateForDisplay({
       projectState: rawState?.get?.("state"),
       hostId: host_id,
@@ -153,7 +155,7 @@ export function StartButton({
         state.get("state") === "running" ? null : Date.now();
     }
     return state;
-  }, [project_map, resolvedProjectId, host_id, hostInfo]);
+  }, [project, host_id, hostInfo]);
   const lifecycleState = `${state?.get("state") ?? ""}`.trim().toLowerCase();
   const { activeOp } = useProjectActiveOperation(resolvedProjectId, {
     pollWhile:

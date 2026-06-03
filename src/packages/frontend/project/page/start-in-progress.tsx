@@ -1,7 +1,10 @@
 import { CloseOutlined } from "@ant-design/icons";
 import { Button, Progress, Space, Spin, Steps, Tag } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useProjectMapField,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import type { StartLroState } from "@cocalc/frontend/project/start-ops";
@@ -173,17 +176,16 @@ export default function StartInProgress({
   project_id: string;
 }) {
   const { is_active } = useProjectContext();
-  const projectMap = useTypedRedux("projects", "project_map");
+  const projectState = useProjectMapField<string>(project_id, [
+    "state",
+    "state",
+  ]);
   const startLroRecord = useTypedRedux({ project_id }, "start_lro");
   const startLro = useMemo(
     () => startLroRecord?.toJS() as StartLroState | undefined,
     [startLroRecord],
   );
-  const lifecycleState = `${
-    projectMap?.getIn([project_id, "state", "state"]) ?? ""
-  }`
-    .trim()
-    .toLowerCase();
+  const lifecycleState = `${projectState ?? ""}`.trim().toLowerCase();
   const startLroActive = isStartActive(startLro);
   const { activeOp } = useProjectActiveOperation(project_id, {
     pollWhile:

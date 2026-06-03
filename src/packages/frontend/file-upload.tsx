@@ -9,7 +9,7 @@ import ReactDOMServer from "react-dom/server"; // for dropzone below
 import { Button } from "antd";
 import { join } from "path";
 import { useIntl } from "react-intl";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useProjectMapField } from "@cocalc/frontend/app-framework";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon, Tip } from "@cocalc/frontend/components";
@@ -453,11 +453,7 @@ interface DropzonePreviewProps {
 }
 
 function DropzonePreview({ project_id }: DropzonePreviewProps) {
-  const state = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    "state",
-    "state",
-  ]);
+  const state = useProjectMapField<string>(project_id, ["state", "state"]);
   return (
     <div className="dz-preview dz-file-preview">
       {state != "running" && (

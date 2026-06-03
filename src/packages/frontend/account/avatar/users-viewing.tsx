@@ -9,6 +9,7 @@ import { useEffect } from "react";
 import {
   CSS,
   useMemo,
+  useProjectMapField,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -18,10 +19,7 @@ import {
   subscribeToDocumentPresence,
 } from "@cocalc/frontend/document-presence/service";
 import { Avatar } from "./avatar";
-import {
-  getProjectUserRole,
-  isViewerProjectRole,
-} from "@cocalc/frontend/project/realtime-access";
+import { isViewerProjectRole } from "@cocalc/frontend/project/realtime-access";
 
 // How frequently all UsersViewing components are completely updated.
 // This is only needed to ensure that faces fade out; any newly added faces
@@ -124,16 +122,13 @@ export function UsersViewing(props: Readonly<Props>) {
     "account",
     "account_id",
   );
-  const project_map = useTypedRedux("projects", "project_map");
+  const projectRole = useProjectMapField<string>(project_id, [
+    "users",
+    our_account_id ?? "",
+    "group",
+  ]);
   const isViewer =
-    project_id != null &&
-    isViewerProjectRole(
-      getProjectUserRole({
-        account_id: our_account_id,
-        project_id,
-        projectsStore: { getIn: project_map?.getIn?.bind(project_map) },
-      }),
-    );
+    project_id != null && isViewerProjectRole(projectRole ?? undefined);
   const { users } = useUsersViewing(project_id, path, max_age_s, !isViewer);
 
   function render_active_users(users) {

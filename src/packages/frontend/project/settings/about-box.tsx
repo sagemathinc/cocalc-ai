@@ -8,7 +8,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import React, { useState } from "react";
 import { useIntl } from "react-intl";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useProjectFromMap } from "@cocalc/frontend/app-framework";
 import {
   CopyToClipBoard,
   HelpIcon,
@@ -61,11 +61,10 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabelLower = intl.formatMessage(labels.projects).toLowerCase();
   const { course } = useProjectCourseInfo(project_id);
-  const project_map = useTypedRedux("projects", "project_map");
   const courseProjectType = course?.get("type") as any;
   const hasReadonlyFields = ["student", "shared"].includes(courseProjectType);
   const [error, setError] = useState<string>("");
-  const projectRecord = project_map?.get(project_id);
+  const projectRecord = useProjectFromMap(project_id);
   const theme = projectThemeFromProject(projectRecord);
   const [appearanceOpen, setAppearanceOpen] = useState<boolean>(false);
   const [appearanceSaving, setAppearanceSaving] = useState<boolean>(false);

@@ -52,6 +52,8 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     }
     return undefined;
   },
+  useProjectMapField: () => undefined,
+  useAccountOtherSetting: () => undefined,
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
