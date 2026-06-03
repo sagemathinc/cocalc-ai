@@ -21,6 +21,7 @@ import {
   useActions,
   useEffect,
   useMemo,
+  useProjectMapField,
   useRedux,
   useRef,
   useState,
@@ -166,10 +167,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     mainWidthPx,
   });
   const isViewer = projectCtx.projectAccess.role === "viewer";
-  const host_id = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    "host_id",
-  ]) as string | undefined;
+  const host_id = useProjectMapField<string>(project_id, "host_id");
   const hostInfo = useHostInfo(host_id);
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
@@ -349,6 +347,13 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       projectId: project_id,
       activeProjectTab: active_project_tab,
       openFiles: open_files,
+      isRuntimeClosed: (reduxName) => {
+        const runtime = redux.getActions(reduxName) as any;
+        return (
+          runtime == null ||
+          (typeof runtime.isClosed === "function" && runtime.isClosed())
+        );
+      },
     });
     if (path == null) return;
     actions?.ensure_open_file_component?.(path);

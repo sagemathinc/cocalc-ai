@@ -280,6 +280,10 @@ const Editor: React.FC<EditorProps> = (props: EditorProps) => {
   if (EditorComponent == null) {
     return <Loading theme={"medium"} />;
   }
+  const actions =
+    redux_name != null
+      ? (redux.getEditorActions(project_id, path) as any)
+      : undefined;
 
   return (
     <div
@@ -288,11 +292,11 @@ const Editor: React.FC<EditorProps> = (props: EditorProps) => {
       style={{ height: "100%" }}
     >
       <EditorComponent
-        name={redux_name}
+        name={actions?.name}
         path={path}
         project_id={project_id}
         redux={redux}
-        actions={redux_name != null ? redux.getActions(redux_name) : undefined}
+        actions={actions}
         is_visible={is_visible}
       />
     </div>

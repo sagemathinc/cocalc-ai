@@ -25,6 +25,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useProjectMapField,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -684,11 +685,11 @@ export const InviteInboxPanel: React.FC<Props> = ({
   const [expanded, set_expanded] = useState<boolean | undefined>(undefined);
   const projectMode = mode === "project";
   const account_id = useTypedRedux("account", "account_id");
-  const project_map = useTypedRedux("projects", "project_map");
-  const projectGroup =
-    project_id && account_id
-      ? project_map?.getIn([project_id, "users", account_id, "group"])
-      : undefined;
+  const projectGroup = useProjectMapField<string>(project_id, [
+    "users",
+    account_id ?? "",
+    "group",
+  ]);
   const isProjectOwner = projectGroup === "owner";
   const {
     loading,

@@ -1,7 +1,11 @@
 import { useEffect } from "react";
 import type { CSSProperties } from "react";
 import { Alert, Progress, Space, Tag } from "antd";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useProjectMapField,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectLifecycleView } from "@cocalc/frontend/projects/host-operational";
 import { COLORS } from "@cocalc/util/theme";
@@ -64,10 +68,14 @@ export default function ProjectControlStatus({
 }) {
   const { project_id } = useProjectContext();
   const control_status = useTypedRedux({ project_id }, "control_status");
-  const projectMap = useTypedRedux("projects", "project_map");
+  const projectState = useProjectMapField<string>(project_id, [
+    "state",
+    "state",
+  ]);
+  const lastBackup = useProjectMapField(project_id, "last_backup");
   const lifecycle = getProjectLifecycleView({
-    projectState: projectMap?.getIn([project_id, "state", "state"]),
-    lastBackup: projectMap?.getIn([project_id, "last_backup"]),
+    projectState,
+    lastBackup,
   });
   const hideStaleArchiveStatus =
     STALE_ARCHIVE_CONTROL_STATUS.has(`${control_status ?? ""}`) &&

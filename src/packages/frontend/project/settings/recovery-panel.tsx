@@ -6,7 +6,7 @@
 import { Card, Space, Typography } from "antd";
 import type { ReactNode } from "react";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useProjectMapField } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo, type IconName } from "@cocalc/frontend/components";
 import CreateBackup from "@cocalc/frontend/project/backups/create";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
@@ -77,10 +77,8 @@ export function RecoveryPanel({
   showDatastore,
   datastoreReload,
 }: Props) {
-  const projectMap = useTypedRedux("projects", "project_map");
-  const lastBackup =
-    projectMap?.getIn([project_id, "last_backup"]) ??
-    project.get("last_backup");
+  const projectLastBackup = useProjectMapField(project_id, "last_backup");
+  const lastBackup = projectLastBackup ?? project.get("last_backup");
 
   return (
     <Space

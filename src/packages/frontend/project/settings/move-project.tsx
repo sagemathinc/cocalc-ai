@@ -1,8 +1,7 @@
 import { Button, Descriptions, Modal, Spin, Tag, Typography } from "antd";
-import { useActions } from "@cocalc/frontend/app-framework";
+import { useActions, useProjectMapField } from "@cocalc/frontend/app-framework";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import ShowError from "@cocalc/frontend/components/error";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -47,10 +46,7 @@ export default function MoveProject({
     onUnhandledError: (err) => setError(`${err}`),
   });
   const actions = useActions("projects");
-  const currentHostId = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    "host_id",
-  ]) as string | undefined;
+  const currentHostId = useProjectMapField<string>(project_id, "host_id");
   const hostInfo = useHostInfo(currentHostId);
   const url = hostInfo?.get?.("connect_url");
   const hostName =

@@ -16,12 +16,14 @@ export function getRecoverableActiveEditorPath({
   projectId,
   activeProjectTab,
   openFiles,
+  isRuntimeClosed,
 }: {
   isActive: boolean;
   activeTopTab?: string;
   projectId: string;
   activeProjectTab?: string;
   openFiles?: OpenFilesLike | null;
+  isRuntimeClosed?: (reduxName: string) => boolean;
 }): string | undefined {
   if (!isActive || activeTopTab !== projectId) {
     return undefined;
@@ -37,5 +39,14 @@ export function getRecoverableActiveEditorPath({
     return undefined;
   }
   const component = openFiles?.getIn?.([path, "component"]);
-  return component?.Editor == null ? path : undefined;
+  if (component?.Editor == null) {
+    return path;
+  }
+  if (
+    typeof component?.redux_name === "string" &&
+    isRuntimeClosed?.(component.redux_name)
+  ) {
+    return path;
+  }
+  return undefined;
 }
