@@ -590,7 +590,7 @@ describe("site license seat pools", () => {
     );
   });
 
-  it("returns provisioned overview for trusted remote admin actor", async () => {
+  it("returns and lists overviews for trusted remote admin actors", async () => {
     const remote_admin_account_id = uuid();
     const owner_account_id = uuid();
     const domain = `trusted-${uuid().slice(0, 8)}.edu`;
@@ -625,6 +625,27 @@ describe("site license seat pools", () => {
         site_license_id: overview.site_license.id,
       }),
     ).rejects.toThrow("must view site license");
+    await expect(
+      listSiteLicenseOverviews({
+        account_id: remote_admin_account_id,
+        admin: true,
+      }),
+    ).rejects.toThrow("must be an admin");
+    await expect(
+      listSiteLicenseOverviews({
+        account_id: remote_admin_account_id,
+        admin: true,
+        trusted_admin: true,
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          site_license: expect.objectContaining({
+            id: overview.site_license.id,
+          }),
+        }),
+      ]),
+    );
   });
 
   it("prevents active site license domain overlap", async () => {

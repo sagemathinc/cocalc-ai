@@ -869,10 +869,14 @@ export async function listSiteLicenseOverviews({
   admin?: boolean;
 } = {}): Promise<SiteLicenseOverview[]> {
   const actorId = requireAccount(account_id);
+  if (admin && !(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
   if (!isSeedBay()) {
     return await getSeedSiteLicenseClient().listSiteLicenseOverviews({
       actor_account_id: actorId,
       admin,
+      trusted_admin: admin,
     });
   }
   return await listSiteLicenseOverviews0({

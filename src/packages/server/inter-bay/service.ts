@@ -780,15 +780,21 @@ async function startAccountLocalService(): Promise<void> {
       isSeedSiteLicenseBay()
         ? await adminProvisionSiteLicense({ ...opts, trusted_admin: true })
         : await getSeedSiteLicenseClient().adminProvisionSiteLicense(opts),
-    listSiteLicenseOverviews: async ({ actor_account_id, admin }) =>
+    listSiteLicenseOverviews: async ({
+      actor_account_id,
+      admin,
+      trusted_admin,
+    }) =>
       isSeedSiteLicenseBay()
         ? await listSiteLicenseOverviews({
             account_id: actor_account_id,
             admin,
+            trusted_admin,
           })
         : await getSeedSiteLicenseClient().listSiteLicenseOverviews({
             actor_account_id,
             admin,
+            trusted_admin,
           }),
     updateMembershipPackage: async ({
       package_id,

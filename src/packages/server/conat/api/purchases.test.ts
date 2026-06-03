@@ -800,6 +800,7 @@ describe("purchases membership packages", () => {
   });
 
   it("lists site-license overviews locally on the seed bay", async () => {
+    isAdminMock.mockResolvedValue(true);
     listSiteLicenseOverviewsMock.mockResolvedValue([
       { site_license: { id: "license-1" } },
     ]);
@@ -819,6 +820,7 @@ describe("purchases membership packages", () => {
   });
 
   it("routes site-license overview lists to the seed bay", async () => {
+    isAdminMock.mockResolvedValue(true);
     getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-2");
     interBayListSiteLicenseOverviewsMock.mockResolvedValue([
       { site_license: { id: "license-remote-1" } },
@@ -833,9 +835,26 @@ describe("purchases membership packages", () => {
     expect(interBayListSiteLicenseOverviewsMock).toHaveBeenCalledWith({
       actor_account_id: "admin-1",
       admin: true,
+      trusted_admin: true,
     });
     expect(listSiteLicenseOverviewsMock).not.toHaveBeenCalled();
     expect(result).toEqual([{ site_license: { id: "license-remote-1" } }]);
+  });
+
+  it("blocks non-admin site-license overview lists before routing to seed", async () => {
+    isAdminMock.mockResolvedValue(false);
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-2");
+
+    const { listSiteLicenseOverviews } = await import("./purchases");
+    await expect(
+      listSiteLicenseOverviews({
+        account_id: "user-1",
+        admin: true,
+      }),
+    ).rejects.toThrow("must be an admin");
+
+    expect(interBayListSiteLicenseOverviewsMock).not.toHaveBeenCalled();
+    expect(listSiteLicenseOverviewsMock).not.toHaveBeenCalled();
   });
 
   it("routes site-license setting and manager edits to the seed bay", async () => {

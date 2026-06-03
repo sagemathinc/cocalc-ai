@@ -2416,10 +2416,12 @@ export async function getSiteLicenseOverview({
 export async function listSiteLicenseOverviews({
   account_id,
   admin = false,
+  trusted_admin = false,
   client,
 }: {
   account_id: string;
   admin?: boolean;
+  trusted_admin?: boolean;
   client?: PoolClient;
 }): Promise<SiteLicenseOverview[]> {
   const normalizedAccountId = normalizeAccountId(account_id);
@@ -2427,7 +2429,7 @@ export async function listSiteLicenseOverviews({
   const queryClient = getQueryClient(client);
   const rows = admin
     ? await (async () => {
-        if (!(await isAdmin(normalizedAccountId))) {
+        if (!trusted_admin && !(await isAdmin(normalizedAccountId))) {
           throw Error("must be an admin");
         }
         const { rows } = await queryClient.query<{ id: string }>(

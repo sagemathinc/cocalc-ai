@@ -1014,6 +1014,7 @@ export interface AccountLocalUpdateMembershipPackageRequest {
 export interface AccountLocalListSiteLicenseOverviewsRequest {
   actor_account_id: string;
   admin?: boolean;
+  trusted_admin?: boolean;
 }
 
 export interface AccountLocalUpdateSiteLicenseRequest {
