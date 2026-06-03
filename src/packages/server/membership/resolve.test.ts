@@ -80,6 +80,54 @@ describe("resolveMembershipForAccount", () => {
     expect(result.subscription_status).toBe("canceled");
   });
 
+  it("keeps the higher paid-through subscription effective for a deferred downgrade", async () => {
+    const account_id = uuid();
+    const end = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await createTestAccount(account_id);
+    await createTestMembershipSubscription(account_id, {
+      class: highTier,
+      end,
+      status: "canceled",
+    });
+    await createTestMembershipSubscription(account_id, {
+      class: lowTier,
+      end,
+      status: "active",
+    });
+
+    const details = await resolveMembershipDetailsForAccount(account_id);
+
+    expect(details.selected.class).toBe(highTier);
+    expect(details.selected.source).toBe("subscription");
+    expect(details.selected.subscription_status).toBe("canceled");
+    expect(
+      details.candidates.filter(
+        (candidate) => candidate.source === "subscription",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("uses the higher active subscription immediately for an upgrade", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createTestMembershipSubscription(account_id, {
+      class: lowTier,
+      end: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      status: "canceled",
+    });
+    await createTestMembershipSubscription(account_id, {
+      class: highTier,
+      end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      status: "active",
+    });
+
+    const result = await resolveMembershipForAccount(account_id);
+
+    expect(result.class).toBe(highTier);
+    expect(result.source).toBe("subscription");
+    expect(result.subscription_status).toBe("active");
+  });
+
   it("returns admin assigned membership when no subscription exists", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);

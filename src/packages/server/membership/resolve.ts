@@ -62,8 +62,7 @@ async function buildMembershipCandidates(
          AND metadata->>'type'='membership'
          AND status IN ('active','unpaid','past_due','canceled')
          AND current_period_end >= NOW()
-       ORDER BY current_period_end DESC
-       LIMIT 1`,
+       ORDER BY current_period_end DESC, id DESC`,
       [account_id],
     ),
     pool.query(
@@ -86,8 +85,7 @@ async function buildMembershipCandidates(
 
   const candidates: MembershipCandidate[] = [];
 
-  const sub = subResult.rows[0];
-  if (sub) {
+  for (const sub of subResult.rows) {
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
     const tier =
       tiers[membershipClass] ??
@@ -242,6 +240,14 @@ function pickBestMembership(
       if (sourceRank[candidate.source] < sourceRank[current.source]) {
         return current;
       }
+      const candidateSubscriptionStatusRank = subscriptionStatusRank(candidate);
+      const currentSubscriptionStatusRank = subscriptionStatusRank(current);
+      if (candidateSubscriptionStatusRank > currentSubscriptionStatusRank) {
+        return candidate;
+      }
+      if (candidateSubscriptionStatusRank < currentSubscriptionStatusRank) {
+        return current;
+      }
       const candidateExpires = candidate.expires
         ? new Date(candidate.expires).valueOf()
         : -Infinity;
@@ -275,6 +281,27 @@ function pickBestMembership(
       tiers["free"]?.usage_limits,
     ),
   };
+}
+
+function subscriptionStatusRank({
+  source,
+  subscription_status,
+}: Pick<MembershipCandidate, "source" | "subscription_status">): number {
+  if (source !== "subscription") {
+    return 0;
+  }
+  switch (subscription_status) {
+    case "active":
+      return 4;
+    case "past_due":
+      return 3;
+    case "unpaid":
+      return 2;
+    case "canceled":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 function usageStatusCacheKey({
