@@ -5,7 +5,11 @@
 
 import { Button, type MenuProps, Space } from "antd";
 import { useIntl } from "react-intl";
-import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  React,
+  useAccountOtherSetting,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { DropdownMenu, Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import {
@@ -41,15 +45,13 @@ export const NewButton: React.FC<Props> = ({
   disabled,
 }: Props) => {
   const intl = useIntl();
-  const other_settings = useTypedRedux("account", "other_settings");
+  const launcherSettings = useAccountOtherSetting(LAUNCHER_SETTINGS_KEY);
   const site_launcher_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
   const siteLauncherDefaults = getSiteLauncherDefaults(site_launcher_quick);
-  const accountLauncherPrefs = getAccountLauncherPrefs(
-    other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
-  );
+  const accountLauncherPrefs = getAccountLauncherPrefs(launcherSettings);
   const mergedLauncher = getEffectiveLauncher({
     accountPrefs: accountLauncherPrefs,
     siteDefaults: siteLauncherDefaults,

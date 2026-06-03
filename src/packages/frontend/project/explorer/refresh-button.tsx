@@ -7,7 +7,7 @@ import { Button, Popover, Switch } from "antd";
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useAccountOtherSetting } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
@@ -99,7 +99,7 @@ export function AutoUpdateButton({ checked, onChange }: AutoUpdateToggleProps) {
 
 export function RefreshButton({ onClick }: Props) {
   const intl = useIntl();
-  const autoUpdateListing = !!useTypedRedux("account", "other_settings")?.get(
+  const autoUpdateListing = !!useAccountOtherSetting(
     "auto_update_file_listing",
   );
 

@@ -7,7 +7,11 @@ import { Button, Card, List, Space, Tag } from "antd";
 import React, { useMemo } from "react";
 import { useIntl } from "react-intl";
 
-import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useAccountOtherSetting,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -39,9 +43,8 @@ export function NewsPanel(props: NewsPanelProps) {
   const news_actions = useActions("news");
   const loading = useTypedRedux("news", "loading");
   const system_seen_ids = useTypedRedux("news", "system_seen_ids");
-  const account_other = useTypedRedux("account", "other_settings");
-  const news_read_until: number | undefined =
-    account_other?.get("news_read_until");
+  const news_read_until =
+    useAccountOtherSetting<number>("news_read_until") ?? 0;
 
   const [newsData, anyUnread]: [NewsItemWebapp[], boolean] = useMemo(() => {
     if (!isNewsFilter(filter)) return [[], false];

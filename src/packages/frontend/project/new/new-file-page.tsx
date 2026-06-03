@@ -11,6 +11,7 @@ import { Alert, Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import {
   ProjectActions,
   redux,
+  useAccountOtherSetting,
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -41,6 +42,7 @@ import {
   keys,
 } from "@cocalc/util/misc";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
+import type { NewFilenameTypes } from "@cocalc/util/db-schema/defaults";
 import { PathNavigator } from "../explorer/path-navigator";
 import { useAvailableFeatures } from "../use-available-features";
 import { NewFileButton } from "./new-file-button";
@@ -94,9 +96,10 @@ export default function NewFilePage(props: Props) {
   }, [autoFocusFilename]);
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
-  const other_settings = useTypedRedux("account", "other_settings");
   const selectedFilenameFamily =
-    other_settings?.get?.(NEW_FILENAMES) ?? DEFAULT_NEW_FILENAMES;
+    useAccountOtherSetting<NewFilenameTypes>(NEW_FILENAMES) ??
+    DEFAULT_NEW_FILENAMES;
+  const launcherSettings = useAccountOtherSetting(LAUNCHER_SETTINGS_KEY);
   const site_launcher_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
@@ -126,9 +129,7 @@ export default function NewFilePage(props: Props) {
   );
 
   const siteLauncherDefaults = getSiteLauncherDefaults(site_launcher_quick);
-  const accountLauncherPrefs = getAccountLauncherPrefs(
-    other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
-  );
+  const accountLauncherPrefs = getAccountLauncherPrefs(launcherSettings);
   const mergedLauncher = getEffectiveLauncher({
     accountPrefs: accountLauncherPrefs,
     siteDefaults: siteLauncherDefaults,
@@ -201,10 +202,7 @@ export default function NewFilePage(props: Props) {
   }
 
   function saveUserLauncherPrefs(prefs: any | null) {
-    const next = updateAccountLauncherPrefs(
-      other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
-      prefs,
-    );
+    const next = updateAccountLauncherPrefs(launcherSettings, prefs);
     redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
   }
 

@@ -29,11 +29,9 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     },
     useTypedRedux: (...args: any[]) => {
       if (args[0] === "account" && args[1] === "account_id") return "acct";
-      if (args[0] === "account" && args[1] === "other_settings") {
-        return mockOtherSettings;
-      }
       return undefined;
     },
+    useAccountOtherSetting: (key: string) => mockOtherSettings[key],
   };
 });
 

@@ -18,6 +18,7 @@ import { defineMessage, useIntl } from "react-intl";
 import { getAlertName } from "@cocalc/comm/project-status/types";
 import {
   CSS,
+  useAccountOtherSetting,
   useActions,
   useRedux,
   useTypedRedux,
@@ -251,8 +252,10 @@ export function FileTab(props: Readonly<Props>) {
           .toJS() ?? [])
       : [];
 
-  const other_settings = useTypedRedux("account", "other_settings");
-  const tabAccentMode = other_settings.get("file_tab_accent_mode") ?? "bright";
+  const tabAccentMode =
+    useAccountOtherSetting<string>("file_tab_accent_mode") ?? "bright";
+  const hideFilePopovers =
+    useAccountOtherSetting<boolean>("hide_file_popovers") ?? false;
   const workspaceRecord =
     path != null ? workspaces.resolveWorkspaceForPath(path) : null;
 
@@ -395,7 +398,7 @@ export function FileTab(props: Readonly<Props>) {
         {btnLeft}
       </div>
     );
-    if (isFixedTab && !showLabel && !other_settings.get("hide_file_popovers")) {
+    if (isFixedTab && !showLabel && !hideFilePopovers) {
       return (
         <Tooltip title={label} placement="right" mouseEnterDelay={1}>
           {button}
@@ -502,7 +505,7 @@ export function FileTab(props: Readonly<Props>) {
     props.noPopover ||
     IS_MOBILE ||
     isFixedTab ||
-    (!isFixedTab && other_settings.get("hide_file_popovers"))
+    (!isFixedTab && hideFilePopovers)
   ) {
     return body;
   }
@@ -606,8 +609,7 @@ function DisplayedLabel({ path, label, inline = true }) {
     isFullPathLabel && typeof label === "string"
       ? label.replace(/^\/+/, "")
       : label;
-  const otherSettings = useTypedRedux("account", "other_settings");
-  const dimFileExtensions = !!otherSettings?.get("dim_file_extensions");
+  const dimFileExtensions = !!useAccountOtherSetting("dim_file_extensions");
   if (path == null) {
     // a fixed tab (not an actual file)
     const E = inline ? "span" : "div";

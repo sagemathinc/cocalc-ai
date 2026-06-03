@@ -10,6 +10,7 @@ import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import {
   CSS,
   redux,
+  useAccountOtherSetting,
   useActions,
   useRedux,
   useTypedRedux,
@@ -86,7 +87,8 @@ function ProjectTab({ project_id }: ProjectTabProps) {
   const showNoInternet = isRunning && !hasInternet;
 
   const { active } = useSortable({ id: project_id });
-  const other_settings = useTypedRedux("account", "other_settings");
+  const hideProjectPopovers =
+    useAccountOtherSetting<boolean>("hide_project_popovers") ?? false;
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const project = useRedux(["projects", "project_map", project_id]);
   const host_info = useTypedRedux("projects", "host_info");
@@ -177,7 +179,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
     const noInternet = (
       <Icon name="global" style={{ color: COLORS.ANTD_RED_WARN }} />
     );
-    if (other_settings.get("hide_project_popovers")) {
+    if (hideProjectPopovers) {
       return <Tooltip title={noInternetInfo("tooltip")}>{noInternet}</Tooltip>;
     } else {
       return noInternet;
@@ -220,7 +222,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
       </div>
     </div>
   );
-  if (IS_MOBILE || other_settings.get("hide_project_popovers")) {
+  if (IS_MOBILE || hideProjectPopovers) {
     return body;
   }
   return (

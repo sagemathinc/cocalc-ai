@@ -6,7 +6,11 @@
 import { Alert, Button, Col, Row } from "antd";
 import { FormattedMessage } from "react-intl";
 
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useAccountOtherSetting,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { Title } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { StartButton } from "@cocalc/frontend/project/start-button";
@@ -18,13 +22,12 @@ import { NavigatorShell } from "../../new/navigator-shell";
 
 export default function HomePage() {
   const { project_id, actions, projectAccess } = useProjectContext();
-  const other_settings = useTypedRedux("account", "other_settings");
   const project_map = useTypedRedux("projects", "project_map");
   const lifecycle = getProjectLifecycleView({
     projectState: project_map?.getIn([project_id, "state", "state"]),
     lastBackup: project_map?.getIn([project_id, "last_backup"]),
   });
-  const navigator_target_project_id = other_settings?.get?.(
+  const navigator_target_project_id = useAccountOtherSetting<string>(
     "navigator_target_project_id",
   );
   const projectLabelLower = "project";

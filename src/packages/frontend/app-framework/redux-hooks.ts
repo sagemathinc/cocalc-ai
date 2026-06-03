@@ -138,6 +138,10 @@ export function useTypedRedux(
   return useRedux(path, projectId);
 }
 
+export function useAccountOtherSetting<T = any>(key: string): T | undefined {
+  return useRedux(["account", "other_settings", key]) as T | undefined;
+}
+
 export function useEditorRedux<State>(editor: {
   project_id: string;
   path: string;

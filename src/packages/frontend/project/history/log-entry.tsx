@@ -11,7 +11,7 @@ import {
   CSS,
   redux,
   Rendered,
-  useTypedRedux,
+  useAccountOtherSetting,
 } from "@cocalc/frontend/app-framework";
 import {
   Gap,
@@ -167,8 +167,7 @@ export const LogEntry: React.FC<Props> = React.memo(
     const intl = useIntl();
     const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
 
-    const otherSettings = useTypedRedux("account", "other_settings");
-    const dimFileExtensions = !!otherSettings?.get("dim_file_extensions");
+    const dimFileExtensions = !!useAccountOtherSetting("dim_file_extensions");
 
     function renderOpenPhaseTooltip(event: OpenFile): React.JSX.Element | null {
       const marks = getOpenPhaseMarks(event);

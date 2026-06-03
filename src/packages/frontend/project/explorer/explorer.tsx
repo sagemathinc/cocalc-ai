@@ -40,7 +40,11 @@ import { PathNavigator } from "./path-navigator";
 import { SearchBar } from "./search-bar";
 import ExplorerTour from "./tour/tour";
 import { dirname, join } from "path";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useAccountOtherSetting,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing, {
   type SortField,
@@ -191,9 +195,10 @@ export function Explorer() {
 
   const project_map = useTypedRedux("projects", "project_map");
 
-  const otherSettings = useTypedRedux("account", "other_settings");
-  const mask = otherSettings?.get("mask_files");
-  const autoUpdateListing = !!otherSettings?.get("auto_update_file_listing");
+  const mask = useAccountOtherSetting("mask_files");
+  const autoUpdateListing = !!useAccountOtherSetting(
+    "auto_update_file_listing",
+  );
   const host_id = project_map?.getIn([project_id, "host_id"]) as
     | string
     | undefined;

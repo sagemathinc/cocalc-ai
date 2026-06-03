@@ -8,7 +8,11 @@ import type { MenuProps } from "antd";
 import { useMemo } from "react";
 import { useIntl } from "react-intl";
 
-import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useAccountOtherSetting,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { file_options } from "@cocalc/frontend/editor-tmp";
@@ -51,7 +55,7 @@ export default function DirectoryPeek({
   const actions = useActions({ project_id });
   const fs = useFs({ project_id });
   const showHidden = useTypedRedux({ project_id }, "show_hidden") ?? false;
-  const mask = useTypedRedux("account", "other_settings")?.get("mask_files");
+  const mask = useAccountOtherSetting("mask_files");
   const student = useStudentProjectFunctionality(project_id);
   const { dropRef } = useFolderDrop(`explorer-peek-${dirPath}`, dirPath);
   const { listing, error } = useListing({

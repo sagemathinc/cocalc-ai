@@ -7,7 +7,11 @@ import { Button, Card, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useAccountOtherSetting,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import {
@@ -122,7 +126,7 @@ export function EnvironmentConfigurationSummary({
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const otherSettings = useTypedRedux("account", "other_settings");
+  const launcherSettings = useAccountOtherSetting(LAUNCHER_SETTINGS_KEY);
   const { env } = useProjectEnv(project_id);
   const { secrets } = useProjectSecrets(project_id);
 
@@ -131,8 +135,8 @@ export function EnvironmentConfigurationSummary({
     [siteLauncherQuick],
   );
   const accountLauncherPrefs = useMemo(
-    () => getAccountLauncherPrefs(otherSettings?.get?.(LAUNCHER_SETTINGS_KEY)),
-    [otherSettings],
+    () => getAccountLauncherPrefs(launcherSettings),
+    [launcherSettings],
   );
   const launcherDefaults = useMemo(
     () =>
@@ -182,10 +186,7 @@ export function EnvironmentConfigurationSummary({
   }, [mode, project_id]);
 
   function saveLauncherDefaults(prefs: any | null): void {
-    const next = updateAccountLauncherPrefs(
-      otherSettings?.get?.(LAUNCHER_SETTINGS_KEY),
-      prefs,
-    );
+    const next = updateAccountLauncherPrefs(launcherSettings, prefs);
     redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
   }
 

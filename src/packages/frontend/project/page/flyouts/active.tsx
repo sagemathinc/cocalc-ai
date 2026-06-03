@@ -12,6 +12,7 @@ import { sortBy, uniq } from "lodash";
 import { UsersViewing } from "@cocalc/frontend/account/avatar/users-viewing";
 import {
   CSS,
+  useAccountOtherSetting,
   useActions,
   useEffect,
   useMemo,
@@ -136,8 +137,7 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
   const openFiles = useTypedRedux({ project_id }, "open_files_order");
   const justClosed = useTypedRedux({ project_id }, "just_closed_files");
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
-  const otherSettings = useTypedRedux("account", "other_settings");
-  const dimFileExtensions = !!otherSettings?.get("dim_file_extensions");
+  const dimFileExtensions = !!useAccountOtherSetting("dim_file_extensions");
   const [filterTerm, setFilterTerm] = useState<string>("");
   const [closedFilterTerm, setClosedFilterTerm] = useState<string>("");
   const [showStarred, setShowStarred] = useState<boolean>(

@@ -5,7 +5,11 @@
 
 import { Button, Col, Row, Space } from "antd";
 import { useEffect } from "react";
-import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useAccountOtherSetting,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import {
   Icon,
   Loading,
@@ -16,6 +20,7 @@ import { file_options } from "@cocalc/frontend/editor-tmp";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
+import type { NewFilenameTypes } from "@cocalc/util/db-schema/defaults";
 import { FileSpec } from "../file-associations";
 
 interface Props {
@@ -27,9 +32,8 @@ export default function AskNewFilename({ project_id }: Props) {
   const ext_selection = useTypedRedux({ project_id }, "ext_selection");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
-  const other_settings = useTypedRedux("account", "other_settings");
   const new_filename = useTypedRedux({ project_id }, "new_filename");
-  const rfn = other_settings.get(NEW_FILENAMES);
+  const rfn = useAccountOtherSetting<NewFilenameTypes>(NEW_FILENAMES);
   const selected = rfn ?? DEFAULT_NEW_FILENAMES;
 
   useEffect(() => {

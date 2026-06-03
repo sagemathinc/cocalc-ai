@@ -7,6 +7,7 @@ import { App as AntdApp } from "antd";
 import {
   redux,
   Redux,
+  useAccountOtherSetting,
   useAsyncEffect,
   useEffect,
   useTypedRedux,
@@ -20,9 +21,9 @@ import {
 } from "@cocalc/frontend/cookie-consent";
 import { initCookieConsent } from "@cocalc/frontend/cookie-consent/init";
 import {
-  getLocale,
   LOCALIZATIONS,
   OTHER_SETTINGS_LOCALE_KEY,
+  sanitizeLocale,
 } from "@cocalc/frontend/i18n";
 import { QueryParams } from "@cocalc/frontend/misc/query-params";
 import { createRoot } from "react-dom/client";
@@ -34,7 +35,11 @@ import { Localize, useLocalizationCtx } from "./localize";
 function CocalcApp({ children }) {
   const appState = useAppContextProvider();
   const { setLocale } = useLocalizationCtx();
-  const other_settings = useTypedRedux("account", "other_settings");
+  const accountLocale = useAccountOtherSetting<string>(
+    OTHER_SETTINGS_LOCALE_KEY,
+  );
+  const timeAgoAbsolute =
+    !!useAccountOtherSetting<boolean>("time_ago_absolute");
   const customizeReady = useTypedRedux("customize", "_is_configured");
   const cookieBannerEnabled = useTypedRedux(
     "customize",
@@ -181,12 +186,12 @@ function CocalcApp({ children }) {
         QueryParams.remove("lang");
       }
     } else {
-      setLocale(getLocale(other_settings));
+      setLocale(sanitizeLocale(accountLocale));
     }
-  }, [getLocale(other_settings)]);
+  }, [accountLocale]);
 
   const timeAgo = {
-    timeAgoAbsolute: other_settings.get("time_ago_absolute"),
+    timeAgoAbsolute,
     setTimeAgoAbsolute: (absolute: boolean) => {
       redux
         .getActions("account")

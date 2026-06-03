@@ -21,6 +21,7 @@ import {
   CSS,
   redux,
   Rendered,
+  useAccountOtherSetting,
   useRedux,
   useState,
 } from "@cocalc/frontend/app-framework";
@@ -278,13 +279,9 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     "show_uncommitted_changes",
   ]);
   const is_saving: boolean = useRedux([props.editor_actions.name, "is_saving"]);
-  const otherSettings = useRedux(["account", "other_settings"]);
-  //  const hideButtonTooltips = otherSettings.get("hide_button_tooltips");
-  const darkMode = otherSettings.get("dark_mode");
-  const showSymbolBarLabels = otherSettings.get(
-    "show_symbol_bar_labels",
-    false,
-  );
+  const darkMode = useAccountOtherSetting("dark_mode");
+  const showSymbolBarLabels =
+    useAccountOtherSetting<boolean>("show_symbol_bar_labels") ?? false;
   const disableTourRefs = useRef<boolean>(false);
   const tourRefs = useRef<{ [name: string]: { current: any } }>({});
   const getTourRef = (name: string) => {
