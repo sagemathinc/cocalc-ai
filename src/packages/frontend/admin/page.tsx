@@ -20,6 +20,7 @@ import { ManagedCpuAdminOverview } from "./managed-cpu-overview";
 import { ProjectBackupShardsAdmin } from "./project-backup-shards";
 import { SsoAdmin } from "./sso";
 import { SiteSetupAdmin, SiteSetupBanner } from "./site-setup";
+import { SiteLicensesAdmin } from "./site-licenses";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -286,6 +287,15 @@ export function AdminPage({
         </div>
       ),
       children: <MembershipTiers />,
+    },
+    {
+      key: "site-licenses",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="users" style={{ marginRight: "8px" }} /> Site Licenses
+        </div>
+      ),
+      children: <SiteLicensesAdmin />,
     },
     //     {
     //       key: "usage-stats",

@@ -31,6 +31,7 @@ describe("purchases api", () => {
     const { adminProvisionSiteLicense: provision } = await import("./api");
 
     await provision({
+      bay_id: "bay-0",
       name: "Campus",
       organization_name: "Example University",
       allowed_domains: ["example.edu"],
@@ -47,6 +48,7 @@ describe("purchases api", () => {
 
     expect(adminProvisionSiteLicense).toHaveBeenCalledWith(
       expect.objectContaining({
+        bay_id: "bay-0",
         browser_id: "browser-1",
         name: "Campus",
       }),

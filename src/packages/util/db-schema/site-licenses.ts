@@ -10,6 +10,7 @@ Table({
   rules: {
     primary_key: "id",
     pg_indexes: [
+      "bay_id",
       "owner_account_id",
       "organization_name",
       "starts_at",
@@ -23,6 +24,7 @@ Table({
           id: null,
           name: null,
           organization_name: null,
+          bay_id: null,
           owner_account_id: null,
           allowed_domains: null,
           custom_terms_url: null,
@@ -44,6 +46,7 @@ Table({
           id: null,
           name: null,
           organization_name: null,
+          bay_id: null,
           owner_account_id: null,
           allowed_domains: null,
           custom_terms_url: null,
@@ -71,9 +74,13 @@ Table({
       type: "string",
       desc: "Licensee organization name.",
     },
+    bay_id: {
+      type: "string",
+      desc: "Control-plane bay that owns this site license.",
+    },
     owner_account_id: {
       type: "uuid",
-      desc: "Account whose home bay owns this site license.",
+      desc: "Legacy account owner for pre-bay site-license rows.",
       render: { type: "account" },
     },
     allowed_domains: {

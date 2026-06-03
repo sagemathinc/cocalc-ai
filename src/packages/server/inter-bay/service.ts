@@ -152,10 +152,12 @@ import {
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
+  listSiteLicenseOverviews,
   requestSiteLicensePoolWithVerifiedEmailsOnLocalBay,
   refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
   removeSiteLicenseManager,
   reviewSiteLicensePoolRequest,
+  revokeSiteLicensePoolSeat,
   setSiteLicenseManager,
   updateSiteLicense,
   updateSiteLicensePool,
@@ -779,6 +781,28 @@ async function startAccountLocalService(): Promise<void> {
       isSeedSiteLicenseBay()
         ? await adminProvisionSiteLicense({ ...opts, trusted_admin: true })
         : await getSeedSiteLicenseClient().adminProvisionSiteLicense(opts),
+    listSiteLicenseOverviews: async ({
+      actor_account_id,
+      admin,
+      trusted_admin,
+    }) =>
+      isSeedSiteLicenseBay()
+        ? await listSiteLicenseOverviews({
+            account_id: actor_account_id,
+            admin,
+            trusted_admin,
+          })
+        : await getSeedSiteLicenseClient().listSiteLicenseOverviews({
+            actor_account_id,
+            admin,
+            trusted_admin,
+          }),
+    revokeSiteLicensePoolSeat: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? {
+            revoked: await revokeSiteLicensePoolSeat(opts),
+          }
+        : await getSeedSiteLicenseClient().revokeSiteLicensePoolSeat(opts),
     updateMembershipPackage: async ({
       package_id,
       actor_account_id,

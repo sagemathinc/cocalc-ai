@@ -322,7 +322,8 @@ export interface SiteLicenseRecord {
   id: string;
   name: string;
   organization_name: string;
-  owner_account_id: string;
+  bay_id: string;
+  owner_account_id?: string | null;
   allowed_domains: string[];
   custom_terms_url?: string | null;
   custom_policy_url?: string | null;
@@ -969,6 +970,7 @@ export interface Purchases {
     account_id?: string;
     browser_id?: string;
     session_hash?: string | null;
+    bay_id: string;
     owner_account_id?: string;
     name?: string;
     organization_name?: string;
@@ -983,6 +985,10 @@ export interface Purchases {
     expires_at?: Date | string | null;
     metadata?: Record<string, unknown> | null;
   }) => Promise<SiteLicenseOverview>;
+  listSiteLicenseOverviews: (opts?: {
+    account_id?: string;
+    admin?: boolean;
+  }) => Promise<SiteLicenseOverview[]>;
   getSiteLicenseOverview: (opts?: {
     account_id?: string;
     owner_account_id?: string;
@@ -1097,6 +1103,7 @@ export const purchases = {
   getClaimableMembershipPackages: authFirst,
   claimMembershipPackageSeat: authFirst,
   adminProvisionSiteLicense: authFirst,
+  listSiteLicenseOverviews: authFirst,
   getSiteLicenseOverview: authFirst,
   updateSiteLicense: authFirst,
   addSiteLicensePool: authFirst,
