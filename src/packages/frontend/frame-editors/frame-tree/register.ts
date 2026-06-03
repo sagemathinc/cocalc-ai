@@ -200,12 +200,16 @@ function register(
 
     remove(path: string, redux, project_id: string): string {
       const name = redux_name(project_id, path);
-      if (reference_count[name] != undefined) {
+      const actions = redux.getActions(name);
+      const actionIsClosed =
+        typeof actions?.isClosed === "function" && actions.isClosed();
+      if (actionIsClosed) {
+        delete reference_count[name];
+      } else if (reference_count[name] != undefined) {
         reference_count[name] -= 1;
         if (reference_count[name] > 0) return name;
         delete reference_count[name];
       }
-      const actions = redux.getActions(name);
 
       if (actions != null) {
         actions.close();

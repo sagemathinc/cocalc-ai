@@ -1496,17 +1496,24 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       const staleName = redux_name(this.project_id, path);
       const staleActions: any = redux.getActions(staleName);
-      if (
-        staleActions != null &&
-        typeof staleActions.isClosed === "function" &&
-        staleActions.isClosed()
-      ) {
-        redux.removeActions(staleName);
-        redux.removeStore(staleName);
-      }
+      const staleStore = redux.getStore(staleName);
+      const shouldRemoveStaleRuntime =
+        (staleActions != null &&
+          typeof staleActions.isClosed === "function" &&
+          staleActions.isClosed()) ||
+        (staleActions == null && staleStore != null);
       // LAZY IMPORT, so that editors are only available
       // when you are going to use them.  Helps with code splitting.
       await import("../../editors/register-all");
+      if (shouldRemoveStaleRuntime) {
+        project_file.remove(path, this.redux, this.project_id);
+        if (redux.getActions(staleName) != null) {
+          redux.removeActions(staleName);
+        }
+        if (redux.getStore(staleName) != null) {
+          redux.removeStore(staleName);
+        }
+      }
 
       // Initialize the file's store and actions
       const name = await project_file.initializeAsync(
@@ -1548,10 +1555,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (info == null) {
       return;
     }
-    if (
-      info.Editor != null &&
-      (info.redux_name != null || this.isViewerProjectUser())
-    ) {
+    const isViewer = this.isViewerProjectUser();
+    if (this.openFileComponentRuntimeIsUsable(info, isViewer)) {
       if (!opts.noFocus) {
         this.show_file(path);
       }
@@ -1611,6 +1616,20 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
     })();
   };
+
+  private openFileComponentRuntimeIsUsable(info: any, isViewer: boolean) {
+    if (info?.Editor == null) {
+      return false;
+    }
+    if (info.redux_name == null) {
+      return isViewer;
+    }
+    const actions: any = redux.getActions(info.redux_name);
+    return !(
+      actions == null ||
+      (typeof actions.isClosed === "function" && actions.isClosed())
+    );
+  }
 
   private isViewerProjectUser(): boolean {
     const account_id = redux.getStore("account")?.get("account_id");

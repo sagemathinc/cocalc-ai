@@ -347,6 +347,13 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       projectId: project_id,
       activeProjectTab: active_project_tab,
       openFiles: open_files,
+      isRuntimeClosed: (reduxName) => {
+        const runtime = redux.getActions(reduxName) as any;
+        return (
+          runtime == null ||
+          (typeof runtime.isClosed === "function" && runtime.isClosed())
+        );
+      },
     });
     if (path == null) return;
     actions?.ensure_open_file_component?.(path);

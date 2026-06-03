@@ -73,4 +73,24 @@ describe("active editor recovery", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("selects the visible active editor when its runtime was closed", () => {
+    expect(
+      getRecoverableActiveEditorPath({
+        isActive: true,
+        activeTopTab: "project-1",
+        projectId: "project-1",
+        activeProjectTab: "editor-main.chat",
+        openFiles: ImmutableMap({
+          "main.chat": ImmutableMap({
+            component: {
+              Editor: () => null,
+              redux_name: "editor-project-1-main.chat",
+            },
+          }),
+        }),
+        isRuntimeClosed: (name) => name === "editor-project-1-main.chat",
+      }),
+    ).toBe("main.chat");
+  });
 });
