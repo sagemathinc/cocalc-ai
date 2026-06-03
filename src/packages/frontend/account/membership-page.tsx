@@ -30,10 +30,7 @@ import {
 } from "@cocalc/frontend/purchases/api";
 import type { MembershipCandidate } from "@cocalc/conat/hub/api/purchases";
 import { capitalize } from "@cocalc/util/misc";
-import {
-  type MembershipCandidateRow,
-  useMembershipSettingsData,
-} from "./membership-settings-data";
+import { useMembershipSettingsData } from "./membership-settings-data";
 import {
   formatFeatureTag,
   normalizeRecord,
@@ -123,20 +120,6 @@ function MembershipSettingsContent() {
   const personalMembership = details?.candidates.find(
     (candidate) => candidate.source === "subscription",
   );
-  const sourceRows = personalMembership
-    ? candidateRows
-    : [
-        ...candidateRows,
-        {
-          expires: null,
-          key: "personal-membership-none",
-          selected: false,
-          source: "Personal membership",
-          sourceDetail: "Managed here by you.",
-          status: "Not configured",
-          tier: "None",
-        } satisfies MembershipCandidateRow,
-      ];
   const refreshMembership = () => {
     window.dispatchEvent(new Event("cocalc:membership-changed"));
     refresh();
@@ -150,13 +133,13 @@ function MembershipSettingsContent() {
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <Card size="small" title="Membership sources">
         <Space orientation="vertical" style={{ width: "100%" }}>
-          {sourceRows.length === 0 ? (
+          {candidateRows.length === 0 ? (
             <Text type="secondary">No active membership sources.</Text>
           ) : (
             <Table
               size="small"
               pagination={false}
-              dataSource={sourceRows}
+              dataSource={candidateRows}
               columns={[
                 {
                   title: "Membership",
@@ -189,21 +172,14 @@ function MembershipSettingsContent() {
                 {
                   title: "Expires",
                   dataIndex: "expires",
-                  render: (value, row) =>
-                    value ? (
-                      <TimeAgo date={value} />
-                    ) : row.status === "Not configured" ? (
-                      <Text type="secondary">--</Text>
-                    ) : (
-                      <Text>Never</Text>
-                    ),
+                  render: (value) =>
+                    value ? <TimeAgo date={value} /> : <Text>Never</Text>,
                 },
               ]}
             />
           )}
           <Space wrap>
             <Button
-              type={personalMembership ? "default" : "primary"}
               onClick={() => {
                 openPurchase(personalMembership?.class ?? "free");
               }}
