@@ -2843,16 +2843,19 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   deleteFiles = async ({
     paths,
     sudo = false,
+    deleteFromSnapshots = false,
     runFreshAuthAction,
   }: {
     paths: string[];
     sudo?: boolean;
+    deleteFromSnapshots?: boolean;
     runFreshAuthAction?: (action: () => Promise<void>) => Promise<boolean>;
   }): Promise<void> => {
     const action = async () => {
       await deleteFiles({
         paths,
         sudo,
+        deleteFromSnapshots,
         projectId: this.project_id,
         fs: () => this.fs(),
         setActivity: (opts) => this.set_activity(opts),
