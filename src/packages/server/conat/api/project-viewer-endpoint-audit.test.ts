@@ -118,7 +118,7 @@ describe("project viewer endpoint audit", () => {
     ]) {
       expectGuard(snapshots, name, ["assertCollab"]);
     }
-    for (const name of ["deleteSnapshot"]) {
+    for (const name of ["deleteSnapshot", "pruneSnapshotPath"]) {
       expectGuard(snapshots, name, [
         "assertCanPerformDestructiveStorageAction",
       ]);

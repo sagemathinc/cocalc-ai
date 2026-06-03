@@ -2,6 +2,7 @@ import { type Subvolume } from "./subvolume";
 import { btrfs } from "./util";
 import getLogger from "@cocalc/backend/logger";
 import { join } from "path";
+import { realpath, rm } from "node:fs/promises";
 import { type SnapshotCounts, updateRollingSnapshots } from "./snapshots";
 import { ConatError } from "@cocalc/conat/core/client";
 import { type SnapshotUsage } from "@cocalc/conat/files/file-server";
@@ -141,6 +142,77 @@ export class SubvolumeSnapshots {
     await btrfs({
       args: ["subvolume", "delete", join(this.snapshotsDir, name)],
     });
+  };
+
+  private setReadOnly = async (name: string, readOnly: boolean) => {
+    await btrfs({
+      args: [
+        "property",
+        "set",
+        "-ts",
+        join(this.snapshotsDir, name),
+        "ro",
+        readOnly ? "true" : "false",
+      ],
+    });
+  };
+
+  private safePruneTargetPath = async (name: string, path: string) => {
+    const snapshotRoot = join(this.snapshotsDir, name);
+    const target = join(snapshotRoot, path);
+    let realTarget: string;
+    try {
+      realTarget = await realpath(target);
+    } catch (err: any) {
+      if (err?.code === "ENOENT") {
+        return target;
+      }
+      throw err;
+    }
+    const realRoot = await realpath(snapshotRoot);
+    if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}/`)) {
+      throw new Error(`snapshot prune path resolves outside snapshot: ${path}`);
+    }
+    return target;
+  };
+
+  prunePath = async ({
+    path,
+    snapshots,
+  }: {
+    path: string;
+    snapshots?: string[];
+  }): Promise<{ path: string; snapshots: string[] }> => {
+    if (
+      !path ||
+      path === "." ||
+      path.startsWith("..") ||
+      path.includes("/..")
+    ) {
+      throw new Error(`invalid snapshot prune path: ${path}`);
+    }
+    if (path === SNAPSHOTS || path.startsWith(`${SNAPSHOTS}/`)) {
+      throw new Error("cannot prune the snapshots directory from snapshots");
+    }
+    const names = snapshots?.length ? snapshots : await this.readdir();
+    for (const name of names) {
+      if (!(await this.exists(name))) {
+        throw new Error(`snapshot ${name} does not exist`);
+      }
+      if (await this.subvolume.fs.exists(this.path(`.${name}.lock`))) {
+        throw Error(`snapshot ${name} is locked`);
+      }
+    }
+    for (const name of names) {
+      const target = await this.safePruneTargetPath(name, path);
+      await this.setReadOnly(name, false);
+      try {
+        await rm(target, { recursive: true, force: true });
+      } finally {
+        await this.setReadOnly(name, true);
+      }
+    }
+    return { path, snapshots: names };
   };
 
   // update the rolling snapshots scheduleGener

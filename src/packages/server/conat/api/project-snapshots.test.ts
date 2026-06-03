@@ -8,6 +8,7 @@ let getProjectFileServerClientMock: jest.Mock;
 let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
 let getProjectSnapshotLimitMock: jest.Mock;
 let requireDangerousProjectMutationAuthMock: jest.Mock;
+let assertCanPerformDestructiveStorageActionMock: jest.Mock;
 let poolQueryMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -80,6 +81,12 @@ jest.mock("./project-dangerous-auth", () => ({
     requireDangerousProjectMutationAuthMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/destructive-storage-actions", () => ({
+  __esModule: true,
+  assertCanPerformDestructiveStorageAction: (...args: any[]) =>
+    assertCanPerformDestructiveStorageActionMock(...args),
+}));
+
 describe("project-snapshots.createSnapshot", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -100,6 +107,7 @@ describe("project-snapshots.createSnapshot", () => {
     getProjectFileServerClientMock = jest.fn(async () => ({
       createSnapshot: jest.fn(),
       deleteSnapshot: jest.fn(),
+      pruneSnapshotPath: jest.fn(),
       updateSnapshots: jest.fn(),
       allSnapshotUsage: jest.fn(async () => []),
       getSnapshotFileText: jest.fn(),
@@ -140,6 +148,7 @@ describe("project-snapshots.createSnapshot", () => {
     getProjectFileServerClientMock = jest.fn(async () => ({
       createSnapshot: jest.fn(),
       deleteSnapshot: jest.fn(),
+      pruneSnapshotPath: jest.fn(),
       updateSnapshots: jest.fn(),
       allSnapshotUsage: jest.fn(async () => [
         { name: "manual-1" },
@@ -181,6 +190,7 @@ describe("project-snapshots.restoreSnapshot", () => {
     getProjectFileServerClientMock = jest.fn(async () => ({
       createSnapshot: jest.fn(),
       deleteSnapshot: jest.fn(),
+      pruneSnapshotPath: jest.fn(),
       updateSnapshots: jest.fn(),
       allSnapshotUsage: jest.fn(async () => []),
       getSnapshotFileText: jest.fn(),
@@ -237,6 +247,62 @@ describe("project-snapshots.restoreSnapshot", () => {
       scope_id: "proj-1",
       service: "persist-service",
       stream_name: "stream:op-restore-1",
+    });
+  });
+});
+
+describe("project-snapshots.pruneSnapshotPath", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    assertCollabMock = jest.fn(async () => undefined);
+    assertCanPerformDestructiveStorageActionMock = jest.fn(
+      async () => undefined,
+    );
+    requireDangerousProjectMutationAuthMock = jest.fn(async () => undefined);
+    getProjectFileServerClientMock = jest.fn(async () => ({
+      createSnapshot: jest.fn(),
+      deleteSnapshot: jest.fn(),
+      pruneSnapshotPath: jest.fn(async () => ({
+        path: "foo",
+        snapshots: ["snap1", "snap2"],
+      })),
+      updateSnapshots: jest.fn(),
+      allSnapshotUsage: jest.fn(async () => []),
+      getSnapshotFileText: jest.fn(),
+    }));
+  });
+
+  it("requires fresh auth, checks destructive storage permission, and prunes via project-host", async () => {
+    const { pruneSnapshotPath } = await import("./project-snapshots");
+    await expect(
+      pruneSnapshotPath({
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        session_hash: "session-1",
+        project_id: "proj-1",
+        path: "foo",
+        snapshots: ["snap1", "snap2"],
+      }),
+    ).resolves.toEqual({
+      path: "foo",
+      snapshots: ["snap1", "snap2"],
+    });
+
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      browser_id: "browser-1",
+      session_hash: "session-1",
+    });
+    expect(assertCanPerformDestructiveStorageActionMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      action: "delete files from snapshots",
+    });
+    const client = await getProjectFileServerClientMock.mock.results[0].value;
+    expect(client.pruneSnapshotPath).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      path: "foo",
+      snapshots: ["snap1", "snap2"],
     });
   });
 });

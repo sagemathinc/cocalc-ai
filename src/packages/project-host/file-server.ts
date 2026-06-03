@@ -1689,6 +1689,38 @@ async function deleteSnapshot({
   await vol.snapshots.delete(name);
 }
 
+function normalizeSnapshotPrunePath(input: string): string {
+  const normalized = normalizeArchivePath(input);
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized.startsWith("..") ||
+    normalized.includes("/..")
+  ) {
+    throw new Error("invalid snapshot prune path");
+  }
+  if (normalized === ".snapshots" || normalized.startsWith(".snapshots/")) {
+    throw new Error("cannot prune snapshots from snapshots");
+  }
+  return normalized;
+}
+
+async function pruneSnapshotPath({
+  project_id,
+  path,
+  snapshots,
+}: {
+  project_id: string;
+  path: string;
+  snapshots?: string[];
+}): Promise<{ path: string; snapshots: string[] }> {
+  const vol = await getVolume(project_id);
+  return await vol.snapshots.prunePath({
+    path: normalizeSnapshotPrunePath(path),
+    snapshots,
+  });
+}
+
 async function updateSnapshots({
   project_id,
   counts,
@@ -3945,6 +3977,7 @@ export async function initFileServer({
     // snapshots
     createSnapshot,
     deleteSnapshot,
+    pruneSnapshotPath,
     updateSnapshots,
     allSnapshotUsage,
     getSnapshotFileText: reuseInFlight(getSnapshotFileText),

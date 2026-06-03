@@ -415,6 +415,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "project snapshot deletion",
   },
+  "projects.pruneSnapshotPath": {
+    decision: "fresh-auth-required",
+    reason: "project snapshot path deletion",
+  },
   "projects.drainProjectRehome": {
     decision: "fresh-auth-required",
     reason: "project ownership migration maintenance",
