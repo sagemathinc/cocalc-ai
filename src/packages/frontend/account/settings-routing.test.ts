@@ -38,6 +38,7 @@ describe("settings-routing", () => {
   it("does not map menu groups as settings routes", () => {
     expect(parseAccountSettingsRoute("settings/preferences")).toBeUndefined();
     expect(parseAccountSettingsRoute("settings/billing")).toBeUndefined();
+    expect(parseAccountSettingsRoute("settings/licenses")).toBeUndefined();
     expect(parseAccountSettingsRoute("settings/licenses/team")).toBeUndefined();
   });
 

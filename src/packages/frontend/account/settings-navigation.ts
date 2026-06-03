@@ -80,7 +80,6 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
     overview: "section",
     visible: ({ isLite }) => !isLite,
     pages: [
-      { type: "page", page: "licenses" },
       {
         type: "page",
         page: "team-licenses",

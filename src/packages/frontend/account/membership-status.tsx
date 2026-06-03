@@ -1043,11 +1043,11 @@ export function MembershipStatusPanel({
               <Button
                 onClick={() =>
                   openAccountSettings({
-                    page: "licenses",
+                    page: "site-licenses",
                   })
                 }
               >
-                <Icon name="key" /> Open Licenses
+                <Icon name="key" /> Open Site Licenses
               </Button>
             </Space>
           </Card>

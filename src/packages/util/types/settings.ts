@@ -25,7 +25,6 @@ export type PreferencesSubTabType =
 export type PreferencesSubTabKey = `preferences-${PreferencesSubTabType}`;
 
 export const VALID_LICENSES_SUB_TYPES = [
-  "licenses",
   "team-licenses",
   "site-licenses",
   "software-licenses",

@@ -239,20 +239,15 @@ export const labels = defineMessages({
     description:
       "A license is part of a subscription or a one-time purchase to upgrade projects",
   },
-  team_licenses: {
-    id: "labels.team_licenses",
-    defaultMessage: "Team Licenses",
-    description: "Settings page for managing team membership seats",
+  team: {
+    id: "labels.team",
+    defaultMessage: "Team",
+    description: "A team or group of users",
   },
-  site_licenses: {
-    id: "labels.site_licenses",
-    defaultMessage: "Site Licenses",
-    description: "Settings page for managing institutional site licenses",
-  },
-  software_licenses: {
-    id: "labels.software_licenses",
-    defaultMessage: "Software Licenses",
-    description: "Settings page for managing Launchpad/Rocket licenses",
+  site: {
+    id: "labels.site",
+    defaultMessage: "Site",
+    description: "A website or installation",
   },
   status: {
     id: "labels.status",

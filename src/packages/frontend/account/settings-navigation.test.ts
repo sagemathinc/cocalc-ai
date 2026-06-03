@@ -96,15 +96,45 @@ describe("settings-navigation", () => {
     expect(overview.primaryPages).toContain("ai");
     expect(
       overview.sections.find((section) => section.key === "licenses")?.pages,
-    ).toContain("licenses");
-    expect(
-      overview.sections.find((section) => section.key === "licenses")?.pages,
-    ).toContain("team-licenses");
+    ).toEqual(["team-licenses", "site-licenses", "software-licenses"]);
     expect(
       overview.sections.find((section) => section.key === "billing")?.pages,
     ).not.toContain("payment-methods");
     expect(
       overview.sections.find((section) => section.key === "support")?.pages,
     ).toEqual(["support"]);
+  });
+
+  it("shows team license management only when commerce or admin access is available", () => {
+    const nonCommercialUser = getVisibleSettingsNavigation({
+      ...visibleContext,
+      isAdmin: false,
+      isCommercial: false,
+    });
+    const userLicenses = nonCommercialUser.find(
+      (node) => node.type === "group" && node.key === "licenses",
+    );
+    expect(userLicenses?.type).toBe("group");
+    if (userLicenses?.type === "group") {
+      expect(userLicenses.pages.map(({ page }) => page)).toEqual([
+        "site-licenses",
+        "software-licenses",
+      ]);
+    }
+
+    const nonCommercialAdmin = getVisibleSettingsNavigation({
+      ...visibleContext,
+      isAdmin: true,
+      isCommercial: false,
+    });
+    const adminLicenses = nonCommercialAdmin.find(
+      (node) => node.type === "group" && node.key === "licenses",
+    );
+    expect(adminLicenses?.type).toBe("group");
+    if (adminLicenses?.type === "group") {
+      expect(adminLicenses.pages.map(({ page }) => page)).toContain(
+        "team-licenses",
+      );
+    }
   });
 });

@@ -60,7 +60,6 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
     { page: "communication", path: "settings/communication" },
     { page: "keys", path: "settings/keys" },
     { page: "other", path: "settings/other" },
-    { page: "licenses", path: "settings/licenses" },
     { page: "team-licenses", path: "settings/team-licenses" },
     { page: "site-licenses", path: "settings/site-licenses" },
     { page: "software-licenses", path: "settings/software-licenses" },

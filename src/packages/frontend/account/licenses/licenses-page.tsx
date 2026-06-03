@@ -3,32 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Card, Space, Typography } from "antd";
+import { Alert, Space, Typography } from "antd";
 import { useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 
 import api from "@cocalc/frontend/client/api";
-import { Icon, Loading } from "@cocalc/frontend/components";
-import type { IconName } from "@cocalc/frontend/components/icon";
+import { Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import type { SettingsPageDefinition } from "../settings-page";
-import { openAccountSettings } from "../settings-routing";
 import { MembershipPackageManager } from "../membership-package-manager";
 import type { MembershipTierWithPresentation } from "../membership-tier-benefits";
 import { SoftwareLicensesPage } from "./software-licenses";
 
-const { Paragraph, Title } = Typography;
-
-export const LICENSES_SETTINGS_PAGE = {
-  component: LicensesOverviewPage,
-  description: defineMessage({
-    id: "account.settings.overview.licenses",
-    defaultMessage: "Find team, site, and software license management.",
-  }),
-  icon: "key",
-  key: "licenses",
-  label: labels.overview,
-} satisfies SettingsPageDefinition;
+const { Paragraph } = Typography;
 
 export const TEAM_LICENSES_SETTINGS_PAGE = {
   component: TeamLicensesPage,
@@ -38,7 +25,7 @@ export const TEAM_LICENSES_SETTINGS_PAGE = {
   }),
   icon: "users",
   key: "team-licenses",
-  label: labels.team_licenses,
+  label: labels.team,
 } satisfies SettingsPageDefinition;
 
 export const SITE_LICENSES_SETTINGS_PAGE = {
@@ -50,7 +37,7 @@ export const SITE_LICENSES_SETTINGS_PAGE = {
   }),
   icon: "graduation-cap",
   key: "site-licenses",
-  label: labels.site_licenses,
+  label: labels.site,
 } satisfies SettingsPageDefinition;
 
 export const SOFTWARE_LICENSES_SETTINGS_PAGE = {
@@ -61,7 +48,7 @@ export const SOFTWARE_LICENSES_SETTINGS_PAGE = {
   }),
   icon: "key",
   key: "software-licenses",
-  label: labels.software_licenses,
+  label: labels.software,
 } satisfies SettingsPageDefinition;
 
 interface MembershipTier extends MembershipTierWithPresentation {
@@ -170,73 +157,5 @@ function SiteLicensesPage() {
       mode="site"
       description="Manage site licenses where you are an owner or manager: review requests, manage seats, and update managers."
     />
-  );
-}
-
-function LicensesOverviewPage() {
-  return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      <Paragraph type="secondary">
-        Licenses here are multi-user grants or software entitlements that you
-        administer. To claim your own site-license membership, use the
-        Membership page.
-      </Paragraph>
-      <Space
-        direction="horizontal"
-        wrap
-        size="middle"
-        style={{ width: "100%" }}
-      >
-        <LicenseOverviewCard
-          icon="users"
-          title="Team Licenses"
-          description="Buy and assign membership seats for a team."
-          page="team-licenses"
-        />
-        <LicenseOverviewCard
-          icon="graduation-cap"
-          title="Site Licenses"
-          description="Manage institutional license requests, seats, and managers."
-          page="site-licenses"
-        />
-        <LicenseOverviewCard
-          icon="key"
-          title="Software Licenses"
-          description="Manage Launchpad/Rocket license tokens."
-          page="software-licenses"
-        />
-      </Space>
-    </Space>
-  );
-}
-
-function LicenseOverviewCard({
-  description,
-  icon,
-  page,
-  title,
-}: {
-  description: string;
-  icon: IconName;
-  page: "site-licenses" | "software-licenses" | "team-licenses";
-  title: string;
-}) {
-  return (
-    <Card
-      hoverable
-      style={{ maxWidth: 340, minWidth: 260 }}
-      onClick={() => {
-        openAccountSettings({ page });
-      }}
-    >
-      <Space orientation="vertical" size="small">
-        <Title level={4} style={{ margin: 0 }}>
-          <Icon name={icon} /> {title}
-        </Title>
-        <Paragraph type="secondary" style={{ margin: 0 }}>
-          {description}
-        </Paragraph>
-      </Space>
-    </Card>
   );
 }
