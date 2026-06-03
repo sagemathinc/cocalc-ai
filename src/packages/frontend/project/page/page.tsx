@@ -94,6 +94,7 @@ import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-pr
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import type { ProjectAccessLandingInfo } from "@cocalc/conat/hub/api/projects";
+import { lite } from "@cocalc/frontend/lite";
 
 const START_BANNER = false;
 
@@ -131,6 +132,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       accountId,
       project,
       isAdmin: !!groups?.includes("admin"),
+      liteMode: lite,
     })
   ) {
     return (
@@ -956,6 +958,7 @@ function ProjectAccessLandingGate({ project_id, is_active }: Props) {
         accountIsReady: true,
         isLoggedIn: true,
         hasProject: false,
+        liteMode: lite,
       })
     ) {
       return;

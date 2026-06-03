@@ -47,6 +47,18 @@ describe("project access landing auth gate", () => {
     ).toBe(false);
   });
 
+  it("does not fetch project metadata in lite mode", () => {
+    expect(
+      shouldFetchProjectAccessLandingInfo({
+        isActive: true,
+        accountIsReady: true,
+        isLoggedIn: true,
+        hasProject: false,
+        liteMode: true,
+      }),
+    ).toBe(false);
+  });
+
   it("keeps non-collaborators on the access landing even if project shell state exists", () => {
     const project = {
       getIn: (path: string[]) =>
@@ -72,6 +84,16 @@ describe("project access landing auth gate", () => {
         accountId: "requester-account",
         project,
         isAdmin: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("bypasses the access landing in lite mode", () => {
+    expect(
+      hasProjectRoleForAccessLandingBypass({
+        accountId: "requester-account",
+        project: null,
+        liteMode: true,
       }),
     ).toBe(true);
   });

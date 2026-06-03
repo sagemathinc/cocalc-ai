@@ -8,24 +8,29 @@ export function shouldFetchProjectAccessLandingInfo({
   accountIsReady,
   isLoggedIn,
   hasProject,
+  liteMode = false,
 }: {
   isActive: boolean;
   accountIsReady: boolean;
   isLoggedIn: boolean;
   hasProject: boolean;
+  liteMode?: boolean;
 }): boolean {
-  return isActive && accountIsReady && isLoggedIn && !hasProject;
+  return !liteMode && isActive && accountIsReady && isLoggedIn && !hasProject;
 }
 
 export function hasProjectRoleForAccessLandingBypass({
   accountId,
   project,
   isAdmin = false,
+  liteMode = false,
 }: {
   accountId?: string | null;
   project: any;
   isAdmin?: boolean;
+  liteMode?: boolean;
 }): boolean {
+  if (liteMode) return true;
   if (project == null) return false;
   if (isAdmin) return true;
   if (!accountId) return false;
