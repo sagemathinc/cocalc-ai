@@ -39,6 +39,7 @@ type RemoteStarStatus = {
   projectHost: string;
   release: string;
   bootstrapUrl: string;
+  sudo: "available" | "unavailable" | "unknown";
 };
 
 function shellQuote(value: string): string {
@@ -64,6 +65,10 @@ function parseRemoteStatus(raw: string): RemoteStarStatus {
     projectHost: data.project_host || "unknown",
     release: data.release || "",
     bootstrapUrl: data.bootstrap_url || "",
+    sudo:
+      data.sudo === "available" || data.sudo === "unavailable"
+        ? data.sudo
+        : "unknown",
   };
 }
 
@@ -73,21 +78,39 @@ async function getRemoteStarStatus(
   const script = String.raw`
 set -eu
 star=/opt/cocalc-star/source/src/scripts/star/star.sh
-if [ ! -x "$star" ]; then
+if sudo -n true >/dev/null 2>&1; then
+  sudo_available=1
+  printf 'sudo=available\n'
+else
+  sudo_available=0
+  printf 'sudo=unavailable\n'
+fi
+if [ "$sudo_available" = 1 ]; then
+  installed_test() { sudo -n test -x "$star" 2>/dev/null; }
+  read_release() { sudo -n basename "$(sudo -n readlink /opt/cocalc-star/current 2>/dev/null || true)" 2>/dev/null || true; }
+  has_bootstrap() { sudo -n test -f /var/lib/cocalc/star/bootstrap-result.json 2>/dev/null; }
+  read_bootstrap() { sudo -n sed -n 's/.*"bootstrap_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /var/lib/cocalc/star/bootstrap-result.json 2>/dev/null || true; }
+else
+  installed_test() { test -x "$star" 2>/dev/null; }
+  read_release() { basename "$(readlink /opt/cocalc-star/current 2>/dev/null || true)" 2>/dev/null || true; }
+  has_bootstrap() { test -f /var/lib/cocalc/star/bootstrap-result.json 2>/dev/null; }
+  read_bootstrap() { sed -n 's/.*"bootstrap_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /var/lib/cocalc/star/bootstrap-result.json 2>/dev/null || true; }
+fi
+if ! installed_test; then
   printf 'installed=0\nhub=missing\nproject_host=missing\nrelease=\nbootstrap_url=\n'
   exit 0
 fi
 printf 'installed=1\n'
 printf 'hub=%s\n' "$(systemctl is-active cocalc-star-hub 2>/dev/null || true)"
 printf 'project_host=%s\n' "$(systemctl is-active cocalc-star-project-host 2>/dev/null || true)"
-printf 'release=%s\n' "$(sudo -n "$star" current-release 2>/dev/null || true)"
-if [ -f /var/lib/cocalc/star/bootstrap-result.json ]; then
-  printf 'bootstrap_url=%s\n' "$(sudo -n sed -n 's/.*"bootstrap_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /var/lib/cocalc/star/bootstrap-result.json 2>/dev/null || true)"
+printf 'release=%s\n' "$(read_release)"
+if has_bootstrap; then
+  printf 'bootstrap_url=%s\n' "$(read_bootstrap)"
 else
   printf 'bootstrap_url=\n'
 fi
 `;
-  const res = await sshRunAsync(sshOpts, `bash -lc ${shellQuote(script)}`, {
+  const res = await sshRunAsync(sshOpts, `bash -c ${shellQuote(script)}`, {
     timeoutMs: 15000,
   });
   if (res.error) {
@@ -183,9 +206,11 @@ function startTunnel(
 function printStatus(status: RemoteStarStatus) {
   if (!status.installed) {
     console.log("CoCalc Star: not installed");
+    console.log(`Passwordless sudo: ${status.sudo}`);
     return;
   }
   console.log("CoCalc Star: installed");
+  console.log(`Passwordless sudo: ${status.sudo}`);
   console.log(`Hub service: ${status.hub}`);
   console.log(`Project-host service: ${status.projectHost}`);
   if (status.release) {
@@ -211,6 +236,11 @@ async function connectStar(target: string, options: StarCliOptions) {
   if (options.statusOnly) {
     printStatus(status);
     return;
+  }
+  if (!status.installed && status.sudo === "unavailable") {
+    throw new Error(
+      "CoCalc Star is not installed and passwordless sudo is not available on the remote target. Configure passwordless sudo, or SSH as a user that can run sudo non-interactively, then rerun this command.",
+    );
   }
   if (
     (!status.installed && options.noInstall) ||
@@ -259,6 +289,9 @@ export async function main(argv: string[] = process.argv.slice(2)) {
   const program = new Command();
   program
     .name("cocalc-plus star")
+    .description(
+      "Install or open CoCalc Star on a dedicated remote Ubuntu VM over SSH.",
+    )
     .usage("user@host[:port] [options]")
     .showHelpAfterError()
     .argument("[target]")
@@ -281,7 +314,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
     .option("--proxy-jump <host>")
     .addHelpText(
       "after",
-      `\nExamples:\n  cocalc-plus star ubuntu@1.2.3.4\n  cocalc-plus star ubuntu@1.2.3.4 --local-port 9500 --no-open\n  cocalc-plus star ubuntu@1.2.3.4 --status-only\n  cocalc-plus star ubuntu@1.2.3.4 --identity ~/.ssh/id_ed25519\n`,
+      `\nWhat it does:\n  1. SSH to the target.\n  2. Check whether CoCalc Star is installed.\n  3. If missing, run the public Star installer with passwordless sudo.\n  4. Open an SSH tunnel from localhost:<port> to the remote Star server.\n\nRequirements:\n  - A dedicated Ubuntu VM.\n  - SSH access to the target.\n  - Passwordless sudo on the target for install or upgrade.\n\nExamples:\n  cocalc-plus star ubuntu@1.2.3.4\n  cocalc-plus star ubuntu@1.2.3.4 --local-port 9500 --no-open\n  cocalc-plus star ubuntu@1.2.3.4 --status-only\n  cocalc-plus star ubuntu@1.2.3.4 --identity ~/.ssh/id_ed25519\n`,
     )
     .action(async (target: string | undefined, options) => {
       const finalTarget = options.target ?? target;
