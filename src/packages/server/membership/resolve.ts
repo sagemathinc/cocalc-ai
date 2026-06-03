@@ -152,7 +152,7 @@ async function buildMembershipCandidates(
     });
   }
 
-  return candidates;
+  return dedupeEquivalentAdminCandidates(candidates);
 }
 
 async function buildMembershipResolutionForAccount(
@@ -165,6 +165,61 @@ async function buildMembershipResolutionForAccount(
   const candidates = await buildMembershipCandidates(account_id, tiers);
   const selected = pickBestMembership(candidates, tiers);
   return { candidates, selected };
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJsonValue);
+  }
+  if (value != null && typeof value === "object") {
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    const record = value as Record<string, unknown>;
+    return Object.keys(record)
+      .sort()
+      .reduce(
+        (result, key) => {
+          result[key] = stableJsonValue(record[key]);
+          return result;
+        },
+        {} as Record<string, unknown>,
+      );
+  }
+  return value;
+}
+
+function adminCandidateKey(candidate: MembershipCandidate): string {
+  return stableStringify({
+    class: candidate.class,
+    priority: candidate.priority,
+    expires: candidate.expires
+      ? new Date(candidate.expires).toISOString()
+      : undefined,
+    entitlements: candidate.entitlements,
+    effective_limits: candidate.effective_limits,
+  });
+}
+
+function dedupeEquivalentAdminCandidates(
+  candidates: MembershipCandidate[],
+): MembershipCandidate[] {
+  const seenAdminCandidates = new Set<string>();
+  return candidates.filter((candidate) => {
+    if (candidate.source !== "admin") {
+      return true;
+    }
+    const key = adminCandidateKey(candidate);
+    if (seenAdminCandidates.has(key)) {
+      return false;
+    }
+    seenAdminCandidates.add(key);
+    return true;
+  });
 }
 
 function pickBestMembership(

@@ -104,6 +104,26 @@ describe("resolveMembershipForAccount", () => {
     expect(result.effective_limits?.max_sponsored_running_projects).toBe(99);
   });
 
+  it("deduplicates identical explicit and group admin memberships", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createTestAdminAssignedMembership(account_id, {
+      membership_class: "admin",
+    });
+    await makeTestAccountAdmin(account_id);
+
+    const details = await resolveMembershipDetailsForAccount(account_id);
+
+    expect(
+      details.candidates.filter(
+        (candidate) =>
+          candidate.source === "admin" && candidate.class === "admin",
+      ),
+    ).toHaveLength(1);
+    expect(details.selected.class).toBe("admin");
+    expect(details.selected.source).toBe("admin");
+  });
+
   it("returns a granted membership when no subscription or admin assignment exists", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);
