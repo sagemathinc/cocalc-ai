@@ -68,6 +68,7 @@ import "./project-hosts";
 import "./project-host-access";
 import "./project-host-bootstrap-tokens";
 import "./project-backup-repos";
+import "./project-backup-indexes";
 import "./project-collab-invites";
 import "./project-events-outbox";
 import "./project-host-route-invalidations";

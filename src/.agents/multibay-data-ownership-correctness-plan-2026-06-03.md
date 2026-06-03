@@ -579,6 +579,8 @@ Important current-state calls encoded in the manifest:
 
 ### Phase 1: Automated Risk Test
 
+Status: partially implemented 2026-06-03.
+
 Add tests that inspect schema metadata and table names/fields.
 
 The test should fail or warn when:
@@ -599,6 +601,29 @@ The test should fail or warn when:
   override.
 
 This test is the key to "stay correct."
+
+Implemented so far:
+
+- `table-ownership.test.ts` scans non-test `src/packages/server` TypeScript
+  files for `CREATE TABLE IF NOT EXISTS`.
+- Literal table names and simple constants such as `${TABLE}` are resolved.
+- Every server-side Postgres table created outside `util/db-schema` must either
+  be a registered durable schema table or have an explicit ad hoc ownership
+  entry in `AD_HOC_POSTGRES_TABLE_OWNERSHIP`.
+- The ad hoc manifest records whether each hidden table should migrate into
+  `util/db-schema` or may remain outside as documented cache/ephemeral state.
+- `project_backup_indexes` already had a `util/db-schema` declaration but was
+  not imported into the schema index; it is now registered and covered by the
+  durable table manifest.
+
+Still needed:
+
+- field-based checks for `account_id`, `project_id`, `host_id`, and `bay_id`
+  consistency;
+- rehome/drain checks that refuse unsupported ownership classes unless the
+  unsafe override is explicitly used;
+- follow-up migrations moving durable ad hoc tables into `util/db-schema` or
+  formal migrations.
 
 ### Phase 2: Seed-Global Commercial State
 

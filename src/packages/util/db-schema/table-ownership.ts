@@ -110,7 +110,7 @@ export const TABLE_OWNERSHIP = {
       "patches",
       "project_access_request_blocks",
       "project_access_requests",
-      "project_backup_repos",
+      "project_backup_indexes",
       "project_collab_invite_blocks",
       "project_collab_invites",
       "project_events_outbox",
@@ -164,6 +164,7 @@ export const TABLE_OWNERSHIP = {
       "organizations",
       "passport_settings",
       "passport_store",
+      "project_backup_repos",
       "registration_tokens",
       "rootfs_image_events",
       "rootfs_images",
@@ -279,8 +280,173 @@ export const TABLE_OWNERSHIP = {
   }),
 } satisfies Record<string, TableOwnershipEntry>;
 
+export interface AdHocPostgresTableOwnershipEntry extends TableOwnershipEntry {
+  source: string;
+  migrate_to_schema: boolean;
+}
+
+function adHocEntries(
+  tables: string[],
+  entry: Omit<AdHocPostgresTableOwnershipEntry, "table">,
+): Record<string, AdHocPostgresTableOwnershipEntry> {
+  return Object.fromEntries(
+    tables.map((table) => [table, { table, ...entry }]),
+  );
+}
+
+export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
+  ...adHocEntries(
+    [
+      "cluster_account_api_key_directory",
+      "cluster_account_directory",
+      "cluster_bay_registry",
+      "project_app_public_subdomains",
+      "project_collab_invite_directory",
+      "site_license_domain_locks",
+      "site_license_domains",
+    ],
+    {
+      ownership: "seed-global",
+      authority: "seed",
+      portability: "stable",
+      source: "server Postgres schema bootstrap",
+      migrate_to_schema: true,
+      notes:
+        "Cluster-global directory/configuration state created outside util/db-schema. Seed should be authoritative; this should move into db-schema or a formal migration.",
+    },
+  ),
+
+  ...adHocEntries(["account_impersonation_grant_directory"], {
+    ownership: "projection",
+    authority: "mixed",
+    portability: "rebuildable",
+    source: "server Postgres schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Cluster lookup directory for impersonation grants. It should be rebuildable from authoritative account-home grant rows.",
+    rebuild:
+      "Recompute from account_impersonation_grants across account homes.",
+  }),
+
+  ...adHocEntries(
+    [
+      "account_abuse_review_annotations",
+      "account_cpu_usage_events",
+      "account_managed_egress_events",
+      "account_revocations",
+      "account_security_state",
+      "account_usage_windows",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      source: "server Postgres schema bootstrap",
+      migrate_to_schema: true,
+      notes:
+        "Account-scoped durable operational state created outside util/db-schema. Reads/writes must route to the account home bay; rehome is unsafe until explicitly audited.",
+    },
+  ),
+
+  ...adHocEntries(["account_usage_epochs", "account_usage_epoch_resets"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    source: "server Postgres schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Global usage-window epoch/reset state. This defines cluster-wide reset semantics and should be seed-authoritative.",
+  }),
+
+  ...adHocEntries(
+    [
+      "project_active_operations",
+      "project_backup_repo_assignments",
+      "project_collab_invite_inbox",
+      "project_copies",
+      "project_moves",
+      "project_secrets",
+    ],
+    {
+      ownership: "project-owning",
+      authority: "project_id",
+      portability: "unsupported",
+      source: "server Postgres schema bootstrap",
+      migrate_to_schema: true,
+      notes:
+        "Project-scoped durable operational state created outside util/db-schema. Reads/writes must route to the project owning bay; rehome is unsafe until explicitly audited.",
+    },
+  ),
+
+  ...adHocEntries(
+    ["project_host_availability_events", "project_host_rehome_operations"],
+    {
+      ownership: "host-owning",
+      authority: "host_id",
+      portability: "unsupported",
+      source: "server Postgres schema bootstrap",
+      migrate_to_schema: true,
+      notes:
+        "Project-host-scoped operational state created outside util/db-schema. Host rehome/drain tools must treat it explicitly.",
+    },
+  ),
+
+  ...adHocEntries(
+    [
+      "account_rehome_operations",
+      "long_running_operations",
+      "parallel_ops_limits",
+      "project_rehome_operations",
+    ],
+    {
+      ownership: "stable-bay",
+      authority: "local",
+      portability: "stable",
+      source: "server Postgres schema bootstrap",
+      migrate_to_schema: true,
+      notes:
+        "Operator/control-plane operation state that is currently stable on the bay where it is created. Whole-bay evacuation must inspect it explicitly.",
+    },
+  ),
+
+  ...adHocEntries(
+    [
+      "bay_restore_test_pitr_events",
+      "cloudflare_r2_audit_cache",
+      "cloudflare_teardown_plans",
+      "provider_setup_challenges",
+    ],
+    {
+      ownership: "cache",
+      authority: "local",
+      portability: "rebuildable",
+      source: "server Postgres schema bootstrap",
+      migrate_to_schema: false,
+      notes:
+        "Operational cache, challenge, or verification state. It may remain outside db-schema if documented as non-authoritative and drain-safe.",
+      rebuild:
+        "Regenerate from provider state, retry workflow, or accept bounded loss.",
+    },
+  ),
+
+  ...adHocEntries(["membership_trial_claims"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    source: "server Postgres schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Global trial-claim ledger keyed by normalized email/account identity. It should be seed-authoritative to avoid duplicate claims across bays.",
+  }),
+} satisfies Record<string, AdHocPostgresTableOwnershipEntry>;
+
+export const POSTGRES_TABLE_OWNERSHIP = {
+  ...TABLE_OWNERSHIP,
+  ...AD_HOC_POSTGRES_TABLE_OWNERSHIP,
+} satisfies Record<string, TableOwnershipEntry>;
+
 export function getTableOwnership(
   table: string,
 ): TableOwnershipEntry | undefined {
-  return TABLE_OWNERSHIP[table];
+  return POSTGRES_TABLE_OWNERSHIP[table];
 }
