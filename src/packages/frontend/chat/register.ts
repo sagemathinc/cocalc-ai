@@ -12,6 +12,7 @@ import { ChatActions } from "./actions";
 import { ChatStore } from "./store";
 import { ChatMessageCache } from "@cocalc/frontend/chat/message-cache";
 import { parseChatPreviewRows } from "./preview";
+import { syncdocDiagnosticLog } from "@cocalc/frontend/syncdoc-diagnostics";
 
 interface ChatInstanceOptions {
   instanceKey?: string;
@@ -88,6 +89,12 @@ export function getChatActions(
   });
   const actions = redux.getActions(name);
   if (isStaleChatActions(actions)) {
+    syncdocDiagnosticLog("chat actions stale on get", {
+      project_id,
+      path,
+      name,
+      state: actions.debugChatState?.(),
+    });
     removeByName(name, redux);
     return undefined;
   }
@@ -107,6 +114,12 @@ export function initChat(
   });
   const existing = redux.getActions(name);
   if (isStaleChatActions(existing)) {
+    syncdocDiagnosticLog("chat actions stale on init", {
+      project_id,
+      path,
+      name,
+      state: existing.debugChatState?.(),
+    });
     removeByName(name, redux);
   } else if (isChatActions(existing)) {
     return existing; // already initialized
@@ -143,6 +156,12 @@ export function initChat(
   actions.set_syncdb(syncdb, store, cache);
   startOptimisticChatPreview(project_id, path, syncdb, cache);
   syncdb.once("close", () => {
+    syncdocDiagnosticLog("side chat syncdb close", {
+      project_id,
+      path,
+      name,
+      cache: cache.debugState?.(),
+    });
     cache.dispose();
   });
 
@@ -185,6 +204,10 @@ export function removeWithInstance(
 
 function removeByName(name: string, redux): string {
   const actions = redux.getActions(name);
+  syncdocDiagnosticLog("chat removeByName", {
+    name,
+    state: actions?.debugChatState?.(),
+  });
   // Dispose per-chat resources before tearing down redux.
   actions?.dispose?.();
   actions?.syncdb?.close();

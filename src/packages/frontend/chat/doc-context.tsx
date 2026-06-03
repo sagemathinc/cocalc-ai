@@ -13,10 +13,12 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { PlainChatMessage } from "./types";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
+import { syncdocDiagnosticLog } from "@cocalc/frontend/syncdoc-diagnostics";
 
 type DocCtx = {
   version: number;
@@ -37,12 +39,19 @@ export function ChatDocProvider({
   children: React.ReactNode;
 }) {
   const [version, setVersion] = useState<number>(-1);
+  const previouslyHadCache = useRef(false);
 
   useEffect(() => {
     if (!cache) {
+      if (previouslyHadCache.current) {
+        syncdocDiagnosticLog("chat doc provider lost cache", {
+          previous: previouslyHadCache.current,
+        });
+      }
       setVersion(-1);
       return;
     }
+    previouslyHadCache.current = true;
     cache.on("version", setVersion);
     setVersion(0);
     return () => {
