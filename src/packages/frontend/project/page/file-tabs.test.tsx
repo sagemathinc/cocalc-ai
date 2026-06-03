@@ -39,8 +39,11 @@ jest.mock("antd", () => ({
       {dropdownRender?.()}
     </div>
   ),
-  Tabs: ({ activeKey, items, onChange }: any) => (
+  Tabs: ({ activeKey, items, onChange, onEdit }: any) => (
     <div>
+      <button type="button" onClick={() => onEdit?.("", "add")}>
+        Add tab
+      </button>
       {items.map((item: any) => (
         <div
           key={item.key}
@@ -220,5 +223,19 @@ describe("FileTabs keyboard navigation", () => {
       foreground: true,
       foreground_project: true,
     });
+  });
+
+  it("opens the new-file page from the editable tabs add button", () => {
+    render(
+      <FileTabs
+        activeTab="editor-a.ts"
+        openFiles={List(["a.ts"])}
+        project_id="project-1"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add tab" }));
+
+    expect(mockActions.set_active_tab).toHaveBeenCalledWith("new");
   });
 });

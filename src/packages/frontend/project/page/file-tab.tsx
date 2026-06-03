@@ -137,7 +137,7 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     label: labels.new,
     flyoutTitle: defineMessage({
       id: "project.page.flyout.new_file.title",
-      defaultMessage: "Create New",
+      defaultMessage: "Create",
     }),
     icon: "plus-circle",
     flyout: NewFlyout,

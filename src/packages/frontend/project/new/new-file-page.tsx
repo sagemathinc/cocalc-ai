@@ -19,6 +19,7 @@ import {
   Icon,
   Loading,
   Paragraph,
+  SelectorInput,
   SettingBox,
   Tip,
 } from "@cocalc/frontend/components";
@@ -32,12 +33,14 @@ import { labels } from "@cocalc/frontend/i18n";
 import { special_filenames_with_no_extension } from "@cocalc/frontend/project-file";
 import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
 import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
+import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import {
   capitalize,
   filename_extension,
   is_only_downloadable,
   keys,
 } from "@cocalc/util/misc";
+import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import { PathNavigator } from "../explorer/path-navigator";
 import { useAvailableFeatures } from "../use-available-features";
 import { NewFileButton } from "./new-file-button";
@@ -63,6 +66,7 @@ interface Props {
   project_id: string;
   initialFilename?: string;
   autoFocusFilename?: boolean;
+  mode?: "page" | "flyout";
 }
 
 export default function NewFilePage(props: Props) {
@@ -71,8 +75,14 @@ export default function NewFilePage(props: Props) {
   }
 
   const intl = useIntl();
-  const { project_id, initialFilename, autoFocusFilename = true } = props;
+  const {
+    project_id,
+    initialFilename,
+    autoFocusFilename = true,
+    mode = "page",
+  } = props;
   const inputRef = useRef<any>(null);
+  const folderInputRef = useRef<any>(null);
   useEffect(() => {
     if (!autoFocusFilename) return;
     setTimeout(() => {
@@ -85,6 +95,8 @@ export default function NewFilePage(props: Props) {
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
   const other_settings = useTypedRedux("account", "other_settings");
+  const selectedFilenameFamily =
+    other_settings?.get?.(NEW_FILENAMES) ?? DEFAULT_NEW_FILENAMES;
   const site_launcher_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
@@ -105,6 +117,9 @@ export default function NewFilePage(props: Props) {
   }, [initialFilename, fallbackFilename]);
   const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
+  const [showFolderModal, setShowFolderModal] = useState<boolean>(false);
+  const [folderName, setFolderName] = useState<string>("");
+  const [creatingFolder, setCreatingFolder] = useState<boolean>(false);
   const file_creation_error = useTypedRedux(
     { project_id },
     "file_creation_error",
@@ -193,7 +208,20 @@ export default function NewFilePage(props: Props) {
     redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
   }
 
+  function setNewFilenameFamily(family: string) {
+    getActions().set_new_filename_family(family);
+  }
+
   const [creatingFile, setCreatingFile] = useState<string>("");
+
+  useEffect(() => {
+    if (!showFolderModal) return;
+    setTimeout(() => {
+      const input = folderInputRef.current?.input ?? folderInputRef.current;
+      input?.focus?.();
+      input?.select?.();
+    }, 1);
+  }, [showFolderModal]);
 
   if (actions == null) {
     return <Loading theme="medium" />;
@@ -267,12 +295,25 @@ export default function NewFilePage(props: Props) {
     );
   }
 
-  function createFolder() {
-    getActions().createFolder({
-      name: filename,
-      current_path: effective_current_path,
-      switch_over: true,
-    });
+  async function createFolder(name = filename) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      setCreatingFolder(true);
+      await getActions().createFolder({
+        name: trimmed,
+        current_path: effective_current_path,
+        switch_over: true,
+      });
+      setShowFolderModal(false);
+    } finally {
+      setCreatingFolder(false);
+    }
+  }
+
+  function openFolderModal() {
+    setFolderName(inputRef.current?.input?.value ?? filename);
+    setShowFolderModal(true);
   }
 
   function renderNoExtensionAlert() {
@@ -359,6 +400,13 @@ export default function NewFilePage(props: Props) {
           size="large"
           disabled={filename.trim() == ""}
           onClick={() => submit()}
+          block={mode === "flyout" ? true : undefined}
+          style={{
+            minWidth: mode === "flyout" ? 0 : undefined,
+            whiteSpace: mode === "flyout" ? "normal" : undefined,
+            height: mode === "flyout" ? "auto" : undefined,
+            textAlign: mode === "flyout" ? "center" : undefined,
+          }}
         >
           <Icon name={filenameIcon(filename)} />{" "}
           {intl.formatMessage(CREATE_MSG, { desc })}
@@ -375,11 +423,55 @@ export default function NewFilePage(props: Props) {
     actions?.set_active_tab(pureFlyoutMode ? "home" : "files");
   }
 
+  function renderActionButtons() {
+    return (
+      <Space size={6} wrap>
+        <Button size="small" onClick={() => setShowUploadModal(true)}>
+          <Icon name="cloud-upload" /> Upload
+        </Button>
+        <Button size="small" onClick={openFolderModal}>
+          <Icon name="folder" /> Folder
+        </Button>
+      </Space>
+    );
+  }
+
+  function renderPathNavigator(fontSize: string) {
+    return (
+      <PathNavigator
+        project_id={project_id}
+        style={{ display: "inline-block", fontSize }}
+        currentPath={effective_current_path}
+        historyPath={effective_current_path}
+        onNavigate={(path) => {
+          actions?.set_current_path(path);
+          actions?.set_active_tab("new");
+        }}
+      />
+    );
+  }
+
+  function renderFlyoutTopControls() {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          marginBottom: 14,
+        }}
+      >
+        {renderPathNavigator("16px")}
+        {renderActionButtons()}
+      </div>
+    );
+  }
+
   //key is so autofocus works below
   return (
     <SettingBox
-      style={{ marginTop: "20px" }}
-      show_header
+      style={{ marginTop: mode === "flyout" ? 0 : "20px" }}
+      show_header={mode !== "flyout"}
       icon={"plus-circle"}
       title={
         <div
@@ -398,26 +490,12 @@ export default function NewFilePage(props: Props) {
               defaultMessage={"Create"}
             />
           </span>
-          <Button size="small" onClick={() => setShowUploadModal(true)}>
-            <Icon name="cloud-upload" /> Upload
-          </Button>
+          {renderActionButtons()}
         </div>
       }
-      subtitle={
-        <div>
-          <PathNavigator
-            project_id={project_id}
-            style={{ display: "inline-block", fontSize: "20px" }}
-            currentPath={effective_current_path}
-            historyPath={effective_current_path}
-            onNavigate={(path) => {
-              actions?.set_current_path(path);
-              actions?.set_active_tab("new");
-            }}
-          />
-        </div>
-      }
-      close={closeNewPage}
+      subtitle={<div>{renderPathNavigator("20px")}</div>}
+      close={mode === "flyout" ? undefined : closeNewPage}
+      bodyStyle={mode === "flyout" ? { padding: 12 } : undefined}
     >
       <Modal
         onCancel={() => setCreatingFile("")}
@@ -429,6 +507,7 @@ export default function NewFilePage(props: Props) {
           <Loading estimate={1000} />
         </div>
       </Modal>
+      {mode === "flyout" && renderFlyoutTopControls()}
       <Row key={"new-file-row"} gutter={[24, 12]}>
         <Col sm={24}>
           <div style={{ marginBottom: "6px", fontWeight: 600 }}>Filename</div>
@@ -441,6 +520,7 @@ export default function NewFilePage(props: Props) {
               gap: "8px",
               alignItems: "stretch",
               flexWrap: "wrap",
+              flexDirection: mode === "flyout" ? "column" : undefined,
             }}
           >
             <Input
@@ -452,7 +532,10 @@ export default function NewFilePage(props: Props) {
               placeholder={
                 "Name your file, folder, or a URL to download from..."
               }
-              style={{ flex: "1 1 320px" }}
+              style={{
+                flex: mode === "flyout" ? "0 1 auto" : "1 1 320px",
+                width: "100%",
+              }}
               onChange={(e) => {
                 if (extensionWarning) {
                   setExtensionWarning(false);
@@ -520,13 +603,6 @@ export default function NewFilePage(props: Props) {
               <Space size={6}>
                 <Button
                   size="small"
-                  onClick={() => createFolder()}
-                  disabled={!filename.trim()}
-                >
-                  <Icon name="folder" /> Create folder
-                </Button>
-                <Button
-                  size="small"
                   onClick={() => createFile()}
                   disabled={
                     !filename.trim() ||
@@ -539,6 +615,15 @@ export default function NewFilePage(props: Props) {
                 </Button>
               </Space>
             </div>
+          </div>
+          <div style={{ marginTop: "12px" }}>
+            <h4 style={{ marginBottom: "6px" }}>Filename generator</h4>
+            <SelectorInput
+              style={{ width: "100%" }}
+              selected={selectedFilenameFamily}
+              options={NewFilenameFamilies}
+              on_change={setNewFilenameFamily}
+            />
           </div>
         </Col>
       </Row>
@@ -559,6 +644,24 @@ export default function NewFilePage(props: Props) {
           project_id={project_id}
           current_path={effective_current_path}
           show_header={false}
+        />
+      </Modal>
+      <Modal
+        open={showFolderModal}
+        onCancel={() => setShowFolderModal(false)}
+        title="Create folder"
+        okText="Create"
+        onOk={() => createFolder(folderName)}
+        okButtonProps={{ disabled: !folderName.trim() }}
+        confirmLoading={creatingFolder}
+        destroyOnHidden
+      >
+        <div style={{ marginBottom: "6px", fontWeight: 600 }}>Folder name</div>
+        <Input
+          ref={folderInputRef}
+          value={folderName}
+          onChange={(e) => setFolderName(e.target.value)}
+          onPressEnter={() => createFolder(folderName)}
         />
       </Modal>
     </SettingBox>

@@ -148,6 +148,7 @@ const ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
 const STALE_HUB_FORCE_RECONNECT_GRACE_MS = 5_000;
+const FOREGROUND_WAKE_PROJECT_HOST_PROBE_CONCURRENCY = 4;
 const RECONNECT_DEBUG_STORAGE_KEY = "cocalc.debug.reconnect";
 const EMPTY_CONNECTION_STATS: ConnectionStats = {
   send: { messages: 0, bytes: 0 },
@@ -270,6 +271,13 @@ export class ConatClient extends EventEmitter {
         "browser online event; forcing reconnect to rebuild routed host connections",
       );
       this.reconnect();
+      void this.forceReconnectAllRoutedHosts("browser_online");
+      this.reconnectCoordinator.requestResourceReconnects({
+        includeBackground: true,
+        force: true,
+        reason: "browser_online",
+        resetBackoff: true,
+      });
       return;
     }
     this.requestReconnect({
@@ -438,11 +446,146 @@ export class ConatClient extends EventEmitter {
           err,
         );
         this.reconnect();
-      } finally {
-        this.foregroundWakeRecovery = undefined;
+        this.reconnectCoordinator.requestResourceReconnects({
+          includeBackground: true,
+          force: true,
+          reason: "foreground_wake_hub_probe_failed",
+          resetBackoff: true,
+        });
+        return;
       }
-    })();
+      await this.probeRoutedHostsAfterForegroundWake(hiddenForMs);
+      this.reconnectCoordinator.requestResourceReconnects({
+        includeBackground: true,
+        force: true,
+        reason: "foreground_wake",
+        resetBackoff: true,
+      });
+    })()
+      .catch((err) => {
+        console.warn("foreground wake recovery failed", err);
+      })
+      .finally(() => {
+        this.foregroundWakeRecovery = undefined;
+      });
     await this.foregroundWakeRecovery;
+  };
+
+  private probeRoutedHostsAfterForegroundWake = async (
+    hiddenForMs: number,
+  ): Promise<void> => {
+    const entries = Object.entries(this.routedHubClients);
+    for (
+      let i = 0;
+      i < entries.length;
+      i += FOREGROUND_WAKE_PROJECT_HOST_PROBE_CONCURRENCY
+    ) {
+      const batch = entries.slice(
+        i,
+        i + FOREGROUND_WAKE_PROJECT_HOST_PROBE_CONCURRENCY,
+      );
+      await Promise.all(
+        batch.map(async ([host_id, state]) => {
+          if (!this.isCurrentRoutedHostState(host_id, state)) {
+            return;
+          }
+          try {
+            await this.probeRoutedHostConnection({
+              host_id,
+              state,
+              timeout: FOREGROUND_WAKE_PING_TIMEOUT_MS,
+            });
+          } catch (err) {
+            if (
+              this.permanentlyDisconnected ||
+              this.tabReconnectPriority() !== "foreground" ||
+              !this.isCurrentRoutedHostState(host_id, state)
+            ) {
+              return;
+            }
+            console.warn(
+              `foreground wake project-host probe failed after ${hiddenForMs}ms hidden; forcing routed host reconnect`,
+              {
+                host_id,
+                err,
+              },
+            );
+            if (this.isProjectHostAuthError(err)) {
+              this.invalidateProjectHostToken(host_id);
+              this.invalidateProjectHostBrowserSession(host_id);
+            }
+            await this.forceReconnectRoutedHost({
+              host_id,
+              state,
+              reason: "foreground_wake_project_host_probe_failed",
+            });
+          }
+        }),
+      );
+    }
+  };
+
+  private probeRoutedHostConnection = async ({
+    host_id,
+    state,
+    timeout,
+  }: {
+    host_id: string;
+    state: RoutedHubClientState;
+    timeout: number;
+  }): Promise<void> => {
+    if (!state.client?.conn?.connected) {
+      throw Error(`routed host ${host_id} is disconnected`);
+    }
+    await state.client.request(
+      `hub.account.${this.client.account_id}.api`,
+      { name: "system.ping", args: [] },
+      { timeout },
+    );
+  };
+
+  private forceReconnectRoutedHost = async ({
+    host_id,
+    state,
+    reason,
+  }: {
+    host_id: string;
+    state: RoutedHubClientState;
+    reason: string;
+  }): Promise<void> => {
+    if (!this.isCurrentRoutedHostState(host_id, state)) {
+      return;
+    }
+    if (state.reconnectTimer != null) {
+      clearTimeout(state.reconnectTimer);
+      delete state.reconnectTimer;
+    }
+    state.reconnectAttempts = 0;
+    try {
+      state.client.disconnect?.();
+    } catch {}
+    try {
+      state.client.conn?.io?.engine?.close?.();
+    } catch {}
+    if (!this.isCurrentRoutedHostState(host_id, state)) {
+      return;
+    }
+    await this.runRoutedHostReconnect({
+      host_id,
+      state,
+      project_id: this.pickTrackedProjectForHost(host_id, state),
+    });
+    reconnectDebugWarn(`forced routed host reconnect after ${reason}`, {
+      host_id,
+      ...this.reconnectDebugContext(),
+    });
+  };
+
+  private forceReconnectAllRoutedHosts = async (reason: string) => {
+    const entries = Object.entries(this.routedHubClients);
+    for (const [host_id, state] of entries) {
+      await this.forceReconnectRoutedHost({ host_id, state, reason });
+    }
   };
 
   private setConnectionStatus = (status: Partial<ConatConnectionStatus>) => {
