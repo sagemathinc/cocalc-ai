@@ -135,9 +135,10 @@ The operational wrapper can build and deploy that artifact directly:
 ```
 
 This stages a normal hardlinked release from the current VM release, overlays
-the new frontend/static assets, flips `/opt/cocalc/bay/current`, restarts only
-hub workers, and skips Postgres, migrations, router/persist, and project-host
-rollout.
+the new frontend/static assets, flips `/opt/cocalc/bay/current`, checks bay
+health, and skips hub restarts, Postgres, migrations, router/persist, and
+project-host rollout. Pass `--restart-hub-workers` only when deliberately
+testing the fallback path.
 
 Then copy the generated tarball to the VM and stage a new versioned release
 from the current release:
@@ -146,7 +147,7 @@ from the current release:
 sudo ./bay-bootstrap-release.sh \
   --static-bundle /tmp/cocalc-bay-static-linux-x64.tar.xz \
   --worker-count 8
-sudo systemctl restart cocalc-bay-hub@{1..8}.service
+sudo /opt/cocalc/bay/current/bin/bay-health
 ```
 
 This creates a normal release directory under `/opt/cocalc/bay/releases/`,

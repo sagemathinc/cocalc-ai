@@ -9,6 +9,7 @@ REMOTE=""
 BUNDLE_PATH=""
 BUILD_BUNDLE=0
 STATIC_ONLY=0
+RESTART_HUB_WORKERS=0
 API_URL=""
 PUBLIC_URL=""
 BAY_ID="bay-0"
@@ -60,7 +61,10 @@ Required:
   --build-bundle              build the bundle before upgrading
   --static-only               deploy only frontend/static assets by creating a
                               new release from the current VM release and
-                              restarting hub workers only
+                              flipping the current release symlink without
+                              restarting hub workers
+  --restart-hub-workers       with --static-only, restart hub workers one at a
+                              time after flipping the current release symlink
 
 Auth for project-host upgrade:
   --cookie <header>           existing Cookie header for CLI auth
@@ -153,6 +157,8 @@ parse_args() {
         BUILD_BUNDLE=1; shift ;;
       --static-only)
         STATIC_ONLY=1; shift ;;
+      --restart-hub-workers)
+        RESTART_HUB_WORKERS=1; shift ;;
       --api)
         API_URL="$2"; shift 2 ;;
       --public-url)
@@ -278,6 +284,12 @@ stage_release() {
 
 restart_and_health_check() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
+    if [[ "$RESTART_HUB_WORKERS" -eq 0 ]]; then
+      log "Run health checks without restarting hub workers"
+      remote_exec "sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
+        | tee "${REPORT_DIR}/bay-health.txt"
+      return 0
+    fi
     local restart_command="sudo systemctl daemon-reload"
     local worker_id
     for worker_id in $(seq 1 "$WORKER_COUNT"); do
