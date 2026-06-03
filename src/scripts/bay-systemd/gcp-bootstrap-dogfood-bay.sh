@@ -26,6 +26,7 @@ REUSE_EXISTING_VM=0
 SKIP_BUILD=0
 SKIP_PORT_FORWARD=0
 STATIC_ONLY=0
+RESTART_HUB_WORKERS=0
 NETWORK=""
 SUBNET=""
 SERVICE_ACCOUNT=""
@@ -75,7 +76,9 @@ Control:
   --skip-port-forward           do not start the local SSH port forward
   --static-only                 deploy only frontend/static assets by creating
                                 a new versioned release from the current VM
-                                release and restarting hub workers only
+                                release without restarting hub workers
+  --restart-hub-workers         with --static-only, restart hub workers one at
+                                a time after flipping the current release
   -h, --help                    show this help
 
 Example:
@@ -207,6 +210,10 @@ parse_args() {
         ;;
       --static-only)
         STATIC_ONLY=1
+        shift
+        ;;
+      --restart-hub-workers)
+        RESTART_HUB_WORKERS=1
         shift
         ;;
       -h|--help)
@@ -419,12 +426,15 @@ bootstrap_remote_bay() {
         printf " %q" "${software_base_url_arg[@]}"
       fi
     )"
-    run remote_ssh "$(
-      printf "sudo systemctl restart"
+    if [[ "$RESTART_HUB_WORKERS" -eq 1 ]]; then
+      local restart_command="sudo systemctl daemon-reload"
+      local worker_id
       for worker_id in $(seq 1 "$WORKER_COUNT"); do
-        printf " cocalc-bay-hub@%q.service" "$worker_id"
+        restart_command+=" && sudo systemctl restart cocalc-bay-hub@${worker_id}.service"
+        restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-worker-health ${worker_id}"
       done
-    )"
+      run remote_ssh "$restart_command"
+    fi
   else
     run remote_ssh "sudo /tmp/bay-systemd/bay-bootstrap-host.sh --bay-id '${BAY_ID}' --install-nodejs"
     run remote_ssh "sudo install -o root -g root -m 0600 /tmp/site-master-key /etc/cocalc/site-master-key"
