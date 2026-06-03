@@ -523,6 +523,8 @@ Phase 3 removes direct attached-bay writes:
 
 ### Phase 0: Table Ownership Manifest
 
+Status: implemented 2026-06-03.
+
 Create a source-controlled manifest, probably under
 `src/packages/util/db-schema/table-ownership.ts`.
 
@@ -551,6 +553,29 @@ export type TableOwnership =
 ```
 
 Add a test that fails when a schema table is missing from the manifest.
+
+Implemented artifacts:
+
+- `src/packages/util/db-schema/table-ownership.ts` defines the initial manifest,
+  ownership classes, authority keys, portability statuses, notes, and rebuild
+  policy hooks.
+- `src/packages/util/db-schema/table-ownership.test.ts` fails when any
+  registered durable `SCHEMA` table is missing from the manifest, when the
+  manifest references an unregistered durable table, or when rebuildable entries
+  lack a documented rebuild path.
+- Virtual query tables and external PostgreSQL system tables are intentionally
+  excluded; their placement follows the real table they wrap.
+
+Important current-state calls encoded in the manifest:
+
+- `purchases` and other account-commercial state are account-home but
+  `unsupported` for rehome until billing-ledger authority is deliberately
+  fixed.
+- seed-global commercial/config/catalog state is explicitly seed-authoritative.
+- account/project/host-owned source-of-truth tables default to `unsupported`
+  portability rather than pretending routine rehome is safe.
+- projections, caches, aggregate analytics, local audit logs, and ephemeral work
+  queues are separate classes, so drain tooling can treat them differently.
 
 ### Phase 1: Automated Risk Test
 

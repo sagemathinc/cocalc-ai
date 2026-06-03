@@ -13,6 +13,7 @@ export type {
 export type { RenderSpec } from "./render-types";
 export type { RetentionModel } from "./retention";
 export { retentionModels } from "./retention";
+export * from "./table-ownership";
 
 // The tables
 import "./account-collaborator-index";
