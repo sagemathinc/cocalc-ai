@@ -267,6 +267,15 @@ status() {
   else
     log "podman is not installed"
   fi
+
+  local bootstrap_result="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}"
+  local bootstrap_url=""
+  if [ -f "$bootstrap_result" ]; then
+    bootstrap_url="$(json_string_field "$bootstrap_result" bootstrap_url || true)"
+    if [ -n "$bootstrap_url" ]; then
+      print_access_instructions "$bootstrap_url"
+    fi
+  fi
 }
 
 smoke() {
@@ -427,14 +436,27 @@ logs() {
 local_bootstrap_url() {
   local url="$1"
   local local_port="${2:-9100}"
-  node - "$url" "$local_port" <<'NODE'
-const [url, localPort] = process.argv.slice(2);
-const parsed = new URL(url);
-parsed.protocol = "http:";
-parsed.hostname = "127.0.0.1";
-parsed.port = localPort;
-process.stdout.write(parsed.toString());
-NODE
+  case "$url" in
+    *://*/*)
+      printf 'http://127.0.0.1:%s/%s' "$local_port" "${url#*://*/}"
+      ;;
+    *://*)
+      printf 'http://127.0.0.1:%s/' "$local_port"
+      ;;
+    *)
+      printf 'http://127.0.0.1:%s/' "$local_port"
+      ;;
+  esac
+}
+
+json_string_field() {
+  local file="$1"
+  local field="$2"
+  if command -v jq >/dev/null 2>&1; then
+    jq -r --arg field "$field" '.[$field] // empty' "$file"
+    return
+  fi
+  sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file" | head -1
 }
 
 print_access_instructions() {
@@ -497,7 +519,7 @@ bootstrap_link() {
     log "missing bootstrap result: $result"
     exit 1
   }
-  url="$(jq -r '.bootstrap_url // empty' "$result")"
+  url="$(json_string_field "$result" bootstrap_url)"
   [ -n "$url" ] || {
     log "bootstrap link is not present in $result"
     exit 1
