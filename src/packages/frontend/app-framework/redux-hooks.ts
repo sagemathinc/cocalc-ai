@@ -267,17 +267,21 @@ function resolveReduxPath(
 }
 
 function getReduxValue(resolved: ResolvedReduxPath) {
+  if (redux == null) return undefined;
   switch (resolved.kind) {
     case "named": {
+      if ((redux as any).getStore == null) return undefined;
       const [name, ...subpath] = resolved.path;
       if (!name) return undefined;
       return redux.getStore(name)?.getIn(subpath as any) as any;
     }
     case "project":
+      if ((redux as any).getProjectStore == null) return undefined;
       return redux
         .getProjectStore(resolved.projectId)
-        .getIn(resolved.path as [string, string, string, string, string]);
+        ?.getIn(resolved.path as [string, string, string, string, string]);
     case "editor":
+      if ((redux as any).getEditorStore == null) return undefined;
       return redux
         .getEditorStore(resolved.projectId, resolved.filename)
         ?.getIn(resolved.path as [string, string, string, string, string]);
@@ -396,6 +400,8 @@ class SharedReduxSubscription {
   }
 
   private startNamed(): void {
+    if (redux == null) return;
+    if ((redux as any).getStore == null) return;
     const [name, ...subpath] = this.resolved.path;
     if (!name) return;
     const store = redux.getStore(name);
@@ -415,9 +421,12 @@ class SharedReduxSubscription {
   }
 
   private startProject(): void {
+    if (redux == null) return;
+    if ((redux as any).getProjectStore == null) return;
     if (this.resolved.kind !== "project") return;
     const resolved = this.resolved;
     const store = redux.getProjectStore(resolved.projectId);
+    if (store == null) return;
     const handleChange = (obj) => {
       if (obj == null) return;
       this.emit(
@@ -433,6 +442,8 @@ class SharedReduxSubscription {
   }
 
   private startEditor(): void {
+    if (redux == null) return;
+    if ((redux as any).getEditorStore == null) return;
     if (this.resolved.kind !== "editor") return;
     const resolved = this.resolved;
     let store = redux.getEditorStore(resolved.projectId, resolved.filename);
@@ -463,6 +474,7 @@ class SharedReduxSubscription {
     }
 
     this.waitingForStore = true;
+    if (redux.reduxStore?.subscribe == null) return;
     const unsubscribe = redux.reduxStore.subscribe(() => {
       if (!this.active) {
         unsubscribe();

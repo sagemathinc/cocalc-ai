@@ -76,6 +76,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     getActions: () => ({}),
   },
   useEffect: require("react").useEffect,
+  useProjectMapField: () => undefined,
   useState: require("react").useState,
   useTypedRedux: (store: any, key: string) => {
     if (store === "account" && key === "account_id") {
