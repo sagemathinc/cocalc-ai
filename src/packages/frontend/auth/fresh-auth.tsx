@@ -284,8 +284,10 @@ export function FreshAuthModal({
 }
 
 export function useFreshAuthAction({
+  closeBeforeRetry = false,
   onUnhandledError,
 }: {
+  closeBeforeRetry?: boolean;
   onUnhandledError?: (err: unknown) => void;
 } = {}) {
   // Frontend counterpart to backend requireFreshAuth checks. Any browser UI
@@ -324,13 +326,16 @@ export function useFreshAuthAction({
     if (!action) {
       return;
     }
+    if (closeBeforeRetry) {
+      setOpen(false);
+    }
     try {
       await action();
     } catch (err) {
       onUnhandledError?.(err);
       throw err;
     }
-  }, [onUnhandledError]);
+  }, [closeBeforeRetry, onUnhandledError]);
 
   return {
     runFreshAuthAction,

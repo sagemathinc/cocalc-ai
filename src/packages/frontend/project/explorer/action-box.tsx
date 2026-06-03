@@ -117,6 +117,7 @@ export function ActionBox({
   const [deleteFromSnapshots, setDeleteFromSnapshots] =
     useState<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    closeBeforeRetry: true,
     onUnhandledError: (err) =>
       alert_message({
         type: "error",

@@ -116,6 +116,7 @@ describe("project redux file operations", () => {
       browser_id: "browser-1",
       project_id: "project-1",
       path: "/home/user/large",
+      timeout: 10 * 60 * 1000,
     });
     expect(rm).toHaveBeenCalledWith(["/home/user/large"], {
       force: true,
@@ -143,6 +144,7 @@ describe("project redux file operations", () => {
       browser_id: "browser-1",
       project_id: "project-1",
       path: "large/data",
+      timeout: 10 * 60 * 1000,
     });
     expect(rm).not.toHaveBeenCalled();
   });

@@ -282,6 +282,7 @@ describe("project-snapshots.pruneSnapshotPath", () => {
         project_id: "proj-1",
         path: "foo",
         snapshots: ["snap1", "snap2"],
+        timeout: 123456,
       }),
     ).resolves.toEqual({
       path: "foo",
@@ -297,6 +298,11 @@ describe("project-snapshots.pruneSnapshotPath", () => {
       account_id: "acct-1",
       project_id: "proj-1",
       action: "delete files from snapshots",
+    });
+    expect(getProjectFileServerClientMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      timeout: 123456,
     });
     const client = await getProjectFileServerClientMock.mock.results[0].value;
     expect(client.pruneSnapshotPath).toHaveBeenCalledWith({

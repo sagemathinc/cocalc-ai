@@ -26,8 +26,12 @@ import type { SnapshotSchedule } from "@cocalc/util/consts/snapshots";
 // TODO: in some cases we *might* only allow the project owner to delete snapshots
 // create a new snapshot of a project
 
-async function projectClient(project_id: string, account_id?: string) {
-  return await getProjectFileServerClient({ project_id, account_id });
+async function projectClient(
+  project_id: string,
+  account_id?: string,
+  timeout?: number,
+) {
+  return await getProjectFileServerClient({ project_id, account_id, timeout });
 }
 
 async function getProjectSnapshotScheduleLocal(
@@ -139,6 +143,7 @@ export async function pruneSnapshotPath({
   project_id,
   path,
   snapshots,
+  timeout,
 }: {
   account_id?: string;
   browser_id?: string | null;
@@ -146,6 +151,7 @@ export async function pruneSnapshotPath({
   project_id: string;
   path: string;
   snapshots?: string[];
+  timeout?: number;
 }): Promise<{ path: string; snapshots: string[] }> {
   await requireDangerousProjectMutationAuth({
     account_id,
@@ -158,7 +164,7 @@ export async function pruneSnapshotPath({
     action: "delete files from snapshots",
   });
   return await (
-    await projectClient(project_id, account_id)
+    await projectClient(project_id, account_id, timeout)
   ).pruneSnapshotPath({
     project_id,
     path,

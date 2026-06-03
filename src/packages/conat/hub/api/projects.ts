@@ -1297,6 +1297,7 @@ export interface Projects {
     project_id: string;
     path: string;
     snapshots?: string[];
+    timeout?: number;
   }) => Promise<{ path: string; snapshots: string[] }>;
 
   getProjectSnapshotSchedule: (opts: {
