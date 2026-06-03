@@ -27,7 +27,9 @@ export const chatroom: EditorDescription = {
   name: "Chatroom",
   icon: "comment",
   component: (props: EditorComponentProps) => {
-    const actions = props.actions.getChatActions(props.id);
+    const actions = props.actions.getChatActions(props.id, {
+      allowMissingFrameType: true,
+    });
     if (actions == null) {
       return createElement(Loading, { theme: "medium" });
     }

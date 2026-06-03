@@ -143,7 +143,6 @@ interface RawSiteLicenseDomain {
 }
 
 const SITE_LICENSE_MANAGER_ROLES = new Set<SiteLicenseManagerRole>([
-  "owner",
   "manager",
   "viewer",
 ]);
@@ -302,6 +301,27 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
   await db.query(
     "CREATE INDEX IF NOT EXISTS site_license_managers_revoked_at_idx ON site_license_managers (revoked_at)",
   );
+  await db.query(`
+    UPDATE site_licenses s
+       SET owner_account_id = owner_rows.account_id,
+           updated = NOW()
+      FROM (
+        SELECT DISTINCT ON (site_license_id) site_license_id, account_id
+          FROM site_license_managers
+         WHERE role = 'owner'
+           AND revoked_at IS NULL
+         ORDER BY site_license_id, created ASC
+      ) owner_rows
+     WHERE s.id = owner_rows.site_license_id
+       AND s.owner_account_id IS NULL
+  `);
+  await db.query(`
+    UPDATE site_license_managers
+       SET role = 'viewer',
+           updated = NOW()
+     WHERE role = 'owner'
+       AND revoked_at IS NULL
+  `);
   await db.query(`
     CREATE TABLE IF NOT EXISTS site_license_pool_requests (
       id UUID PRIMARY KEY,
@@ -1194,9 +1214,7 @@ async function notifySiteLicensePoolRequestCreatedBestEffort({
   try {
     const managers = await listSiteLicenseManagers(siteLicense.id);
     const targetAccountIds = managers
-      .filter(
-        (manager) => manager.role === "owner" || manager.role === "manager",
-      )
+      .filter((manager) => manager.role === "manager")
       .map((manager) => manager.account_id);
     const poolName = getPackagePoolName(pkg);
     await createSiteLicenseAccountNoticeBestEffort({
@@ -1658,8 +1676,8 @@ async function assertSiteLicenseManager({
     return;
   }
   const allowedRoles: SiteLicenseManagerRole[] = write
-    ? ["owner", "manager"]
-    : ["owner", "manager", "viewer"];
+    ? ["manager"]
+    : ["manager", "viewer"];
   const { rows } = await getQueryClient(client).query(
     `SELECT 1
      FROM site_license_managers
@@ -1670,37 +1688,23 @@ async function assertSiteLicenseManager({
      LIMIT 1`,
     [site_license_id, account_id, allowedRoles],
   );
-  if (!rows[0]) {
-    throw Error(write ? "must manage site license" : "must view site license");
-  }
-}
-
-async function assertSiteLicenseOwner({
-  account_id,
-  site_license_id,
-  client,
-}: {
-  account_id: string;
-  site_license_id: string;
-  client?: PoolClient;
-}): Promise<void> {
-  await ensureSiteLicenseSchema(client);
-  if (await isAdmin(account_id)) {
+  if (rows[0]) {
     return;
   }
-  const { rows } = await getQueryClient(client).query(
-    `SELECT 1
-     FROM site_license_managers
-     WHERE site_license_id=$1
-       AND account_id=$2
-       AND role='owner'
-       AND revoked_at IS NULL
-     LIMIT 1`,
-    [site_license_id, account_id],
-  );
-  if (!rows[0]) {
-    throw Error("must own site license");
+  if (!write) {
+    const { rows: ownerRows } = await getQueryClient(client).query(
+      `SELECT 1
+         FROM site_licenses
+        WHERE id=$1
+          AND owner_account_id=$2
+        LIMIT 1`,
+      [site_license_id, account_id],
+    );
+    if (ownerRows[0]) {
+      return;
+    }
   }
+  throw Error(write ? "must manage site license" : "must view site license");
 }
 
 async function assertSiteLicenseAdmin({
@@ -2426,7 +2430,8 @@ export async function listSiteLicenseOverviews({
         const { rows } = await queryClient.query<{ id: string }>(
           `SELECT s.id
              FROM site_licenses s
-            WHERE EXISTS (
+            WHERE s.owner_account_id = $1
+               OR EXISTS (
               SELECT 1
                 FROM site_license_managers m
                WHERE m.site_license_id = s.id
@@ -2582,9 +2587,12 @@ export async function adminProvisionSiteLicense({
     throw Error("must be an admin");
   }
   const normalizedBayId = getSiteLicenseSeedBayId();
+  // The seed bay stores the durable site-license record.  The owner is the
+  // single billing/accountability account and future self-service purchaser;
+  // delegated manager rows separately control operational approvals.
   const ownerAccountId =
     owner_account_id == null || `${owner_account_id}`.trim() === ""
-      ? null
+      ? actorAccountId
       : normalizeAccountId(owner_account_id, "owner_account_id");
   const normalizedDomains = normalizeAllowedDomains(allowed_domains);
   const normalizedPools = normalizePools(pools, normalizedDomains);
@@ -2670,7 +2678,7 @@ export async function adminProvisionSiteLicense({
     for (const pool of normalizedPools) {
       const packageId = await createMembershipPackage(
         {
-          owner_account_id: ownerAccountId ?? actorAccountId,
+          owner_account_id: ownerAccountId,
           kind: "site",
           membership_class: pool.membership_class,
           seat_count: pool.seat_count,
@@ -3066,13 +3074,9 @@ export async function setSiteLicenseManager({
   if (!SITE_LICENSE_MANAGER_ROLES.has(role)) {
     throw Error(`unsupported manager role '${role}'`);
   }
+  await assertSiteLicenseAdmin({ account_id: actorAccountId });
   await assertTargetAccountExists(targetAccountId);
   return await withLocalSiteLicenseTransaction(async (client) => {
-    await assertSiteLicenseOwner({
-      account_id: actorAccountId,
-      site_license_id: siteLicenseId,
-      client,
-    });
     const { rows } = await client.query<RawSiteLicenseManager>(
       `SELECT *
          FROM site_license_managers
@@ -3135,12 +3139,8 @@ export async function removeSiteLicenseManager({
     target_account_id,
     "target_account_id",
   );
+  await assertSiteLicenseAdmin({ account_id: actorAccountId });
   return await withLocalSiteLicenseTransaction(async (client) => {
-    await assertSiteLicenseOwner({
-      account_id: actorAccountId,
-      site_license_id: siteLicenseId,
-      client,
-    });
     const { rows } = await client.query<RawSiteLicenseManager>(
       `SELECT *
          FROM site_license_managers

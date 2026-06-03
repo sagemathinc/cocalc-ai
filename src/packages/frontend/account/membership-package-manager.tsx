@@ -120,6 +120,21 @@ interface PackageUserSearchResult {
   email_address?: string;
 }
 
+function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
+  const displayName = [user.first_name, user.last_name]
+    .map((part) => `${part ?? ""}`.trim())
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <Space orientation="vertical" size={0}>
+      <Text>{displayName || user.email_address || user.account_id}</Text>
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        {[user.email_address, user.account_id].filter(Boolean).join(" · ")}
+      </Text>
+    </Space>
+  );
+}
+
 interface ClaimableMembershipPackagesPanelProps {
   onChanged?: () => void;
 }
@@ -1737,18 +1752,12 @@ function SiteLicenseDashboard({
             requestOverview.site_license.id === overview.site_license.id &&
             request.state === "pending",
         );
-        const canEditManagers =
-          isAdmin ||
-          overview.managers.some(
-            (manager) =>
-              manager.account_id === accountId && manager.role === "owner",
-          );
+        const canEditManagers = isAdmin;
         const canManageLicense =
           isAdmin ||
           overview.managers.some(
             (manager) =>
-              manager.account_id === accountId &&
-              (manager.role === "owner" || manager.role === "manager"),
+              manager.account_id === accountId && manager.role === "manager",
           );
         return (
           <Card
@@ -2213,8 +2222,7 @@ function SiteLicenseDashboard({
                   </Text>
                   {overview.site_license.owner_account_id ? (
                     <Text type="secondary">
-                      legacy owner account{" "}
-                      {overview.site_license.owner_account_id}
+                      owner account {overview.site_license.owner_account_id}
                     </Text>
                   ) : null}
                 </Space>
@@ -2462,19 +2470,66 @@ function SiteLicenseManagersEditor({
     target_account_id: string,
   ) => Promise<void>;
 }) {
-  const [accountId, setAccountId] = useState("");
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<PackageUserSearchResult[]>(
+    [],
+  );
+  const searchRunRef = useRef(0);
   const [role, setRole] = useState<SiteLicenseManagerRole>("manager");
   const [working, setWorking] = useState("");
   const [error, setError] = useState("");
 
+  async function searchAccounts(query: string) {
+    const trimmed = query.trim();
+    const run = ++searchRunRef.current;
+    if (!trimmed) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    setError("");
+    try {
+      const rawResults = await webapp_client.users_client.user_search({
+        query: trimmed,
+        limit: 20,
+        admin: true,
+      });
+      if (run !== searchRunRef.current) return;
+      const existingAccountIds = new Set(
+        overview.managers.map((manager) => manager.account_id),
+      );
+      setSearchResults(
+        (rawResults ?? [])
+          .filter(
+            (result): result is PackageUserSearchResult =>
+              typeof result?.account_id === "string" &&
+              result.account_id.length > 0 &&
+              !existingAccountIds.has(result.account_id),
+          )
+          .slice(0, 20),
+      );
+    } catch (err) {
+      if (run === searchRunRef.current) {
+        setError(`${err}`);
+        setSearchResults([]);
+      }
+    } finally {
+      if (run === searchRunRef.current) {
+        setSearching(false);
+      }
+    }
+  }
+
   async function addOrUpdateManager() {
-    const target = accountId.trim();
+    const target = selectedAccountId.trim();
     if (!target) return;
     setWorking(`set-${target}`);
     setError("");
     try {
       await onSetManager(overview.site_license.id, target, role);
-      setAccountId("");
+      setSelectedAccountId("");
+      setSearchResults([]);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -2511,9 +2566,7 @@ function SiteLicenseManagersEditor({
             >
               <Space wrap>
                 <Text code>{manager.account_id}</Text>
-                <Tag color={manager.role === "owner" ? "blue" : undefined}>
-                  {manager.role}
-                </Tag>
+                <Tag>{manager.role}</Tag>
               </Space>
               <Space>
                 {canEdit ? (
@@ -2523,7 +2576,6 @@ function SiteLicenseManagersEditor({
                       value={manager.role}
                       style={{ width: 110 }}
                       options={[
-                        { label: "Owner", value: "owner" },
                         { label: "Manager", value: "manager" },
                         { label: "Viewer", value: "viewer" },
                       ]}
@@ -2550,23 +2602,40 @@ function SiteLicenseManagersEditor({
           ))}
         </Space>
       ) : (
-        <Text type="secondary">No managers listed.</Text>
+        <Text type="secondary">No delegated managers listed.</Text>
       )}
       {canEdit ? (
         <>
           <Divider style={{ margin: "4px 0" }} />
+          <Text type="secondary">
+            Owner is the billing/responsible account. Managers are delegated
+            operational users who can review requests; viewers can inspect only.
+          </Text>
           <Space wrap>
-            <Input
-              placeholder="Manager account id"
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              style={{ minWidth: 300 }}
+            <Select
+              showSearch
+              filterOption={false}
+              value={selectedAccountId || undefined}
+              loading={searching}
+              notFoundContent={searching ? <Spin size="small" /> : null}
+              placeholder="Search by name, email, or account id"
+              style={{ minWidth: 360 }}
+              options={searchResults.map((user) => ({
+                value: user.account_id,
+                label: packageUserSearchLabel(user),
+              }))}
+              onSearch={(query) => void searchAccounts(query)}
+              onChange={(value) => setSelectedAccountId(value)}
+              onClear={() => {
+                setSelectedAccountId("");
+                setSearchResults([]);
+              }}
+              allowClear
             />
             <Select
               value={role}
               style={{ width: 130 }}
               options={[
-                { label: "Owner", value: "owner" },
                 { label: "Manager", value: "manager" },
                 { label: "Viewer", value: "viewer" },
               ]}
@@ -2574,16 +2643,17 @@ function SiteLicenseManagersEditor({
             />
             <Button
               type="primary"
-              loading={working === `set-${accountId.trim()}`}
+              disabled={!selectedAccountId}
+              loading={working === `set-${selectedAccountId.trim()}`}
               onClick={() => void addOrUpdateManager()}
             >
-              Add manager
+              Add delegate
             </Button>
           </Space>
         </>
       ) : (
         <Text type="secondary">
-          Only site-license owners and CoCalc admins can change manager roles.
+          Only CoCalc admins can change delegated site-license roles.
         </Text>
       )}
     </Space>

@@ -293,7 +293,7 @@ export interface MembershipPackageDetails extends MembershipPackageRecord {
   assignments: MembershipPackageAssignment[];
 }
 
-export type SiteLicenseManagerRole = "owner" | "manager" | "viewer";
+export type SiteLicenseManagerRole = "manager" | "viewer";
 export type SiteLicenseVerificationPolicy =
   | "email-domain"
   | "sso-affiliation"
