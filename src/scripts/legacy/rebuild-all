@@ -1,1 +1,0 @@
-git pull && npm run clean && npm run make && npm run test
