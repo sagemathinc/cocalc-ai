@@ -73,6 +73,7 @@ export default function NewFilePage(props: Props) {
   const intl = useIntl();
   const { project_id, initialFilename, autoFocusFilename = true } = props;
   const inputRef = useRef<any>(null);
+  const folderInputRef = useRef<any>(null);
   useEffect(() => {
     if (!autoFocusFilename) return;
     setTimeout(() => {
@@ -105,6 +106,9 @@ export default function NewFilePage(props: Props) {
   }, [initialFilename, fallbackFilename]);
   const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
+  const [showFolderModal, setShowFolderModal] = useState<boolean>(false);
+  const [folderName, setFolderName] = useState<string>("");
+  const [creatingFolder, setCreatingFolder] = useState<boolean>(false);
   const file_creation_error = useTypedRedux(
     { project_id },
     "file_creation_error",
@@ -195,6 +199,15 @@ export default function NewFilePage(props: Props) {
 
   const [creatingFile, setCreatingFile] = useState<string>("");
 
+  useEffect(() => {
+    if (!showFolderModal) return;
+    setTimeout(() => {
+      const input = folderInputRef.current?.input ?? folderInputRef.current;
+      input?.focus?.();
+      input?.select?.();
+    }, 1);
+  }, [showFolderModal]);
+
   if (actions == null) {
     return <Loading theme="medium" />;
   }
@@ -267,12 +280,25 @@ export default function NewFilePage(props: Props) {
     );
   }
 
-  function createFolder() {
-    getActions().createFolder({
-      name: filename,
-      current_path: effective_current_path,
-      switch_over: true,
-    });
+  async function createFolder(name = filename) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      setCreatingFolder(true);
+      await getActions().createFolder({
+        name: trimmed,
+        current_path: effective_current_path,
+        switch_over: true,
+      });
+      setShowFolderModal(false);
+    } finally {
+      setCreatingFolder(false);
+    }
+  }
+
+  function openFolderModal() {
+    setFolderName(inputRef.current?.input?.value ?? filename);
+    setShowFolderModal(true);
   }
 
   function renderNoExtensionAlert() {
@@ -398,9 +424,14 @@ export default function NewFilePage(props: Props) {
               defaultMessage={"Create"}
             />
           </span>
-          <Button size="small" onClick={() => setShowUploadModal(true)}>
-            <Icon name="cloud-upload" /> Upload
-          </Button>
+          <Space size={6}>
+            <Button size="small" onClick={() => setShowUploadModal(true)}>
+              <Icon name="cloud-upload" /> Upload
+            </Button>
+            <Button size="small" onClick={openFolderModal}>
+              <Icon name="folder" /> Folder
+            </Button>
+          </Space>
         </div>
       }
       subtitle={
@@ -520,13 +551,6 @@ export default function NewFilePage(props: Props) {
               <Space size={6}>
                 <Button
                   size="small"
-                  onClick={() => createFolder()}
-                  disabled={!filename.trim()}
-                >
-                  <Icon name="folder" /> Create folder
-                </Button>
-                <Button
-                  size="small"
                   onClick={() => createFile()}
                   disabled={
                     !filename.trim() ||
@@ -559,6 +583,24 @@ export default function NewFilePage(props: Props) {
           project_id={project_id}
           current_path={effective_current_path}
           show_header={false}
+        />
+      </Modal>
+      <Modal
+        open={showFolderModal}
+        onCancel={() => setShowFolderModal(false)}
+        title="Create folder"
+        okText="Create"
+        onOk={() => createFolder(folderName)}
+        okButtonProps={{ disabled: !folderName.trim() }}
+        confirmLoading={creatingFolder}
+        destroyOnHidden
+      >
+        <div style={{ marginBottom: "6px", fontWeight: 600 }}>Folder name</div>
+        <Input
+          ref={folderInputRef}
+          value={folderName}
+          onChange={(e) => setFolderName(e.target.value)}
+          onPressEnter={() => createFolder(folderName)}
         />
       </Modal>
     </SettingBox>
