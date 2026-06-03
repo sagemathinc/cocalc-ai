@@ -43,6 +43,7 @@ import { dirname, join } from "path";
 import {
   redux,
   useAccountOtherSetting,
+  useProjectMapField,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
@@ -193,15 +194,13 @@ export function Explorer() {
     () => getDirectoryTreeWidth(project_id),
   );
 
-  const project_map = useTypedRedux("projects", "project_map");
-
   const mask = useAccountOtherSetting("mask_files");
   const autoUpdateListing = !!useAccountOtherSetting(
     "auto_update_file_listing",
   );
-  const host_id = project_map?.getIn([project_id, "host_id"]) as
-    | string
-    | undefined;
+  const host_id = useProjectMapField<string>(project_id, "host_id");
+  const projectStateValue = useProjectMapField(project_id, "state");
+  const lastBackup = useProjectMapField(project_id, "last_backup");
   const hostInfo = useHostInfo(host_id);
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
@@ -611,12 +610,12 @@ export function Explorer() {
     project_is_running = true;
     // next, we check if this is a common user (not public)
   } else if (my_group !== "public") {
-    project_state = project_map?.getIn([project_id, "state"]) as any;
+    project_state = projectStateValue as any;
     const lifecycle = getProjectLifecycleView({
       projectState: project_state?.get("state"),
       hostId: host_id,
       hostInfo,
-      lastBackup: project_map?.getIn([project_id, "last_backup"]),
+      lastBackup,
     });
     const displayState = normalizeProjectStateForDisplay({
       projectState: project_state?.get("state"),

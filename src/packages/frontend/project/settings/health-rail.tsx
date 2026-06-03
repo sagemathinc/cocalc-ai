@@ -8,7 +8,11 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 import { Icon, ProjectState, TimeAgo } from "@cocalc/frontend/components";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useProjectMapField,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
@@ -92,7 +96,7 @@ export function ProjectSettingsHealthRail({
   showNoInternetWarning,
 }: Props) {
   const projectStatus = useTypedRedux({ project_id }, "status");
-  const projectMap = useTypedRedux("projects", "project_map");
+  const projectLastBackup = useProjectMapField(project_id, "last_backup");
   const hostId = (project as any).get("host_id") as string | undefined;
   const hostInfo = useHostInfo(hostId);
   const displayStateValue = normalizeProjectStateForDisplay({
@@ -108,9 +112,7 @@ export function ProjectSettingsHealthRail({
     return rawState.set("state", "opened");
   })();
   const rawProjectState = `${(project as any).getIn(["state", "state"]) ?? ""}`;
-  const lastBackup =
-    projectMap?.getIn([project_id, "last_backup"]) ??
-    (project as any).get("last_backup");
+  const lastBackup = projectLastBackup ?? (project as any).get("last_backup");
   const startTs = projectStatus?.get("start_ts");
   const userCount = (project as any).get("users")?.size;
 

@@ -16,6 +16,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useProjectFromMap,
   useRef,
   useState,
   useTypedRedux,
@@ -105,10 +106,9 @@ export function FilesBottom({
   const [sync, setSync] = useState<boolean>(true);
   const [requestedTerminalStart, setRequestedTerminalStart] =
     useState<boolean>(false);
-  const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
-  const project = project_map?.get(project_id);
+  const project = useProjectFromMap(project_id);
   const terminalStartPolicyBlock = useMemo(
     () =>
       getProjectStartPolicyBlock({

@@ -8,7 +8,11 @@ import type { ButtonProps } from "antd";
 import { useState } from "react";
 import { FormattedMessage } from "react-intl";
 
-import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useActions,
+  useProjectFromMap,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { ArchiveProjectModal } from "@cocalc/frontend/projects/archive-project-modal";
 
@@ -21,10 +25,9 @@ interface Props {
 export function ArchiveProject({ project_id, disabled, size }: Props) {
   const [open, setOpen] = useState(false);
   const actions = useActions("projects");
-  const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
-  const project = project_map?.get(project_id);
+  const project = useProjectFromMap(project_id);
   const isOwner = project?.getIn(["users", account_id, "group"]) === "owner";
   const storageHistoryEnabled =
     project?.get("allow_collaborator_destructive_storage_actions") === true;

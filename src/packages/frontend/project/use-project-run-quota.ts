@@ -4,7 +4,10 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useProjectMapField,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ProjectRunQuota } from "@cocalc/conat/hub/api/projects";
 import {
@@ -14,10 +17,7 @@ import {
   subscribeProjectFieldValue,
   useProjectField,
 } from "./use-project-field";
-import {
-  getProjectUserRole,
-  isCollaboratorProjectRole,
-} from "./realtime-access";
+import { isCollaboratorProjectRole } from "./realtime-access";
 
 const runQuotaFieldState =
   createProjectFieldState<ProjectRunQuota>("run_quota");
@@ -108,12 +108,11 @@ export function useProjectRunQuota(
 ) {
   const account_id = useTypedRedux("account", "account_id");
   const is_admin = !!useTypedRedux("account", "is_admin");
-  const project_map = useTypedRedux("projects", "project_map");
-  const role = getProjectUserRole({
-    account_id,
-    project_id,
-    projectsStore: { getIn: (path) => project_map?.getIn(path) },
-  });
+  const role = useProjectMapField<string>(project_id, [
+    "users",
+    account_id ?? "",
+    "group",
+  ]);
   const collaboratorEnabled =
     enabled && (is_admin || isCollaboratorProjectRole(role));
   const projectStatus = useTypedRedux({ project_id }, "status");

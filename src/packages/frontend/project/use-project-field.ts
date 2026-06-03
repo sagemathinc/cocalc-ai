@@ -31,9 +31,9 @@ import {
   useAsyncEffect,
   useCallback,
   useEffect,
+  useProjectMapField,
   useRef,
   useState,
-  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 
 export interface ProjectFieldState<T> {
@@ -260,10 +260,7 @@ export function useProjectField<T>({
   initialValue?: unknown;
   enabled?: boolean;
 }) {
-  const projectMapValue = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    projectMapField,
-  ]);
+  const projectMapValue = useProjectMapField(project_id, projectMapField);
   const [counter, setCounter] = useState<number>(0);
   const [value, setValueState] = useState<T | null>(() =>
     enabled

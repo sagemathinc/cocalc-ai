@@ -7,8 +7,8 @@ import {
   redux,
   useEffect,
   useMemo,
+  useProjectFromMap,
   useState,
-  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SCHEMA } from "@cocalc/util/db-schema";
@@ -24,7 +24,7 @@ export const FIX_BORDERS: React.CSSProperties = {
 
 // [hsy] This comes from project/settings.tsx and maybe there is a better way to do this
 export function useProject(project_id) {
-  const project_map = useTypedRedux("projects", "project_map");
+  const projectRecord = useProjectFromMap(project_id);
   const [project, setProject] = useState<any>(null);
 
   const group = useMemo(
@@ -61,9 +61,9 @@ export function useProject(project_id) {
         table.close();
       };
     } else {
-      setProject(project_map?.get(project_id) ?? null);
+      setProject(projectRecord ?? null);
     }
-  }, [group, project_id, project_map]);
+  }, [group, project_id, projectRecord]);
 
   return { project, group };
 }

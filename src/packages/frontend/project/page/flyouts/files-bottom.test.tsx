@@ -68,6 +68,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     if (store === "account" && key === "is_admin") return false;
     return undefined;
   },
+  useProjectFromMap: (project_id: string) => mockProjectMap?.get(project_id),
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({

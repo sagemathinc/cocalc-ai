@@ -21,6 +21,7 @@ import {
   useActions,
   useEffect,
   useMemo,
+  useProjectMapField,
   useRedux,
   useRef,
   useState,
@@ -166,10 +167,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     mainWidthPx,
   });
   const isViewer = projectCtx.projectAccess.role === "viewer";
-  const host_id = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    "host_id",
-  ]) as string | undefined;
+  const host_id = useProjectMapField<string>(project_id, "host_id");
   const hostInfo = useHostInfo(host_id);
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
