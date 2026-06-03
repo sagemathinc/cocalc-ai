@@ -40,6 +40,7 @@ Commands:
   restart [all|hub|host] Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
   bootstrap-link         Print the bootstrap registration link, if still present.
+  uninstall              Stop and remove Star service hooks; preserve data by default.
 
 This is intentionally small and operator-oriented. It manages a CoCalc Star
 single-VM install.
@@ -504,6 +505,235 @@ bootstrap_link() {
   print_access_instructions "$url"
 }
 
+confirm_uninstall() {
+  local prompt="$1"
+  if [ "${STAR_ASSUME_YES:-0}" = "1" ]; then
+    return 0
+  fi
+  if [ ! -t 0 ]; then
+    log "refusing non-interactive uninstall without STAR_ASSUME_YES=1"
+    exit 1
+  fi
+  printf '%s\n' "$prompt" >&2
+  read -r -p "Type 'uninstall cocalc star' to continue: " answer
+  if [ "$answer" != "uninstall cocalc star" ]; then
+    log "confirmation did not match"
+    exit 1
+  fi
+}
+
+confirm_purge_data() {
+  if [ "${STAR_ASSUME_YES:-0}" = "1" ] && [ "${STAR_PURGE_DATA_CONFIRM:-}" = "purge cocalc star data" ]; then
+    return 0
+  fi
+  if [ ! -t 0 ]; then
+    log "refusing non-interactive data purge without STAR_PURGE_DATA_CONFIRM='purge cocalc star data'"
+    exit 1
+  fi
+  cat >&2 <<EOF
+WARNING: this removes CoCalc Star data from this VM.
+
+It removes:
+  ${STAR_ROOT}
+  ${STAR_INSTALL_ROOT}
+  ${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}
+
+This can delete users, projects, database state, RootFS caches, secrets, and
+local backups. Create and copy an off-VM backup before continuing.
+EOF
+  read -r -p "Type 'purge cocalc star data' to permanently remove data: " answer
+  if [ "$answer" != "purge cocalc star data" ]; then
+    log "data purge confirmation did not match"
+    exit 1
+  fi
+}
+
+remove_fstab_marker_lines() {
+  local tmp
+  [ -f /etc/fstab ] || return 0
+  if ! grep -q '# cocalc-star' /etc/fstab; then
+    return 0
+  fi
+  tmp="$(mktemp)"
+  grep -v '# cocalc-star' /etc/fstab >"$tmp"
+  install -m 0644 -o root -g root "$tmp" /etc/fstab
+  rm -f "$tmp"
+}
+
+backup_and_remove_file() {
+  local path="$1"
+  local backup_dir="$2"
+  [ -e "$path" ] || [ -L "$path" ] || return 0
+  mkdir -p "${backup_dir}${path%/*}"
+  cp -a "$path" "${backup_dir}${path}"
+  rm -f "$path"
+}
+
+is_generated_star_caddyfile() {
+  local path="${1:-/etc/caddy/Caddyfile}"
+  [ -f "$path" ] || return 1
+  grep -q '^:80[[:space:]]*{' "$path" || return 1
+  grep -q "^[[:space:]]*reverse_proxy[[:space:]]\\+127.0.0.1:${STAR_BASE_PORT}[[:space:]]*$" "$path" || return 1
+  awk '
+    /^[[:space:]]*$/ { next }
+    /^[[:space:]]*#/ { next }
+    { n += 1 }
+    END { exit n == 3 ? 0 : 1 }
+  ' "$path"
+}
+
+stop_star_project_containers() {
+  local star_uid
+  star_uid="$(id -u "$STAR_USER" 2>/dev/null || true)"
+  [ -n "$star_uid" ] || return 0
+  command -v podman >/dev/null 2>&1 || return 0
+  sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" bash -lc '
+    ids="$(podman ps -aq --filter label=role=project 2>/dev/null || true)"
+    [ -z "$ids" ] || podman rm -f $ids >/dev/null 2>&1 || true
+  ' || true
+}
+
+uninstall_star() {
+  local purge_data=0
+  local purge_user=0
+  local yes=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --purge-data)
+        purge_data=1
+        shift
+        ;;
+      --purge-user)
+        purge_user=1
+        shift
+        ;;
+      --yes)
+        yes=1
+        STAR_ASSUME_YES=1
+        export STAR_ASSUME_YES
+        shift
+        ;;
+      -h | --help)
+        cat <<'EOF'
+Usage: star.sh uninstall [--yes] [--purge-data] [--purge-user]
+
+Default behavior is conservative:
+  - stop and disable CoCalc Star services,
+  - remove Star systemd units, sudoers entries, wrappers, and active env files,
+  - preserve releases, database state, project data, RootFS caches, secrets, and mounts.
+
+Options:
+  --purge-data  also remove Star install/data trees and Star btrfs image.
+  --purge-user  also remove the Star Linux user. This requires --purge-data.
+  --yes         skip the basic uninstall prompt.
+
+Non-interactive data purge requires:
+  STAR_ASSUME_YES=1 STAR_PURGE_DATA_CONFIRM='purge cocalc star data'
+EOF
+        return 0
+        ;;
+      *)
+        log "unknown uninstall option: $1"
+        exit 2
+        ;;
+    esac
+  done
+
+  if [ "$(id -u)" -ne 0 ]; then
+    log "run uninstall as root, e.g. sudo $0 uninstall"
+    exit 1
+  fi
+  if [ "$purge_user" = "1" ] && [ "$purge_data" != "1" ]; then
+    log "--purge-user requires --purge-data"
+    exit 2
+  fi
+
+  if [ "$yes" != "1" ]; then
+    confirm_uninstall "CoCalc Star will be stopped and service hooks removed. Data is preserved unless --purge-data is also specified."
+  fi
+  if [ "$purge_data" = "1" ]; then
+    confirm_purge_data
+  fi
+
+  local timestamp backup_dir generated_caddy=0 star_uid
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  if [ "$purge_data" = "1" ]; then
+    backup_dir="/tmp/cocalc-star-uninstall-backups/${timestamp}"
+  else
+    backup_dir="${STAR_ROOT}/uninstall-backups/${timestamp}"
+  fi
+
+  log "stopping Star services"
+  systemctl stop cocalc-star-project-host.service >/dev/null 2>&1 || true
+  stop_star_project_containers
+  systemctl stop cocalc-star-hub.service >/dev/null 2>&1 || true
+
+  log "disabling Star services"
+  systemctl disable cocalc-star-project-host.service >/dev/null 2>&1 || true
+  systemctl disable cocalc-star-hub.service >/dev/null 2>&1 || true
+
+  if is_generated_star_caddyfile /etc/caddy/Caddyfile; then
+    generated_caddy=1
+    systemctl disable --now caddy >/dev/null 2>&1 || true
+  fi
+
+  log "removing Star service/config hooks"
+  install -d -m 0700 "$backup_dir"
+  backup_and_remove_file /etc/systemd/system/cocalc-star-hub.service "$backup_dir"
+  backup_and_remove_file /etc/systemd/system/cocalc-star-project-host.service "$backup_dir"
+  backup_and_remove_file /etc/cocalc/star/hub.env "$backup_dir"
+  backup_and_remove_file /etc/cocalc/star/config.env "$backup_dir"
+  backup_and_remove_file /etc/cocalc/project-host.env "$backup_dir"
+  backup_and_remove_file /etc/sudoers.d/cocalc-project-host-runtime "$backup_dir"
+  backup_and_remove_file /etc/sudoers.d/cocalc-star-admin "$backup_dir"
+  backup_and_remove_file /usr/local/sbin/cocalc-runtime-storage "$backup_dir"
+  backup_and_remove_file /usr/local/sbin/cocalc-mount-data "$backup_dir"
+  backup_and_remove_file /usr/local/sbin/cocalc-project-host-rootctl "$backup_dir"
+  backup_and_remove_file /usr/local/sbin/cocalc-nvidia-cdi-normalize "$backup_dir"
+  if [ "$generated_caddy" = "1" ]; then
+    backup_and_remove_file /etc/caddy/Caddyfile "$backup_dir"
+  fi
+  systemctl daemon-reload
+
+  if [ "$purge_data" = "1" ]; then
+    log "purging Star data"
+    star_uid="$(id -u "$STAR_USER" 2>/dev/null || true)"
+    if [ -n "$star_uid" ]; then
+      systemctl stop "user@${star_uid}.service" >/dev/null 2>&1 || true
+    fi
+    umount /mnt/cocalc-scratch >/dev/null 2>&1 || true
+    umount /mnt/cocalc >/dev/null 2>&1 || true
+    remove_fstab_marker_lines
+    rm -rf "$STAR_ROOT" "$STAR_INSTALL_ROOT" /mnt/cocalc-scratch /mnt/cocalc/shared-scratch
+    rm -f "${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}"
+    if [ "$purge_user" = "1" ] && getent passwd "$STAR_USER" >/dev/null; then
+      userdel -r "$STAR_USER" >/dev/null 2>&1 || userdel "$STAR_USER" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  cat <<EOF
+CoCalc Star uninstall complete.
+
+Removed active service hooks. Backups of removed config files, if any, are in:
+  ${backup_dir}
+EOF
+
+  if [ "$purge_data" != "1" ]; then
+    cat <<EOF
+
+Preserved Star data and releases:
+  ${STAR_ROOT}
+  ${STAR_INSTALL_ROOT}
+  ${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}
+  /mnt/cocalc
+  /mnt/cocalc-scratch
+
+To remove data too, first create and copy an off-VM backup, then run:
+  sudo ${STAR_SOURCE_LINK}/src/scripts/star/star.sh uninstall --purge-data
+EOF
+  fi
+}
+
 case "${1:-}" in
   status)
     status
@@ -538,6 +768,10 @@ case "${1:-}" in
     ;;
   bootstrap-link)
     bootstrap_link
+    ;;
+  uninstall)
+    shift
+    uninstall_star "$@"
     ;;
   -h | --help | help | '')
     usage

@@ -116,6 +116,25 @@ curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/ins
   | sudo STAR_ASSUME_YES=1 STAR_SSH_TARGET=ubuntu@1.2.3.4 bash
 ```
 
+## Uninstall
+
+The default uninstall is conservative. It stops Star, disables/removes active
+service hooks, and preserves releases, database state, project data, RootFS
+caches, secrets, and mounts:
+
+```sh
+sudo /opt/cocalc-star/source/src/scripts/star/star.sh uninstall
+```
+
+To remove preserved data too, first create and copy an off-VM backup, then run:
+
+```sh
+sudo /opt/cocalc-star/source/src/scripts/star/star.sh uninstall --purge-data
+```
+
+Non-interactive data purge requires both `STAR_ASSUME_YES=1` and
+`STAR_PURGE_DATA_CONFIRM='purge cocalc star data'`.
+
 ## Useful Overrides
 
 ```sh
