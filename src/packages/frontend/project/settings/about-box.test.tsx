@@ -43,8 +43,22 @@ jest.mock("react-intl", () => ({
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const actual = jest.requireActual("@cocalc/frontend/app-framework");
+  const projectRecord = {
+    get: (field: string) =>
+      field === "theme"
+        ? {
+            get: (themeField: string) => {
+              if (themeField === "image_blob") return "blob-1";
+              if (themeField === "color") return "#112233";
+              return undefined;
+            },
+          }
+        : undefined,
+  };
   return {
     ...actual,
+    useProjectFromMap: (project_id: string) =>
+      project_id === "project-1" ? projectRecord : undefined,
     useTypedRedux: (...args: any[]) => useTypedRedux(...args),
   };
 });

@@ -45,6 +45,7 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     useEffect: React.useEffect,
     useMemo: React.useMemo,
     useState: React.useState,
+    useAccountOtherSetting: () => undefined,
     useTypedRedux: () => undefined,
     TypedMap,
     createTypedMap,

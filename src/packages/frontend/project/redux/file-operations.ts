@@ -272,6 +272,7 @@ export async function moveFiles({
 export async function deleteFiles({
   paths,
   sudo = false,
+  deleteFromSnapshots = false,
   projectId,
   fs,
   setActivity,
@@ -279,6 +280,7 @@ export async function deleteFiles({
 }: {
   paths: string[];
   sudo?: boolean;
+  deleteFromSnapshots?: boolean;
 } & FileOperationContext): Promise<void> {
   if (paths.length == 0) {
     return;
@@ -289,6 +291,7 @@ export async function deleteFiles({
 
   try {
     const snapshots: string[] = [];
+    const snapshotPrunePaths = new Set<string>();
     const nonSnapshotPaths: string[] = [];
     for (const path of paths) {
       const target = getSnapshotPathTarget(path);
@@ -302,11 +305,27 @@ export async function deleteFiles({
         );
       }
       if (target?.kind === "snapshot-entry") {
+        if (deleteFromSnapshots) {
+          snapshotPrunePaths.add(target.relativePath);
+          continue;
+        }
         throw new Error(
           `Snapshots are read-only. Delete the snapshot '${target.name}' instead of files inside it.`,
         );
       }
       nonSnapshotPaths.push(path);
+      if (deleteFromSnapshots) {
+        snapshotPrunePaths.add(path);
+      }
+    }
+    if (snapshotPrunePaths.size > 0) {
+      for (const path of snapshotPrunePaths) {
+        await webapp_client.conat_client.hub.projects.pruneSnapshotPath({
+          browser_id: webapp_client.browser_id,
+          project_id: projectId,
+          path,
+        });
+      }
     }
     if (snapshots.length > 0) {
       for (const name of snapshots) {

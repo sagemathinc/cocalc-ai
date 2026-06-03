@@ -45,6 +45,8 @@ jest.mock("antd", () => ({
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useActions: (name: string) =>
     name === "page" ? pageActions : projectActions,
+  useAccountOtherSetting: (key: string) =>
+    key === "hide_project_popovers" ? true : undefined,
   useRedux: () =>
     ImmutableMap({
       title: "Alpha",

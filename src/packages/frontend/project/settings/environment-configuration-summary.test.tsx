@@ -25,6 +25,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       set_other_settings: jest.fn(),
     }),
   },
+  useAccountOtherSetting: () => undefined,
   useTypedRedux: () => undefined,
 }));
 

@@ -3,9 +3,30 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { copyPaths, deleteMatchingFiles } from "./file-operations";
+import { copyPaths, deleteFiles, deleteMatchingFiles } from "./file-operations";
+
+const mockDeleteSnapshot = jest.fn();
+const mockPruneSnapshotPath = jest.fn();
+
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    browser_id: "browser-1",
+    conat_client: {
+      hub: {
+        projects: {
+          deleteSnapshot: (...args: any[]) => mockDeleteSnapshot(...args),
+          pruneSnapshotPath: (...args: any[]) => mockPruneSnapshotPath(...args),
+        },
+      },
+    },
+  },
+}));
 
 describe("project redux file operations", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it("copies normalized paths and logs directory destinations", async () => {
     const cp = jest.fn().mockResolvedValue(undefined);
     const setActivity = jest.fn();
@@ -75,5 +96,54 @@ describe("project redux file operations", () => {
     });
     expect(deleteFiles).toHaveBeenCalledWith({ paths: ["/tmp/keep.txt"] });
     expect(deleted).toEqual(["/tmp/keep.txt"]);
+  });
+
+  it("prunes ordinary paths from snapshots before deleting live files", async () => {
+    const rm = jest.fn().mockResolvedValue(undefined);
+    const setActivity = jest.fn();
+    const log = jest.fn();
+
+    await deleteFiles({
+      paths: ["/home/user/large"],
+      deleteFromSnapshots: true,
+      projectId: "project-1",
+      fs: () => ({ rm }) as any,
+      setActivity,
+      log,
+    });
+
+    expect(mockPruneSnapshotPath).toHaveBeenCalledWith({
+      browser_id: "browser-1",
+      project_id: "project-1",
+      path: "/home/user/large",
+    });
+    expect(rm).toHaveBeenCalledWith(["/home/user/large"], {
+      force: true,
+      recursive: true,
+      sudo: false,
+    });
+    expect(mockPruneSnapshotPath.mock.invocationCallOrder[0]).toBeLessThan(
+      rm.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("prunes snapshot-entry relative paths without deleting read-only snapshot files", async () => {
+    const rm = jest.fn().mockResolvedValue(undefined);
+
+    await deleteFiles({
+      paths: [".snapshots/manual-1/large/data"],
+      deleteFromSnapshots: true,
+      projectId: "project-1",
+      fs: () => ({ rm }) as any,
+      setActivity: jest.fn(),
+      log: jest.fn(),
+    });
+
+    expect(mockPruneSnapshotPath).toHaveBeenCalledWith({
+      browser_id: "browser-1",
+      project_id: "project-1",
+      path: "large/data",
+    });
+    expect(rm).not.toHaveBeenCalled();
   });
 });

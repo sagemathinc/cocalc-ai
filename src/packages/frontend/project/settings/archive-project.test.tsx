@@ -30,6 +30,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useActions: () => ({
     archive_project: (...args: any[]) => archiveProjectMock(...args),
   }),
+  useProjectFromMap: () => undefined,
   useTypedRedux: () => undefined,
 }));
 
