@@ -16,6 +16,7 @@ const mockCreateFolder = jest.fn();
 const mockCreateFile = jest.fn();
 const mockSetActiveTab = jest.fn();
 const mockSetCurrentPath = jest.fn();
+const mockSetNewFilenameFamily = jest.fn();
 const mockSetState = jest.fn();
 const mockSetOtherSettings = jest.fn();
 
@@ -97,6 +98,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     createFolder: mockCreateFolder,
     set_active_tab: mockSetActiveTab,
     set_current_path: mockSetCurrentPath,
+    set_new_filename_family: mockSetNewFilenameFamily,
     setState: mockSetState,
   }),
   useTypedRedux: (store: any, key: string) => {
@@ -113,6 +115,11 @@ jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: any) => <span data-icon={name} />,
   Loading: () => <span>Loading</span>,
   Paragraph: ({ children }: any) => <p>{children}</p>,
+  SelectorInput: ({ on_change, selected }: any) => (
+    <button type="button" onClick={() => on_change("pet")}>
+      Filename generator: {selected}
+    </button>
+  ),
   SettingBox: ({ children, title, subtitle }: any) => (
     <section>
       <header>{title}</header>
@@ -152,6 +159,13 @@ jest.mock("@cocalc/frontend/project/page/activity-bar", () => ({
 
 jest.mock("@cocalc/frontend/project/page/activity-bar-consts", () => ({
   ACTIVITY_BAR_KEY: "activity-bar",
+}));
+
+jest.mock("@cocalc/frontend/project/utils", () => ({
+  NewFilenameFamilies: {
+    iso: "Current time",
+    pet: "Pet names",
+  },
 }));
 
 jest.mock("../explorer/path-navigator", () => ({
@@ -215,6 +229,7 @@ describe("NewFilePage folder creation", () => {
     mockCreateFile.mockReset();
     mockSetActiveTab.mockReset();
     mockSetCurrentPath.mockReset();
+    mockSetNewFilenameFamily.mockReset();
     mockSetState.mockReset();
     mockSetOtherSettings.mockReset();
   });
@@ -245,5 +260,13 @@ describe("NewFilePage folder creation", () => {
         switch_over: true,
       }),
     );
+  });
+
+  it("shows the filename generator selector", () => {
+    render(<NewFilePage project_id="project-1" />);
+
+    fireEvent.click(screen.getByText(/Filename generator:/));
+
+    expect(mockSetNewFilenameFamily).toHaveBeenCalledWith("pet");
   });
 });

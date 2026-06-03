@@ -19,6 +19,7 @@ import {
   Icon,
   Loading,
   Paragraph,
+  SelectorInput,
   SettingBox,
   Tip,
 } from "@cocalc/frontend/components";
@@ -32,12 +33,14 @@ import { labels } from "@cocalc/frontend/i18n";
 import { special_filenames_with_no_extension } from "@cocalc/frontend/project-file";
 import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
 import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
+import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import {
   capitalize,
   filename_extension,
   is_only_downloadable,
   keys,
 } from "@cocalc/util/misc";
+import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import { PathNavigator } from "../explorer/path-navigator";
 import { useAvailableFeatures } from "../use-available-features";
 import { NewFileButton } from "./new-file-button";
@@ -63,6 +66,7 @@ interface Props {
   project_id: string;
   initialFilename?: string;
   autoFocusFilename?: boolean;
+  mode?: "page" | "flyout";
 }
 
 export default function NewFilePage(props: Props) {
@@ -71,7 +75,12 @@ export default function NewFilePage(props: Props) {
   }
 
   const intl = useIntl();
-  const { project_id, initialFilename, autoFocusFilename = true } = props;
+  const {
+    project_id,
+    initialFilename,
+    autoFocusFilename = true,
+    mode = "page",
+  } = props;
   const inputRef = useRef<any>(null);
   const folderInputRef = useRef<any>(null);
   useEffect(() => {
@@ -86,6 +95,8 @@ export default function NewFilePage(props: Props) {
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
   const other_settings = useTypedRedux("account", "other_settings");
+  const selectedFilenameFamily =
+    other_settings?.get?.(NEW_FILENAMES) ?? DEFAULT_NEW_FILENAMES;
   const site_launcher_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
@@ -195,6 +206,10 @@ export default function NewFilePage(props: Props) {
       prefs,
     );
     redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
+  }
+
+  function setNewFilenameFamily(family: string) {
+    getActions().set_new_filename_family(family);
   }
 
   const [creatingFile, setCreatingFile] = useState<string>("");
@@ -404,7 +419,7 @@ export default function NewFilePage(props: Props) {
   //key is so autofocus works below
   return (
     <SettingBox
-      style={{ marginTop: "20px" }}
+      style={{ marginTop: mode === "flyout" ? 0 : "20px" }}
       show_header
       icon={"plus-circle"}
       title={
@@ -448,7 +463,7 @@ export default function NewFilePage(props: Props) {
           />
         </div>
       }
-      close={closeNewPage}
+      close={mode === "flyout" ? undefined : closeNewPage}
     >
       <Modal
         onCancel={() => setCreatingFile("")}
@@ -563,6 +578,15 @@ export default function NewFilePage(props: Props) {
                 </Button>
               </Space>
             </div>
+          </div>
+          <div style={{ marginTop: "12px" }}>
+            <h4 style={{ marginBottom: "6px" }}>Filename generator</h4>
+            <SelectorInput
+              style={{ width: "100%" }}
+              selected={selectedFilenameFamily}
+              options={NewFilenameFamilies}
+              on_change={setNewFilenameFamily}
+            />
           </div>
         </Col>
       </Row>
