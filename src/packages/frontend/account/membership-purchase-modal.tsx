@@ -67,12 +67,14 @@ interface MembershipTiersResponse {
 }
 
 interface Props {
+  currentClassOverride?: string;
   open: boolean;
   onClose: () => void;
   onChanged?: () => void;
 }
 
 export default function MembershipPurchaseModal({
+  currentClassOverride,
   open,
   onClose,
   onChanged,
@@ -168,7 +170,7 @@ export default function MembershipPurchaseModal({
     loadQuote();
   }, [open, selectedTierId, interval]);
 
-  const currentClass = membership?.class ?? "free";
+  const currentClass = currentClassOverride ?? membership?.class ?? "free";
   const selectedTier = selectedTierId ? tierById[selectedTierId] : undefined;
   const selectedLabel = selectedTier?.label ?? selectedTier?.id ?? "";
 
@@ -263,7 +265,8 @@ export default function MembershipPurchaseModal({
         <>
           <div style={{ marginBottom: "12px" }}>
             <Text type="secondary">
-              Current membership:{" "}
+              Current{" "}
+              {currentClassOverride ? "personal membership" : "membership"}:{" "}
               <Tag color={currentClass === "free" ? "default" : "blue"}>
                 {currentClass}
               </Tag>

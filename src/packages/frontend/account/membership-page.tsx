@@ -7,9 +7,7 @@ import {
   Alert,
   Button,
   Card,
-  Collapse,
   Descriptions,
-  Divider,
   Popconfirm,
   Space,
   Tag,
@@ -30,6 +28,7 @@ import {
   cancelSubscription,
   resumeSubscription,
 } from "@cocalc/frontend/purchases/api";
+import type { MembershipCandidate } from "@cocalc/conat/hub/api/purchases";
 import { capitalize } from "@cocalc/util/misc";
 import { useMembershipSettingsData } from "./membership-settings-data";
 import {
@@ -87,6 +86,9 @@ function MembershipSettingsContent() {
     tierById,
   } = useMembershipSettingsData();
   const [purchaseOpen, setPurchaseOpen] = useState<boolean>(false);
+  const [purchaseCurrentClass, setPurchaseCurrentClass] = useState<
+    string | undefined
+  >(undefined);
 
   if (!account_id) return null;
   if (loading) return <Loading />;
@@ -110,33 +112,124 @@ function MembershipSettingsContent() {
   const featureTags = Object.entries(features)
     .map(([key, value]) => formatFeatureTag(key, value))
     .filter((value): value is string => !!value);
+  const selectedSourceRow = candidateRows.find((row) => row.selected);
+  const personalMembership = details?.candidates.find(
+    (candidate) => candidate.source === "subscription",
+  );
+  const openPurchase = (currentClassOverride?: string) => {
+    setPurchaseCurrentClass(currentClassOverride);
+    setPurchaseOpen(true);
+  };
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      <Descriptions size="small" column={1}>
-        <Descriptions.Item label="Tier">
-          <Space>
-            <Tag color={membership.class === "free" ? "default" : "blue"}>
-              {tierLabel || membership.class}
-            </Tag>
-            <Text type="secondary">{membership.class}</Text>
-          </Space>
-        </Descriptions.Item>
-        <Descriptions.Item label="Source">
-          {membershipSourceLabel}
-        </Descriptions.Item>
-        {membership.expires && membership.source !== "subscription" && (
-          <Descriptions.Item label={expiresLabel}>
-            <MembershipDate date={membership.expires} />
-          </Descriptions.Item>
-        )}
-      </Descriptions>
+      <Card size="small" title="Effective membership">
+        <Space orientation="vertical" style={{ width: "100%" }}>
+          <Descriptions size="small" column={1}>
+            <Descriptions.Item label="Tier">
+              <Space>
+                <Tag color={membership.class === "free" ? "default" : "blue"}>
+                  {tierLabel || membership.class}
+                </Tag>
+                <Text type="secondary">{membership.class}</Text>
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="Source">
+              {selectedSourceRow?.source ?? membershipSourceLabel}
+            </Descriptions.Item>
+            {membership.expires && membership.source !== "subscription" && (
+              <Descriptions.Item label={expiresLabel}>
+                <MembershipDate date={membership.expires} />
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+          {membership.source !== "subscription" &&
+            membership.source !== "free" && (
+              <Alert
+                type="info"
+                showIcon
+                message="This membership is read-only here."
+                description={
+                  selectedSourceRow?.sourceDetail ??
+                  "It is managed outside personal membership settings."
+                }
+              />
+            )}
+        </Space>
+      </Card>
 
-      <PersonalSubscriptionControls membership={membership} refresh={refresh} />
+      <Card size="small" title="Membership sources">
+        {candidateRows.length === 0 ? (
+          <Text type="secondary">No active membership sources.</Text>
+        ) : (
+          <Table
+            size="small"
+            pagination={false}
+            dataSource={candidateRows}
+            columns={[
+              {
+                title: "Membership",
+                dataIndex: "tier",
+                render: (value, row) => (
+                  <Space>
+                    <Tag color={row.selected ? "blue" : undefined}>{value}</Tag>
+                  </Space>
+                ),
+              },
+              {
+                title: "Source",
+                dataIndex: "source",
+                render: (value, row) => (
+                  <Space orientation="vertical" size={0}>
+                    <Text>{value}</Text>
+                    <Text type="secondary">{row.sourceDetail}</Text>
+                  </Space>
+                ),
+              },
+              {
+                title: "Status",
+                dataIndex: "status",
+                render: (value, row) => (
+                  <Tag color={membershipStatusColor(row)}>{value}</Tag>
+                ),
+              },
+              {
+                title: "Expires",
+                dataIndex: "expires",
+                render: (value) =>
+                  value ? <TimeAgo date={value} /> : <Text>Never</Text>,
+              },
+            ]}
+          />
+        )}
+      </Card>
+
+      <PersonalMembershipControls
+        effectiveSource={membership.source}
+        membership={personalMembership}
+        openPurchase={openPurchase}
+        refresh={refresh}
+        tierLabel={
+          personalMembership
+            ? (tierById[personalMembership.class]?.label ??
+              capitalize(personalMembership.class))
+            : undefined
+        }
+      />
 
       {tier != null ? (
-        <Card size="small">
+        <Card size="small" title="Effective benefits">
           <MembershipTierBenefits compact tier={tier} />
+        </Card>
+      ) : null}
+
+      {featureTags.length > 0 ? (
+        <Card size="small" title="Effective features">
+          <Space wrap>
+            {featureTags.map((tag) => (
+              <Tag key={tag}>{tag}</Tag>
+            ))}
+          </Space>
         </Card>
       ) : null}
 
@@ -144,7 +237,7 @@ function MembershipSettingsContent() {
         <Alert
           type="info"
           showIcon
-          title="Support override active"
+          message="Support override active"
           description={
             <>
               {details.admin_override.effects?.length ? (
@@ -168,19 +261,6 @@ function MembershipSettingsContent() {
         />
       ) : null}
 
-      <Space wrap>
-        <Button
-          type={membership.class === "free" ? "primary" : "default"}
-          onClick={() => setPurchaseOpen(true)}
-        >
-          {membership.class === "free"
-            ? "Upgrade membership"
-            : "Change membership"}
-        </Button>
-      </Space>
-
-      <Divider style={{ margin: "8px 0" }} />
-
       <Card size="small">
         <Space
           wrap
@@ -200,69 +280,32 @@ function MembershipSettingsContent() {
         </Space>
       </Card>
 
-      <Divider style={{ margin: "8px 0" }} />
-
-      <div>
-        <Text strong>Features</Text>
-        <div style={{ marginTop: "6px" }}>
-          {featureTags.length === 0 ? (
-            <Text type="secondary">No membership features configured.</Text>
-          ) : (
-            <Space wrap>
-              {featureTags.map((tag) => (
-                <Tag key={tag}>{tag}</Tag>
-              ))}
-            </Space>
-          )}
-        </div>
-      </div>
-
-      <Collapse
-        items={[
-          {
-            key: "membership-sources",
-            label: "Why this membership?",
-            children:
-              candidateRows.length === 0 ? (
-                <Text type="secondary">No active membership sources.</Text>
-              ) : (
-                <Table
-                  size="small"
-                  pagination={false}
-                  dataSource={candidateRows}
-                  columns={[
-                    {
-                      title: "Tier",
-                      dataIndex: "tier",
-                      render: (value, row) => (
-                        <Space>
-                          {value}
-                          {row.selected && <Tag color="blue">Selected</Tag>}
-                        </Space>
-                      ),
-                    },
-                    { title: "Source", dataIndex: "source" },
-                    { title: "Priority", dataIndex: "priority" },
-                    {
-                      title: "Expires",
-                      dataIndex: "expires",
-                      render: (value) =>
-                        value ? <TimeAgo date={value} /> : "Never",
-                    },
-                  ]}
-                />
-              ),
-          },
-        ]}
-      />
-
       <MembershipPurchaseModal
+        currentClassOverride={purchaseCurrentClass}
         open={purchaseOpen}
-        onClose={() => setPurchaseOpen(false)}
+        onClose={() => {
+          setPurchaseOpen(false);
+          setPurchaseCurrentClass(undefined);
+        }}
         onChanged={refresh}
       />
     </Space>
   );
+}
+
+function membershipStatusColor({
+  selected,
+  subscriptionStatus,
+}: {
+  selected: boolean;
+  subscriptionStatus?: "active" | "canceled" | "unpaid" | "past_due";
+}) {
+  if (selected) return "blue";
+  if (subscriptionStatus === "canceled") return "orange";
+  if (subscriptionStatus === "past_due" || subscriptionStatus === "unpaid") {
+    return "red";
+  }
+  return undefined;
 }
 
 function MembershipDate({ date }: { date: Date | string }) {
@@ -276,14 +319,63 @@ function MembershipDate({ date }: { date: Date | string }) {
   );
 }
 
+function PersonalMembershipControls({
+  effectiveSource,
+  membership,
+  openPurchase,
+  refresh,
+  tierLabel,
+}: {
+  effectiveSource: "subscription" | "admin" | "grant" | "free";
+  membership?: MembershipCandidate;
+  openPurchase: (currentClassOverride?: string) => void;
+  refresh: () => void;
+  tierLabel?: string;
+}) {
+  if (!membership) {
+    return (
+      <Card size="small" title="Personal membership">
+        <Space orientation="vertical" style={{ width: "100%" }}>
+          <Text type="secondary">
+            {effectiveSource === "free"
+              ? "You do not have a paid personal membership."
+              : "You do not have a paid personal membership. Your current membership is managed outside this page."}
+          </Text>
+          {effectiveSource === "free" && (
+            <Button
+              type="primary"
+              onClick={() => {
+                openPurchase("free");
+              }}
+            >
+              Start personal membership
+            </Button>
+          )}
+        </Space>
+      </Card>
+    );
+  }
+
+  return (
+    <PersonalSubscriptionControls
+      membership={membership}
+      openPurchase={openPurchase}
+      refresh={refresh}
+      tierLabel={tierLabel}
+    />
+  );
+}
+
 function PersonalSubscriptionControls({
   membership,
+  openPurchase,
   refresh,
+  tierLabel,
 }: {
-  membership: NonNullable<
-    ReturnType<typeof useMembershipSettingsData>["membership"]
-  >;
+  membership: MembershipCandidate;
+  openPurchase: (currentClassOverride?: string) => void;
   refresh: () => void;
+  tierLabel?: string;
 }) {
   const subscriptionId = membership.subscription_id;
   const [error, setError] = useState<string>("");
@@ -292,7 +384,7 @@ function PersonalSubscriptionControls({
     onUnhandledError: (err) => setError(`${err}`),
   });
 
-  if (membership.source !== "subscription" || subscriptionId == null) {
+  if (subscriptionId == null) {
     return null;
   }
 
@@ -336,8 +428,16 @@ function PersonalSubscriptionControls({
   return (
     <Card size="small" title="Personal membership">
       <Space orientation="vertical" style={{ width: "100%" }}>
-        {error && <Alert type="error" title={error} closable />}
+        {error && <Alert type="error" message={error} closable />}
         <Descriptions size="small" column={1}>
+          <Descriptions.Item label="Tier">
+            <Space>
+              <Tag color="blue">
+                {tierLabel ?? capitalize(membership.class)}
+              </Tag>
+              <Text type="secondary">{membership.class}</Text>
+            </Space>
+          </Descriptions.Item>
           <Descriptions.Item label={canceled ? "Active until" : "Next payment"}>
             {membership.expires ? (
               <MembershipDate date={membership.expires} />
@@ -351,6 +451,13 @@ function PersonalSubscriptionControls({
         </Descriptions>
         {!canceled && <UseBalance minimal />}
         <Space wrap>
+          <Button
+            onClick={() => {
+              openPurchase(membership.class);
+            }}
+          >
+            Change personal membership
+          </Button>
           {canceled ? (
             <Button loading={loading} onClick={resume}>
               Resume renewal
