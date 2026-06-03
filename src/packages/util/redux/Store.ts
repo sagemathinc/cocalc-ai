@@ -40,6 +40,7 @@ export class Store<State extends Record<string, any>> extends EventEmitter {
     [K in keyof Partial<State>]: Selector<State, K> | undefined;
   };
   private _last_state: State;
+  private highChangeListenerWarningThreshold = 0;
 
   constructor(name: string, redux: AppRedux) {
     super();
@@ -51,6 +52,34 @@ export class Store<State extends Record<string, any>> extends EventEmitter {
     this.name = name;
     this.redux = redux;
     this.setMaxListeners(1000);
+  }
+
+  on(eventName: string | symbol, listener: (...args: any[]) => void): this {
+    const result = super.on(eventName, listener);
+    this.warnIfHighChangeListenerCount(eventName);
+    return result;
+  }
+
+  addListener(
+    eventName: string | symbol,
+    listener: (...args: any[]) => void,
+  ): this {
+    const result = super.addListener(eventName, listener);
+    this.warnIfHighChangeListenerCount(eventName);
+    return result;
+  }
+
+  private warnIfHighChangeListenerCount(eventName: string | symbol): void {
+    if (eventName !== "change") return;
+    const count = this.listenerCount("change");
+    const threshold = count >= 1000 ? 1000 : count >= 500 ? 500 : 0;
+    if (threshold <= this.highChangeListenerWarningThreshold) return;
+    this.highChangeListenerWarningThreshold = threshold;
+    console.warn("redux store has high change listener count", {
+      store: this.name,
+      changeListeners: count,
+      maxListeners: this.getMaxListeners(),
+    });
   }
 
   setState(obj): void {

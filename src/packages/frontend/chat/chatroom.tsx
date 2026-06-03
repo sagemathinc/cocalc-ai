@@ -532,7 +532,8 @@ function asTrimmedString(value: unknown): string | undefined {
 
 function chatActionsStoreName(actions: ChatActions): string {
   const name = (actions as any)?.name;
-  return typeof name === "string" && name.trim().length > 0 ? name : "";
+  if (typeof name !== "string" || name.trim().length === 0) return "";
+  return redux.getStore(name) != null ? name : "";
 }
 
 export function ChatPanel({

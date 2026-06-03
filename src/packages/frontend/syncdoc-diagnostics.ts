@@ -162,6 +162,35 @@ function collectProjectDiagnostics() {
   return projects;
 }
 
+function collectReduxListenerDiagnostics() {
+  const stores = (redux as any)._stores ?? {};
+  const all = Object.entries<any>(stores).map(([name, store]) => {
+    const changeListeners = safeCall(() => store.listenerCount?.("change"));
+    return {
+      name,
+      changeListeners:
+        typeof changeListeners === "number" ? changeListeners : undefined,
+      maxListeners: safeCall(() => store.getMaxListeners?.()),
+    };
+  });
+  const withChangeListeners = all.filter(
+    ({ changeListeners }) =>
+      typeof changeListeners === "number" && changeListeners > 0,
+  );
+  withChangeListeners.sort(
+    (a, b) => (b.changeListeners ?? 0) - (a.changeListeners ?? 0),
+  );
+  return {
+    storeCount: all.length,
+    storesWithChangeListeners: withChangeListeners.length,
+    totalChangeListeners: withChangeListeners.reduce(
+      (sum, { changeListeners }) => sum + (changeListeners ?? 0),
+      0,
+    ),
+    topChangeListenerStores: withChangeListeners.slice(0, 25),
+  };
+}
+
 export function collectSyncdocDiagnostics({
   conatClient,
 }: DiagnosticsOptions = {}) {
@@ -178,6 +207,7 @@ export function collectSyncdocDiagnostics({
           : document.hasFocus(),
     },
     conat: safeCall(() => conatClient?.debugReconnectState?.()),
+    redux: collectReduxListenerDiagnostics(),
     projects: collectProjectDiagnostics(),
     recentEvents: diagnosticEvents.slice(),
   };
