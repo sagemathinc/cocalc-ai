@@ -1563,7 +1563,21 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return;
     }
     if (this.open_files == null) return;
-    void (async () => {
+    const inFlight = this.ensureOpenFileComponentInFlight.get(path);
+    if (inFlight != null) {
+      if (!opts.noFocus) {
+        void inFlight.then(() => {
+          const currentInfo = this.get_store()
+            ?.get("open_files")
+            .getIn([path, "component"]) as any | undefined;
+          if (this.openFileComponentRuntimeIsUsable(currentInfo, isViewer)) {
+            this.show_file(path);
+          }
+        });
+      }
+      return;
+    }
+    const promise = (async () => {
       try {
         const syncPath = this.get_sync_path(path);
         const ext = this.open_files?.get(path, "ext");
@@ -1614,8 +1628,17 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           `Editor initialization failed for ${path}, error already shown to user`,
         );
       }
-    })();
+    })().finally(() => {
+      this.ensureOpenFileComponentInFlight.delete(path);
+    });
+    this.ensureOpenFileComponentInFlight.set(path, promise);
+    void promise;
   };
+
+  private ensureOpenFileComponentInFlight = new globalThis.Map<
+    string,
+    Promise<void>
+  >();
 
   private openFileComponentRuntimeIsUsable(info: any, isViewer: boolean) {
     if (info?.Editor == null) {

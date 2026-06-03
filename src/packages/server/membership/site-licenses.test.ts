@@ -107,7 +107,7 @@ describe("site license seat pools", () => {
       actor_account_id: opts.actor_account_id,
       site_license_id: overview.site_license.id,
       target_account_id: opts.owner_account_id,
-      role: "owner",
+      role: "manager",
     });
   }
 
@@ -161,7 +161,7 @@ describe("site license seat pools", () => {
     ).rejects.toThrow(/membership tier not found or disabled/);
   });
 
-  it("stores site licenses on the seed bay and does not attach managers on provisioning", async () => {
+  it("stores site licenses on the seed bay and treats owner as responsible account only", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();
     const domain = `ownerless-${uuid().slice(0, 8)}.edu`;
@@ -198,10 +198,17 @@ describe("site license seat pools", () => {
         account_id: owner_account_id,
         site_license_id: overview.site_license.id,
       }),
-    ).rejects.toThrow("must view site license");
+    ).resolves.toEqual(
+      expect.objectContaining({
+        site_license: expect.objectContaining({
+          owner_account_id,
+        }),
+        managers: [],
+      }),
+    );
   });
 
-  it("lists site licenses for admins and attached managers only", async () => {
+  it("lists site licenses for admins, responsible owners, and delegated managers", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();
     const outsider_account_id = uuid();
@@ -213,6 +220,7 @@ describe("site license seat pools", () => {
 
     const overview = await adminProvisionSiteLicense({
       actor_account_id: admin_account_id,
+      owner_account_id,
       name: "Visible Campus",
       organization_name: "Example University",
       allowed_domains: [domain],
@@ -245,7 +253,13 @@ describe("site license seat pools", () => {
       listSiteLicenseOverviews({
         account_id: owner_account_id,
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual([
+      expect.objectContaining({
+        site_license: expect.objectContaining({
+          id: overview.site_license.id,
+        }),
+      }),
+    ]);
     await expect(
       listSiteLicenseOverviews({
         account_id: outsider_account_id,
@@ -256,7 +270,7 @@ describe("site license seat pools", () => {
       actor_account_id: admin_account_id,
       site_license_id: overview.site_license.id,
       target_account_id: owner_account_id,
-      role: "owner",
+      role: "viewer",
     });
 
     await expect(
@@ -398,7 +412,7 @@ describe("site license seat pools", () => {
       expect.arrayContaining([
         expect.objectContaining({
           account_id: owner_account_id,
-          role: "owner",
+          role: "manager",
         }),
       ]),
     );
@@ -967,7 +981,7 @@ describe("site license seat pools", () => {
     });
 
     const withManager = await setSiteLicenseManager({
-      actor_account_id: owner_account_id,
+      actor_account_id: admin_account_id,
       site_license_id: overview.site_license.id,
       target_account_id: manager_account_id,
       role: "manager",
@@ -985,12 +999,21 @@ describe("site license seat pools", () => {
         actor_account_id: manager_account_id,
         site_license_id: overview.site_license.id,
         target_account_id: manager_account_id,
-        role: "owner",
+        role: "viewer",
       }),
-    ).rejects.toThrow("must own site license");
+    ).rejects.toThrow("must be an admin");
+
+    await expect(
+      setSiteLicenseManager({
+        actor_account_id: owner_account_id,
+        site_license_id: overview.site_license.id,
+        target_account_id: manager_account_id,
+        role: "viewer",
+      }),
+    ).rejects.toThrow("must be an admin");
 
     const withoutManager = await removeSiteLicenseManager({
-      actor_account_id: owner_account_id,
+      actor_account_id: admin_account_id,
       site_license_id: overview.site_license.id,
       target_account_id: manager_account_id,
     });
@@ -1000,7 +1023,7 @@ describe("site license seat pools", () => {
       ),
     ).toBe(false);
     const withoutOwner = await removeSiteLicenseManager({
-      actor_account_id: owner_account_id,
+      actor_account_id: admin_account_id,
       site_license_id: overview.site_license.id,
       target_account_id: owner_account_id,
     });

@@ -79,7 +79,7 @@ Table({
     },
     owner_account_id: {
       type: "uuid",
-      desc: "Legacy account owner for pre-bay site-license rows.",
+      desc: "Canonical responsible account for billing and future self-service ownership. This is not an operational manager role.",
       render: { type: "account" },
     },
     allowed_domains: {
@@ -188,7 +188,7 @@ Table({
     },
     role: {
       type: "string",
-      desc: "Manager role: owner, manager, or viewer.",
+      desc: "Delegated site-license role: manager or viewer. The canonical owner is site_licenses.owner_account_id.",
     },
     created_by_account_id: {
       type: "uuid",

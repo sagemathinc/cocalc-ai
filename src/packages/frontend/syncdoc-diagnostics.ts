@@ -76,6 +76,18 @@ function toPlain(value: any): any {
   return value;
 }
 
+function summarizeLocalViewState(
+  store: any,
+): Record<string, unknown> | undefined {
+  const localViewState = safeCall(() => store.get("local_view_state"));
+  if (localViewState == null) return;
+  return {
+    active_id: safeCall(() => localViewState.get("active_id")),
+    full_id: safeCall(() => localViewState.get("full_id")),
+    frame_tree: toPlain(safeCall(() => localViewState.get("frame_tree"))),
+  };
+}
+
 function summarizeEditorStore(store: any): Record<string, unknown> | undefined {
   if (store == null) return;
   return {
@@ -95,6 +107,7 @@ function summarizeEditorStore(store: any): Record<string, unknown> | undefined {
       const value = store.get("value");
       return typeof value === "string" ? value.slice(0, 80) : undefined;
     }),
+    local_view_state: summarizeLocalViewState(store),
   };
 }
 
