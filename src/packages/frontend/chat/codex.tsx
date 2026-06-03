@@ -304,6 +304,7 @@ export function CodexConfigButton({
   const [controlsCollapsed, setControlsCollapsed] = useState(
     readCodexControlsCollapsed,
   );
+  const lastAppliedThreadRef = React.useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const initialModels = DEFAULT_CODEX_MODELS.map((m) => ({
@@ -315,11 +316,17 @@ export function CodexConfigButton({
     setModels(initialModels);
   }, []);
 
+  const threadConfigKey = codexThreadConfigKey(threadConfig);
+
   useEffect(() => {
     if (!models.length) return;
     const threadId = `${threadKey ?? ""}`.trim();
     if (!threadId) {
       console.warn("invalid chat thread id", { threadKey });
+      return;
+    }
+    const threadChanged = lastAppliedThreadRef.current !== threadId;
+    if (open && !threadChanged) {
       return;
     }
     const baseModel = models[0]?.value ?? DEFAULT_MODEL_NAME;
@@ -366,6 +373,7 @@ export function CodexConfigButton({
     };
     form.setFieldsValue(currentValue);
     setValue(currentValue);
+    lastAppliedThreadRef.current = threadId;
   }, [
     models,
     threadKey,
@@ -373,7 +381,7 @@ export function CodexConfigButton({
     actions,
     form,
     open,
-    threadConfig,
+    threadConfigKey,
     defaultSessionMode,
     workspaceWorkingDirectory,
   ]);
@@ -900,6 +908,25 @@ function normalizeSessionMode(
     return mode;
   }
   return getDefaultCodexSessionMode();
+}
+
+export function codexThreadConfigKey(
+  config?: Partial<CodexThreadConfig> | null,
+): string {
+  if (config == null) return "";
+  return JSON.stringify({
+    allowWrite: config.allowWrite,
+    codexPathOverride: config.codexPathOverride,
+    envHome: config.envHome,
+    envPath: config.envPath,
+    model: config.model,
+    notifyOnTurnFinish: config.notifyOnTurnFinish,
+    reasoning: config.reasoning,
+    serviceTier: config.serviceTier,
+    sessionId: config.sessionId,
+    sessionMode: config.sessionMode,
+    workingDirectory: config.workingDirectory,
+  });
 }
 
 function defaultWorkingDir(
