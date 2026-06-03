@@ -96,16 +96,10 @@ describe("site license seat pools", () => {
     );
   }
 
-  async function provisionSiteLicenseForTest({
-    bay_id = "bay-0",
-    ...opts
-  }: Omit<Parameters<typeof adminProvisionSiteLicense>[0], "bay_id"> & {
-    bay_id?: string;
-  }) {
-    const overview = await adminProvisionSiteLicense({
-      ...opts,
-      bay_id,
-    });
+  async function provisionSiteLicenseForTest(
+    opts: Parameters<typeof adminProvisionSiteLicense>[0],
+  ) {
+    const overview = await adminProvisionSiteLicense(opts);
     if (!opts.owner_account_id || opts.trusted_admin) {
       return overview;
     }
@@ -150,7 +144,6 @@ describe("site license seat pools", () => {
     await expect(
       adminProvisionSiteLicense({
         actor_account_id: admin_account_id,
-        bay_id: "bay-0",
         owner_account_id,
         name: "Invalid Tier License",
         organization_name: "Example University",
@@ -168,7 +161,7 @@ describe("site license seat pools", () => {
     ).rejects.toThrow(/membership tier not found or disabled/);
   });
 
-  it("requires an explicit bay and does not attach managers on provisioning", async () => {
+  it("stores site licenses on the seed bay and does not attach managers on provisioning", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();
     const domain = `ownerless-${uuid().slice(0, 8)}.edu`;
@@ -176,20 +169,8 @@ describe("site license seat pools", () => {
     await createTestAccount(owner_account_id);
     await markAdmin(admin_account_id);
 
-    await expect(
-      adminProvisionSiteLicense({
-        actor_account_id: admin_account_id,
-        bay_id: "",
-        name: "Missing Bay Campus",
-        organization_name: "Example University",
-        allowed_domains: [domain],
-        pools: [],
-      }),
-    ).rejects.toThrow("bay_id");
-
     const overview = await adminProvisionSiteLicense({
       actor_account_id: admin_account_id,
-      bay_id: "bay-0",
       owner_account_id,
       name: "Ownerless Campus",
       organization_name: "Example University",
@@ -232,7 +213,6 @@ describe("site license seat pools", () => {
 
     const overview = await adminProvisionSiteLicense({
       actor_account_id: admin_account_id,
-      bay_id: "bay-0",
       name: "Visible Campus",
       organization_name: "Example University",
       allowed_domains: [domain],
@@ -307,7 +287,6 @@ describe("site license seat pools", () => {
 
     const overview = await adminProvisionSiteLicense({
       actor_account_id: admin_account_id,
-      bay_id: "bay-0",
       name: "Manager Revoke Campus",
       organization_name: "Example University",
       allowed_domains: [domain],

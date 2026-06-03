@@ -670,7 +670,6 @@ describe("purchases membership packages", () => {
     const result = await adminProvisionSiteLicense({
       account_id: "admin-1",
       session_hash: "session-1",
-      bay_id: "bay-0",
       owner_account_id: "owner-1",
       name: "Example Campus",
       organization_name: "Example University",
@@ -693,7 +692,6 @@ describe("purchases membership packages", () => {
     });
     expect(interBayAdminProvisionSiteLicenseMock).toHaveBeenCalledWith({
       actor_account_id: "admin-1",
-      bay_id: "bay-0",
       owner_account_id: "owner-1",
       name: "Example Campus",
       organization_name: "Example University",
@@ -727,7 +725,6 @@ describe("purchases membership packages", () => {
     await expect(
       adminProvisionSiteLicense({
         account_id: "admin-1",
-        bay_id: "bay-0",
         owner_account_id: "owner-1",
         name: "Example Campus",
         organization_name: "Example University",
@@ -758,7 +755,6 @@ describe("purchases membership packages", () => {
       adminProvisionSiteLicense({
         account_id: "admin-1",
         session_hash: "session-1",
-        bay_id: "bay-0",
         owner_account_id: "owner-1",
         name: "Example Campus",
         organization_name: "Example University",

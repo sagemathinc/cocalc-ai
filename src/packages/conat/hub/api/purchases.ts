@@ -970,7 +970,6 @@ export interface Purchases {
     account_id?: string;
     browser_id?: string;
     session_hash?: string | null;
-    bay_id: string;
     owner_account_id?: string;
     name?: string;
     organization_name?: string;

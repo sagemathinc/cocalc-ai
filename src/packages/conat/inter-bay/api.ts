@@ -987,7 +987,6 @@ export interface AccountLocalGetMembershipPackagesRequest {
 
 export interface AccountLocalAdminProvisionSiteLicenseRequest {
   actor_account_id: string;
-  bay_id: string;
   owner_account_id?: string;
   name: string;
   organization_name: string;

@@ -24,7 +24,6 @@ Table({
           id: null,
           name: null,
           organization_name: null,
-          bay_id: null,
           owner_account_id: null,
           allowed_domains: null,
           custom_terms_url: null,
@@ -76,7 +75,7 @@ Table({
     },
     bay_id: {
       type: "string",
-      desc: "Control-plane bay that owns this site license.",
+      desc: "Seed control-plane bay that owns this site license.",
     },
     owner_account_id: {
       type: "uuid",

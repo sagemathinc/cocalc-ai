@@ -87,7 +87,6 @@ import type {
   SiteLicensePoolRequest,
   SiteLicenseVerificationPolicy,
 } from "@cocalc/conat/hub/api/purchases";
-import type { BayInfo } from "@cocalc/conat/hub/api/system";
 import { MEMBERSHIP_PACKAGE_PURCHASE } from "@cocalc/util/db-schema/purchases";
 import {
   capitalize,
@@ -1598,7 +1597,7 @@ function SiteLicenseSummaryTable({
             )}
           />
           <Table.Column<SiteLicenseOverview>
-            title="Bay"
+            title="Seed bay"
             render={(_, overview) => (
               <Text type="secondary">{overview.site_license.bay_id}</Text>
             )}
@@ -2209,7 +2208,7 @@ function SiteLicenseDashboard({
 
                 <Space wrap>
                   <Text type="secondary">
-                    License id {overview.site_license.id}; bay{" "}
+                    License id {overview.site_license.id}; seed bay{" "}
                     {overview.site_license.bay_id}
                   </Text>
                   {overview.site_license.owner_account_id ? (
@@ -2839,8 +2838,6 @@ function ProvisionSiteLicenseModal({
   const [startsAt, setStartsAt] = useState<Dayjs | null>(null);
   const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
   const [pools, setPools] = useState<SiteLicensePoolConfig[]>([]);
-  const [bays, setBays] = useState<BayInfo[]>([]);
-  const [selectedBayId, setSelectedBayId] = useState<string>("");
   const [editingPoolIndex, setEditingPoolIndex] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -2850,23 +2847,6 @@ function ProvisionSiteLicenseModal({
 
   useEffect(() => {
     if (!open) return;
-    let canceled = false;
-    async function loadBays() {
-      try {
-        const nextBays = await webapp_client.conat_client.hub.system.listBays(
-          {},
-        );
-        if (!canceled) {
-          setBays(nextBays ?? []);
-        }
-      } catch (err) {
-        if (!canceled) {
-          setBays([]);
-          setError(`${err}`);
-        }
-      }
-    }
-    void loadBays();
     const usedTierIds = new Set<string>();
     const studentTier = findSiteLicenseTier({
       tiers: siteLicenseTierOptions,
@@ -2899,7 +2879,6 @@ function ProvisionSiteLicenseModal({
     setOveragePolicy("hard-cap");
     setStartsAt(null);
     setExpiresAt(null);
-    setSelectedBayId("");
     const defaultPools: SiteLicensePoolConfig[] = [];
     if (studentTier) {
       defaultPools.push({
@@ -2941,9 +2920,6 @@ function ProvisionSiteLicenseModal({
     setEditingPoolIndex(null);
     setSubmitting(false);
     setError("");
-    return () => {
-      canceled = true;
-    };
   }, [open, siteLicenseTierOptions]);
 
   function updatePool(index: number, patch: Partial<SiteLicensePoolConfig>) {
@@ -2976,9 +2952,6 @@ function ProvisionSiteLicenseModal({
       }
       if (!cleanOrganizationName) {
         throw Error("Enter an organization name.");
-      }
-      if (!selectedBayId) {
-        throw Error("Select the bay for this site license.");
       }
       if (allowed_domains.length === 0) {
         throw Error("Enter at least one allowed email domain.");
@@ -3014,7 +2987,6 @@ function ProvisionSiteLicenseModal({
       }
       await runFreshAuthAction(async () => {
         await adminProvisionSiteLicense({
-          bay_id: selectedBayId,
           owner_account_id,
           name: cleanName,
           organization_name: cleanOrganizationName,
@@ -3101,7 +3073,7 @@ function ProvisionSiteLicenseModal({
             style={{
               display: "grid",
               gap: 14,
-              gridTemplateColumns: "repeat(3, minmax(220px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
             }}
           >
             <CompactField
@@ -3122,20 +3094,6 @@ function ProvisionSiteLicenseModal({
                 value={organizationName}
                 onChange={(event) => setOrganizationName(event.target.value)}
                 placeholder="Example University"
-              />
-            </CompactField>
-            <CompactField
-              label="Bay"
-              help="Control-plane placement for this license."
-            >
-              <Select
-                value={selectedBayId || undefined}
-                placeholder="Select bay"
-                options={bays.map((bay) => ({
-                  label: `${bay.label} (${bay.bay_id})`,
-                  value: bay.bay_id,
-                }))}
-                onChange={setSelectedBayId}
               />
             </CompactField>
           </div>

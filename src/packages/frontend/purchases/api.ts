@@ -388,7 +388,6 @@ export async function purchaseMembershipPackage(opts: {
 }
 
 export async function adminProvisionSiteLicense(opts: {
-  bay_id: string;
   owner_account_id?: string;
   name: string;
   organization_name: string;

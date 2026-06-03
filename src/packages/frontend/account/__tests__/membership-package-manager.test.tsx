@@ -35,7 +35,6 @@ const getSiteLicenseAffiliationReverificationStatus = jest.fn();
 const refreshSiteLicenseAffiliationVerification = jest.fn();
 const userSearch = jest.fn();
 const getNames = jest.fn();
-const listBays = jest.fn();
 const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
   await action();
   return true;
@@ -147,9 +146,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     },
     conat_client: {
       hub: {
-        system: {
-          listBays: (...args: any[]) => listBays(...args),
-        },
+        system: {},
       },
     },
   },
@@ -204,7 +201,6 @@ describe("MembershipPackageManager", () => {
     getClaimableMembershipPackages.mockResolvedValue([]);
     listSiteLicenseOverviews.mockResolvedValue([]);
     processPaymentIntents.mockResolvedValue({ count: 0 });
-    listBays.mockResolvedValue([{ bay_id: "bay-0", label: "Local bay" }]);
     runFreshAuthAction.mockClear();
     getNames.mockResolvedValue({
       "user-1": { first_name: "Grace", last_name: "Hopper" },
@@ -482,7 +478,7 @@ describe("MembershipPackageManager", () => {
     });
   });
 
-  it("requires admins to select a bay before provisioning a site license", async () => {
+  it("provisions an admin site license without a user-selected bay", async () => {
     isAdmin = true;
     listSiteLicenseOverviews.mockResolvedValue([]);
     adminProvisionSiteLicense.mockResolvedValue({
@@ -518,12 +514,14 @@ describe("MembershipPackageManager", () => {
     fireEvent.click(screen.getByText("Provision license"));
 
     await waitFor(() => {
-      expect(runFreshAuthAction).not.toHaveBeenCalled();
-      expect(adminProvisionSiteLicense).not.toHaveBeenCalled();
-      expect(
-        screen.getByText(/Select the bay for this site license/),
-      ).toBeTruthy();
+      expect(runFreshAuthAction).toHaveBeenCalled();
+      expect(adminProvisionSiteLicense).toHaveBeenCalled();
     });
+    const provisionCall = adminProvisionSiteLicense.mock.calls[0]?.[0];
+    expect(provisionCall.bay_id).toBeUndefined();
+    expect(new Set(provisionCall.allowed_domains)).toEqual(
+      new Set(["example.edu", "dept.example.edu"]),
+    );
   });
 
   it("shows a compact admin site-license list before the selected dashboard", async () => {

@@ -805,8 +805,7 @@ export function registerMembershipCommand(
 
   siteLicense
     .command("provision")
-    .description("admin provision a site license with named pools")
-    .requiredOption("--bay <bay-id>", "control-plane bay for the license")
+    .description("admin provision a seed-bay site license with named pools")
     .option("--owner <account>", "optional legacy owner account identifier")
     .requiredOption("--name <name>", "site license name")
     .requiredOption("--organization-name <name>", "organization name")
@@ -829,7 +828,6 @@ export function registerMembershipCommand(
     .action(
       async (
         opts: {
-          bay: string;
           owner?: string;
           name: string;
           organizationName: string;
@@ -865,7 +863,6 @@ export function registerMembershipCommand(
             return serializeSiteLicenseOverview(
               await ctx.hub.purchases.adminProvisionSiteLicense({
                 account_id: ctx.accountId,
-                bay_id: `${opts.bay ?? ""}`.trim(),
                 owner_account_id: owner_account_id || undefined,
                 name: `${opts.name ?? ""}`.trim(),
                 organization_name: `${opts.organizationName ?? ""}`.trim(),

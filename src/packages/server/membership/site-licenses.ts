@@ -7,7 +7,7 @@ import dayjs from "dayjs";
 
 import { getLogger } from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { listClusterBayInfos } from "@cocalc/server/bay-registry";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { createNotificationEventGraph } from "@cocalc/database/postgres/notifications-core";
 import { getClusterAccountsByIdsDirect } from "@cocalc/server/accounts/cluster-directory";
@@ -209,6 +209,7 @@ async function ensureSiteLicenseSchema(client?: PoolClient): Promise<void> {
 }
 
 async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
+  const seedBayId = getSiteLicenseSeedBayId();
   await db.query(`
     CREATE TABLE IF NOT EXISTS site_licenses (
       id UUID PRIMARY KEY,
@@ -237,21 +238,11 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
   );
   await db.query(
     `
-      UPDATE site_licenses s
-         SET bay_id = COALESCE(NULLIF(a.home_bay_id, ''), $1)
-        FROM accounts a
-       WHERE (s.bay_id IS NULL OR BTRIM(s.bay_id) = '')
-         AND s.owner_account_id = a.account_id
-    `,
-    [getConfiguredBayId()],
-  );
-  await db.query(
-    `
       UPDATE site_licenses
          SET bay_id = $1
-       WHERE bay_id IS NULL OR BTRIM(bay_id) = ''
+       WHERE bay_id IS DISTINCT FROM $1
     `,
-    [getConfiguredBayId()],
+    [seedBayId],
   );
   await db.query("ALTER TABLE site_licenses ALTER COLUMN bay_id SET NOT NULL");
   await db.query(
@@ -386,16 +377,8 @@ function normalizeString(value: unknown, field: string): string {
   return normalized;
 }
 
-function normalizeBayId(value: unknown): string {
-  return normalizeString(value, "bay_id");
-}
-
-async function assertSiteLicenseBayExists(bay_id: string): Promise<void> {
-  const normalizedBayId = normalizeBayId(bay_id);
-  const bays = await listClusterBayInfos();
-  if (!bays.some((bay) => bay.bay_id === normalizedBayId)) {
-    throw Error(`bay '${normalizedBayId}' not found`);
-  }
+function getSiteLicenseSeedBayId(): string {
+  return normalizeString(getConfiguredClusterSeedBayId(), "seed bay_id");
 }
 
 function normalizeOptionalString(value: unknown): string | null {
@@ -962,7 +945,7 @@ function normalizeSiteLicenseRow(
     id: row.id,
     name: row.name,
     organization_name: row.organization_name,
-    bay_id: `${row.bay_id ?? ""}`.trim() || getConfiguredBayId(),
+    bay_id: `${row.bay_id ?? ""}`.trim() || getSiteLicenseSeedBayId(),
     owner_account_id: row.owner_account_id ?? null,
     allowed_domains: Array.isArray(row.allowed_domains)
       ? row.allowed_domains
@@ -2563,7 +2546,6 @@ async function getSiteLicenseOverviewWithoutAuthorization({
 
 export async function adminProvisionSiteLicense({
   actor_account_id,
-  bay_id,
   owner_account_id,
   name,
   organization_name,
@@ -2580,7 +2562,6 @@ export async function adminProvisionSiteLicense({
   trusted_admin = false,
 }: {
   actor_account_id: string;
-  bay_id: string;
   owner_account_id?: string | null;
   name: string;
   organization_name: string;
@@ -2600,8 +2581,7 @@ export async function adminProvisionSiteLicense({
   if (!trusted_admin && !(await isAdmin(actorAccountId))) {
     throw Error("must be an admin");
   }
-  const normalizedBayId = normalizeBayId(bay_id);
-  await assertSiteLicenseBayExists(normalizedBayId);
+  const normalizedBayId = getSiteLicenseSeedBayId();
   const ownerAccountId =
     owner_account_id == null || `${owner_account_id}`.trim() === ""
       ? null
