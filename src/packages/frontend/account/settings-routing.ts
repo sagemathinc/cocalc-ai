@@ -6,6 +6,7 @@
 import { redux } from "@cocalc/frontend/app-framework";
 import type {
   BillingSubTabType,
+  LicensesSubTabType,
   NavigatePath,
   PreferencesSubTabKey,
   PreferencesSubTabType,
@@ -13,6 +14,7 @@ import type {
 } from "@cocalc/util/types/settings";
 import {
   VALID_BILLING_SUB_TYPES,
+  VALID_LICENSES_SUB_TYPES,
   VALID_PREFERENCES_SUB_TYPES,
   VALID_SETTINGS_PAGES,
 } from "@cocalc/util/types/settings";
@@ -59,6 +61,9 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
     { page: "keys", path: "settings/keys" },
     { page: "other", path: "settings/other" },
     { page: "licenses", path: "settings/licenses" },
+    { page: "team-licenses", path: "settings/team-licenses" },
+    { page: "site-licenses", path: "settings/site-licenses" },
+    { page: "software-licenses", path: "settings/software-licenses" },
     { page: "store", path: "settings/store" },
     { page: "vouchers", path: "settings/vouchers" },
     { page: "purchases", path: "settings/purchases" },
@@ -111,6 +116,13 @@ function normalizeLegacyGroupedPage(
     )
   ) {
     return preferencesPage as PreferencesSubTabType;
+  }
+  const licensesPage = page.replace(/^licenses-/, "");
+  if (
+    licensesPage !== page &&
+    VALID_LICENSES_SUB_TYPES.includes(licensesPage as LicensesSubTabType)
+  ) {
+    return licensesPage as LicensesSubTabType;
   }
   const billingPage = page.replace(/^billing-/, "");
   if (

@@ -29,7 +29,7 @@ export function useSettingsNavigationContext(): SettingsNavigationContext {
 
 type Visibility = (context: SettingsNavigationContext) => boolean;
 type OverviewPlacement = "hidden" | "primary" | "section";
-type GroupKey = "preferences" | "billing";
+type GroupKey = "preferences" | "licenses" | "billing";
 
 type PageNode = {
   overview?: OverviewPlacement;
@@ -74,6 +74,24 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
   },
   {
     type: "group",
+    key: "licenses",
+    icon: "key",
+    label: labels.licenses,
+    overview: "section",
+    visible: ({ isLite }) => !isLite,
+    pages: [
+      { type: "page", page: "licenses" },
+      {
+        type: "page",
+        page: "team-licenses",
+        visible: ({ isAdmin, isCommercial }) => isCommercial || isAdmin,
+      },
+      { type: "page", page: "site-licenses" },
+      { type: "page", page: "software-licenses" },
+    ],
+  },
+  {
+    type: "group",
     key: "preferences",
     icon: "cogs",
     label: labels.preferences,
@@ -100,7 +118,6 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
     label: labels.billing,
     overview: "section",
     pages: [
-      { type: "page", page: "licenses" },
       { type: "page", page: "store" },
       { type: "page", page: "vouchers" },
       {

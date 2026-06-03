@@ -24,8 +24,16 @@ export type PreferencesSubTabType =
 
 export type PreferencesSubTabKey = `preferences-${PreferencesSubTabType}`;
 
-export const VALID_BILLING_SUB_TYPES = [
+export const VALID_LICENSES_SUB_TYPES = [
   "licenses",
+  "team-licenses",
+  "site-licenses",
+  "software-licenses",
+] as const;
+
+export type LicensesSubTabType = (typeof VALID_LICENSES_SUB_TYPES)[number];
+
+export const VALID_BILLING_SUB_TYPES = [
   "store",
   "vouchers",
   "purchases",
@@ -43,6 +51,7 @@ export const VALID_SETTINGS_PAGES = [
   "profile",
   "membership",
   "usage-limits",
+  ...VALID_LICENSES_SUB_TYPES,
   ...VALID_PREFERENCES_SUB_TYPES,
   ...VALID_BILLING_SUB_TYPES,
   "support",

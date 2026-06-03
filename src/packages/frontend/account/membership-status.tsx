@@ -1036,9 +1036,8 @@ export function MembershipStatusPanel({
               <Space orientation="vertical" size={2}>
                 <Text strong>Institutional and team licenses</Text>
                 <Text type="secondary">
-                  Claim site-license access, refresh institutional affiliation,
-                  or manage team and campus license seats from the Licenses
-                  page.
+                  Manage team and campus license seats from the Licenses page.
+                  Claim your own site-license access from the Membership page.
                 </Text>
               </Space>
               <Button

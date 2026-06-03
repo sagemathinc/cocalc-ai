@@ -16,15 +16,23 @@ const visibleContext: SettingsNavigationContext = {
 describe("settings-navigation", () => {
   it("keeps menu grouping separate from page identity", () => {
     expect(getSettingsNavigationGroupKey("store")).toBe("billing");
+    expect(getSettingsNavigationGroupKey("team-licenses")).toBe("licenses");
     expect(getSettingsNavigationGroupKey("ai")).toBe("preferences");
+    const licenses = ACCOUNT_SETTINGS_NAVIGATION.find(
+      (node) => node.type === "group" && node.key === "licenses",
+    );
     const billing = ACCOUNT_SETTINGS_NAVIGATION.find(
       (node) => node.type === "group" && node.key === "billing",
     );
     const preferences = ACCOUNT_SETTINGS_NAVIGATION.find(
       (node) => node.type === "group" && node.key === "preferences",
     );
+    expect(licenses?.type).toBe("group");
     expect(billing?.type).toBe("group");
     expect(preferences?.type).toBe("group");
+    if (licenses?.type === "group") {
+      expect(licenses.pages.map(({ page }) => page)).toContain("team-licenses");
+    }
     if (billing?.type === "group") {
       expect(billing.pages.map(({ page }) => page)).toContain("store");
     }
@@ -51,6 +59,11 @@ describe("settings-navigation", () => {
       );
       expect(preferences.pages.map(({ page }) => page)).not.toContain("keys");
     }
+    expect(
+      liteNavigation.some(
+        (node) => node.type === "group" && node.key === "licenses",
+      ),
+    ).toBe(false);
     expect(
       liteNavigation.some(
         (node) => node.type === "group" && node.key === "billing",
@@ -82,8 +95,11 @@ describe("settings-navigation", () => {
     expect(overview.primaryPages).toContain("appearance");
     expect(overview.primaryPages).toContain("ai");
     expect(
-      overview.sections.find((section) => section.key === "billing")?.pages,
+      overview.sections.find((section) => section.key === "licenses")?.pages,
     ).toContain("licenses");
+    expect(
+      overview.sections.find((section) => section.key === "licenses")?.pages,
+    ).toContain("team-licenses");
     expect(
       overview.sections.find((section) => section.key === "billing")?.pages,
     ).not.toContain("payment-methods");

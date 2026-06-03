@@ -745,7 +745,7 @@ export default function PricingPage({
                 who need access. One account manages payment while each person
                 works from their own CoCalc account.
               </Paragraph>
-              <Button href={appPath("settings/licenses")}>
+              <Button href={appPath("settings/team-licenses")}>
                 Manage team seats
               </Button>
             </Space>

@@ -13,7 +13,12 @@ import { ACCOUNT_PREFERENCES_KEYBOARD_PAGE } from "./account-preferences-keyboar
 import { ACCOUNT_PREFERENCES_OTHER_PAGE } from "./account-preferences-other";
 import { ACCOUNT_PREFERENCES_PROFILE_PAGE } from "./account-preferences-profile";
 import { ACCOUNT_PREFERENCES_SECURITY_PAGE } from "./account-preferences-security";
-import { LICENSES_SETTINGS_PAGE } from "./licenses/licenses-page";
+import {
+  LICENSES_SETTINGS_PAGE,
+  SITE_LICENSES_SETTINGS_PAGE,
+  SOFTWARE_LICENSES_SETTINGS_PAGE,
+  TEAM_LICENSES_SETTINGS_PAGE,
+} from "./licenses/licenses-page";
 import { MEMBERSHIP_SETTINGS_PAGE } from "./membership-page";
 import { PAYMENT_METHODS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payment-methods-page";
 import { PAYMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payments-page";
@@ -43,7 +48,10 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   purchases: PURCHASES_SETTINGS_PAGE,
   statements: STATEMENTS_SETTINGS_PAGE,
   store: STORE_SETTINGS_PAGE,
+  "team-licenses": TEAM_LICENSES_SETTINGS_PAGE,
   support: SUPPORT_TICKETS_SETTINGS_PAGE,
+  "site-licenses": SITE_LICENSES_SETTINGS_PAGE,
+  "software-licenses": SOFTWARE_LICENSES_SETTINGS_PAGE,
   "usage-limits": USAGE_LIMITS_SETTINGS_PAGE,
   vouchers: VOUCHER_CENTER_SETTINGS_PAGE,
 } satisfies Record<RegisteredSettingsPageType, SettingsPageDefinition>;
