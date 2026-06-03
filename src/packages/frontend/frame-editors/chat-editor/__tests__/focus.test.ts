@@ -85,4 +85,33 @@ describe("chat editor focus", () => {
       value: "",
     });
   });
+
+  it("precreates chat frame actions when chat data is ready", () => {
+    const setState = jest.fn();
+    const getChatActions = jest.fn(() => ({}));
+    const fakeActions = Object.assign(Object.create(Actions.prototype), {
+      chatActions: {},
+      get_active_frame_id: () => "frame-a",
+      get_frame_ids_in_order: () => ["frame-a"],
+      _get_frame_type: () => "chatroom",
+      getChatActions,
+      isClosed: () => false,
+      store: {
+        get: (key: string) =>
+          key === "value" ? "Loading..." : key === "resize" ? 4 : undefined,
+      },
+      setState,
+    });
+
+    (Actions.prototype as any).markChatDocumentReady.call(fakeActions);
+
+    expect(getChatActions).toHaveBeenCalledWith("frame-a", {
+      allowMissingFrameType: true,
+    });
+    expect(setState).toHaveBeenCalledWith({
+      is_loaded: true,
+      value: "",
+      resize: 5,
+    });
+  });
 });
