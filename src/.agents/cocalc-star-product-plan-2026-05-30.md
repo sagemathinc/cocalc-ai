@@ -782,6 +782,65 @@ SEA target:
 Do not make normal operation depend on running the SEA binary as a long-lived
 process. Use systemd services for long-running processes.
 
+Uninstall should become a first-class command before broad non-technical
+testing:
+
+- Stop and disable Star systemd units.
+- Remove Star-owned systemd unit files and mutable service config.
+- Remove `/opt/cocalc-star` and `/var/lib/cocalc/star` only after an explicit
+  confirmation because they contain releases, database state, project data,
+  rootfs caches, backups, and secrets.
+- Remove Star-created users/groups only when no remaining files need them.
+- Print exactly what was left behind if the uninstall is conservative.
+
+This matters for trust. Star is intentionally a full appliance that takes over a
+dedicated VM, but users will sometimes test on the wrong machine. A clear
+uninstall path makes the warning less terrifying without weakening the
+dedicated-VM requirement.
+
+## CoCalc Plus Star Manager Path
+
+CoCalc Plus should provide an optional Star manager/install path, distinct from
+the primary `curl | sudo bash` Star installer.
+
+Target CLI:
+
+```sh
+cocalc-plus star ubuntu@1.2.3.4
+```
+
+Behavior:
+
+1. SSH to the target.
+2. Check reachability, OS/arch, and passwordless sudo via `sudo -n true`.
+3. Check whether CoCalc Star is already installed.
+4. If not installed, run the same public Star installer as the manual path:
+   `curl ... | sudo bash`.
+5. Poll Star install/status logs until the hub is ready.
+6. Read the bootstrap result from the remote machine.
+7. Set up an SSH local port forward automatically.
+8. Print and/or open the local bootstrap URL.
+
+Target UI:
+
+- Extend the existing Plus remote SSH sessions modal with a "Run remotely"
+  choice:
+  - `CoCalc Plus`: normal-user install, lightweight, does not take over the
+    machine.
+  - `CoCalc Star`: requires passwordless sudo, provisions a full multi-user
+    appliance, and should be run only on a dedicated VM.
+- The Star option must show a strong explicit warning before Create. The warning
+  should say that Star creates users, systemd services, project/runtime data,
+  container/rootfs caches, and a local database, and that it is intended for a
+  dedicated VM.
+- After Create, show install progress, the active tunnel, and the admin
+  bootstrap link.
+
+This path is especially valuable for Windows and non-Unix laptop users once
+Plus has a reliable desktop/Electron distribution. It should reuse the same Star
+installer and lifecycle commands rather than becoming a separate install
+implementation.
+
 ## Developer Source Deployments
 
 Star should also be a practical developer and customer-customization target.
@@ -1080,6 +1139,24 @@ Star avoids cloud-specific APIs. Marketplace integration only needs:
 This makes AWS/Azure/GCP/Nebius marketplaces all mostly packaging/business work,
 not provider feature development.
 
+Marketplace DNS/TLS expectation:
+
+- VM image marketplaces usually provide a VM image, public IP, firewall/security
+  group guidance, SSH access, and product documentation. They generally do not
+  provide automatic DNS names and trusted TLS certificates for arbitrary
+  self-hosted VM web apps.
+- Some higher-level platform products provide managed domain workflows, but
+  those are not the same thing as a raw VM appliance marketplace image.
+- Therefore Star should assume marketplace users initially access the appliance
+  through one of:
+  - private SSH tunnel to `127.0.0.1:9100`,
+  - public IP over HTTP only for short-lived setup/testing,
+  - user-provided DNS plus Caddy/Let's Encrypt,
+  - future CoCalc-managed DNS/reverse-tunnel service.
+- The marketplace image should expose the admin bootstrap path through first-run
+  instructions, `star.sh status`, and provider documentation. It should not
+  depend on a marketplace-specific DNS hook.
+
 Packaging options to evaluate after the script installer is boring:
 
 - Marketplace appliance images for the main lead-generation path.
@@ -1131,14 +1208,14 @@ distribution convenience, not a substitute for a focused appliance experience.
      debugging.
 10. Product focus:
 
-   - hide or disable SaaS/cloud-provider features that do not make sense in a
-     single-VM appliance, including Stripe sales flows, Cloudflare setup, cloud
-     host creation, and provider-specific launch flows,
-   - keep the underlying code paths where they are shared with Launchpad/Rocket,
-     but give Star a focused admin/product profile instead of exposing every
-     technically possible control-plane feature,
-   - discuss and decide the exact disabled feature list before the initial
-     public/product demo.
+- hide or disable SaaS/cloud-provider features that do not make sense in a
+  single-VM appliance, including Stripe sales flows, Cloudflare setup, cloud
+  host creation, and provider-specific launch flows,
+- keep the underlying code paths where they are shared with Launchpad/Rocket,
+  but give Star a focused admin/product profile instead of exposing every
+  technically possible control-plane feature,
+- discuss and decide the exact disabled feature list before the initial
+  public/product demo.
 
 ## Implementation Phases
 

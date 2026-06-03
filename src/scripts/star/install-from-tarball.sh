@@ -30,6 +30,7 @@ Defaults:
   STAR_RELEASE_ID=<utc timestamp>-<tarball sha256 prefix>
   STAR_USER=<existing Star user or cocalc-star>
   STAR_ASSUME_YES=0
+  STAR_SSH_TARGET=<optional ssh target shown in access instructions>
 
 Set STAR_ASSUME_YES=1 for non-interactive installs.
 EOF
@@ -265,9 +266,13 @@ export STAR_INSTALL_SOURCE
 export STAR_RELEASES_DIR
 export STAR_RELEASE_ID
 export STAR_USER
+export STAR_SSH_TARGET="${STAR_SSH_TARGET:-}"
 "$INSTALLER"
 
 replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"
 rm -rf "$rollback_state_dir"
 trap - EXIT
 log "installed release $STAR_RELEASE_ID"
+if [ -x "${STAR_INSTALL_SOURCE}/src/scripts/star/star.sh" ]; then
+  "${STAR_INSTALL_SOURCE}/src/scripts/star/star.sh" bootstrap-link || true
+fi
