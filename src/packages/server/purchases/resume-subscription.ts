@@ -78,7 +78,7 @@ You have successfully manually resumed subscription id=${subscription_id} which 
 
 Your subscription will automatically renew ${RENEW_DAYS_BEFORE_END} days before ${end.toDateString()}.
 
-- [Your Subscriptions](${await url(`/settings/subscriptions#id=${subscription_id}`)})
+- [Your Membership](${await url(`/settings/membership`)})
 
 Thank you!
 
@@ -106,7 +106,7 @@ You might want to check in with them.`,
       body: `
 An unexpected error happened when manually resuming your subscription with id=${subscription_id} for your ${metadata.type}
 
-- [Your Subscriptions](${await url(`/settings/subscriptions#id=${subscription_id}`)})
+- [Your Membership](${await url(`/settings/membership`)})
 
 - ERROR: ${err}
 

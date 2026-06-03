@@ -137,7 +137,7 @@ If you do nothing you will be automatically billed two days from now,
 and can continue using your subscription.  You can also cancel or
 change your subscription:
 
-[Manage Subscription](${await url(`/settings/subscriptions#id=${id}`)})
+[Manage Membership](${await url(`/settings/membership`)})
 
 ### Details
 

@@ -65,6 +65,21 @@ describe("resolveMembershipForAccount", () => {
     expect(result.source).toBe("subscription");
   });
 
+  it("keeps a canceled paid-through subscription active until its period ends", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createTestMembershipSubscription(account_id, {
+      class: lowTier,
+      status: "canceled",
+    });
+
+    const result = await resolveMembershipForAccount(account_id);
+
+    expect(result.class).toBe(lowTier);
+    expect(result.source).toBe("subscription");
+    expect(result.subscription_status).toBe("canceled");
+  });
+
   it("returns admin assigned membership when no subscription exists", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);

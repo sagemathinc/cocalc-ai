@@ -61,6 +61,14 @@ export default async function createSubscription(
       throw Error(`unsupported subscription metadata type "${metadataType}"`);
     }
     if (
+      opts.status != "active" &&
+      opts.status != "canceled" &&
+      opts.status != "unpaid" &&
+      opts.status != "past_due"
+    ) {
+      throw Error(`unsupported subscription status "${opts.status}"`);
+    }
+    if (
       metadataType == "membership" &&
       !(metadata as MembershipMetadata).class
     ) {
@@ -69,7 +77,7 @@ export default async function createSubscription(
 
     db = db ?? (await getPoolClient());
     const { rows } = await db.query(
-      "INSERT INTO subscriptions (account_id,created,cost,interval,current_period_start,current_period_end,latest_purchase_id,status,metadata) VALUES($1,NOW(),$2,$3,$4,$5,$6,'active',$7)  RETURNING id",
+      "INSERT INTO subscriptions (account_id,created,cost,interval,current_period_start,current_period_end,latest_purchase_id,status,metadata) VALUES($1,NOW(),$2,$3,$4,$5,$6,$7,$8)  RETURNING id",
       [
         opts.account_id,
         moneyToDbString(costValue),
@@ -77,6 +85,7 @@ export default async function createSubscription(
         opts.current_period_start,
         opts.current_period_end,
         opts.latest_purchase_id,
+        opts.status,
         opts.metadata,
       ],
     );

@@ -10,6 +10,7 @@ import {
   Collapse,
   Descriptions,
   Divider,
+  Popconfirm,
   Space,
   Tag,
   Table,
@@ -18,9 +19,17 @@ import {
 import { useState } from "react";
 import { defineMessage } from "react-intl";
 
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { labels } from "@cocalc/frontend/i18n";
+import {
+  cancelSubscription,
+  resumeSubscription,
+} from "@cocalc/frontend/purchases/api";
 import { capitalize } from "@cocalc/util/misc";
 import { useMembershipSettingsData } from "./membership-settings-data";
 import {
@@ -31,6 +40,7 @@ import MembershipPurchaseModal from "./membership-purchase-modal";
 import { MembershipTierBenefits } from "./membership-tier-benefits";
 import type { SettingsPageDefinition } from "./settings-page";
 import { openAccountSettings } from "./settings-routing";
+import { UseBalance } from "./balance-toward-subs";
 
 const { Paragraph, Text } = Typography;
 
@@ -88,14 +98,13 @@ function MembershipSettingsContent() {
     tier?.label ?? (membership ? capitalize(membership.class) : "");
   const membershipSourceLabel =
     membership.source === "subscription"
-      ? "Subscription"
+      ? "Personal membership"
       : membership.source === "grant"
         ? "Granted"
         : membership.source === "admin"
           ? "Admin assigned"
           : "Free";
-  const expiresLabel =
-    membership.source === "subscription" ? "Current period ends" : "Expires";
+  const expiresLabel = "Expires";
   const entitlements = normalizeRecord(membership.entitlements);
   const features = normalizeRecord(entitlements.features);
   const featureTags = Object.entries(features)
@@ -116,17 +125,14 @@ function MembershipSettingsContent() {
         <Descriptions.Item label="Source">
           {membershipSourceLabel}
         </Descriptions.Item>
-        {membership.subscription_id != null && (
-          <Descriptions.Item label="Subscription id">
-            {membership.subscription_id}
-          </Descriptions.Item>
-        )}
-        {membership.expires && (
+        {membership.expires && membership.source !== "subscription" && (
           <Descriptions.Item label={expiresLabel}>
-            <TimeAgo date={membership.expires} />
+            <MembershipDate date={membership.expires} />
           </Descriptions.Item>
         )}
       </Descriptions>
+
+      <PersonalSubscriptionControls membership={membership} refresh={refresh} />
 
       {tier != null ? (
         <Card size="small">
@@ -218,9 +224,7 @@ function MembershipSettingsContent() {
             label: "Why this membership?",
             children:
               candidateRows.length === 0 ? (
-                <Text type="secondary">
-                  No active subscriptions or admin assignments.
-                </Text>
+                <Text type="secondary">No active membership sources.</Text>
               ) : (
                 <Table
                   size="small"
@@ -245,11 +249,6 @@ function MembershipSettingsContent() {
                       render: (value) =>
                         value ? <TimeAgo date={value} /> : "Never",
                     },
-                    {
-                      title: "Subscription id",
-                      dataIndex: "subscription_id",
-                      render: (value) => value ?? "-",
-                    },
                   ]}
                 />
               ),
@@ -263,5 +262,115 @@ function MembershipSettingsContent() {
         onChanged={refresh}
       />
     </Space>
+  );
+}
+
+function MembershipDate({ date }: { date: Date | string }) {
+  return (
+    <Space wrap size="small">
+      <Text>{new Date(date).toLocaleString()}</Text>
+      <Text type="secondary">
+        <TimeAgo date={date} />
+      </Text>
+    </Space>
+  );
+}
+
+function PersonalSubscriptionControls({
+  membership,
+  refresh,
+}: {
+  membership: NonNullable<
+    ReturnType<typeof useMembershipSettingsData>["membership"]
+  >;
+  refresh: () => void;
+}) {
+  const subscriptionId = membership.subscription_id;
+  const [error, setError] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
+
+  if (membership.source !== "subscription" || subscriptionId == null) {
+    return null;
+  }
+
+  const canceled = membership.subscription_status === "canceled";
+  const refreshMembership = () => {
+    window.dispatchEvent(new Event("cocalc:membership-changed"));
+    refresh();
+  };
+  const cancel = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        await cancelSubscription({
+          subscription_id: subscriptionId,
+          reason: "Canceled from Membership settings.",
+        });
+        refreshMembership();
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  const resume = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        await resumeSubscription(subscriptionId);
+        refreshMembership();
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card size="small" title="Personal membership">
+      <Space orientation="vertical" style={{ width: "100%" }}>
+        {error && <Alert type="error" title={error} closable />}
+        <Descriptions size="small" column={1}>
+          <Descriptions.Item label={canceled ? "Active until" : "Next payment"}>
+            {membership.expires ? (
+              <MembershipDate date={membership.expires} />
+            ) : (
+              <Text type="secondary">Not scheduled</Text>
+            )}
+          </Descriptions.Item>
+          <Descriptions.Item label="Renewal">
+            {canceled ? "Canceled" : "Automatic"}
+          </Descriptions.Item>
+        </Descriptions>
+        {!canceled && <UseBalance minimal />}
+        <Space wrap>
+          {canceled ? (
+            <Button loading={loading} onClick={resume}>
+              Resume renewal
+            </Button>
+          ) : (
+            <Popconfirm
+              title="Cancel membership renewal?"
+              description="Your current paid membership remains active until the date shown above."
+              okButtonProps={{ danger: true, loading }}
+              okText="Cancel renewal"
+              onConfirm={cancel}
+            >
+              <Button danger loading={loading}>
+                Cancel...
+              </Button>
+            </Popconfirm>
+          )}
+        </Space>
+      </Space>
+      <FreshAuthModal {...freshAuthModalProps} />
+    </Card>
   );
 }

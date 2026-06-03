@@ -2,9 +2,7 @@ import { getLegacyCommerceTargetPath } from "./legacy-commerce";
 
 describe("routing/legacy-commerce", () => {
   it("maps legacy billing paths to canonical settings pages", () => {
-    expect(getLegacyCommerceTargetPath("billing")).toBe(
-      "settings/subscriptions",
-    );
+    expect(getLegacyCommerceTargetPath("billing")).toBe("settings/membership");
     expect(getLegacyCommerceTargetPath("/billing/cards")).toBe(
       "settings/payment-methods",
     );
@@ -12,7 +10,7 @@ describe("routing/legacy-commerce", () => {
       "settings/payment-methods",
     );
     expect(getLegacyCommerceTargetPath("/billing/subscriptions/history")).toBe(
-      "settings/subscriptions",
+      "settings/membership",
     );
     expect(getLegacyCommerceTargetPath("/billing/invoices-and-receipts")).toBe(
       "settings/statements",

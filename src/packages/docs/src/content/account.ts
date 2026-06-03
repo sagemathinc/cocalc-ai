@@ -40,18 +40,18 @@ links. The docs action ids are \`account.profile.open\` and
 export const BILLING_SETTINGS_BODY = String.raw`
 ## What billing settings are for
 
-Billing settings collect subscriptions, licenses, purchases, payment methods,
-statements, vouchers, and store access for the signed-in account. These screens
-are account-scoped. Purchased membership tiers and dedicated project hosts may
+Billing settings collect licenses, purchases, payment methods, statements,
+vouchers, and store access for the signed-in account. These screens are
+account-scoped. Purchased membership tiers and dedicated project hosts may
 change how projects run, but the purchase history and payment instruments
 belong to the account.
 
-## Subscriptions and licenses
+## Membership and licenses
 
-Use subscriptions to review recurring paid access. Use licenses when access is
-assigned through a license object, course, team, or institution. Before changing
-access, check whether the entitlement is account-wide, project-specific, or
-managed by an instructor or administrator.
+Use Membership settings to review recurring paid personal access. Use licenses
+when access is assigned through a license object, course, team, or institution.
+Before changing access, check whether the entitlement is account-wide,
+project-specific, or managed by an instructor or administrator.
 
 ## Payment methods and statements
 
@@ -62,7 +62,7 @@ screen first, then inspect the relevant account, project, or license context.
 ## Agent notes
 
 Billing actions should route through the in-app account settings pages:
-\`billing.subscriptions.open\`, \`billing.payment-methods.open\`, and
+\`account.membership.open\`, \`billing.payment-methods.open\`, and
 \`billing.statements.open\`. Avoid adding new \`doc.cocalc.com\` links for
 billing help; use \`/app-docs\` or an executable docs action instead.
 `;

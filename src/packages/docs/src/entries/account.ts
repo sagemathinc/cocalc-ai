@@ -42,10 +42,10 @@ export const ACCOUNT_ENTRIES: DocsEntry[] = [
   {
     actions: [
       {
-        description: "Open Account Settings -> Subscriptions.",
+        description: "Open Account Settings -> Membership.",
         executable: true,
-        id: "billing.subscriptions.open",
-        label: "Open subscriptions",
+        id: "account.membership.open",
+        label: "Open membership",
       },
       {
         description: "Open Account Settings -> Payment Methods.",
@@ -66,13 +66,13 @@ export const ACCOUNT_ENTRIES: DocsEntry[] = [
     id: "billing.settings",
     image: docsIcon(
       "/public/docs/project-hosts-684faa4c.webp",
-      "Billing settings with subscriptions, payment methods, and statements",
+      "Billing settings with membership, payment methods, and statements",
     ),
     lastReviewed: "2026-05-31",
     slug: "billing/settings",
     status: "ready",
     summary:
-      "Review subscriptions, licenses, payment methods, purchases, and statements.",
+      "Review membership, licenses, payment methods, purchases, and statements.",
     title: "Manage billing settings",
     visibility: "signed-in",
   },

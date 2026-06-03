@@ -58,7 +58,6 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
     { page: "communication", path: "settings/communication" },
     { page: "keys", path: "settings/keys" },
     { page: "other", path: "settings/other" },
-    { page: "subscriptions", path: "settings/subscriptions" },
     { page: "licenses", path: "settings/licenses" },
     { page: "store", path: "settings/store" },
     { page: "vouchers", path: "settings/vouchers" },

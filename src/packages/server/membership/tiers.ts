@@ -176,10 +176,10 @@ export async function getActiveMembershipSubscription({
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
     `SELECT id, metadata, cost, current_period_start, current_period_end, status
-     FROM subscriptions
-     WHERE account_id=$1
-       AND metadata->>'type'='membership'
-       AND status IN ('active','unpaid','past_due')
+       FROM subscriptions
+       WHERE account_id=$1
+         AND metadata->>'type'='membership'
+       AND status IN ('active','unpaid','past_due','canceled')
        AND current_period_end >= NOW()
      ORDER BY current_period_end DESC
      LIMIT 1`,

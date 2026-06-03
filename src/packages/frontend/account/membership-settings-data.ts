@@ -135,7 +135,7 @@ export function useMembershipSettingsData(): {
         tier: tierLabel,
         source:
           candidate.source === "subscription"
-            ? "Subscription"
+            ? "Personal membership"
             : candidate.source === "grant"
               ? "Granted"
               : "Admin assigned",

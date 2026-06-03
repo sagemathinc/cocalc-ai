@@ -885,7 +885,7 @@ export function MembershipStatusPanel({
         tier: tierLabel,
         source:
           candidate.source === "subscription"
-            ? "Subscription"
+            ? "Personal membership"
             : candidate.source === "grant"
               ? "Granted"
               : "Admin assigned",
@@ -913,14 +913,19 @@ export function MembershipStatusPanel({
     tier?.label ?? (membership ? capitalize(membership.class) : "");
   const membershipSourceLabel =
     membership?.source === "subscription"
-      ? "Subscription"
+      ? "Personal membership"
       : membership?.source === "grant"
         ? "Granted"
         : membership?.source === "admin"
           ? "Admin assigned"
           : "Free";
   const expiresLabel =
-    membership?.source === "subscription" ? "Current period ends" : "Expires";
+    membership?.source === "subscription" &&
+    membership.subscription_status === "canceled"
+      ? "Active until"
+      : membership?.source === "subscription"
+        ? "Next payment"
+        : "Expires";
   const entitlements = normalizeRecord(membership?.entitlements);
   const projectDefaults = normalizeRecord(entitlements.project_defaults);
   const aiLimits = normalizeRecord(entitlements.ai_limits);
@@ -969,11 +974,6 @@ export function MembershipStatusPanel({
             <Descriptions.Item label="Source">
               {membershipSourceLabel}
             </Descriptions.Item>
-            {membership.subscription_id != null && (
-              <Descriptions.Item label="Subscription id">
-                {membership.subscription_id}
-              </Descriptions.Item>
-            )}
             {membership.expires && (
               <Descriptions.Item label={expiresLabel}>
                 <TimeAgo date={membership.expires} />
@@ -1219,9 +1219,7 @@ export function MembershipStatusPanel({
                 label: "Why this membership?",
                 children:
                   candidateRows.length === 0 ? (
-                    <Text type="secondary">
-                      No active subscriptions or admin assignments.
-                    </Text>
+                    <Text type="secondary">No active membership sources.</Text>
                   ) : (
                     <Table
                       size="small"
@@ -1245,11 +1243,6 @@ export function MembershipStatusPanel({
                           dataIndex: "expires",
                           render: (value) =>
                             value ? <TimeAgo date={value} /> : "Never",
-                        },
-                        {
-                          title: "Subscription id",
-                          dataIndex: "subscription_id",
-                          render: (value) => value ?? "—",
                         },
                       ]}
                     />

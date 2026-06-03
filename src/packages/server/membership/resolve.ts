@@ -60,7 +60,7 @@ async function buildMembershipCandidates(
        FROM subscriptions
        WHERE account_id=$1
          AND metadata->>'type'='membership'
-         AND status IN ('active','unpaid','past_due')
+         AND status IN ('active','unpaid','past_due','canceled')
          AND current_period_end >= NOW()
        ORDER BY current_period_end DESC
        LIMIT 1`,
@@ -99,6 +99,7 @@ async function buildMembershipCandidates(
       entitlements: tierToEntitlements(tier),
       effective_limits: normalizeMembershipEffectiveLimits(tier?.usage_limits),
       subscription_id: sub.id,
+      subscription_status: sub.status,
       expires: sub.current_period_end,
     });
   }
@@ -202,6 +203,7 @@ function pickBestMembership(
       entitlements: best.entitlements,
       effective_limits: best.effective_limits,
       subscription_id: best.subscription_id,
+      subscription_status: best.subscription_status,
       grant_id: best.grant_id,
       grant_source: best.grant_source,
       grant_package_id: best.grant_package_id,
