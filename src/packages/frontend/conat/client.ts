@@ -251,6 +251,17 @@ export class ConatClient extends EventEmitter {
       }),
     ),
   });
+  private summarizeRoutedHubClientState = (state: RoutedHubClientState) => ({
+    address: state.address,
+    host_session_id: state.host_session_id,
+    project_ids: Array.from(state.project_ids),
+    last_project_id: state.last_project_id,
+    connected: !!state.client?.conn?.connected,
+    reconnecting: state.reconnectTimer != null,
+    reconnectAttempts: state.reconnectAttempts,
+    hasConnectInFlight: state.connectInFlight != null,
+    clientState: state.client?.state,
+  });
   private browserOnlinePriority = (): ReconnectPriority => {
     if (typeof document === "undefined") {
       return "foreground";
@@ -1376,17 +1387,35 @@ export class ConatClient extends EventEmitter {
 
   private removeRoutedHubClient = (
     host_id: string,
-    opts?: { expectedClient?: ReturnType<typeof connectToConat> },
+    opts: {
+      reason: string;
+      expectedClient?: ReturnType<typeof connectToConat>;
+      details?: any;
+    },
   ) => {
     const current = this.routedHubClients[host_id];
     if (!current) return;
     if (opts?.expectedClient && current.client !== opts.expectedClient) {
+      syncdocDiagnosticLog("project-host client close skipped", {
+        host_id,
+        reason: opts.reason,
+        expectedClientMismatch: true,
+        current: this.summarizeRoutedHubClientState(current),
+        details: opts.details,
+      });
       return;
     }
     if (current.reconnectTimer != null) {
       clearTimeout(current.reconnectTimer);
       delete current.reconnectTimer;
     }
+    syncdocDiagnosticLog("project-host client close", {
+      host_id,
+      reason: opts.reason,
+      current: this.summarizeRoutedHubClientState(current),
+      details: opts.details,
+      context: this.reconnectDebugContext(),
+    });
     try {
       current.client.close();
     } catch (err) {
@@ -1405,7 +1434,10 @@ export class ConatClient extends EventEmitter {
       return;
     }
     this.invalidateProjectHostToken(host_id, { resetFailureState: true });
-    this.removeRoutedHubClient(host_id, { expectedClient: current.client });
+    this.removeRoutedHubClient(host_id, {
+      reason: "no_tracked_projects_for_host",
+      expectedClient: current.client,
+    });
   };
 
   private scheduleRoutedHostRecovery = () => {
@@ -1458,7 +1490,10 @@ export class ConatClient extends EventEmitter {
     for (const host_id of [source_host_id, dest_host_id]) {
       if (!host_id) continue;
       this.invalidateProjectHostToken(host_id, { resetFailureState: true });
-      this.removeRoutedHubClient(host_id);
+      this.removeRoutedHubClient(host_id, {
+        reason: "refresh_project_host_routing",
+        details: { source_host_id, dest_host_id },
+      });
     }
   };
 
@@ -1810,7 +1845,15 @@ export class ConatClient extends EventEmitter {
       this.invalidateProjectHostToken(host_id, {
         resetFailureState: true,
       });
-      this.removeRoutedHubClient(host_id, { expectedClient: state.client });
+      this.removeRoutedHubClient(host_id, {
+        reason: "routed_host_address_changed",
+        expectedClient: state.client,
+        details: {
+          previousAddress: state.address,
+          refreshedAddress: refreshed.address,
+          project_id,
+        },
+      });
       this.getOrCreateRoutedHubClient({
         ...refreshed,
         project_id,
@@ -1989,7 +2032,10 @@ export class ConatClient extends EventEmitter {
         throw err;
       }
       this.invalidateProjectHostToken(routing.host_id);
-      this.removeRoutedHubClient(routing.host_id);
+      this.removeRoutedHubClient(routing.host_id, {
+        reason: "touch_project_auth_error",
+        details: { project_id },
+      });
       cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });
       await cn.request(
         subject,
@@ -2041,7 +2087,14 @@ export class ConatClient extends EventEmitter {
       return current.client;
     }
     if (current) {
-      this.removeRoutedHubClient(host_id);
+      this.removeRoutedHubClient(host_id, {
+        reason: "replace_routed_host_client_address_changed",
+        details: {
+          previousAddress: current.address,
+          nextAddress: address,
+          project_id,
+        },
+      });
     }
     const state: RoutedHubClientState = {
       address,
@@ -2336,7 +2389,10 @@ export class ConatClient extends EventEmitter {
       delete this.routedHostRecoveryTimer;
     }
     for (const host_id of Object.keys(this.routedHubClients)) {
-      this.removeRoutedHubClient(host_id);
+      this.removeRoutedHubClient(host_id, {
+        reason: "shed_project_connections",
+        details: { clearTokens },
+      });
     }
     this.routedHubClients = {};
     if (clearTokens) {
@@ -2540,7 +2596,13 @@ export class ConatClient extends EventEmitter {
         const routing = await this.ensureProjectRoutingInfo(project_id);
         if (routing && this.isProjectHostAuthError(err)) {
           this.invalidateProjectHostToken(routing.host_id);
-          this.removeRoutedHubClient(routing.host_id);
+          this.removeRoutedHubClient(routing.host_id, {
+            reason: "browser_api_project_host_auth_error",
+            details: {
+              project_id,
+              subject,
+            },
+          });
           try {
             const retryClient = this.getOrCreateRoutedHubClient({
               ...routing,
@@ -2648,7 +2710,13 @@ export class ConatClient extends EventEmitter {
     } catch (err: any) {
       if (this.isProjectHostAuthError(err)) {
         this.invalidateProjectHostToken(routing.host_id);
-        this.removeRoutedHubClient(routing.host_id);
+        this.removeRoutedHubClient(routing.host_id, {
+          reason: "upload_file_project_host_auth_error",
+          details: {
+            project_id,
+            subject,
+          },
+        });
       }
       return {
         ok: false,
