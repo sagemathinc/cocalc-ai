@@ -8,9 +8,11 @@ const path = require("node:path");
 const fs = require("node:fs");
 const repl = require("node:repl");
 const os = require("node:os");
+const crypto = require("node:crypto");
 
 // render-template.js fills NAME/VERSION/MAIN.
 const version = "${VERSION}";
+const embeddedBundleHash = "${ASSET_HASH}";
 const name = "${NAME}";
 const mainScript = "${MAIN}";
 
@@ -49,39 +51,168 @@ function defaultLaunchpadDataDir() {
 function extractAssetsSync() {
   const { getRawAsset } = require("node:sea");
   const { spawnSync } = require("node:child_process");
+  let assetBuffer;
+  const getAssetBuffer = () => {
+    if (!assetBuffer) {
+      const ab = getRawAsset("cocalc.tar.xz");
+      assetBuffer = Buffer.from(new Uint8Array(ab));
+    }
+    return assetBuffer;
+  };
 
-  const destDir = path.join(
+  const cacheRoot = path.join(
     process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"),
     "cocalc",
+  );
+  const destDir = path.join(cacheRoot, name);
+  const metadataPath = path.join(destDir, ".cocalc-sea-cache.json");
+  const lockDir = path.join(cacheRoot, `.${name}.extract.lock`);
+
+  const bundleHash =
+    embeddedBundleHash && !embeddedBundleHash.includes("{ASSET_HASH}")
+      ? embeddedBundleHash
+      : crypto.createHash("sha256").update(getAssetBuffer()).digest("hex");
+  const expectedMetadata = {
     name,
     version,
-  );
+    mainScript,
+    bundleHash,
+  };
 
-  const stamp = path.join(destDir, ".ok");
-  if (!fs.existsSync(stamp)) {
-    console.log("Unpacking...");
-    const ab = getRawAsset("cocalc.tar.xz");
-    const buf = Buffer.from(new Uint8Array(ab));
+  const isReady = () => {
+    try {
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+      return (
+        metadata.name === expectedMetadata.name &&
+        metadata.version === expectedMetadata.version &&
+        metadata.mainScript === expectedMetadata.mainScript &&
+        metadata.bundleHash === expectedMetadata.bundleHash &&
+        fs.existsSync(path.join(destDir, mainScript))
+      );
+    } catch {
+      return false;
+    }
+  };
 
-    fs.mkdirSync(destDir, { recursive: true });
-
-    const child = spawnSync(
-      "tar",
-      ["-Jxf", "-", "-C", destDir, "--strip-components=1"],
-      { input: buf, stdio: ["pipe", "inherit", "inherit"] },
+  const acquireLock = () => {
+    fs.mkdirSync(cacheRoot, { recursive: true });
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      try {
+        fs.mkdirSync(lockDir);
+        fs.writeFileSync(
+          path.join(lockDir, "owner.json"),
+          JSON.stringify(
+            {
+              pid: process.pid,
+              createdAt: new Date().toISOString(),
+              bundleHash,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      } catch (err) {
+        if (err?.code !== "EEXIST") {
+          throw err;
+        }
+        try {
+          const stat = fs.statSync(lockDir);
+          if (Date.now() - stat.mtimeMs > 10 * 60 * 1000) {
+            fs.rmSync(lockDir, { recursive: true, force: true });
+            continue;
+          }
+        } catch {
+          // Retry; another process may have just released the lock.
+        }
+        if (isReady()) {
+          return "ready";
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+      }
+    }
+    throw new Error(
+      `timed out waiting for SEA asset extraction lock ${lockDir}`,
     );
+  };
 
-    if (child.error) {
-      console.error("Failed to run tar:", child.error);
-      process.exit(1);
+  const releaseLock = () => {
+    try {
+      fs.rmSync(lockDir, { recursive: true, force: true });
+    } catch {
+      // ignore
     }
-    if (child.status !== 0) {
-      console.error("tar exited with code", child.status);
-      process.exit(child.status);
-    }
+  };
 
-    fs.writeFileSync(stamp, "");
+  if (!isReady()) {
+    const lockResult = acquireLock();
+    if (lockResult !== "ready" && !isReady()) {
+      console.log("Unpacking...");
+      const tmpDir = path.join(
+        cacheRoot,
+        `.${name}.extract.${process.pid}.${Date.now()}`,
+      );
+      const oldDir = path.join(
+        cacheRoot,
+        `.${name}.old.${process.pid}.${Date.now()}`,
+      );
+
+      try {
+        const buf = getAssetBuffer();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.mkdirSync(tmpDir, { recursive: true });
+
+        const child = spawnSync(
+          "tar",
+          ["-Jxf", "-", "-C", tmpDir, "--strip-components=1"],
+          { input: buf, stdio: ["pipe", "inherit", "inherit"] },
+        );
+
+        if (child.error) {
+          throw new Error(`Failed to run tar: ${child.error.message}`);
+        }
+        if (child.status !== 0) {
+          throw new Error(`tar exited with code ${child.status}`);
+        }
+
+        fs.writeFileSync(
+          path.join(tmpDir, ".cocalc-sea-cache.json"),
+          JSON.stringify(
+            {
+              ...expectedMetadata,
+              extractedAt: new Date().toISOString(),
+            },
+            null,
+            2,
+          ),
+        );
+
+        if (fs.existsSync(destDir)) {
+          fs.rmSync(oldDir, { recursive: true, force: true });
+          fs.renameSync(destDir, oldDir);
+        }
+        fs.renameSync(tmpDir, destDir);
+        fs.rmSync(oldDir, { recursive: true, force: true });
+      } catch (err) {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        if (fs.existsSync(oldDir) && !fs.existsSync(destDir)) {
+          try {
+            fs.renameSync(oldDir, destDir);
+          } catch {
+            // If rollback fails, report the original extraction failure below.
+          }
+        }
+        console.error(err?.message || err);
+        process.exit(1);
+      } finally {
+        releaseLock();
+      }
+    } else if (lockResult !== "ready") {
+      releaseLock();
+    }
   }
+
   console.log("Assets ready at:", destDir);
   return destDir;
 }

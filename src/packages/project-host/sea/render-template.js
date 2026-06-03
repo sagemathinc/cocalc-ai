@@ -8,6 +8,8 @@ Usage:
 */
 
 const fs = require("node:fs");
+const crypto = require("node:crypto");
+const path = require("node:path");
 
 const [templatePath, outputPath, name, version, main] = process.argv.slice(2);
 
@@ -18,10 +20,22 @@ if (!templatePath || !outputPath || !name || !version || !main) {
   process.exit(2);
 }
 
+function fileSha256(file) {
+  try {
+    return crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(file))
+      .digest("hex");
+  } catch {
+    return "";
+  }
+}
+
 const replacements = {
   NAME: name,
   VERSION: version,
   MAIN: main,
+  ASSET_HASH: fileSha256(path.join(process.cwd(), "cocalc.tar.xz")),
 };
 
 let rendered = fs.readFileSync(templatePath, "utf8");
