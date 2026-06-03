@@ -276,7 +276,12 @@ interface EditorProps {
 
 const Editor: React.FC<EditorProps> = (props: EditorProps) => {
   const { path, project_id, is_visible, component } = props;
+  const { actions: projectActions } = useProjectContext();
   const { Editor: EditorComponent, redux_name } = component;
+  useEffect(() => {
+    if (EditorComponent != null) return;
+    projectActions?.ensure_open_file_component?.(path, { noFocus: true });
+  }, [projectActions, EditorComponent, path]);
   if (EditorComponent == null) {
     return <Loading theme={"medium"} />;
   }
