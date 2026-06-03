@@ -1253,7 +1253,7 @@ export function SiteLicenseAdminPanel({
           <Icon name="plus-circle" /> Provision site license
         </Button>
         <Button onClick={() => setRefreshToken((value) => value + 1)}>
-          <Icon name="refresh" /> Refresh
+          <Icon name="refresh" /> Refresh list
         </Button>
       </Space>
       {error ? <Alert type="error" showIcon title={error} /> : null}
