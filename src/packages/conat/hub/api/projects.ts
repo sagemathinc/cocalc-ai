@@ -697,6 +697,7 @@ export const projects = {
 
   createSnapshot: authFirstRequireAccount,
   deleteSnapshot: authFirstRequireAccount,
+  pruneSnapshotPath: authFirstRequireAccount,
   restoreSnapshot: authFirstRequireAccount,
   getSnapshotQuota: authFirstRequireAccount,
   allSnapshotUsage: authFirstRequireAccount,
@@ -1288,6 +1289,15 @@ export interface Projects {
     project_id: string;
     name: string;
   }) => Promise<void>;
+
+  pruneSnapshotPath: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    project_id: string;
+    path: string;
+    snapshots?: string[];
+  }) => Promise<{ path: string; snapshots: string[] }>;
 
   getProjectSnapshotSchedule: (opts: {
     account_id?: string;

@@ -132,6 +132,40 @@ export async function deleteSnapshot({
   });
 }
 
+export async function pruneSnapshotPath({
+  account_id,
+  browser_id,
+  session_hash,
+  project_id,
+  path,
+  snapshots,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  project_id: string;
+  path: string;
+  snapshots?: string[];
+}): Promise<{ path: string; snapshots: string[] }> {
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  await assertCanPerformDestructiveStorageAction({
+    account_id,
+    project_id,
+    action: "delete files from snapshots",
+  });
+  return await (
+    await projectClient(project_id, account_id)
+  ).pruneSnapshotPath({
+    project_id,
+    path,
+    snapshots,
+  });
+}
+
 export async function getSnapshotQuota({
   account_id,
   project_id,

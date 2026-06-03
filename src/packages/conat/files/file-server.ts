@@ -223,6 +223,11 @@ export interface Fileserver {
     readOnly?: boolean;
   }) => Promise<void>;
   deleteSnapshot: (opts: { project_id: string; name: string }) => Promise<void>;
+  pruneSnapshotPath: (opts: {
+    project_id: string;
+    path: string;
+    snapshots?: string[];
+  }) => Promise<{ path: string; snapshots: string[] }>;
   updateSnapshots: (opts: {
     project_id: string;
     counts?: Partial<SnapshotCounts>;

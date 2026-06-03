@@ -60,7 +60,7 @@ export interface Invoice {
   currency: string;
   amount_due: number;
   tax: number;
-  tax_percent: number;
+  tax_percent?: number;
   lines?: {
     data: InvoiceLine[];
     total_count: number;
