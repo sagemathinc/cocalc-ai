@@ -134,9 +134,9 @@ The operational wrapper can build and deploy that artifact directly:
   --static-only
 ```
 
-This stages a normal hardlinked release from the current VM release, replaces
-only frontend/static assets, flips `/opt/cocalc/bay/current`, restarts only hub
-workers, and skips Postgres, migrations, router/persist, and project-host
+This stages a normal hardlinked release from the current VM release, overlays
+the new frontend/static assets, flips `/opt/cocalc/bay/current`, restarts only
+hub workers, and skips Postgres, migrations, router/persist, and project-host
 rollout.
 
 Then copy the generated tarball to the VM and stage a new versioned release
@@ -150,9 +150,11 @@ sudo systemctl restart cocalc-bay-hub@{1..8}.service
 ```
 
 This creates a normal release directory under `/opt/cocalc/bay/releases/`,
-hardlinks unchanged files from the current release, replaces only
-`runtime/control-plane/static` and `runtime/control-plane/public`, flips
-`/opt/cocalc/bay/current`, and preserves rollback semantics.
+hardlinks unchanged files from the current release, overlays the new frontend
+assets, flips `/opt/cocalc/bay/current`, and preserves rollback semantics.
+For Rocket/systemd bay releases, hash-named Rspack chunks from the previous
+`/static` tree are retained when the new release does not include them, so
+already-open clients can continue lazy loading chunks until they refresh.
 
 The release bootstrap currently:
 
