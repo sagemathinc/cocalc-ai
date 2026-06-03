@@ -809,6 +809,20 @@ Target CLI:
 cocalc-plus star ubuntu@1.2.3.4
 ```
 
+Later non-blocking CLI polish:
+
+```sh
+cocalc star ubuntu@1.2.3.4
+```
+
+The `cocalc` CLI already has product-shortcut plumbing for commands such as
+`cocalc plus ...` and `cocalc launchpad ...`. A future `cocalc star ...`
+shortcut should delegate to the same `cocalc-plus star ...` implementation
+rather than reimplementing SSH probing, Star install, status polling, tunnel
+management, or bootstrap URL handling. This is useful for agents and CLI-first
+users, but it is not a release blocker; the primary supported paths remain the
+public Star installer and the Plus Star manager path.
+
 Behavior:
 
 1. SSH to the target.
@@ -835,6 +849,11 @@ Target UI:
   dedicated VM.
 - After Create, show install progress, the active tunnel, and the admin
   bootstrap link.
+- Reuse the existing Plus remote SSH session plumbing as much as possible:
+  target parsing, identity/proxy-jump/extra SSH arguments, reachability checks,
+  local tunnel lifecycle, recent-connection state, and status/progress display.
+  The Star-specific backend should remain the shared `cocalc-plus star` command
+  path so the graphical UI is a management surface, not another installer.
 
 This path is especially valuable for Windows and non-Unix laptop users once
 Plus has a reliable desktop/Electron distribution. It should reuse the same Star
