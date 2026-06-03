@@ -67,4 +67,22 @@ describe("chat editor focus", () => {
       Actions.prototype.getChatActions.call(fakeActions as any, "frame-a"),
     ).toBeUndefined();
   });
+
+  it("clears the inherited loading placeholder when chat data is ready", () => {
+    const setState = jest.fn();
+    const fakeActions = Object.assign(Object.create(Actions.prototype), {
+      isClosed: () => false,
+      store: {
+        get: (key: string) => (key === "value" ? "Loading..." : undefined),
+      },
+      setState,
+    });
+
+    (Actions.prototype as any).markChatDocumentReady.call(fakeActions);
+
+    expect(setState).toHaveBeenCalledWith({
+      is_loaded: true,
+      value: "",
+    });
+  });
 });

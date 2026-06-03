@@ -83,6 +83,17 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   private chatFastOpenApplied = false;
   private messageCacheRecoveryWarned = false;
 
+  private markChatDocumentReady(): void {
+    if (this.isClosed()) return;
+    const state: Partial<ChatEditorState> = {
+      is_loaded: true,
+    };
+    if (this.store?.get("value") === "Loading...") {
+      state.value = "";
+    }
+    this.setState(state);
+  }
+
   private startOptimisticChatFastOpen(syncdb: any): void {
     const fs = this._get_project_actions()?.fs?.();
     if (typeof fs?.readFile !== "function") return;
@@ -138,6 +149,7 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     this.startOptimisticChatFastOpen(syncdb);
     syncdb.once("ready", () => {
       initFromSyncDB({ syncdb, store });
+      this.markChatDocumentReady();
       if (this.chatFastOpenApplied) {
         this.chatFastOpenApplied = false;
         if (this.store?.get("status") === FAST_OPEN_CHAT_STATUS) {
@@ -149,13 +161,17 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     });
     syncdb.on("reload", () => {
       initFromSyncDB({ syncdb, store });
+      this.markChatDocumentReady();
     });
     syncdb.on("change", (changes) => {
       handleSyncDBChange({ store, syncdb, changes });
     });
   }
 
-  getChatActions(frameId?): ChatActions | undefined {
+  getChatActions(
+    frameId?,
+    opts?: { allowMissingFrameType?: boolean },
+  ): ChatActions | undefined {
     if (frameId == null) {
       for (const actions of Object.values(this.chatActions)) {
         return actions;
@@ -166,9 +182,19 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
       return this.chatActions[frameId];
     }
 
-    if (this._get_frame_type(frameId) != FRAME_TYPE) {
+    const frameType = this._get_frame_type(frameId);
+    if (frameType != FRAME_TYPE) {
       // if frame is not of type FRAME_TYPE, no chat actions are defined
-      return;
+      if (!opts?.allowMissingFrameType) {
+        return;
+      }
+      syncdocDiagnosticLog("chat editor recovering frame actions", {
+        project_id: this.project_id,
+        path: this.path,
+        frameId,
+        frameType,
+        state: this.debugSyncdocState?.(),
+      });
     }
 
     const syncdb = this._syncstring;
