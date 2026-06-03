@@ -37,7 +37,10 @@ import { in_snapshot_path } from "../utils";
 import CreateArchive from "./create-archive";
 import Download from "./download";
 import RenameFile from "./rename-file";
-import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import {
+  getSnapshotPathTarget,
+  SNAPSHOTS,
+} from "@cocalc/util/consts/snapshots";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 
 export const PRE_STYLE = {
@@ -82,6 +85,17 @@ export function ActionBox({
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const user_type = useTypedRedux("account", "user_type");
+  const account_id = useTypedRedux("account", "account_id");
+  const isAdmin = !!useTypedRedux("account", "is_admin");
+  const project_map = useTypedRedux("projects", "project_map");
+  const project = project_map?.get?.(project_id);
+  const projectGroup = account_id
+    ? project?.getIn?.(["users", account_id, "group"])
+    : undefined;
+  const canDeleteSnapshotPaths =
+    isAdmin ||
+    projectGroup === "owner" ||
+    project?.get?.("allow_collaborator_destructive_storage_actions") === true;
   const dnd_copy_dest = useTypedRedux(
     { project_id },
     "copy_destination_project_id",
@@ -100,6 +114,8 @@ export function ActionBox({
     );
   const [overwrite, set_overwrite] = useState<boolean>(true);
   const [deleteWithSudo, setDeleteWithSudo] = useState<boolean>(false);
+  const [deleteFromSnapshots, setDeleteFromSnapshots] =
+    useState<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) =>
       alert_message({
@@ -137,6 +153,7 @@ export function ActionBox({
   function clear() {
     actions.set_all_files_unchecked();
     setDeleteWithSudo(false);
+    setDeleteFromSnapshots(false);
     if (dnd_copy_dest) {
       actions.setState({ copy_destination_project_id: undefined });
     }
@@ -202,10 +219,83 @@ export function ActionBox({
     );
   }
 
+  function snapshotPruneTarget(path: string): string | undefined {
+    const target = getSnapshotPathTarget(path);
+    if (target?.kind === "snapshots-root" || target?.kind === "snapshot") {
+      return;
+    }
+    if (target?.kind === "snapshot-entry") {
+      return target.relativePath;
+    }
+    return path;
+  }
+
+  function selectedSnapshotPruneState() {
+    let hasPrunablePath = false;
+    let hasUnprunableSnapshotSelection = false;
+    for (const path of checked_files) {
+      if (snapshotPruneTarget(path) == null) {
+        hasUnprunableSnapshotSelection = true;
+      } else {
+        hasPrunablePath = true;
+      }
+    }
+    return { hasPrunablePath, hasUnprunableSnapshotSelection };
+  }
+
+  function snapshotPruneDisabledReason(): string | undefined {
+    const { hasPrunablePath, hasUnprunableSnapshotSelection } =
+      selectedSnapshotPruneState();
+    if (!hasPrunablePath || hasUnprunableSnapshotSelection) {
+      return `This option is only for ordinary files or paths inside ${SNAPSHOTS}, not ${SNAPSHOTS} itself or whole snapshots.`;
+    }
+    if (!canDeleteSnapshotPaths) {
+      return "Only project owners can delete snapshot history unless the owner enables Storage history for collaborators.";
+    }
+  }
+
+  const snapshotPruneReason = snapshotPruneDisabledReason();
+  const snapshotPruneDisabled = snapshotPruneReason != null;
+
+  useEffect(() => {
+    if (snapshotPruneDisabled && deleteFromSnapshots) {
+      setDeleteFromSnapshots(false);
+    }
+  }, [deleteFromSnapshots, snapshotPruneDisabled]);
+
+  function render_delete_from_snapshots_checkbox() {
+    return (
+      <div style={{ marginBottom: "12px" }}>
+        <Checkbox
+          checked={deleteFromSnapshots}
+          disabled={snapshotPruneDisabled}
+          onChange={(e) => setDeleteFromSnapshots(e.target.checked)}
+        >
+          Delete this path in ALL snapshots
+        </Checkbox>
+        <div
+          style={{
+            color: snapshotPruneDisabled ? COLORS.GRAY : COLORS.GRAY_M,
+            fontSize: "13px",
+            marginTop: "4px",
+          }}
+        >
+          {snapshotPruneReason ??
+            `This erases matching paths from ${SNAPSHOTS} history. It does not delete backup copies in ${BACKUPS}. This requires fresh authentication.`}
+        </div>
+      </div>
+    );
+  }
+
   async function delete_click(): Promise<void> {
     const paths = checked_files.toArray();
     await runFreshAuthAction(async () => {
-      await actions.deleteFiles({ paths, sudo: deleteWithSudo });
+      await actions.deleteFiles({
+        paths,
+        sudo: deleteWithSudo,
+        deleteFromSnapshots:
+          deleteFromSnapshots && !snapshotPruneDisabled ? true : false,
+      });
       for (const path of paths) {
         actions.close_tab(path);
       }
@@ -252,6 +342,7 @@ export function ActionBox({
             .
           </div>
           {render_selected_files_list({ large: true })}
+          {render_delete_from_snapshots_checkbox()}
           <div style={{ marginBottom: "12px" }}>
             <Checkbox
               checked={deleteWithSudo}
@@ -310,6 +401,7 @@ export function ActionBox({
         </Row>
         <Row style={{ marginBottom: "10px" }}>
           <Col sm={12}>
+            {render_delete_from_snapshots_checkbox()}
             <Checkbox
               checked={deleteWithSudo}
               onChange={(e) => setDeleteWithSudo(e.target.checked)}

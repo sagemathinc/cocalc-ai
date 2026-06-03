@@ -1,11 +1,26 @@
-import { render, screen } from "@testing-library/react";
-import { Set as ImmutableSet } from "immutable";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Map as ImmutableMap, Set as ImmutableSet } from "immutable";
 import { IntlProvider } from "react-intl";
 
 import { ActionBox } from "./action-box";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: () => "signed_in",
+  useTypedRedux: (store: any, key: string) => {
+    if (store === "account" && key === "user_type") return "signed_in";
+    if (store === "account" && key === "account_id") return "account-1";
+    if (store === "account" && key === "is_admin") return false;
+    if (store === "projects" && key === "project_map") {
+      return ImmutableMap({
+        "project-1": ImmutableMap({
+          allow_collaborator_destructive_storage_actions: true,
+          users: ImmutableMap({
+            "account-1": ImmutableMap({ group: "collaborator" }),
+          }),
+        }),
+      });
+    }
+    return undefined;
+  },
 }));
 
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
@@ -115,5 +130,31 @@ describe("ActionBox delete modal", () => {
       "beta.txt",
       "selected-file-0.txt",
     ]);
+  });
+
+  it("passes snapshot pruning option when deleting with the checkbox enabled", async () => {
+    render(
+      <IntlProvider locale="en">
+        <ActionBox
+          display="modal"
+          file_action="delete"
+          checked_files={ImmutableSet(["/home/user/foo"])}
+          current_path="/home/user"
+          project_id="project-1"
+          actions={actions}
+        />
+      </IntlProvider>,
+    );
+
+    fireEvent.click(screen.getByText("Delete this path in ALL snapshots"));
+    fireEvent.click(screen.getByText("Delete 1 Item"));
+
+    await waitFor(() =>
+      expect(actions.deleteFiles).toHaveBeenCalledWith({
+        paths: ["/home/user/foo"],
+        sudo: false,
+        deleteFromSnapshots: true,
+      }),
+    );
   });
 });
