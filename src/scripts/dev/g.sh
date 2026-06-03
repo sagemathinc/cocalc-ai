@@ -1,6 +1,12 @@
+#!/usr/bin/env bash
 set -ev
-mkdir -p `pwd`/logs
-export LOGS=`pwd`/logs
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${SRC_ROOT}"
+
+mkdir -p "${SRC_ROOT}/logs"
+export LOGS="${SRC_ROOT}/logs"
 rm -f $LOGS/log
 unset INIT_CWD
 export DEBUG="cocalc:*,-cocalc:silly:*"

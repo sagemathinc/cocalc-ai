@@ -1,5 +1,14 @@
 # Local Hub Dev Stack + Smoke Tests
 
+This directory contains active local-development helpers. It also includes a
+few personal/dev convenience scripts that used to live at `src/scripts/`:
+
+- `g.sh`: restart-loop hub runner from `src/`.
+- `g-tmux.sh`: tmux launcher for hub/database/rspack development.
+- `memory_monitor.py`: local process memory watchdog.
+- `runoo`: quick repeated/flakiness command runner.
+- `upgrade-all.sh`: local hub rebuild/restart/host-upgrade helper.
+
 ## One-time setup (optional)
 
 ```bash
