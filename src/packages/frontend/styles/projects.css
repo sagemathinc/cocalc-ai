@@ -143,6 +143,11 @@ li.cc-project-home-recent-files:hover {
   background-color: var(--cocalc-col-gray-lll);
 }
 
+div.cc-project-flyout-dragbar {
+  border-right: 1px solid var(--cocalc-col-gray-l0);
+  box-sizing: border-box;
+}
+
 div.cc-project-flyout-dragbar:hover {
   background-color: var(--cocalc-col-gray-l);
 }
