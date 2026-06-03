@@ -400,6 +400,13 @@ export default function NewFilePage(props: Props) {
           size="large"
           disabled={filename.trim() == ""}
           onClick={() => submit()}
+          block={mode === "flyout" ? true : undefined}
+          style={{
+            minWidth: mode === "flyout" ? 0 : undefined,
+            whiteSpace: mode === "flyout" ? "normal" : undefined,
+            height: mode === "flyout" ? "auto" : undefined,
+            textAlign: mode === "flyout" ? "center" : undefined,
+          }}
         >
           <Icon name={filenameIcon(filename)} />{" "}
           {intl.formatMessage(CREATE_MSG, { desc })}
@@ -487,6 +494,7 @@ export default function NewFilePage(props: Props) {
               gap: "8px",
               alignItems: "stretch",
               flexWrap: "wrap",
+              flexDirection: mode === "flyout" ? "column" : undefined,
             }}
           >
             <Input
@@ -498,7 +506,10 @@ export default function NewFilePage(props: Props) {
               placeholder={
                 "Name your file, folder, or a URL to download from..."
               }
-              style={{ flex: "1 1 320px" }}
+              style={{
+                flex: mode === "flyout" ? "0 1 auto" : "1 1 320px",
+                width: "100%",
+              }}
               onChange={(e) => {
                 if (extensionWarning) {
                   setExtensionWarning(false);
