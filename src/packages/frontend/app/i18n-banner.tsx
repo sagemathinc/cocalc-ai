@@ -15,8 +15,8 @@ import {
   CSS,
   React,
   redux,
+  useAccountOtherSetting,
   useMemo,
-  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { useLocalizationCtx } from "@cocalc/frontend/app/localize";
 import {
@@ -46,8 +46,7 @@ const I18N_BANNER_STYLE: CSS = {
 } as const;
 
 export function useShowI18NBanner() {
-  const other_settings = useTypedRedux("account", "other_settings");
-  const i18n = other_settings?.get(OTHER_SETTINGS_LOCALE_KEY);
+  const i18n = useAccountOtherSetting<string>(OTHER_SETTINGS_LOCALE_KEY);
 
   return useMemo(() => {
     // we show the banner, if the default locale is set and the browser langauge is not english

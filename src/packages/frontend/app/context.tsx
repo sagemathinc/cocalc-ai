@@ -8,7 +8,7 @@ import { debounce } from "lodash";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useAccountOtherSetting } from "@cocalc/frontend/app-framework";
 import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
 import { useActivityBarPreferences } from "@cocalc/frontend/project/page/activity-bar-storage";
 import { COLORS } from "@cocalc/util/theme";
@@ -78,12 +78,11 @@ export function useAppContextProvider(): AppState {
 }
 
 export function useAntdStyleProvider() {
-  const other_settings = useTypedRedux("account", "other_settings");
   const baseTheme = getBaseAntdTheme();
-  const rounded = other_settings?.get("antd_rounded", true);
-  const animate = other_settings?.get("antd_animate", true);
-  const branded = other_settings?.get("antd_brandcolors", false);
-  const compact = other_settings?.get("antd_compact", false);
+  const rounded = useAccountOtherSetting<boolean>("antd_rounded") ?? true;
+  const animate = useAccountOtherSetting<boolean>("antd_animate") ?? true;
+  const branded = useAccountOtherSetting<boolean>("antd_brandcolors") ?? false;
+  const compact = useAccountOtherSetting<boolean>("antd_compact") ?? false;
 
   const borderStyle = rounded
     ? undefined

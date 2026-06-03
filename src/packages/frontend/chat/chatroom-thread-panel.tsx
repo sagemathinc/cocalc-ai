@@ -16,12 +16,12 @@ import {
 } from "antd";
 import {
   React,
+  useAccountOtherSetting,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
@@ -64,6 +64,7 @@ import {
   getDefaultCodexNewChatDefaults,
   getCodexNewChatModeOptions,
   getDefaultCodexSessionMode,
+  OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
   saveCodexNewChatDefaults,
 } from "./codex-defaults";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
@@ -380,10 +381,12 @@ export function ChatRoomThreadPanel({
   readOnly = false,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
-  const accountOtherSettings = useTypedRedux("account", "other_settings");
+  const codexNewChatDefaultsSetting = useAccountOtherSetting(
+    OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
+  );
   const defaultNewChatCodexDefaults = useMemo(
     () => getDefaultCodexNewChatDefaults(),
-    [accountOtherSettings],
+    [codexNewChatDefaultsSetting],
   );
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
   const [threadSearchInput, setThreadSearchInput] = useState("");

@@ -11,7 +11,7 @@ import type { PDFPageProxy, PDFPageViewport } from "pdfjs-dist/webpack.mjs";
 import { useCallback, useEffect, useRef } from "react";
 import { useDebouncedCallback } from "use-debounce";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useAccountOtherSetting } from "@cocalc/frontend/app-framework";
 import { get_dark_mode_config } from "@cocalc/frontend/account/dark-mode";
 import AnnotationLayer, { SyncHighlight } from "./pdfjs-annotation";
 import TextLayer from "./pdfjs-text";
@@ -37,10 +37,18 @@ export default function CanvasPage({
   const lastRenderScaleRef = useRef<number>(scale);
 
   // Get dark mode state and settings
-  const other_settings = useTypedRedux("account", "other_settings");
-  const isDarkMode = other_settings?.get("dark_mode") ?? false;
+  const isDarkMode = useAccountOtherSetting<boolean>("dark_mode") ?? false;
+  const darkModeBrightness = useAccountOtherSetting<number>(
+    "dark_mode_brightness",
+  );
+  const darkModeContrast = useAccountOtherSetting<number>("dark_mode_contrast");
+  const darkModeSepia = useAccountOtherSetting<number>("dark_mode_sepia");
   const darkModeConfig = isDarkMode
-    ? get_dark_mode_config(other_settings?.toJS())
+    ? get_dark_mode_config({
+        dark_mode_brightness: darkModeBrightness,
+        dark_mode_contrast: darkModeContrast,
+        dark_mode_sepia: darkModeSepia,
+      })
     : null;
 
   const viewport: PDFPageViewport = page.getViewport({

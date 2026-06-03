@@ -8,6 +8,7 @@ import { Button, Modal, Popconfirm, Space, Tag } from "antd";
 import {
   React,
   redux,
+  useAccountOtherSetting,
   useCallback,
   useEditorRedux,
   useEffect,
@@ -92,6 +93,7 @@ import {
   clearWorkspaceNoticeForChatPath,
   setWorkspaceReadyForReviewNotice,
 } from "@cocalc/frontend/project/workspaces/runtime";
+import { OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS } from "./codex-defaults";
 import {
   DEFAULT_CODEX_MODEL_NAME,
   isCodexModelName,
@@ -693,7 +695,9 @@ export function ChatPanel({
   ]);
 
   const [composerSession, setComposerSession] = useState(0);
-  const accountOtherSettings = useTypedRedux("account", "other_settings");
+  const codexNewChatDefaultsSetting = useAccountOtherSetting(
+    OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
+  );
   const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
   const priorThreadCompletionSnapshotsRef = useRef<
@@ -730,7 +734,7 @@ export function ChatPanel({
           defaultWorkingDirectoryForChat(path, workspaceWorkingDirectory),
       },
     };
-  }, [accountOtherSettings, desc, path, workspaceWorkingDirectory]);
+  }, [codexNewChatDefaultsSetting, desc, path, workspaceWorkingDirectory]);
   const [newThreadSetup, setNewThreadSetup] = useState<NewThreadSetup>(
     defaultNewThreadSetup,
   );

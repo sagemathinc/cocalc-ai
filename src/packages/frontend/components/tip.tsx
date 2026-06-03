@@ -8,7 +8,7 @@ import type { TooltipProps as AntdTooltipProps } from "antd";
 import { TooltipPlacement } from "antd/lib/tooltip";
 import React, { CSSProperties as CSS } from "react";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useAccountOtherSetting } from "@cocalc/frontend/app-framework";
 import * as misc from "@cocalc/util/misc";
 import * as feature from "../feature";
 import { Icon, IconName } from "./icon";
@@ -74,8 +74,7 @@ function useTooltipsDisabled({
   allow_touch?: boolean;
   ignore_hide_setting?: boolean;
 }) {
-  const other_settings = useTypedRedux("account", "other_settings");
-  const hideTooltips = !!other_settings?.get?.("hide_button_tooltips");
+  const hideTooltips = !!useAccountOtherSetting("hide_button_tooltips");
   return (
     (feature.IS_TOUCH && !allow_touch) || (hideTooltips && !ignore_hide_setting)
   );

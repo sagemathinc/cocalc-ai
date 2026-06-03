@@ -108,6 +108,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     if (key === "file_creation_error") return "";
     return undefined;
   },
+  useAccountOtherSetting: () => undefined,
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({

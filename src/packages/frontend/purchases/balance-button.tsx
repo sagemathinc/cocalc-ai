@@ -1,7 +1,11 @@
 import { Badge, Button, Spin } from "antd";
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
-import { CSS, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  CSS,
+  useAccountOtherSetting,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { NavTab } from "@cocalc/frontend/app/nav-tab";
 import { NAV_CLASS } from "@cocalc/frontend/app/top-nav-consts";
 import { labels } from "@cocalc/frontend/i18n";
@@ -28,8 +32,9 @@ export default function BalanceButton({
   const dbBalance = useTypedRedux("account", "balance");
   const balanceAlert = useTypedRedux("account", "balance_alert");
   const [balance, setBalance] = useState<MoneyValue | null>(dbBalance ?? null);
-  const otherSettings = useTypedRedux("account", "other_settings");
-  const hideNavbarBalance = otherSettings?.get("hide_navbar_balance");
+  const hideNavbarBalance = useAccountOtherSetting<boolean>(
+    "hide_navbar_balance",
+  );
 
   useEffect(() => {
     if (dbBalance != null) {

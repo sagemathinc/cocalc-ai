@@ -10,6 +10,7 @@ import { VirtuosoHandle } from "react-virtuoso";
 import {
   React,
   redux,
+  useAccountOtherSetting,
   usePrevious,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -170,7 +171,6 @@ export function FilesFlyout({
   const [activeFileSort, setActiveFileSort] = useFlyoutSettings(project_id);
 
   const file_search = useTypedRedux({ project_id }, "file_search") ?? "";
-  const otherSettings = useTypedRedux("account", "other_settings");
   const show_masked = useTypedRedux({ project_id }, "show_masked");
   const hidden = useTypedRedux({ project_id }, "show_hidden");
   const typeFilter = useTypedRedux({ project_id }, "type_filter") ?? null;
@@ -285,7 +285,9 @@ export function FilesFlyout({
     (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
     shouldSuppressTransientRoutingError({ error: effectiveError, moveLro });
   const effectiveRefresh = inBackupsPath ? refreshBackups : refresh;
-  const autoUpdateListing = !!otherSettings?.get("auto_update_file_listing");
+  const autoUpdateListing = !!useAccountOtherSetting(
+    "auto_update_file_listing",
+  );
   const typeFilterOptions = useMemo(() => {
     const extensions = new Set<string>();
     for (const file of effectiveListing ?? []) {

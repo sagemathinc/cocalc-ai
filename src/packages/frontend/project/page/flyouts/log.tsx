@@ -12,6 +12,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { Button as BSButton } from "@cocalc/frontend/antd-bootstrap";
 import {
   CSS,
+  useAccountOtherSetting,
   useActions,
   useCallback,
   useEffect,
@@ -314,8 +315,7 @@ export function LogFlyout({
   const openFiles = useTypedRedux({ project_id }, "open_files_order");
   const user_map = useTypedRedux("users", "user_map");
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
-  const otherSettings = useTypedRedux("account", "other_settings");
-  const dimFileExtensions = !!otherSettings?.get("dim_file_extensions");
+  const dimFileExtensions = !!useAccountOtherSetting("dim_file_extensions");
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   const search = useTypedRedux({ project_id }, "search") ?? "";

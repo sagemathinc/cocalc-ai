@@ -16,7 +16,10 @@ import { useIntl } from "react-intl";
 
 import { set_account_table } from "@cocalc/frontend/account/util";
 import { Button as BSButton } from "@cocalc/frontend/antd-bootstrap";
-import { useRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useAccountOtherSetting,
+  useRedux,
+} from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { COMMANDS } from "@cocalc/frontend/frame-editors/frame-tree/commands";
 import {
@@ -50,8 +53,7 @@ export function BuildControls({
     useRedux(["account", "editor_settings", "build_on_save"]) ?? false;
 
   // Check if global dark mode is enabled
-  const other_settings = useTypedRedux("account", "other_settings");
-  const isDarkMode = other_settings?.get("dark_mode") ?? false;
+  const isDarkMode = useAccountOtherSetting<boolean>("dark_mode") ?? false;
 
   // Get PDF dark mode disabled state from Redux store
   const pdfDarkModeDisabledMap = useRedux(
