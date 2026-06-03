@@ -48,6 +48,7 @@ import {
   addSiteLicensePool as addSiteLicensePool0,
   adminProvisionSiteLicense as adminProvisionSiteLicense0,
   getVerifiedEmailAddressesForAccount,
+  listSiteLicenseOverviews as listSiteLicenseOverviews0,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview as getSiteLicenseOverview0,
   requestSiteLicensePool as requestSiteLicensePool0,
@@ -774,6 +775,7 @@ export async function adminProvisionSiteLicense({
   account_id,
   browser_id,
   session_hash,
+  bay_id,
   owner_account_id,
   name,
   organization_name,
@@ -791,6 +793,7 @@ export async function adminProvisionSiteLicense({
   account_id?: string;
   browser_id?: string;
   session_hash?: string | null;
+  bay_id?: string;
   owner_account_id?: string;
   name?: string;
   organization_name?: string;
@@ -815,13 +818,15 @@ export async function adminProvisionSiteLicense({
     session_hash,
     allow_actor_impersonation: false,
   });
-  const ownerAccountId = `${owner_account_id ?? actorId}`.trim();
-  if (!ownerAccountId) {
-    throw Error("owner_account_id required");
+  const normalizedBayId = `${bay_id ?? ""}`.trim();
+  if (!normalizedBayId) {
+    throw Error("bay_id required");
   }
+  const ownerAccountId = `${owner_account_id ?? ""}`.trim() || undefined;
   if (!isSeedBay()) {
     return await getSeedSiteLicenseClient().adminProvisionSiteLicense({
       actor_account_id: actorId,
+      bay_id: normalizedBayId,
       owner_account_id: ownerAccountId,
       name: `${name ?? ""}`,
       organization_name: `${organization_name ?? ""}`,
@@ -839,6 +844,7 @@ export async function adminProvisionSiteLicense({
   }
   return await adminProvisionSiteLicense0({
     actor_account_id: actorId,
+    bay_id: normalizedBayId,
     owner_account_id: ownerAccountId,
     name: `${name ?? ""}`,
     organization_name: `${organization_name ?? ""}`,
@@ -852,6 +858,26 @@ export async function adminProvisionSiteLicense({
     starts_at,
     expires_at,
     metadata,
+  });
+}
+
+export async function listSiteLicenseOverviews({
+  account_id,
+  admin = false,
+}: {
+  account_id?: string;
+  admin?: boolean;
+} = {}): Promise<SiteLicenseOverview[]> {
+  const actorId = requireAccount(account_id);
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().listSiteLicenseOverviews({
+      actor_account_id: actorId,
+      admin,
+    });
+  }
+  return await listSiteLicenseOverviews0({
+    account_id: actorId,
+    admin,
   });
 }
 

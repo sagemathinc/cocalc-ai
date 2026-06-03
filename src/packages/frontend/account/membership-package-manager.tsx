@@ -57,8 +57,8 @@ import {
   getClaimableMembershipPackages,
   getMembershipPackageQuote,
   getMembershipPackages,
-  getSiteLicenseOverview,
   isPurchaseAllowed,
+  listSiteLicenseOverviews,
   processPaymentIntents,
   purchaseMembershipPackage,
   refreshSiteLicenseAffiliationVerification,
@@ -86,6 +86,7 @@ import type {
   SiteLicensePoolRequest,
   SiteLicenseVerificationPolicy,
 } from "@cocalc/conat/hub/api/purchases";
+import type { BayInfo } from "@cocalc/conat/hub/api/system";
 import { MEMBERSHIP_PACKAGE_PURCHASE } from "@cocalc/util/db-schema/purchases";
 import {
   capitalize,
@@ -99,7 +100,7 @@ import { openAccountSettings } from "./settings-routing";
 
 const { Paragraph, Text, Title } = Typography;
 
-interface MembershipTierLike extends MembershipTierWithPresentation {
+export interface MembershipTierLike extends MembershipTierWithPresentation {
   id: string;
   label?: string;
   store_visible?: boolean;
@@ -841,7 +842,6 @@ export function MembershipPackageManager({
   user_account_id,
 }: Props) {
   const account_id = useTypedRedux("account", "account_id");
-  const is_admin = !!useTypedRedux("account", "is_admin");
   const ownerAccountId = user_account_id ?? account_id;
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -857,8 +857,6 @@ export function MembershipPackageManager({
   const [editTarget, setEditTarget] = useState<MembershipPackageDetails | null>(
     null,
   );
-  const [provisionSiteLicenseOpen, setProvisionSiteLicenseOpen] =
-    useState<boolean>(false);
   const [accountNames, setAccountNames] = useState<
     Record<string, { first_name?: string; last_name?: string } | undefined>
   >({});
@@ -890,6 +888,25 @@ export function MembershipPackageManager({
     }
   };
 
+  const refreshSiteLicenseOverviews = async () => {
+    if (!account_id || user_account_id) {
+      setSiteLicenseOverviews([]);
+      setSiteLicenseOverviewError("");
+      setSiteLicenseOverviewLoading(false);
+      return;
+    }
+    setSiteLicenseOverviewLoading(true);
+    setSiteLicenseOverviewError("");
+    try {
+      setSiteLicenseOverviews(await listSiteLicenseOverviews());
+    } catch (err) {
+      setSiteLicenseOverviews([]);
+      setSiteLicenseOverviewError(`${err}`);
+    } finally {
+      setSiteLicenseOverviewLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!ownerAccountId) {
       setMembershipPackages([]);
@@ -904,15 +921,23 @@ export function MembershipPackageManager({
   const assignedAccountIds = useMemo(() => {
     return Array.from(
       new Set(
-        membershipPackages.flatMap((membershipPackage) =>
-          membershipPackage.assignments
-            .filter(isActiveAssignment)
-            .map((assignment) => assignment.account_id)
-            .filter((value): value is string => !!value),
-        ),
+        [
+          ...membershipPackages.flatMap((membershipPackage) =>
+            membershipPackage.assignments
+              .filter(isActiveAssignment)
+              .map((assignment) => assignment.account_id),
+          ),
+          ...siteLicenseOverviews.flatMap((overview) =>
+            overview.pools.flatMap((pool) =>
+              pool.assignments
+                .filter(isActiveAssignment)
+                .map((assignment) => assignment.account_id),
+            ),
+          ),
+        ].filter((value): value is string => !!value),
       ),
     );
-  }, [membershipPackages]);
+  }, [membershipPackages, siteLicenseOverviews]);
 
   useEffect(() => {
     let canceled = false;
@@ -946,31 +971,11 @@ export function MembershipPackageManager({
       ),
     [membershipPackages],
   );
-  const sitePackages = useMemo(
-    () =>
-      membershipPackages.filter(
-        (membershipPackage) => membershipPackage.kind === "site",
-      ),
-    [membershipPackages],
-  );
-  const siteLicenseIds = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          sitePackages
-            .map((membershipPackage) =>
-              `${membershipPackage.metadata?.site_license_id ?? ""}`.trim(),
-            )
-            .filter((value) => value.length > 0),
-        ),
-      ).sort(),
-    [sitePackages],
-  );
 
   useEffect(() => {
     let canceled = false;
     async function loadSiteLicenseOverviews() {
-      if (!ownerAccountId || siteLicenseIds.length === 0) {
+      if (!account_id || user_account_id) {
         setSiteLicenseOverviews([]);
         setSiteLicenseOverviewError("");
         setSiteLicenseOverviewLoading(false);
@@ -979,14 +984,7 @@ export function MembershipPackageManager({
       setSiteLicenseOverviewLoading(true);
       setSiteLicenseOverviewError("");
       try {
-        const overviews = await Promise.all(
-          siteLicenseIds.map((site_license_id) =>
-            getSiteLicenseOverview({
-              owner_account_id: ownerAccountId,
-              site_license_id,
-            }),
-          ),
-        );
+        const overviews = await listSiteLicenseOverviews();
         if (!canceled) {
           setSiteLicenseOverviews(overviews);
         }
@@ -1005,10 +1003,11 @@ export function MembershipPackageManager({
     return () => {
       canceled = true;
     };
-  }, [ownerAccountId, siteLicenseIds.join("\n")]);
+  }, [account_id, refreshToken, user_account_id]);
 
   const handleChanged = async () => {
     await refreshPackages();
+    await refreshSiteLicenseOverviews();
     onChanged?.();
   };
 
@@ -1035,11 +1034,6 @@ export function MembershipPackageManager({
         <Button onClick={() => setRefreshToken((value) => value + 1)}>
           <Icon name="refresh" /> Refresh packages
         </Button>
-        {is_admin ? (
-          <Button onClick={() => setProvisionSiteLicenseOpen(true)}>
-            <Icon name="plus-circle" /> Provision site license
-          </Button>
-        ) : null}
       </Space>
       {loading ? (
         <Loading />
@@ -1076,26 +1070,14 @@ export function MembershipPackageManager({
             tiers={tiers}
             accountNames={accountNames}
             accountId={account_id}
-            isAdmin={is_admin}
+            isAdmin={false}
             reviewingRequestId={siteLicenseReviewLoadingId}
-            onEditPool={is_admin ? (pool) => setEditTarget(pool) : undefined}
-            onAddPool={
-              is_admin
-                ? async (site_license_id, pool) => {
-                    await runFreshAuthAction(async () => {
-                      await addSiteLicensePool({ site_license_id, pool });
-                      await handleChanged();
-                    });
-                  }
-                : undefined
-            }
-            onReview={async (overview, request, action) => {
+            onReview={async (_overview, request, action) => {
               setSiteLicenseReviewLoadingId(request.id);
               setError("");
               try {
                 await runFreshAuthAction(async () => {
                   await reviewSiteLicensePoolRequest({
-                    owner_account_id: overview.site_license.owner_account_id,
                     request_id: request.id,
                     action,
                   });
@@ -1117,16 +1099,6 @@ export function MembershipPackageManager({
                 await handleChanged();
               });
             }}
-            onUpdateLicense={
-              is_admin
-                ? async (site_license_id, updates) => {
-                    await runFreshAuthAction(async () => {
-                      await updateSiteLicense({ site_license_id, ...updates });
-                      await handleChanged();
-                    });
-                  }
-                : undefined
-            }
             onSetManager={async (site_license_id, target_account_id, role) => {
               await runFreshAuthAction(async () => {
                 await setSiteLicenseManager({
@@ -1156,16 +1128,6 @@ export function MembershipPackageManager({
         onClose={() => setPurchaseTarget(undefined)}
         onPurchased={handleChanged}
       />
-      <ProvisionSiteLicenseModal
-        open={provisionSiteLicenseOpen}
-        owner_account_id={user_account_id}
-        tiers={tiers}
-        onClose={() => setProvisionSiteLicenseOpen(false)}
-        onProvisioned={async () => {
-          setProvisionSiteLicenseOpen(false);
-          await handleChanged();
-        }}
-      />
       <EditSiteLicenseModal
         open={editTarget != null}
         membershipPackage={editTarget}
@@ -1186,6 +1148,212 @@ export function MembershipPackageManager({
       />
       <FreshAuthModal {...freshAuthModalProps} />
     </div>
+  );
+}
+
+export function SiteLicenseAdminPanel({
+  tiers,
+  onChanged,
+}: {
+  tiers: MembershipTierLike[];
+  onChanged?: () => void;
+}) {
+  const account_id = useTypedRedux("account", "account_id");
+  const [overviews, setOverviews] = useState<SiteLicenseOverview[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [provisionOpen, setProvisionOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<MembershipPackageDetails | null>(
+    null,
+  );
+  const [accountNames, setAccountNames] = useState<
+    Record<string, { first_name?: string; last_name?: string } | undefined>
+  >({});
+  const [reviewingRequestId, setReviewingRequestId] = useState("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
+
+  async function refreshOverviews() {
+    if (!account_id) {
+      setOverviews([]);
+      setError("");
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      setOverviews(await listSiteLicenseOverviews({ admin: true }));
+    } catch (err) {
+      setOverviews([]);
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshOverviews();
+  }, [account_id, refreshToken]);
+
+  const assignedAccountIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          overviews
+            .flatMap((overview) =>
+              overview.pools.flatMap((pool) =>
+                pool.assignments
+                  .filter(isActiveAssignment)
+                  .map((assignment) => assignment.account_id),
+              ),
+            )
+            .filter((value): value is string => !!value),
+        ),
+      ),
+    [overviews],
+  );
+
+  useEffect(() => {
+    let canceled = false;
+    async function loadNames() {
+      if (assignedAccountIds.length === 0) {
+        setAccountNames({});
+        return;
+      }
+      try {
+        const next =
+          await webapp_client.users_client.getNames(assignedAccountIds);
+        if (!canceled) {
+          setAccountNames(next ?? {});
+        }
+      } catch (_err) {
+        if (!canceled) {
+          setAccountNames({});
+        }
+      }
+    }
+    void loadNames();
+    return () => {
+      canceled = true;
+    };
+  }, [assignedAccountIds]);
+
+  async function handleChanged() {
+    await refreshOverviews();
+    onChanged?.();
+  }
+
+  return (
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      <Space wrap>
+        <Button type="primary" onClick={() => setProvisionOpen(true)}>
+          <Icon name="plus-circle" /> Provision site license
+        </Button>
+        <Button onClick={() => setRefreshToken((value) => value + 1)}>
+          <Icon name="refresh" /> Refresh
+        </Button>
+      </Space>
+      {error ? <Alert type="error" showIcon title={error} /> : null}
+      {!loading && overviews.length === 0 && !error ? (
+        <Alert
+          type="info"
+          showIcon
+          title="No site licenses configured"
+          description="Provision a site license here, then add customer owners or managers after the license has been checked."
+        />
+      ) : null}
+      <SiteLicenseDashboard
+        overviews={overviews}
+        loading={loading}
+        error=""
+        tiers={tiers}
+        accountNames={accountNames}
+        accountId={account_id}
+        isAdmin={true}
+        reviewingRequestId={reviewingRequestId}
+        onEditPool={(pool) => setEditTarget(pool)}
+        onAddPool={async (site_license_id, pool) => {
+          await runFreshAuthAction(async () => {
+            await addSiteLicensePool({ site_license_id, pool });
+            await handleChanged();
+          });
+        }}
+        onReview={async (_overview, request, action) => {
+          setReviewingRequestId(request.id);
+          setError("");
+          try {
+            await runFreshAuthAction(async () => {
+              await reviewSiteLicensePoolRequest({
+                request_id: request.id,
+                action,
+              });
+              await handleChanged();
+            });
+          } catch (err) {
+            setError(`${err}`);
+          } finally {
+            setReviewingRequestId("");
+          }
+        }}
+        onRevokeSeat={async (pool, assignment) => {
+          await runFreshAuthAction(async () => {
+            await revokeMembershipPackageSeat({
+              package_id: pool.id,
+              target_account_id: assignment.account_id ?? undefined,
+              target_email_address: assignment.email_address ?? undefined,
+            });
+            await handleChanged();
+          });
+        }}
+        onUpdateLicense={async (site_license_id, updates) => {
+          await runFreshAuthAction(async () => {
+            await updateSiteLicense({ site_license_id, ...updates });
+            await handleChanged();
+          });
+        }}
+        onSetManager={async (site_license_id, target_account_id, role) => {
+          await runFreshAuthAction(async () => {
+            await setSiteLicenseManager({
+              site_license_id,
+              target_account_id,
+              role,
+            });
+            await handleChanged();
+          });
+        }}
+        onRemoveManager={async (site_license_id, target_account_id) => {
+          await runFreshAuthAction(async () => {
+            await removeSiteLicenseManager({
+              site_license_id,
+              target_account_id,
+            });
+            await handleChanged();
+          });
+        }}
+      />
+      <ProvisionSiteLicenseModal
+        open={provisionOpen}
+        tiers={tiers}
+        onClose={() => setProvisionOpen(false)}
+        onProvisioned={async () => {
+          setProvisionOpen(false);
+          await handleChanged();
+        }}
+      />
+      <EditSiteLicenseModal
+        open={editTarget != null}
+        membershipPackage={editTarget}
+        onClose={() => setEditTarget(null)}
+        onUpdated={async () => {
+          setEditTarget(null);
+          await handleChanged();
+        }}
+      />
+      <FreshAuthModal {...freshAuthModalProps} />
+    </Space>
   );
 }
 
@@ -1808,10 +1976,18 @@ function SiteLicenseDashboard({
                   </Card>
                 ) : null}
 
-                <Text type="secondary">
-                  License id {overview.site_license.id}; owner account{" "}
-                  {overview.site_license.owner_account_id}
-                </Text>
+                <Space wrap>
+                  <Text type="secondary">
+                    License id {overview.site_license.id}; bay{" "}
+                    {overview.site_license.bay_id}
+                  </Text>
+                  {overview.site_license.owner_account_id ? (
+                    <Text type="secondary">
+                      legacy owner account{" "}
+                      {overview.site_license.owner_account_id}
+                    </Text>
+                  ) : null}
+                </Space>
               </Space>
             </div>
           </Card>
@@ -2432,6 +2608,8 @@ function ProvisionSiteLicenseModal({
   const [startsAt, setStartsAt] = useState<Dayjs | null>(null);
   const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
   const [pools, setPools] = useState<SiteLicensePoolConfig[]>([]);
+  const [bays, setBays] = useState<BayInfo[]>([]);
+  const [selectedBayId, setSelectedBayId] = useState<string>("");
   const [editingPoolIndex, setEditingPoolIndex] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -2441,6 +2619,23 @@ function ProvisionSiteLicenseModal({
 
   useEffect(() => {
     if (!open) return;
+    let canceled = false;
+    async function loadBays() {
+      try {
+        const nextBays = await webapp_client.conat_client.hub.system.listBays(
+          {},
+        );
+        if (!canceled) {
+          setBays(nextBays ?? []);
+        }
+      } catch (err) {
+        if (!canceled) {
+          setBays([]);
+          setError(`${err}`);
+        }
+      }
+    }
+    void loadBays();
     const usedTierIds = new Set<string>();
     const studentTier = findSiteLicenseTier({
       tiers: siteLicenseTierOptions,
@@ -2473,6 +2668,7 @@ function ProvisionSiteLicenseModal({
     setOveragePolicy("hard-cap");
     setStartsAt(null);
     setExpiresAt(null);
+    setSelectedBayId("");
     const defaultPools: SiteLicensePoolConfig[] = [];
     if (studentTier) {
       defaultPools.push({
@@ -2514,6 +2710,9 @@ function ProvisionSiteLicenseModal({
     setEditingPoolIndex(null);
     setSubmitting(false);
     setError("");
+    return () => {
+      canceled = true;
+    };
   }, [open, siteLicenseTierOptions]);
 
   function updatePool(index: number, patch: Partial<SiteLicensePoolConfig>) {
@@ -2546,6 +2745,9 @@ function ProvisionSiteLicenseModal({
       }
       if (!cleanOrganizationName) {
         throw Error("Enter an organization name.");
+      }
+      if (!selectedBayId) {
+        throw Error("Select the bay for this site license.");
       }
       if (allowed_domains.length === 0) {
         throw Error("Enter at least one allowed email domain.");
@@ -2581,6 +2783,7 @@ function ProvisionSiteLicenseModal({
       }
       await runFreshAuthAction(async () => {
         await adminProvisionSiteLicense({
+          bay_id: selectedBayId,
           owner_account_id,
           name: cleanName,
           organization_name: cleanOrganizationName,
@@ -2667,7 +2870,7 @@ function ProvisionSiteLicenseModal({
             style={{
               display: "grid",
               gap: 14,
-              gridTemplateColumns: "repeat(2, minmax(260px, 1fr))",
+              gridTemplateColumns: "repeat(3, minmax(220px, 1fr))",
             }}
           >
             <CompactField
@@ -2688,6 +2891,20 @@ function ProvisionSiteLicenseModal({
                 value={organizationName}
                 onChange={(event) => setOrganizationName(event.target.value)}
                 placeholder="Example University"
+              />
+            </CompactField>
+            <CompactField
+              label="Bay"
+              help="Control-plane placement for this license."
+            >
+              <Select
+                value={selectedBayId || undefined}
+                placeholder="Select bay"
+                options={bays.map((bay) => ({
+                  label: `${bay.label} (${bay.bay_id})`,
+                  value: bay.bay_id,
+                }))}
+                onChange={setSelectedBayId}
               />
             </CompactField>
           </div>

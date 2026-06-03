@@ -986,8 +986,9 @@ export interface AccountLocalGetMembershipPackagesRequest {
 }
 
 export interface AccountLocalAdminProvisionSiteLicenseRequest {
-  owner_account_id: string;
   actor_account_id: string;
+  bay_id: string;
+  owner_account_id?: string;
   name: string;
   organization_name: string;
   allowed_domains: string[];
@@ -1008,6 +1009,11 @@ export interface AccountLocalUpdateMembershipPackageRequest {
   seat_count?: number;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
+}
+
+export interface AccountLocalListSiteLicenseOverviewsRequest {
+  actor_account_id: string;
+  admin?: boolean;
 }
 
 export interface AccountLocalUpdateSiteLicenseRequest {
@@ -1695,6 +1701,7 @@ export type AccountLocalMethod =
   | "set-site-license-manager"
   | "remove-site-license-manager"
   | "get-site-license-overview"
+  | "list-site-license-overviews"
   | "request-site-license-pool"
   | "request-site-license-pool-for-account"
   | "review-site-license-pool-request"
@@ -2608,6 +2615,9 @@ export interface InterBayAccountLocalApi {
   adminProvisionSiteLicense: (
     opts: AccountLocalAdminProvisionSiteLicenseRequest,
   ) => Promise<SiteLicenseOverview>;
+  listSiteLicenseOverviews: (
+    opts: AccountLocalListSiteLicenseOverviewsRequest,
+  ) => Promise<SiteLicenseOverview[]>;
   updateMembershipPackage: (
     opts: AccountLocalUpdateMembershipPackageRequest,
   ) => Promise<MembershipPackageDetails>;
@@ -4484,6 +4494,15 @@ export function createInterBayAccountLocalClient({
       method: "admin-provision-site-license",
     }),
   });
+  const listSiteLicenseOverviewsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "listSiteLicenseOverviews">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "list-site-license-overviews",
+    }),
+  });
   const updateMembershipPackageClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "updateMembershipPackage">
   >({
@@ -4739,6 +4758,8 @@ export function createInterBayAccountLocalClient({
       await getMembershipPackagesClient.getMembershipPackages(opts),
     adminProvisionSiteLicense: async (opts) =>
       await adminProvisionSiteLicenseClient.adminProvisionSiteLicense(opts),
+    listSiteLicenseOverviews: async (opts) =>
+      await listSiteLicenseOverviewsClient.listSiteLicenseOverviews(opts),
     updateMembershipPackage: async (opts) =>
       await updateMembershipPackageClient.updateMembershipPackage(opts),
     updateSiteLicense: async (opts) =>
@@ -5280,6 +5301,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         adminProvisionSiteLicense: async (opts) =>
           await impl.adminProvisionSiteLicense(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "listSiteLicenseOverviews">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "list-site-license-overviews",
+      }),
+      impl: {
+        listSiteLicenseOverviews: async (opts) =>
+          await impl.listSiteLicenseOverviews(opts),
       },
     }),
     createServiceHandler<

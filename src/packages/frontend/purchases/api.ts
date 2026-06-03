@@ -388,6 +388,7 @@ export async function purchaseMembershipPackage(opts: {
 }
 
 export async function adminProvisionSiteLicense(opts: {
+  bay_id: string;
   owner_account_id?: string;
   name: string;
   organization_name: string;
@@ -409,6 +410,12 @@ export async function adminProvisionSiteLicense(opts: {
     ...opts,
     browser_id: webapp_client.browser_id,
   });
+}
+
+export async function listSiteLicenseOverviews(
+  opts: { admin?: boolean } = {},
+): Promise<SiteLicenseOverview[]> {
+  return await (await getPurchasesHubRpc()).listSiteLicenseOverviews(opts);
 }
 
 export async function updateMembershipPackage(opts: {

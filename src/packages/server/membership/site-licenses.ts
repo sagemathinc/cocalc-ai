@@ -7,6 +7,7 @@ import dayjs from "dayjs";
 
 import { getLogger } from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { listClusterBayInfos } from "@cocalc/server/bay-registry";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { createNotificationEventGraph } from "@cocalc/database/postgres/notifications-core";
 import { getClusterAccountsByIdsDirect } from "@cocalc/server/accounts/cluster-directory";
@@ -48,7 +49,6 @@ import {
   createMembershipPackage,
   getMembershipPackage,
   listMembershipPackageAssignments,
-  listMembershipPackageDetailsForOwner,
   revokeMembershipPackageSeat,
   updateMembershipPackage as updateMembershipPackageRecord,
 } from "./packages";
@@ -78,7 +78,8 @@ interface RawSiteLicenseRecord {
   id: string;
   name: string;
   organization_name: string;
-  owner_account_id: string;
+  bay_id?: string | null;
+  owner_account_id?: string | null;
   allowed_domains?: string[] | null;
   custom_terms_url?: string | null;
   custom_policy_url?: string | null;
@@ -213,7 +214,8 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
       id UUID PRIMARY KEY,
       name TEXT NOT NULL,
       organization_name TEXT NOT NULL,
-      owner_account_id UUID NOT NULL,
+      bay_id TEXT NOT NULL,
+      owner_account_id UUID,
       allowed_domains TEXT[],
       custom_terms_url TEXT,
       custom_policy_url TEXT,
@@ -227,6 +229,34 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
       updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await db.query(
+    "ALTER TABLE site_licenses ADD COLUMN IF NOT EXISTS bay_id TEXT",
+  );
+  await db.query(
+    "ALTER TABLE site_licenses ALTER COLUMN owner_account_id DROP NOT NULL",
+  );
+  await db.query(
+    `
+      UPDATE site_licenses s
+         SET bay_id = COALESCE(NULLIF(a.home_bay_id, ''), $1)
+        FROM accounts a
+       WHERE (s.bay_id IS NULL OR BTRIM(s.bay_id) = '')
+         AND s.owner_account_id = a.account_id
+    `,
+    [getConfiguredBayId()],
+  );
+  await db.query(
+    `
+      UPDATE site_licenses
+         SET bay_id = $1
+       WHERE bay_id IS NULL OR BTRIM(bay_id) = ''
+    `,
+    [getConfiguredBayId()],
+  );
+  await db.query("ALTER TABLE site_licenses ALTER COLUMN bay_id SET NOT NULL");
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_licenses_bay_id_idx ON site_licenses (bay_id)",
+  );
   await db.query(
     "CREATE INDEX IF NOT EXISTS site_licenses_owner_account_id_idx ON site_licenses (owner_account_id)",
   );
@@ -354,6 +384,18 @@ function normalizeString(value: unknown, field: string): string {
     throw Error(`${field} is required`);
   }
   return normalized;
+}
+
+function normalizeBayId(value: unknown): string {
+  return normalizeString(value, "bay_id");
+}
+
+async function assertSiteLicenseBayExists(bay_id: string): Promise<void> {
+  const normalizedBayId = normalizeBayId(bay_id);
+  const bays = await listClusterBayInfos();
+  if (!bays.some((bay) => bay.bay_id === normalizedBayId)) {
+    throw Error(`bay '${normalizedBayId}' not found`);
+  }
 }
 
 function normalizeOptionalString(value: unknown): string | null {
@@ -672,7 +714,8 @@ function getSiteLicenseAffiliationMetadata({
     site_license_id,
     site_license_name: site_license.name,
     organization_name: site_license.organization_name,
-    site_license_owner_account_id: site_license.owner_account_id,
+    site_license_bay_id: site_license.bay_id,
+    site_license_owner_account_id: site_license.owner_account_id ?? null,
     pool_name: `${pkg.metadata?.pool_name ?? ""}`.trim() || null,
     verification_policy: getPackageVerificationPolicy(pkg.metadata),
     exclusive_group,
@@ -919,7 +962,8 @@ function normalizeSiteLicenseRow(
     id: row.id,
     name: row.name,
     organization_name: row.organization_name,
-    owner_account_id: row.owner_account_id,
+    bay_id: `${row.bay_id ?? ""}`.trim() || getConfiguredBayId(),
+    owner_account_id: row.owner_account_id ?? null,
     allowed_domains: Array.isArray(row.allowed_domains)
       ? row.allowed_domains
       : [],
@@ -1784,6 +1828,65 @@ async function listSiteLicensePackageIdsByExclusiveGroup({
   return ids.length === 0 ? [] : ids;
 }
 
+async function listSiteLicensePackageDetails({
+  site_license_id,
+  client,
+}: {
+  site_license_id: string;
+  client?: PoolClient;
+}): Promise<MembershipPackageDetails[]> {
+  const { rows } = await getQueryClient(client).query<{
+    id: string;
+    owner_account_id: string;
+    kind: string;
+    membership_class: string;
+    seat_count: number | string;
+    purchase_id?: number | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+    metadata?: Record<string, unknown> | null;
+    created?: Date | string;
+    updated?: Date | string;
+  }>(
+    `SELECT id, owner_account_id, kind, membership_class, seat_count,
+            purchase_id, starts_at, expires_at, metadata, created, updated
+       FROM membership_packages
+      WHERE kind='site'
+        AND metadata->>'site_license_id'=$1
+      ORDER BY created ASC`,
+    [site_license_id],
+  );
+  const details: MembershipPackageDetails[] = [];
+  for (const row of rows) {
+    const assignments = await listMembershipPackageAssignments({
+      package_id: row.id,
+      include_revoked: true,
+      client,
+    });
+    const active_assignment_count = assignments.filter(
+      (assignment) => assignment.revoked_at == null,
+    ).length;
+    const seat_count = Number(row.seat_count);
+    details.push({
+      id: row.id,
+      owner_account_id: row.owner_account_id,
+      kind: "site",
+      membership_class: row.membership_class,
+      seat_count,
+      purchase_id: row.purchase_id ?? null,
+      starts_at: asDate(row.starts_at) ?? undefined,
+      expires_at: asDate(row.expires_at),
+      metadata: normalizeMetadata(row.metadata),
+      created: asDate(row.created) ?? undefined,
+      updated: asDate(row.updated) ?? undefined,
+      assignments,
+      active_assignment_count,
+      available_seat_count: Math.max(0, seat_count - active_assignment_count),
+    });
+  }
+  return details;
+}
+
 async function listSiteLicensePoolSummaries({
   site_license,
   client,
@@ -1791,8 +1894,8 @@ async function listSiteLicensePoolSummaries({
   site_license: SiteLicenseRecord;
   client?: PoolClient;
 }): Promise<SiteLicensePoolSummary[]> {
-  const details = await listMembershipPackageDetailsForOwner({
-    owner_account_id: site_license.owner_account_id,
+  const details = await listSiteLicensePackageDetails({
+    site_license_id: site_license.id,
     client,
   });
   const pendingCounts = await countPendingRequestsByPackage({
@@ -2023,7 +2126,8 @@ export async function refreshSiteLicenseAffiliationVerificationWithVerifiedEmail
           site_license_id: normalizedSiteLicenseId,
           site_license_name: siteLicense.name,
           organization_name: siteLicense.organization_name,
-          site_license_owner_account_id: siteLicense.owner_account_id,
+          site_license_bay_id: siteLicense.bay_id,
+          site_license_owner_account_id: siteLicense.owner_account_id ?? null,
           pool_name: pool.pool_name ?? null,
           verification_policy: "email-domain",
           exclusive_group: previousSeat.exclusive_group,
@@ -2052,7 +2156,7 @@ export async function refreshSiteLicenseAffiliationVerificationWithVerifiedEmail
         }
         if (assignment.grant_id) {
           await queueMembershipGrantSyncEffect({
-            owner_account_id: siteLicense.owner_account_id,
+            owner_account_id: pool.owner_account_id,
             package_id: pool.id,
             assignment_id: assignment.id,
             desired_payload: {
@@ -2309,6 +2413,56 @@ export async function getSiteLicenseOverview({
   });
 }
 
+export async function listSiteLicenseOverviews({
+  account_id,
+  admin = false,
+  client,
+}: {
+  account_id: string;
+  admin?: boolean;
+  client?: PoolClient;
+}): Promise<SiteLicenseOverview[]> {
+  const normalizedAccountId = normalizeAccountId(account_id);
+  await ensureSiteLicenseSchema(client);
+  const queryClient = getQueryClient(client);
+  const rows = admin
+    ? await (async () => {
+        if (!(await isAdmin(normalizedAccountId))) {
+          throw Error("must be an admin");
+        }
+        const { rows } = await queryClient.query<{ id: string }>(
+          `SELECT id
+             FROM site_licenses
+            ORDER BY updated DESC, created DESC, name ASC`,
+        );
+        return rows;
+      })()
+    : await (async () => {
+        const { rows } = await queryClient.query<{ id: string }>(
+          `SELECT s.id
+             FROM site_licenses s
+            WHERE EXISTS (
+              SELECT 1
+                FROM site_license_managers m
+               WHERE m.site_license_id = s.id
+                 AND m.account_id = $1
+                 AND m.revoked_at IS NULL
+            )
+            ORDER BY s.updated DESC, s.created DESC, s.name ASC`,
+          [normalizedAccountId],
+        );
+        return rows;
+      })();
+  return await Promise.all(
+    rows.map((row) =>
+      getSiteLicenseOverviewWithoutAuthorization({
+        site_license_id: row.id,
+        client,
+      }),
+    ),
+  );
+}
+
 async function getSiteLicenseOverviewWithoutAuthorization({
   site_license_id,
   client,
@@ -2346,6 +2500,7 @@ async function getSiteLicenseOverviewWithoutAuthorization({
 
 export async function adminProvisionSiteLicense({
   actor_account_id,
+  bay_id,
   owner_account_id,
   name,
   organization_name,
@@ -2362,7 +2517,8 @@ export async function adminProvisionSiteLicense({
   trusted_admin = false,
 }: {
   actor_account_id: string;
-  owner_account_id: string;
+  bay_id: string;
+  owner_account_id?: string | null;
   name: string;
   organization_name: string;
   allowed_domains: string[];
@@ -2381,10 +2537,12 @@ export async function adminProvisionSiteLicense({
   if (!trusted_admin && !(await isAdmin(actorAccountId))) {
     throw Error("must be an admin");
   }
-  const ownerAccountId = normalizeAccountId(
-    owner_account_id,
-    "owner_account_id",
-  );
+  const normalizedBayId = normalizeBayId(bay_id);
+  await assertSiteLicenseBayExists(normalizedBayId);
+  const ownerAccountId =
+    owner_account_id == null || `${owner_account_id}`.trim() === ""
+      ? null
+      : normalizeAccountId(owner_account_id, "owner_account_id");
   const normalizedDomains = normalizeAllowedDomains(allowed_domains);
   const normalizedPools = normalizePools(pools, normalizedDomains);
   const indexedDomains = collectSiteLicenseDomains({
@@ -2419,16 +2577,17 @@ export async function adminProvisionSiteLicense({
     }
     await client.query(
       `INSERT INTO site_licenses
-           (id, name, organization_name, owner_account_id, allowed_domains,
+           (id, name, organization_name, bay_id, owner_account_id, allowed_domains,
             custom_terms_url, custom_policy_url, terms_version_label,
             renewal_policy, overage_policy, starts_at, expires_at, metadata,
             created, updated)
          VALUES
-           ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,NOW(),NOW())`,
+           ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,NOW(),NOW())`,
       [
         site_license_id,
         normalizeString(name, "name"),
         normalizeString(organization_name, "organization_name"),
+        normalizedBayId,
         ownerAccountId,
         normalizedDomains,
         normalizeOptionalString(custom_terms_url),
@@ -2448,20 +2607,6 @@ export async function adminProvisionSiteLicense({
       expires_at,
       client,
     });
-    await client.query(
-      `INSERT INTO site_license_managers
-           (id, site_license_id, account_id, role, created_by_account_id,
-            metadata, created, updated)
-         VALUES ($1,$2,$3,$4,$5,$6::jsonb,NOW(),NOW())`,
-      [
-        uuid(),
-        site_license_id,
-        ownerAccountId,
-        "owner",
-        actorAccountId,
-        { provisioned_by_account_id: actorAccountId },
-      ],
-    );
     await recordSiteLicenseAuditEvent({
       site_license_id,
       action: "site-license-provisioned",
@@ -2473,26 +2618,16 @@ export async function adminProvisionSiteLicense({
           organization_name,
           "organization_name",
         ),
+        bay_id: normalizedBayId,
         allowed_domains: normalizedDomains,
         pool_count: normalizedPools.length,
-      },
-      client,
-    });
-    await recordSiteLicenseAuditEvent({
-      site_license_id,
-      action: "manager-added",
-      actor_account_id: actorAccountId,
-      target_account_id: ownerAccountId,
-      metadata: {
-        role: "owner",
-        source: "admin-provision-site-license",
       },
       client,
     });
     for (const pool of normalizedPools) {
       const packageId = await createMembershipPackage(
         {
-          owner_account_id: ownerAccountId,
+          owner_account_id: ownerAccountId ?? actorAccountId,
           kind: "site",
           membership_class: pool.membership_class,
           seat_count: pool.seat_count,
@@ -2501,6 +2636,7 @@ export async function adminProvisionSiteLicense({
           metadata: {
             ...normalizeMetadata(pool.metadata),
             site_license_id,
+            site_license_bay_id: normalizedBayId,
             pool_name: pool.pool_name,
             allowed_domains: pool.allowed_domains,
             requires_approval: pool.requires_approval,
@@ -2654,7 +2790,7 @@ export async function addSiteLicensePool({
     });
     const packageId = await createMembershipPackage(
       {
-        owner_account_id: siteLicense.owner_account_id,
+        owner_account_id: siteLicense.owner_account_id ?? actorAccountId,
         kind: "site",
         membership_class: normalizedPool.membership_class,
         seat_count: normalizedPool.seat_count,
@@ -2663,6 +2799,7 @@ export async function addSiteLicensePool({
         metadata: {
           ...normalizeMetadata(normalizedPool.metadata),
           site_license_id: siteLicenseId,
+          site_license_bay_id: siteLicense.bay_id,
           pool_name: normalizedPool.pool_name,
           allowed_domains: normalizedPool.allowed_domains,
           requires_approval: normalizedPool.requires_approval,
@@ -2904,19 +3041,6 @@ export async function setSiteLicenseManager({
       [siteLicenseId, targetAccountId],
     );
     const existing = rows[0] ? normalizeSiteLicenseManagerRow(rows[0]) : null;
-    if (existing?.role === "owner" && role !== "owner") {
-      const { rows: ownerRows } = await client.query<{ count: string }>(
-        `SELECT COUNT(*)::TEXT AS count
-           FROM site_license_managers
-          WHERE site_license_id=$1
-            AND role='owner'
-            AND revoked_at IS NULL`,
-        [siteLicenseId],
-      );
-      if (Number(ownerRows[0]?.count ?? 0) <= 1) {
-        throw Error("cannot remove the last site-license owner");
-      }
-    }
     if (existing) {
       await client.query(
         `UPDATE site_license_managers
@@ -2990,19 +3114,6 @@ export async function removeSiteLicenseManager({
         site_license_id: siteLicenseId,
         client,
       });
-    }
-    if (existing.role === "owner") {
-      const { rows: ownerRows } = await client.query<{ count: string }>(
-        `SELECT COUNT(*)::TEXT AS count
-           FROM site_license_managers
-          WHERE site_license_id=$1
-            AND role='owner'
-            AND revoked_at IS NULL`,
-        [siteLicenseId],
-      );
-      if (Number(ownerRows[0]?.count ?? 0) <= 1) {
-        throw Error("cannot remove the last site-license owner");
-      }
     }
     await client.query(
       `UPDATE site_license_managers
@@ -3400,7 +3511,7 @@ export async function reviewSiteLicensePoolRequest({
           client,
         );
         await queueMembershipClaimIdentitySyncEffect({
-          owner_account_id: siteLicense.owner_account_id,
+          owner_account_id: pkg.owner_account_id,
           package_id: pkg.id,
           assignment_id: assignment.id,
           desired_payload: {

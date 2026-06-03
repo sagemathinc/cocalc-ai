@@ -28,6 +28,7 @@ const claimMembershipPackageSeatMock = jest.fn();
 const adminProvisionSiteLicenseMock = jest.fn();
 const getVerifiedEmailAddressesForAccountMock = jest.fn();
 const getSiteLicenseOverviewMock = jest.fn();
+const listSiteLicenseOverviewsMock = jest.fn();
 const addSiteLicensePoolMock = jest.fn();
 const requestSiteLicensePoolMock = jest.fn();
 const getSiteLicenseAffiliationReverificationStatusForAccountMock = jest.fn();
@@ -50,6 +51,7 @@ const interBayGetClaimableMembershipPackagesForAccountMock = jest.fn();
 const interBayClaimMembershipPackageSeatForAccountMock = jest.fn();
 const interBayAdminProvisionSiteLicenseMock = jest.fn();
 const interBayGetSiteLicenseOverviewMock = jest.fn();
+const interBayListSiteLicenseOverviewsMock = jest.fn();
 const interBayAddSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolForAccountMock = jest.fn();
@@ -147,6 +149,8 @@ jest.mock("@cocalc/server/membership/site-licenses", () => ({
     getVerifiedEmailAddressesForAccountMock(...args),
   getSiteLicenseOverview: (...args: any[]) =>
     getSiteLicenseOverviewMock(...args),
+  listSiteLicenseOverviews: (...args: any[]) =>
+    listSiteLicenseOverviewsMock(...args),
   addSiteLicensePool: (...args: any[]) => addSiteLicensePoolMock(...args),
   requestSiteLicensePool: (...args: any[]) =>
     requestSiteLicensePoolMock(...args),
@@ -239,6 +243,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayAdminProvisionSiteLicenseMock(...args),
     getSiteLicenseOverview: (...args: any[]) =>
       interBayGetSiteLicenseOverviewMock(...args),
+    listSiteLicenseOverviews: (...args: any[]) =>
+      interBayListSiteLicenseOverviewsMock(...args),
     addSiteLicensePool: (...args: any[]) =>
       interBayAddSiteLicensePoolMock(...args),
     requestSiteLicensePool: (...args: any[]) =>
@@ -271,10 +277,12 @@ beforeEach(() => {
   updateSiteLicensePoolMock.mockReset();
   updateSiteLicenseMock.mockReset();
   addSiteLicensePoolMock.mockReset();
+  listSiteLicenseOverviewsMock.mockReset();
   setSiteLicenseManagerMock.mockReset();
   removeSiteLicenseManagerMock.mockReset();
   interBayUpdateSiteLicenseMock.mockReset();
   interBayAddSiteLicensePoolMock.mockReset();
+  interBayListSiteLicenseOverviewsMock.mockReset();
   interBaySetSiteLicenseManagerMock.mockReset();
   interBayRemoveSiteLicenseManagerMock.mockReset();
   getConfiguredClusterSeedBayIdMock.mockReset();
@@ -654,6 +662,7 @@ describe("purchases membership packages", () => {
     const result = await adminProvisionSiteLicense({
       account_id: "admin-1",
       session_hash: "session-1",
+      bay_id: "bay-0",
       owner_account_id: "owner-1",
       name: "Example Campus",
       organization_name: "Example University",
@@ -676,6 +685,7 @@ describe("purchases membership packages", () => {
     });
     expect(interBayAdminProvisionSiteLicenseMock).toHaveBeenCalledWith({
       actor_account_id: "admin-1",
+      bay_id: "bay-0",
       owner_account_id: "owner-1",
       name: "Example Campus",
       organization_name: "Example University",
@@ -709,6 +719,7 @@ describe("purchases membership packages", () => {
     await expect(
       adminProvisionSiteLicense({
         account_id: "admin-1",
+        bay_id: "bay-0",
         owner_account_id: "owner-1",
         name: "Example Campus",
         organization_name: "Example University",
@@ -739,6 +750,7 @@ describe("purchases membership packages", () => {
       adminProvisionSiteLicense({
         account_id: "admin-1",
         session_hash: "session-1",
+        bay_id: "bay-0",
         owner_account_id: "owner-1",
         name: "Example Campus",
         organization_name: "Example University",
@@ -785,6 +797,45 @@ describe("purchases membership packages", () => {
     });
     expect(getSiteLicenseOverviewMock).not.toHaveBeenCalled();
     expect(result.site_license.id).toBe("license-remote-1");
+  });
+
+  it("lists site-license overviews locally on the seed bay", async () => {
+    listSiteLicenseOverviewsMock.mockResolvedValue([
+      { site_license: { id: "license-1" } },
+    ]);
+
+    const { listSiteLicenseOverviews } = await import("./purchases");
+    const result = await listSiteLicenseOverviews({
+      account_id: "admin-1",
+      admin: true,
+    });
+
+    expect(listSiteLicenseOverviewsMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      admin: true,
+    });
+    expect(interBayListSiteLicenseOverviewsMock).not.toHaveBeenCalled();
+    expect(result).toEqual([{ site_license: { id: "license-1" } }]);
+  });
+
+  it("routes site-license overview lists to the seed bay", async () => {
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-2");
+    interBayListSiteLicenseOverviewsMock.mockResolvedValue([
+      { site_license: { id: "license-remote-1" } },
+    ]);
+
+    const { listSiteLicenseOverviews } = await import("./purchases");
+    const result = await listSiteLicenseOverviews({
+      account_id: "admin-1",
+      admin: true,
+    });
+
+    expect(interBayListSiteLicenseOverviewsMock).toHaveBeenCalledWith({
+      actor_account_id: "admin-1",
+      admin: true,
+    });
+    expect(listSiteLicenseOverviewsMock).not.toHaveBeenCalled();
+    expect(result).toEqual([{ site_license: { id: "license-remote-1" } }]);
   });
 
   it("routes site-license setting and manager edits to the seed bay", async () => {
