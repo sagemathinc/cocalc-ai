@@ -21,6 +21,56 @@ This plan extends the current `scalable-architecture.md` rule:
 - anything else must either be seed-global, explicitly portable with one of
   the above, or explicitly disposable/rebuildable.
 
+## Architecture Motivation
+
+The multibay architecture is not primarily a high-availability design.
+
+Reliability and high availability are handled within each bay. It is acceptable
+for a piece of authoritative data to live on exactly one bay. The correctness
+requirement is not "every bay has every important row"; the requirement is
+"every row has a clear authoritative bay, and code always knows where that is."
+
+The primary goal is scale:
+
+- support millions of simultaneous active users by spreading control-plane load
+  across many bays;
+- avoid a design where every active browser, project, and control-plane event
+  depends on one central hub/database;
+- make scale mostly an operations/spending problem rather than a future
+  architecture replacement.
+
+The secondary goal is latency:
+
+- place account home bays near users when useful;
+- place project owning bays and project hosts near active compute/data-plane
+  traffic when useful;
+- keep browser-to-project-host traffic direct whenever possible.
+
+The critical operational constraint is drainability:
+
+- any non-seed bay must be drainable;
+- draining a non-seed bay may cause small planned downtime for affected
+  accounts, projects, and project hosts;
+- draining a non-seed bay must not lose durable state that is outside those
+  three movable ownership domains;
+- the seed bay exists for the lifetime of the cluster and is not removable;
+- the seed bay may still be drained of accounts, projects, and project hosts,
+  leaving only seed-global state.
+
+This motivation affects data-location tradeoffs:
+
+- if all bays are in one low-latency cluster, seed roundtrips and iterating over
+  all bays are often acceptable implementation shortcuts;
+- if bays become geographically distributed, frequent seed roundtrips become a
+  latency and reliability tax, so attached bays need local mirrors/projections
+  for hot read paths;
+- seed-global state is appropriate for low-volume, high-value, commercial,
+  security, and cluster configuration data;
+- account/project/host owned state is appropriate for high-volume operational
+  data that benefits from horizontal scaling and locality;
+- global config should usually be seed-authoritative but mirrored to attached
+  bays, so normal reads stay local while writes remain unambiguous.
+
 ## Current Problem
 
 Several active tables are neither obviously seed-global nor included in account,
