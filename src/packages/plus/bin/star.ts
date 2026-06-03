@@ -142,7 +142,9 @@ async function chooseLocalPort(raw?: string): Promise<number> {
     if (await canBindPort(STAR_REMOTE_PORT)) {
       return STAR_REMOTE_PORT;
     }
-    return await pickFreePort();
+    const port = await pickFreePort();
+    console.log(`Local port ${STAR_REMOTE_PORT} is in use; using ${port}.`);
+    return port;
   }
   const port = Number(raw);
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
@@ -301,7 +303,11 @@ export async function main(argv: string[] = process.argv.slice(2)) {
       "Star installer URL",
       DEFAULT_INSTALLER_URL,
     )
-    .option("--local-port <n|auto>", "local forwarded port", "9100")
+    .option(
+      "--local-port <n|auto>",
+      "local forwarded port; auto prefers 9100 and falls back to a free port",
+      "auto",
+    )
     .option("--no-install", "fail instead of installing Star when missing")
     .option("--no-open", "do not try to open the browser")
     .option(
@@ -314,7 +320,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
     .option("--proxy-jump <host>")
     .addHelpText(
       "after",
-      `\nWhat it does:\n  1. SSH to the target.\n  2. Check whether CoCalc Star is installed.\n  3. If missing, run the public Star installer with passwordless sudo.\n  4. Open an SSH tunnel from localhost:<port> to the remote Star server.\n\nRequirements:\n  - A dedicated Ubuntu VM.\n  - SSH access to the target.\n  - Passwordless sudo on the target for install or upgrade.\n\nExamples:\n  cocalc-plus star ubuntu@1.2.3.4\n  cocalc-plus star ubuntu@1.2.3.4 --local-port 9500 --no-open\n  cocalc-plus star ubuntu@1.2.3.4 --status-only\n  cocalc-plus star ubuntu@1.2.3.4 --identity ~/.ssh/id_ed25519\n`,
+      `\nWhat it does:\n  1. SSH to the target.\n  2. Check whether CoCalc Star is installed.\n  3. If missing, run the public Star installer with passwordless sudo.\n  4. Open an SSH tunnel from localhost:<port> to the remote Star server.\n  5. Print the local bootstrap URL to open in your browser.\n\nRequirements:\n  - A dedicated Ubuntu VM.\n  - SSH access to the target.\n  - Passwordless sudo on the target for install or upgrade.\n\nPort forwarding:\n  --local-port auto is the default. It uses 9100 when free, otherwise it picks a free local port and prints the exact URL.\n\nExamples:\n  cocalc-plus star ubuntu@1.2.3.4\n  cocalc-plus star ubuntu@1.2.3.4 --local-port 9500 --no-open\n  cocalc-plus star ubuntu@1.2.3.4 --status-only\n  cocalc-plus star ubuntu@1.2.3.4 --identity ~/.ssh/id_ed25519\n`,
     )
     .action(async (target: string | undefined, options) => {
       const finalTarget = options.target ?? target;
