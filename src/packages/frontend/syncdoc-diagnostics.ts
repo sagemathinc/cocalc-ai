@@ -3,7 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { redux, redux_name } from "@cocalc/frontend/app-framework";
+import {
+  collectReduxHookSubscriptionDiagnostics,
+  redux,
+  redux_name,
+} from "@cocalc/frontend/app-framework";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 
 export const SYNCDOC_DIAGNOSTICS_STORAGE_KEY = "cocalc.debug.syncdoc";
@@ -207,7 +211,10 @@ export function collectSyncdocDiagnostics({
           : document.hasFocus(),
     },
     conat: safeCall(() => conatClient?.debugReconnectState?.()),
-    redux: collectReduxListenerDiagnostics(),
+    redux: {
+      listeners: collectReduxListenerDiagnostics(),
+      hooks: collectReduxHookSubscriptionDiagnostics(),
+    },
     projects: collectProjectDiagnostics(),
     recentEvents: diagnosticEvents.slice(),
   };

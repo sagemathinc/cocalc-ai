@@ -45,58 +45,7 @@ import React, { useEffect, useRef } from "react";
 import * as types from "./actions-and-stores";
 
 export function useReduxNamedStore(path: string[]) {
-  const [value, set_value] = React.useState(() => {
-    return redux.getStore(path[0])?.getIn(path.slice(1) as any) as any;
-  });
-
-  useEffect(() => {
-    if (!path[0]) {
-      // Special case -- we allow passing "" for the name of the store and get out undefined.
-      // This is useful when using the useRedux hook but when the name of the store isn't known initially.
-      return undefined;
-    }
-    const store = redux.getStore(path[0]);
-    if (store == null) {
-      // This could happen if some input is invalid, e.g., trying to create one of these
-      // redux hooks with an invalid project_id. There will be other warnings in the logs
-      // about that.  It's better at this point to warn once in the logs, rather than completely
-      // crash the client.
-      console.warn(`store "${path[0]}" must exist; path=`, path);
-      return undefined;
-    }
-    const subpath = path.slice(1);
-    let last_value = value;
-    const f = () => {
-      if (!f.is_mounted) {
-        // CRITICAL: even after removing the change listener, sometimes f gets called;
-        // I don't know why EventEmitter has those semantics, but it definitely does.
-        // That's why we *also* maintain this is_mounted flag.
-        return;
-      }
-      const new_value = store.getIn(subpath as any);
-      if (last_value !== new_value) {
-        /*
-        console.log("useReduxNamedStore change ", {
-          name: path[0],
-          path: JSON.stringify(path),
-          new_value,
-          last_value,
-        });
-        */
-        last_value = new_value;
-        set_value(new_value);
-      }
-    };
-    f.is_mounted = true;
-    store.on("change", f);
-    f();
-    return () => {
-      f.is_mounted = false;
-      store.removeListener("change", f);
-    };
-  }, path);
-
-  return value;
+  return useRedux(path);
 }
 
 function useReduxEditorStore(
@@ -326,76 +275,259 @@ function subscribeReduxValue(
   resolved: ResolvedReduxPath,
   onValue: (value: any) => void,
 ) {
-  switch (resolved.kind) {
-    case "named": {
-      const [name, ...subpath] = resolved.path;
-      if (!name) {
-        return () => {};
-      }
-      const store = redux.getStore(name);
-      if (store == null) {
-        console.warn(`store "${name}" must exist; path=`, resolved.path);
-        return () => {};
-      }
-      const handleChange = () => {
-        onValue(store.getIn(subpath as any));
-      };
-      store.on("change", handleChange);
-      handleChange();
-      return () => {
-        store.removeListener("change", handleChange);
-      };
+  return getSharedReduxSubscription(resolved).subscribe(onValue);
+}
+
+type ReduxValueSubscriber = (value: any) => void;
+
+export interface ReduxHookSubscriptionDiagnostics {
+  key: string;
+  kind: ResolvedReduxPath["kind"];
+  storeName?: string;
+  projectId?: string;
+  filename?: string;
+  path: string[];
+  subscriberCount: number;
+  storeAttached: boolean;
+  waitingForStore: boolean;
+}
+
+class SharedReduxSubscription {
+  private subscribers = new Set<ReduxValueSubscriber>();
+  private unsubscribeFromStore: () => void = () => {};
+  private active = false;
+  private storeAttached = false;
+  private waitingForStore = false;
+  private lastValue: any;
+
+  constructor(
+    private readonly key: string,
+    private readonly resolved: ResolvedReduxPath,
+  ) {
+    this.lastValue = getReduxValue(resolved);
+  }
+
+  subscribe(onValue: ReduxValueSubscriber): () => void {
+    this.subscribers.add(onValue);
+    if (!this.active) {
+      this.start();
     }
-    case "project": {
-      const store = redux.getProjectStore(resolved.projectId);
-      const handleChange = (obj) => {
-        if (obj == null) return;
-        onValue(
-          obj.getIn(resolved.path as [string, string, string, string, string]),
-        );
-      };
-      store.on("change", handleChange);
-      handleChange(store);
-      return () => {
-        store.removeListener("change", handleChange);
-      };
-    }
-    case "editor": {
-      let active = true;
-      let store = redux.getEditorStore(resolved.projectId, resolved.filename);
-      const handleChange = (obj) => {
-        if (obj == null || !active) return;
-        onValue(
-          obj.getIn(resolved.path as [string, string, string, string, string]),
-        );
-      };
-      handleChange(store);
-      if (store != null) {
-        store.on("change", handleChange);
-        return () => {
-          active = false;
-          store?.removeListener("change", handleChange);
-        };
+    onValue(this.lastValue);
+    return () => {
+      this.subscribers.delete(onValue);
+      if (this.subscribers.size === 0) {
+        this.stop();
+        sharedReduxSubscriptions.delete(this.key);
       }
-      const unsubscribe = redux.reduxStore.subscribe(() => {
-        if (!active) {
-          unsubscribe();
-          return;
-        }
-        store = redux.getEditorStore(resolved.projectId, resolved.filename);
-        if (store != null) {
-          unsubscribe();
-          handleChange(store);
-          store.on("change", handleChange);
-        }
-      });
-      return () => {
-        active = false;
-        unsubscribe();
-        store?.removeListener("change", handleChange);
-      };
+    };
+  }
+
+  diagnostics(): ReduxHookSubscriptionDiagnostics {
+    return {
+      key: this.key,
+      kind: this.resolved.kind,
+      storeName: storeNameFromResolvedReduxPath(this.resolved),
+      projectId:
+        this.resolved.kind === "project" || this.resolved.kind === "editor"
+          ? this.resolved.projectId
+          : undefined,
+      filename:
+        this.resolved.kind === "editor" ? this.resolved.filename : undefined,
+      path: pathFromResolvedReduxPath(this.resolved),
+      subscriberCount: this.subscribers.size,
+      storeAttached: this.storeAttached,
+      waitingForStore: this.waitingForStore,
+    };
+  }
+
+  private start(): void {
+    this.active = true;
+    switch (this.resolved.kind) {
+      case "named":
+        this.startNamed();
+        return;
+      case "project":
+        this.startProject();
+        return;
+      case "editor":
+        this.startEditor();
+        return;
     }
   }
+
+  private stop(): void {
+    this.active = false;
+    this.storeAttached = false;
+    this.waitingForStore = false;
+    this.unsubscribeFromStore();
+    this.unsubscribeFromStore = () => {};
+  }
+
+  private emit(value: any): void {
+    if (this.lastValue === value) return;
+    this.lastValue = value;
+    for (const subscriber of Array.from(this.subscribers)) {
+      subscriber(value);
+    }
+  }
+
+  private startNamed(): void {
+    const [name, ...subpath] = this.resolved.path;
+    if (!name) return;
+    const store = redux.getStore(name);
+    if (store == null) {
+      console.warn(`store "${name}" must exist; path=`, this.resolved.path);
+      return;
+    }
+    const handleChange = () => {
+      this.emit(store.getIn(subpath as any));
+    };
+    store.on("change", handleChange);
+    this.storeAttached = true;
+    this.unsubscribeFromStore = () => {
+      store.removeListener("change", handleChange);
+    };
+    handleChange();
+  }
+
+  private startProject(): void {
+    if (this.resolved.kind !== "project") return;
+    const resolved = this.resolved;
+    const store = redux.getProjectStore(resolved.projectId);
+    const handleChange = (obj) => {
+      if (obj == null) return;
+      this.emit(
+        obj.getIn(resolved.path as [string, string, string, string, string]),
+      );
+    };
+    store.on("change", handleChange);
+    this.storeAttached = true;
+    this.unsubscribeFromStore = () => {
+      store.removeListener("change", handleChange);
+    };
+    handleChange(store);
+  }
+
+  private startEditor(): void {
+    if (this.resolved.kind !== "editor") return;
+    const resolved = this.resolved;
+    let store = redux.getEditorStore(resolved.projectId, resolved.filename);
+    let handleChange: ((obj) => void) | undefined;
+
+    const attachStore = (nextStore) => {
+      store = nextStore;
+      handleChange = (obj) => {
+        if (obj == null || !this.active) return;
+        this.emit(
+          obj.getIn(resolved.path as [string, string, string, string, string]),
+        );
+      };
+      this.waitingForStore = false;
+      this.storeAttached = true;
+      store.on("change", handleChange);
+      handleChange(store);
+    };
+
+    if (store != null) {
+      attachStore(store);
+      this.unsubscribeFromStore = () => {
+        if (handleChange != null) {
+          store?.removeListener("change", handleChange);
+        }
+      };
+      return;
+    }
+
+    this.waitingForStore = true;
+    const unsubscribe = redux.reduxStore.subscribe(() => {
+      if (!this.active) {
+        unsubscribe();
+        return;
+      }
+      const nextStore = redux.getEditorStore(
+        resolved.projectId,
+        resolved.filename,
+      );
+      if (nextStore != null) {
+        unsubscribe();
+        attachStore(nextStore);
+      }
+    });
+    this.unsubscribeFromStore = () => {
+      unsubscribe();
+      if (handleChange != null) {
+        store?.removeListener("change", handleChange);
+      }
+    };
+  }
+}
+
+const sharedReduxSubscriptions = new Map<string, SharedReduxSubscription>();
+
+function getSharedReduxSubscription(
+  resolved: ResolvedReduxPath,
+): SharedReduxSubscription {
+  const key = resolvedReduxPathKey(resolved);
+  let subscription = sharedReduxSubscriptions.get(key);
+  if (subscription == null) {
+    subscription = new SharedReduxSubscription(key, resolved);
+    sharedReduxSubscriptions.set(key, subscription);
+  }
+  return subscription;
+}
+
+function resolvedReduxPathKey(resolved: ResolvedReduxPath): string {
+  switch (resolved.kind) {
+    case "named":
+      return JSON.stringify(["named", resolved.path]);
+    case "project":
+      return JSON.stringify(["project", resolved.projectId, resolved.path]);
+    case "editor":
+      return JSON.stringify([
+        "editor",
+        resolved.projectId,
+        resolved.filename,
+        resolved.path,
+      ]);
+  }
+}
+
+function storeNameFromResolvedReduxPath(
+  resolved: ResolvedReduxPath,
+): string | undefined {
+  switch (resolved.kind) {
+    case "named":
+      return resolved.path[0];
+    case "project":
+      return `project-${resolved.projectId}`;
+    case "editor":
+      return `editor-${resolved.projectId}-${resolved.filename}`;
+  }
+}
+
+function pathFromResolvedReduxPath(resolved: ResolvedReduxPath): string[] {
+  switch (resolved.kind) {
+    case "named":
+      return resolved.path.slice(1);
+    case "project":
+    case "editor":
+      return resolved.path;
+  }
+}
+
+export function collectReduxHookSubscriptionDiagnostics() {
+  const subscriptions = Array.from(sharedReduxSubscriptions.values()).map(
+    (subscription) => subscription.diagnostics(),
+  );
+  subscriptions.sort((a, b) => b.subscriberCount - a.subscriberCount);
+  return {
+    subscriptionCount: subscriptions.length,
+    totalSubscribers: subscriptions.reduce(
+      (sum, subscription) => sum + subscription.subscriberCount,
+      0,
+    ),
+    topSubscriptions: subscriptions.slice(0, 50),
+  };
 }
 
 /*
