@@ -230,16 +230,21 @@ status() {
 
   printf '\nAPI customize:\n'
   if curl -fsS "${STAR_API}/customize" >"$customize_json"; then
-    jq '.configuration | {
-      site_name,
-      is_launchpad,
-      project_hosts_local_enabled,
-      project_hosts_self_host_alpha_enabled,
-      project_rootfs_default_image,
-      project_rootfs_prepull_images,
-      cloudflare_mode,
-      launchpad_cloudflare_tunnel_status
-    }' "$customize_json"
+    if command -v jq >/dev/null 2>&1; then
+      jq '.configuration | {
+        site_name,
+        is_launchpad,
+        project_hosts_local_enabled,
+        project_hosts_self_host_alpha_enabled,
+        project_rootfs_default_image,
+        project_rootfs_prepull_images,
+        cloudflare_mode,
+        launchpad_cloudflare_tunnel_status
+      }' "$customize_json"
+    else
+      printf 'customize endpoint is reachable at %s/customize\n' "$STAR_API"
+      log "jq is not installed; skipping formatted customize output"
+    fi
   else
     log "customize endpoint is not reachable at ${STAR_API}"
   fi
