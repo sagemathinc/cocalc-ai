@@ -72,6 +72,7 @@ import {
   updateSiteLicense,
 } from "@cocalc/frontend/purchases/api";
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
+import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   ClaimableMembershipPackage,
@@ -917,6 +918,7 @@ export function MembershipPackageManager({
   user_account_id,
 }: Props) {
   const account_id = useTypedRedux("account", "account_id");
+  const zendesk = !!useTypedRedux("customize", "zendesk");
   const ownerAccountId = user_account_id ?? account_id;
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -1162,7 +1164,28 @@ export function MembershipPackageManager({
               type="info"
               showIcon
               title="No site licenses to manage"
-              description="Site-license owners and managers see their license dashboards here after an admin attaches them."
+              description={
+                <Space orientation="vertical">
+                  <Text>
+                    Site-license owners and managers see their license
+                    dashboards here after an admin attaches them.
+                  </Text>
+                  {zendesk ? (
+                    <Button
+                      type="primary"
+                      onClick={() =>
+                        openSupportTab({
+                          body: "I would like to discuss setting up or managing a CoCalc site license.",
+                          subject: "Site license request",
+                          type: "purchase",
+                        })
+                      }
+                    >
+                      File a support ticket
+                    </Button>
+                  ) : null}
+                </Space>
+              }
             />
           ) : null}
           {showSiteLicenses ? (
