@@ -19,7 +19,6 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import stripeName from "@cocalc/util/stripe/name";
 import { InvoicesData } from "@cocalc/util/types/stripe";
 import getConn from "./connection";
-import salesTax from "./sales-tax";
 
 import getLogger from "@cocalc/backend/logger";
 const logger = getLogger("stripe-client");
@@ -298,10 +297,6 @@ export class StripeClient {
     const info: any = get_nonnull_field(mesg, "info");
     await (await getConn()).sources.update(card_id, info);
     await this.update_database();
-  }
-
-  public async sales_tax(customer_id: string): Promise<number> {
-    return await salesTax(customer_id);
   }
 
   public async mesg_update_subscription(mesg: Message): Promise<void> {

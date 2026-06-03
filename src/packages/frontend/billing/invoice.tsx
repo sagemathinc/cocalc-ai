@@ -91,10 +91,13 @@ export const Invoice: React.FC<Props> = ({ invoice }) => {
   }
 
   function render_tax(): React.JSX.Element {
+    const taxPercent = invoice.get("tax_percent");
     return (
       <Row key="tax" style={{ borderBottom: "1px solid #aaa" }}>
         <Col sm={1} />
-        <Col sm={9}>WA State Sales Tax ({invoice.get("tax_percent")}%)</Col>
+        <Col sm={9}>
+          Sales Tax{taxPercent != null ? ` (${taxPercent}%)` : ""}
+        </Col>
         <Col sm={2}>
           {render_amount(invoice.get("tax"), invoice.get("currency"))}
         </Col>

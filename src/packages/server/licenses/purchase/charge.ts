@@ -21,7 +21,6 @@ import { decimalToStripe } from "@cocalc/util/stripe/calc";
 export type Purchase = {
   type: "invoice" | "subscription"; // what was purchased
   id: string; // the id of the *invoice* in stripe
-  tax_percent: number; // tax rate (e.g., 0.085)
 };
 
 export async function chargeUser(
@@ -194,17 +193,14 @@ async function stripePurchaseProduct(
     }
   }
   logger.debug("stripePurchaseProduct: got price", price);
-  let tax_percent;
   if (info.type == "vouchers") {
-    // (1) there is no period for a voucher, (2) we charge them the tax
-    // amount we quoted the when creating the vouchers.
+    // There is no period for a voucher.
     await conn.invoiceItems.create({
       customer,
       pricing: { price },
       quantity,
       metadata: info as any,
     });
-    tax_percent = info.tax / Math.max(0.001, info.cost);
   } else {
     if (info.start == null || info.end == null) {
       throw Error("start and end must be defined");
@@ -221,20 +217,14 @@ async function stripePurchaseProduct(
       quantity,
       period,
     });
-    tax_percent = await stripe.sales_tax(customer);
   }
 
   // TODO: improve later to handle case of *multiple* items on one invoice
-
-  // TODO: tax_percent is DEPRECATED but not gone (see stripeCreateSubscription below).
 
   const options = {
     customer,
     auto_advance: true,
     collection_method: "charge_automatically",
-    tax_percent: tax_percent
-      ? Math.round(tax_percent * 100 * 100) / 100
-      : undefined,
   } as any;
 
   logger.debug("stripePurchaseProduct options=", JSON.stringify(options));
@@ -286,7 +276,7 @@ async function stripePurchaseProduct(
   );
   await stripe.update_database();
 
-  return { type: "invoice", id: invoice_id, tax_percent };
+  return { type: "invoice", id: invoice_id };
 }
 
 /**
@@ -344,26 +334,16 @@ async function stripeCreateSubscription(
 
   // TODO: will need to improve to handle case of *multiple* items on one subscription
 
-  // CRITICAL: if we don't just multiply by 100, since then sometimes
-  // stripe comes back with an error like this
-  //    "Error: Invalid decimal: 8.799999999999999; must contain at maximum two decimal places."
-  // TODO: tax_percent is DEPRECATED -- https://stripe.com/docs/billing/migration/taxes
-  // but fortunately it still works so we can rewrite this later.
-  const tax_percent = await stripe.sales_tax(customer);
-
   const options = {
     customer,
     // see https://github.com/sagemathinc/cocalc/issues/5234 for
     // why this payment_behavior.
     payment_behavior: "error_if_incomplete" as "error_if_incomplete",
     items: [{ price, quantity }],
-    tax_percent: tax_percent
-      ? Math.round(tax_percent * 100 * 100) / 100
-      : undefined,
   };
 
   const { id } = await conn.subscriptions.create(options);
   await stripe.update_database();
 
-  return { type: "subscription", id, tax_percent };
+  return { type: "subscription", id };
 }

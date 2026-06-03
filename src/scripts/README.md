@@ -13,8 +13,6 @@ documented, or referenced from code.
 - `check_doc_urls.py` and `check_doc_urls.skip`: documentation/link checker.
 - `export-api-doc.ts`: export API documentation JSON.
 - `run-ci.sh`: local full clean/build/test helper.
-- `sales_tax.py`: historical Washington sales-tax generator referenced by
-  `packages/util/stripe/sales-tax.ts`; this should be modernized before reuse.
 
 ## Active Product And Release Workflows
 
