@@ -37,6 +37,7 @@ import {
 } from "./theme";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { normalizeProjectStateForDisplay } from "./host-operational";
+import { NewProjectCreator } from "./create-project";
 
 const PROJECT_NAME_STYLE: CSS = {
   whiteSpace: "nowrap",
@@ -259,6 +260,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
   const [mode, setMode] = useState<ProjectsNavMode>(getStoredProjectsNavMode);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
+  const [createPanelOpen, setCreatePanelOpen] = useState(false);
   const selectRef = useRef<any>(null);
 
   useEffect(() => {
@@ -358,7 +360,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
 
   function onEdit(project_id: string, action: "add" | "remove") {
     if (action === "add") {
-      actions.set_active_tab("projects");
+      setCreatePanelOpen(true);
     } else {
       // close given project
       actions.close_project_tab(project_id);
@@ -626,6 +628,11 @@ export function ProjectsNav(props: ProjectsNavProps) {
         ...style,
       }}
     >
+      <NewProjectCreator
+        default_value=""
+        open={createPanelOpen}
+        onClose={() => setCreatePanelOpen(false)}
+      />
       {mode === "dropdown" ? (
         renderDropdownNav()
       ) : (

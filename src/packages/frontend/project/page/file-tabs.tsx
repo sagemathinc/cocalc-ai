@@ -213,7 +213,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
   const onEdit = (key: string, action: "add" | "remove") => {
     if (actions == null) return;
     if (action == "add") {
-      actions.set_active_tab("files");
+      actions.set_active_tab("new");
       return;
     }
     if (key) {
