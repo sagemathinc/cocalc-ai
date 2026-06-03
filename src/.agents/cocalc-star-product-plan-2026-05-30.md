@@ -56,10 +56,9 @@ Implementation status as of 2026-06-02:
 - The default RootFS image is now `buildpack-deps:26.04`, and the installer
   caches/publishes the managed default RootFS so project backups work without
   asking the operator to publish the launch image first.
-- Current major UX gap: after installation succeeds, the terminal output must
-  give a clear, copy/pasteable next step for reaching the private bootstrap URL.
-  Today the operator still has to remember or derive the SSH `-L` port-forward
-  command.
+- Raw installer and `star.sh status` access instructions now print
+  copy/pasteable SSH tunnel guidance, the local bootstrap URL, and alternate
+  local-port guidance while the bootstrap URL remains valid.
 - Current implementation is a validated tarball + installer deployment, not a
   final marketplace image or SEA binary. SEA is now optional rather than a hard
   product requirement.
@@ -1497,7 +1496,8 @@ VM", is complete.
 
 Current recommended next step:
 
-1. Polish the post-install terminal output:
+1. Polish the post-install terminal output. Done for the raw installer and
+   `star.sh status`:
    - print `CoCalc Star is running`,
    - print a complete `ssh -L 9100:127.0.0.1:9100 ...` command when possible,
    - print the matching `http://127.0.0.1:9100/...` bootstrap URL,
