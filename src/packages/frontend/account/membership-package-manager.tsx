@@ -21,6 +21,7 @@ import {
   Space,
   Spin,
   Statistic,
+  Table,
   Tag,
   Typography,
 } from "antd";
@@ -423,6 +424,35 @@ function getPolicyColor(policy: SiteLicenseVerificationPolicy): string {
     case "sso-affiliation":
       return "blue";
   }
+}
+
+function getSiteLicensePeriodLabel(overview: SiteLicenseOverview): string {
+  const starts = dateLabel(overview.site_license.starts_at);
+  const expires = dateLabel(overview.site_license.expires_at);
+  if (starts === "none" && expires === "none") {
+    return "no dates";
+  }
+  if (starts === "none") {
+    return `until ${expires}`;
+  }
+  if (expires === "none") {
+    return `from ${starts}`;
+  }
+  return `${starts} to ${expires}`;
+}
+
+function getSiteLicenseSearchText(overview: SiteLicenseOverview): string {
+  return [
+    overview.site_license.id,
+    overview.site_license.name,
+    overview.site_license.organization_name,
+    overview.site_license.bay_id,
+    ...(overview.site_license.allowed_domains ?? []),
+    ...overview.pools.map((pool) => pool.pool_name),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 }
 
 export function ClaimableMembershipPackagesPanel({
@@ -1164,6 +1194,8 @@ export function SiteLicenseAdminPanel({
   const [error, setError] = useState("");
   const [refreshToken, setRefreshToken] = useState(0);
   const [provisionOpen, setProvisionOpen] = useState(false);
+  const [licenseSearch, setLicenseSearch] = useState("");
+  const [selectedSiteLicenseId, setSelectedSiteLicenseId] = useState("");
   const [editTarget, setEditTarget] = useState<MembershipPackageDetails | null>(
     null,
   );
@@ -1246,6 +1278,36 @@ export function SiteLicenseAdminPanel({
     onChanged?.();
   }
 
+  const filteredOverviews = useMemo(() => {
+    const needle = licenseSearch.trim().toLowerCase();
+    if (!needle) {
+      return overviews;
+    }
+    return overviews.filter((overview) =>
+      getSiteLicenseSearchText(overview).includes(needle),
+    );
+  }, [licenseSearch, overviews]);
+
+  useEffect(() => {
+    if (filteredOverviews.length === 0) {
+      if (selectedSiteLicenseId) {
+        setSelectedSiteLicenseId("");
+      }
+      return;
+    }
+    if (
+      !filteredOverviews.some(
+        (overview) => overview.site_license.id === selectedSiteLicenseId,
+      )
+    ) {
+      setSelectedSiteLicenseId(filteredOverviews[0].site_license.id);
+    }
+  }, [filteredOverviews, selectedSiteLicenseId]);
+
+  const selectedOverview = filteredOverviews.find(
+    (overview) => overview.site_license.id === selectedSiteLicenseId,
+  );
+
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <Space wrap>
@@ -1255,6 +1317,14 @@ export function SiteLicenseAdminPanel({
         <Button onClick={() => setRefreshToken((value) => value + 1)}>
           <Icon name="refresh" /> Refresh list
         </Button>
+        <Input.Search
+          allowClear
+          placeholder="Find by license, organization, domain, or bay"
+          style={{ width: 360 }}
+          value={licenseSearch}
+          onChange={(event) => setLicenseSearch(event.target.value)}
+          onSearch={setLicenseSearch}
+        />
       </Space>
       {error ? <Alert type="error" showIcon title={error} /> : null}
       {!loading && overviews.length === 0 && !error ? (
@@ -1265,8 +1335,24 @@ export function SiteLicenseAdminPanel({
           description="Provision a site license here, then add customer owners or managers after the license has been checked."
         />
       ) : null}
+      {overviews.length > 0 ? (
+        <SiteLicenseSummaryTable
+          overviews={filteredOverviews}
+          selectedSiteLicenseId={selectedSiteLicenseId}
+          totalCount={overviews.length}
+          onSelect={setSelectedSiteLicenseId}
+        />
+      ) : null}
+      {overviews.length > 0 && filteredOverviews.length === 0 ? (
+        <Alert
+          type="info"
+          showIcon
+          title="No matching site licenses"
+          description="Clear the search to show all configured site licenses."
+        />
+      ) : null}
       <SiteLicenseDashboard
-        overviews={overviews}
+        overviews={selectedOverview ? [selectedOverview] : []}
         loading={loading}
         error=""
         tiers={tiers}
@@ -1390,6 +1476,128 @@ function SiteLicenseMetricCard({
         {value}
       </div>
     </div>
+  );
+}
+
+function SiteLicenseSummaryTable({
+  overviews,
+  selectedSiteLicenseId,
+  totalCount,
+  onSelect,
+}: {
+  overviews: SiteLicenseOverview[];
+  selectedSiteLicenseId: string;
+  totalCount: number;
+  onSelect: (siteLicenseId: string) => void;
+}) {
+  return (
+    <Card size="small">
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <Space wrap style={{ justifyContent: "space-between", width: "100%" }}>
+          <Text strong>Site licenses</Text>
+          <Text type="secondary">
+            Showing {overviews.length} of {totalCount}
+          </Text>
+        </Space>
+        <Table<SiteLicenseOverview>
+          dataSource={overviews}
+          pagination={false}
+          rowKey={(overview) => overview.site_license.id}
+          rowSelection={{
+            onChange: (keys) => {
+              const [key] = keys;
+              if (key != null) {
+                onSelect(`${key}`);
+              }
+            },
+            selectedRowKeys: selectedSiteLicenseId
+              ? [selectedSiteLicenseId]
+              : [],
+            type: "radio",
+          }}
+          onRow={(overview) => ({
+            onClick: () => onSelect(overview.site_license.id),
+            style: { cursor: "pointer" },
+          })}
+          scroll={{ x: true }}
+          size="small"
+        >
+          <Table.Column<SiteLicenseOverview>
+            title="License"
+            render={(_, overview) => (
+              <Space orientation="vertical" size={0}>
+                <Text strong>{overview.site_license.name}</Text>
+                <Text type="secondary">
+                  {overview.site_license.organization_name}
+                </Text>
+              </Space>
+            )}
+          />
+          <Table.Column<SiteLicenseOverview>
+            title="Seats"
+            render={(_, overview) => {
+              const totals = getOverviewSeatTotals(overview);
+              return (
+                <Space orientation="vertical" size={0}>
+                  <Text strong>
+                    {totals.activeSeats} / {totals.totalSeats}
+                  </Text>
+                  <Text type="secondary">
+                    {totals.availableSeats} available
+                  </Text>
+                </Space>
+              );
+            }}
+          />
+          <Table.Column<SiteLicenseOverview>
+            title="Requests"
+            render={(_, overview) => {
+              const pending = getOverviewSeatTotals(overview).pendingRequests;
+              return pending ? (
+                <Tag color="gold">{pending} pending</Tag>
+              ) : (
+                <Text type="secondary">none</Text>
+              );
+            }}
+          />
+          <Table.Column<SiteLicenseOverview>
+            title="Pools"
+            render={(_, overview) => overview.pools.length}
+          />
+          <Table.Column<SiteLicenseOverview>
+            title="Domains"
+            render={(_, overview) => {
+              const domains = overview.site_license.allowed_domains ?? [];
+              if (domains.length === 0) {
+                return <Text type="secondary">none</Text>;
+              }
+              return (
+                <Space wrap size={4}>
+                  {domains.slice(0, 2).map((domain) => (
+                    <Tag key={domain}>{domain}</Tag>
+                  ))}
+                  {domains.length > 2 ? <Tag>+{domains.length - 2}</Tag> : null}
+                </Space>
+              );
+            }}
+          />
+          <Table.Column<SiteLicenseOverview>
+            title="Period"
+            render={(_, overview) => (
+              <Text type="secondary">
+                {getSiteLicensePeriodLabel(overview)}
+              </Text>
+            )}
+          />
+          <Table.Column<SiteLicenseOverview>
+            title="Bay"
+            render={(_, overview) => (
+              <Text type="secondary">{overview.site_license.bay_id}</Text>
+            )}
+          />
+        </Table>
+      </Space>
+    </Card>
   );
 }
 

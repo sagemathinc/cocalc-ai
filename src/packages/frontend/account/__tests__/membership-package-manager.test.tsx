@@ -498,6 +498,142 @@ describe("MembershipPackageManager", () => {
     });
   });
 
+  it("shows a compact admin site-license list before the selected dashboard", async () => {
+    isAdmin = true;
+    listSiteLicenseOverviews.mockResolvedValue([
+      {
+        site_license: {
+          id: "license-1",
+          name: "Campus License",
+          organization_name: "Example University",
+          bay_id: "bay-0",
+          owner_account_id: null,
+          allowed_domains: ["example.edu"],
+          metadata: {},
+        },
+        pools: [
+          {
+            id: "site-1",
+            owner_account_id: "owner-1",
+            kind: "site",
+            membership_class: "pro",
+            seat_count: 10,
+            active_assignment_count: 1,
+            available_seat_count: 9,
+            assignments: [
+              {
+                id: "assignment-1",
+                package_id: "site-1",
+                account_id: "user-1",
+                assigned_at: new Date("2026-05-01T00:00:00Z"),
+              },
+            ],
+            metadata: {
+              pool_name: "Students",
+              site_license_id: "license-1",
+              requires_approval: false,
+              verification_policy: "email-domain",
+              exclusive_group: "student",
+            },
+            pool_name: "Students",
+            requires_approval: false,
+            verification_policy: "email-domain",
+            exclusive_group: "student",
+            pending_request_count: 0,
+          },
+        ],
+        managers: [],
+        pending_requests: [],
+        recent_audit_events: [],
+      },
+      {
+        site_license: {
+          id: "license-2",
+          name: "Research License",
+          organization_name: "Research Institute",
+          bay_id: "bay-1",
+          owner_account_id: null,
+          allowed_domains: ["research.example.edu"],
+          metadata: {},
+        },
+        pools: [
+          {
+            id: "site-2",
+            owner_account_id: "owner-1",
+            kind: "site",
+            membership_class: "pro",
+            seat_count: 20,
+            active_assignment_count: 3,
+            available_seat_count: 17,
+            assignments: [
+              {
+                id: "assignment-2",
+                package_id: "site-2",
+                account_id: "user-2",
+                assigned_at: new Date("2026-05-01T00:00:00Z"),
+              },
+              {
+                id: "assignment-3",
+                package_id: "site-2",
+                account_id: "user-3",
+                assigned_at: new Date("2026-05-01T00:00:00Z"),
+              },
+              {
+                id: "assignment-4",
+                package_id: "site-2",
+                account_id: "user-4",
+                assigned_at: new Date("2026-05-01T00:00:00Z"),
+              },
+            ],
+            metadata: {
+              pool_name: "Researchers",
+              site_license_id: "license-2",
+              requires_approval: true,
+              verification_policy: "manager-approval",
+              exclusive_group: "research",
+            },
+            pool_name: "Researchers",
+            requires_approval: true,
+            verification_policy: "manager-approval",
+            exclusive_group: "research",
+            pending_request_count: 1,
+          },
+        ],
+        managers: [],
+        pending_requests: [
+          {
+            id: "request-1",
+            site_license_id: "license-2",
+            package_id: "site-2",
+            account_id: "student-1",
+            matched_email_address: "ada@research.example.edu",
+            canonical_identity: "ada@research.example.edu",
+            requested_membership_class: "pro",
+            state: "pending",
+            requested_at: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+        recent_audit_events: [],
+      },
+    ]);
+
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Showing 2 of 2")).toBeTruthy();
+      expect(screen.getByText("1 / 10")).toBeTruthy();
+      expect(screen.getByText("3 / 20")).toBeTruthy();
+      expect(screen.getByText("Students")).toBeTruthy();
+      expect(screen.queryByText("Researchers")).toBeNull();
+    });
+
+    fireEvent.click(screen.getByText("Research License"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Researchers").length).toBeGreaterThan(0);
+    });
+  });
+
   it("lets admins update a site-license pool from the dashboard", async () => {
     isAdmin = true;
     const sitePackage = {
