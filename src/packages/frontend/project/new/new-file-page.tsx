@@ -423,11 +423,55 @@ export default function NewFilePage(props: Props) {
     actions?.set_active_tab(pureFlyoutMode ? "home" : "files");
   }
 
+  function renderActionButtons() {
+    return (
+      <Space size={6} wrap>
+        <Button size="small" onClick={() => setShowUploadModal(true)}>
+          <Icon name="cloud-upload" /> Upload
+        </Button>
+        <Button size="small" onClick={openFolderModal}>
+          <Icon name="folder" /> Folder
+        </Button>
+      </Space>
+    );
+  }
+
+  function renderPathNavigator(fontSize: string) {
+    return (
+      <PathNavigator
+        project_id={project_id}
+        style={{ display: "inline-block", fontSize }}
+        currentPath={effective_current_path}
+        historyPath={effective_current_path}
+        onNavigate={(path) => {
+          actions?.set_current_path(path);
+          actions?.set_active_tab("new");
+        }}
+      />
+    );
+  }
+
+  function renderFlyoutTopControls() {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          marginBottom: 14,
+        }}
+      >
+        {renderPathNavigator("16px")}
+        {renderActionButtons()}
+      </div>
+    );
+  }
+
   //key is so autofocus works below
   return (
     <SettingBox
       style={{ marginTop: mode === "flyout" ? 0 : "20px" }}
-      show_header
+      show_header={mode !== "flyout"}
       icon={"plus-circle"}
       title={
         <div
@@ -446,31 +490,12 @@ export default function NewFilePage(props: Props) {
               defaultMessage={"Create"}
             />
           </span>
-          <Space size={6}>
-            <Button size="small" onClick={() => setShowUploadModal(true)}>
-              <Icon name="cloud-upload" /> Upload
-            </Button>
-            <Button size="small" onClick={openFolderModal}>
-              <Icon name="folder" /> Folder
-            </Button>
-          </Space>
+          {renderActionButtons()}
         </div>
       }
-      subtitle={
-        <div>
-          <PathNavigator
-            project_id={project_id}
-            style={{ display: "inline-block", fontSize: "20px" }}
-            currentPath={effective_current_path}
-            historyPath={effective_current_path}
-            onNavigate={(path) => {
-              actions?.set_current_path(path);
-              actions?.set_active_tab("new");
-            }}
-          />
-        </div>
-      }
+      subtitle={<div>{renderPathNavigator("20px")}</div>}
       close={mode === "flyout" ? undefined : closeNewPage}
+      bodyStyle={mode === "flyout" ? { padding: 12 } : undefined}
     >
       <Modal
         onCancel={() => setCreatingFile("")}
@@ -482,6 +507,7 @@ export default function NewFilePage(props: Props) {
           <Loading estimate={1000} />
         </div>
       </Modal>
+      {mode === "flyout" && renderFlyoutTopControls()}
       <Row key={"new-file-row"} gutter={[24, 12]}>
         <Col sm={24}>
           <div style={{ marginBottom: "6px", fontWeight: 600 }}>Filename</div>
