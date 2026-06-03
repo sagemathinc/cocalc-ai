@@ -8,18 +8,31 @@ Make the multibay data model correct by construction:
 
 - every durable table has one explicit authority model;
 - every write path routes to that authority;
-- every rehome/drain path moves or rebuilds the data it is responsible for;
+- every routine drain path only depends on state that is explicitly
+  disposable, rebuildable, or intentionally stable on its existing bay;
 - bay-local caches and projections are clearly labeled as disposable;
 - tests fail when new account/project/host/global state is added without an
   ownership decision.
 
 This plan extends the current `scalable-architecture.md` rule:
 
-- accounts move by `home_bay_id`;
-- projects move by `owning_bay_id`;
-- project hosts move by `bay_id`;
-- anything else must either be seed-global, explicitly portable with one of
-  the above, or explicitly disposable/rebuildable.
+- accounts are placed by `home_bay_id`;
+- projects are placed by `owning_bay_id`;
+- project hosts are placed by `bay_id`;
+- anything else must either be seed-global, explicitly attached to one of the
+  above ownership domains, explicitly stable on a bay, or explicitly
+  disposable/rebuildable.
+
+Important release stance:
+
+- account/project/host rehome is an exceptional operator escape hatch, not a
+  routine balancing primitive and not a foundational correctness assumption;
+- rehome may work for carefully audited cases, but it is dangerous until every
+  attached table has proven portability semantics;
+- new placement and host/workload drain are the normal operational tools;
+- old placements may remain stable on their original bay indefinitely;
+- CLI mutation paths must call this out and require an explicit unsafe flag for
+  rehome writes.
 
 ## Architecture Motivation
 
@@ -46,16 +59,18 @@ The secondary goal is latency:
   traffic when useful;
 - keep browser-to-project-host traffic direct whenever possible.
 
-The critical operational constraint is drainability:
+The critical operational constraint is safe operational drainability:
 
-- any non-seed bay must be drainable;
-- draining a non-seed bay may cause small planned downtime for affected
-  accounts, projects, and project hosts;
-- draining a non-seed bay must not lose durable state that is outside those
-  three movable ownership domains;
+- project hosts and active workloads must be drainable;
+- a non-seed bay can be placed into "no new placement" mode and drained of
+  active compute/workload pressure without moving every durable tenant row;
+- full account/project/host rehome is allowed only as an exceptional, audited,
+  unsafe operation with a dry-run and rollback plan;
+- deleting a non-seed bay is a separate whole-bay evacuation project, not a
+  routine consequence of normal drain;
 - the seed bay exists for the lifetime of the cluster and is not removable;
-- the seed bay may still be drained of accounts, projects, and project hosts,
-  leaving only seed-global state.
+- the seed bay may still be drained of active accounts, projects, and project
+  hosts over time, but seed-global state remains there.
 
 This motivation affects data-location tradeoffs:
 
@@ -68,15 +83,30 @@ This motivation affects data-location tradeoffs:
   security, and cluster configuration data;
 - account/project/host owned state is appropriate for high-volume operational
   data that benefits from horizontal scaling and locality;
+- stable account/project/host placement is acceptable; rebalancing should
+  usually happen by changing where new accounts/projects/hosts are placed, not
+  by moving old durable state;
 - global config should usually be seed-authoritative but mirrored to attached
   bays, so normal reads stay local while writes remain unambiguous.
 
 ## Current Problem
 
-Several active tables are neither obviously seed-global nor included in account,
-project, or host rehome state. That creates the same class of bug we just fixed
-for site licenses: durable product/business state can be created on a random
-bay, then disappear or become unreachable when that bay is drained.
+Several active tables are neither obviously seed-global nor clearly attached to
+account, project, host, stable-bay, projection, cache, or ephemeral ownership.
+That creates the same class of bug we just fixed for site licenses: durable
+product/business state can be created on a random bay, then disappear or become
+unreachable when operators assume the bay can be deleted or transparently
+evacuated.
+
+The immediate goal is not to make routine rehome safe for everything. The
+immediate goal is to stop accidental ambiguity:
+
+- commercial ledgers, credits, licenses, and global config must not be local to
+  whichever bay handled the request;
+- account/project/host-local tables must say whether they are stable placement,
+  portable, projection/cache, or intentionally not rehome-safe;
+- user-visible tooling must not imply that rehome is a safe default maintenance
+  operation.
 
 There is also an existing global-settings pattern where saving site settings
 writes locally, then attempts to push the same updates to every bay. This is
@@ -111,8 +141,9 @@ Examples:
 
 ### `account-home`
 
-The account home bay is authoritative. Account rehome must copy and clear the
-state, or the state must be fully rebuildable from seed/global data.
+The account home bay is authoritative. By default, this is stable placement.
+Account rehome is exceptional and unsafe unless the table is explicitly marked
+portable or rebuildable.
 
 Examples:
 
@@ -123,9 +154,9 @@ Examples:
 
 ### `project-owning`
 
-The project owning bay is authoritative. Project rehome must copy and clear the
-state, or the state must be fully rebuildable from the project row/project-host
-state.
+The project owning bay is authoritative. By default, this is stable placement.
+Project rehome is exceptional and unsafe unless the table is explicitly marked
+portable or rebuildable.
 
 Examples:
 
@@ -136,8 +167,9 @@ Examples:
 
 ### `host-owning`
 
-The host's bay is authoritative. Host rehome must copy and clear the state, or
-the state must be fully rebuildable from cloud/provider data.
+The host's bay is authoritative. By default, this is stable placement. Host
+rehome is exceptional and unsafe unless the table is explicitly marked portable
+or rebuildable from cloud/provider data.
 
 Examples:
 
@@ -181,6 +213,25 @@ Examples:
 Append-only operational history that is intentionally per-bay. This must be a
 conscious decision, not a default. If the audit record is legally/commercially
 important, use `seed-global` instead.
+
+### `stable-bay`
+
+Durable state intentionally remains on the bay where it was created or assigned.
+It is not expected to move during routine operations.
+
+Examples:
+
+- legacy low-volume account/project/host side tables that are not release
+  blockers and are not safe to move yet;
+- historical operational data that is useful but not commercially critical;
+- records whose ownership will be revisited before any whole-bay evacuation.
+
+Rules:
+
+- normal code must route reads/writes to the stored authoritative bay;
+- routine drain must not delete this bay while stable-bay state remains;
+- rehome tools must report or refuse unsupported stable-bay attachments unless
+  running an explicit unsafe evacuation path.
 
 ## Initial Risk Inventory
 
@@ -229,9 +280,12 @@ Current concern:
 Target:
 
 - decide whether to retire it in favor of `account_entitlement_overrides`, or
-  classify as `account-home` and route/copy it consistently;
-- if retained, add it to account rehome portable state and route admin APIs to
-  target account home bay;
+  classify as `account-home` and route it consistently; (ANS: classify as
+  `account-home` and route it consistently)
+- if retained, route admin APIs to target account home bay;
+- explicitly mark it `portable` or `stable` for account rehome;
+- if `portable`, add it to account rehome copy/clear state;
+- if `stable`, ensure unsafe account rehome warns/refuses when rows exist;
 - prefer retirement if it is only legacy/on-prem/dev functionality.
 
 #### External credentials
@@ -257,8 +311,11 @@ Target:
   - `account`: `account-home`;
   - `project`: `project-owning`;
 - route reads/writes by scope before touching DB;
-- include account/project scoped rows in corresponding rehome portable state;
-- ensure encrypted payloads remain decryptable after move.
+- explicitly mark account/project scoped rows `portable` or `stable`;
+- if `portable`, include account/project scoped rows in corresponding rehome
+  copy/clear state;
+- if `stable`, ensure unsafe rehome warns/refuses when credentials exist;
+- if moved, ensure encrypted payloads remain decryptable after move.
 
 #### Self-host connectors
 
@@ -304,7 +361,7 @@ Target:
 
 - decide authority:
   - likely `account-home` for per-account balance and purchase ledger, or
-    `seed-global` for all commercial ledgers;
+    `seed-global` for all commercial ledgers; (ANS: account-home)
 - if `account-home`, add purchase/statement rows to account rehome and route
   billing APIs by account home;
 - if `seed-global`, route all payment/ledger writes to seed and use local
@@ -337,7 +394,10 @@ Current concern:
 Target:
 
 - classify each table;
-- for `project-owning` rows, add project rehome copy/clear support;
+- for `project-owning` rows, explicitly choose `portable`, `rebuildable`, or
+  `stable`;
+- only add project rehome copy/clear support for rows intentionally marked
+  `portable`;
 - for `projection` rows, document rebuild path and ensure drain can rebuild or
   tolerate deletion;
 - keep heavy data-plane sync content out of hub-mediated rehome unless the
@@ -471,7 +531,7 @@ Each entry should include:
 - table name;
 - ownership class;
 - authority key, if applicable;
-- rehome responsibility;
+- portability status: `portable`, `rebuildable`, `stable`, or `unsupported`;
 - rebuild/delete policy;
 - notes.
 
@@ -483,6 +543,7 @@ export type TableOwnership =
   | "account-home"
   | "project-owning"
   | "host-owning"
+  | "stable-bay"
   | "projection"
   | "cache"
   | "ephemeral"
@@ -498,17 +559,19 @@ Add tests that inspect schema metadata and table names/fields.
 The test should fail or warn when:
 
 - a table has `account_id` but is neither `account-home`, `seed-global`,
-  `projection`, `cache`, `ephemeral`, nor explicitly exempt;
+  `stable-bay`, `projection`, `cache`, `ephemeral`, nor explicitly exempt;
 - a table has `project_id` but is neither `project-owning`, `projection`,
-  `cache`, `ephemeral`, nor explicitly exempt;
+  `stable-bay`, `cache`, `ephemeral`, nor explicitly exempt;
 - a table has `host_id` but is neither `host-owning`, `projection`, `cache`,
-  `ephemeral`, nor explicitly exempt;
-- a table is classified as `account-home` but is missing from account rehome
-  portable state or has no documented rebuild path;
-- a table is classified as `project-owning` but is missing from project rehome
-  portable state or has no documented rebuild path;
-- a table is classified as `host-owning` but is missing from host rehome
-  portable state or has no documented rebuild path.
+  `stable-bay`, `ephemeral`, nor explicitly exempt;
+- a table is classified as `account-home`, `project-owning`, or `host-owning`
+  but has no declared portability status;
+- a table is marked `portable` but is missing from the corresponding rehome
+  copy/clear implementation;
+- a table is marked `rebuildable` but has no documented rebuild path;
+- a table is marked `stable` or `unsupported` and a routine rehome/drain tool
+  tries to move or delete the authoritative bay without an explicit unsafe
+  override.
 
 This test is the key to "stay correct."
 
@@ -516,38 +579,45 @@ This test is the key to "stay correct."
 
 Fix the highest-risk commercial state first.
 
-Tasks:
+Tasks:finish/site-license seed routing is already done;
 
-- finish/site-license seed routing is already done;
 - route software licensing APIs to seed;
+
 - classify and route software license activation;
+
 - decide whether software license tiers are part of the server-settings/global
   config version stream;
+
 - add tests proving an attached bay forwards create/list/revoke/restore to seed.
 
 ### Phase 3: Admin Membership Entitlement Cleanup
 
 Tasks:
 
-- decide whether `admin_assigned_memberships` is still needed;
+- decide whether `admin_assigned_memberships` is still needed; (ANS: YES, definitely needed still. overrides are far to fine grained)
 - if obsolete, migrate or delete it in favor of `account_entitlement_overrides`;
 - if retained, make it `account-home`;
 - route admin APIs to target account home bay;
-- include it in account rehome portable state;
-- add tests covering account rehome with an assigned membership.
+- decide whether it is `portable` or `stable` for rehome;
+- if `portable`, include it in account rehome copy/clear state;
+- if `stable`, ensure unsafe account rehome warns/refuses when it exists;
+- add tests covering the chosen placement/portability behavior.
 
 ### Phase 4: External Credentials Ownership Split
 
 Tasks:
 
 - add scope-aware routing helpers:
-  - account scope -> account home;
-  - project scope -> project owning bay;
-  - site scope -> seed;
-  - organization scope -> seed for now;
+  - account scope -&gt; account home;
+  - project scope -&gt; project owning bay;
+  - site scope -&gt; seed;
+  - organization scope -&gt; seed for now;
 - update system/host APIs to use these helpers before store access;
-- include account/project scoped rows in account/project rehome;
-- add tests for account rehome and project rehome preserving credentials;
+- decide whether account/project scoped rows are `portable` or `stable`;
+- if `portable`, include account/project scoped rows in account/project
+  rehome;
+- if `stable`, ensure unsafe rehome warns/refuses when credentials exist;
+- add tests for the chosen credential portability behavior;
 - explicitly check encryption/decryption after move.
 
 ### Phase 5: Self-Host Connector Portability
@@ -555,7 +625,9 @@ Tasks:
 Tasks:
 
 - classify connector records as `host-owning`;
-- include `self_host_connectors` in host rehome payload;
+- decide whether `self_host_connectors` are `portable` or `stable`;
+- if `portable`, include `self_host_connectors` in host rehome payload;
+- if `stable`, ensure unsafe host rehome warns/refuses when connectors exist;
 - decide token behavior:
   - expired/pairing tokens can be dropped;
   - active installation tokens may need copy if host rehome happens during

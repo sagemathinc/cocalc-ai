@@ -482,6 +482,7 @@ test("account rehome forwards destination bay and metadata", async () => {
     "--campaign",
     "drain-1",
     "--yes",
+    "--unsafe-rehome",
   ]);
 
   assert.equal(resolvedIdentifier, "qa@example.com");
@@ -491,6 +492,45 @@ test("account rehome forwards destination bay and metadata", async () => {
     reason: "load-shed",
     campaign_id: "drain-1",
   });
+});
+
+test("account rehome refuses to run with --yes but without --unsafe-rehome", async () => {
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          system: {
+            rehomeAccount: async () => {
+              throw new Error("should not rehome without --unsafe-rehome");
+            },
+          },
+        },
+      };
+      await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => ({
+      account_id: "22222222-2222-2222-2222-222222222222",
+      email_address: "qa@example.com",
+    }),
+  } as any);
+
+  await assert.rejects(
+    () =>
+      program.parseAsync([
+        "node",
+        "test",
+        "account",
+        "rehome",
+        "qa@example.com",
+        "--bay",
+        "bay-1",
+        "--yes",
+      ]),
+    /--unsafe-rehome/,
+  );
 });
 
 test("account rehome-status forwards source bay", async () => {
@@ -696,6 +736,7 @@ test("account rehome-drain forwards write mode and metadata", async () => {
     "--only-if-tag",
     "qa-drain",
     "--write",
+    "--unsafe-rehome",
   ]);
 
   assert.deepEqual(captured, {
@@ -707,6 +748,43 @@ test("account rehome-drain forwards write mode and metadata", async () => {
     reason: "load shed",
     only_if_tag: "qa-drain",
   });
+});
+
+test("account rehome-drain refuses write mode without --unsafe-rehome", async () => {
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          system: {
+            drainAccountRehome: async () => {
+              throw new Error("should not write without --unsafe-rehome");
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve account identifier");
+    },
+  } as any);
+
+  await assert.rejects(
+    () =>
+      program.parseAsync([
+        "node",
+        "test",
+        "account",
+        "rehome-drain",
+        "--dest-bay",
+        "bay-2",
+        "--write",
+      ]),
+    /--unsafe-rehome/,
+  );
 });
 
 test("account repair-membership defaults to a dry run", async () => {

@@ -1531,6 +1531,7 @@ test("host rehome forwards destination bay and metadata", async () => {
     "--campaign",
     "maint-2026-04",
     "--yes",
+    "--unsafe-rehome",
   ]);
 
   assert.deepEqual(capture.rehomeRequests, [
@@ -1543,6 +1544,35 @@ test("host rehome forwards destination bay and metadata", async () => {
   ]);
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.owning_bay_id, "bay-1");
+});
+
+test("host rehome refuses to run with --yes but without --unsafe-rehome", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture);
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await assert.rejects(
+    program.parseAsync([
+      "node",
+      "test",
+      "host",
+      "rehome",
+      "host-1",
+      "--bay",
+      "bay-1",
+      "--yes",
+    ]),
+    /--unsafe-rehome/,
+  );
+  assert.deepEqual(capture.rehomeRequests, []);
 });
 
 test("host bootstrap-status returns lifecycle drift data", async () => {

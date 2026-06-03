@@ -52,7 +52,17 @@ test("assertProjectRehomeConfirmed refuses rehome without --yes", () => {
       project_id: "project-id",
       dest_bay_id: "bay-2",
       yes: true,
+      unsafeRehome: true,
     }),
+  );
+  assert.throws(
+    () =>
+      assertProjectRehomeConfirmed({
+        project_id: "project-id",
+        dest_bay_id: "bay-2",
+        yes: true,
+      }),
+    /--unsafe-rehome/,
   );
 });
 
