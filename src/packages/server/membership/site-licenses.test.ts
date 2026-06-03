@@ -33,6 +33,7 @@ import {
   refreshSiteLicenseAffiliationVerificationForAccount,
   removeSiteLicenseManager,
   reviewSiteLicensePoolRequest,
+  revokeSiteLicensePoolSeat,
   setSiteLicenseManager,
   updateSiteLicense,
   updateSiteLicensePool,
@@ -289,6 +290,75 @@ describe("site license seat pools", () => {
         }),
       }),
     ]);
+  });
+
+  it("lets site-license managers revoke active pool seats", async () => {
+    const admin_account_id = uuid();
+    const manager_account_id = uuid();
+    const viewer_account_id = uuid();
+    const student_account_id = uuid();
+    const domain = `manager-revoke-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(manager_account_id);
+    await createTestAccount(viewer_account_id);
+    await createTestAccount(student_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(student_account_id, `student@${domain}`);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      bay_id: "bay-0",
+      name: "Manager Revoke Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+        },
+      ],
+    });
+    const pool = overview.pools[0]!;
+    await setSiteLicenseManager({
+      actor_account_id: admin_account_id,
+      site_license_id: overview.site_license.id,
+      target_account_id: manager_account_id,
+      role: "manager",
+    });
+    await setSiteLicenseManager({
+      actor_account_id: admin_account_id,
+      site_license_id: overview.site_license.id,
+      target_account_id: viewer_account_id,
+      role: "viewer",
+    });
+    await claimMembershipPackageSeat({
+      package_id: pool.id,
+      account_id: student_account_id,
+    });
+
+    await expect(
+      revokeSiteLicensePoolSeat({
+        actor_account_id: viewer_account_id,
+        package_id: pool.id,
+        target_account_id: student_account_id,
+      }),
+    ).rejects.toThrow("must manage site license");
+    await expect(
+      revokeSiteLicensePoolSeat({
+        actor_account_id: manager_account_id,
+        package_id: pool.id,
+        target_account_id: student_account_id,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      listMembershipPackageAssignments({
+        package_id: pool.id,
+        include_revoked: false,
+      }),
+    ).resolves.toEqual([]);
   });
 
   it("provisions pools and requires manager approval for higher tier seats", async () => {

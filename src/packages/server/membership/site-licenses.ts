@@ -2465,6 +2465,67 @@ export async function listSiteLicenseOverviews({
   );
 }
 
+export async function revokeSiteLicensePoolSeat({
+  actor_account_id,
+  package_id,
+  target_account_id,
+  target_email_address,
+  trusted_admin = false,
+  client,
+}: {
+  actor_account_id: string;
+  package_id: string;
+  target_account_id?: string;
+  target_email_address?: string;
+  trusted_admin?: boolean;
+  client?: PoolClient;
+}): Promise<boolean> {
+  const actorAccountId = normalizeAccountId(
+    actor_account_id,
+    "actor_account_id",
+  );
+  const packageId = normalizePackageId(package_id);
+  const targetAccountId =
+    target_account_id == null || `${target_account_id}`.trim() === ""
+      ? undefined
+      : normalizeAccountId(target_account_id, "target_account_id");
+  const targetEmailAddress =
+    target_email_address == null || `${target_email_address}`.trim() === ""
+      ? undefined
+      : normalizeEmailAddress(target_email_address);
+  if (!targetAccountId && !targetEmailAddress) {
+    throw Error("target_account_id or target_email_address required");
+  }
+  if (targetAccountId && targetEmailAddress) {
+    throw Error("specify only one target");
+  }
+
+  const revokeWithClient = async (dbClient: PoolClient): Promise<boolean> => {
+    const { siteLicense } = await getSiteLicenseForPackage(packageId, dbClient);
+    if (!trusted_admin) {
+      await assertSiteLicenseManager({
+        account_id: actorAccountId,
+        site_license_id: siteLicense.id,
+        write: true,
+        client: dbClient,
+      });
+    }
+    return await revokeMembershipPackageSeat(
+      {
+        package_id: packageId,
+        account_id: targetAccountId,
+        email_address: targetEmailAddress,
+      },
+      dbClient,
+    );
+  };
+
+  if (client != null) {
+    return await revokeWithClient(client);
+  }
+  return await withLocalSiteLicenseTransaction(revokeWithClient);
+}
+
 async function getSiteLicenseOverviewWithoutAuthorization({
   site_license_id,
   client,

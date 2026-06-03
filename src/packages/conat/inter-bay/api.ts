@@ -1017,6 +1017,14 @@ export interface AccountLocalListSiteLicenseOverviewsRequest {
   trusted_admin?: boolean;
 }
 
+export interface AccountLocalRevokeSiteLicensePoolSeatRequest {
+  actor_account_id: string;
+  package_id: string;
+  target_account_id?: string;
+  target_email_address?: string;
+  trusted_admin?: boolean;
+}
+
 export interface AccountLocalUpdateSiteLicenseRequest {
   actor_account_id: string;
   site_license_id: string;
@@ -1703,6 +1711,7 @@ export type AccountLocalMethod =
   | "remove-site-license-manager"
   | "get-site-license-overview"
   | "list-site-license-overviews"
+  | "revoke-site-license-pool-seat"
   | "request-site-license-pool"
   | "request-site-license-pool-for-account"
   | "review-site-license-pool-request"
@@ -2619,6 +2628,9 @@ export interface InterBayAccountLocalApi {
   listSiteLicenseOverviews: (
     opts: AccountLocalListSiteLicenseOverviewsRequest,
   ) => Promise<SiteLicenseOverview[]>;
+  revokeSiteLicensePoolSeat: (
+    opts: AccountLocalRevokeSiteLicensePoolSeatRequest,
+  ) => Promise<{ revoked: boolean }>;
   updateMembershipPackage: (
     opts: AccountLocalUpdateMembershipPackageRequest,
   ) => Promise<MembershipPackageDetails>;
@@ -4504,6 +4516,15 @@ export function createInterBayAccountLocalClient({
       method: "list-site-license-overviews",
     }),
   });
+  const revokeSiteLicensePoolSeatClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "revokeSiteLicensePoolSeat">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "revoke-site-license-pool-seat",
+    }),
+  });
   const updateMembershipPackageClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "updateMembershipPackage">
   >({
@@ -4761,6 +4782,8 @@ export function createInterBayAccountLocalClient({
       await adminProvisionSiteLicenseClient.adminProvisionSiteLicense(opts),
     listSiteLicenseOverviews: async (opts) =>
       await listSiteLicenseOverviewsClient.listSiteLicenseOverviews(opts),
+    revokeSiteLicensePoolSeat: async (opts) =>
+      await revokeSiteLicensePoolSeatClient.revokeSiteLicensePoolSeat(opts),
     updateMembershipPackage: async (opts) =>
       await updateMembershipPackageClient.updateMembershipPackage(opts),
     updateSiteLicense: async (opts) =>
@@ -5316,6 +5339,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         listSiteLicenseOverviews: async (opts) =>
           await impl.listSiteLicenseOverviews(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "revokeSiteLicensePoolSeat">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "revoke-site-license-pool-seat",
+      }),
+      impl: {
+        revokeSiteLicensePoolSeat: async (opts) =>
+          await impl.revokeSiteLicensePoolSeat(opts),
       },
     }),
     createServiceHandler<

@@ -860,7 +860,14 @@ describe("MembershipPackageManager", () => {
           metadata: {},
         },
         pools: [sitePackage],
-        managers: [],
+        managers: [
+          {
+            id: "manager-1",
+            account_id: "owner-1",
+            role: "manager",
+            site_license_id: "license-1",
+          },
+        ],
         pending_requests: [
           {
             id: "request-1",

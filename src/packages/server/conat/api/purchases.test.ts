@@ -36,6 +36,7 @@ const refreshSiteLicenseAffiliationVerificationForAccountMock = jest.fn();
 const refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBayMock =
   jest.fn();
 const reviewSiteLicensePoolRequestMock = jest.fn();
+const revokeSiteLicensePoolSeatMock = jest.fn();
 const updateSiteLicensePoolMock = jest.fn();
 const updateSiteLicenseMock = jest.fn();
 const setSiteLicenseManagerMock = jest.fn();
@@ -56,6 +57,7 @@ const interBayAddSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolForAccountMock = jest.fn();
 const interBayReviewSiteLicensePoolRequestMock = jest.fn();
+const interBayRevokeSiteLicensePoolSeatMock = jest.fn();
 const interBayUpdateSiteLicenseMock = jest.fn();
 const interBaySetSiteLicenseManagerMock = jest.fn();
 const interBayRemoveSiteLicenseManagerMock = jest.fn();
@@ -166,6 +168,8 @@ jest.mock("@cocalc/server/membership/site-licenses", () => ({
     ),
   reviewSiteLicensePoolRequest: (...args: any[]) =>
     reviewSiteLicensePoolRequestMock(...args),
+  revokeSiteLicensePoolSeat: (...args: any[]) =>
+    revokeSiteLicensePoolSeatMock(...args),
   updateSiteLicensePool: (...args: any[]) => updateSiteLicensePoolMock(...args),
   updateSiteLicense: (...args: any[]) => updateSiteLicenseMock(...args),
   setSiteLicenseManager: (...args: any[]) => setSiteLicenseManagerMock(...args),
@@ -253,6 +257,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayRequestSiteLicensePoolForAccountMock(...args),
     reviewSiteLicensePoolRequest: (...args: any[]) =>
       interBayReviewSiteLicensePoolRequestMock(...args),
+    revokeSiteLicensePoolSeat: (...args: any[]) =>
+      interBayRevokeSiteLicensePoolSeatMock(...args),
     updateSiteLicense: (...args: any[]) =>
       interBayUpdateSiteLicenseMock(...args),
     setSiteLicenseManager: (...args: any[]) =>
@@ -277,11 +283,13 @@ beforeEach(() => {
   updateSiteLicensePoolMock.mockReset();
   updateSiteLicenseMock.mockReset();
   addSiteLicensePoolMock.mockReset();
+  revokeSiteLicensePoolSeatMock.mockReset();
   listSiteLicenseOverviewsMock.mockReset();
   setSiteLicenseManagerMock.mockReset();
   removeSiteLicenseManagerMock.mockReset();
   interBayUpdateSiteLicenseMock.mockReset();
   interBayAddSiteLicensePoolMock.mockReset();
+  interBayRevokeSiteLicensePoolSeatMock.mockReset();
   interBayListSiteLicenseOverviewsMock.mockReset();
   interBaySetSiteLicenseManagerMock.mockReset();
   interBayRemoveSiteLicenseManagerMock.mockReset();
@@ -1711,6 +1719,60 @@ describe("purchases membership packages", () => {
       allow_actor_impersonation: false,
       session_hash: "session-1",
     });
+    expect(result).toEqual({ revoked: true });
+  });
+
+  it("revokes a site-license pool seat through site-license management", async () => {
+    getMembershipPackageMock.mockResolvedValue({
+      id: "site-pool-1",
+      owner_account_id: "site-license-owner-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 3,
+    });
+    revokeSiteLicensePoolSeatMock.mockResolvedValue(true);
+
+    const { revokeMembershipPackageSeat } = await import("./purchases");
+    const result = await revokeMembershipPackageSeat({
+      account_id: "manager-1",
+      session_hash: "session-1",
+      package_id: "site-pool-1",
+      target_account_id: "student-1",
+    });
+
+    expect(revokeSiteLicensePoolSeatMock).toHaveBeenCalledWith({
+      actor_account_id: "manager-1",
+      package_id: "site-pool-1",
+      target_account_id: "student-1",
+      target_email_address: undefined,
+      trusted_admin: false,
+    });
+    expect(revokeMembershipPackageSeatMock).not.toHaveBeenCalled();
+    expect(result).toEqual({ revoked: true });
+  });
+
+  it("routes site-license pool seat revocation to the seed bay", async () => {
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-2");
+    getMembershipPackageMock.mockResolvedValue(null);
+    interBayRevokeSiteLicensePoolSeatMock.mockResolvedValue({ revoked: true });
+
+    const { revokeMembershipPackageSeat } = await import("./purchases");
+    const result = await revokeMembershipPackageSeat({
+      account_id: "manager-1",
+      session_hash: "session-1",
+      package_id: "site-pool-1",
+      target_account_id: "student-1",
+    });
+
+    expect(interBayRevokeSiteLicensePoolSeatMock).toHaveBeenCalledWith({
+      actor_account_id: "manager-1",
+      package_id: "site-pool-1",
+      target_account_id: "student-1",
+      target_email_address: undefined,
+      trusted_admin: false,
+    });
+    expect(revokeSiteLicensePoolSeatMock).not.toHaveBeenCalled();
+    expect(revokeMembershipPackageSeatMock).not.toHaveBeenCalled();
     expect(result).toEqual({ revoked: true });
   });
 

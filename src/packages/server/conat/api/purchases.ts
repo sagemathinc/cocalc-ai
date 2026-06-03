@@ -55,6 +55,7 @@ import {
   refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
   removeSiteLicenseManager as removeSiteLicenseManager0,
   reviewSiteLicensePoolRequest as reviewSiteLicensePoolRequest0,
+  revokeSiteLicensePoolSeat as revokeSiteLicensePoolSeat0,
   setSiteLicenseManager as setSiteLicenseManager0,
   updateSiteLicense as updateSiteLicense0,
   updateSiteLicensePool as updateSiteLicensePool0,
@@ -697,11 +698,32 @@ export async function revokeMembershipPackageSeat({
     session_hash,
     allow_actor_impersonation: false,
   });
+  const isAdminActor = await isAdmin(account_id);
   const pkg = await getMembershipPackage({ package_id });
+  if (!pkg && !isSeedBay()) {
+    return await getSeedSiteLicenseClient().revokeSiteLicensePoolSeat({
+      actor_account_id: account_id,
+      package_id,
+      target_account_id,
+      target_email_address,
+      trusted_admin: isAdminActor,
+    });
+  }
   if (!pkg) {
     throw Error("membership package not found");
   }
-  if (pkg.owner_account_id !== account_id && !(await isAdmin(account_id))) {
+  if (pkg.kind === "site") {
+    return {
+      revoked: await revokeSiteLicensePoolSeat0({
+        actor_account_id: account_id,
+        package_id,
+        target_account_id,
+        target_email_address,
+        trusted_admin: isAdminActor,
+      }),
+    };
+  }
+  if (pkg.owner_account_id !== account_id && !isAdminActor) {
     throw Error("must own membership package");
   }
   return {

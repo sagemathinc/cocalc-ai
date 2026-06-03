@@ -1744,6 +1744,13 @@ function SiteLicenseDashboard({
             (manager) =>
               manager.account_id === accountId && manager.role === "owner",
           );
+        const canManageLicense =
+          isAdmin ||
+          overview.managers.some(
+            (manager) =>
+              manager.account_id === accountId &&
+              (manager.role === "owner" || manager.role === "manager"),
+          );
         return (
           <Card
             key={overview.site_license.id}
@@ -1913,26 +1920,28 @@ function SiteLicenseDashboard({
                               <Text>{request.requester_note}</Text>
                             ) : null}
                           </Space>
-                          <Space>
-                            <Button
-                              type="primary"
-                              loading={reviewingRequestId === request.id}
-                              onClick={() =>
-                                void onReview(overview, request, "approve")
-                              }
-                            >
-                              Approve
-                            </Button>
-                            <Button
-                              danger
-                              loading={reviewingRequestId === request.id}
-                              onClick={() =>
-                                void onReview(overview, request, "reject")
-                              }
-                            >
-                              Reject
-                            </Button>
-                          </Space>
+                          {canManageLicense ? (
+                            <Space>
+                              <Button
+                                type="primary"
+                                loading={reviewingRequestId === request.id}
+                                onClick={() =>
+                                  void onReview(overview, request, "approve")
+                                }
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                danger
+                                loading={reviewingRequestId === request.id}
+                                onClick={() =>
+                                  void onReview(overview, request, "reject")
+                                }
+                              >
+                                Reject
+                              </Button>
+                            </Space>
+                          ) : null}
                         </div>
                       ))}
                     </Space>
@@ -2120,24 +2129,26 @@ function SiteLicenseDashboard({
                                             {dateLabel(assignment.assigned_at)}
                                           </Text>
                                         </Space>
-                                        <Button
-                                          size="small"
-                                          danger
-                                          loading={revokingSeat === key}
-                                          onClick={async () => {
-                                            setRevokingSeat(key);
-                                            try {
-                                              await onRevokeSeat(
-                                                pool,
-                                                assignment,
-                                              );
-                                            } finally {
-                                              setRevokingSeat("");
-                                            }
-                                          }}
-                                        >
-                                          Revoke
-                                        </Button>
+                                        {canManageLicense ? (
+                                          <Button
+                                            size="small"
+                                            danger
+                                            loading={revokingSeat === key}
+                                            onClick={async () => {
+                                              setRevokingSeat(key);
+                                              try {
+                                                await onRevokeSeat(
+                                                  pool,
+                                                  assignment,
+                                                );
+                                              } finally {
+                                                setRevokingSeat("");
+                                              }
+                                            }}
+                                          >
+                                            Revoke
+                                          </Button>
+                                        ) : null}
                                       </div>
                                     );
                                   })}
