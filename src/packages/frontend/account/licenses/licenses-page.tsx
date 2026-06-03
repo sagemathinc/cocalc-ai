@@ -12,15 +12,11 @@ import { Icon, Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
 import type { SettingsPageDefinition } from "../settings-page";
-import {
-  ClaimableMembershipPackagesPanel,
-  MembershipPackageManager,
-  SiteLicenseReverificationPanel,
-} from "../membership-package-manager";
+import { MembershipPackageManager } from "../membership-package-manager";
 import type { MembershipTierWithPresentation } from "../membership-tier-benefits";
 import { SoftwareLicensesPage } from "./software-licenses";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export const LICENSES_SETTINGS_PAGE = {
   component: LicensesPage,
@@ -131,27 +127,7 @@ function SiteLicensesPage() {
       {loading ? (
         <Loading />
       ) : (
-        <>
-          <Card>
-            <Space
-              orientation="vertical"
-              size="middle"
-              style={{ width: "100%" }}
-            >
-              <Space orientation="vertical" size={2}>
-                <Text strong>Institutional access</Text>
-                <Text type="secondary">
-                  Claim an available campus seat and keep your affiliation
-                  current.
-                </Text>
-              </Space>
-              <ClaimableMembershipPackagesPanel onChanged={handleChanged} />
-              <SiteLicenseReverificationPanel onChanged={handleChanged} />
-            </Space>
-          </Card>
-
-          <MembershipPackageManager tiers={tiers} onChanged={handleChanged} />
-        </>
+        <MembershipPackageManager tiers={tiers} onChanged={handleChanged} />
       )}
     </Space>
   );

@@ -21,7 +21,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Icon, Loading } from "@cocalc/frontend/components";
+import { Loading } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { labels } from "@cocalc/frontend/i18n";
 import {
@@ -35,6 +35,10 @@ import {
   formatFeatureTag,
   normalizeRecord,
 } from "./membership-settings-format";
+import {
+  ClaimableMembershipPackagesPanel,
+  SiteLicenseReverificationPanel,
+} from "./membership-package-manager";
 import MembershipPurchaseModal from "./membership-purchase-modal";
 import { MembershipTierBenefits } from "./membership-tier-benefits";
 import type { SettingsPageDefinition } from "./settings-page";
@@ -116,6 +120,10 @@ function MembershipSettingsContent() {
   const personalMembership = details?.candidates.find(
     (candidate) => candidate.source === "subscription",
   );
+  const refreshMembership = () => {
+    window.dispatchEvent(new Event("cocalc:membership-changed"));
+    refresh();
+  };
   const openPurchase = (currentClassOverride?: string) => {
     setPurchaseCurrentClass(currentClassOverride);
     setPurchaseOpen(true);
@@ -123,85 +131,77 @@ function MembershipSettingsContent() {
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      <Card size="small" title="Effective membership">
+      <Card size="small" title="Membership sources">
         <Space orientation="vertical" style={{ width: "100%" }}>
-          <Descriptions size="small" column={1}>
-            <Descriptions.Item label="Tier">
-              <Space>
-                <Tag color={membership.class === "free" ? "default" : "blue"}>
-                  {tierLabel || membership.class}
-                </Tag>
-                <Text type="secondary">{membership.class}</Text>
-              </Space>
-            </Descriptions.Item>
-            <Descriptions.Item label="Source">
-              {selectedSourceRow?.source ?? membershipSourceLabel}
-            </Descriptions.Item>
-            {membership.expires && membership.source !== "subscription" && (
-              <Descriptions.Item label={expiresLabel}>
-                <MembershipDate date={membership.expires} />
-              </Descriptions.Item>
-            )}
-          </Descriptions>
-          {membership.source !== "subscription" &&
-            membership.source !== "free" && (
-              <Alert
-                type="info"
-                showIcon
-                message="This membership is read-only here."
-                description={
-                  selectedSourceRow?.sourceDetail ??
-                  "It is managed outside personal membership settings."
-                }
-              />
-            )}
+          {candidateRows.length === 0 ? (
+            <Text type="secondary">No active membership sources.</Text>
+          ) : (
+            <Table
+              size="small"
+              pagination={false}
+              dataSource={candidateRows}
+              columns={[
+                {
+                  title: "Membership",
+                  dataIndex: "tier",
+                  render: (value, row) => (
+                    <Space>
+                      <Tag color={row.selected ? "blue" : undefined}>
+                        {value}
+                      </Tag>
+                    </Space>
+                  ),
+                },
+                {
+                  title: "Source",
+                  dataIndex: "source",
+                  render: (value, row) => (
+                    <Space orientation="vertical" size={0}>
+                      <Text>{value}</Text>
+                      <Text type="secondary">{row.sourceDetail}</Text>
+                    </Space>
+                  ),
+                },
+                {
+                  title: "Status",
+                  dataIndex: "status",
+                  render: (value, row) => (
+                    <Tag color={membershipStatusColor(row)}>{value}</Tag>
+                  ),
+                },
+                {
+                  title: "Expires",
+                  dataIndex: "expires",
+                  render: (value) =>
+                    value ? <TimeAgo date={value} /> : <Text>Never</Text>,
+                },
+              ]}
+            />
+          )}
+          <ClaimableMembershipPackagesPanel onChanged={refreshMembership} />
+          <SiteLicenseReverificationPanel onChanged={refreshMembership} />
         </Space>
       </Card>
 
-      <Card size="small" title="Membership sources">
-        {candidateRows.length === 0 ? (
-          <Text type="secondary">No active membership sources.</Text>
-        ) : (
-          <Table
-            size="small"
-            pagination={false}
-            dataSource={candidateRows}
-            columns={[
-              {
-                title: "Membership",
-                dataIndex: "tier",
-                render: (value, row) => (
-                  <Space>
-                    <Tag color={row.selected ? "blue" : undefined}>{value}</Tag>
-                  </Space>
-                ),
-              },
-              {
-                title: "Source",
-                dataIndex: "source",
-                render: (value, row) => (
-                  <Space orientation="vertical" size={0}>
-                    <Text>{value}</Text>
-                    <Text type="secondary">{row.sourceDetail}</Text>
-                  </Space>
-                ),
-              },
-              {
-                title: "Status",
-                dataIndex: "status",
-                render: (value, row) => (
-                  <Tag color={membershipStatusColor(row)}>{value}</Tag>
-                ),
-              },
-              {
-                title: "Expires",
-                dataIndex: "expires",
-                render: (value) =>
-                  value ? <TimeAgo date={value} /> : <Text>Never</Text>,
-              },
-            ]}
-          />
-        )}
+      <Card size="small" title="Effective membership">
+        <Descriptions size="small" column={1}>
+          <Descriptions.Item label="Tier">
+            <Space>
+              <Tag color={membership.class === "free" ? "default" : "blue"}>
+                {tierLabel || membership.class}
+              </Tag>
+              <Text type="secondary">{membership.class}</Text>
+            </Space>
+          </Descriptions.Item>
+          <Descriptions.Item label="Source">
+            {selectedSourceRow?.source ?? membershipSourceLabel}
+          </Descriptions.Item>
+          {membership.expires && membership.source !== "subscription" && (
+            <Descriptions.Item label={expiresLabel}>
+              <MembershipDate date={membership.expires} />
+            </Descriptions.Item>
+          )}
+        </Descriptions>
       </Card>
 
       <PersonalMembershipControls
@@ -260,25 +260,6 @@ function MembershipSettingsContent() {
           }
         />
       ) : null}
-
-      <Card size="small">
-        <Space
-          wrap
-          align="center"
-          style={{ justifyContent: "space-between", width: "100%" }}
-        >
-          <Space orientation="vertical" size={2}>
-            <Text strong>Institutional and team licenses</Text>
-            <Text type="secondary">
-              Claim site-license access, refresh institutional affiliation, or
-              manage team and campus license seats from the Licenses page.
-            </Text>
-          </Space>
-          <Button onClick={() => openAccountSettings({ page: "licenses" })}>
-            <Icon name="key" /> Open Licenses
-          </Button>
-        </Space>
-      </Card>
 
       <MembershipPurchaseModal
         currentClassOverride={purchaseCurrentClass}
