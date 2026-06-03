@@ -549,6 +549,28 @@ export class ChatActions extends Actions<ChatState> {
     return this.syncdb.get_state?.() === "closed";
   };
 
+  debugChatState = () => {
+    return {
+      name: this.name,
+      frameId: this.frameId,
+      hasSyncdb: this.syncdb != null,
+      syncdbState: this.syncdb?.get_state?.(),
+      syncdbLiveConnected: this.syncdb?.is_live_connected?.(),
+      syncdbDebug: this.syncdb?.debug_live_connection_state?.(),
+      isClosed: this.isClosed(),
+      isSyncdbReady: this.isSyncdbReady(),
+      hasMessageCache: this.messageCache != null,
+      messageCache: this.messageCache?.debugState?.(),
+      store: {
+        project_id: this.store?.get?.("project_id"),
+        path: this.store?.get?.("path"),
+        read_only: this.store?.get?.("read_only"),
+        syncdbReady: this.store?.get?.("syncdbReady"),
+        readStateVersion: this.store?.get?.("readStateVersion"),
+      },
+    };
+  };
+
   reserveChatSendIdentity = ({
     reply_thread_id,
   }: {

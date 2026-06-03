@@ -81,6 +81,7 @@ import {
   chat,
   getSideChatActions,
 } from "@cocalc/frontend/frame-editors/generic/chat";
+import { syncdocDiagnosticLog } from "@cocalc/frontend/syncdoc-diagnostics";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import type { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
@@ -295,6 +296,11 @@ export class BaseEditorActions<
     if (this.tracksLiveSyncdocStatus()) {
       this.setState({ rtc_status: this.disconnectedRtcStatus() });
     }
+    syncdocDiagnosticLog("editor syncdoc disconnected", {
+      project_id: this.project_id,
+      path: this.path,
+      state: this.debugSyncdocState(),
+    });
     this.reconnectResource?.requestReconnect({
       reason: "editor_syncdoc_disconnected",
     });
@@ -307,6 +313,11 @@ export class BaseEditorActions<
       rtc_status: this.areSyncdocsLiveConnected()
         ? "live"
         : this.disconnectedRtcStatus(),
+    });
+    syncdocDiagnosticLog("editor syncdoc connected", {
+      project_id: this.project_id,
+      path: this.path,
+      state: this.debugSyncdocState(),
     });
   };
 
@@ -999,6 +1010,12 @@ export class BaseEditorActions<
           const priority = this.store?.get("visible")
             ? "foreground"
             : "background";
+          syncdocDiagnosticLog("editor resource reconnect start", {
+            project_id: this.project_id,
+            path: this.path,
+            priority,
+            state: this.debugSyncdocState(),
+          });
           if (
             !(await this.wait_until_syncdoc_live_connected(
               this._syncstring,
@@ -1015,6 +1032,12 @@ export class BaseEditorActions<
           ) {
             throw Error("syncdb_not_live_connected");
           }
+          syncdocDiagnosticLog("editor resource reconnect success", {
+            project_id: this.project_id,
+            path: this.path,
+            priority,
+            state: this.debugSyncdocState(),
+          });
         },
       });
   }
@@ -1035,6 +1058,61 @@ export class BaseEditorActions<
       this.isSyncdocLiveConnected(this._syncdb)
     );
   }
+
+  private debugOneSyncdoc(syncdoc: any) {
+    if (syncdoc == null) return undefined;
+    if (this.isFakeSyncdoc(syncdoc)) {
+      return {
+        fake: true,
+        state: syncdoc.get_state?.(),
+        readOnly: syncdoc.is_read_only?.(),
+      };
+    }
+    const debug = syncdoc.debug_live_connection_state?.();
+    return {
+      state: syncdoc.get_state?.(),
+      ready: syncdoc.isReady?.(),
+      closed: syncdoc.isClosed?.(),
+      readOnly: syncdoc.is_read_only?.(),
+      liveConnected: this.isSyncdocLiveConnected(syncdoc),
+      debug,
+    };
+  }
+
+  public debugSyncdocState = () => {
+    const store = this.store;
+    const messageCache = (this as any).messageCache;
+    const chatActions = (this as any).chatActions;
+    return {
+      name: this.name,
+      project_id: this.project_id,
+      path: this.path,
+      doctype: this.doctype,
+      closed: this.isClosed(),
+      store: {
+        is_loaded: store?.get?.("is_loaded"),
+        read_only: store?.get?.("read_only"),
+        read_only_preview: store?.get?.("read_only_preview"),
+        rtc_status: store?.get?.("rtc_status"),
+        status: store?.get?.("status"),
+        visible: store?.get?.("visible"),
+        has_unsaved_changes: store?.get?.("has_unsaved_changes"),
+        has_uncommitted_changes: store?.get?.("has_uncommitted_changes"),
+      },
+      syncstring: this.debugOneSyncdoc(this._syncstring),
+      syncdb: this.debugOneSyncdoc(this._syncdb),
+      messageCache: messageCache?.debugState?.(),
+      chatActions:
+        chatActions == null
+          ? undefined
+          : Object.fromEntries(
+              Object.entries(chatActions).map(([frameId, actions]: any) => [
+                frameId,
+                actions?.debugChatState?.(),
+              ]),
+            ),
+    };
+  };
 
   private async wait_until_syncdoc_live_connected(
     syncdoc?,

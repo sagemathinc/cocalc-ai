@@ -6,6 +6,7 @@ import type { PlainChatMessage } from "./types";
 import { dateValue, parentMessageId } from "./access";
 import { once } from "@cocalc/util/async-utils";
 import { normalizeChatMessage } from "./normalize";
+import { syncdocDiagnosticLog } from "@cocalc/frontend/syncdoc-diagnostics";
 
 /**
  * ChatMessageCache
@@ -41,6 +42,9 @@ export class ChatMessageCache extends EventEmitter {
   private threadConfigByThreadId: Map<string, Record<string, unknown>> =
     new Map();
   private version = 0;
+  private disposed = false;
+  private lastEvent = "constructor";
+  private lastEventAt = Date.now();
 
   constructor(syncdb: ImmerDB) {
     super();
@@ -119,7 +123,26 @@ export class ChatMessageCache extends EventEmitter {
     return this.version;
   }
 
+  debugState() {
+    return {
+      disposed: this.disposed,
+      version: this.version,
+      messagesByDate: this.messagesByDate.size,
+      messagesById: this.messagesById.size,
+      threads: this.threadIndex.size,
+      threadConfigs: this.threadConfigByThreadId.size,
+      syncdbState: this.syncdb?.get_state?.(),
+      syncdbLiveConnected: this.syncdb?.is_live_connected?.(),
+      syncdbDebug: this.syncdb?.debug_live_connection_state?.(),
+      lastEvent: this.lastEvent,
+      lastEventAt: new Date(this.lastEventAt).toISOString(),
+    };
+  }
+
   dispose() {
+    this.noteEvent("dispose");
+    this.disposed = true;
+    syncdocDiagnosticLog("chat message cache dispose", this.debugState());
     this.syncdb.off("change", this.handleChange);
     this.syncdb.off("reload", this.handleReload);
     this.messagesById = new Map();
@@ -134,6 +157,11 @@ export class ChatMessageCache extends EventEmitter {
   private bumpVersion() {
     this.version += 1;
     this.emit("version", this.version);
+  }
+
+  private noteEvent(event: string) {
+    this.lastEvent = event;
+    this.lastEventAt = Date.now();
   }
 
   private getDateKey(row?: { date?: unknown }): string | undefined {
@@ -302,6 +330,11 @@ export class ChatMessageCache extends EventEmitter {
     }
     const snapshot = this.buildSnapshotFromRows(rows);
     this.applySnapshot(snapshot);
+    this.noteEvent("preview");
+    syncdocDiagnosticLog("chat message cache preview", {
+      rows: Array.isArray(rows) ? rows.length : undefined,
+      state: this.debugState(),
+    });
     return { applied: true, chatRows: snapshot.chatRows };
   }
 
@@ -378,12 +411,14 @@ export class ChatMessageCache extends EventEmitter {
     });
     this.messagesByDate = nextByDate;
     if (applied > 0) {
+      this.noteEvent("hydrateArchivedRows");
       this.bumpVersion();
     }
     return { applied, skipped };
   }
 
   private applySnapshot(snapshot: ChatCacheSnapshot): void {
+    const before = this.messagesByDate.size;
     this.messagesById = produce(snapshot.mapById, () => {});
     this.messagesByDate = produce(snapshot.mapByDate, () => {});
     this.messageIdIndex = produce(snapshot.messageIdIndex, () => {});
@@ -392,6 +427,13 @@ export class ChatMessageCache extends EventEmitter {
     // Keep this mutable; incremental change handling updates this map in-place.
     this.threadKeyByThreadId = new Map(snapshot.threadKeyByThreadId);
     this.threadConfigByThreadId = new Map(snapshot.threadConfigByThreadId);
+    this.noteEvent("snapshot");
+    if (before > 0 && this.messagesByDate.size === 0) {
+      syncdocDiagnosticLog("chat message cache cleared by snapshot", {
+        before,
+        state: this.debugState(),
+      });
+    }
     this.bumpVersion();
   }
 
@@ -479,6 +521,7 @@ export class ChatMessageCache extends EventEmitter {
     }
     const rows = this.syncdb.get() ?? [];
     log("rebuildFromDoc: got rows", rows);
+    this.noteEvent("rebuildFromDoc");
     this.applySnapshot(this.buildSnapshotFromRows(rows));
   }
 
@@ -561,10 +604,12 @@ export class ChatMessageCache extends EventEmitter {
       });
     });
     this.messagesByDate = nextByDate;
+    this.noteEvent("change");
     this.bumpVersion();
   };
 
   private handleReload = () => {
+    this.noteEvent("reload");
     void this.rebuildFromDoc();
   };
 }

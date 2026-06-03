@@ -92,6 +92,10 @@ import {
   type ReconnectResourceOptions,
   type RegisteredReconnectResource,
 } from "./reconnect-coordinator";
+import {
+  installSyncdocDiagnostics,
+  syncdocDiagnosticLog,
+} from "@cocalc/frontend/syncdoc-diagnostics";
 import { disconnect_from_all_projects } from "@cocalc/frontend/project/websocket/connect";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
 import {
@@ -333,6 +337,13 @@ export class ConatClient extends EventEmitter {
       onReconnectStable: () => {
         this.numConnectionAttempts = 0;
       },
+      onResourceReconnectEvent: (event) => {
+        syncdocDiagnosticLog("resource reconnect", {
+          ...event,
+          error: event.error == null ? undefined : `${event.error}`,
+          context: this.reconnectDebugContext(),
+        });
+      },
     });
     this.initConatClient();
     this.on("state", (state) => {
@@ -345,6 +356,7 @@ export class ConatClient extends EventEmitter {
       window.addEventListener("online", this.browserOnlineHandler);
       window.addEventListener("offline", this.browserOfflineHandler);
     }
+    installSyncdocDiagnostics({ conatClient: this });
   }
 
   private updateAddress = (address: string | undefined) => {
@@ -674,6 +686,55 @@ export class ConatClient extends EventEmitter {
       });
     }
     return targets;
+  };
+
+  debugReconnectState = () => {
+    return {
+      sessionId: this.sessionId,
+      address: this.address,
+      remote: this.remote,
+      permanentlyDisconnected: this.permanentlyDisconnected,
+      connectionAttempts: this.numConnectionAttempts,
+      context: this.reconnectDebugContext(),
+      targets: this.getConnectionTargets(),
+      coordinator: this.reconnectCoordinator.debugSnapshot(),
+      projectHostTokens: Object.fromEntries(
+        Object.entries(this.projectHostTokens).map(([host_id, state]) => [
+          host_id,
+          {
+            hasToken: !!state.token,
+            expiresInMs:
+              state.expiresAt == null
+                ? undefined
+                : state.expiresAt - Date.now(),
+            inFlight: state.inFlight != null,
+            failureCount: state.failureCount,
+            retryAfterInMs:
+              state.retryAfter == null
+                ? undefined
+                : state.retryAfter - Date.now(),
+            lastError:
+              state.lastError == null ? undefined : `${state.lastError}`,
+            lastProjectId: state.lastProjectId,
+          },
+        ]),
+      ),
+      projectHostBrowserSessions: Object.fromEntries(
+        Object.entries(this.projectHostBrowserSessions).map(
+          ([host_id, state]) => [
+            host_id,
+            {
+              address: state.address,
+              establishedForMs:
+                state.establishedAt == null
+                  ? undefined
+                  : Date.now() - state.establishedAt,
+              inFlight: state.inFlight != null,
+            },
+          ],
+        ),
+      ),
+    };
   };
 
   probeConnectionTarget = async (

@@ -32,6 +32,7 @@ import {
   mark_open_phase,
 } from "@cocalc/frontend/project/open-file";
 import { getLogger } from "@cocalc/frontend/logger";
+import { syncdocDiagnosticLog } from "@cocalc/frontend/syncdoc-diagnostics";
 
 const FRAME_TYPE = "chatroom";
 const FAST_OPEN_CHAT_STATUS = "Loading live collaboration...";
@@ -129,6 +130,11 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     // Single shared message cache for all chat frames attached to this syncdoc.
     this.messageCache = new ChatMessageCache(syncdb);
     this.messageCacheRecoveryWarned = false;
+    syncdocDiagnosticLog("chat editor cache created", {
+      project_id: this.project_id,
+      path: this.path,
+      state: this.debugSyncdocState?.(),
+    });
     this.startOptimisticChatFastOpen(syncdb);
     syncdb.once("ready", () => {
       initFromSyncDB({ syncdb, store });
@@ -200,6 +206,12 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
         syncdbState: this._syncstring?.get_state?.(),
       });
     }
+    syncdocDiagnosticLog("chat editor cache recovered", {
+      project_id: this.project_id,
+      path: this.path,
+      frameId,
+      state: this.debugSyncdocState?.(),
+    });
     return this.messageCache;
   }
 
@@ -240,6 +252,11 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     for (const frameId in this.chatActions) {
       this.closeChatFrame(frameId);
     }
+    syncdocDiagnosticLog("chat editor close", {
+      project_id: this.project_id,
+      path: this.path,
+      state: this.debugSyncdocState?.(),
+    });
     this.messageCache?.dispose?.();
     this.messageCache = undefined;
     super.close();

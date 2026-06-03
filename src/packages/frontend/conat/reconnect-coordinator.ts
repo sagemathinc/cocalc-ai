@@ -26,6 +26,22 @@ export interface ReconnectScheduleEvent {
   visibility: ReconnectPriority;
 }
 
+export type ResourceReconnectEventName =
+  | "request"
+  | "start"
+  | "success"
+  | "failure";
+
+export interface ResourceReconnectEvent {
+  event: ResourceReconnectEventName;
+  id: string;
+  reason?: string;
+  attempts: number;
+  force?: boolean;
+  priority: ReconnectPriority;
+  error?: unknown;
+}
+
 export interface ReconnectCoordinatorOptions {
   canReconnect: () => boolean;
   connect: () => Promise<void>;
@@ -34,6 +50,7 @@ export interface ReconnectCoordinatorOptions {
   maxConcurrentResourceReconnects?: number;
   onReconnectScheduled?: (event: ReconnectScheduleEvent) => void;
   onReconnectStable?: () => void;
+  onResourceReconnectEvent?: (event: ResourceReconnectEvent) => void;
   resourceReconnectTimeoutMs?: number;
 }
 
@@ -58,6 +75,7 @@ export interface RegisteredReconnectResource {
 
 interface PendingReconnectResource {
   attempts: number;
+  id: string;
   options: ReconnectResourceOptions;
   force?: boolean;
   lastForegroundProbeAt?: number;
@@ -190,6 +208,7 @@ export class ReconnectCoordinator extends EventEmitter {
     const id = `resource-${this.nextResourceId++}`;
     const resource: PendingReconnectResource = {
       attempts: 0,
+      id,
       options,
     };
     this.resources.set(id, resource);
@@ -342,6 +361,14 @@ export class ReconnectCoordinator extends EventEmitter {
     resource.force ||= force;
     resource.readyAt =
       resource.readyAt == null ? readyAt : Math.min(resource.readyAt, readyAt);
+    this.options.onResourceReconnectEvent?.({
+      event: "request",
+      id: resource.id,
+      reason,
+      attempts: resource.attempts,
+      force: resource.force,
+      priority: this.resourcePriority(resource),
+    });
     this.schedulePendingResourceReconnects();
   };
 
@@ -470,13 +497,38 @@ export class ReconnectCoordinator extends EventEmitter {
     resource.reconnecting = true;
     resource.readyAt = undefined;
     try {
+      this.options.onResourceReconnectEvent?.({
+        event: "start",
+        id: resource.id,
+        reason: resource.pendingReason,
+        attempts: resource.attempts,
+        force: resource.force,
+        priority: this.resourcePriority(resource),
+      });
       await this.runResourceReconnectWithTimeout(resource);
+      this.options.onResourceReconnectEvent?.({
+        event: "success",
+        id: resource.id,
+        reason: resource.pendingReason,
+        attempts: resource.attempts,
+        force: resource.force,
+        priority: this.resourcePriority(resource),
+      });
       resource.force = false;
       resource.pendingAt = undefined;
       resource.pendingReason = undefined;
       resource.attempts = 0;
       this.resourceConcurrencyWindow.noteSuccess();
-    } catch {
+    } catch (err) {
+      this.options.onResourceReconnectEvent?.({
+        event: "failure",
+        id: resource.id,
+        reason: resource.pendingReason,
+        attempts: resource.attempts,
+        force: resource.force,
+        priority: this.resourcePriority(resource),
+        error: err,
+      });
       resource.attempts += 1;
       resource.readyAt = Date.now() + this.computeResourceDelay(resource);
       this.resourceConcurrencyWindow.noteFailure();
@@ -555,6 +607,39 @@ export class ReconnectCoordinator extends EventEmitter {
 
   getReconnectAttempt = () => this.reconnectAttempt;
   getStandbyStage = (): StandbyStage => this.standbyStage;
+  debugSnapshot = () => {
+    const now = Date.now();
+    return {
+      standbyStage: this.standbyStage,
+      reconnectAttempt: this.reconnectAttempt,
+      pendingReconnect: this.reconnectTimer != null,
+      pendingReason: this.pendingReason,
+      pendingPriority: this.pendingPriority,
+      pendingDelayMs: this.pendingDelayMs,
+      resourceReconnectsInFlight: this.resourceReconnectsInFlight,
+      resourceConcurrency: this.resourceConcurrencyWindow.capacity(),
+      resources: Array.from(this.resources.values()).map((resource) => ({
+        id: resource.id,
+        attempts: resource.attempts,
+        force: resource.force,
+        pending: resource.readyAt != null,
+        pendingForMs:
+          resource.pendingAt == null ? undefined : now - resource.pendingAt,
+        pendingReason: resource.pendingReason,
+        readyInMs:
+          resource.readyAt == null ? undefined : resource.readyAt - now,
+        reconnecting: resource.reconnecting,
+        lastForegroundProbeForMs:
+          resource.lastForegroundProbeAt == null
+            ? undefined
+            : now - resource.lastForegroundProbeAt,
+        priority: this.resourcePriority(resource),
+        canReconnect: resource.options.canReconnect?.() !== false,
+        isConnected: resource.options.isConnected?.(),
+        probeOnForeground: resource.options.probeOnForeground?.(),
+      })),
+    };
+  };
 
   private resourcePriority = (
     resource: PendingReconnectResource,
