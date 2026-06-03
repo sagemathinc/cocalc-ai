@@ -202,6 +202,7 @@ describe("MembershipPackageManager", () => {
     listSiteLicenseOverviews.mockResolvedValue([]);
     processPaymentIntents.mockResolvedValue({ count: 0 });
     runFreshAuthAction.mockClear();
+    userSearch.mockResolvedValue([]);
     getNames.mockResolvedValue({
       "user-1": { first_name: "Grace", last_name: "Hopper" },
     });
@@ -814,12 +815,87 @@ describe("MembershipPackageManager", () => {
     expect(screen.queryByText("Edit license")).toBeNull();
     expect(screen.queryByText("Edit pool")).toBeNull();
     expect(screen.queryByText("Add pool")).toBeNull();
-    expect(screen.queryByText("Add manager")).toBeNull();
+    expect(screen.queryByText("Add delegate")).toBeNull();
     expect(
       screen.getByText(
-        "Only site-license owners and CoCalc admins can change manager roles.",
+        "Only CoCalc admins can change delegated site-license roles.",
       ),
     ).toBeTruthy();
+  });
+
+  it("lets admins add site-license delegates with admin user search", async () => {
+    isAdmin = true;
+    const sitePackage = {
+      id: "site-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "pro",
+      seat_count: 50,
+      active_assignment_count: 2,
+      available_seat_count: 48,
+      assignments: [],
+      metadata: {
+        allowed_domains: ["example.edu"],
+        pool_name: "Students",
+        site_license_id: "license-1",
+        requires_approval: false,
+        verification_policy: "email-domain",
+      },
+      pool_name: "Students",
+      requires_approval: false,
+      verification_policy: "email-domain",
+      pending_request_count: 0,
+    };
+    userSearch.mockResolvedValue([
+      {
+        account_id: "manager-1",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        email_address: "ada@example.edu",
+      },
+    ]);
+    setSiteLicenseManager.mockResolvedValue(undefined);
+    listSiteLicenseOverviews.mockResolvedValue([
+      {
+        site_license: {
+          id: "license-1",
+          name: "Campus License",
+          organization_name: "Example University",
+          bay_id: "bay-0",
+          owner_account_id: "owner-1",
+          allowed_domains: ["example.edu"],
+          metadata: {},
+        },
+        pools: [sitePackage],
+        managers: [],
+        pending_requests: [],
+        recent_audit_events: [],
+      },
+    ]);
+
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Campus License")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Campus License"));
+    const search = screen
+      .getAllByRole("combobox")
+      .find((element) => !element.hasAttribute("readonly"));
+    if (search == null) {
+      throw Error("missing delegate account search input");
+    }
+    fireEvent.change(search, { target: { value: "ada@example.edu" } });
+
+    await waitFor(() => {
+      expect(userSearch).toHaveBeenCalledWith({
+        query: "ada@example.edu",
+        limit: 20,
+        admin: true,
+      });
+    });
+    expect(await screen.findByText("Ada Lovelace")).toBeTruthy();
   });
 
   it("requires fresh auth before reviewing site-license pool requests", async () => {
