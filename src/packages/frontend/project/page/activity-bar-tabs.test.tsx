@@ -322,13 +322,22 @@ describe("ProjectTabs settings affordance", () => {
   beforeEach(() => {
     mockLite = false;
     mockPageState = {};
+    mockProjectAccessRole = "collaborator";
   });
 
   afterEach(() => {
     mockLite = true;
   });
 
-  it("shows account settings in launchpad mode", () => {
+  it("hides account settings in launchpad mode", () => {
+    render(<ProjectTabs project_id="project-1" />);
+
+    expect(screen.queryByTestId("account-settings-button")).toBeNull();
+  });
+
+  it("shows account settings in lite mode", () => {
+    mockLite = true;
+
     render(<ProjectTabs project_id="project-1" />);
 
     expect(screen.getByTestId("account-settings-button")).toBeTruthy();
