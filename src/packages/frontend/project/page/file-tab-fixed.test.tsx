@@ -25,6 +25,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     open_file: jest.fn(),
   }),
   useRedux: () => undefined,
+  useAccountOtherSetting: (key: string) => {
+    if (key === "hide_file_popovers") return false;
+    if (key === "file_tab_accent_mode") return "bright";
+    return undefined;
+  },
   useTypedRedux: (_store: any, key: string) => {
     if (key === "status") return undefined;
     if (key === "other_settings") {

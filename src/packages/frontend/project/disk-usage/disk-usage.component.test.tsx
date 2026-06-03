@@ -52,15 +52,17 @@ jest.mock("@cocalc/frontend/app-framework", () => {
         open_directory: jest.fn(),
       })),
     },
+    useProjectMapField: jest.fn(),
     useTypedRedux: jest.fn(),
   };
 });
 
 const useDiskUsageMock = useDiskUsage as jest.Mock;
 const getStorageOverviewMock = getStorageOverview as jest.Mock;
-const { useTypedRedux } = jest.requireMock(
+const { useProjectMapField, useTypedRedux } = jest.requireMock(
   "@cocalc/frontend/app-framework",
 ) as {
+  useProjectMapField: jest.Mock;
   useTypedRedux: jest.Mock;
 };
 const applyOverviewMock = jest.fn();
@@ -86,6 +88,7 @@ describe("DiskUsage backup UI", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     applyOverviewMock.mockClear();
+    useProjectMapField.mockReturnValue(undefined);
     useDiskUsageMock.mockReturnValue({
       visible: [
         {
@@ -124,6 +127,11 @@ describe("DiskUsage backup UI", () => {
   });
 
   it("shows backup status on the button and the modal", async () => {
+    useProjectMapField.mockImplementation((project_id: string, path: string) =>
+      project_id === "project-1" && path === "last_backup"
+        ? new Date("2026-05-05T18:00:00.000Z")
+        : undefined,
+    );
     useTypedRedux.mockReturnValue(
       ImmutableMap({
         "project-1": ImmutableMap({

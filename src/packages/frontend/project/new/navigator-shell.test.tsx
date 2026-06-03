@@ -114,6 +114,8 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     if (key === "available_features") return {};
     return undefined;
   },
+  useAccountOtherSetting: () => undefined,
+  useProjectMapField: () => "running",
 }));
 
 jest.mock("@cocalc/frontend/chat/register", () => ({

@@ -24,6 +24,7 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     },
     useCallback: React.useCallback,
     useEffect: React.useEffect,
+    useProjectMapField: jest.fn(() => undefined),
     useRef: React.useRef,
     useState: React.useState,
     useTypedRedux: jest.fn(() => undefined),

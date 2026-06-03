@@ -15,6 +15,8 @@ jest.mock("antd", () => ({
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  useAccountOtherSetting: (key: string) =>
+    key === "hide_button_tooltips" ? hideTooltips : undefined,
   useTypedRedux: () => ({
     get: (key: string) =>
       key === "hide_button_tooltips" ? hideTooltips : undefined,

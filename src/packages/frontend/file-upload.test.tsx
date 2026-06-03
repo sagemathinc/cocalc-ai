@@ -45,6 +45,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getProjectActions: jest.fn(() => ({ log: jest.fn() })),
   },
+  useProjectMapField: jest.fn(() => undefined),
   useTypedRedux: jest.fn(() => undefined),
 }));
 
