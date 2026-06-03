@@ -27,11 +27,13 @@ import {
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
   listSiteLicenseAffiliationReverificationSeats,
+  listSiteLicenseOverviews,
   releaseGraceExpiredSiteLicenseAffiliationSeats,
   requestSiteLicensePool,
   refreshSiteLicenseAffiliationVerificationForAccount,
   removeSiteLicenseManager,
   reviewSiteLicensePoolRequest,
+  revokeSiteLicensePoolSeat,
   setSiteLicenseManager,
   updateSiteLicense,
   updateSiteLicensePool,
@@ -94,6 +96,21 @@ describe("site license seat pools", () => {
     );
   }
 
+  async function provisionSiteLicenseForTest(
+    opts: Parameters<typeof adminProvisionSiteLicense>[0],
+  ) {
+    const overview = await adminProvisionSiteLicense(opts);
+    if (!opts.owner_account_id || opts.trusted_admin) {
+      return overview;
+    }
+    return await setSiteLicenseManager({
+      actor_account_id: opts.actor_account_id,
+      site_license_id: overview.site_license.id,
+      target_account_id: opts.owner_account_id,
+      role: "owner",
+    });
+  }
+
   it("only treats positive email verification markers as verified", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);
@@ -144,6 +161,185 @@ describe("site license seat pools", () => {
     ).rejects.toThrow(/membership tier not found or disabled/);
   });
 
+  it("stores site licenses on the seed bay and does not attach managers on provisioning", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const domain = `ownerless-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await markAdmin(admin_account_id);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Ownerless Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+        },
+      ],
+    });
+
+    expect(overview.site_license).toEqual(
+      expect.objectContaining({
+        bay_id: "bay-0",
+        owner_account_id,
+      }),
+    );
+    expect(overview.managers).toEqual([]);
+    await expect(
+      getSiteLicenseOverview({
+        account_id: owner_account_id,
+        site_license_id: overview.site_license.id,
+      }),
+    ).rejects.toThrow("must view site license");
+  });
+
+  it("lists site licenses for admins and attached managers only", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const outsider_account_id = uuid();
+    const domain = `list-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(outsider_account_id);
+    await markAdmin(admin_account_id);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      name: "Visible Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+        },
+      ],
+    });
+
+    await expect(
+      listSiteLicenseOverviews({
+        account_id: admin_account_id,
+        admin: true,
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          site_license: expect.objectContaining({
+            id: overview.site_license.id,
+          }),
+        }),
+      ]),
+    );
+    await expect(
+      listSiteLicenseOverviews({
+        account_id: owner_account_id,
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      listSiteLicenseOverviews({
+        account_id: outsider_account_id,
+      }),
+    ).resolves.toEqual([]);
+
+    await setSiteLicenseManager({
+      actor_account_id: admin_account_id,
+      site_license_id: overview.site_license.id,
+      target_account_id: owner_account_id,
+      role: "owner",
+    });
+
+    await expect(
+      listSiteLicenseOverviews({
+        account_id: owner_account_id,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        site_license: expect.objectContaining({
+          id: overview.site_license.id,
+        }),
+      }),
+    ]);
+  });
+
+  it("lets site-license managers revoke active pool seats", async () => {
+    const admin_account_id = uuid();
+    const manager_account_id = uuid();
+    const viewer_account_id = uuid();
+    const student_account_id = uuid();
+    const domain = `manager-revoke-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(manager_account_id);
+    await createTestAccount(viewer_account_id);
+    await createTestAccount(student_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(student_account_id, `student@${domain}`);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      name: "Manager Revoke Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+        },
+      ],
+    });
+    const pool = overview.pools[0]!;
+    await setSiteLicenseManager({
+      actor_account_id: admin_account_id,
+      site_license_id: overview.site_license.id,
+      target_account_id: manager_account_id,
+      role: "manager",
+    });
+    await setSiteLicenseManager({
+      actor_account_id: admin_account_id,
+      site_license_id: overview.site_license.id,
+      target_account_id: viewer_account_id,
+      role: "viewer",
+    });
+    await claimMembershipPackageSeat({
+      package_id: pool.id,
+      account_id: student_account_id,
+    });
+
+    await expect(
+      revokeSiteLicensePoolSeat({
+        actor_account_id: viewer_account_id,
+        package_id: pool.id,
+        target_account_id: student_account_id,
+      }),
+    ).rejects.toThrow("must manage site license");
+    await expect(
+      revokeSiteLicensePoolSeat({
+        actor_account_id: manager_account_id,
+        package_id: pool.id,
+        target_account_id: student_account_id,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      listMembershipPackageAssignments({
+        package_id: pool.id,
+        include_revoked: false,
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it("provisions pools and requires manager approval for higher tier seats", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();
@@ -158,7 +354,7 @@ describe("site license seat pools", () => {
     await markVerifiedEmail(student_account_id, `ada@${domain}`);
     await markVerifiedEmail(researcher_account_id, `ada+research@${domain}`);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Math Department Launch",
@@ -443,14 +639,14 @@ describe("site license seat pools", () => {
     );
   });
 
-  it("returns provisioned overview for trusted remote admin actor", async () => {
+  it("returns and lists overviews for trusted remote admin actors", async () => {
     const remote_admin_account_id = uuid();
     const owner_account_id = uuid();
     const domain = `trusted-${uuid().slice(0, 8)}.edu`;
     await createTestAccount(remote_admin_account_id);
     await createTestAccount(owner_account_id);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: remote_admin_account_id,
       owner_account_id,
       name: "Trusted Remote Campus",
@@ -470,20 +666,35 @@ describe("site license seat pools", () => {
     });
 
     expect(overview.site_license.name).toBe("Trusted Remote Campus");
-    expect(overview.managers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          account_id: owner_account_id,
-          role: "owner",
-        }),
-      ]),
-    );
+    expect(overview.site_license.bay_id).toBe("bay-0");
+    expect(overview.managers).toEqual([]);
     await expect(
       getSiteLicenseOverview({
         account_id: remote_admin_account_id,
         site_license_id: overview.site_license.id,
       }),
     ).rejects.toThrow("must view site license");
+    await expect(
+      listSiteLicenseOverviews({
+        account_id: remote_admin_account_id,
+        admin: true,
+      }),
+    ).rejects.toThrow("must be an admin");
+    await expect(
+      listSiteLicenseOverviews({
+        account_id: remote_admin_account_id,
+        admin: true,
+        trusted_admin: true,
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          site_license: expect.objectContaining({
+            id: overview.site_license.id,
+          }),
+        }),
+      ]),
+    );
   });
 
   it("prevents active site license domain overlap", async () => {
@@ -496,7 +707,7 @@ describe("site license seat pools", () => {
     await createTestAccount(second_owner_account_id);
     await markAdmin(admin_account_id);
 
-    await adminProvisionSiteLicense({
+    await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id: first_owner_account_id,
       name: "Active Campus",
@@ -515,7 +726,7 @@ describe("site license seat pools", () => {
     });
 
     await expect(
-      adminProvisionSiteLicense({
+      provisionSiteLicenseForTest({
         actor_account_id: admin_account_id,
         owner_account_id: second_owner_account_id,
         name: "Duplicate Campus",
@@ -535,7 +746,7 @@ describe("site license seat pools", () => {
     ).rejects.toThrow(`site license domain '${domain}' overlaps`);
 
     await expect(
-      adminProvisionSiteLicense({
+      provisionSiteLicenseForTest({
         actor_account_id: admin_account_id,
         owner_account_id: second_owner_account_id,
         name: "Subdomain Campus",
@@ -566,7 +777,7 @@ describe("site license seat pools", () => {
     await createTestAccount(second_owner_account_id);
     await markAdmin(admin_account_id);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Indexed Campus",
@@ -604,7 +815,7 @@ describe("site license seat pools", () => {
     );
 
     await expect(
-      adminProvisionSiteLicense({
+      provisionSiteLicenseForTest({
         actor_account_id: admin_account_id,
         owner_account_id: second_owner_account_id,
         name: "Index Conflict Campus",
@@ -635,7 +846,7 @@ describe("site license seat pools", () => {
     await createTestAccount(second_owner_account_id);
     await markAdmin(admin_account_id);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Editable Campus",
@@ -683,7 +894,7 @@ describe("site license seat pools", () => {
     });
 
     await expect(
-      adminProvisionSiteLicense({
+      provisionSiteLicenseForTest({
         actor_account_id: admin_account_id,
         owner_account_id: second_owner_account_id,
         name: "Conflict Campus",
@@ -714,7 +925,7 @@ describe("site license seat pools", () => {
     await createTestAccount(manager_account_id);
     await markAdmin(admin_account_id);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Settings Campus",
@@ -788,13 +999,16 @@ describe("site license seat pools", () => {
         (manager) => manager.account_id === manager_account_id,
       ),
     ).toBe(false);
-    await expect(
-      removeSiteLicenseManager({
-        actor_account_id: owner_account_id,
-        site_license_id: overview.site_license.id,
-        target_account_id: owner_account_id,
-      }),
-    ).rejects.toThrow("cannot remove the last site-license owner");
+    const withoutOwner = await removeSiteLicenseManager({
+      actor_account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+      target_account_id: owner_account_id,
+    });
+    expect(
+      withoutOwner.managers.some(
+        (manager) => manager.account_id === owner_account_id,
+      ),
+    ).toBe(false);
   });
 
   it("adds site-license pools after creation", async () => {
@@ -806,7 +1020,7 @@ describe("site license seat pools", () => {
     await createTestAccount(owner_account_id);
     await markAdmin(admin_account_id);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Add Pool Campus",
@@ -907,7 +1121,7 @@ describe("site license seat pools", () => {
     await createTestAccount(active_owner_account_id);
     await markAdmin(admin_account_id);
 
-    await adminProvisionSiteLicense({
+    await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id: expired_owner_account_id,
       name: "Expired Campus",
@@ -926,7 +1140,7 @@ describe("site license seat pools", () => {
       ],
     });
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id: active_owner_account_id,
       name: "Replacement Campus",
@@ -960,7 +1174,7 @@ describe("site license seat pools", () => {
     await markVerifiedEmail(student_account_id, `student@${domain}`);
     await markVerifiedEmail(instructor_account_id, `instructor@${domain}`);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Custom Terms Campus",
@@ -1077,7 +1291,7 @@ describe("site license seat pools", () => {
       ],
     );
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Exclusive Group Campus",
@@ -1185,7 +1399,7 @@ describe("site license seat pools", () => {
     await markVerifiedEmail(expired_account_id, `expired@${domain}`);
     await markVerifiedEmail(instructor_account_id, `instructor@${domain}`);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Reverification Campus",
@@ -1402,7 +1616,7 @@ describe("site license seat pools", () => {
     await markVerifiedEmail(wrong_domain_account_id, `wrong@${domain}`);
     await markVerifiedEmail(instructor_account_id, `instructor@${domain}`);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Refresh Campus",
@@ -1647,7 +1861,7 @@ describe("site license seat pools", () => {
     await markVerifiedEmail(expired_account_id, `expired@${domain}`);
     await markVerifiedEmail(current_account_id, `current@${domain}`);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Maintenance Campus",
@@ -1747,7 +1961,7 @@ describe("site license seat pools", () => {
     await markAdmin(admin_account_id);
     await markVerifiedEmail(pending_account_id, `pending@${domain}`);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Notification Campus",
@@ -1858,7 +2072,7 @@ describe("site license seat pools", () => {
     await markVerifiedEmail(first_account_id, `first@${domain}`);
     await markVerifiedEmail(second_account_id, `second@${domain}`);
 
-    const overview = await adminProvisionSiteLicense({
+    const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
       owner_account_id,
       name: "Capacity Campus",

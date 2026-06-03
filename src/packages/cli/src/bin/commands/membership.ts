@@ -805,8 +805,8 @@ export function registerMembershipCommand(
 
   siteLicense
     .command("provision")
-    .description("admin provision a site license with named pools")
-    .requiredOption("--owner <account>", "owner account identifier")
+    .description("admin provision a seed-bay site license with named pools")
+    .option("--owner <account>", "optional legacy owner account identifier")
     .requiredOption("--name <name>", "site license name")
     .requiredOption("--organization-name <name>", "organization name")
     .requiredOption(
@@ -828,7 +828,7 @@ export function registerMembershipCommand(
     .action(
       async (
         opts: {
-          owner: string;
+          owner?: string;
           name: string;
           organizationName: string;
           domain: string[];
@@ -848,9 +848,12 @@ export function registerMembershipCommand(
           command,
           "membership site-license provision",
           async (ctx) => {
-            const owner = await resolveAccountByIdentifier(ctx, opts.owner);
+            const owner =
+              opts.owner == null
+                ? undefined
+                : await resolveAccountByIdentifier(ctx, opts.owner);
             const owner_account_id = `${owner?.account_id ?? ""}`.trim();
-            if (!owner_account_id) {
+            if (opts.owner && !owner_account_id) {
               throw new Error("unable to resolve owner account");
             }
             const allowed_domains = normalizeStringList(opts.domain);
@@ -860,7 +863,7 @@ export function registerMembershipCommand(
             return serializeSiteLicenseOverview(
               await ctx.hub.purchases.adminProvisionSiteLicense({
                 account_id: ctx.accountId,
-                owner_account_id,
+                owner_account_id: owner_account_id || undefined,
                 name: `${opts.name ?? ""}`.trim(),
                 organization_name: `${opts.organizationName ?? ""}`.trim(),
                 allowed_domains,

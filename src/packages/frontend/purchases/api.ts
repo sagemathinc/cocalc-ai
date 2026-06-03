@@ -411,6 +411,12 @@ export async function adminProvisionSiteLicense(opts: {
   });
 }
 
+export async function listSiteLicenseOverviews(
+  opts: { admin?: boolean } = {},
+): Promise<SiteLicenseOverview[]> {
+  return await (await getPurchasesHubRpc()).listSiteLicenseOverviews(opts);
+}
+
 export async function updateMembershipPackage(opts: {
   package_id: string;
   owner_account_id?: string;

@@ -1,8 +1,15 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import {
   ClaimableMembershipPackagesPanel,
   MembershipPackageManager,
+  SiteLicenseAdminPanel,
 } from "../membership-package-manager";
 
 const getMembershipPackages = jest.fn();
@@ -10,6 +17,7 @@ const getClaimableMembershipPackages = jest.fn();
 const claimMembershipPackageSeat = jest.fn();
 const requestSiteLicensePool = jest.fn();
 const getSiteLicenseOverview = jest.fn();
+const listSiteLicenseOverviews = jest.fn();
 const reviewSiteLicensePoolRequest = jest.fn();
 const getMembershipPackageQuote = jest.fn();
 const isPurchaseAllowed = jest.fn();
@@ -34,6 +42,28 @@ const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
 
 let accountId = "owner-1";
 let isAdmin = false;
+
+function getSiteLicenseSummaryRow(name: string): HTMLElement {
+  const row = screen
+    .getAllByRole("row")
+    .find(
+      (row) =>
+        row.getAttribute("data-site-license-id") != null &&
+        row.querySelectorAll("td").length > 1 &&
+        within(row).queryByText(name),
+    );
+  if (row == null) {
+    throw Error(`unable to find site license summary row for ${name}`);
+  }
+  return row;
+}
+
+function expectTextNotVisible(text: string): void {
+  const element = screen.queryByText(text);
+  if (element != null) {
+    expect(element).not.toBeVisible();
+  }
+}
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (_store: string, key: string) =>
@@ -79,6 +109,8 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
     claimMembershipPackageSeat(...args),
   requestSiteLicensePool: (...args: any[]) => requestSiteLicensePool(...args),
   getSiteLicenseOverview: (...args: any[]) => getSiteLicenseOverview(...args),
+  listSiteLicenseOverviews: (...args: any[]) =>
+    listSiteLicenseOverviews(...args),
   reviewSiteLicensePoolRequest: (...args: any[]) =>
     reviewSiteLicensePoolRequest(...args),
   getMembershipPackageQuote: (...args: any[]) =>
@@ -111,6 +143,11 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     users_client: {
       user_search: (...args: any[]) => userSearch(...args),
       getNames: (...args: any[]) => getNames(...args),
+    },
+    conat_client: {
+      hub: {
+        system: {},
+      },
     },
   },
 }));
@@ -162,6 +199,7 @@ describe("MembershipPackageManager", () => {
     accountId = "owner-1";
     isAdmin = false;
     getClaimableMembershipPackages.mockResolvedValue([]);
+    listSiteLicenseOverviews.mockResolvedValue([]);
     processPaymentIntents.mockResolvedValue({ count: 0 });
     runFreshAuthAction.mockClear();
     getNames.mockResolvedValue({
@@ -189,63 +227,48 @@ describe("MembershipPackageManager", () => {
         ],
         metadata: { interval: "month", seat_price: 10 },
       },
-      {
-        id: "site-1",
-        owner_account_id: "owner-1",
-        kind: "site",
-        membership_class: "pro",
-        seat_count: 50,
-        active_assignment_count: 0,
-        available_seat_count: 50,
-        assignments: [],
-        metadata: {
-          allowed_domains: ["example.edu"],
-          pool_name: "Students",
-          site_license_id: "license-1",
-          requires_approval: false,
-          verification_policy: "email-domain",
-          exclusive_group: "student",
-        },
-      },
     ]);
-    getSiteLicenseOverview.mockResolvedValue({
-      site_license: {
-        id: "license-1",
-        name: "Campus License",
-        organization_name: "Example University",
-        owner_account_id: "owner-1",
-        allowed_domains: ["example.edu"],
-        metadata: {},
-      },
-      pools: [
-        {
-          id: "site-1",
-          owner_account_id: "owner-1",
-          kind: "site",
-          membership_class: "pro",
-          seat_count: 50,
-          active_assignment_count: 0,
-          available_seat_count: 50,
-          assignments: [],
-          metadata: {
-            allowed_domains: ["example.edu"],
+    listSiteLicenseOverviews.mockResolvedValue([
+      {
+        site_license: {
+          id: "license-1",
+          name: "Campus License",
+          organization_name: "Example University",
+          bay_id: "bay-0",
+          owner_account_id: null,
+          allowed_domains: ["example.edu"],
+          metadata: {},
+        },
+        pools: [
+          {
+            id: "site-1",
+            owner_account_id: "owner-1",
+            kind: "site",
+            membership_class: "pro",
+            seat_count: 50,
+            active_assignment_count: 0,
+            available_seat_count: 50,
+            assignments: [],
+            metadata: {
+              allowed_domains: ["example.edu"],
+              pool_name: "Students",
+              site_license_id: "license-1",
+              requires_approval: false,
+              verification_policy: "email-domain",
+              exclusive_group: "student",
+            },
             pool_name: "Students",
-            site_license_id: "license-1",
             requires_approval: false,
             verification_policy: "email-domain",
             exclusive_group: "student",
+            pending_request_count: 0,
           },
-          pool_name: "Students",
-          requires_approval: false,
-          verification_policy: "email-domain",
-          exclusive_group: "student",
-          pending_request_count: 0,
-        },
-      ],
-      managers: [],
-      pending_requests: [],
-      recent_audit_events: [],
-    });
+        ],
+        managers: [],
+        pending_requests: [],
+        recent_audit_events: [],
+      },
+    ]);
 
     render(<MembershipPackageManager tiers={TIERS} />);
 
@@ -455,15 +478,16 @@ describe("MembershipPackageManager", () => {
     });
   });
 
-  it("lets admins provision a site license without payment", async () => {
+  it("provisions an admin site license without a user-selected bay", async () => {
     isAdmin = true;
-    getMembershipPackages.mockResolvedValue([]);
+    listSiteLicenseOverviews.mockResolvedValue([]);
     adminProvisionSiteLicense.mockResolvedValue({
       site_license: {
         id: "license-1",
         name: "Campus site license",
         organization_name: "Example University",
-        owner_account_id: "owner-1",
+        bay_id: "bay-0",
+        owner_account_id: null,
         allowed_domains: ["example.edu"],
       },
       pools: [],
@@ -471,7 +495,7 @@ describe("MembershipPackageManager", () => {
       pending_requests: [],
     });
 
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
 
     await waitFor(() => {
       expect(screen.getByText("Provision site license")).toBeTruthy();
@@ -490,34 +514,162 @@ describe("MembershipPackageManager", () => {
     fireEvent.click(screen.getByText("Provision license"));
 
     await waitFor(() => {
-      expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
-      expect(adminProvisionSiteLicense).toHaveBeenCalledWith({
-        owner_account_id: undefined,
-        allowed_domains: ["dept.example.edu", "example.edu"],
-        name: "Campus site license",
-        organization_name: "Example University",
-        custom_terms_url: null,
-        custom_policy_url: null,
-        terms_version_label: null,
-        renewal_policy: "annual",
-        overage_policy: "hard-cap",
-        starts_at: undefined,
-        expires_at: undefined,
-        pools: expect.arrayContaining([
-          expect.objectContaining({
-            pool_name: "Students",
-            membership_class: "member",
-            requires_approval: false,
-            allowed_domains: ["dept.example.edu", "example.edu"],
-          }),
-          expect.objectContaining({
-            pool_name: "Instructors",
+      expect(runFreshAuthAction).toHaveBeenCalled();
+      expect(adminProvisionSiteLicense).toHaveBeenCalled();
+    });
+    const provisionCall = adminProvisionSiteLicense.mock.calls[0]?.[0];
+    expect(provisionCall.bay_id).toBeUndefined();
+    expect(new Set(provisionCall.allowed_domains)).toEqual(
+      new Set(["example.edu", "dept.example.edu"]),
+    );
+  });
+
+  it("shows a compact admin site-license list before the selected dashboard", async () => {
+    isAdmin = true;
+    listSiteLicenseOverviews.mockResolvedValue([
+      {
+        site_license: {
+          id: "license-1",
+          name: "Campus License",
+          organization_name: "Example University",
+          bay_id: "bay-0",
+          owner_account_id: null,
+          allowed_domains: ["example.edu"],
+          metadata: {},
+        },
+        pools: [
+          {
+            id: "site-1",
+            owner_account_id: "owner-1",
+            kind: "site",
             membership_class: "pro",
+            seat_count: 10,
+            active_assignment_count: 1,
+            available_seat_count: 9,
+            assignments: [
+              {
+                id: "assignment-1",
+                package_id: "site-1",
+                account_id: "user-1",
+                assigned_at: new Date("2026-05-01T00:00:00Z"),
+              },
+            ],
+            metadata: {
+              pool_name: "Students",
+              site_license_id: "license-1",
+              requires_approval: false,
+              verification_policy: "email-domain",
+              exclusive_group: "student",
+            },
+            pool_name: "Students",
+            requires_approval: false,
+            verification_policy: "email-domain",
+            exclusive_group: "student",
+            pending_request_count: 0,
+          },
+        ],
+        managers: [],
+        pending_requests: [],
+        recent_audit_events: [],
+      },
+      {
+        site_license: {
+          id: "license-2",
+          name: "Research License",
+          organization_name: "Research Institute",
+          bay_id: "bay-1",
+          owner_account_id: null,
+          allowed_domains: ["research.example.edu"],
+          metadata: {},
+        },
+        pools: [
+          {
+            id: "site-2",
+            owner_account_id: "owner-1",
+            kind: "site",
+            membership_class: "pro",
+            seat_count: 20,
+            active_assignment_count: 3,
+            available_seat_count: 17,
+            assignments: [
+              {
+                id: "assignment-2",
+                package_id: "site-2",
+                account_id: "user-2",
+                assigned_at: new Date("2026-05-01T00:00:00Z"),
+              },
+              {
+                id: "assignment-3",
+                package_id: "site-2",
+                account_id: "user-3",
+                assigned_at: new Date("2026-05-01T00:00:00Z"),
+              },
+              {
+                id: "assignment-4",
+                package_id: "site-2",
+                account_id: "user-4",
+                assigned_at: new Date("2026-05-01T00:00:00Z"),
+              },
+            ],
+            metadata: {
+              pool_name: "Researchers",
+              site_license_id: "license-2",
+              requires_approval: true,
+              verification_policy: "manager-approval",
+              exclusive_group: "research",
+            },
+            pool_name: "Researchers",
             requires_approval: true,
-            allowed_domains: ["dept.example.edu", "example.edu"],
-          }),
-        ]),
-      });
+            verification_policy: "manager-approval",
+            exclusive_group: "research",
+            pending_request_count: 1,
+          },
+        ],
+        managers: [],
+        pending_requests: [
+          {
+            id: "request-1",
+            site_license_id: "license-2",
+            package_id: "site-2",
+            account_id: "student-1",
+            matched_email_address: "ada@research.example.edu",
+            canonical_identity: "ada@research.example.edu",
+            requested_membership_class: "pro",
+            state: "pending",
+            requested_at: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+        recent_audit_events: [],
+      },
+    ]);
+
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Showing 2 of 2")).toBeTruthy();
+      expect(screen.getByText("1 / 10")).toBeTruthy();
+      expect(screen.getByText("3 / 20")).toBeTruthy();
+      expect(screen.queryByText("Students")).toBeNull();
+      expect(screen.queryByText("Researchers")).toBeNull();
+    });
+
+    fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Students")).toBeVisible();
+    });
+
+    fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
+
+    await waitFor(() => {
+      expectTextNotVisible("Students");
+    });
+
+    fireEvent.click(getSiteLicenseSummaryRow("Research License"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Researchers").length).toBeGreaterThan(0);
+      expectTextNotVisible("Students");
     });
   });
 
@@ -546,21 +698,23 @@ describe("MembershipPackageManager", () => {
       exclusive_group: "student",
       pending_request_count: 0,
     };
-    getMembershipPackages.mockResolvedValue([sitePackage]);
-    getSiteLicenseOverview.mockResolvedValue({
-      site_license: {
-        id: "license-1",
-        name: "Campus License",
-        organization_name: "Example University",
-        owner_account_id: "owner-1",
-        allowed_domains: ["example.edu"],
-        metadata: {},
+    listSiteLicenseOverviews.mockResolvedValue([
+      {
+        site_license: {
+          id: "license-1",
+          name: "Campus License",
+          organization_name: "Example University",
+          bay_id: "bay-0",
+          owner_account_id: null,
+          allowed_domains: ["example.edu"],
+          metadata: {},
+        },
+        pools: [sitePackage],
+        managers: [],
+        pending_requests: [],
+        recent_audit_events: [],
       },
-      pools: [sitePackage],
-      managers: [],
-      pending_requests: [],
-      recent_audit_events: [],
-    });
+    ]);
     updateMembershipPackage.mockResolvedValue({
       id: "site-1",
       owner_account_id: "owner-1",
@@ -573,7 +727,13 @@ describe("MembershipPackageManager", () => {
       metadata: { allowed_domains: ["example.edu"] },
     });
 
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Campus License")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Campus License"));
 
     await waitFor(() => {
       expect(screen.getByText("Edit pool")).toBeTruthy();
@@ -620,28 +780,30 @@ describe("MembershipPackageManager", () => {
       exclusive_group: "student",
       pending_request_count: 0,
     };
-    getMembershipPackages.mockResolvedValue([sitePackage]);
-    getSiteLicenseOverview.mockResolvedValue({
-      site_license: {
-        id: "license-1",
-        name: "Campus License",
-        organization_name: "Example University",
-        owner_account_id: "owner-1",
-        allowed_domains: ["example.edu"],
-        metadata: {},
-      },
-      pools: [sitePackage],
-      managers: [
-        {
-          id: "manager-1",
-          site_license_id: "license-1",
-          account_id: "owner-1",
-          role: "manager",
+    listSiteLicenseOverviews.mockResolvedValue([
+      {
+        site_license: {
+          id: "license-1",
+          name: "Campus License",
+          organization_name: "Example University",
+          bay_id: "bay-0",
+          owner_account_id: null,
+          allowed_domains: ["example.edu"],
+          metadata: {},
         },
-      ],
-      pending_requests: [],
-      recent_audit_events: [],
-    });
+        pools: [sitePackage],
+        managers: [
+          {
+            id: "manager-1",
+            site_license_id: "license-1",
+            account_id: "owner-1",
+            role: "manager",
+          },
+        ],
+        pending_requests: [],
+        recent_audit_events: [],
+      },
+    ]);
 
     render(<MembershipPackageManager tiers={TIERS} />);
 
@@ -684,33 +846,42 @@ describe("MembershipPackageManager", () => {
       exclusive_group: "instructor",
       pending_request_count: 1,
     };
-    getMembershipPackages.mockResolvedValue([sitePackage]);
-    getSiteLicenseOverview.mockResolvedValue({
-      site_license: {
-        id: "license-1",
-        name: "Campus License",
-        organization_name: "Example University",
-        owner_account_id: "owner-1",
-        allowed_domains: ["example.edu"],
-        metadata: {},
-      },
-      pools: [sitePackage],
-      managers: [],
-      pending_requests: [
-        {
-          id: "request-1",
-          site_license_id: "license-1",
-          package_id: "site-1",
-          account_id: "student-1",
-          matched_email_address: "ada@example.edu",
-          canonical_identity: "ada@example.edu",
-          requested_membership_class: "pro",
-          state: "pending",
-          requested_at: new Date("2026-05-01T00:00:00Z"),
+    listSiteLicenseOverviews.mockResolvedValue([
+      {
+        site_license: {
+          id: "license-1",
+          name: "Campus License",
+          organization_name: "Example University",
+          bay_id: "bay-0",
+          owner_account_id: null,
+          allowed_domains: ["example.edu"],
+          metadata: {},
         },
-      ],
-      recent_audit_events: [],
-    });
+        pools: [sitePackage],
+        managers: [
+          {
+            id: "manager-1",
+            account_id: "owner-1",
+            role: "manager",
+            site_license_id: "license-1",
+          },
+        ],
+        pending_requests: [
+          {
+            id: "request-1",
+            site_license_id: "license-1",
+            package_id: "site-1",
+            account_id: "student-1",
+            matched_email_address: "ada@example.edu",
+            canonical_identity: "ada@example.edu",
+            requested_membership_class: "pro",
+            state: "pending",
+            requested_at: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+        recent_audit_events: [],
+      },
+    ]);
     reviewSiteLicensePoolRequest.mockResolvedValue({
       id: "request-1",
       state: "approved",
@@ -727,7 +898,6 @@ describe("MembershipPackageManager", () => {
     await waitFor(() => {
       expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
       expect(reviewSiteLicensePoolRequest).toHaveBeenCalledWith({
-        owner_account_id: "owner-1",
         request_id: "request-1",
         action: "approve",
       });
@@ -759,21 +929,23 @@ describe("MembershipPackageManager", () => {
       exclusive_group: "student",
       pending_request_count: 0,
     };
-    getMembershipPackages.mockResolvedValue([sitePackage]);
-    getSiteLicenseOverview.mockResolvedValue({
-      site_license: {
-        id: "license-1",
-        name: "Campus License",
-        organization_name: "Example University",
-        owner_account_id: "owner-1",
-        allowed_domains: ["example.edu"],
-        metadata: {},
+    listSiteLicenseOverviews.mockResolvedValue([
+      {
+        site_license: {
+          id: "license-1",
+          name: "Campus License",
+          organization_name: "Example University",
+          bay_id: "bay-0",
+          owner_account_id: null,
+          allowed_domains: ["example.edu"],
+          metadata: {},
+        },
+        pools: [sitePackage],
+        managers: [],
+        pending_requests: [],
+        recent_audit_events: [],
       },
-      pools: [sitePackage],
-      managers: [],
-      pending_requests: [],
-      recent_audit_events: [],
-    });
+    ]);
     addSiteLicensePool.mockResolvedValue({
       site_license: {
         id: "license-1",
@@ -789,7 +961,13 @@ describe("MembershipPackageManager", () => {
       recent_audit_events: [],
     });
 
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Campus License")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Campus License"));
 
     await waitFor(() => {
       expect(screen.getByText("Add pool")).toBeTruthy();
