@@ -31,11 +31,19 @@ export type TablePortabilityStatus =
   | "stable"
   | "unsupported";
 
+export type TableReferenceField =
+  | "account_id"
+  | "owner_account_id"
+  | "project_id"
+  | "host_id"
+  | "bay_id";
+
 export interface TableOwnershipEntry {
   table: string;
   ownership: TableOwnershipClass;
   authority: TableAuthorityKey;
   portability: TablePortabilityStatus;
+  secondary_reference_fields?: Partial<Record<TableReferenceField, string>>;
   notes: string;
   rebuild?: string;
 }
@@ -82,6 +90,10 @@ export const TABLE_OWNERSHIP = {
       ownership: "account-home",
       authority: "account_id",
       portability: "unsupported",
+      secondary_reference_fields: {
+        project_id:
+          "Project reference for account-scoped usage, purchase, or credential rows.",
+      },
       notes:
         "Account-owned source-of-truth state. Reads/writes must route to the account home bay. Rehome remains unsafe until this table has explicit migration tests.",
     },
@@ -91,6 +103,10 @@ export const TABLE_OWNERSHIP = {
     ownership: "account-home",
     authority: "account_id",
     portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Project reference for project-linked purchases, not placement authority.",
+    },
     notes:
       "Account-owned billing ledger state. This must never be dropped or reinitialized during rehome; current rehome behavior is intentionally treated as unsafe.",
   }),
@@ -122,6 +138,11 @@ export const TABLE_OWNERSHIP = {
       ownership: "project-owning",
       authority: "project_id",
       portability: "unsupported",
+      secondary_reference_fields: {
+        account_id: "Actor or owner reference, not placement authority.",
+        host_id: "Host that produced or currently serves the project record.",
+        owner_account_id: "Account reference, not placement authority.",
+      },
       notes:
         "Project-owned source-of-truth state. Reads/writes must route to the project owning bay. Rehome requires explicit table-specific copy/delete verification.",
     },
@@ -139,6 +160,12 @@ export const TABLE_OWNERSHIP = {
       ownership: "host-owning",
       authority: "host_id",
       portability: "unsupported",
+      secondary_reference_fields: {
+        account_id:
+          "Account reference for access or allocation, not host placement authority.",
+        project_id:
+          "Project reference for access or allocation, not host placement authority.",
+      },
       notes:
         "Project-host-owned control-plane state. Writes must route to the host bay; host rehome is an exceptional unsafe operation until audited.",
     },
@@ -341,6 +368,10 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       ownership: "account-home",
       authority: "account_id",
       portability: "unsupported",
+      secondary_reference_fields: {
+        host_id: "Usage attribution dimension, not placement authority.",
+        project_id: "Usage attribution dimension, not placement authority.",
+      },
       source: "server Postgres schema bootstrap",
       migrate_to_schema: true,
       notes:
@@ -371,6 +402,9 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       ownership: "project-owning",
       authority: "project_id",
       portability: "unsupported",
+      secondary_reference_fields: {
+        account_id: "Actor or participant reference, not placement authority.",
+      },
       source: "server Postgres schema bootstrap",
       migrate_to_schema: true,
       notes:
@@ -402,6 +436,11 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       ownership: "stable-bay",
       authority: "local",
       portability: "stable",
+      secondary_reference_fields: {
+        account_id: "Operation target reference, not placement authority.",
+        host_id: "Operation target reference, not placement authority.",
+        project_id: "Operation target reference, not placement authority.",
+      },
       source: "server Postgres schema bootstrap",
       migrate_to_schema: true,
       notes:

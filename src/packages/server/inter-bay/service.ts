@@ -163,6 +163,15 @@ import {
   updateSiteLicensePool,
 } from "@cocalc/server/membership/site-licenses";
 import {
+  createLicenseOnSeed,
+  listLicensesOnSeed,
+  listLicenseTiersOnSeed,
+  listOwnedLicensesOnSeed,
+  restoreLicenseOnSeed,
+  revokeLicenseOnSeed,
+  upsertLicenseTierOnSeed,
+} from "@cocalc/server/conat/api/software";
+import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
@@ -803,6 +812,44 @@ async function startAccountLocalService(): Promise<void> {
             revoked: await revokeSiteLicensePoolSeat(opts),
           }
         : await getSeedSiteLicenseClient().revokeSiteLicensePoolSeat(opts),
+    listSoftwareLicenseTiers: async ({ actor_account_id, include_disabled }) =>
+      isSeedSiteLicenseBay()
+        ? await listLicenseTiersOnSeed({ include_disabled })
+        : await getSeedSiteLicenseClient().listSoftwareLicenseTiers({
+            actor_account_id,
+            include_disabled,
+          }),
+    upsertSoftwareLicenseTier: async ({ actor_account_id, tier }) =>
+      isSeedSiteLicenseBay()
+        ? await upsertLicenseTierOnSeed({ actor_account_id, tier })
+        : await getSeedSiteLicenseClient().upsertSoftwareLicenseTier({
+            actor_account_id,
+            tier,
+          }),
+    listSoftwareLicenses: async ({ actor_account_id, search, limit }) =>
+      isSeedSiteLicenseBay()
+        ? await listLicensesOnSeed({ search, limit })
+        : await getSeedSiteLicenseClient().listSoftwareLicenses({
+            actor_account_id,
+            search,
+            limit,
+          }),
+    createSoftwareLicense: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await createLicenseOnSeed(opts)
+        : await getSeedSiteLicenseClient().createSoftwareLicense(opts),
+    revokeSoftwareLicense: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await revokeLicenseOnSeed(opts)
+        : await getSeedSiteLicenseClient().revokeSoftwareLicense(opts),
+    restoreSoftwareLicense: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await restoreLicenseOnSeed(opts)
+        : await getSeedSiteLicenseClient().restoreSoftwareLicense(opts),
+    listOwnedSoftwareLicenses: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await listOwnedLicensesOnSeed(opts)
+        : await getSeedSiteLicenseClient().listOwnedSoftwareLicenses(opts),
     updateMembershipPackage: async ({
       package_id,
       actor_account_id,

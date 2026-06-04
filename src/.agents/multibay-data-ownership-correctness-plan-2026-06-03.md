@@ -579,7 +579,7 @@ Important current-state calls encoded in the manifest:
 
 ### Phase 1: Automated Risk Test
 
-Status: partially implemented 2026-06-03.
+Status: implemented first pass 2026-06-03.
 
 Add tests that inspect schema metadata and table names/fields.
 
@@ -602,7 +602,7 @@ The test should fail or warn when:
 
 This test is the key to "stay correct."
 
-Implemented so far:
+Implemented artifacts:
 
 - `table-ownership.test.ts` scans non-test `src/packages/server` TypeScript
   files for `CREATE TABLE IF NOT EXISTS`.
@@ -615,21 +615,28 @@ Implemented so far:
 - `project_backup_indexes` already had a `util/db-schema` declaration but was
   not imported into the schema index; it is now registered and covered by the
   durable table manifest.
+- The manifest now records intentional secondary reference fields, e.g. an
+  account-owned table with a `project_id` reference.
+- The test enforces consistency for `account_id`, `owner_account_id`,
+  `project_id`, `host_id`, and `bay_id` fields across both durable schema
+  tables and documented ad hoc PostgreSQL tables.
 
 Still needed:
 
-- field-based checks for `account_id`, `project_id`, `host_id`, and `bay_id`
-  consistency;
-- rehome/drain checks that refuse unsupported ownership classes unless the
-  unsafe override is explicitly used;
 - follow-up migrations moving durable ad hoc tables into `util/db-schema` or
-  formal migrations.
+  formal migrations where that adds real value;
+- stronger runtime enforcement in routing/write helpers, not only schema-level
+  tests.
 
 ### Phase 2: Seed-Global Commercial State
 
+Status: software licensing seed routing implemented first pass 2026-06-03.
+
 Fix the highest-risk commercial state first.
 
-Tasks:finish/site-license seed routing is already done;
+Tasks:
+
+- finish/site-license seed routing is already done;
 
 - route software licensing APIs to seed;
 
@@ -639,6 +646,26 @@ Tasks:finish/site-license seed routing is already done;
   config version stream;
 
 - add tests proving an attached bay forwards create/list/revoke/restore to seed.
+
+Implemented artifacts:
+
+- `software_license_tiers`, `software_licenses`, and
+  `software_license_events` are classified as `seed-global` in the manifest.
+- Software license admin/user APIs authenticate on the receiving bay, then
+  forward attached-bay reads/writes to the seed account-local inter-bay API.
+- Seed-local helper functions contain the direct DB implementation, so the DB
+  authority is explicit and reusable by the inter-bay service.
+- Focused tests cover dangerous fresh-auth behavior and attached-bay forwarding
+  for license creation and owned-license listing.
+
+Still needed:
+
+- route/confirm software license activation paths use seed or signed-token-only
+  semantics;
+- decide whether license tiers join the future global config version/mirror
+  stream;
+- add broader inter-bay service tests if this API becomes hot or externally
+  exposed.
 
 ### Phase 3: Admin Membership Entitlement Cleanup
 
@@ -735,6 +762,8 @@ Tasks:
 
 ### Phase 9: Drain Safety Gate
 
+Status: reusable preflight evaluator implemented first pass 2026-06-03.
+
 Before draining a bay, run an automated preflight:
 
 - list all non-disposable rows on the source bay by ownership class;
@@ -744,6 +773,25 @@ Before draining a bay, run an automated preflight:
 - block drain if unknown or unclassified durable state remains.
 
 This should be a CLI/admin API and should use the manifest.
+
+Implemented artifacts:
+
+- `src/packages/server/bay-drain/preflight.ts` evaluates local table names
+  against the ownership manifest.
+- Unknown tables always block drain.
+- Unsupported/stable authoritative state blocks by default and downgrades only
+  with an explicit `unsafe_rehome` override.
+- Cache, ephemeral, and projection tables are treated as safe to drop/rebuild.
+- Seed-global tables on non-seed bays warn, since they should be mirrors or
+  reconcilable from seed.
+
+Still needed:
+
+- wire this evaluator into the actual drain/rehome CLI/admin paths;
+- require an explicit unsafe flag for rehome-style operations that would leave
+  or move unsupported account/project/host-owned state;
+- add row-count/detail reporting so operators see which ownership classes remain
+  on a bay before deletion.
 
 ## Definition of Done
 
