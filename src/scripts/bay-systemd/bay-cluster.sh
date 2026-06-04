@@ -14,8 +14,11 @@ TOPOLOGY_EPOCH=""
 PEER_HEALTH_PORT="9402"
 PEER_HEALTH_PATH="/peer-health"
 PEER_LOCAL_HEALTH_TIMEOUT="3"
+SEED_CONAT_PORT="10300"
 SECRET_FILE=""
+SEED_CONAT_PASSWORD_FILE=""
 ROTATE_SECRET=1
+RESTART_HUB_WORKERS=0
 BAYS=()
 SSH_ARGS=()
 TEMP_DIR=""
@@ -48,10 +51,16 @@ Options:
   --peer-health-path <path>    default: /peer-health
   --peer-local-health-timeout <s>
                               default: 3
+  --seed-conat-port <n>       seed hub-worker Conat fabric port, default: 10300
+  --seed-conat-password-file <path>
+                              seed Conat password file; otherwise fetched from
+                              the seed bay's secrets/conat-password
   --secret-file <path>         shared cluster secret file to install; otherwise
                               a new secret is generated for install-topology
   --no-rotate-secret           install topology only, preserving existing
                               COCALC_CLUSTER_SHARED_SECRET values
+  --restart-hub-workers        rolling-restart hub workers after installing
+                              topology/secrets so running processes use them
   --ssh-arg <arg>              repeatable ssh/scp argument
   -h, --help                   show this help
 
@@ -122,12 +131,24 @@ parse_args() {
         PEER_LOCAL_HEALTH_TIMEOUT="$2"
         shift 2
         ;;
+      --seed-conat-port)
+        SEED_CONAT_PORT="$2"
+        shift 2
+        ;;
+      --seed-conat-password-file)
+        SEED_CONAT_PASSWORD_FILE="$2"
+        shift 2
+        ;;
       --secret-file)
         SECRET_FILE="$2"
         shift 2
         ;;
       --no-rotate-secret)
         ROTATE_SECRET=0
+        shift
+        ;;
+      --restart-hub-workers)
+        RESTART_HUB_WORKERS=1
         shift
         ;;
       --bay)
@@ -199,9 +220,13 @@ validate_args() {
     if [[ -n "$SECRET_FILE" && ! -r "$SECRET_FILE" ]]; then
       die "--secret-file is not readable: ${SECRET_FILE}"
     fi
+    if [[ -n "$SEED_CONAT_PASSWORD_FILE" && ! -r "$SEED_CONAT_PASSWORD_FILE" ]]; then
+      die "--seed-conat-password-file is not readable: ${SEED_CONAT_PASSWORD_FILE}"
+    fi
   fi
   [[ "$PEER_HEALTH_PORT" =~ ^[0-9]+$ ]] || die "--peer-health-port must be an integer"
   [[ "$PEER_LOCAL_HEALTH_TIMEOUT" =~ ^[0-9]+$ ]] || die "--peer-local-health-timeout must be an integer"
+  [[ "$SEED_CONAT_PORT" =~ ^[0-9]+$ ]] || die "--seed-conat-port must be an integer"
   [[ "$PEER_HEALTH_PATH" == /* ]] || die "--peer-health-path must start with /"
 }
 
@@ -228,6 +253,7 @@ render_topology_for_bay() {
     "--peer-health-port" "$PEER_HEALTH_PORT"
     "--peer-health-path" "$PEER_HEALTH_PATH"
     "--peer-local-health-timeout" "$PEER_LOCAL_HEALTH_TIMEOUT"
+    "--seed-conat-port" "$SEED_CONAT_PORT"
   )
   if [[ -n "$TOPOLOGY_EPOCH" ]]; then
     args+=("--topology-epoch" "$TOPOLOGY_EPOCH")
@@ -252,37 +278,77 @@ prepare_secret_file() {
   chmod 0600 "$SECRET_FILE"
 }
 
+seed_bay_entry() {
+  local entry
+  for entry in "${BAYS[@]}"; do
+    if [[ "$(bay_id_at "$entry")" == "$SEED_BAY_ID" ]]; then
+      printf '%s' "$entry"
+      return 0
+    fi
+  done
+  return 1
+}
+
+prepare_seed_conat_password_file() {
+  if [[ -n "$SEED_CONAT_PASSWORD_FILE" ]]; then
+    return 0
+  fi
+  local seed_entry seed_remote
+  seed_entry="$(seed_bay_entry)" || die "--seed-bay is not present in --bay entries: ${SEED_BAY_ID}"
+  seed_remote="$(bay_remote_at "$seed_entry")"
+  SEED_CONAT_PASSWORD_FILE="${TEMP_DIR}/seed-conat-password"
+  log "Fetch seed Conat password from ${SEED_BAY_ID} (${seed_remote})"
+  ssh_remote "$seed_remote" "sudo cat /mnt/cocalc/bays/$(q "$SEED_BAY_ID")/secrets/conat-password" \
+    > "$SEED_CONAT_PASSWORD_FILE"
+  chmod 0600 "$SEED_CONAT_PASSWORD_FILE"
+}
+
 remote_install_command() {
   local remote_topology="$1"
   local remote_secret="$2"
+  local remote_seed_conat_password="$3"
   cat <<EOF
 set -euo pipefail
 sudo install -o root -g root -m 0644 $(q "$remote_topology") /etc/cocalc/bay-topology.env
-if [[ -n $(q "$remote_secret") && -f $(q "$remote_secret") ]]; then
-  sudo python3 - $(q "$remote_secret") <<'PY'
+sudo python3 - $(q "$remote_secret") $(q "$remote_seed_conat_password") <<'PY'
 from pathlib import Path
 import sys
 
-secret_path = Path(sys.argv[1])
-secret = secret_path.read_text(encoding="utf-8").strip()
+cluster_secret_path = Path(sys.argv[1]) if sys.argv[1] else None
+seed_conat_password_path = Path(sys.argv[2]) if sys.argv[2] else None
 path = Path("/etc/cocalc/bay-secrets.env")
 text = path.read_text(encoding="utf-8") if path.exists() else ""
 lines = text.splitlines()
-for i, line in enumerate(lines):
-    if line.startswith("COCALC_CLUSTER_SHARED_SECRET="):
-        lines[i] = f"COCALC_CLUSTER_SHARED_SECRET={secret}"
-        break
-else:
+
+def set_env(name: str, value: str) -> None:
+    global lines
+    for i, line in enumerate(lines):
+        if line.startswith(f"{name}="):
+            lines[i] = f"{name}={value}"
+            return
     if lines and lines[-1].strip():
         lines.append("")
-    lines.append(f"COCALC_CLUSTER_SHARED_SECRET={secret}")
+    lines.append(f"{name}={value}")
+
+if cluster_secret_path and cluster_secret_path.is_file():
+    set_env("COCALC_CLUSTER_SHARED_SECRET", cluster_secret_path.read_text(encoding="utf-8").strip())
+
+if seed_conat_password_path and seed_conat_password_path.is_file():
+    seed_conat_password = seed_conat_password_path.read_text(encoding="utf-8").strip()
+    set_env("COCALC_CLUSTER_SEED_CONAT_PASSWORD", seed_conat_password)
+    set_env("COCALC_INTER_BAY_CONAT_PASSWORD", seed_conat_password)
+
 path.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
 PY
-  sudo chmod 0600 /etc/cocalc/bay-secrets.env
-fi
-rm -f $(q "$remote_topology") $(q "$remote_secret")
+sudo chmod 0600 /etc/cocalc/bay-secrets.env
+rm -f $(q "$remote_topology") $(q "$remote_secret") $(q "$remote_seed_conat_password")
 sudo systemctl daemon-reload
 sudo systemctl restart cocalc-bay-peer-health.service
+if [[ $(q "$RESTART_HUB_WORKERS") == "1" ]]; then
+  # shellcheck disable=SC1091
+  source /opt/cocalc/bay/current/bin/lib.sh
+  sudo /opt/cocalc/bay/current/bin/bay-rollout-workers "\$(current_version)"
+fi
 sudo /opt/cocalc/bay/current/bin/bay-status
 EOF
 }
@@ -291,13 +357,14 @@ install_topology() {
   require_command openssl
   require_command scp
   require_command ssh
-  prepare_secret_file
   TEMP_DIR="$(mktemp -d)"
+  prepare_secret_file
+  prepare_seed_conat_password_file
   if [[ -z "$TOPOLOGY_EPOCH" ]]; then
     TOPOLOGY_EPOCH="$(date +%s)"
   fi
 
-  local entry bay_id remote topology_file remote_topology remote_secret
+  local entry bay_id remote topology_file remote_topology remote_secret remote_seed_conat_password
   for entry in "${BAYS[@]}"; do
     bay_id="$(bay_id_at "$entry")"
     remote="$(bay_remote_at "$entry")"
@@ -311,7 +378,9 @@ install_topology() {
       remote_secret="/tmp/cocalc-${bay_id}-cluster-secret.$$"
       scp_to_remote "$SECRET_FILE" "$remote" "$remote_secret"
     fi
-    ssh_remote "$remote" "$(remote_install_command "$remote_topology" "$remote_secret")"
+    remote_seed_conat_password="/tmp/cocalc-${bay_id}-seed-conat-password.$$"
+    scp_to_remote "$SEED_CONAT_PASSWORD_FILE" "$remote" "$remote_seed_conat_password"
+    ssh_remote "$remote" "$(remote_install_command "$remote_topology" "$remote_secret" "$remote_seed_conat_password")"
   done
 }
 

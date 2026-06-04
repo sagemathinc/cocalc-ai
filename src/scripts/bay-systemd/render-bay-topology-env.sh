@@ -8,6 +8,7 @@ BIND_HOST=""
 PEER_HEALTH_PORT="9402"
 PEER_HEALTH_PATH="/peer-health"
 PEER_LOCAL_HEALTH_TIMEOUT="3"
+SEED_CONAT_PORT="10300"
 TOPOLOGY_EPOCH=""
 BAYS=()
 
@@ -31,6 +32,7 @@ Options:
   --peer-local-health-timeout <s>
                              local bay-health timeout used inside peer-health
                              responses, default: 3
+  --seed-conat-port <n>      seed hub-worker Conat fabric port, default: 10300
   --topology-epoch <value>   default: current unix timestamp
   -h, --help                 show this help
 
@@ -85,6 +87,10 @@ while [[ $# -gt 0 ]]; do
       PEER_LOCAL_HEALTH_TIMEOUT="$2"
       shift 2
       ;;
+    --seed-conat-port)
+      SEED_CONAT_PORT="$2"
+      shift 2
+      ;;
     --topology-epoch)
       TOPOLOGY_EPOCH="$2"
       shift 2
@@ -109,6 +115,7 @@ done
 [[ "${#BAYS[@]}" -ge 1 ]] || die "at least one --bay is required"
 [[ "$PEER_HEALTH_PORT" =~ ^[0-9]+$ ]] || die "--peer-health-port must be an integer"
 [[ "$PEER_LOCAL_HEALTH_TIMEOUT" =~ ^[0-9]+$ ]] || die "--peer-local-health-timeout must be an integer"
+[[ "$SEED_CONAT_PORT" =~ ^[0-9]+$ ]] || die "--seed-conat-port must be an integer"
 [[ "$PEER_HEALTH_PATH" == /* ]] || die "--peer-health-path must start with /"
 
 if [[ -z "$TOPOLOGY_EPOCH" ]]; then
@@ -118,6 +125,7 @@ fi
 bay_ids=()
 urls=()
 local_internal_ip=""
+seed_internal_ip=""
 
 for entry in "${BAYS[@]}"; do
   if [[ "$entry" != *=* ]]; then
@@ -131,9 +139,13 @@ for entry in "${BAYS[@]}"; do
   if [[ "$bay_id" == "$LOCAL_BAY_ID" ]]; then
     local_internal_ip="$internal_ip"
   fi
+  if [[ "$bay_id" == "$SEED_BAY_ID" ]]; then
+    seed_internal_ip="$internal_ip"
+  fi
 done
 
 [[ -n "$local_internal_ip" ]] || die "--local-bay is not present in --bay entries: ${LOCAL_BAY_ID}"
+[[ -n "$seed_internal_ip" ]] || die "--seed-bay is not present in --bay entries: ${SEED_BAY_ID}"
 if [[ -z "$BIND_HOST" ]]; then
   BIND_HOST="$local_internal_ip"
 fi
@@ -155,6 +167,8 @@ COCALC_CLUSTER_ROLE=$(shell_quote "$role")
 COCALC_CLUSTER_SEED_BAY_ID=$(shell_quote "$SEED_BAY_ID")
 COCALC_CLUSTER_BAY_IDS=$(shell_quote "$bay_ids_csv")
 COCALC_CLUSTER_TOPOLOGY_EPOCH=$(shell_quote "$TOPOLOGY_EPOCH")
+COCALC_CLUSTER_SEED_CONAT_SERVER=$(shell_quote "http://${seed_internal_ip}:${SEED_CONAT_PORT}")
+COCALC_INTER_BAY_CONAT_SERVER=$(shell_quote "http://${seed_internal_ip}:${SEED_CONAT_PORT}")
 
 COCALC_BAY_PEER_HEALTH_HOST=$(shell_quote "$BIND_HOST")
 COCALC_BAY_PEER_HEALTH_PORT=$(shell_quote "$PEER_HEALTH_PORT")
