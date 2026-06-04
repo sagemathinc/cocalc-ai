@@ -27,6 +27,7 @@ function mockResetHooks() {
 }
 
 jest.mock("react", () => ({
+  useCallback: (callback: unknown) => callback,
   useEffect: (effect: () => void | (() => void), inputs: unknown[] = []) => {
     const i = mockHookIndex++;
     const slot = (mockEffectSlots[i] ??= {});
