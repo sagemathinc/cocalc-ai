@@ -147,6 +147,7 @@ async function main() {
     internal_url: "http://127.0.0.1:9002",
     ssh_server: "127.0.0.1:2222",
     status: "running",
+    tier: 0,
     metadata: {
       provider: "star",
       cloud_provider: "star",
