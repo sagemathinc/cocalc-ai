@@ -260,7 +260,7 @@ export default function useFiles({
         } catch (err) {
           if (requestId.current !== id) return;
           console.warn("listing watcher bootstrap failed", { path, err });
-          if (!isRetryableListingWatcherError(err)) {
+          if (!isRetryableListingError(err)) {
             return;
           }
           const delayMs =
@@ -300,17 +300,18 @@ function clearCached({ cacheId, path }: { cacheId: JSONValue; path: string }) {
   notifyCacheListeners();
 }
 
-function isListingTimeoutError(err: unknown): boolean {
-  return `${(err as any)?.message ?? err ?? ""}`.includes("timeout");
-}
-
-function isRetryableListingWatcherError(err: unknown): boolean {
+export function isRetryableListingError(err: unknown): boolean {
   const code = `${(err as any)?.code ?? ""}`.trim();
-  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  const message = `${(err as any)?.message ?? err ?? ""}`.trim().toLowerCase();
   if (code === "408" || code === "429") {
     return true;
   }
   return (
+    message === "closed" ||
+    message === "error: closed" ||
+    message.includes("connection closed") ||
+    message.includes("socket has been disconnected") ||
+    message.includes("disconnected") ||
     message.includes("timeout") ||
     message.includes("timed out") ||
     message.includes("retry in about") ||
@@ -338,7 +339,7 @@ async function getListingSnapshot({
     } catch (err) {
       lastError = err;
       if (
-        !isListingTimeoutError(err) ||
+        !isRetryableListingError(err) ||
         attempt >= INITIAL_LISTING_MAX_ATTEMPTS
       ) {
         throw err;

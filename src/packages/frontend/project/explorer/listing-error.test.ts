@@ -74,6 +74,12 @@ describe("getUserFacingListingError", () => {
     );
   });
 
+  it("rewrites plain closed listing failures into a clear message", () => {
+    expect(getUserFacingListingError(new Error("closed"))).toBe(
+      "The project connection closed while the file listing was loading. Please wait a moment and refresh.",
+    );
+  });
+
   it("preserves ordinary errors", () => {
     const err = new Error("plain failure");
     expect(getUserFacingListingError(err)).toBe(err);
