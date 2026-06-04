@@ -2584,18 +2584,11 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     fi
     rustic_cmd=("$(rustic_binary)" -P "$repo_profile")
     cd "$src"
-    if "${rustic_cmd[@]}" backup --json --no-scan --host "$host_name" "$@" .; then
-      exit 0
-    fi
-    backup_status="$?"
-    if "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
-      exit "$backup_status"
-    fi
-    if ! "${rustic_cmd[@]}" --no-progress init >/dev/null 2>&1; then
-      # Another process may have initialized the repo concurrently; accept
-      # that case and only fail if the repository is still unusable.
-      if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
-        exit "$backup_status"
+    if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
+      if ! "${rustic_cmd[@]}" --no-progress init >/dev/null 2>&1; then
+        # Another process may have initialized the repo concurrently; accept
+        # that case and only fail if the repository is still unusable.
+        "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1
       fi
     fi
     exec "${rustic_cmd[@]}" backup --json --no-scan --host "$host_name" "$@" .
