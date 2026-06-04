@@ -594,20 +594,40 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin software license minting changes signed commercial entitlements",
   },
+  "software.createLicenseOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed-local helper is only reached from fresh-auth-checked public software RPCs or trusted inter-bay service handlers",
+  },
   "software.restoreLicense": {
     decision: "fresh-auth-required",
     reason:
       "admin software license restoration changes signed commercial entitlements",
+  },
+  "software.restoreLicenseOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed-local helper is only reached from fresh-auth-checked public software RPCs or trusted inter-bay service handlers",
   },
   "software.revokeLicense": {
     decision: "fresh-auth-required",
     reason:
       "admin software license revocation changes signed commercial entitlements",
   },
+  "software.revokeLicenseOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed-local helper is only reached from fresh-auth-checked public software RPCs or trusted inter-bay service handlers",
+  },
   "software.upsertLicenseTier": {
     decision: "fresh-auth-required",
     reason:
       "admin software license tier edits change signed commercial entitlement templates",
+  },
+  "software.upsertLicenseTierOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed-local helper is only reached from fresh-auth-checked public software RPCs or trusted inter-bay service handlers",
   },
   "sync.purgeHistory": {
     decision: "fresh-auth-not-required",
