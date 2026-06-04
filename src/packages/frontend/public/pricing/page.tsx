@@ -30,6 +30,7 @@ import {
   PublicGrid,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
+import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { currency, humanSize, round2 } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
@@ -676,14 +677,9 @@ export default function PricingPage({
     };
   }, []);
 
-  const publicTiers = [...(tiers ?? [])]
-    .filter((tier) => tier.store_visible && !tier.disabled)
-    .sort((a, b) => {
-      const ap = a.priority ?? 0;
-      const bp = b.priority ?? 0;
-      if (ap !== bp) return ap - bp;
-      return (a.label ?? a.id).localeCompare(b.label ?? b.id);
-    });
+  const publicTiers = sortMembershipTiersByDisplayOrder(
+    (tiers ?? []).filter((tier) => tier.store_visible && !tier.disabled),
+  );
   const visibleTiers = publicTiers.filter((tier) =>
     hasPriceForInterval(tier, billingInterval),
   );

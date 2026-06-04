@@ -33,6 +33,7 @@ import {
 } from "@cocalc/frontend/frame-editors/generic/client";
 import { currency, is_valid_uuid_string } from "@cocalc/util/misc";
 import { toDecimal } from "@cocalc/util/money";
+import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { MAX_VOUCHERS, MAX_VOUCHER_VALUE } from "@cocalc/util/vouchers";
 
 import { adminPurchase } from "./api";
@@ -47,6 +48,7 @@ interface MembershipTier extends MembershipTierWithPresentation {
   label?: string;
   price_monthly?: number;
   price_yearly?: number;
+  priority?: number;
 }
 
 export default function AdminPurchasePanel() {
@@ -105,14 +107,20 @@ export default function AdminPurchasePanel() {
     };
   }, []);
 
+  const sortedTiers = useMemo(
+    () => sortMembershipTiersByDisplayOrder(tiers),
+    [tiers],
+  );
+
   useEffect(() => {
-    if (!membershipClass && tiers.length > 0) {
-      const first = tiers.find((tier) => !tier.disabled) ?? tiers[0];
+    if (!membershipClass && sortedTiers.length > 0) {
+      const first =
+        sortedTiers.find((tier) => !tier.disabled) ?? sortedTiers[0];
       if (first) {
         setMembershipClass(first.id);
       }
     }
-  }, [tiers, membershipClass]);
+  }, [sortedTiers, membershipClass]);
 
   const tierById = useMemo(() => {
     return tiers.reduce(
@@ -293,7 +301,7 @@ export default function AdminPurchasePanel() {
             <Text strong>Membership tier</Text>
             <Select
               loading={tierLoading}
-              options={tiers
+              options={sortedTiers
                 .filter((tier) => !tier.disabled)
                 .map((tier) => ({
                   label: tier.label ?? tier.id,

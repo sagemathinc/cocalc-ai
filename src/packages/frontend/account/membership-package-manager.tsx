@@ -95,6 +95,7 @@ import {
   is_valid_email_address as isValidEmailAddress,
 } from "@cocalc/util/misc";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
+import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { COLORS } from "@cocalc/util/theme";
 import type { LineItem } from "@cocalc/util/stripe/types";
 import { openAccountSettings } from "./settings-routing";
@@ -104,6 +105,9 @@ const { Paragraph, Text, Title } = Typography;
 export interface MembershipTierLike extends MembershipTierWithPresentation {
   id: string;
   label?: string;
+  price_monthly?: number;
+  price_yearly?: number;
+  priority?: number;
   store_visible?: boolean;
   disabled?: boolean;
 }
@@ -230,25 +234,25 @@ function getPackageKindLabel(kind: MembershipPackageKind): string {
 }
 
 function getTeamSeatTiers(tiers: MembershipTierLike[]): MembershipTierLike[] {
-  return tiers
-    .filter(
+  return sortMembershipTiersByDisplayOrder(
+    tiers.filter(
       (tier) =>
         !tier.disabled &&
         tier.store_visible !== false &&
         tier.id !== "free" &&
         tier.id !== "student",
-    )
-    .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+    ),
+  );
 }
 
 function getSiteLicenseProvisioningTiers(
   tiers: MembershipTierLike[],
 ): MembershipTierLike[] {
-  return tiers
-    .filter(
+  return sortMembershipTiersByDisplayOrder(
+    tiers.filter(
       (tier) => !tier.disabled && tier.id !== "free" && tier.id !== "admin",
-    )
-    .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+    ),
+  );
 }
 
 function findSiteLicenseTier({
