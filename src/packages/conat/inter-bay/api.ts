@@ -93,6 +93,10 @@ import type {
 } from "@cocalc/conat/project-host/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
+import type {
+  SoftwareLicense,
+  SoftwareLicenseTier,
+} from "@cocalc/util/db-schema/software-licenses";
 import type { MoneyValue } from "@cocalc/util/money";
 import type {
   ProjectUserRole,
@@ -1138,6 +1142,48 @@ export interface AccountLocalReplaceMembershipPortableStateRequest extends Accou
   account_id: string;
 }
 
+export interface AccountLocalListSoftwareLicenseTiersRequest {
+  actor_account_id: string;
+  include_disabled?: boolean;
+}
+
+export interface AccountLocalUpsertSoftwareLicenseTierRequest {
+  actor_account_id: string;
+  tier: SoftwareLicenseTier;
+}
+
+export interface AccountLocalListSoftwareLicensesRequest {
+  actor_account_id: string;
+  search?: string;
+  limit?: number;
+}
+
+export interface AccountLocalCreateSoftwareLicenseRequest {
+  actor_account_id: string;
+  tier_id: string;
+  owner_account_id?: string;
+  product?: "launchpad" | "rocket";
+  expires_at?: string;
+  limits?: Record<string, any>;
+  features?: Record<string, any>;
+  notes?: string;
+}
+
+export interface AccountLocalRevokeSoftwareLicenseRequest {
+  actor_account_id: string;
+  license_id: string;
+  reason?: string;
+}
+
+export interface AccountLocalRestoreSoftwareLicenseRequest {
+  actor_account_id: string;
+  license_id: string;
+}
+
+export interface AccountLocalListOwnedSoftwareLicensesRequest {
+  account_id: string;
+}
+
 export type AccountRehomeOperationStage =
   | "requested"
   | "destination_accepted"
@@ -1711,6 +1757,13 @@ export type AccountLocalMethod =
   | "get-site-license-overview"
   | "list-site-license-overviews"
   | "revoke-site-license-pool-seat"
+  | "list-software-license-tiers"
+  | "upsert-software-license-tier"
+  | "list-software-licenses"
+  | "create-software-license"
+  | "revoke-software-license"
+  | "restore-software-license"
+  | "list-owned-software-licenses"
   | "request-site-license-pool"
   | "request-site-license-pool-for-account"
   | "review-site-license-pool-request"
@@ -2630,6 +2683,27 @@ export interface InterBayAccountLocalApi {
   revokeSiteLicensePoolSeat: (
     opts: AccountLocalRevokeSiteLicensePoolSeatRequest,
   ) => Promise<{ revoked: boolean }>;
+  listSoftwareLicenseTiers: (
+    opts: AccountLocalListSoftwareLicenseTiersRequest,
+  ) => Promise<SoftwareLicenseTier[]>;
+  upsertSoftwareLicenseTier: (
+    opts: AccountLocalUpsertSoftwareLicenseTierRequest,
+  ) => Promise<void>;
+  listSoftwareLicenses: (
+    opts: AccountLocalListSoftwareLicensesRequest,
+  ) => Promise<SoftwareLicense[]>;
+  createSoftwareLicense: (
+    opts: AccountLocalCreateSoftwareLicenseRequest,
+  ) => Promise<SoftwareLicense>;
+  revokeSoftwareLicense: (
+    opts: AccountLocalRevokeSoftwareLicenseRequest,
+  ) => Promise<void>;
+  restoreSoftwareLicense: (
+    opts: AccountLocalRestoreSoftwareLicenseRequest,
+  ) => Promise<void>;
+  listOwnedSoftwareLicenses: (
+    opts: AccountLocalListOwnedSoftwareLicensesRequest,
+  ) => Promise<SoftwareLicense[]>;
   updateMembershipPackage: (
     opts: AccountLocalUpdateMembershipPackageRequest,
   ) => Promise<MembershipPackageDetails>;
@@ -4524,6 +4598,69 @@ export function createInterBayAccountLocalClient({
       method: "revoke-site-license-pool-seat",
     }),
   });
+  const listSoftwareLicenseTiersClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "listSoftwareLicenseTiers">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "list-software-license-tiers",
+    }),
+  });
+  const upsertSoftwareLicenseTierClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "upsertSoftwareLicenseTier">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "upsert-software-license-tier",
+    }),
+  });
+  const listSoftwareLicensesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "listSoftwareLicenses">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "list-software-licenses",
+    }),
+  });
+  const createSoftwareLicenseClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "createSoftwareLicense">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "create-software-license",
+    }),
+  });
+  const revokeSoftwareLicenseClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "revokeSoftwareLicense">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "revoke-software-license",
+    }),
+  });
+  const restoreSoftwareLicenseClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "restoreSoftwareLicense">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "restore-software-license",
+    }),
+  });
+  const listOwnedSoftwareLicensesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "listOwnedSoftwareLicenses">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "list-owned-software-licenses",
+    }),
+  });
   const updateMembershipPackageClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "updateMembershipPackage">
   >({
@@ -4783,6 +4920,20 @@ export function createInterBayAccountLocalClient({
       await listSiteLicenseOverviewsClient.listSiteLicenseOverviews(opts),
     revokeSiteLicensePoolSeat: async (opts) =>
       await revokeSiteLicensePoolSeatClient.revokeSiteLicensePoolSeat(opts),
+    listSoftwareLicenseTiers: async (opts) =>
+      await listSoftwareLicenseTiersClient.listSoftwareLicenseTiers(opts),
+    upsertSoftwareLicenseTier: async (opts) =>
+      await upsertSoftwareLicenseTierClient.upsertSoftwareLicenseTier(opts),
+    listSoftwareLicenses: async (opts) =>
+      await listSoftwareLicensesClient.listSoftwareLicenses(opts),
+    createSoftwareLicense: async (opts) =>
+      await createSoftwareLicenseClient.createSoftwareLicense(opts),
+    revokeSoftwareLicense: async (opts) =>
+      await revokeSoftwareLicenseClient.revokeSoftwareLicense(opts),
+    restoreSoftwareLicense: async (opts) =>
+      await restoreSoftwareLicenseClient.restoreSoftwareLicense(opts),
+    listOwnedSoftwareLicenses: async (opts) =>
+      await listOwnedSoftwareLicensesClient.listOwnedSoftwareLicenses(opts),
     updateMembershipPackage: async (opts) =>
       await updateMembershipPackageClient.updateMembershipPackage(opts),
     updateSiteLicense: async (opts) =>
@@ -5352,6 +5503,104 @@ export function createInterBayAccountLocalHandler({
       impl: {
         revokeSiteLicensePoolSeat: async (opts) =>
           await impl.revokeSiteLicensePoolSeat(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "listSoftwareLicenseTiers">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "list-software-license-tiers",
+      }),
+      impl: {
+        listSoftwareLicenseTiers: async (opts) =>
+          await impl.listSoftwareLicenseTiers(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "upsertSoftwareLicenseTier">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "upsert-software-license-tier",
+      }),
+      impl: {
+        upsertSoftwareLicenseTier: async (opts) =>
+          await impl.upsertSoftwareLicenseTier(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "listSoftwareLicenses">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "list-software-licenses",
+        }),
+        impl: {
+          listSoftwareLicenses: async (opts) =>
+            await impl.listSoftwareLicenses(opts),
+        },
+      },
+    ),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "createSoftwareLicense">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "create-software-license",
+      }),
+      impl: {
+        createSoftwareLicense: async (opts) =>
+          await impl.createSoftwareLicense(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "revokeSoftwareLicense">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "revoke-software-license",
+      }),
+      impl: {
+        revokeSoftwareLicense: async (opts) =>
+          await impl.revokeSoftwareLicense(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "restoreSoftwareLicense">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "restore-software-license",
+      }),
+      impl: {
+        restoreSoftwareLicense: async (opts) =>
+          await impl.restoreSoftwareLicense(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "listOwnedSoftwareLicenses">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "list-owned-software-licenses",
+      }),
+      impl: {
+        listOwnedSoftwareLicenses: async (opts) =>
+          await impl.listOwnedSoftwareLicenses(opts),
       },
     }),
     createServiceHandler<

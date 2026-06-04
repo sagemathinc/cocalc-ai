@@ -73,14 +73,21 @@ export function assertHostRehomeConfirmed({
   host_id,
   dest_bay_id,
   yes,
+  unsafeRehome,
 }: {
   host_id: string;
   dest_bay_id: string;
   yes?: boolean;
+  unsafeRehome?: boolean;
 }): void {
   if (!yes) {
     throw new Error(
       `refusing to rehome host '${host_id}' to bay '${dest_bay_id}' without --yes`,
+    );
+  }
+  if (!unsafeRehome) {
+    throw new Error(
+      `host rehome is an exceptional unsafe operation; pass --unsafe-rehome only after auditing host-owned data portability`,
     );
   }
 }
@@ -1699,6 +1706,11 @@ export function registerHostCommand(
     .option("--reason <text>", "operator-visible reason")
     .option("--campaign <id>", "batch/campaign identifier")
     .option("--yes", "confirm the host ownership rehome")
+    .option(
+      "--unsafe-rehome",
+      "acknowledge host rehome can orphan or lose non-portable host-owned data",
+      false,
+    )
     .action(
       async (
         hostIdentifier: string,
@@ -1707,6 +1719,7 @@ export function registerHostCommand(
           reason?: string;
           campaign?: string;
           yes?: boolean;
+          unsafeRehome?: boolean;
         },
         command: Command,
       ) => {
@@ -1716,6 +1729,7 @@ export function registerHostCommand(
             host_id: h.id,
             dest_bay_id: opts.bay,
             yes: !!opts.yes,
+            unsafeRehome: !!opts.unsafeRehome,
           });
           return await ctx.hub.hosts.rehomeHost({
             id: h.id,

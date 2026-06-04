@@ -68,14 +68,21 @@ export function assertProjectRehomeConfirmed({
   project_id,
   dest_bay_id,
   yes,
+  unsafeRehome,
 }: {
   project_id: string;
   dest_bay_id: string;
   yes?: boolean;
+  unsafeRehome?: boolean;
 }): void {
   if (!yes) {
     throw new Error(
       `refusing to rehome project '${project_id}' to bay '${dest_bay_id}' without --yes`,
+    );
+  }
+  if (!unsafeRehome) {
+    throw new Error(
+      `project rehome is an exceptional unsafe operation; pass --unsafe-rehome only after auditing project-owned data portability`,
     );
   }
 }
@@ -796,6 +803,11 @@ export function registerProjectOpsCommands(
     .option("--reason <reason>", "operator reason, e.g. maintenance or load")
     .option("--campaign <id>", "operator campaign/drain identifier")
     .option("-y, --yes", "confirm the project ownership transfer")
+    .option(
+      "--unsafe-rehome",
+      "acknowledge project rehome can orphan or lose non-portable project-owned data",
+      false,
+    )
     .action(
       async (
         opts: {
@@ -804,6 +816,7 @@ export function registerProjectOpsCommands(
           reason?: string;
           campaign?: string;
           yes?: boolean;
+          unsafeRehome?: boolean;
         },
         command: Command,
       ) => {
@@ -817,6 +830,7 @@ export function registerProjectOpsCommands(
             project_id: ws.project_id,
             dest_bay_id: destBayId,
             yes: opts.yes,
+            unsafeRehome: opts.unsafeRehome,
           });
           return await ctx.hub.projects.rehomeProject({
             project_id: ws.project_id,
@@ -873,6 +887,11 @@ export function registerProjectOpsCommands(
     .option("--campaign <id>", "operator campaign/drain identifier")
     .option("--reason <reason>", "operator reason, e.g. maintenance or load")
     .option("--write", "apply changes instead of dry run", false)
+    .option(
+      "--unsafe-rehome",
+      "required with --write; acknowledge project rehome can orphan or lose non-portable project-owned data",
+      false,
+    )
     .action(
       async (
         opts: {
@@ -882,6 +901,7 @@ export function registerProjectOpsCommands(
           campaign?: string;
           reason?: string;
           write?: boolean;
+          unsafeRehome?: boolean;
         },
         command: Command,
       ) => {
@@ -889,6 +909,11 @@ export function registerProjectOpsCommands(
           const limit = Number(opts.limit ?? "25");
           if (!Number.isInteger(limit) || limit <= 0) {
             throw new Error("--limit must be a positive integer");
+          }
+          if (opts.write === true && !opts.unsafeRehome) {
+            throw new Error(
+              "project rehome-drain --write is unsafe; pass --unsafe-rehome only after auditing project-owned data portability",
+            );
           }
           return await ctx.hub.projects.drainProjectRehome({
             source_bay_id: opts.sourceBay?.trim() || undefined,
