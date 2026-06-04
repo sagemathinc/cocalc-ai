@@ -115,6 +115,7 @@ export default function useFiles({
   throttleUpdate = DEFAULT_THROTTLE_FILE_UPDATE,
   cacheId,
   watch = true,
+  refreshFs,
 }: {
   // fs = undefined is supported and just waits until you provide a fs that is defined
   fs?: FilesystemClientLike | null;
@@ -125,6 +126,7 @@ export default function useFiles({
   // This is used to speed up the first load, and can also be fetched synchronously.
   cacheId?: JSONValue;
   watch?: boolean;
+  refreshFs?: () => void;
 }): {
   files: Files | null;
   error: null | ConatErrorLike;
@@ -144,10 +146,12 @@ export default function useFiles({
     undefined,
   );
   const requestId = useRef(0);
+  const staleFilesystemRefreshRequestedRef = useRef(false);
   const refresh = useCallback(() => {
     if (cacheId != null) {
       clearCached({ cacheId, path });
     }
+    staleFilesystemRefreshRequestedRef.current = false;
     setErrorState((cur) =>
       cur.path === path && cur.error == null ? cur : { path, error: null },
     );
@@ -159,6 +163,7 @@ export default function useFiles({
     async () => {
       const id = ++requestId.current;
       if (fs == null) {
+        staleFilesystemRefreshRequestedRef.current = false;
         if (requestId.current !== id) return;
         setErrorState((cur) =>
           cur.path === path && cur.error == null ? cur : { path, error: null },
@@ -168,7 +173,20 @@ export default function useFiles({
         );
         return;
       }
+      const refreshStaleFilesystemClient = (err: unknown): boolean => {
+        if (
+          refreshFs == null ||
+          staleFilesystemRefreshRequestedRef.current ||
+          !isStaleFilesystemClientError(err)
+        ) {
+          return false;
+        }
+        staleFilesystemRefreshRequestedRef.current = true;
+        refreshFs();
+        return true;
+      };
       try {
+        staleFilesystemRefreshRequestedRef.current = false;
         const cachedFiles = getFiles({ cacheId, path });
         setFilesState((cur) =>
           cur.path === path && sameFiles(cur.files, cachedFiles)
@@ -198,6 +216,9 @@ export default function useFiles({
               : { path, error: null },
           );
         } catch (err) {
+          if (refreshStaleFilesystemClient(err)) {
+            return;
+          }
           if (requestId.current !== id) return;
           setErrorState((cur) =>
             cur.path === path && cur.error === err
@@ -211,6 +232,9 @@ export default function useFiles({
           );
         }
       } catch (err) {
+        if (refreshStaleFilesystemClient(err)) {
+          return;
+        }
         if (requestId.current !== id) return;
         setErrorState((cur) =>
           cur.path === path && cur.error === err
@@ -260,7 +284,10 @@ export default function useFiles({
         } catch (err) {
           if (requestId.current !== id) return;
           console.warn("listing watcher bootstrap failed", { path, err });
-          if (!isRetryableListingWatcherError(err)) {
+          if (refreshStaleFilesystemClient(err)) {
+            return;
+          }
+          if (!isRetryableListingError(err)) {
             return;
           }
           const delayMs =
@@ -280,7 +307,7 @@ export default function useFiles({
       listingRef.current?.close();
       delete listingRef.current;
     },
-    [cacheId, fs, path, counter, throttleUpdate, watch],
+    [cacheId, fs, path, counter, refreshFs, throttleUpdate, watch],
   );
 
   const files = filesState.path === path ? filesState.files : null;
@@ -300,17 +327,14 @@ function clearCached({ cacheId, path }: { cacheId: JSONValue; path: string }) {
   notifyCacheListeners();
 }
 
-function isListingTimeoutError(err: unknown): boolean {
-  return `${(err as any)?.message ?? err ?? ""}`.includes("timeout");
-}
-
-function isRetryableListingWatcherError(err: unknown): boolean {
+export function isRetryableListingError(err: unknown): boolean {
   const code = `${(err as any)?.code ?? ""}`.trim();
-  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  const message = `${(err as any)?.message ?? err ?? ""}`.trim().toLowerCase();
   if (code === "408" || code === "429") {
     return true;
   }
   return (
+    isStaleFilesystemClientError(err) ||
     message.includes("timeout") ||
     message.includes("timed out") ||
     message.includes("retry in about") ||
@@ -321,6 +345,17 @@ function isRetryableListingWatcherError(err: unknown): boolean {
     message.includes("no subscribers matching") ||
     message.includes("unable to route") ||
     message.includes("project actions unavailable")
+  );
+}
+
+export function isStaleFilesystemClientError(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err ?? ""}`.trim().toLowerCase();
+  return (
+    message === "closed" ||
+    message === "error: closed" ||
+    message.includes("connection closed") ||
+    message.includes("socket has been disconnected") ||
+    message.includes("disconnected")
   );
 }
 
@@ -338,7 +373,7 @@ async function getListingSnapshot({
     } catch (err) {
       lastError = err;
       if (
-        !isListingTimeoutError(err) ||
+        !isRetryableListingError(err) ||
         attempt >= INITIAL_LISTING_MAX_ATTEMPTS
       ) {
         throw err;

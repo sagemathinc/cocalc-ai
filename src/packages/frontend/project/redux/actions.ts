@@ -159,6 +159,7 @@ import {
 } from "./project-log";
 import { callFilesystemClientWithRecovery } from "./filesystem-client";
 import {
+  openFileComponentRuntimeIsUsable,
   resetOpenFileRuntimeAfterHostReset,
   selectOpenFilesForSyncPath,
 } from "./open-file-runtime";
@@ -1641,17 +1642,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   >();
 
   private openFileComponentRuntimeIsUsable(info: any, isViewer: boolean) {
-    if (info?.Editor == null) {
-      return false;
-    }
-    if (info.redux_name == null) {
-      return isViewer;
-    }
-    const actions: any = redux.getActions(info.redux_name);
-    return !(
-      actions == null ||
-      (typeof actions.isClosed === "function" && actions.isClosed())
-    );
+    return openFileComponentRuntimeIsUsable({
+      info,
+      isViewer,
+      getActions: (name) => redux.getActions(name),
+      getStore: (name) => redux.getStore(name),
+    });
   }
 
   private isViewerProjectUser(): boolean {

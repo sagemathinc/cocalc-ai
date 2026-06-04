@@ -304,6 +304,49 @@ describe("useFiles", () => {
     });
   });
 
+  it("requests a fresh filesystem client after a closed snapshot failure", async () => {
+    const refreshFs = jest.fn();
+    (withTimeout as jest.Mock).mockRejectedValue(new Error("closed"));
+    const listing = {
+      files: {},
+      on: jest.fn(),
+      close: jest.fn(),
+    };
+    const fs = {
+      getListing: jest.fn().mockResolvedValue({ files: {} }),
+      listing: jest.fn().mockResolvedValue(listing),
+    };
+
+    useFilesForTestWithOptions({
+      fs,
+      path: "/closed-snapshot",
+      refreshFs,
+    });
+    await flushEffects();
+
+    expect(refreshFs).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests a fresh filesystem client after a closed watcher failure", async () => {
+    const refreshFs = jest.fn();
+    (withTimeout as jest.Mock).mockImplementation(
+      async (promise: Promise<any>) => await promise,
+    );
+    const fs = {
+      getListing: jest.fn().mockResolvedValue({ files: {} }),
+      listing: jest.fn().mockRejectedValue(new Error("closed")),
+    };
+
+    useFilesForTestWithOptions({
+      fs,
+      path: "/closed-watcher",
+      refreshFs,
+    });
+    await flushEffects();
+
+    expect(refreshFs).toHaveBeenCalledTimes(1);
+  });
+
   it("uses one-shot listings for read-only neighbor cache prefetches", async () => {
     const fs = {
       getListing: jest.fn(async (path: string) => ({
