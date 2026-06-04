@@ -1,5 +1,6 @@
 import { React } from "@cocalc/frontend/app-framework";
 import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
+import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { HostCreateModal } from "./components/host-create-modal";
 import { HostDrawer } from "./components/host-drawer";
@@ -13,6 +14,8 @@ import {
   type HostCreateDraft,
 } from "./create/host-create-draft";
 import { useHostsPageViewModel } from "./hooks/use-hosts-page-view-model";
+
+const IS_STAR_SETUP_PROFILE = cocalc_setup_profile === "star";
 
 export const HostsPage: React.FC = () => {
   const {
@@ -75,9 +78,10 @@ export const HostsPage: React.FC = () => {
   const hostDrawerVmWithCreateSimilar = React.useMemo(
     () => ({
       ...hostDrawerVm,
-      onCreateSimilar: createVm.permissions.canCreateHosts
-        ? openCreateSimilar
-        : undefined,
+      onCreateSimilar:
+        !IS_STAR_SETUP_PROFILE && createVm.permissions.canCreateHosts
+          ? openCreateSimilar
+          : undefined,
     }),
     [createVm.permissions.canCreateHosts, hostDrawerVm, openCreateSimilar],
   );
@@ -122,7 +126,9 @@ export const HostsPage: React.FC = () => {
           vm={{
             ...hostListVm,
             createPanelOpen: createModalOpen,
-            onToggleCreatePanel: openCreateModal,
+            onToggleCreatePanel: IS_STAR_SETUP_PROFILE
+              ? undefined
+              : openCreateModal,
           }}
         />
       </div>

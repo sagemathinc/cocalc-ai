@@ -484,6 +484,17 @@ ensure_default_rootfs_cache() {
   as_star_user "set -a && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
 }
 
+publish_default_rootfs() {
+  if [ -z "${STAR_DEFAULT_ROOTFS_IMAGE:-}" ]; then
+    return
+  fi
+  local script="scripts/star-poc/publish-default-rootfs.cjs"
+  if [ -f "$SRC_ROOT/scripts/star-poc/build/publish-default-rootfs/index.cjs" ]; then
+    script="scripts/star-poc/build/publish-default-rootfs/index.cjs"
+  fi
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
+}
+
 write_env_files() {
   local site_master_key="${STAR_DATA}/secrets/site-master-key"
   if [ ! -f "$site_master_key" ]; then
@@ -766,5 +777,6 @@ build_default_rootfs_image
 write_env_files
 ensure_default_rootfs_cache
 seed_database
+publish_default_rootfs
 install_systemd
 start_services

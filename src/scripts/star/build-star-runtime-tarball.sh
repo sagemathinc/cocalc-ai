@@ -50,6 +50,15 @@ use_node_26() {
   fi
 }
 
+clean_generated_bundle_workspaces() {
+  rm -rf \
+    packages/cli/build/bundle \
+    packages/launchpad/build/bundle \
+    packages/plus/build/bundle \
+    packages/project/build/bundle \
+    packages/project-host/build/bundle
+}
+
 build_runtime() {
   if [ "$STAR_RUNTIME_BUILD" = "0" ]; then
     log "skipping local build because STAR_RUNTIME_BUILD=0"
@@ -67,6 +76,7 @@ build_runtime() {
     if ! command -v pnpm >/dev/null 2>&1; then
       npm install -g pnpm@10.33.0
     fi
+    clean_generated_bundle_workspaces
     ./workspaces.py install
     pnpm --filter @cocalc/app-notebook build
     ./workspaces.py build --dev
@@ -110,12 +120,21 @@ build_star_helper_bundles() {
       packages/server/build/star-helper-entrypoints/seed-star-poc.cjs
     cp scripts/star-poc/ensure-rootfs-cache.cjs \
       packages/project-host/build/star-helper-entrypoints/ensure-rootfs-cache.cjs
+    cp scripts/star-poc/publish-default-rootfs.cjs \
+      packages/server/build/star-helper-entrypoints/publish-default-rootfs.cjs
     rm -rf \
       "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
-      "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache"
+      "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
+      "$STAR_HELPER_BUILD_DIR/publish-default-rootfs"
     pnpm --filter @cocalc/launchpad exec ncc build \
       "$SRC_ROOT/packages/server/build/star-helper-entrypoints/seed-star-poc.cjs" \
       -o "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
+      --external bufferutil \
+      --external utf-8-validate \
+      --license licenses.txt
+    pnpm --filter @cocalc/launchpad exec ncc build \
+      "$SRC_ROOT/packages/server/build/star-helper-entrypoints/publish-default-rootfs.cjs" \
+      -o "$STAR_HELPER_BUILD_DIR/publish-default-rootfs" \
       --external bufferutil \
       --external utf-8-validate \
       --license licenses.txt

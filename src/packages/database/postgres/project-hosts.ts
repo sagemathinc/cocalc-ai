@@ -15,6 +15,7 @@ export interface ProjectHostRecord {
   version?: string;
   capacity?: any;
   metadata?: any;
+  tier?: number | null;
   last_seen?: Date;
   host_session_id?: string;
 }
@@ -35,6 +36,7 @@ export async function upsertProjectHost({
   version,
   capacity,
   metadata,
+  tier,
   last_seen,
   sshpiperd_public_key,
   host_session_id,
@@ -48,8 +50,8 @@ export async function upsertProjectHost({
   await pool().query(
     `
     INSERT INTO project_hosts
-      (id, bay_id, name, region, public_url, internal_url, ssh_server, status, version, capacity, metadata, last_seen, created, updated)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW(), NOW())
+      (id, bay_id, name, region, public_url, internal_url, ssh_server, status, version, capacity, metadata, tier, last_seen, created, updated)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW(), NOW())
     ON CONFLICT (id)
     DO UPDATE SET
       bay_id = COALESCE(EXCLUDED.bay_id, project_hosts.bay_id),
@@ -62,6 +64,7 @@ export async function upsertProjectHost({
       version = EXCLUDED.version,
       capacity = EXCLUDED.capacity,
       metadata = COALESCE(project_hosts.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
+      tier = COALESCE(EXCLUDED.tier, project_hosts.tier),
       last_seen = EXCLUDED.last_seen,
       updated = NOW()
     WHERE project_hosts.deleted IS NULL;
@@ -78,6 +81,7 @@ export async function upsertProjectHost({
       version ?? null,
       capacity ?? null,
       mergedMetadata,
+      tier ?? null,
       now,
     ],
   );
