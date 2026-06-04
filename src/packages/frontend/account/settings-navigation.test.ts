@@ -83,7 +83,7 @@ describe("settings-navigation", () => {
     expect(overview.primaryPages).toContain("ai");
     expect(
       overview.sections.find((section) => section.key === "billing")?.pages,
-    ).toContain("subscriptions");
+    ).toContain("licenses");
     expect(
       overview.sections.find((section) => section.key === "billing")?.pages,
     ).not.toContain("payment-methods");

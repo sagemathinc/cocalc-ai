@@ -1,4 +1,4 @@
-import { UseBalance } from "@cocalc/frontend/account/other-settings";
+import { UseBalance } from "@cocalc/frontend/account/balance-toward-subs";
 import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-page";
 import { labels } from "@cocalc/frontend/i18n";
 import { defineMessage } from "react-intl";

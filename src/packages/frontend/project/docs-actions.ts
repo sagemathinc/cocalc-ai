@@ -813,13 +813,13 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         projectId,
       }),
   },
-  "billing.subscriptions.open": {
-    id: "billing.subscriptions.open",
+  "account.membership.open": {
+    id: "account.membership.open",
     isAvailable: validateSignedIn,
     run: ({ projectId }) =>
       revealAccountSettings({
-        actionId: "billing.subscriptions.open",
-        page: "subscriptions",
+        actionId: "account.membership.open",
+        page: "membership",
         projectId,
       }),
   },

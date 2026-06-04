@@ -27,11 +27,11 @@ export interface DocsActionParameter {
 }
 
 export type DocsActionId =
+  | "account.membership.open"
   | "account.profile.open"
   | "account.ssh-keys.open"
   | "billing.payment-methods.open"
   | "billing.statements.open"
-  | "billing.subscriptions.open"
   | "admin.news.open"
   | "admin.news.create-system"
   | "admin.bay-ops.open"

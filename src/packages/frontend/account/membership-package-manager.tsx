@@ -40,7 +40,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Icon, Loading } from "@cocalc/frontend/components";
+import { Icon, Loading, Tooltip } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import {
@@ -136,6 +136,7 @@ function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
 }
 
 interface ClaimableMembershipPackagesPanelProps {
+  compact?: boolean;
   onChanged?: () => void;
 }
 
@@ -470,6 +471,7 @@ function getSiteLicenseSearchText(overview: SiteLicenseOverview): string {
 }
 
 export function ClaimableMembershipPackagesPanel({
+  compact,
   onChanged,
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
@@ -485,6 +487,7 @@ export function ClaimableMembershipPackagesPanel({
   const [termsTarget, setTermsTarget] =
     useState<ClaimableMembershipPackage | null>(null);
   const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
+  const [compactModalOpen, setCompactModalOpen] = useState<boolean>(false);
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
@@ -523,6 +526,7 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
+      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -544,6 +548,7 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
+      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -570,6 +575,181 @@ export function ClaimableMembershipPackagesPanel({
   }
   const emailVerified =
     !!email_address && !!email_address_verified?.get?.(email_address);
+
+  function renderClaimablePackages() {
+    return (
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {claimables.map((claimablePackage) => (
+          <Card
+            key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
+            size="small"
+            title={
+              <Space wrap>
+                <span>{getPackageKindLabel(claimablePackage.kind)}</span>
+                <Tag color="blue">
+                  {capitalize(claimablePackage.membership_class)}
+                </Tag>
+              </Space>
+            }
+            extra={
+              claimablePackage.requires_approval ? (
+                <Button
+                  type="primary"
+                  loading={requestingPackageId === claimablePackage.package_id}
+                  disabled={claimablePackage.pending_request_id != null}
+                  onClick={() => handlePrimaryAction(claimablePackage)}
+                >
+                  {claimablePackage.pending_request_id
+                    ? "Request pending"
+                    : "Request access"}
+                </Button>
+              ) : (
+                <Button
+                  type="primary"
+                  loading={claimingPackageId === claimablePackage.package_id}
+                  onClick={() => handlePrimaryAction(claimablePackage)}
+                >
+                  Claim seat
+                </Button>
+              )
+            }
+          >
+            <Descriptions size="small" column={1}>
+              <Descriptions.Item label="Eligibility">
+                {getClaimReasonLabel(claimablePackage)}
+              </Descriptions.Item>
+              {claimablePackage.pool_name ? (
+                <Descriptions.Item label="Pool">
+                  {claimablePackage.pool_name}
+                </Descriptions.Item>
+              ) : null}
+              {claimablePackage.requires_approval ? (
+                <Descriptions.Item label="Approval">
+                  {claimablePackage.pending_request_id ? (
+                    <Tag color="gold">Pending manager review</Tag>
+                  ) : (
+                    <Tag color="blue">Manager approval required</Tag>
+                  )}
+                </Descriptions.Item>
+              ) : null}
+              {claimablePackage.requires_terms_acceptance ? (
+                <Descriptions.Item label="Terms">
+                  <Tag color="purple">Review required</Tag>
+                </Descriptions.Item>
+              ) : null}
+              <Descriptions.Item label="Available seats">
+                {claimablePackage.available_seat_count}
+              </Descriptions.Item>
+              {claimablePackage.expires_at ? (
+                <Descriptions.Item label="Expires">
+                  <TimeAgo date={claimablePackage.expires_at} />
+                </Descriptions.Item>
+              ) : null}
+            </Descriptions>
+          </Card>
+        ))}
+      </Space>
+    );
+  }
+
+  const termsModal = (
+    <Modal
+      open={termsTarget != null}
+      title="Review institution terms"
+      okText={termsTarget?.requires_approval ? "Request access" : "Claim seat"}
+      okButtonProps={{ disabled: !termsAccepted }}
+      onCancel={() => {
+        setTermsTarget(null);
+        setTermsAccepted(false);
+      }}
+      onOk={async () => {
+        const target = termsTarget;
+        if (!target) return;
+        setTermsTarget(null);
+        setTermsAccepted(false);
+        if (target.requires_approval) {
+          await requestPool(target, true);
+        } else {
+          await claimPackage(target, true);
+        }
+      }}
+      destroyOnHidden
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <Alert
+          type="info"
+          showIcon
+          title="Your institution requires custom terms or policies"
+          description="Review the configured links before using this institution-funded CoCalc membership."
+        />
+        {termsTarget?.custom_terms_url ? (
+          <a
+            href={termsTarget.custom_terms_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Custom terms of service
+          </a>
+        ) : null}
+        {termsTarget?.custom_policy_url ? (
+          <a
+            href={termsTarget.custom_policy_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Institution policy
+          </a>
+        ) : null}
+        {termsTarget?.terms_version_label ? (
+          <Text type="secondary">
+            Terms version: {termsTarget.terms_version_label}
+          </Text>
+        ) : null}
+        <Checkbox
+          checked={termsAccepted}
+          onChange={(event) => setTermsAccepted(event.target.checked)}
+        >
+          I have reviewed the institution terms and policies for this
+          membership.
+        </Checkbox>
+      </Space>
+    </Modal>
+  );
+
+  if (compact) {
+    const disabledReason =
+      claimables.length > 0
+        ? undefined
+        : emailVerified
+          ? `Your signed-in email address ${email_address} is verified, but no reserved seats or matching site-license pools are available for it right now.`
+          : `Verify your signed-in email address ${email_address} to claim reserved seats or matching site-license memberships.`;
+    return (
+      <>
+        <Tooltip title={disabledReason}>
+          <span>
+            <Button
+              disabled={!loading && claimables.length === 0}
+              loading={loading}
+              onClick={() => setCompactModalOpen(true)}
+            >
+              Claim site license membership
+            </Button>
+          </span>
+        </Tooltip>
+        {error ? <Alert type="error" message={error} showIcon /> : null}
+        <Modal
+          open={compactModalOpen}
+          title="Claim site license membership"
+          footer={null}
+          onCancel={() => setCompactModalOpen(false)}
+          destroyOnHidden
+        >
+          {renderClaimablePackages()}
+        </Modal>
+        {termsModal}
+      </>
+    );
+  }
 
   return (
     <div>
@@ -613,144 +793,8 @@ export function ClaimableMembershipPackagesPanel({
           }
         />
       ) : null}
-      {!loading && claimables.length > 0 ? (
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          {claimables.map((claimablePackage) => (
-            <Card
-              key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
-              size="small"
-              title={
-                <Space wrap>
-                  <span>{getPackageKindLabel(claimablePackage.kind)}</span>
-                  <Tag color="blue">
-                    {capitalize(claimablePackage.membership_class)}
-                  </Tag>
-                </Space>
-              }
-              extra={
-                claimablePackage.requires_approval ? (
-                  <Button
-                    type="primary"
-                    loading={
-                      requestingPackageId === claimablePackage.package_id
-                    }
-                    disabled={claimablePackage.pending_request_id != null}
-                    onClick={() => handlePrimaryAction(claimablePackage)}
-                  >
-                    {claimablePackage.pending_request_id
-                      ? "Request pending"
-                      : "Request access"}
-                  </Button>
-                ) : (
-                  <Button
-                    type="primary"
-                    loading={claimingPackageId === claimablePackage.package_id}
-                    onClick={() => handlePrimaryAction(claimablePackage)}
-                  >
-                    Claim seat
-                  </Button>
-                )
-              }
-            >
-              <Descriptions size="small" column={1}>
-                <Descriptions.Item label="Eligibility">
-                  {getClaimReasonLabel(claimablePackage)}
-                </Descriptions.Item>
-                {claimablePackage.pool_name ? (
-                  <Descriptions.Item label="Pool">
-                    {claimablePackage.pool_name}
-                  </Descriptions.Item>
-                ) : null}
-                {claimablePackage.requires_approval ? (
-                  <Descriptions.Item label="Approval">
-                    {claimablePackage.pending_request_id ? (
-                      <Tag color="gold">Pending manager review</Tag>
-                    ) : (
-                      <Tag color="blue">Manager approval required</Tag>
-                    )}
-                  </Descriptions.Item>
-                ) : null}
-                {claimablePackage.requires_terms_acceptance ? (
-                  <Descriptions.Item label="Terms">
-                    <Tag color="purple">Review required</Tag>
-                  </Descriptions.Item>
-                ) : null}
-                <Descriptions.Item label="Available seats">
-                  {claimablePackage.available_seat_count}
-                </Descriptions.Item>
-                {claimablePackage.expires_at ? (
-                  <Descriptions.Item label="Expires">
-                    <TimeAgo date={claimablePackage.expires_at} />
-                  </Descriptions.Item>
-                ) : null}
-              </Descriptions>
-            </Card>
-          ))}
-        </Space>
-      ) : null}
-      <Modal
-        open={termsTarget != null}
-        title="Review institution terms"
-        okText={
-          termsTarget?.requires_approval ? "Request access" : "Claim seat"
-        }
-        okButtonProps={{ disabled: !termsAccepted }}
-        onCancel={() => {
-          setTermsTarget(null);
-          setTermsAccepted(false);
-        }}
-        onOk={async () => {
-          const target = termsTarget;
-          if (!target) return;
-          setTermsTarget(null);
-          setTermsAccepted(false);
-          if (target.requires_approval) {
-            await requestPool(target, true);
-          } else {
-            await claimPackage(target, true);
-          }
-        }}
-        destroyOnHidden
-      >
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          <Alert
-            type="info"
-            showIcon
-            title="Your institution requires custom terms or policies"
-            description="Review the configured links before using this institution-funded CoCalc membership."
-          />
-          {termsTarget?.custom_terms_url ? (
-            <a
-              href={termsTarget.custom_terms_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Custom terms of service
-            </a>
-          ) : null}
-          {termsTarget?.custom_policy_url ? (
-            <a
-              href={termsTarget.custom_policy_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Institution policy
-            </a>
-          ) : null}
-          {termsTarget?.terms_version_label ? (
-            <Text type="secondary">
-              Terms version: {termsTarget.terms_version_label}
-            </Text>
-          ) : null}
-          <Checkbox
-            checked={termsAccepted}
-            onChange={(event) => setTermsAccepted(event.target.checked)}
-          >
-            I have reviewed the institution terms and policies for this
-            membership.
-          </Checkbox>
-        </Space>
-      </Modal>
+      {!loading && claimables.length > 0 ? renderClaimablePackages() : null}
+      {termsModal}
     </div>
   );
 }

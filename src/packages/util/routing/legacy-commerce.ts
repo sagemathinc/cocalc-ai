@@ -6,10 +6,10 @@
 import type { NavigatePath } from "@cocalc/util/types/settings";
 
 const BILLING_ROUTE_ALIASES: Record<string, NavigatePath> = {
-  "": "settings/subscriptions",
+  "": "settings/membership",
   cards: "settings/payment-methods",
   "payment-methods": "settings/payment-methods",
-  subscriptions: "settings/subscriptions",
+  subscriptions: "settings/membership",
   receipts: "settings/statements",
   "invoices-and-receipts": "settings/statements",
 };

@@ -476,23 +476,3 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
 }
 
 import { unreachable } from "@cocalc/util/misc";
-import UseBalanceTowardSubscriptions from "./balance-toward-subs";
-
-export function UseBalance({ style, minimal }: { style?; minimal? }) {
-  const use_balance_toward_subscriptions = useTypedRedux(
-    "account",
-    "other_settings",
-  )?.get("use_balance_toward_subscriptions");
-
-  return (
-    <UseBalanceTowardSubscriptions
-      minimal={minimal}
-      style={style}
-      use_balance_toward_subscriptions={use_balance_toward_subscriptions}
-      set_use_balance_toward_subscriptions={(value) => {
-        const actions = redux.getActions("account");
-        actions.set_other_settings("use_balance_toward_subscriptions", value);
-      }}
-    />
-  );
-}

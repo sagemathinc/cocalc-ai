@@ -181,7 +181,7 @@ export default async function createSubscriptionPayment({
     body: `
 ${site_name} has started renewing your ${moneyToCurrency(amountValue)}/${interval} subscription (id=${subscription_id}).
 
-- [Subscription Status](${await url(`/settings/subscriptions#id=${subscription_id}`)})
+- [Membership Status](${await url(`/settings/membership`)})
 
 - Hosted Invoice: ${hosted_invoice_url}
 

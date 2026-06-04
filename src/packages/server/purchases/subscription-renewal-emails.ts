@@ -133,9 +133,9 @@ ${pay}
 <br/><br/>
 
 Visit
-${await siteURL()}/settings/subscriptions to browse all of your subscriptions,
-resume any that you have canceled, or easily edit any subscription
-if you need more or less resources.  If you have any questions, reply
+${await siteURL()}/settings/membership to review your membership,
+resume renewal if you have canceled it, or change your membership
+if you need more or less resources. If you have any questions, reply
 to this email to create a support request.
 
 `;

@@ -25,7 +25,6 @@ export type PreferencesSubTabType =
 export type PreferencesSubTabKey = `preferences-${PreferencesSubTabType}`;
 
 export const VALID_BILLING_SUB_TYPES = [
-  "subscriptions",
   "licenses",
   "store",
   "vouchers",
