@@ -1,4 +1,5 @@
 import { Map } from "immutable";
+import { EventEmitter } from "events";
 import type { AppRedux } from "@cocalc/util/redux/types";
 import type { SyncString } from "@cocalc/sync/editor/string/sync";
 import * as openFile from "@cocalc/frontend/project/open-file";
@@ -87,6 +88,11 @@ class FastOpenHarness extends TextEditorActions {
     await flushPromises();
   }
 
+  async initSyncstringForTest(): Promise<void> {
+    (this as any)._init_syncstring();
+    await flushPromises();
+  }
+
   completeOptimistic(): void {
     (this as any).completeOptimisticFastOpen();
   }
@@ -94,6 +100,17 @@ class FastOpenHarness extends TextEditorActions {
   getState(key: string): any {
     return this.state.get(key);
   }
+}
+
+class ReadySyncString extends EventEmitter {
+  get_state = jest.fn().mockReturnValue("ready");
+  isReady = jest.fn().mockReturnValue(true);
+  isClosed = jest.fn().mockReturnValue(false);
+  is_read_only = jest.fn().mockReturnValue(false);
+  is_live_connected = jest.fn().mockReturnValue(true);
+  get_settings = jest.fn().mockReturnValue(Map());
+  to_str = jest.fn().mockReturnValue("live");
+  get_cursors = jest.fn().mockReturnValue([]);
 }
 
 describe("fast-open optimistic state machine", () => {
@@ -156,6 +173,7 @@ describe("fast-open optimistic state machine", () => {
     actions.setSyncString({
       get_state: jest.fn().mockReturnValue("loading"),
       to_str: jest.fn().mockReturnValue("same"),
+      is_read_only: jest.fn().mockReturnValue(false),
     } as any);
 
     await actions.startOptimistic();
@@ -163,6 +181,7 @@ describe("fast-open optimistic state machine", () => {
 
     expect(actions.getState("value")).toBe("same");
     expect(actions.getState("status")).toBe("");
+    expect(actions.getState("read_only")).toBe(false);
     expect(markOpenPhase).toHaveBeenCalledWith(
       PROJECT_ID,
       PATH,
@@ -200,6 +219,22 @@ describe("fast-open optimistic state machine", () => {
     jest.advanceTimersByTime(5000);
     await flushPromises();
     expect(actions.getState("status")).toBe("");
+  });
+
+  it("initializes when syncstring is already ready before the ready listener runs", async () => {
+    const actions = new FastOpenHarness();
+    actions.setFastOpenEnabled(true);
+    actions.setReadFileResult("disk");
+    actions.setSyncString(new ReadySyncString() as unknown as SyncString);
+
+    await actions.initSyncstringForTest();
+
+    expect(actions.getState("is_loaded")).toBe(true);
+    expect(actions.getState("value")).toBe("live");
+    expect(actions.getState("read_only")).toBe(false);
+    expect(actions.getState("status")).toBe("");
+    expect(actions.getState("rtc_status")).toBe("live");
+    expect(markOpenPhase).toHaveBeenCalledWith(PROJECT_ID, PATH, "sync_ready");
   });
 
   it("falls back cleanly when optimistic read fails", async () => {

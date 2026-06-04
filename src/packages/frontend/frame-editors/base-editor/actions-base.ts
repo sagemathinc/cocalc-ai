@@ -429,6 +429,7 @@ export class BaseEditorActions<
     if (this.store?.get("status") === FAST_OPEN_SYNCSTRING_STATUS) {
       this.setState({ status: "" });
     }
+    this._syncstring_metadata();
     if (differs) {
       this.setTransientOptimisticFastOpenStatus(FAST_OPEN_HANDOFF_DIFF_STATUS);
     }
@@ -783,7 +784,6 @@ export class BaseEditorActions<
     if (this.doctype !== "none") {
       this.setState({ rtc_status: "loading" });
     }
-    this.startOptimisticFastOpen();
     const sessionStart = Date.now();
     const closeSyncdocAndFile = () => {
       this._syncstring.close();
@@ -848,7 +848,10 @@ export class BaseEditorActions<
       closeSyncdocAndFile();
     });
 
-    this._syncstring.once("ready", (err) => {
+    const handleReady = (err?: Error) => {
+      if (this._syncstring_init) {
+        return;
+      }
       mark_open_phase(this.project_id, this.path, "sync_ready");
       if (this.doctype != "none") {
         // doctype = 'none' must be handled elsewhere, e.g., terminals.
@@ -893,7 +896,13 @@ export class BaseEditorActions<
         this._syncstring_cursor_activity.bind(this),
       );
       this.afterSyncReady();
-    });
+    };
+
+    this._syncstring.once("ready", handleReady);
+    if (this._syncstring.get_state?.() === "ready") {
+      handleReady();
+    }
+    this.startOptimisticFastOpen();
 
     this._syncstring.once("load-time-estimate", (est) => {
       return this.setState({ load_time_estimate: est });
@@ -1957,7 +1966,8 @@ export class BaseEditorActions<
   _syncstring_metadata(): void {
     // need to check since this can get called by the close.
     if (!this._syncstring) return;
-    const read_only = this._syncstring.is_read_only();
+    const read_only = this._syncstring.is_read_only?.();
+    if (read_only == null) return;
     if (read_only !== this.store.get("read_only")) {
       this.setState({ read_only });
     }
