@@ -275,8 +275,8 @@ export class SyncTableStream extends EventEmitter {
     throw Error("delete: not implemented for stream synctable");
   };
 
-  save = () => {
-    this.dstream?.save();
+  save = async () => {
+    await this.dstream?.save();
   };
 
   recoverNow = async (

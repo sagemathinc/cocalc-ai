@@ -55,6 +55,32 @@ describe("project container environment", () => {
     expect(env.LOGS).toBeUndefined();
   });
 
+  it("keeps project debug logging disabled by default", async () => {
+    const { getEnvironment } = await import("./env");
+    const env = await getEnvironment({
+      HOME: "/home/user",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      image: "test-image",
+    });
+
+    expect(env.DEBUG).toBe("");
+    expect(env.DEBUG_CONSOLE).toBe("no");
+  });
+
+  it("allows project debug logging to be explicitly enabled by the host", async () => {
+    process.env.COCALC_PROJECT_DEBUG = "cocalc:project:*";
+    process.env.COCALC_PROJECT_DEBUG_CONSOLE = "yes";
+    const { getEnvironment } = await import("./env");
+    const env = await getEnvironment({
+      HOME: "/home/user",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      image: "test-image",
+    });
+
+    expect(env.DEBUG).toBe("cocalc:project:*");
+    expect(env.DEBUG_CONSOLE).toBe("yes");
+  });
+
   it("injects a GCE ubuntu mirror hint from the host zone", async () => {
     process.env.PROJECT_HOST_CLOUD_PROVIDER = "gcp";
     process.env.PROJECT_HOST_REGION = "us-west3";

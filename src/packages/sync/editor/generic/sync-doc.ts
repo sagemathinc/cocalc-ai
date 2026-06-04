@@ -1487,6 +1487,8 @@ export class SyncDoc extends EventEmitter {
             );
           }
         }
+      } else {
+        await repairLatestSnapshotCheckpoint(synctable.dstream);
       }
     } else if (this.useConat && query.syncstrings) {
       synctable = await this.client.synctable_conat(query, {
@@ -3742,6 +3744,44 @@ function isCompletePatchStream(dstream) {
     }
   }
   return false;
+}
+
+async function repairLatestSnapshotCheckpoint(dstream): Promise<boolean> {
+  const checkpoint = latestSnapshotCheckpoint(dstream);
+  if (checkpoint == null) {
+    return false;
+  }
+  await dstream.setCheckpoint(checkpoint);
+  return true;
+}
+
+function latestSnapshotCheckpoint(dstream) {
+  for (let n = dstream.length - 1; n >= 0; n--) {
+    const x = dstream[n];
+    if (!x?.is_snapshot) {
+      continue;
+    }
+    const time = x.time;
+    let seq = x.seq_info?.seq;
+    if (seq == null) {
+      let m = n - 1;
+      seq = dstream.seq(n) ?? 0;
+      while (m >= 1) {
+        if (dstream[m].time == time) {
+          seq = dstream.seq(m) ?? seq;
+          break;
+        }
+        m -= 1;
+      }
+    }
+    if (seq != null) {
+      return {
+        name: LATEST_SNAPSHOT_CHECKPOINT,
+        seq,
+        data: { patchId: time },
+      };
+    }
+  }
 }
 
 function isReadOnlyForCurrentUser(
