@@ -128,6 +128,7 @@ describe("ChatLog sidechat search jumps", () => {
     await waitFor(() =>
       expect(mockScrollToIndex).toHaveBeenCalledWith({
         index: Number.MAX_SAFE_INTEGER,
+        behavior: "auto",
       }),
     );
   });
@@ -169,6 +170,7 @@ describe("ChatLog sidechat search jumps", () => {
       expect(mockScrollToIndex).toHaveBeenCalledWith({
         index: 0,
         align: "center",
+        behavior: "auto",
       }),
     );
   });
@@ -217,9 +219,7 @@ describe("ChatLog sidechat search jumps", () => {
       rerender(<ChatLog {...props} />);
     });
 
-    await waitFor(() =>
-      expect(latestVirtuosoProps?.followOutput).toBe("smooth"),
-    );
+    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(true));
     expect(mockScrollToIndex).not.toHaveBeenCalled();
   });
 
@@ -257,9 +257,7 @@ describe("ChatLog sidechat search jumps", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(latestVirtuosoProps?.followOutput).toBe("smooth"),
-    );
+    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(true));
     act(() => {
       fireEvent.wheel(screen.getByTestId("virtuoso").parentElement!, {
         deltaY: -100,
@@ -304,9 +302,7 @@ describe("ChatLog sidechat search jumps", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(latestVirtuosoProps?.followOutput).toBe("smooth"),
-    );
+    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(true));
 
     const container = screen.getByTestId("virtuoso").parentElement!;
     const selectableMessage = document.createElement("div");
@@ -377,6 +373,7 @@ describe("ChatLog sidechat search jumps", () => {
     await waitFor(() =>
       expect(mockScrollToIndex).toHaveBeenCalledWith({
         index: Number.MAX_SAFE_INTEGER,
+        behavior: "auto",
       }),
     );
     await waitFor(() =>
@@ -429,6 +426,7 @@ describe("ChatLog sidechat search jumps", () => {
     await waitFor(() =>
       expect(mockScrollToIndex).toHaveBeenCalledWith({
         index: Number.MAX_SAFE_INTEGER,
+        behavior: "auto",
       }),
     );
     const initialCalls = mockScrollToIndex.mock.calls.length;

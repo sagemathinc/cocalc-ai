@@ -83,13 +83,54 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   private chatFastOpenApplied = false;
   private messageCacheRecoveryWarned = false;
 
+  private ensureRenderableChatActions(): boolean {
+    const frameIds: string[] = [];
+    try {
+      const activeId = this.get_active_frame_id?.();
+      if (activeId) {
+        frameIds.push(activeId);
+      }
+      for (const id of this.get_frame_ids_in_order?.() ?? []) {
+        if (!frameIds.includes(id)) {
+          frameIds.push(id);
+        }
+      }
+    } catch {
+      return false;
+    }
+
+    for (const frameId of frameIds) {
+      if (this._get_frame_type(frameId) !== FRAME_TYPE) {
+        continue;
+      }
+      const existed = this.chatActions[frameId] != null;
+      const actions = this.getChatActions(frameId, {
+        allowMissingFrameType: true,
+      });
+      if (actions != null && !existed) {
+        syncdocDiagnosticLog("chat editor precreated frame actions", {
+          project_id: this.project_id,
+          path: this.path,
+          frameId,
+          state: this.debugSyncdocState?.(),
+        });
+        return true;
+      }
+    }
+    return false;
+  }
+
   private markChatDocumentReady(): void {
     if (this.isClosed()) return;
+    const createdChatActions = this.ensureRenderableChatActions();
     const state: Partial<ChatEditorState> = {
       is_loaded: true,
     };
     if (this.store?.get("value") === "Loading...") {
       state.value = "";
+    }
+    if (createdChatActions) {
+      state.resize = (this.store?.get("resize") ?? 0) + 1;
     }
     this.setState(state);
   }

@@ -285,6 +285,8 @@ const NEWEST_MESSAGES_BUTTON_STYLE: CSSProperties = {
   zIndex: 5,
 } as const;
 
+const INSTANT_SCROLL_BEHAVIOR = "auto" as const;
+
 function isEditableOrOverlayInteractionTarget(
   target: EventTarget | null,
 ): boolean {
@@ -434,7 +436,10 @@ export function ChatLog({
       scrollToBottomRef?.current?.(true);
     } else {
       keepBottomAnchoredRef.current = false;
-      virtuosoRef.current?.scrollToIndex({ index: scrollToIndex });
+      virtuosoRef.current?.scrollToIndex({
+        index: scrollToIndex,
+        behavior: INSTANT_SCROLL_BEHAVIOR,
+      });
     }
     actions.clearScrollRequest();
   }, [scrollToIndex, canAutoScroll, actions]);
@@ -463,7 +468,10 @@ export function ChatLog({
       return;
     }
     keepBottomAnchoredRef.current = false;
-    virtuosoRef.current?.scrollToIndex({ index });
+    virtuosoRef.current?.scrollToIndex({
+      index,
+      behavior: INSTANT_SCROLL_BEHAVIOR,
+    });
     actions.clearScrollRequest();
   }, [scrollToDate, canAutoScroll, sortedDates, messages, actions]);
 
@@ -474,7 +482,11 @@ export function ChatLog({
     if (index < 0) return;
     keepBottomAnchoredRef.current = false;
     if (USE_VIRTUOSO) {
-      virtuosoRef.current?.scrollToIndex({ index, align: "center" });
+      virtuosoRef.current?.scrollToIndex({
+        index,
+        align: "center",
+        behavior: INSTANT_SCROLL_BEHAVIOR,
+      });
     } else if (scrollToBottomRef?.current) {
       scrollToBottomRef.current(true);
     }
@@ -508,7 +520,10 @@ export function ChatLog({
       keepBottomAnchoredRef.current = true;
       const token = ++bottomScrollTokenRef.current;
       const doScroll = () =>
-        virtuosoRef.current?.scrollToIndex({ index: Number.MAX_SAFE_INTEGER });
+        virtuosoRef.current?.scrollToIndex({
+          index: Number.MAX_SAFE_INTEGER,
+          behavior: INSTANT_SCROLL_BEHAVIOR,
+        });
       const doScrollIfStillAnchored = () => {
         if (bottomScrollTokenRef.current !== token) return;
         if (!canAutoScrollRef.current) return;
@@ -1078,6 +1093,7 @@ export function MessageList({
         setAtBottom(true);
         listVirtuosoRef.current?.scrollToIndex({
           index: Number.MAX_SAFE_INTEGER,
+          behavior: INSTANT_SCROLL_BEHAVIOR,
         });
         scrollToBottomRef?.current?.(true);
         return;
@@ -1093,7 +1109,11 @@ export function MessageList({
       }
       setManualScroll?.(true);
       setAtBottom(false);
-      listVirtuosoRef.current?.scrollToIndex({ index, align: "start" });
+      listVirtuosoRef.current?.scrollToIndex({
+        index,
+        align: "start",
+        behavior: INSTANT_SCROLL_BEHAVIOR,
+      });
 
       const token = ++anchorRestoreTokenRef.current;
       for (const delayMs of [0, 16, 75, 200, 500, 1000]) {
@@ -1531,9 +1551,7 @@ export function MessageList({
         }
         atTopStateChange={onAtTopStateChange}
         onScroll={() => scheduleAnchorCapture()}
-        followOutput={
-          !manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false
-        }
+        followOutput={!manualScroll && atBottom && !anyOverlayOpen}
       />
       {showNewestMessagesButton ? (
         <Button
