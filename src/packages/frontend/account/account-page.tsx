@@ -45,7 +45,6 @@ import {
   getAccountSettingsRouteFromState,
   isAccountSettingsPageKey,
 } from "./settings-routing";
-import MembershipBadge from "./membership-badge";
 import { lite, project_id } from "@cocalc/frontend/lite";
 
 // Type for valid menu keys
@@ -178,7 +177,6 @@ export const AccountPage: React.FC = () => {
     return (
       <Space wrap>
         {navigationContext.isCommercial ? <BalanceButton /> : undefined}
-        {!lite && <MembershipBadge />}
         <I18NSelector isWide={isWide} />
         {!lite && <SignOut everywhere={false} narrow={!isWide} />}
       </Space>
