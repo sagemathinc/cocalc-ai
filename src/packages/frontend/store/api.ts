@@ -36,7 +36,7 @@ export async function adminPurchase(opts: {
   return await api("purchases/admin-purchase", opts);
 }
 
-export async function getVoucherCenterData(): Promise<{
+export async function getVouchersData(): Promise<{
   created: Voucher[];
   redeemed: VoucherCode[];
 }> {

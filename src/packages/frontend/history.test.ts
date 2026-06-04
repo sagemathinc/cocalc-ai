@@ -8,10 +8,6 @@ describe("parse_target", () => {
       page: "account",
       tab: "vouchers",
     });
-    expect(parse_target("settings/store")).toEqual({
-      page: "account",
-      tab: "store",
-    });
     expect(parse_target("settings/payment-methods")).toEqual({
       page: "account",
       tab: "payment-methods",

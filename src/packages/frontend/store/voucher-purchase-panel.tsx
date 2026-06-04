@@ -38,9 +38,9 @@ const DEFAULT_COUNT = 1;
 const DEFAULT_TITLE = "CoCalc voucher";
 
 export default function VoucherPurchasePanel({
-  onOpenVoucherCenter,
+  onPurchased,
 }: {
-  onOpenVoucherCenter: () => void;
+  onPurchased?: () => void | Promise<void>;
 }) {
   const [amount, setAmount] = useState<number>(DEFAULT_AMOUNT);
   const [count, setCount] = useState<number>(DEFAULT_COUNT);
@@ -137,7 +137,7 @@ export default function VoucherPurchasePanel({
           title: title.trim(),
         });
         setCodes(result.codes ?? []);
-        onOpenVoucherCenter();
+        await onPurchased?.();
       });
     } catch (err) {
       setActionError(`${err}`);
@@ -229,7 +229,7 @@ export default function VoucherPurchasePanel({
             setProcessing(true);
             try {
               await processPaymentIntents();
-              onOpenVoucherCenter();
+              await onPurchased?.();
             } catch (err) {
               setActionError(`${err}`);
             }
@@ -240,7 +240,7 @@ export default function VoucherPurchasePanel({
       {processing && (
         <Alert
           title="Payment processing"
-          description="Your voucher codes will appear in the Voucher Center shortly."
+          description="Your voucher codes will appear below shortly."
           type="info"
         />
       )}
@@ -252,10 +252,6 @@ export default function VoucherPurchasePanel({
           type="success"
         />
       )}
-
-      <Button type="link" onClick={onOpenVoucherCenter}>
-        Open Voucher Center
-      </Button>
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );

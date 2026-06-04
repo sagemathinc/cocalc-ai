@@ -65,8 +65,10 @@ type SiteLicenseMembershipPackage = NonNullable<
 
 const logger = getLogger("server:membership:site-licenses");
 const SITE_LICENSE_NOTIFICATION_ORIGIN_LABEL = "Site licenses";
-const SITE_LICENSE_NOTIFICATION_ACTION_LINK = "/settings/licenses";
-const SITE_LICENSE_NOTIFICATION_ACTION_LABEL = "Open licenses";
+const SITE_LICENSE_MANAGER_NOTIFICATION_ACTION_LINK = "/settings/site-licenses";
+const SITE_LICENSE_MANAGER_NOTIFICATION_ACTION_LABEL = "Open site licenses";
+const SITE_LICENSE_MEMBERSHIP_NOTIFICATION_ACTION_LINK = "/settings/membership";
+const SITE_LICENSE_MEMBERSHIP_NOTIFICATION_ACTION_LABEL = "Open membership";
 const SITE_LICENSE_REVERIFICATION_WARNING_DAYS = [14, 3] as const;
 
 type SiteLicenseAffiliationNotificationStage =
@@ -1135,6 +1137,8 @@ async function resolveSiteLicenseNotificationTargets(
 }
 
 async function createSiteLicenseAccountNoticeBestEffort({
+  action_label = SITE_LICENSE_MANAGER_NOTIFICATION_ACTION_LABEL,
+  action_link = SITE_LICENSE_MANAGER_NOTIFICATION_ACTION_LINK,
   actor_account_id,
   target_account_ids,
   title,
@@ -1143,6 +1147,8 @@ async function createSiteLicenseAccountNoticeBestEffort({
   dedupe_key,
   metadata = {},
 }: {
+  action_label?: string;
+  action_link?: string;
   actor_account_id?: string | null;
   target_account_ids: string[];
   title: string;
@@ -1171,8 +1177,8 @@ async function createSiteLicenseAccountNoticeBestEffort({
         title,
         body_markdown,
         origin_label: SITE_LICENSE_NOTIFICATION_ORIGIN_LABEL,
-        action_link: SITE_LICENSE_NOTIFICATION_ACTION_LINK,
-        action_label: SITE_LICENSE_NOTIFICATION_ACTION_LABEL,
+        action_link,
+        action_label,
         dedupe_key,
         ...metadata,
       },
@@ -1185,8 +1191,8 @@ async function createSiteLicenseAccountNoticeBestEffort({
           body_markdown,
           severity,
           origin_label: SITE_LICENSE_NOTIFICATION_ORIGIN_LABEL,
-          action_link: SITE_LICENSE_NOTIFICATION_ACTION_LINK,
-          action_label: SITE_LICENSE_NOTIFICATION_ACTION_LABEL,
+          action_link,
+          action_label,
           ...metadata,
         },
       })),
@@ -1263,6 +1269,8 @@ async function notifySiteLicensePoolRequestReviewedBestEffort({
   const poolName = getPackagePoolName(pkg);
   const approved = request.state === "approved";
   await createSiteLicenseAccountNoticeBestEffort({
+    action_label: SITE_LICENSE_MEMBERSHIP_NOTIFICATION_ACTION_LABEL,
+    action_link: SITE_LICENSE_MEMBERSHIP_NOTIFICATION_ACTION_LINK,
     actor_account_id,
     target_account_ids: [request.account_id],
     title: approved
@@ -1475,6 +1483,8 @@ export async function notifySiteLicenseAffiliationReverificationSeatsForSystem({
       stage,
     });
     const sent = await createSiteLicenseAccountNoticeBestEffort({
+      action_label: SITE_LICENSE_MEMBERSHIP_NOTIFICATION_ACTION_LABEL,
+      action_link: SITE_LICENSE_MEMBERSHIP_NOTIFICATION_ACTION_LINK,
       actor_account_id: null,
       target_account_ids: [seat.account_id],
       title: copy.title,
@@ -1524,12 +1534,14 @@ export async function notifySiteLicenseAffiliationSeatReleasesForSystem({
   const siteLicense = await getSiteLicense(normalizedSiteLicenseId);
   for (const seat of seats) {
     await createSiteLicenseAccountNoticeBestEffort({
+      action_label: SITE_LICENSE_MEMBERSHIP_NOTIFICATION_ACTION_LABEL,
+      action_link: SITE_LICENSE_MEMBERSHIP_NOTIFICATION_ACTION_LINK,
       actor_account_id: null,
       target_account_ids: [seat.account_id],
       title: `${siteLicense.name} membership ended`,
       body_markdown: [
         `Your **${seat.pool_name || seat.membership_class}** membership for ${siteLicense.organization_name} ended because the affiliation reverification grace period expired.`,
-        "Your CoCalc account and projects remain available. Open Licenses to see any other memberships or request access again if you are still eligible.",
+        "Your CoCalc account and projects remain available. Open Membership to see any other memberships or request access again if you are still eligible.",
       ].join("\n\n"),
       severity: "warning",
       dedupe_key: `site-license-affiliation-release:${seat.assignment_id}:${seat.reverification_grace_expires_at?.toISOString() ?? "expired"}`,

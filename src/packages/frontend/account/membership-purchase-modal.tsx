@@ -37,6 +37,7 @@ import {
   type MembershipTierWithPresentation,
 } from "./membership-tier-benefits";
 import { MEMBERSHIP_CHANGE } from "@cocalc/util/db-schema/purchases";
+import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { currency } from "@cocalc/util/misc";
 import {
   moneyRound2Up,
@@ -67,12 +68,14 @@ interface MembershipTiersResponse {
 }
 
 interface Props {
+  currentClassOverride?: string;
   open: boolean;
   onClose: () => void;
   onChanged?: () => void;
 }
 
 export default function MembershipPurchaseModal({
+  currentClassOverride,
   open,
   onClose,
   onChanged,
@@ -124,16 +127,9 @@ export default function MembershipPurchaseModal({
   }, [open]);
 
   const visibleTiers = useMemo(() => {
-    return tiers
-      .filter((tier) => tier.store_visible && !tier.disabled)
-      .sort((a, b) => {
-        const ap = a.priority ?? 0;
-        const bp = b.priority ?? 0;
-        if (ap !== bp) return ap - bp;
-        const al = a.label ?? a.id;
-        const bl = b.label ?? b.id;
-        return al.localeCompare(bl);
-      });
+    return sortMembershipTiersByDisplayOrder(
+      tiers.filter((tier) => tier.store_visible && !tier.disabled),
+    );
   }, [tiers]);
 
   const tierById = useMemo(() => {
@@ -168,7 +164,7 @@ export default function MembershipPurchaseModal({
     loadQuote();
   }, [open, selectedTierId, interval]);
 
-  const currentClass = membership?.class ?? "free";
+  const currentClass = currentClassOverride ?? membership?.class ?? "free";
   const selectedTier = selectedTierId ? tierById[selectedTierId] : undefined;
   const selectedLabel = selectedTier?.label ?? selectedTier?.id ?? "";
 
@@ -263,7 +259,8 @@ export default function MembershipPurchaseModal({
         <>
           <div style={{ marginBottom: "12px" }}>
             <Text type="secondary">
-              Current membership:{" "}
+              Current{" "}
+              {currentClassOverride ? "personal membership" : "membership"}:{" "}
               <Tag color={currentClass === "free" ? "default" : "blue"}>
                 {currentClass}
               </Tag>

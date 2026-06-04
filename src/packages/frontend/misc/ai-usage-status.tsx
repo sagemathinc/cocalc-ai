@@ -97,7 +97,7 @@ export function AIUsageHelpContent() {
       </Paragraph>
       <Paragraph>
         Upgrade your membership for higher limits.{" "}
-        <A href="/settings/store">Open the Store</A>.
+        <A href="/settings/membership">Open Membership</A>.
       </Paragraph>
     </>
   );

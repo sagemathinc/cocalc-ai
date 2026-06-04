@@ -70,7 +70,6 @@ const TEMPLATE_KEYS = [
   "basic",
   "student",
   "standard",
-  "member",
   "instructor",
   "researcher",
   "pro",
@@ -1381,12 +1380,12 @@ export function MembershipTiers() {
           {editorCard({
             title: "Product",
             subtitle:
-              "Public identity, pricing, store visibility, and internal lifecycle state.",
+              "Public identity, pricing, purchase visibility, and internal lifecycle state.",
             summary: cardSummary((get) =>
               summaryPieces(
                 `monthly ${currency(Number(get("price_monthly") ?? 0))}`,
                 `yearly ${currency(Number(get("price_yearly") ?? 0))}`,
-                get("store_visible") ? "public store" : "hidden from store",
+                get("store_visible") ? "public purchase" : "hidden",
                 get("active") ? "active" : "disabled",
               ),
             ),
@@ -1475,10 +1474,12 @@ export function MembershipTiers() {
                   <Col {...fieldCol}>
                     <Form.Item
                       name="store_visible"
-                      label="Store visibility"
+                      label="Purchase visibility"
                       valuePropName="checked"
                     >
-                      <Checkbox>Show in public pricing/store</Checkbox>
+                      <Checkbox>
+                        Show in public pricing and purchase UI
+                      </Checkbox>
                     </Form.Item>
                   </Col>
                   <Col {...fieldCol}>
@@ -1540,8 +1541,8 @@ export function MembershipTiers() {
                   <Col {...wideFieldCol}>
                     <Form.Item
                       name="store_description"
-                      label="Store description"
-                      extra="Short public sentence shown on pricing/store cards."
+                      label="Public description"
+                      extra="Short public sentence shown on pricing and purchase cards."
                     >
                       <Input.TextArea rows={3} />
                     </Form.Item>
@@ -1549,7 +1550,7 @@ export function MembershipTiers() {
                   <Col {...wideFieldCol}>
                     <Form.Item
                       name="store_highlights_text"
-                      label="Store highlights"
+                      label="Public highlights"
                       extra="One public bullet point per line."
                     >
                       <Input.TextArea rows={3} />
@@ -3643,8 +3644,8 @@ export function MembershipTiers() {
           </>
         )}
         <Paragraph style={{ marginBottom: 0 }}>
-          Tip: Tier IDs should be stable slugs (e.g., <Text code>member</Text>).
-          Set <Text code>Visible</Text> for the normal store and{" "}
+          Tip: Use stable tier IDs, e.g. <Text code>standard</Text>. Set{" "}
+          <Text code>Visible</Text> for public purchase UI and{" "}
           <Text code>Course visible</Text> for course student memberships.
         </Paragraph>
       </div>

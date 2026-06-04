@@ -214,10 +214,8 @@ export default function PublicRedeemVoucherView({
         Need help? Read the{" "}
         <a href={joinUrlPath(appBasePath, "docs")}>CoCalc documentation</a>,
         open the{" "}
-        <a href={joinUrlPath(appBasePath, "settings", "vouchers")}>
-          Voucher Center
-        </a>
-        , or contact <a href={joinUrlPath(appBasePath, "support")}>support</a>.
+        <a href={joinUrlPath(appBasePath, "settings", "vouchers")}>Vouchers</a>,
+        or contact <a href={joinUrlPath(appBasePath, "support")}>support</a>.
       </Paragraph>
     </Space>
   );

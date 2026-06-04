@@ -20,7 +20,7 @@ The URI schema handled by the single page app is as follows:
         https://cocalc.com/settings/keys
         etc.
      Billing:
-        https://cocalc.com/settings/subscriptions
+        https://cocalc.com/settings/membership
         https://cocalc.com/settings/payment-methods
         https://cocalc.com/settings/statements
      Support:

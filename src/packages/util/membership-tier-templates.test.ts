@@ -63,7 +63,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
 
   it("merges explicit entitlements over built-in defaults", () => {
     const tier = applyMembershipTierTemplateFallbacks({
-      id: "member",
+      id: "standard",
       course_store_visible: true,
       course_price: 10,
       course_duration_days: 30,
@@ -190,7 +190,6 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       "free",
       "student",
       "basic",
-      "member",
       "standard",
       "instructor",
       "researcher",

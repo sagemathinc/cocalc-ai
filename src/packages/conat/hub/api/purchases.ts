@@ -187,6 +187,7 @@ export interface MembershipResolution {
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
   subscription_id?: number;
+  subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
   grant_id?: string;
   grant_source?: string;
   grant_package_id?: string;
@@ -201,6 +202,7 @@ export interface MembershipCandidate {
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
   subscription_id?: number;
+  subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
   grant_id?: string;
   grant_source?: string;
   grant_package_id?: string;

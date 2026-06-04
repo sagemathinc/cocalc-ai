@@ -6,22 +6,22 @@
 import type { NavigatePath } from "@cocalc/util/types/settings";
 
 const BILLING_ROUTE_ALIASES: Record<string, NavigatePath> = {
-  "": "settings/subscriptions",
+  "": "settings/membership",
   cards: "settings/payment-methods",
   "payment-methods": "settings/payment-methods",
-  subscriptions: "settings/subscriptions",
+  subscriptions: "settings/membership",
   receipts: "settings/statements",
   "invoices-and-receipts": "settings/statements",
 };
 
 const STORE_ROUTE_ALIASES: Record<string, NavigatePath> = {
-  "": "settings/store",
-  membership: "settings/store",
-  cart: "settings/store",
-  checkout: "settings/store",
-  processing: "settings/store",
-  congrats: "settings/store",
-  vouchers: "settings/store",
+  "": "settings/membership",
+  membership: "settings/membership",
+  cart: "settings/membership",
+  checkout: "settings/membership",
+  processing: "settings/membership",
+  congrats: "settings/membership",
+  vouchers: "settings/vouchers",
 };
 
 export function getLegacyCommerceTargetPath(

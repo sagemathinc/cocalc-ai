@@ -745,8 +745,10 @@ export const AddCollaborators: React.FC<Props> = ({
             This project is using {current} of {limit} member and pending invite
             slots. To add more people, revoke a pending invite, remove a
             collaborator or owner,{" "}
-            <a href={joinUrlPath(appBasePath, "store")}>upgrade membership</a>,
-            or <ShowSupportLink text="contact support" />.
+            <a href={joinUrlPath(appBasePath, "settings", "membership")}>
+              upgrade membership
+            </a>
+            , or <ShowSupportLink text="contact support" />.
           </span>
         }
       />

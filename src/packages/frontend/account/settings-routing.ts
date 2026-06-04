@@ -6,6 +6,7 @@
 import { redux } from "@cocalc/frontend/app-framework";
 import type {
   BillingSubTabType,
+  LicensesSubTabType,
   NavigatePath,
   PreferencesSubTabKey,
   PreferencesSubTabType,
@@ -13,6 +14,7 @@ import type {
 } from "@cocalc/util/types/settings";
 import {
   VALID_BILLING_SUB_TYPES,
+  VALID_LICENSES_SUB_TYPES,
   VALID_PREFERENCES_SUB_TYPES,
   VALID_SETTINGS_PAGES,
 } from "@cocalc/util/types/settings";
@@ -58,10 +60,10 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
     { page: "communication", path: "settings/communication" },
     { page: "keys", path: "settings/keys" },
     { page: "other", path: "settings/other" },
+    { page: "team-licenses", path: "settings/team-licenses" },
+    { page: "site-licenses", path: "settings/site-licenses" },
+    { page: "software-licenses", path: "settings/software-licenses" },
     { page: "subscriptions", path: "settings/subscriptions" },
-    { page: "licenses", path: "settings/licenses" },
-    { page: "store", path: "settings/store" },
-    { page: "vouchers", path: "settings/vouchers" },
     { page: "purchases", path: "settings/purchases" },
     { page: "payments", path: "settings/payments" },
     {
@@ -69,6 +71,7 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
       path: "settings/payment-methods",
     },
     { page: "statements", path: "settings/statements" },
+    { page: "vouchers", path: "settings/vouchers" },
     { page: "support", path: "settings/support" },
   ] as const;
 
@@ -112,6 +115,13 @@ function normalizeLegacyGroupedPage(
     )
   ) {
     return preferencesPage as PreferencesSubTabType;
+  }
+  const licensesPage = page.replace(/^licenses-/, "");
+  if (
+    licensesPage !== page &&
+    VALID_LICENSES_SUB_TYPES.includes(licensesPage as LicensesSubTabType)
+  ) {
+    return licensesPage as LicensesSubTabType;
   }
   const billingPage = page.replace(/^billing-/, "");
   if (

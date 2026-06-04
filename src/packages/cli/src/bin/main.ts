@@ -193,6 +193,10 @@ import {
   type CloudflareCommandDeps,
 } from "./commands/cloudflare";
 import { registerDocsCommand, type DocsCommandDeps } from "./commands/docs";
+import {
+  registerPersistCommand,
+  type PersistCommandDeps,
+} from "./commands/persist";
 
 const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
@@ -2593,6 +2597,12 @@ const docsCommandDeps = {
 } satisfies DocsCommandDeps;
 
 registerDocsCommand(program, docsCommandDeps);
+
+const persistCommandDeps = {
+  runLocalCommand,
+} satisfies PersistCommandDeps;
+
+registerPersistCommand(program, persistCommandDeps);
 
 const exportCommandDeps = {
   globalsFrom,

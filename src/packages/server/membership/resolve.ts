@@ -60,10 +60,9 @@ async function buildMembershipCandidates(
        FROM subscriptions
        WHERE account_id=$1
          AND metadata->>'type'='membership'
-         AND status IN ('active','unpaid','past_due')
+         AND status IN ('active','unpaid','past_due','canceled')
          AND current_period_end >= NOW()
-       ORDER BY current_period_end DESC
-       LIMIT 1`,
+       ORDER BY current_period_end DESC, id DESC`,
       [account_id],
     ),
     pool.query(
@@ -86,8 +85,7 @@ async function buildMembershipCandidates(
 
   const candidates: MembershipCandidate[] = [];
 
-  const sub = subResult.rows[0];
-  if (sub) {
+  for (const sub of subResult.rows) {
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
     const tier =
       tiers[membershipClass] ??
@@ -99,6 +97,7 @@ async function buildMembershipCandidates(
       entitlements: tierToEntitlements(tier),
       effective_limits: normalizeMembershipEffectiveLimits(tier?.usage_limits),
       subscription_id: sub.id,
+      subscription_status: sub.status,
       expires: sub.current_period_end,
     });
   }
@@ -151,7 +150,7 @@ async function buildMembershipCandidates(
     });
   }
 
-  return candidates;
+  return dedupeEquivalentAdminCandidates(candidates);
 }
 
 async function buildMembershipResolutionForAccount(
@@ -164,6 +163,61 @@ async function buildMembershipResolutionForAccount(
   const candidates = await buildMembershipCandidates(account_id, tiers);
   const selected = pickBestMembership(candidates, tiers);
   return { candidates, selected };
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJsonValue);
+  }
+  if (value != null && typeof value === "object") {
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    const record = value as Record<string, unknown>;
+    return Object.keys(record)
+      .sort()
+      .reduce(
+        (result, key) => {
+          result[key] = stableJsonValue(record[key]);
+          return result;
+        },
+        {} as Record<string, unknown>,
+      );
+  }
+  return value;
+}
+
+function adminCandidateKey(candidate: MembershipCandidate): string {
+  return stableStringify({
+    class: candidate.class,
+    priority: candidate.priority,
+    expires: candidate.expires
+      ? new Date(candidate.expires).toISOString()
+      : undefined,
+    entitlements: candidate.entitlements,
+    effective_limits: candidate.effective_limits,
+  });
+}
+
+function dedupeEquivalentAdminCandidates(
+  candidates: MembershipCandidate[],
+): MembershipCandidate[] {
+  const seenAdminCandidates = new Set<string>();
+  return candidates.filter((candidate) => {
+    if (candidate.source !== "admin") {
+      return true;
+    }
+    const key = adminCandidateKey(candidate);
+    if (seenAdminCandidates.has(key)) {
+      return false;
+    }
+    seenAdminCandidates.add(key);
+    return true;
+  });
 }
 
 function pickBestMembership(
@@ -186,6 +240,14 @@ function pickBestMembership(
       if (sourceRank[candidate.source] < sourceRank[current.source]) {
         return current;
       }
+      const candidateSubscriptionStatusRank = subscriptionStatusRank(candidate);
+      const currentSubscriptionStatusRank = subscriptionStatusRank(current);
+      if (candidateSubscriptionStatusRank > currentSubscriptionStatusRank) {
+        return candidate;
+      }
+      if (candidateSubscriptionStatusRank < currentSubscriptionStatusRank) {
+        return current;
+      }
       const candidateExpires = candidate.expires
         ? new Date(candidate.expires).valueOf()
         : -Infinity;
@@ -202,6 +264,7 @@ function pickBestMembership(
       entitlements: best.entitlements,
       effective_limits: best.effective_limits,
       subscription_id: best.subscription_id,
+      subscription_status: best.subscription_status,
       grant_id: best.grant_id,
       grant_source: best.grant_source,
       grant_package_id: best.grant_package_id,
@@ -218,6 +281,27 @@ function pickBestMembership(
       tiers["free"]?.usage_limits,
     ),
   };
+}
+
+function subscriptionStatusRank({
+  source,
+  subscription_status,
+}: Pick<MembershipCandidate, "source" | "subscription_status">): number {
+  if (source !== "subscription") {
+    return 0;
+  }
+  switch (subscription_status) {
+    case "active":
+      return 4;
+    case "past_due":
+      return 3;
+    case "unpaid":
+      return 2;
+    case "canceled":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 function usageStatusCacheKey({

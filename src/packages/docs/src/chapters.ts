@@ -10,7 +10,7 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
     category: "Account and billing",
     startEntryId: "account.settings",
     summary:
-      "Manage account identity, SSH keys, subscriptions, payment methods, and statements from signed-in account settings.",
+      "Manage account identity, membership, SSH keys, payment methods, and statements from signed-in account settings.",
     workflows: ["Profile", "SSH keys", "Billing"],
   },
   {

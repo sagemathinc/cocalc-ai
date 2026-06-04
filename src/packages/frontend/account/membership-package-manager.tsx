@@ -40,7 +40,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Icon, Loading } from "@cocalc/frontend/components";
+import { Icon, Loading, Tooltip } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import {
@@ -72,6 +72,7 @@ import {
   updateSiteLicense,
 } from "@cocalc/frontend/purchases/api";
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
+import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   ClaimableMembershipPackage,
@@ -94,6 +95,7 @@ import {
   is_valid_email_address as isValidEmailAddress,
 } from "@cocalc/util/misc";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
+import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { COLORS } from "@cocalc/util/theme";
 import type { LineItem } from "@cocalc/util/stripe/types";
 import { openAccountSettings } from "./settings-routing";
@@ -103,11 +105,15 @@ const { Paragraph, Text, Title } = Typography;
 export interface MembershipTierLike extends MembershipTierWithPresentation {
   id: string;
   label?: string;
+  price_monthly?: number;
+  price_yearly?: number;
+  priority?: number;
   store_visible?: boolean;
   disabled?: boolean;
 }
 
 interface Props {
+  mode?: "all" | "site" | "team";
   tiers: MembershipTierLike[];
   onChanged?: () => void;
   user_account_id?: string;
@@ -136,6 +142,7 @@ function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
 }
 
 interface ClaimableMembershipPackagesPanelProps {
+  compact?: boolean;
   onChanged?: () => void;
 }
 
@@ -242,25 +249,25 @@ function getPackageKindLabel(kind: MembershipPackageKind): string {
 }
 
 function getTeamSeatTiers(tiers: MembershipTierLike[]): MembershipTierLike[] {
-  return tiers
-    .filter(
+  return sortMembershipTiersByDisplayOrder(
+    tiers.filter(
       (tier) =>
         !tier.disabled &&
         tier.store_visible !== false &&
         tier.id !== "free" &&
         tier.id !== "student",
-    )
-    .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+    ),
+  );
 }
 
 function getSiteLicenseProvisioningTiers(
   tiers: MembershipTierLike[],
 ): MembershipTierLike[] {
-  return tiers
-    .filter(
+  return sortMembershipTiersByDisplayOrder(
+    tiers.filter(
       (tier) => !tier.disabled && tier.id !== "free" && tier.id !== "admin",
-    )
-    .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+    ),
+  );
 }
 
 function findSiteLicenseTier({
@@ -291,7 +298,7 @@ function makeDefaultSiteLicensePool({
 }): SiteLicensePoolConfig {
   return {
     pool_name: `Pool ${index + 1}`,
-    membership_class: (tiers[0]?.id ?? "member") as MembershipClass,
+    membership_class: (tiers[0]?.id ?? "standard") as MembershipClass,
     seat_count: 25,
     requires_approval: true,
     verification_policy: "email-domain",
@@ -470,6 +477,7 @@ function getSiteLicenseSearchText(overview: SiteLicenseOverview): string {
 }
 
 export function ClaimableMembershipPackagesPanel({
+  compact,
   onChanged,
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
@@ -485,6 +493,7 @@ export function ClaimableMembershipPackagesPanel({
   const [termsTarget, setTermsTarget] =
     useState<ClaimableMembershipPackage | null>(null);
   const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
+  const [compactModalOpen, setCompactModalOpen] = useState<boolean>(false);
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
@@ -523,6 +532,7 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
+      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -544,6 +554,7 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
+      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -570,6 +581,181 @@ export function ClaimableMembershipPackagesPanel({
   }
   const emailVerified =
     !!email_address && !!email_address_verified?.get?.(email_address);
+
+  function renderClaimablePackages() {
+    return (
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {claimables.map((claimablePackage) => (
+          <Card
+            key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
+            size="small"
+            title={
+              <Space wrap>
+                <span>{getPackageKindLabel(claimablePackage.kind)}</span>
+                <Tag color="blue">
+                  {capitalize(claimablePackage.membership_class)}
+                </Tag>
+              </Space>
+            }
+            extra={
+              claimablePackage.requires_approval ? (
+                <Button
+                  type="primary"
+                  loading={requestingPackageId === claimablePackage.package_id}
+                  disabled={claimablePackage.pending_request_id != null}
+                  onClick={() => handlePrimaryAction(claimablePackage)}
+                >
+                  {claimablePackage.pending_request_id
+                    ? "Request pending"
+                    : "Request access"}
+                </Button>
+              ) : (
+                <Button
+                  type="primary"
+                  loading={claimingPackageId === claimablePackage.package_id}
+                  onClick={() => handlePrimaryAction(claimablePackage)}
+                >
+                  Claim seat
+                </Button>
+              )
+            }
+          >
+            <Descriptions size="small" column={1}>
+              <Descriptions.Item label="Eligibility">
+                {getClaimReasonLabel(claimablePackage)}
+              </Descriptions.Item>
+              {claimablePackage.pool_name ? (
+                <Descriptions.Item label="Pool">
+                  {claimablePackage.pool_name}
+                </Descriptions.Item>
+              ) : null}
+              {claimablePackage.requires_approval ? (
+                <Descriptions.Item label="Approval">
+                  {claimablePackage.pending_request_id ? (
+                    <Tag color="gold">Pending manager review</Tag>
+                  ) : (
+                    <Tag color="blue">Manager approval required</Tag>
+                  )}
+                </Descriptions.Item>
+              ) : null}
+              {claimablePackage.requires_terms_acceptance ? (
+                <Descriptions.Item label="Terms">
+                  <Tag color="purple">Review required</Tag>
+                </Descriptions.Item>
+              ) : null}
+              <Descriptions.Item label="Available seats">
+                {claimablePackage.available_seat_count}
+              </Descriptions.Item>
+              {claimablePackage.expires_at ? (
+                <Descriptions.Item label="Expires">
+                  <TimeAgo date={claimablePackage.expires_at} />
+                </Descriptions.Item>
+              ) : null}
+            </Descriptions>
+          </Card>
+        ))}
+      </Space>
+    );
+  }
+
+  const termsModal = (
+    <Modal
+      open={termsTarget != null}
+      title="Review institution terms"
+      okText={termsTarget?.requires_approval ? "Request access" : "Claim seat"}
+      okButtonProps={{ disabled: !termsAccepted }}
+      onCancel={() => {
+        setTermsTarget(null);
+        setTermsAccepted(false);
+      }}
+      onOk={async () => {
+        const target = termsTarget;
+        if (!target) return;
+        setTermsTarget(null);
+        setTermsAccepted(false);
+        if (target.requires_approval) {
+          await requestPool(target, true);
+        } else {
+          await claimPackage(target, true);
+        }
+      }}
+      destroyOnHidden
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <Alert
+          type="info"
+          showIcon
+          title="Your institution requires custom terms or policies"
+          description="Review the configured links before using this institution-funded CoCalc membership."
+        />
+        {termsTarget?.custom_terms_url ? (
+          <a
+            href={termsTarget.custom_terms_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Custom terms of service
+          </a>
+        ) : null}
+        {termsTarget?.custom_policy_url ? (
+          <a
+            href={termsTarget.custom_policy_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Institution policy
+          </a>
+        ) : null}
+        {termsTarget?.terms_version_label ? (
+          <Text type="secondary">
+            Terms version: {termsTarget.terms_version_label}
+          </Text>
+        ) : null}
+        <Checkbox
+          checked={termsAccepted}
+          onChange={(event) => setTermsAccepted(event.target.checked)}
+        >
+          I have reviewed the institution terms and policies for this
+          membership.
+        </Checkbox>
+      </Space>
+    </Modal>
+  );
+
+  if (compact) {
+    const disabledReason =
+      claimables.length > 0
+        ? undefined
+        : emailVerified
+          ? `Your signed-in email address ${email_address} is verified, but no reserved seats or matching site-license pools are available for it right now.`
+          : `Verify your signed-in email address ${email_address} to claim reserved seats or matching site-license memberships.`;
+    return (
+      <>
+        <Tooltip title={disabledReason}>
+          <span>
+            <Button
+              disabled={!loading && claimables.length === 0}
+              loading={loading}
+              onClick={() => setCompactModalOpen(true)}
+            >
+              Claim site license membership
+            </Button>
+          </span>
+        </Tooltip>
+        {error ? <Alert type="error" message={error} showIcon /> : null}
+        <Modal
+          open={compactModalOpen}
+          title="Claim site license membership"
+          footer={null}
+          onCancel={() => setCompactModalOpen(false)}
+          destroyOnHidden
+        >
+          {renderClaimablePackages()}
+        </Modal>
+        {termsModal}
+      </>
+    );
+  }
 
   return (
     <div>
@@ -613,144 +799,8 @@ export function ClaimableMembershipPackagesPanel({
           }
         />
       ) : null}
-      {!loading && claimables.length > 0 ? (
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          {claimables.map((claimablePackage) => (
-            <Card
-              key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
-              size="small"
-              title={
-                <Space wrap>
-                  <span>{getPackageKindLabel(claimablePackage.kind)}</span>
-                  <Tag color="blue">
-                    {capitalize(claimablePackage.membership_class)}
-                  </Tag>
-                </Space>
-              }
-              extra={
-                claimablePackage.requires_approval ? (
-                  <Button
-                    type="primary"
-                    loading={
-                      requestingPackageId === claimablePackage.package_id
-                    }
-                    disabled={claimablePackage.pending_request_id != null}
-                    onClick={() => handlePrimaryAction(claimablePackage)}
-                  >
-                    {claimablePackage.pending_request_id
-                      ? "Request pending"
-                      : "Request access"}
-                  </Button>
-                ) : (
-                  <Button
-                    type="primary"
-                    loading={claimingPackageId === claimablePackage.package_id}
-                    onClick={() => handlePrimaryAction(claimablePackage)}
-                  >
-                    Claim seat
-                  </Button>
-                )
-              }
-            >
-              <Descriptions size="small" column={1}>
-                <Descriptions.Item label="Eligibility">
-                  {getClaimReasonLabel(claimablePackage)}
-                </Descriptions.Item>
-                {claimablePackage.pool_name ? (
-                  <Descriptions.Item label="Pool">
-                    {claimablePackage.pool_name}
-                  </Descriptions.Item>
-                ) : null}
-                {claimablePackage.requires_approval ? (
-                  <Descriptions.Item label="Approval">
-                    {claimablePackage.pending_request_id ? (
-                      <Tag color="gold">Pending manager review</Tag>
-                    ) : (
-                      <Tag color="blue">Manager approval required</Tag>
-                    )}
-                  </Descriptions.Item>
-                ) : null}
-                {claimablePackage.requires_terms_acceptance ? (
-                  <Descriptions.Item label="Terms">
-                    <Tag color="purple">Review required</Tag>
-                  </Descriptions.Item>
-                ) : null}
-                <Descriptions.Item label="Available seats">
-                  {claimablePackage.available_seat_count}
-                </Descriptions.Item>
-                {claimablePackage.expires_at ? (
-                  <Descriptions.Item label="Expires">
-                    <TimeAgo date={claimablePackage.expires_at} />
-                  </Descriptions.Item>
-                ) : null}
-              </Descriptions>
-            </Card>
-          ))}
-        </Space>
-      ) : null}
-      <Modal
-        open={termsTarget != null}
-        title="Review institution terms"
-        okText={
-          termsTarget?.requires_approval ? "Request access" : "Claim seat"
-        }
-        okButtonProps={{ disabled: !termsAccepted }}
-        onCancel={() => {
-          setTermsTarget(null);
-          setTermsAccepted(false);
-        }}
-        onOk={async () => {
-          const target = termsTarget;
-          if (!target) return;
-          setTermsTarget(null);
-          setTermsAccepted(false);
-          if (target.requires_approval) {
-            await requestPool(target, true);
-          } else {
-            await claimPackage(target, true);
-          }
-        }}
-        destroyOnHidden
-      >
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          <Alert
-            type="info"
-            showIcon
-            title="Your institution requires custom terms or policies"
-            description="Review the configured links before using this institution-funded CoCalc membership."
-          />
-          {termsTarget?.custom_terms_url ? (
-            <a
-              href={termsTarget.custom_terms_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Custom terms of service
-            </a>
-          ) : null}
-          {termsTarget?.custom_policy_url ? (
-            <a
-              href={termsTarget.custom_policy_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Institution policy
-            </a>
-          ) : null}
-          {termsTarget?.terms_version_label ? (
-            <Text type="secondary">
-              Terms version: {termsTarget.terms_version_label}
-            </Text>
-          ) : null}
-          <Checkbox
-            checked={termsAccepted}
-            onChange={(event) => setTermsAccepted(event.target.checked)}
-          >
-            I have reviewed the institution terms and policies for this
-            membership.
-          </Checkbox>
-        </Space>
-      </Modal>
+      {!loading && claimables.length > 0 ? renderClaimablePackages() : null}
+      {termsModal}
     </div>
   );
 }
@@ -881,11 +931,13 @@ export function SiteLicenseReverificationPanel({
 }
 
 export function MembershipPackageManager({
+  mode = "all",
   tiers,
   onChanged,
   user_account_id,
 }: Props) {
   const account_id = useTypedRedux("account", "account_id");
+  const zendesk = !!useTypedRedux("customize", "zendesk");
   const ownerAccountId = user_account_id ?? account_id;
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -910,14 +962,22 @@ export function MembershipPackageManager({
   const [siteLicenseReviewLoadingId, setSiteLicenseReviewLoadingId] =
     useState<string>("");
   const [siteLicenseOverviewLoading, setSiteLicenseOverviewLoading] =
-    useState<boolean>(false);
+    useState<boolean>(mode === "site");
   const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
     useState<string>("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
   });
+  const showTeamPackages = mode === "all" || mode === "team";
+  const showSiteLicenses = mode === "all" || mode === "site";
 
   const refreshPackages = async () => {
+    if (!showTeamPackages) {
+      setMembershipPackages([]);
+      setError("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -933,7 +993,7 @@ export function MembershipPackageManager({
   };
 
   const refreshSiteLicenseOverviews = async () => {
-    if (!account_id || user_account_id) {
+    if (!showSiteLicenses || !account_id || user_account_id) {
       setSiteLicenseOverviews([]);
       setSiteLicenseOverviewError("");
       setSiteLicenseOverviewLoading(false);
@@ -960,7 +1020,7 @@ export function MembershipPackageManager({
       return;
     }
     void refreshPackages();
-  }, [ownerAccountId, refreshToken, user_account_id]);
+  }, [ownerAccountId, refreshToken, showTeamPackages, user_account_id]);
 
   const assignedAccountIds = useMemo(() => {
     return Array.from(
@@ -1019,7 +1079,7 @@ export function MembershipPackageManager({
   useEffect(() => {
     let canceled = false;
     async function loadSiteLicenseOverviews() {
-      if (!account_id || user_account_id) {
+      if (!showSiteLicenses || !account_id || user_account_id) {
         setSiteLicenseOverviews([]);
         setSiteLicenseOverviewError("");
         setSiteLicenseOverviewLoading(false);
@@ -1047,7 +1107,7 @@ export function MembershipPackageManager({
     return () => {
       canceled = true;
     };
-  }, [account_id, refreshToken, user_account_id]);
+  }, [account_id, refreshToken, showSiteLicenses, user_account_id]);
 
   const handleChanged = async () => {
     await refreshPackages();
@@ -1061,108 +1121,154 @@ export function MembershipPackageManager({
 
   return (
     <div>
-      <Text strong>Team and site licenses</Text>
-      <Paragraph type="secondary" style={{ marginTop: "6px" }}>
-        Team packages let you buy seats and grant memberships to specific
-        accounts. Site licenses are provisioned by support or admins, then
-        managed here. Users can claim site-license seats when one of their
-        verified email domains matches the license.
-      </Paragraph>
+      {mode === "all" ? (
+        <>
+          <Text strong>Team and site licenses</Text>
+          <Paragraph type="secondary" style={{ marginTop: "6px" }}>
+            Team packages let you buy seats and grant memberships to specific
+            accounts. Site licenses are provisioned by support or admins, then
+            managed here.
+          </Paragraph>
+        </>
+      ) : null}
       {error && (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
       )}
       <Space wrap style={{ marginBottom: 12 }}>
-        <Button type="primary" onClick={() => setPurchaseTarget(null)}>
-          <Icon name="shopping-cart" /> Buy team seats
-        </Button>
+        {showTeamPackages ? (
+          <Button type="primary" onClick={() => setPurchaseTarget(null)}>
+            <Icon name="shopping-cart" /> Buy team seats
+          </Button>
+        ) : null}
         <Button onClick={() => setRefreshToken((value) => value + 1)}>
-          <Icon name="refresh" /> Refresh packages
+          <Icon name="refresh" /> Refresh
         </Button>
       </Space>
       {loading ? (
         <Loading />
       ) : (
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          <PackageGroup
-            title="Team packages"
-            emptyTitle="No team packages yet"
-            emptyDescription="Buy team seats here, then assign them to the accounts that should receive membership access."
-            membershipPackages={teamPackages}
-            tiers={tiers}
-            accountNames={accountNames}
-            onAddSeats={(membershipPackage) =>
-              setPurchaseTarget(membershipPackage)
-            }
-            onAssignSeat={(membershipPackage) =>
-              setAssignmentTarget(membershipPackage)
-            }
-            onRevokeSeat={async (membershipPackage, assignment) => {
-              await runFreshAuthAction(async () => {
-                await revokeMembershipPackageSeat({
-                  package_id: membershipPackage.id,
-                  target_account_id: assignment.account_id ?? undefined,
-                  target_email_address: assignment.email_address ?? undefined,
-                });
-                await handleChanged();
-              });
-            }}
-          />
-          <SiteLicenseDashboard
-            overviews={siteLicenseOverviews}
-            loading={siteLicenseOverviewLoading}
-            error={siteLicenseOverviewError}
-            tiers={tiers}
-            accountNames={accountNames}
-            accountId={account_id}
-            isAdmin={false}
-            reviewingRequestId={siteLicenseReviewLoadingId}
-            onReview={async (_overview, request, action) => {
-              setSiteLicenseReviewLoadingId(request.id);
-              setError("");
-              try {
+          {showTeamPackages ? (
+            <PackageGroup
+              title="Team packages"
+              emptyTitle="No team packages yet"
+              emptyDescription="Buy team seats here, then assign them to the accounts that should receive membership access."
+              membershipPackages={teamPackages}
+              tiers={tiers}
+              accountNames={accountNames}
+              onAddSeats={(membershipPackage) =>
+                setPurchaseTarget(membershipPackage)
+              }
+              onAssignSeat={(membershipPackage) =>
+                setAssignmentTarget(membershipPackage)
+              }
+              onRevokeSeat={async (membershipPackage, assignment) => {
                 await runFreshAuthAction(async () => {
-                  await reviewSiteLicensePoolRequest({
-                    request_id: request.id,
-                    action,
+                  await revokeMembershipPackageSeat({
+                    package_id: membershipPackage.id,
+                    target_account_id: assignment.account_id ?? undefined,
+                    target_email_address: assignment.email_address ?? undefined,
                   });
                   await handleChanged();
                 });
-              } catch (err) {
-                setError(`${err}`);
-              } finally {
-                setSiteLicenseReviewLoadingId("");
+              }}
+            />
+          ) : null}
+          {showSiteLicenses &&
+          mode === "site" &&
+          !siteLicenseOverviewLoading &&
+          !siteLicenseOverviewError &&
+          siteLicenseOverviews.length === 0 ? (
+            <Alert
+              type="info"
+              showIcon
+              title="No site licenses to manage"
+              description={
+                <Space orientation="vertical">
+                  <Text>
+                    Site-license owners and managers see their license
+                    dashboards here after an admin attaches them.
+                  </Text>
+                  {zendesk ? (
+                    <Button
+                      type="primary"
+                      onClick={() =>
+                        openSupportTab({
+                          body: "I would like to discuss setting up or managing a CoCalc site license.",
+                          subject: "Site license request",
+                          type: "purchase",
+                        })
+                      }
+                    >
+                      File a support ticket
+                    </Button>
+                  ) : null}
+                </Space>
               }
-            }}
-            onRevokeSeat={async (pool, assignment) => {
-              await runFreshAuthAction(async () => {
-                await revokeMembershipPackageSeat({
-                  package_id: pool.id,
-                  target_account_id: assignment.account_id ?? undefined,
-                  target_email_address: assignment.email_address ?? undefined,
+            />
+          ) : null}
+          {showSiteLicenses ? (
+            <SiteLicenseDashboard
+              overviews={siteLicenseOverviews}
+              loading={siteLicenseOverviewLoading}
+              error={siteLicenseOverviewError}
+              tiers={tiers}
+              accountNames={accountNames}
+              accountId={account_id}
+              isAdmin={false}
+              reviewingRequestId={siteLicenseReviewLoadingId}
+              onReview={async (_overview, request, action) => {
+                setSiteLicenseReviewLoadingId(request.id);
+                setError("");
+                try {
+                  await runFreshAuthAction(async () => {
+                    await reviewSiteLicensePoolRequest({
+                      request_id: request.id,
+                      action,
+                    });
+                    await handleChanged();
+                  });
+                } catch (err) {
+                  setError(`${err}`);
+                } finally {
+                  setSiteLicenseReviewLoadingId("");
+                }
+              }}
+              onRevokeSeat={async (pool, assignment) => {
+                await runFreshAuthAction(async () => {
+                  await revokeMembershipPackageSeat({
+                    package_id: pool.id,
+                    target_account_id: assignment.account_id ?? undefined,
+                    target_email_address: assignment.email_address ?? undefined,
+                  });
+                  await handleChanged();
                 });
-                await handleChanged();
-              });
-            }}
-            onSetManager={async (site_license_id, target_account_id, role) => {
-              await runFreshAuthAction(async () => {
-                await setSiteLicenseManager({
-                  site_license_id,
-                  target_account_id,
-                  role,
+              }}
+              onSetManager={async (
+                site_license_id,
+                target_account_id,
+                role,
+              ) => {
+                await runFreshAuthAction(async () => {
+                  await setSiteLicenseManager({
+                    site_license_id,
+                    target_account_id,
+                    role,
+                  });
+                  await handleChanged();
                 });
-                await handleChanged();
-              });
-            }}
-            onRemoveManager={async (site_license_id, target_account_id) => {
-              await runFreshAuthAction(async () => {
-                await removeSiteLicenseManager({
-                  site_license_id,
-                  target_account_id,
+              }}
+              onRemoveManager={async (site_license_id, target_account_id) => {
+                await runFreshAuthAction(async () => {
+                  await removeSiteLicenseManager({
+                    site_license_id,
+                    target_account_id,
+                  });
+                  await handleChanged();
                 });
-                await handleChanged();
-              });
-            }}
-          />
+              }}
+            />
+          ) : null}
         </Space>
       )}
       <TeamPackagePurchaseModal

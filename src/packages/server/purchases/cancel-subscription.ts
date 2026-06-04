@@ -50,7 +50,7 @@ costs ${moneyToCurrency(cost)}/${interval} was canceled.
 
 **REASON:** ${JSON.stringify(canceled_reason)}
 
-You can easily [resume or edit this subscription at any time](${await url(`/settings/subscriptions#id=${subscription_id}`)}).
+You can easily [resume or edit this membership at any time](${await url(`/settings/membership`)}).
 
 ${await support()}
 `;

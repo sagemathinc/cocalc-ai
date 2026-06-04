@@ -626,7 +626,11 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       <div
         style={
           flyoutIsVisible
-            ? { display: "flex", flexDirection: "row" }
+            ? {
+                display: "flex",
+                flexDirection: "row",
+                backgroundColor: COLORS.GRAY_LL,
+              }
             : {
                 position: "absolute",
                 top: 0,
@@ -635,6 +639,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
                 width: flyoutWidth,
                 display: "flex",
                 flexDirection: "row",
+                backgroundColor: COLORS.GRAY_LL,
                 visibility: "hidden",
                 pointerEvents: "none",
               }
@@ -1400,6 +1405,7 @@ function RetainedFlyoutBodies({
         height: "100%",
         flex: `0 0 ${flyoutWidth}px`,
         overflow: "hidden",
+        backgroundColor: COLORS.GRAY_LL,
       }}
     >
       {visibleFlyouts.map((flyout) => {
@@ -1414,6 +1420,7 @@ function RetainedFlyoutBodies({
               visibility: isVisible ? "visible" : "hidden",
               pointerEvents: isVisible ? "auto" : "none",
               zIndex: isVisible ? 1 : 0,
+              backgroundColor: COLORS.GRAY_LL,
             }}
           >
             <FlyoutBody

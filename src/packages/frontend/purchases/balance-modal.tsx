@@ -104,7 +104,7 @@ export default function BalanceModal({
 }
 
 const LINKS = [
-  { label: "Store", value: "store" },
+  { label: "Membership", value: "membership" },
   { label: "Vouchers", value: "vouchers" },
   { label: "Purchases", value: "purchases" },
   { label: "Payments", value: "payments" },

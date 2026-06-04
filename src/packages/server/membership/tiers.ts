@@ -54,6 +54,15 @@ export interface MembershipChangeResult extends MembershipPricingResult {
   target_interval: "month" | "year";
 }
 
+type ActiveMembershipSubscription = {
+  id: number;
+  metadata: { class?: MembershipClass };
+  cost: number;
+  current_period_start: Date;
+  current_period_end: Date;
+  status: string;
+};
+
 export async function getMembershipTiers({
   includeDisabled = true,
   storeVisibleOnly = false,
@@ -159,33 +168,80 @@ export function getMembershipPrice(
 export async function getActiveMembershipSubscription({
   account_id,
   client,
+  tierMap,
 }: {
   account_id: string;
   client?: PoolClient;
-}): Promise<
-  | {
-      id: number;
-      metadata: { class?: MembershipClass };
-      cost: number;
-      current_period_start: Date;
-      current_period_end: Date;
-      status: string;
-    }
-  | undefined
-> {
+  tierMap?: Record<string, MembershipTierRecord>;
+}): Promise<ActiveMembershipSubscription | undefined> {
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
     `SELECT id, metadata, cost, current_period_start, current_period_end, status
-     FROM subscriptions
-     WHERE account_id=$1
-       AND metadata->>'type'='membership'
-       AND status IN ('active','unpaid','past_due')
-       AND current_period_end >= NOW()
-     ORDER BY current_period_end DESC
-     LIMIT 1`,
+       FROM subscriptions
+       WHERE account_id=$1
+         AND metadata->>'type'='membership'
+         AND status IN ('active','unpaid','past_due','canceled')
+         AND current_period_end >= NOW()
+       ORDER BY current_period_end DESC, id DESC`,
     [account_id],
   );
-  return rows[0];
+  const subscriptions = rows as ActiveMembershipSubscription[];
+  if (subscriptions.length == 0) {
+    return undefined;
+  }
+  const tiers =
+    tierMap ?? (await getMembershipTierMap({ includeDisabled: true, client }));
+  return subscriptions.reduce((best, subscription) =>
+    compareEffectiveMembershipSubscriptions(subscription, best, tiers) > 0
+      ? subscription
+      : best,
+  );
+}
+
+function compareEffectiveMembershipSubscriptions(
+  left: ActiveMembershipSubscription,
+  right: ActiveMembershipSubscription,
+  tierMap: Record<string, MembershipTierRecord>,
+): number {
+  const leftPriority = subscriptionTierPriority(left, tierMap);
+  const rightPriority = subscriptionTierPriority(right, tierMap);
+  if (leftPriority != rightPriority) {
+    return leftPriority - rightPriority;
+  }
+  const leftStatus = subscriptionStatusRank(left.status);
+  const rightStatus = subscriptionStatusRank(right.status);
+  if (leftStatus != rightStatus) {
+    return leftStatus - rightStatus;
+  }
+  const leftEnd = new Date(left.current_period_end).valueOf();
+  const rightEnd = new Date(right.current_period_end).valueOf();
+  if (leftEnd != rightEnd) {
+    return leftEnd - rightEnd;
+  }
+  return left.id - right.id;
+}
+
+function subscriptionTierPriority(
+  subscription: ActiveMembershipSubscription,
+  tierMap: Record<string, MembershipTierRecord>,
+): number {
+  const membershipClass = subscription.metadata?.class ?? "free";
+  return tierMap[membershipClass]?.priority ?? 0;
+}
+
+function subscriptionStatusRank(status: string): number {
+  switch (status) {
+    case "active":
+      return 4;
+    case "past_due":
+      return 3;
+    case "unpaid":
+      return 2;
+    case "canceled":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 export async function computeMembershipPricing({
@@ -218,6 +274,7 @@ export async function computeMembershipPricing({
   const existing = await getActiveMembershipSubscription({
     account_id,
     client,
+    tierMap,
   });
 
   const existingClass = existing?.metadata?.class;
@@ -299,6 +356,7 @@ export async function computeMembershipChange({
   const existing = await getActiveMembershipSubscription({
     account_id,
     client,
+    tierMap,
   });
   const existingClass = existing?.metadata?.class;
   if (existingClass && existingClass == targetClass) {
