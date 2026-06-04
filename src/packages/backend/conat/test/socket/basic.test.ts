@@ -270,6 +270,14 @@ describe("test having two clients and see that communication is independent and 
     expect((await x2)[0]).toBe("broadcast");
   });
 
+  it("server broadcast preserves headers", async () => {
+    const x1 = once(client1, "data");
+    const x2 = once(client2, "data");
+    server.write("broadcast", { headers: { source: "server" } });
+    expect(await x1).toEqual(["broadcast", { source: "server" }]);
+    expect(await x2).toEqual(["broadcast", { source: "server" }]);
+  });
+
   it("test with a channel", async () => {
     const s1 = server.channel("one");
     const c1 = client1.channel("one");

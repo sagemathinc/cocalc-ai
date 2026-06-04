@@ -69,6 +69,7 @@ interface Props {
   initialFilename?: string;
   autoFocusFilename?: boolean;
   mode?: "page" | "flyout";
+  isVisible?: boolean;
 }
 
 export default function NewFilePage(props: Props) {
@@ -82,18 +83,19 @@ export default function NewFilePage(props: Props) {
     initialFilename,
     autoFocusFilename = true,
     mode = "page",
+    isVisible = true,
   } = props;
   const inputRef = useRef<any>(null);
   const folderInputRef = useRef<any>(null);
   useEffect(() => {
-    if (!autoFocusFilename) return;
+    if (!autoFocusFilename || !isVisible) return;
     setTimeout(() => {
       if (inputRef.current) {
         inputRef.current.focus();
         inputRef.current.select();
       }
     }, 1);
-  }, [autoFocusFilename]);
+  }, [autoFocusFilename, isVisible]);
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
   const selectedFilenameFamily =
@@ -587,10 +589,10 @@ export default function NewFilePage(props: Props) {
                 flexWrap: "wrap",
               }}
             >
+              {/* No placeholder: Ant Design fades it out after hide, and the header already labels this control. */}
               <Select<string>
                 showSearch
                 allowClear
-                placeholder="Search file types..."
                 style={{ flex: "1 1 260px", minWidth: "200px" }}
                 value={undefined}
                 options={moreFileTypeOptions}

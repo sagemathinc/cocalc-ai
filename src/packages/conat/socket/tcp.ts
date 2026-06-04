@@ -79,6 +79,7 @@ export class Receiver extends EventEmitter {
         `WARNING: ${this.role} discarding message -- seq must be a positive integer`,
         { seq, mesg: mesg.data, headers: mesg.headers },
       );
+      this.reset();
       return;
     }
     this.seq.largest = Math.max(seq, this.seq.largest);
