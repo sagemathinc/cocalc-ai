@@ -637,6 +637,7 @@ export interface AccountRehomeStateCopyRequest {
   account_impersonation_grants?: Record<string, unknown>[];
   account_impersonation_sessions?: Record<string, unknown>[];
   api_keys?: Record<string, unknown>[];
+  admin_assigned_memberships?: Record<string, unknown>[];
   account_entitlement_overrides?: Record<string, unknown>[];
   account_entitlement_override_events?: Record<string, unknown>[];
   membership_grants?: Record<string, unknown>[];
@@ -676,6 +677,32 @@ export interface AccountLocalGetMembershipDetailsRequest {
 
 export interface AccountLocalGetUsageOverviewRequest {
   account_id: string;
+}
+
+export interface AccountLocalAdminAssignedMembershipRow {
+  account_id: string;
+  membership_class: string;
+  assigned_by: string;
+  assigned_at: Date;
+  expires_at?: Date | null;
+  notes?: string | null;
+}
+
+export interface AccountLocalGetAdminAssignedMembershipRequest {
+  account_id: string;
+}
+
+export interface AccountLocalSetAdminAssignedMembershipRequest {
+  account_id: string;
+  actor_account_id: string;
+  membership_class: string;
+  expires_at?: Date | string | number | null;
+  notes?: string | null;
+}
+
+export interface AccountLocalClearAdminAssignedMembershipRequest {
+  account_id: string;
+  actor_account_id: string;
 }
 
 export interface AccountLocalGetEntitlementOverrideRequest {
@@ -1739,6 +1766,9 @@ export type AccountLocalMethod =
   | "get-membership"
   | "get-membership-details"
   | "get-account-usage-overview"
+  | "get-admin-assigned-membership"
+  | "set-admin-assigned-membership"
+  | "clear-admin-assigned-membership"
   | "get-account-entitlement-override"
   | "set-account-entitlement-override"
   | "clear-account-entitlement-override"
@@ -2659,6 +2689,15 @@ export interface InterBayAccountLocalApi {
   getAccountUsageOverview: (
     opts: AccountLocalGetUsageOverviewRequest,
   ) => Promise<AccountUsageOverview>;
+  getAdminAssignedMembership: (
+    opts: AccountLocalGetAdminAssignedMembershipRequest,
+  ) => Promise<AccountLocalAdminAssignedMembershipRow | undefined>;
+  setAdminAssignedMembership: (
+    opts: AccountLocalSetAdminAssignedMembershipRequest,
+  ) => Promise<void>;
+  clearAdminAssignedMembership: (
+    opts: AccountLocalClearAdminAssignedMembershipRequest,
+  ) => Promise<void>;
   getAccountEntitlementOverride: (
     opts: AccountLocalGetEntitlementOverrideRequest,
   ) => Promise<AccountEntitlementOverride | undefined>;
@@ -4526,6 +4565,33 @@ export function createInterBayAccountLocalClient({
       method: "get-account-usage-overview",
     }),
   });
+  const getAdminAssignedMembershipClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getAdminAssignedMembership">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-admin-assigned-membership",
+    }),
+  });
+  const setAdminAssignedMembershipClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "setAdminAssignedMembership">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "set-admin-assigned-membership",
+    }),
+  });
+  const clearAdminAssignedMembershipClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "clearAdminAssignedMembership">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "clear-admin-assigned-membership",
+    }),
+  });
   const getAccountEntitlementOverrideClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getAccountEntitlementOverride">
   >({
@@ -4896,6 +4962,14 @@ export function createInterBayAccountLocalClient({
       await getMembershipDetailsClient.getMembershipDetails(opts),
     getAccountUsageOverview: async (opts) =>
       await getAccountUsageOverviewClient.getAccountUsageOverview(opts),
+    getAdminAssignedMembership: async (opts) =>
+      await getAdminAssignedMembershipClient.getAdminAssignedMembership(opts),
+    setAdminAssignedMembership: async (opts) =>
+      await setAdminAssignedMembershipClient.setAdminAssignedMembership(opts),
+    clearAdminAssignedMembership: async (opts) =>
+      await clearAdminAssignedMembershipClient.clearAdminAssignedMembership(
+        opts,
+      ),
     getAccountEntitlementOverride: async (opts) =>
       await getAccountEntitlementOverrideClient.getAccountEntitlementOverride(
         opts,
@@ -5391,6 +5465,48 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getAccountUsageOverview: async (opts) =>
           await impl.getAccountUsageOverview(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getAdminAssignedMembership">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-admin-assigned-membership",
+      }),
+      impl: {
+        getAdminAssignedMembership: async (opts) =>
+          await impl.getAdminAssignedMembership(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "setAdminAssignedMembership">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "set-admin-assigned-membership",
+      }),
+      impl: {
+        setAdminAssignedMembership: async (opts) =>
+          await impl.setAdminAssignedMembership(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "clearAdminAssignedMembership">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "clear-admin-assigned-membership",
+      }),
+      impl: {
+        clearAdminAssignedMembership: async (opts) =>
+          await impl.clearAdminAssignedMembership(opts),
       },
     }),
     createServiceHandler<

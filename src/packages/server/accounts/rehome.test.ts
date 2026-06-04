@@ -235,6 +235,13 @@ describe("account rehome", () => {
       }
       if (
         sql.includes(
+          'DELETE FROM "admin_assigned_memberships" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
           'DELETE FROM "account_entitlement_overrides" WHERE account_id=$1',
         )
       ) {
@@ -439,6 +446,23 @@ describe("account rehome", () => {
       if (sql.includes("FROM api_keys") && sql.includes("jsonb_agg")) {
         return { rows: [{ rows: [] }] };
       }
+      if (sql.includes('FROM "admin_assigned_memberships"')) {
+        return {
+          rows: [
+            {
+              rows: [
+                {
+                  account_id: TARGET_ACCOUNT_ID,
+                  membership_class: "member",
+                  assigned_by: REQUESTED_BY,
+                  assigned_at: "2026-05-06T01:00:00.000Z",
+                  notes: "support ticket",
+                },
+              ],
+            },
+          ],
+        };
+      }
       if (sql.includes('FROM "account_entitlement_overrides"')) {
         return {
           rows: [
@@ -611,6 +635,13 @@ describe("account rehome", () => {
       }
       if (
         sql.includes(
+          'DELETE FROM "admin_assigned_memberships" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
           'DELETE FROM "account_entitlement_overrides" WHERE account_id=$1',
         )
       ) {
@@ -714,6 +745,12 @@ describe("account rehome", () => {
           expect.objectContaining({
             account_id: TARGET_ACCOUNT_ID,
             features: { create_hosts: true },
+          }),
+        ],
+        admin_assigned_memberships: [
+          expect.objectContaining({
+            account_id: TARGET_ACCOUNT_ID,
+            membership_class: "member",
           }),
         ],
         account_entitlement_override_events: [
