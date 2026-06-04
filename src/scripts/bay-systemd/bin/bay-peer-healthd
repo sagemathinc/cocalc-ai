@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+token="$(peer_health_token || true)"
+if [[ -z "$token" ]]; then
+  bay_log "missing COCALC_CLUSTER_SHARED_SECRET or COCALC_BAY_PEER_HEALTH_TOKEN"
+  exit 1
+fi
+
+release="$(current_version || true)"
+
+exec python3 - \
+  "$SCRIPT_DIR" \
+  "$COCALC_BAY_ID" \
+  "$COCALC_CLUSTER_ID" \
+  "$COCALC_CLUSTER_ROLE" \
+  "$COCALC_CLUSTER_SEED_BAY_ID" \
+  "$COCALC_CLUSTER_BAY_IDS" \
+  "$COCALC_CLUSTER_TOPOLOGY_EPOCH" \
+  "$COCALC_BAY_PUBLIC_URL" \
+  "$COCALC_BAY_PEER_HEALTH_HOST" \
+  "$COCALC_BAY_PEER_HEALTH_PORT" \
+  "$COCALC_BAY_PEER_HEALTH_PATH" \
+  "$COCALC_BAY_PEER_LOCAL_HEALTH_TIMEOUT_S" \
+  "$release" \
+  "$token" <<'PY'
+import hmac
+import json
+import os
+import subprocess
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+(
+    script_dir,
+    bay_id,
+    cluster_id,
+    cluster_role,
+    seed_bay_id,
+    cluster_bay_ids,
+    topology_epoch,
+    public_url,
+    bind_host,
+    bind_port,
+    peer_health_path,
+    peer_local_health_timeout_s,
+    release,
+    token,
+) = sys.argv[1:]
+
+
+def json_response(handler, status, payload):
+    body = json.dumps(payload, sort_keys=True).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def local_health():
+    try:
+        timeout = float(peer_local_health_timeout_s)
+        env = {**os.environ, "COCALC_BAY_HEALTH_TIMEOUT_S": str(max(1, int(timeout)))}
+        result = subprocess.run(
+            [f"{script_dir}/bay-health"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2,
+            env=env,
+        )
+        try:
+            payload = json.loads(result.stdout)
+        except Exception as err:
+            payload = {
+                "ok": False,
+                "error": f"invalid bay-health JSON: {err}",
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+        payload.setdefault("ok", result.returncode == 0)
+        payload["exit_code"] = result.returncode
+        return payload
+    except Exception as err:
+        return {"ok": False, "error": str(err)}
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "cocalc-bay-peer-health"
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+    def do_GET(self):
+        if self.path == "/healthz":
+            json_response(self, 200, {"ok": True, "bay_id": bay_id})
+            return
+
+        if self.path != peer_health_path:
+            json_response(self, 404, {"ok": False, "error": "not found"})
+            return
+
+        auth = self.headers.get("Authorization", "")
+        expected = f"Bearer {token}"
+        if not hmac.compare_digest(auth, expected):
+            json_response(self, 403, {"ok": False, "error": "forbidden"})
+            return
+
+        health = local_health()
+        payload = {
+            "ok": bool(health.get("ok")),
+            "bay_id": bay_id,
+            "cluster_id": cluster_id,
+            "cluster_role": cluster_role,
+            "seed_bay_id": seed_bay_id,
+            "cluster_bay_ids": [item for item in cluster_bay_ids.split(",") if item],
+            "topology_epoch": topology_epoch,
+            "public_url": public_url,
+            "release": release or "unknown",
+            "local_health": health,
+            "checked_at_ms": int(time.time() * 1000),
+        }
+        json_response(self, 200 if payload["ok"] else 503, payload)
+
+
+server = ThreadingHTTPServer((bind_host, int(bind_port)), Handler)
+sys.stderr.write(
+    f"bay peer health listening on http://{bind_host}:{bind_port}{peer_health_path}\n"
+)
+server.serve_forever()
+PY

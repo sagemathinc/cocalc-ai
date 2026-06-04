@@ -605,6 +605,7 @@ main() {
   BAY_ENV_EXAMPLE="${ENV_DIR}/bay.env.example"
   BAY_WORKERS_ENV_EXAMPLE="${ENV_DIR}/bay-workers.env.example"
   BAY_SECRETS_ENV_EXAMPLE="${ENV_DIR}/bay-secrets.env.example"
+  BAY_TOPOLOGY_ENV_EXAMPLE="${ENV_DIR}/bay-topology.env.example"
   BAY_OVERLAY_ENV_EXAMPLE="${ENV_DIR}/bay-${OVERLAY_MODE}-overlay.env.example"
   POSTGRES_BIN="$(find_postgres)"
   PG_CTL_BIN="$(find_pg_ctl)"
@@ -742,10 +743,25 @@ COCALC_BAY_WORKER_NODE_OPTIONS=
 COCALC_BAY_WORKER_EXTRA_ENV=
 EOF
 
+  render_if_missing_or_forced "${ENV_DIR}/bay-topology.env" "$BAY_TOPOLOGY_ENV_EXAMPLE" <<EOF
+COCALC_CLUSTER_ID=standalone
+COCALC_CLUSTER_ROLE=standalone
+COCALC_CLUSTER_SEED_BAY_ID=${BAY_ID}
+COCALC_CLUSTER_BAY_IDS=${BAY_ID}
+COCALC_CLUSTER_TOPOLOGY_EPOCH=0
+COCALC_BAY_PEER_HEALTH_HOST=127.0.0.1
+COCALC_BAY_PEER_HEALTH_PORT=9402
+COCALC_BAY_PEER_HEALTH_PATH=/peer-health
+COCALC_BAY_PEER_HEALTH_TIMEOUT_S=5
+COCALC_BAY_PEER_LOCAL_HEALTH_TIMEOUT_S=3
+COCALC_CLUSTER_PEER_HEALTH_URLS=
+EOF
+
   render_if_missing_or_forced "${ENV_DIR}/bay-secrets.env" "$BAY_SECRETS_ENV_EXAMPLE" <<EOF
 COCALC_SESSION_SECRET=$(random_secret)
 COCALC_COOKIE_SECRET=$(random_secret)
 COCALC_CONAT_SHARED_SECRET=$(random_secret)
+COCALC_CLUSTER_SHARED_SECRET=$(random_secret)
 COCALC_REQUIRE_SITE_MASTER_KEY=1
 EOF
   ensure_site_master_key_required_env
@@ -788,6 +804,7 @@ Bay root:         ${BAY_ROOT}
 Generated files:
   /etc/cocalc/bay.env
   /etc/cocalc/bay-workers.env
+  /etc/cocalc/bay-topology.env
   /etc/cocalc/bay-secrets.env
   ${BAY_ROOT}/secrets/conat-password
 
@@ -796,12 +813,13 @@ Required pre-provisioned file:
 
 Next steps:
   1. Review /etc/cocalc/bay.env
-  2. Review /etc/cocalc/bay-overlay.env
-  3. Install the same site master key on every bay before starting:
+  2. Review /etc/cocalc/bay-topology.env
+  3. Review /etc/cocalc/bay-overlay.env
+  4. Install the same site master key on every bay before starting:
      install -o root -g root -m 0600 /path/to/site-master-key ${SITE_MASTER_KEY_PATH}
-  4. Verify migrations manually:
+  5. Verify migrations manually:
      ${CURRENT_LINK}/bin/bay-migrate
-  5. Start the bay if not already started:
+  6. Start the bay if not already started:
      systemctl start cocalc-bay.target
 EOF
 }

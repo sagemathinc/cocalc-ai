@@ -163,7 +163,8 @@ The release bootstrap currently:
 - updates `/opt/cocalc/bay/current`
 - installs the scaffold and either the current-CoCalc or Rocket bundle overlay
 - provisions the bay database if missing
-- writes `/etc/cocalc/bay.env`, `bay-workers.env`, and `bay-secrets.env`
+- writes `/etc/cocalc/bay.env`, `bay-workers.env`, `bay-topology.env`, and
+  `bay-secrets.env`
 - enables `cocalc-bay.target` plus the requested hub worker units
 - requires `/etc/cocalc/site-master-key` when `--start` is used
 
@@ -178,6 +179,7 @@ sudo ./src/scripts/bay-systemd/install-scaffold.sh --overlay current-cocalc --da
 2. Edit:
    - `/etc/cocalc/bay.env`
    - `/etc/cocalc/bay-workers.env`
+   - `/etc/cocalc/bay-topology.env`
    - `/etc/cocalc/bay-secrets.env`
    - optionally `/etc/cocalc/bay-overlay.env`
 3. Install `/etc/cocalc/site-master-key` with mode `0600`.
@@ -190,13 +192,50 @@ sudo systemctl enable cocalc-bay-hub@2.service
 sudo systemctl start cocalc-bay.target
 ```
 
+## Multibay Topology And Peer Health
+
+Standalone bays use a loopback peer-health endpoint by default. For multibay
+clusters, render the same topology on every bay and bind peer health to each
+VM's internal cloud IP:
+
+```sh
+./src/scripts/bay-systemd/render-bay-topology-env.sh \
+  --cluster bella \
+  --seed-bay bay-0 \
+  --local-bay bay-0 \
+  --bay bay-0=10.206.0.21 \
+  --bay bay-1=10.206.0.22
+```
+
+Install that output as `/etc/cocalc/bay-topology.env` on the local bay. Use the
+same `COCALC_CLUSTER_SHARED_SECRET` in `/etc/cocalc/bay-secrets.env` on every
+bay in the cluster.
+
+Peer health is intentionally an internal control-plane endpoint:
+
+- service: `cocalc-bay-peer-health.service`
+- default port: `9402`
+- authenticated path: `/peer-health`
+- unauthenticated local liveness path: `/healthz`
+
+Check local plus peer health with:
+
+```sh
+sudo /opt/cocalc/bay/current/bin/bay-health --peers
+```
+
+Public ingress and peer health are separate. Cloudflare tunnels can expose the
+public site, but bay-to-bay health and control traffic should use private
+internal IPs and firewall rules scoped to bay VMs.
+
 ## Important Constraints
 
 - The wrapper scripts expect environment to come from:
   - `/etc/cocalc/bay.env`
   - `/etc/cocalc/bay-workers.env`
+  - `/etc/cocalc/bay-topology.env`
   - `/etc/cocalc/bay-secrets.env`
-- optionally `/etc/cocalc/bay-overlay.env`
+  - optionally `/etc/cocalc/bay-overlay.env`
 - Production bay services set `COCALC_REQUIRE_SITE_MASTER_KEY=1` and load
   `/etc/cocalc/site-master-key` as a systemd credential. Missing keys fail
   startup instead of creating a new local key.
