@@ -589,19 +589,17 @@ export default function NewFilePage(props: Props) {
                 flexWrap: "wrap",
               }}
             >
-              {isVisible ? (
-                <Select<string>
-                  showSearch
-                  allowClear
-                  placeholder="Search file types..."
-                  style={{ flex: "1 1 260px", minWidth: "200px" }}
-                  value={undefined}
-                  options={moreFileTypeOptions}
-                  onSelect={(value: string) => {
-                    quickCreate(value);
-                  }}
-                />
-              ) : null}
+              {/* No placeholder: Ant Design fades it out after hide, and the header already labels this control. */}
+              <Select<string>
+                showSearch
+                allowClear
+                style={{ flex: "1 1 260px", minWidth: "200px" }}
+                value={undefined}
+                options={moreFileTypeOptions}
+                onSelect={(value: string) => {
+                  quickCreate(value);
+                }}
+              />
               <Space size={6}>
                 <Button
                   size="small"
