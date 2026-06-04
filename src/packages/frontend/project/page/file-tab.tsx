@@ -74,6 +74,7 @@ type FixedTabs = {
       project_id: string;
       wrap: (content: React.JSX.Element, style?: CSS) => React.JSX.Element;
       flyoutWidth: number;
+      isVisible?: boolean;
     }) => React.JSX.Element;
     flyoutTitle?: string | ReactNode | IntlMessage;
     noAnonymous?: boolean;

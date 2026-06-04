@@ -201,9 +201,9 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
     case "home":
       return <HomePage />;
     case "files":
-      return <Explorer />;
+      return <Explorer isVisible={is_visible} />;
     case "new":
-      return <ProjectNew project_id={project_id} />;
+      return <ProjectNew project_id={project_id} isVisible={is_visible} />;
     case "log":
       return <ProjectLog project_id={project_id} />;
     case "search":

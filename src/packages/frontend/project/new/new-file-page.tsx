@@ -69,6 +69,7 @@ interface Props {
   initialFilename?: string;
   autoFocusFilename?: boolean;
   mode?: "page" | "flyout";
+  isVisible?: boolean;
 }
 
 export default function NewFilePage(props: Props) {
@@ -82,18 +83,25 @@ export default function NewFilePage(props: Props) {
     initialFilename,
     autoFocusFilename = true,
     mode = "page",
+    isVisible = true,
   } = props;
   const inputRef = useRef<any>(null);
   const folderInputRef = useRef<any>(null);
+  const [moreFileTypesOpen, setMoreFileTypesOpen] = useState(false);
   useEffect(() => {
-    if (!autoFocusFilename) return;
+    if (!autoFocusFilename || !isVisible) return;
     setTimeout(() => {
       if (inputRef.current) {
         inputRef.current.focus();
         inputRef.current.select();
       }
     }, 1);
-  }, [autoFocusFilename]);
+  }, [autoFocusFilename, isVisible]);
+  useEffect(() => {
+    if (!isVisible) {
+      setMoreFileTypesOpen(false);
+    }
+  }, [isVisible]);
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
   const selectedFilenameFamily =
@@ -590,11 +598,17 @@ export default function NewFilePage(props: Props) {
               <Select<string>
                 showSearch
                 allowClear
+                open={isVisible ? moreFileTypesOpen : false}
+                onOpenChange={(open) => setMoreFileTypesOpen(open)}
+                getPopupContainer={(trigger) =>
+                  trigger.parentElement ?? document.body
+                }
                 placeholder="Search file types..."
                 style={{ flex: "1 1 260px", minWidth: "200px" }}
                 value={undefined}
                 options={moreFileTypeOptions}
                 onSelect={(value: string) => {
+                  setMoreFileTypesOpen(false);
                   quickCreate(value);
                 }}
               />
