@@ -12,6 +12,7 @@ if [[ -z "$token" ]]; then
 fi
 
 release="$(current_version || true)"
+export COCALC_BAY_PEER_HEALTH_RUNTIME_TOKEN="$token"
 
 exec python3 - \
   "$SCRIPT_DIR" \
@@ -26,8 +27,7 @@ exec python3 - \
   "$COCALC_BAY_PEER_HEALTH_PORT" \
   "$COCALC_BAY_PEER_HEALTH_PATH" \
   "$COCALC_BAY_PEER_LOCAL_HEALTH_TIMEOUT_S" \
-  "$release" \
-  "$token" <<'PY'
+  "$release" <<'PY'
 import hmac
 import json
 import os
@@ -50,8 +50,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     peer_health_path,
     peer_local_health_timeout_s,
     release,
-    token,
 ) = sys.argv[1:]
+
+token = os.environ["COCALC_BAY_PEER_HEALTH_RUNTIME_TOKEN"]
 
 
 def json_response(handler, status, payload):
