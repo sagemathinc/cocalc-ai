@@ -118,6 +118,40 @@ This script is currently an operator workflow, not a stable public installer
 interface. It assumes SSH access to the bay VM and direct bay-local Postgres
 access through the systemd layout.
 
+## GCP Bootstrap Service Account
+
+Run this in a trusted admin `gcloud` shell to create or update the project
+service account used by the GCP bay bootstrap helper:
+
+```sh
+PROJECT_ID=projecthosts \
+  ./src/scripts/bay-systemd/gcp-rocket-bootstrap-service-account.sh
+```
+
+The script prints a JSON service account key between explicit markers. Treat
+that JSON as a password and store it as a CoCalc project secret before passing
+it to `gcp-bootstrap-dogfood-bay.sh --key-file`.
+
+By default the helper grants:
+
+- `roles/compute.instanceAdmin.v1`
+- `roles/compute.networkUser`
+- `roles/iam.serviceAccountUser`
+- a project custom role named `cocalcRocketFirewallAdmin`
+
+The custom firewall role is intentionally narrower than
+`roles/compute.securityAdmin`. It includes only:
+
+- `compute.firewalls.create`
+- `compute.firewalls.delete`
+- `compute.firewalls.get`
+- `compute.firewalls.list`
+- `compute.firewalls.update`
+
+Set `INCLUDE_FIREWALL_ADMIN=0` to skip the custom role. If custom-role creation
+is blocked by organization policy, manually grant `roles/compute.securityAdmin`
+to the service account as the broader fallback.
+
 For frontend/static-only changes, build a smaller artifact locally:
 
 ```sh
