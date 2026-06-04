@@ -1,11 +1,11 @@
 [Unit]
-Description=CoCalc Bay Migrations
-After=cocalc-bay-postgres.service
-Requires=cocalc-bay-postgres.service
+Description=CoCalc Bay Internal Peer Health
+After=network-online.target
+Wants=network-online.target
 PartOf=cocalc-bay.target
 
 [Service]
-Type=oneshot
+Type=exec
 User=cocalc-bay
 WorkingDirectory=/opt/cocalc/bay/current
 EnvironmentFile=/etc/cocalc/bay.env
@@ -13,10 +13,10 @@ EnvironmentFile=-/etc/cocalc/bay-workers.env
 EnvironmentFile=-/etc/cocalc/bay-overlay.env
 EnvironmentFile=-/etc/cocalc/bay-topology.env
 EnvironmentFile=-/etc/cocalc/bay-secrets.env
-Environment=COCALC_REQUIRE_SITE_MASTER_KEY=1
-LoadCredential=site-master-key:/etc/cocalc/site-master-key
-ExecStart=/opt/cocalc/bay/current/bin/bay-migrate
-RemainAfterExit=yes
+ExecStart=/opt/cocalc/bay/current/bin/bay-peer-healthd
+Restart=always
+RestartSec=2
+TimeoutStartSec=30
 StandardOutput=journal
 StandardError=journal
 

@@ -22,6 +22,32 @@ type ResetOpenFileRuntimeAfterHostResetOpts = {
   ) => Promise<void> | void;
 };
 
+export function openFileComponentRuntimeIsUsable({
+  info,
+  isViewer,
+  getActions,
+  getStore,
+}: {
+  info: any;
+  isViewer: boolean;
+  getActions: (name: string) => any;
+  getStore: (name: string) => any;
+}): boolean {
+  if (info?.Editor == null) {
+    return false;
+  }
+  if (info.redux_name == null) {
+    return isViewer;
+  }
+  const actions = getActions(info.redux_name);
+  const store = getStore(info.redux_name);
+  return !(
+    actions == null ||
+    store == null ||
+    (typeof actions.isClosed === "function" && actions.isClosed())
+  );
+}
+
 export async function resetOpenFileRuntimeAfterHostReset({
   openFiles,
   activeProjectTab,

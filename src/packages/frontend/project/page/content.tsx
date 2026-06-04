@@ -44,6 +44,7 @@ import { ProjectServers } from "@cocalc/frontend/project/servers";
 import { ProjectSettings } from "@cocalc/frontend/project/settings";
 import { WorkspacesPanel } from "@cocalc/frontend/project/page/flyouts/workspaces";
 import { ProjectDocsPanel } from "@cocalc/frontend/project/page/flyouts/docs";
+import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
 import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useProjectContext } from "../context";
@@ -268,6 +269,7 @@ interface EditorProps {
   path: string;
   project_id: string;
   is_visible: boolean;
+  isViewer: boolean;
   // NOTE: this "component" part is a plain
   // object, and is not an immutable.Map, since
   // it has to store a react component.
@@ -275,20 +277,24 @@ interface EditorProps {
 }
 
 const Editor: React.FC<EditorProps> = (props: EditorProps) => {
-  const { path, project_id, is_visible, component } = props;
+  const { path, project_id, is_visible, isViewer, component } = props;
   const { actions: projectActions } = useProjectContext();
   const { Editor: EditorComponent, redux_name } = component;
+  const actions =
+    redux_name != null ? (redux.getActions(redux_name) as any) : undefined;
+  const runtimeIsUsable = openFileComponentRuntimeIsUsable({
+    info: component,
+    isViewer,
+    getActions: (name) => redux.getActions(name),
+    getStore: (name) => redux.getStore(name),
+  });
   useEffect(() => {
-    if (EditorComponent != null) return;
+    if (runtimeIsUsable) return;
     projectActions?.ensure_open_file_component?.(path, { noFocus: true });
-  }, [projectActions, EditorComponent, path]);
-  if (EditorComponent == null) {
+  }, [projectActions, path, runtimeIsUsable]);
+  if (!runtimeIsUsable) {
     return <Loading theme={"medium"} />;
   }
-  const actions =
-    redux_name != null
-      ? (redux.getEditorActions(project_id, path) as any)
-      : undefined;
 
   return (
     <div
@@ -345,6 +351,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
       project_id={project_id}
       path={path}
       is_visible={is_visible}
+      isViewer={projectAccess.role === "viewer"}
       component={component}
     />
   );

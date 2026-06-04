@@ -95,6 +95,8 @@ install -m 0644 "${SCRIPT_DIR}/env/bay-workers.env.example" \
   "${TARGET_ENV_DIR}/bay-workers.env.example"
 install -m 0644 "${SCRIPT_DIR}/env/bay-secrets.env.example" \
   "${TARGET_ENV_DIR}/bay-secrets.env.example"
+install -m 0644 "${SCRIPT_DIR}/env/bay-topology.env.example" \
+  "${TARGET_ENV_DIR}/bay-topology.env.example"
 
 if [[ ! -e "${TARGET_ENV_DIR}/bay.env" ]]; then
   install -m 0644 "${SCRIPT_DIR}/env/bay.env.example" "${TARGET_ENV_DIR}/bay.env"
@@ -108,6 +110,10 @@ if [[ ! -e "${TARGET_ENV_DIR}/bay-secrets.env" ]]; then
     "${TARGET_ENV_DIR}/bay-secrets.env"
 else
   chmod 0600 "${TARGET_ENV_DIR}/bay-secrets.env"
+fi
+if [[ ! -e "${TARGET_ENV_DIR}/bay-topology.env" ]]; then
+  install -m 0644 "${SCRIPT_DIR}/env/bay-topology.env.example" \
+    "${TARGET_ENV_DIR}/bay-topology.env"
 fi
 
 if [[ "$OVERLAY_MODE" == "current-cocalc" ]]; then
@@ -147,20 +153,21 @@ Next steps:
   1. Edit ${TARGET_ENV_DIR}/bay.env
   2. Edit ${TARGET_ENV_DIR}/bay-workers.env
   3. Edit ${TARGET_ENV_DIR}/bay-secrets.env
-  4. Install the shared site master key:
+  4. Edit ${TARGET_ENV_DIR}/bay-topology.env for multibay clusters
+  5. Install the shared site master key:
      install -o root -g root -m 0600 /path/to/site-master-key ${TARGET_ENV_DIR}/site-master-key
 EOF
 
 if [[ "$OVERLAY_MODE" != "none" ]]; then
   cat <<EOF
-  5. Review ${TARGET_ENV_DIR}/bay-overlay.env
+  6. Review ${TARGET_ENV_DIR}/bay-overlay.env
 EOF
 fi
 
 cat <<EOF
-  6. Enable desired workers, e.g.:
+  - Enable desired workers, e.g.:
      systemctl enable cocalc-bay-hub@1.service
      systemctl enable cocalc-bay-hub@2.service
-  7. Start the bay:
+  - Start the bay:
      systemctl start cocalc-bay.target
 EOF

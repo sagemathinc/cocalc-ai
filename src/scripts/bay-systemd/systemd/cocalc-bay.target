@@ -3,6 +3,7 @@ Description=CoCalc Bay Aggregate Target
 Wants=cocalc-bay-postgres.service
 Wants=cocalc-bay-conat-persist.service
 Wants=cocalc-bay-conat-router.service
+Wants=cocalc-bay-peer-health.service
 Wants=cocalc-bay-hub-workers.target
 After=network-online.target
 

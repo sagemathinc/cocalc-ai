@@ -50,7 +50,7 @@ import { FileListItem } from "./file-list-item";
 import { FilesBottom } from "./files-bottom";
 import { FilesHeader } from "./files-header";
 import { fileItemStyle } from "./utils";
-import useFs from "@cocalc/frontend/project/listing/use-fs";
+import { useFsWithRefresh } from "@cocalc/frontend/project/listing/use-fs";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
 import useBackupsListing, {
   isBackupsPath,
@@ -218,7 +218,7 @@ export function FilesFlyout({
     path: effective_current_path,
     homePath,
   });
-  const fs = useFs({ project_id });
+  const { fs, refreshFs } = useFsWithRefresh({ project_id });
   const {
     listing: directoryListing,
     error: listingError,
@@ -226,6 +226,7 @@ export function FilesFlyout({
   } = useListing({
     fs: inBackupsPath ? null : fs,
     path: listingPath,
+    refreshFs,
   });
   const {
     listing: backupsListing,
@@ -268,6 +269,19 @@ export function FilesFlyout({
   }, [backupOps, refreshBackups]);
   const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
   const effectiveError = inBackupsPath ? backupsError : listingError;
+  const effectiveErrorKey = effectiveError
+    ? `${effective_current_path}|${(effectiveError as any)?.message ?? effectiveError}`
+    : "";
+  const [dismissedErrorKey, setDismissedErrorKey] = useState("");
+  useEffect(() => {
+    if (!effectiveError) {
+      setDismissedErrorKey("");
+    }
+  }, [effectiveError]);
+  const visibleError =
+    effectiveErrorKey && dismissedErrorKey !== effectiveErrorKey
+      ? effectiveError
+      : null;
   const lifecycle = getProjectLifecycleView({
     projectState: projectStateName,
     hostId: host_id,
@@ -1012,12 +1026,13 @@ export function FilesFlyout({
       )}
       {inBackupsPath && <Backups onCreated={refreshBackupsAfterUserAction} />}
       {!suppressRoutingError &&
+        visibleError &&
         !shouldShowArchivedProjectWarning &&
         !shouldShowNewProjectWarning &&
         !shouldShowStartProjectWarning && (
           <ShowError
-            error={getUserFacingListingError(effectiveError)}
-            setError={effectiveRefresh}
+            error={getUserFacingListingError(visibleError)}
+            setError={() => setDismissedErrorKey(effectiveErrorKey)}
           />
         )}
       <FileOperationLros

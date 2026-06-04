@@ -46,7 +46,7 @@ import {
   useProjectMapField,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import useFs from "@cocalc/frontend/project/listing/use-fs";
+import { useFsWithRefresh } from "@cocalc/frontend/project/listing/use-fs";
 import useListing, {
   type SortField,
 } from "@cocalc/frontend/project/listing/use-listing";
@@ -217,7 +217,10 @@ export function Explorer() {
       DEFAULT_ACTIVE_FILE_SORT,
   );
 
-  const fs = useFs({ project_id, viewer: readOnlyViewer });
+  const { fs, refreshFs } = useFsWithRefresh({
+    project_id,
+    viewer: readOnlyViewer,
+  });
   const inBackupsPath = isBackupsPath(effective_current_path);
   const inSnapshotsPath = isSnapshotsPath(effective_current_path);
   const homePath =
@@ -239,6 +242,7 @@ export function Explorer() {
     cacheId: actions?.getCacheId(),
     mask,
     watch: !readOnlyViewer,
+    refreshFs,
   });
   const {
     listing: backupsListing,

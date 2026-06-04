@@ -7,6 +7,7 @@ load_bay_env() {
     "${COCALC_BAY_ENV_FILE:-/etc/cocalc/bay.env}" \
     "${COCALC_BAY_WORKERS_ENV_FILE:-/etc/cocalc/bay-workers.env}" \
     "${COCALC_BAY_OVERLAY_ENV_FILE:-/etc/cocalc/bay-overlay.env}" \
+    "${COCALC_BAY_TOPOLOGY_ENV_FILE:-/etc/cocalc/bay-topology.env}" \
     "${COCALC_BAY_SECRETS_ENV_FILE:-/etc/cocalc/bay-secrets.env}"; do
     if [[ -r "$env_file" ]]; then
       # shellcheck disable=SC1090
@@ -36,6 +37,11 @@ load_bay_env
 : "${COCALC_BAY_HUB_BIND_HOST:=127.0.0.1}"
 : "${COCALC_BAY_HUB_BASE_PORT:=9300}"
 : "${COCALC_BAY_HUB_HEALTH_PATH:=/alive}"
+: "${COCALC_BAY_PEER_HEALTH_HOST:=127.0.0.1}"
+: "${COCALC_BAY_PEER_HEALTH_PORT:=9402}"
+: "${COCALC_BAY_PEER_HEALTH_PATH:=/peer-health}"
+: "${COCALC_BAY_PEER_HEALTH_TIMEOUT_S:=5}"
+: "${COCALC_BAY_PEER_LOCAL_HEALTH_TIMEOUT_S:=3}"
 : "${COCALC_BAY_MIN_HEALTHY_WORKERS:=1}"
 : "${COCALC_BAY_WORKER_COUNT:=1}"
 : "${COCALC_BAY_HEALTH_TIMEOUT_S:=15}"
@@ -44,6 +50,15 @@ load_bay_env
 : "${COCALC_BAY_SKIP_NEXT_MIGRATIONS_MARKER:=${COCALC_BAY_STATE_DIR}/skip-next-migrations}"
 : "${COCALC_BAY_NODE_VERSION:=26.2.0}"
 : "${COCALC_BAY_NODE_BIN:=/opt/cocalc/nvm/versions/node/v${COCALC_BAY_NODE_VERSION}/bin/node}"
+: "${COCALC_BAY_PUBLIC_URL:=}"
+: "${COCALC_CLUSTER_ID:=standalone}"
+: "${COCALC_CLUSTER_ROLE:=standalone}"
+: "${COCALC_CLUSTER_SEED_BAY_ID:=${COCALC_BAY_ID}}"
+: "${COCALC_CLUSTER_BAY_IDS:=${COCALC_BAY_ID}}"
+: "${COCALC_CLUSTER_TOPOLOGY_EPOCH:=0}"
+: "${COCALC_CLUSTER_SEED_CONAT_SERVER:=}"
+: "${COCALC_INTER_BAY_CONAT_SERVER:=}"
+: "${COCALC_CLUSTER_PEER_HEALTH_URLS:=}"
 
 if [[ -x "$COCALC_BAY_NODE_BIN" ]]; then
   export PATH="$(dirname "$COCALC_BAY_NODE_BIN"):${PATH}"
@@ -141,6 +156,29 @@ router_url() {
     "$COCALC_BAY_ROUTER_HOST" \
     "$COCALC_BAY_ROUTER_PORT" \
     "$COCALC_BAY_ROUTER_HEALTH_PATH"
+}
+
+peer_health_url() {
+  printf 'http://%s:%s%s' \
+    "$COCALC_BAY_PEER_HEALTH_HOST" \
+    "$COCALC_BAY_PEER_HEALTH_PORT" \
+    "$COCALC_BAY_PEER_HEALTH_PATH"
+}
+
+peer_health_token() {
+  if [[ -n "${COCALC_CLUSTER_SHARED_SECRET:-}" ]]; then
+    printf '%s' "$COCALC_CLUSTER_SHARED_SECRET"
+    return 0
+  fi
+  if [[ -n "${COCALC_BAY_PEER_HEALTH_TOKEN:-}" ]]; then
+    printf '%s' "$COCALC_BAY_PEER_HEALTH_TOKEN"
+    return 0
+  fi
+  if [[ -n "${COCALC_CONAT_SHARED_SECRET:-}" ]]; then
+    printf '%s' "$COCALC_CONAT_SHARED_SECRET"
+    return 0
+  fi
+  return 1
 }
 
 tcp_check() {

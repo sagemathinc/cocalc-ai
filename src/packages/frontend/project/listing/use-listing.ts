@@ -42,6 +42,7 @@ export default function useListing({
   cacheId,
   mask,
   watch = true,
+  refreshFs,
 }: {
   // fs = undefined is supported and just waits until you provide a fs that is defined
   fs?: FilesystemClient | null;
@@ -52,6 +53,7 @@ export default function useListing({
   cacheId?: JSONValue;
   mask?: boolean;
   watch?: boolean;
+  refreshFs?: () => void;
 }): {
   listing: null | DirectoryListingEntry[];
   error: null | ConatError;
@@ -63,6 +65,7 @@ export default function useListing({
     throttleUpdate,
     cacheId,
     watch,
+    refreshFs,
   });
 
   const listing = useMemo<null | DirectoryListingEntry[]>(() => {
