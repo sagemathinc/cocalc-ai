@@ -32,6 +32,7 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Icon, Paragraph } from "@cocalc/frontend/components";
+import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { labels } from "@cocalc/frontend/i18n";
 
 import { R2_REGION_LABELS } from "@cocalc/util/consts";
@@ -56,6 +57,8 @@ import {
 import { ProjectCreateHealthCard } from "./create/project-create-health-card";
 import { useProjectCreateDraft } from "./create/use-project-create-draft";
 import "./create-project.css";
+
+const IS_STAR_SETUP_PROFILE = cocalc_setup_profile === "star";
 
 interface Props {
   default_value: string;
@@ -94,6 +97,18 @@ const PROJECT_PRESETS: {
     icon: "sliders",
   },
 ];
+
+function projectPresetDescription(preset: (typeof PROJECT_PRESETS)[number]) {
+  if (!IS_STAR_SETUP_PROFILE) return preset.description;
+  switch (preset.mode) {
+    case "standard":
+      return "Default or catalog-tagged base image.";
+    case "custom":
+      return "Choose your own runtime image.";
+    default:
+      return preset.description;
+  }
+}
 
 export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const intl = useIntl();
@@ -579,7 +594,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                       color: COLORS.GRAY_M,
                     }}
                   >
-                    {preset.description}
+                    {projectPresetDescription(preset)}
                   </div>
                 </span>
               </Space>
@@ -678,6 +693,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         label: "Host / region",
         value: summary.hostName || summary.host_id || "Automatic placement",
         color: COLORS.BS_GREEN_LL,
+        hidden: IS_STAR_SETUP_PROFILE,
       },
       {
         icon: "database",
@@ -701,43 +717,45 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             <div style={{ fontWeight: 700, fontSize: 16 }}>Project summary</div>
           </div>
           <Space orientation="vertical" size={0} style={{ width: "100%" }}>
-            {summaryItems.map((item, index) => (
-              <div
-                key={item.label}
-                className="cc-project-create-summary-row"
-                style={{
-                  borderBottom:
-                    index === summaryItems.length - 1
-                      ? undefined
-                      : `1px solid ${COLORS.GRAY_LL}`,
-                }}
-              >
-                <span
-                  className="cc-project-create-summary-icon"
+            {summaryItems
+              .filter((item) => !item.hidden)
+              .map((item, index, visibleItems) => (
+                <div
+                  key={item.label}
+                  className="cc-project-create-summary-row"
                   style={{
-                    background: item.color,
-                    color: COLORS.BS_BLUE_TEXT,
+                    borderBottom:
+                      index === visibleItems.length - 1
+                        ? undefined
+                        : `1px solid ${COLORS.GRAY_LL}`,
                   }}
                 >
-                  <Icon name={item.icon as any} />
-                </span>
-                <span style={{ minWidth: 0 }}>
-                  <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
-                    {item.label}
-                  </div>
-                  <div
+                  <span
+                    className="cc-project-create-summary-icon"
                     style={{
-                      color: COLORS.GRAY_D,
-                      fontSize: 13,
-                      fontWeight: 600,
-                      overflowWrap: "anywhere",
+                      background: item.color,
+                      color: COLORS.BS_BLUE_TEXT,
                     }}
                   >
-                    {item.value}
-                  </div>
-                </span>
-              </div>
-            ))}
+                    <Icon name={item.icon as any} />
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+                      {item.label}
+                    </div>
+                    <div
+                      style={{
+                        color: COLORS.GRAY_D,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      {item.value}
+                    </div>
+                  </span>
+                </div>
+              ))}
           </Space>
           <Space wrap>
             {summary.gpu && <Tag color="purple">GPU</Tag>}
@@ -836,20 +854,24 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           {renderPresetSection()}
         </div>
         {renderRootfsSection()}
-        <SelectNewHost
-          disabled={saving}
-          selectedHost={selectedHost}
-          onChange={setHost}
-          regionFilter={draft.region}
-          regionLabel={R2_REGION_LABELS[draft.region]}
-          wantsGpu={summary.gpu}
-          pickerMode="create"
-          pickerDisplay="inline"
-          pickerOpen={hostPickerOpen}
-          onPickerOpenChange={setHostPickerOpen}
-          showHelp={false}
-        />
-        {hostPickerOpen && renderRegionExplanation()}
+        {!IS_STAR_SETUP_PROFILE && (
+          <>
+            <SelectNewHost
+              disabled={saving}
+              selectedHost={selectedHost}
+              onChange={setHost}
+              regionFilter={draft.region}
+              regionLabel={R2_REGION_LABELS[draft.region]}
+              wantsGpu={summary.gpu}
+              pickerMode="create"
+              pickerDisplay="inline"
+              pickerOpen={hostPickerOpen}
+              onPickerOpenChange={setHostPickerOpen}
+              showHelp={false}
+            />
+            {hostPickerOpen && renderRegionExplanation()}
+          </>
+        )}
         {render_error()}
       </Space>
     );
