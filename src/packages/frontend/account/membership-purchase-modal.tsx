@@ -37,6 +37,7 @@ import {
   type MembershipTierWithPresentation,
 } from "./membership-tier-benefits";
 import { MEMBERSHIP_CHANGE } from "@cocalc/util/db-schema/purchases";
+import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { currency } from "@cocalc/util/misc";
 import {
   moneyRound2Up,
@@ -126,16 +127,9 @@ export default function MembershipPurchaseModal({
   }, [open]);
 
   const visibleTiers = useMemo(() => {
-    return tiers
-      .filter((tier) => tier.store_visible && !tier.disabled)
-      .sort((a, b) => {
-        const ap = a.priority ?? 0;
-        const bp = b.priority ?? 0;
-        if (ap !== bp) return ap - bp;
-        const al = a.label ?? a.id;
-        const bl = b.label ?? b.id;
-        return al.localeCompare(bl);
-      });
+    return sortMembershipTiersByDisplayOrder(
+      tiers.filter((tier) => tier.store_visible && !tier.disabled),
+    );
   }, [tiers]);
 
   const tierById = useMemo(() => {

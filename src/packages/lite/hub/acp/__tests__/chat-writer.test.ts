@@ -1445,7 +1445,7 @@ describe("ChatStreamWriter", () => {
     expect((writer as any).content).toContain(
       "You have reached your 5-hour AI usage limit.",
     );
-    expect((writer as any).content).toContain("/settings/store");
+    expect((writer as any).content).toContain("/settings/membership");
     expect((writer as any).content).toContain("/settings/ai");
     expect((writer as any).content).not.toContain(
       "The cgroupv2 manager is set to systemd",

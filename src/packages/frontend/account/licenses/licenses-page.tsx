@@ -3,30 +3,52 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Card, Space, Tabs, Typography } from "antd";
+import { Alert, Space, Typography } from "antd";
 import { useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 
 import api from "@cocalc/frontend/client/api";
-import { Icon, Loading } from "@cocalc/frontend/components";
+import { Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import { COLORS } from "@cocalc/util/theme";
 import type { SettingsPageDefinition } from "../settings-page";
 import { MembershipPackageManager } from "../membership-package-manager";
 import type { MembershipTierWithPresentation } from "../membership-tier-benefits";
 import { SoftwareLicensesPage } from "./software-licenses";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph } = Typography;
 
-export const LICENSES_SETTINGS_PAGE = {
-  component: LicensesPage,
+export const TEAM_LICENSES_SETTINGS_PAGE = {
+  component: TeamLicensesPage,
   description: defineMessage({
-    id: "account.settings.overview.licenses",
-    defaultMessage: "Manage your software licenses.",
+    id: "account.settings.overview.team_licenses",
+    defaultMessage: "Buy team seats and assign memberships to people.",
+  }),
+  icon: "users",
+  key: "team-licenses",
+  label: labels.team,
+} satisfies SettingsPageDefinition;
+
+export const SITE_LICENSES_SETTINGS_PAGE = {
+  component: SiteLicensesPage,
+  description: defineMessage({
+    id: "account.settings.overview.site_licenses",
+    defaultMessage:
+      "Manage institutional license requests, seats, and managers.",
+  }),
+  icon: "graduation-cap",
+  key: "site-licenses",
+  label: labels.site,
+} satisfies SettingsPageDefinition;
+
+export const SOFTWARE_LICENSES_SETTINGS_PAGE = {
+  component: SoftwareLicensesPage,
+  description: defineMessage({
+    id: "account.settings.overview.software_licenses",
+    defaultMessage: "Manage Launchpad/Rocket software license tokens.",
   }),
   icon: "key",
-  key: "licenses",
-  label: labels.licenses,
+  key: "software-licenses",
+  label: labels.software,
 } satisfies SettingsPageDefinition;
 
 interface MembershipTier extends MembershipTierWithPresentation {
@@ -47,7 +69,13 @@ interface MembershipTiersResponse {
   tiers?: MembershipTier[];
 }
 
-function SiteLicensesPage() {
+function LicenseManagementPage({
+  description,
+  mode,
+}: {
+  description: string;
+  mode: "site" | "team";
+}) {
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
@@ -88,32 +116,9 @@ function SiteLicensesPage() {
 
   return (
     <Space orientation="vertical" size="large" style={{ width: "100%" }}>
-      <Card
-        style={{
-          border: 0,
-          background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, ${COLORS.BS_GREEN_LL})`,
-          boxShadow: `0 12px 28px ${COLORS.GRAY_LL}`,
-        }}
-      >
-        <Space
-          wrap
-          align="start"
-          style={{ justifyContent: "space-between", width: "100%" }}
-        >
-          <Space orientation="vertical" size={4} style={{ maxWidth: 760 }}>
-            <Title level={3} style={{ margin: 0 }}>
-              Campus and team licenses
-            </Title>
-            <Paragraph style={{ marginBottom: 0 }}>
-              Manage institutional access, approval queues, team seats, and
-              Launchpad software licenses from one place.
-            </Paragraph>
-          </Space>
-          <Button onClick={handleChanged}>
-            <Icon name="refresh" /> Refresh
-          </Button>
-        </Space>
-      </Card>
+      <Paragraph type="secondary" style={{ marginBottom: 0, maxWidth: 760 }}>
+        {description}
+      </Paragraph>
 
       {error ? (
         <Alert
@@ -127,39 +132,30 @@ function SiteLicensesPage() {
       {loading ? (
         <Loading />
       ) : (
-        <MembershipPackageManager tiers={tiers} onChanged={handleChanged} />
+        <MembershipPackageManager
+          mode={mode}
+          tiers={tiers}
+          onChanged={handleChanged}
+        />
       )}
     </Space>
   );
 }
 
-export function LicensesPage() {
+function TeamLicensesPage() {
   return (
-    <div style={{ margin: "auto", maxWidth: 1200, width: "100%" }}>
-      <Tabs
-        defaultActiveKey="site"
-        style={{ width: "100%" }}
-        items={[
-          {
-            key: "site",
-            label: (
-              <span>
-                <Icon name="users" /> Site licenses
-              </span>
-            ),
-            children: <SiteLicensesPage />,
-          },
-          {
-            key: "software",
-            label: (
-              <span>
-                <Icon name="key" /> Launchpad licenses
-              </span>
-            ),
-            children: <SoftwareLicensesPage />,
-          },
-        ]}
-      />
-    </div>
+    <LicenseManagementPage
+      mode="team"
+      description="Buy team seats and assign them to the CoCalc accounts that should receive membership access."
+    />
+  );
+}
+
+function SiteLicensesPage() {
+  return (
+    <LicenseManagementPage
+      mode="site"
+      description="Manage site licenses where you are an owner or manager: review requests, manage seats, and update managers."
+    />
   );
 }

@@ -21,6 +21,15 @@ describe("settings-routing", () => {
     expect(parseAccountSettingsRoute("settings/usage-limits")).toEqual({
       page: "usage-limits",
     });
+    expect(parseAccountSettingsRoute("settings/team-licenses")).toEqual({
+      page: "team-licenses",
+    });
+    expect(parseAccountSettingsRoute("settings/site-licenses")).toEqual({
+      page: "site-licenses",
+    });
+    expect(parseAccountSettingsRoute("settings/subscriptions")).toEqual({
+      page: "subscriptions",
+    });
     expect(parseAccountSettingsRoute("settings/vouchers")).toEqual({
       page: "vouchers",
     });
@@ -32,13 +41,23 @@ describe("settings-routing", () => {
   it("does not map menu groups as settings routes", () => {
     expect(parseAccountSettingsRoute("settings/preferences")).toBeUndefined();
     expect(parseAccountSettingsRoute("settings/billing")).toBeUndefined();
+    expect(parseAccountSettingsRoute("settings/licenses")).toBeUndefined();
+    expect(parseAccountSettingsRoute("settings/licenses/team")).toBeUndefined();
   });
 
   it("builds canonical settings paths from leaf pages", () => {
     expect(getSettingsTargetPath({ page: "index" })).toBe("settings");
-    expect(getSettingsTargetPath({ page: "store" })).toBe("settings/store");
+    expect(getSettingsTargetPath({ page: "vouchers" })).toBe(
+      "settings/vouchers",
+    );
+    expect(getSettingsTargetPath({ page: "subscriptions" })).toBe(
+      "settings/subscriptions",
+    );
     expect(getSettingsTargetPath({ page: "membership" })).toBe(
       "settings/membership",
+    );
+    expect(getSettingsTargetPath({ page: "software-licenses" })).toBe(
+      "settings/software-licenses",
     );
     expect(getSettingsTargetPath({ page: "appearance" })).toBe(
       "settings/appearance",

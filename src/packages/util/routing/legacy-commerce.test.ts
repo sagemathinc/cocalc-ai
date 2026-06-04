@@ -17,16 +17,16 @@ describe("routing/legacy-commerce", () => {
     );
   });
 
-  it("maps legacy store paths to the new app-native store", () => {
-    expect(getLegacyCommerceTargetPath("store")).toBe("settings/store");
+  it("maps legacy store paths to specific replacement settings pages", () => {
+    expect(getLegacyCommerceTargetPath("store")).toBe("settings/membership");
     expect(getLegacyCommerceTargetPath("/store/membership")).toBe(
-      "settings/store",
+      "settings/membership",
     );
     expect(getLegacyCommerceTargetPath("/store/vouchers?id=123")).toBe(
-      "settings/store",
+      "settings/vouchers",
     );
     expect(getLegacyCommerceTargetPath("/store/checkout")).toBe(
-      "settings/store",
+      "settings/membership",
     );
   });
 

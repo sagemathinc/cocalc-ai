@@ -38,7 +38,6 @@ const DEFAULT_TAGLINES: Record<string, string> = {
     "An affordable paid membership for individual learning and light work.",
   student: "A class-focused membership for course access.",
   standard: "The standard paid membership for serious day-to-day work.",
-  member: "The standard paid membership for serious day-to-day work.",
   instructor: "More headroom for teaching, courses, and many collaborators.",
   researcher: "Higher compute and image limits for research workloads.",
   pro: "Higher limits for heavier workloads and demanding technical projects.",

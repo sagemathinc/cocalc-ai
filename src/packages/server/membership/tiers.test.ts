@@ -8,6 +8,7 @@ import { before, after } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
 import {
   createTestAccount,
+  createTestMembershipSubscription,
   createTestMembershipTier,
 } from "@cocalc/server/purchases/test-data";
 import { computeMembershipChange } from "./tiers";
@@ -134,5 +135,48 @@ describe("membership tier free trials", () => {
     });
     expect(secondQuote.trial_available).toBe(false);
     expect(secondQuote.charge).toBe(50);
+  });
+});
+
+describe("membership change pricing", () => {
+  it("quotes against the effective paid-through subscription", async () => {
+    const account_id = uuid();
+    const lowTier = `quote-low-${uuid().slice(0, 8)}` as any;
+    const highTier = `quote-high-${uuid().slice(0, 8)}` as any;
+    await createTestAccount(account_id);
+    await createTestMembershipTier({
+      id: lowTier,
+      price_monthly: 20,
+      price_yearly: 200,
+      priority: 10,
+    });
+    await createTestMembershipTier({
+      id: highTier,
+      price_monthly: 100,
+      price_yearly: 1000,
+      priority: 20,
+    });
+
+    await createTestMembershipSubscription(account_id, {
+      class: highTier,
+      cost: 100,
+      end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      status: "canceled",
+    });
+    await createTestMembershipSubscription(account_id, {
+      class: lowTier,
+      cost: 20,
+      end: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000),
+      status: "active",
+    });
+
+    await expect(
+      computeMembershipChange({
+        account_id,
+        targetClass: highTier,
+        interval: "month",
+        client: getPool() as any,
+      }),
+    ).rejects.toThrow(`already subscribed to ${highTier}`);
   });
 });

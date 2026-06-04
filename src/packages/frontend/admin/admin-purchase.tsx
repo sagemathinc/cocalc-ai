@@ -6,7 +6,6 @@
 import {
   Alert,
   Button,
-  Card,
   Divider,
   Flex,
   Input,
@@ -33,9 +32,10 @@ import {
 } from "@cocalc/frontend/frame-editors/generic/client";
 import { currency, is_valid_uuid_string } from "@cocalc/util/misc";
 import { toDecimal } from "@cocalc/util/money";
+import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { MAX_VOUCHERS, MAX_VOUCHER_VALUE } from "@cocalc/util/vouchers";
 
-import { adminPurchase } from "./api";
+import { adminPurchase } from "@cocalc/frontend/store/api";
 
 const { Paragraph, Text } = Typography;
 
@@ -47,9 +47,10 @@ interface MembershipTier extends MembershipTierWithPresentation {
   label?: string;
   price_monthly?: number;
   price_yearly?: number;
+  priority?: number;
 }
 
-export default function AdminPurchasePanel() {
+export function AdminPurchaseAdmin() {
   const [product, setProduct] = useState<Product>("membership");
   const [targetQuery, setTargetQuery] = useState<string>("");
   const [targetUser, setTargetUser] = useState<User | null>(null);
@@ -105,14 +106,20 @@ export default function AdminPurchasePanel() {
     };
   }, []);
 
+  const sortedTiers = useMemo(
+    () => sortMembershipTiersByDisplayOrder(tiers),
+    [tiers],
+  );
+
   useEffect(() => {
-    if (!membershipClass && tiers.length > 0) {
-      const first = tiers.find((tier) => !tier.disabled) ?? tiers[0];
+    if (!membershipClass && sortedTiers.length > 0) {
+      const first =
+        sortedTiers.find((tier) => !tier.disabled) ?? sortedTiers[0];
       if (first) {
         setMembershipClass(first.id);
       }
     }
-  }, [tiers, membershipClass]);
+  }, [sortedTiers, membershipClass]);
 
   const tierById = useMemo(() => {
     return tiers.reduce(
@@ -246,7 +253,7 @@ export default function AdminPurchasePanel() {
   }
 
   return (
-    <Card size="small" title="Admin-assisted purchase">
+    <>
       <Paragraph type="secondary">
         Create a manual purchase for another user. This supports discounts,
         custom prices, credit-funded purchases, and fully free comps, matching
@@ -293,7 +300,7 @@ export default function AdminPurchasePanel() {
             <Text strong>Membership tier</Text>
             <Select
               loading={tierLoading}
-              options={tiers
+              options={sortedTiers
                 .filter((tier) => !tier.disabled)
                 .map((tier) => ({
                   label: tier.label ?? tier.id,
@@ -447,6 +454,6 @@ export default function AdminPurchasePanel() {
         </Button>
       </Space>
       <FreshAuthModal {...freshAuthModalProps} />
-    </Card>
+    </>
   );
 }

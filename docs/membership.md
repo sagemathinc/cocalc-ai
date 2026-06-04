@@ -20,7 +20,7 @@ flowchart TD
   D --> E[Project Start<br/>quota injection]
   D --> F[LLM Usage Limits<br/>5h + 7d]
   D --> G[UI Surfaces]
-  H[Store Checkout] --> I[Membership Purchase]
+  H[Membership Settings] --> I[Membership Purchase]
   I --> C
 
   classDef data fill:#e6f2ff,stroke:#2b6cb0,color:#1a365d;
@@ -93,7 +93,7 @@ Limits are defined via `llm_limits` in the membership tier, with keys:
 
 If no limits are set, the system treats the limit as 0.
 
-## Store + Purchases
+## Membership Purchases
 
 Memberships are purchased directly:
 
@@ -120,7 +120,7 @@ Conat API (typed RPC):
 
 Key UI surfaces:
 
-- Store membership page: [src/packages/next/components/store/memberships.tsx](./src/packages/next/components/store/memberships.tsx)
+- Membership settings page: [src/packages/frontend/account/membership-page.tsx](./src/packages/frontend/account/membership-page.tsx)
 - Subscriptions UI: [src/packages/frontend/purchases/subscriptions.tsx](./src/packages/frontend/purchases/subscriptions.tsx)
 - LLM usage indicator: [src/packages/frontend/misc/llm-cost-estimation.tsx](./src/packages/frontend/misc/llm-cost-estimation.tsx)
 - Balance modal usage display: [src/packages/frontend/purchases/balance-modal.tsx](./src/packages/frontend/purchases/balance-modal.tsx)
@@ -135,5 +135,5 @@ Key UI surfaces:
 ## Known Gaps / Planned Work
 
 - Structured admin editors for `project_defaults`, `llm_limits`, and `features` (current UI uses raw JSON).
-- Membership benefits copy in store + settings.
+- Membership benefits copy in settings.
 - Team/org seats and course grants to fully replace licenses.

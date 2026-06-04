@@ -97,16 +97,16 @@ Table({
     },
     store_visible: {
       type: "boolean",
-      desc: "Whether to show this tier in the store UI.",
+      desc: "Whether to show this tier in public pricing and purchase UI.",
     },
     store_description: {
       type: "string",
-      desc: "Short public description shown on the pricing/store page.",
+      desc: "Short public description shown on pricing and purchase cards.",
     },
     store_highlights: {
       type: "array",
       pg_type: "TEXT[]",
-      desc: "Public pricing/store bullet points, one short string per item.",
+      desc: "Public pricing and purchase bullet points, one short string per item.",
     },
     course_store_visible: {
       type: "boolean",

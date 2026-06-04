@@ -72,6 +72,7 @@ import {
   updateSiteLicense,
 } from "@cocalc/frontend/purchases/api";
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
+import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   ClaimableMembershipPackage,
@@ -94,6 +95,7 @@ import {
   is_valid_email_address as isValidEmailAddress,
 } from "@cocalc/util/misc";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
+import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { COLORS } from "@cocalc/util/theme";
 import type { LineItem } from "@cocalc/util/stripe/types";
 import { openAccountSettings } from "./settings-routing";
@@ -103,11 +105,15 @@ const { Paragraph, Text, Title } = Typography;
 export interface MembershipTierLike extends MembershipTierWithPresentation {
   id: string;
   label?: string;
+  price_monthly?: number;
+  price_yearly?: number;
+  priority?: number;
   store_visible?: boolean;
   disabled?: boolean;
 }
 
 interface Props {
+  mode?: "all" | "site" | "team";
   tiers: MembershipTierLike[];
   onChanged?: () => void;
   user_account_id?: string;
@@ -243,25 +249,25 @@ function getPackageKindLabel(kind: MembershipPackageKind): string {
 }
 
 function getTeamSeatTiers(tiers: MembershipTierLike[]): MembershipTierLike[] {
-  return tiers
-    .filter(
+  return sortMembershipTiersByDisplayOrder(
+    tiers.filter(
       (tier) =>
         !tier.disabled &&
         tier.store_visible !== false &&
         tier.id !== "free" &&
         tier.id !== "student",
-    )
-    .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+    ),
+  );
 }
 
 function getSiteLicenseProvisioningTiers(
   tiers: MembershipTierLike[],
 ): MembershipTierLike[] {
-  return tiers
-    .filter(
+  return sortMembershipTiersByDisplayOrder(
+    tiers.filter(
       (tier) => !tier.disabled && tier.id !== "free" && tier.id !== "admin",
-    )
-    .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+    ),
+  );
 }
 
 function findSiteLicenseTier({
@@ -292,7 +298,7 @@ function makeDefaultSiteLicensePool({
 }): SiteLicensePoolConfig {
   return {
     pool_name: `Pool ${index + 1}`,
-    membership_class: (tiers[0]?.id ?? "member") as MembershipClass,
+    membership_class: (tiers[0]?.id ?? "standard") as MembershipClass,
     seat_count: 25,
     requires_approval: true,
     verification_policy: "email-domain",
@@ -925,11 +931,13 @@ export function SiteLicenseReverificationPanel({
 }
 
 export function MembershipPackageManager({
+  mode = "all",
   tiers,
   onChanged,
   user_account_id,
 }: Props) {
   const account_id = useTypedRedux("account", "account_id");
+  const zendesk = !!useTypedRedux("customize", "zendesk");
   const ownerAccountId = user_account_id ?? account_id;
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -954,14 +962,22 @@ export function MembershipPackageManager({
   const [siteLicenseReviewLoadingId, setSiteLicenseReviewLoadingId] =
     useState<string>("");
   const [siteLicenseOverviewLoading, setSiteLicenseOverviewLoading] =
-    useState<boolean>(false);
+    useState<boolean>(mode === "site");
   const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
     useState<string>("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
   });
+  const showTeamPackages = mode === "all" || mode === "team";
+  const showSiteLicenses = mode === "all" || mode === "site";
 
   const refreshPackages = async () => {
+    if (!showTeamPackages) {
+      setMembershipPackages([]);
+      setError("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -977,7 +993,7 @@ export function MembershipPackageManager({
   };
 
   const refreshSiteLicenseOverviews = async () => {
-    if (!account_id || user_account_id) {
+    if (!showSiteLicenses || !account_id || user_account_id) {
       setSiteLicenseOverviews([]);
       setSiteLicenseOverviewError("");
       setSiteLicenseOverviewLoading(false);
@@ -1004,7 +1020,7 @@ export function MembershipPackageManager({
       return;
     }
     void refreshPackages();
-  }, [ownerAccountId, refreshToken, user_account_id]);
+  }, [ownerAccountId, refreshToken, showTeamPackages, user_account_id]);
 
   const assignedAccountIds = useMemo(() => {
     return Array.from(
@@ -1063,7 +1079,7 @@ export function MembershipPackageManager({
   useEffect(() => {
     let canceled = false;
     async function loadSiteLicenseOverviews() {
-      if (!account_id || user_account_id) {
+      if (!showSiteLicenses || !account_id || user_account_id) {
         setSiteLicenseOverviews([]);
         setSiteLicenseOverviewError("");
         setSiteLicenseOverviewLoading(false);
@@ -1091,7 +1107,7 @@ export function MembershipPackageManager({
     return () => {
       canceled = true;
     };
-  }, [account_id, refreshToken, user_account_id]);
+  }, [account_id, refreshToken, showSiteLicenses, user_account_id]);
 
   const handleChanged = async () => {
     await refreshPackages();
@@ -1105,108 +1121,154 @@ export function MembershipPackageManager({
 
   return (
     <div>
-      <Text strong>Team and site licenses</Text>
-      <Paragraph type="secondary" style={{ marginTop: "6px" }}>
-        Team packages let you buy seats and grant memberships to specific
-        accounts. Site licenses are provisioned by support or admins, then
-        managed here. Users can claim site-license seats when one of their
-        verified email domains matches the license.
-      </Paragraph>
+      {mode === "all" ? (
+        <>
+          <Text strong>Team and site licenses</Text>
+          <Paragraph type="secondary" style={{ marginTop: "6px" }}>
+            Team packages let you buy seats and grant memberships to specific
+            accounts. Site licenses are provisioned by support or admins, then
+            managed here.
+          </Paragraph>
+        </>
+      ) : null}
       {error && (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
       )}
       <Space wrap style={{ marginBottom: 12 }}>
-        <Button type="primary" onClick={() => setPurchaseTarget(null)}>
-          <Icon name="shopping-cart" /> Buy team seats
-        </Button>
+        {showTeamPackages ? (
+          <Button type="primary" onClick={() => setPurchaseTarget(null)}>
+            <Icon name="shopping-cart" /> Buy team seats
+          </Button>
+        ) : null}
         <Button onClick={() => setRefreshToken((value) => value + 1)}>
-          <Icon name="refresh" /> Refresh packages
+          <Icon name="refresh" /> Refresh
         </Button>
       </Space>
       {loading ? (
         <Loading />
       ) : (
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          <PackageGroup
-            title="Team packages"
-            emptyTitle="No team packages yet"
-            emptyDescription="Buy team seats here, then assign them to the accounts that should receive membership access."
-            membershipPackages={teamPackages}
-            tiers={tiers}
-            accountNames={accountNames}
-            onAddSeats={(membershipPackage) =>
-              setPurchaseTarget(membershipPackage)
-            }
-            onAssignSeat={(membershipPackage) =>
-              setAssignmentTarget(membershipPackage)
-            }
-            onRevokeSeat={async (membershipPackage, assignment) => {
-              await runFreshAuthAction(async () => {
-                await revokeMembershipPackageSeat({
-                  package_id: membershipPackage.id,
-                  target_account_id: assignment.account_id ?? undefined,
-                  target_email_address: assignment.email_address ?? undefined,
-                });
-                await handleChanged();
-              });
-            }}
-          />
-          <SiteLicenseDashboard
-            overviews={siteLicenseOverviews}
-            loading={siteLicenseOverviewLoading}
-            error={siteLicenseOverviewError}
-            tiers={tiers}
-            accountNames={accountNames}
-            accountId={account_id}
-            isAdmin={false}
-            reviewingRequestId={siteLicenseReviewLoadingId}
-            onReview={async (_overview, request, action) => {
-              setSiteLicenseReviewLoadingId(request.id);
-              setError("");
-              try {
+          {showTeamPackages ? (
+            <PackageGroup
+              title="Team packages"
+              emptyTitle="No team packages yet"
+              emptyDescription="Buy team seats here, then assign them to the accounts that should receive membership access."
+              membershipPackages={teamPackages}
+              tiers={tiers}
+              accountNames={accountNames}
+              onAddSeats={(membershipPackage) =>
+                setPurchaseTarget(membershipPackage)
+              }
+              onAssignSeat={(membershipPackage) =>
+                setAssignmentTarget(membershipPackage)
+              }
+              onRevokeSeat={async (membershipPackage, assignment) => {
                 await runFreshAuthAction(async () => {
-                  await reviewSiteLicensePoolRequest({
-                    request_id: request.id,
-                    action,
+                  await revokeMembershipPackageSeat({
+                    package_id: membershipPackage.id,
+                    target_account_id: assignment.account_id ?? undefined,
+                    target_email_address: assignment.email_address ?? undefined,
                   });
                   await handleChanged();
                 });
-              } catch (err) {
-                setError(`${err}`);
-              } finally {
-                setSiteLicenseReviewLoadingId("");
+              }}
+            />
+          ) : null}
+          {showSiteLicenses &&
+          mode === "site" &&
+          !siteLicenseOverviewLoading &&
+          !siteLicenseOverviewError &&
+          siteLicenseOverviews.length === 0 ? (
+            <Alert
+              type="info"
+              showIcon
+              title="No site licenses to manage"
+              description={
+                <Space orientation="vertical">
+                  <Text>
+                    Site-license owners and managers see their license
+                    dashboards here after an admin attaches them.
+                  </Text>
+                  {zendesk ? (
+                    <Button
+                      type="primary"
+                      onClick={() =>
+                        openSupportTab({
+                          body: "I would like to discuss setting up or managing a CoCalc site license.",
+                          subject: "Site license request",
+                          type: "purchase",
+                        })
+                      }
+                    >
+                      File a support ticket
+                    </Button>
+                  ) : null}
+                </Space>
               }
-            }}
-            onRevokeSeat={async (pool, assignment) => {
-              await runFreshAuthAction(async () => {
-                await revokeMembershipPackageSeat({
-                  package_id: pool.id,
-                  target_account_id: assignment.account_id ?? undefined,
-                  target_email_address: assignment.email_address ?? undefined,
+            />
+          ) : null}
+          {showSiteLicenses ? (
+            <SiteLicenseDashboard
+              overviews={siteLicenseOverviews}
+              loading={siteLicenseOverviewLoading}
+              error={siteLicenseOverviewError}
+              tiers={tiers}
+              accountNames={accountNames}
+              accountId={account_id}
+              isAdmin={false}
+              reviewingRequestId={siteLicenseReviewLoadingId}
+              onReview={async (_overview, request, action) => {
+                setSiteLicenseReviewLoadingId(request.id);
+                setError("");
+                try {
+                  await runFreshAuthAction(async () => {
+                    await reviewSiteLicensePoolRequest({
+                      request_id: request.id,
+                      action,
+                    });
+                    await handleChanged();
+                  });
+                } catch (err) {
+                  setError(`${err}`);
+                } finally {
+                  setSiteLicenseReviewLoadingId("");
+                }
+              }}
+              onRevokeSeat={async (pool, assignment) => {
+                await runFreshAuthAction(async () => {
+                  await revokeMembershipPackageSeat({
+                    package_id: pool.id,
+                    target_account_id: assignment.account_id ?? undefined,
+                    target_email_address: assignment.email_address ?? undefined,
+                  });
+                  await handleChanged();
                 });
-                await handleChanged();
-              });
-            }}
-            onSetManager={async (site_license_id, target_account_id, role) => {
-              await runFreshAuthAction(async () => {
-                await setSiteLicenseManager({
-                  site_license_id,
-                  target_account_id,
-                  role,
+              }}
+              onSetManager={async (
+                site_license_id,
+                target_account_id,
+                role,
+              ) => {
+                await runFreshAuthAction(async () => {
+                  await setSiteLicenseManager({
+                    site_license_id,
+                    target_account_id,
+                    role,
+                  });
+                  await handleChanged();
                 });
-                await handleChanged();
-              });
-            }}
-            onRemoveManager={async (site_license_id, target_account_id) => {
-              await runFreshAuthAction(async () => {
-                await removeSiteLicenseManager({
-                  site_license_id,
-                  target_account_id,
+              }}
+              onRemoveManager={async (site_license_id, target_account_id) => {
+                await runFreshAuthAction(async () => {
+                  await removeSiteLicenseManager({
+                    site_license_id,
+                    target_account_id,
+                  });
+                  await handleChanged();
                 });
-                await handleChanged();
-              });
-            }}
-          />
+              }}
+            />
+          ) : null}
         </Space>
       )}
       <TeamPackagePurchaseModal

@@ -8,7 +8,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Divider,
   Empty,
   Flex,
   Modal,
@@ -21,7 +20,6 @@ import { useEffect, useMemo, useState } from "react";
 import { defineMessage } from "react-intl";
 
 import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-page";
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
@@ -39,23 +37,24 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 import {
   chargeForUnpaidVouchers,
   getAdminVouchers,
-  getVoucherCenterData,
+  getVouchersData,
   getVoucherCodes,
 } from "./api";
+import VoucherPurchasePanel from "./voucher-purchase-panel";
 import VoucherCodeNotes from "./voucher-code-notes";
 
-const { Paragraph, Text, Title } = Typography;
+const { Text, Title } = Typography;
 
-export const VOUCHER_CENTER_SETTINGS_PAGE = {
-  component: VoucherCenterPage,
+export const VOUCHERS_SETTINGS_PAGE = {
+  component: VouchersPage,
   description: defineMessage({
     id: "account.settings.overview.vouchers",
     defaultMessage:
-      "Browse voucher batches, redeemed codes, admin notes, and redeem links.",
+      "Buy vouchers and manage voucher batches, redeemed codes, and redeem links.",
   }),
   icon: "gift",
   key: "vouchers",
-  label: labels.voucher_center,
+  label: labels.vouchers,
 } satisfies SettingsPageDefinition;
 
 function sortByDateDesc<T extends { created?: Date | string }>(
@@ -248,7 +247,7 @@ function VoucherBatchModal({
   );
 }
 
-export function VoucherCenterPage() {
+export function VouchersPage() {
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const [created, setCreated] = useState<Voucher[]>([]);
   const [redeemed, setRedeemed] = useState<VoucherCode[]>([]);
@@ -270,7 +269,7 @@ export function VoucherCenterPage() {
     setError("");
     try {
       const [userData, allAdminVouchers] = await Promise.all([
-        getVoucherCenterData(),
+        getVouchersData(),
         isAdmin ? getAdminVouchers() : Promise.resolve([]),
       ]);
       setCreated(sortByDateDesc(userData.created));
@@ -360,43 +359,28 @@ export function VoucherCenterPage() {
         onClose={() => setSelectedVoucher(null)}
       />
 
-      <Flex align="center" gap="middle" justify="space-between" wrap>
-        <Paragraph style={{ marginBottom: 0 }} type="secondary">
-          Buy vouchers in the Store, redeem them publicly, and manage the
-          voucher batches and redemptions tied to your account.
-        </Paragraph>
+      <Title level={3}>Vouchers</Title>
+
+      <Card title="Buy vouchers">
+        <VoucherPurchasePanel onPurchased={load} />
+      </Card>
+
+      <Flex
+        align="center"
+        gap="middle"
+        justify="space-between"
+        style={{ marginTop: "16px" }}
+        wrap
+      >
         <Space>
           <Button onClick={load}>
             <Icon name="sync-alt" /> Refresh
-          </Button>
-          <Button onClick={() => openAccountSettings({ page: "store" })}>
-            Open Store
           </Button>
           <Button href={joinUrlPath(appBasePath, "redeem")} target="_blank">
             Redeem Voucher
           </Button>
         </Space>
       </Flex>
-
-      <Card style={{ marginTop: "16px" }}>
-        <Flex gap="middle" wrap>
-          <div>
-            <Text strong>{created.length}</Text>
-            <div style={{ color: "#666" }}>batches created</div>
-          </div>
-          <Divider type="vertical" style={{ height: "auto" }} />
-          <div>
-            <Text strong>{redeemed.length}</Text>
-            <div style={{ color: "#666" }}>codes redeemed</div>
-          </div>
-          <Divider type="vertical" style={{ height: "auto" }} />
-          <div>
-            <a href="/app-docs/billing/settings" target="_blank">
-              Voucher documentation
-            </a>
-          </div>
-        </Flex>
-      </Card>
 
       {error && (
         <Alert style={{ marginTop: "16px" }} title={error} type="error" />
@@ -557,17 +541,6 @@ export function VoucherCenterPage() {
         ]}
       />
 
-      <Card style={{ marginTop: "16px" }}>
-        <Paragraph style={{ marginBottom: 0 }}>
-          Need to buy more voucher codes? Go back to the{" "}
-          <a onClick={() => openAccountSettings({ page: "store" })}>Store</a>.
-          Need to redeem a code from outside the app? Use the public{" "}
-          <a href={joinUrlPath(appBasePath, "redeem")} target="_blank">
-            redeem page
-          </a>
-          .
-        </Paragraph>
-      </Card>
       <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );

@@ -439,9 +439,8 @@ describe("PublicApp", () => {
     expect(screen.getByText("Expanded")).not.toBeNull();
     expect(screen.getByRole("link", { name: /Member/ })).toHaveAttribute(
       "href",
-      "/settings/store",
+      "/settings/membership",
     );
-    expect(screen.queryByRole("link", { name: "Open Store" })).toBeNull();
     fireEvent.click(screen.getByText("Monthly"));
     expect(screen.getByText("$25")).not.toBeNull();
     expect(screen.getAllByText("/ month").length).toBe(2);

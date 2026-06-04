@@ -30,6 +30,7 @@ import {
   PublicGrid,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
+import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { currency, humanSize, round2 } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
@@ -522,7 +523,7 @@ function PricingTierTile({
 }) {
   const label = tier.label ?? tier.id;
   const href = isAuthenticated
-    ? appPath("settings/store")
+    ? appPath("settings/membership")
     : appPath("auth/sign-up");
   const { token } = theme.useToken();
 
@@ -676,14 +677,9 @@ export default function PricingPage({
     };
   }, []);
 
-  const publicTiers = [...(tiers ?? [])]
-    .filter((tier) => tier.store_visible && !tier.disabled)
-    .sort((a, b) => {
-      const ap = a.priority ?? 0;
-      const bp = b.priority ?? 0;
-      if (ap !== bp) return ap - bp;
-      return (a.label ?? a.id).localeCompare(b.label ?? b.id);
-    });
+  const publicTiers = sortMembershipTiersByDisplayOrder(
+    (tiers ?? []).filter((tier) => tier.store_visible && !tier.disabled),
+  );
   const visibleTiers = publicTiers.filter((tier) =>
     hasPriceForInterval(tier, billingInterval),
   );
@@ -745,7 +741,7 @@ export default function PricingPage({
                 who need access. One account manages payment while each person
                 works from their own CoCalc account.
               </Paragraph>
-              <Button href={appPath("settings/licenses")}>
+              <Button href={appPath("settings/team-licenses")}>
                 Manage team seats
               </Button>
             </Space>

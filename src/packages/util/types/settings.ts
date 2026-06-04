@@ -24,25 +24,33 @@ export type PreferencesSubTabType =
 
 export type PreferencesSubTabKey = `preferences-${PreferencesSubTabType}`;
 
+export const VALID_LICENSES_SUB_TYPES = [
+  "team-licenses",
+  "site-licenses",
+  "software-licenses",
+] as const;
+
+export type LicensesSubTabType = (typeof VALID_LICENSES_SUB_TYPES)[number];
+
 export const VALID_BILLING_SUB_TYPES = [
-  "licenses",
-  "store",
-  "vouchers",
+  "subscriptions",
   "purchases",
   "payments",
   "payment-methods",
   "statements",
+  "vouchers",
 ] as const;
 
 export type BillingSubTabType = (typeof VALID_BILLING_SUB_TYPES)[number];
 
 // Valid leaf settings pages. Menu/URL grouping is intentionally not part of
-// page identity, so callers can open "store" without knowing where it lives.
+// page identity, so callers can open a page without knowing where it lives.
 export const VALID_SETTINGS_PAGES = [
   "index",
   "profile",
   "membership",
   "usage-limits",
+  ...VALID_LICENSES_SUB_TYPES,
   ...VALID_PREFERENCES_SUB_TYPES,
   ...VALID_BILLING_SUB_TYPES,
   "support",

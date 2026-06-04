@@ -89,11 +89,11 @@ describe("page-routing", () => {
     });
     expect(parsePageTarget("store/membership")).toEqual({
       page: "account",
-      tab: "store",
+      tab: "membership",
     });
     expect(parsePageTarget("store/vouchers")).toEqual({
       page: "account",
-      tab: "store",
+      tab: "vouchers",
     });
   });
 
