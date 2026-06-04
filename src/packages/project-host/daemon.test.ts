@@ -170,6 +170,7 @@ describe("project-host daemon stop", () => {
           { name: "111", isDirectory: () => true },
           { name: "222", isDirectory: () => true },
           { name: "333", isDirectory: () => true },
+          { name: "444", isDirectory: () => true },
         ] as any;
       }
       return (realReaddirSync as any)(file, opts);
@@ -205,10 +206,18 @@ describe("project-host daemon stop", () => {
       if (file === "/proc/333/environ") {
         return Buffer.from(`COCALC_DATA=/other\u0000PORT=9003\u0000`) as any;
       }
+      if (file === "/proc/444/cmdline") {
+        return Buffer.from("project-host:acp-worker\u0000") as any;
+      }
+      if (file === "/proc/444/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_ACP_WORKER=1\u0000`,
+        ) as any;
+      }
       return (realReadFileSync as any)(file, options);
     }) as typeof fs.readFileSync);
 
-    const alive = new Set([111, 222]);
+    const alive = new Set([111, 222, 444]);
     const killSpy = jest.spyOn(process, "kill").mockImplementation(((
       pid: number,
       signal?: NodeJS.Signals | number,
@@ -230,6 +239,7 @@ describe("project-host daemon stop", () => {
 
     expect(killSpy).toHaveBeenCalledWith(111, "SIGTERM");
     expect(killSpy).toHaveBeenCalledWith(222, "SIGTERM");
+    expect(killSpy).toHaveBeenCalledWith(444, "SIGTERM");
     expect(fs.existsSync(pidPath)).toBe(false);
   });
 
@@ -738,6 +748,7 @@ describe("project-host daemon stop", () => {
       [1111, "running"],
       [2222, "running"],
       [3333, "running"],
+      [5555, "running"],
     ]);
     const killSpy = jest.spyOn(process, "kill").mockImplementation(((
       pid: number,
@@ -753,7 +764,7 @@ describe("project-host daemon stop", () => {
         }
         throw new Error("not running");
       }
-      if (pid === 3333 && signal === "SIGTERM") {
+      if ((pid === 3333 || pid === 5555) && signal === "SIGTERM") {
         killState.set(pid, "stopped");
         return true;
       }
@@ -770,6 +781,7 @@ describe("project-host daemon stop", () => {
         return [
           { name: "1111", isDirectory: () => true },
           { name: "2222", isDirectory: () => true },
+          { name: "5555", isDirectory: () => true },
         ] as any;
       }
       return (realReaddirSync as any)(file, opts);
@@ -798,6 +810,14 @@ describe("project-host daemon stop", () => {
           `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON=1\u0000PORT=9202\u0000`,
         ) as any;
       }
+      if (file === "/proc/5555/cmdline") {
+        return Buffer.from("project-host:acp-worker\u0000") as any;
+      }
+      if (file === "/proc/5555/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_ACP_WORKER=1\u0000`,
+        ) as any;
+      }
       return (realReadFileSync as any)(file, options);
     }) as typeof fs.readFileSync);
 
@@ -818,6 +838,7 @@ describe("project-host daemon stop", () => {
       COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT: "9002",
     });
     expect(killSpy).toHaveBeenCalledWith(3333, "SIGTERM");
+    expect(killSpy).toHaveBeenCalledWith(5555, "SIGTERM");
     expect(killSpy).toHaveBeenCalledWith(1111, 0);
     expect(killSpy).toHaveBeenCalledWith(2222, 0);
     expect(killSpy).not.toHaveBeenCalledWith(1111, "SIGTERM");
