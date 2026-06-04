@@ -23,7 +23,8 @@ STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-docker.io/buildpack-deps:26.04}"
-STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
+STAR_HARDEN_INSTALL_USER_SUDO="${STAR_HARDEN_INSTALL_USER_SUDO:-0}"
+STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-${STAR_HARDEN_INSTALL_USER_SUDO}}"
 STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
 STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
 
@@ -702,7 +703,11 @@ EOF
 ${STAR_USER} ALL=(root) NOPASSWD: /bin/systemctl *, /bin/journalctl *, /usr/bin/tee *, /usr/bin/install *, /bin/mount *, /bin/umount *, /usr/bin/loginctl *
 EOF
   chmod 0440 /etc/sudoers.d/cocalc-star-admin
-  remove_broad_sudoers_for_star_user
+  if [ "$STAR_HARDEN_INSTALL_USER_SUDO" = "1" ]; then
+    remove_broad_sudoers_for_star_user
+  else
+    log "preserving existing sudo access for installer user ${STAR_USER}"
+  fi
   if [ "$STAR_REMOVE_GCP_SUDOERS" = "1" ]; then
     if id -nG "$STAR_USER" | tr ' ' '\n' | grep -qx google-sudoers; then
       gpasswd -d "$STAR_USER" google-sudoers || true

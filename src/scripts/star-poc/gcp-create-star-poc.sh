@@ -21,7 +21,8 @@ STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-docker.io/buildpack-deps:26.04}"
-STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
+STAR_HARDEN_INSTALL_USER_SUDO="${STAR_HARDEN_INSTALL_USER_SUDO:-0}"
+STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-${STAR_HARDEN_INSTALL_USER_SUDO}}"
 RUN_DOCTOR="${RUN_DOCTOR:-1}"
 RUN_SMOKE="${RUN_SMOKE:-1}"
 RUN_UPGRADE_ROLLBACK_TEST="${RUN_UPGRADE_ROLLBACK_TEST:-0}"
@@ -67,9 +68,11 @@ Useful overrides:
   STAR_BUILD_DEFAULT_ROOTFS=0   skip building the local Jupyter/LaTeX rootfs
   STAR_DEFAULT_ROOTFS_IMAGE=... local rootfs image tag to seed as default
   STAR_DEFAULT_ROOTFS_BASE_IMAGE=docker.io/buildpack-deps:26.04
-  STAR_REMOVE_GCP_SUDOERS=0     keep the GCP sudo group after install
+  STAR_HARDEN_INSTALL_USER_SUDO=1
+                                remove broad sudo grants from the installer user
+  STAR_REMOVE_GCP_SUDOERS=1     remove the GCP sudo group after install
   VALIDATION_USER=user          validate through the VM user instead of root
-                                requires STAR_REMOVE_GCP_SUDOERS=0
+                                requires preserving installer sudo access
   RUN_DOCTOR=0                  skip star-poc doctor validation
   RUN_SMOKE=0                   skip star-poc smoke validation
   RUN_UPGRADE_ROLLBACK_TEST=1   install a second release, verify existing
@@ -125,7 +128,7 @@ install_remote_release() {
   local remote_archive="$1"
   local remote_extract_dir="$2"
   local install_command
-  install_command="rm -rf ${remote_extract_dir} && mkdir -p ${remote_extract_dir} && tar -xzf ${remote_archive} -C ${remote_extract_dir} --strip-components=1 && STAR_ASSUME_YES=1 STAR_USER=${REMOTE_USER} STAR_INSTALL_ROOT=${STAR_INSTALL_ROOT} STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} bash ${remote_extract_dir}/install-release.sh ${remote_archive}"
+  install_command="rm -rf ${remote_extract_dir} && mkdir -p ${remote_extract_dir} && tar -xzf ${remote_archive} -C ${remote_extract_dir} --strip-components=1 && STAR_ASSUME_YES=1 STAR_USER=${REMOTE_USER} STAR_INSTALL_ROOT=${STAR_INSTALL_ROOT} STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_HARDEN_INSTALL_USER_SUDO=${STAR_HARDEN_INSTALL_USER_SUDO} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} bash ${remote_extract_dir}/install-release.sh ${remote_archive}"
   if [ "$VALIDATION_USER" != "root" ]; then
     install_command="sudo bash -lc '${install_command}'"
   else
