@@ -18,9 +18,14 @@ import { LSFlyout, lsKey, storeFlyoutState } from "./state";
 interface FlyoutBodyProps {
   flyout: FixedTab;
   flyoutWidth: number;
+  isVisible?: boolean;
 }
 
-export function FlyoutBody({ flyout, flyoutWidth }: FlyoutBodyProps) {
+export function FlyoutBody({
+  flyout,
+  flyoutWidth,
+  isVisible = true,
+}: FlyoutBodyProps) {
   const { project_id } = useProjectContext();
   const { collapsed: hideActionButtons } = useActivityBarPreferences();
 
@@ -99,7 +104,12 @@ export function FlyoutBody({ flyout, flyoutWidth }: FlyoutBodyProps) {
           <Loading />
         </div>
       ) : (
-        <Body project_id={project_id} wrap={wrap} flyoutWidth={flyoutWidth} />
+        <Body
+          project_id={project_id}
+          wrap={wrap}
+          flyoutWidth={flyoutWidth}
+          isVisible={isVisible}
+        />
       )}
     </div>
   );

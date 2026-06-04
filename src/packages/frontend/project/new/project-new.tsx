@@ -11,9 +11,13 @@ import { ROOT_STYLE } from "../servers/consts";
 
 interface Props {
   project_id: string;
+  isVisible?: boolean;
 }
 
-export function ProjectNew({ project_id }: Props): React.JSX.Element {
+export function ProjectNew({
+  project_id,
+  isVisible = true,
+}: Props): React.JSX.Element {
   const { mainWidthPx, projectAccess } = useProjectContext();
 
   if (!projectAccess.capabilities.writeProjectFiles) {
@@ -34,7 +38,7 @@ export function ProjectNew({ project_id }: Props): React.JSX.Element {
   return (
     <Row style={{ ...ROOT_STYLE, maxWidth: null, margin: null }}>
       <Col md={12} mdOffset={0} lg={12 - 2 * offset} lgOffset={offset}>
-        <NewFilePage project_id={project_id} />
+        <NewFilePage project_id={project_id} isVisible={isVisible} />
       </Col>
     </Row>
   );

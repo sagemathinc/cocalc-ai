@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Sender } from "./tcp";
+import { Receiver, Sender } from "./tcp";
 import { messageData } from "@cocalc/conat/core/client";
 
 function socketAck(emitted: number) {
@@ -57,5 +57,21 @@ describe("Conat socket TCP sender", () => {
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toBeDefined();
+  });
+});
+
+describe("Conat socket TCP receiver", () => {
+  it("resets the logical socket on invalid framing", () => {
+    const consoleLog = jest.spyOn(console, "log").mockImplementation();
+    const reset = jest.fn();
+    const receiver = new Receiver(jest.fn(), reset, "client");
+
+    try {
+      receiver.process(messageData("raw terminal output"));
+
+      expect(reset).toHaveBeenCalledTimes(1);
+    } finally {
+      consoleLog.mockRestore();
+    }
   });
 });

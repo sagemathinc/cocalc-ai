@@ -120,8 +120,10 @@ function typeFilterValue(file: DirectoryListingEntry): string {
 
 export function FilesFlyout({
   flyoutWidth,
+  isVisible = true,
 }: {
   flyoutWidth: number;
+  isVisible?: boolean;
 }): React.JSX.Element {
   const {
     isRunning: projectIsRunning,
@@ -979,6 +981,7 @@ export function FilesFlyout({
     return (
       <FileDndProvider
         project_id={project_id}
+        enabled={isVisible}
         onUserFilesystemChange={allowNextListingUpdate}
       >
         <StatefulVirtuoso

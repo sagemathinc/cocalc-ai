@@ -1416,7 +1416,11 @@ function RetainedFlyoutBodies({
               zIndex: isVisible ? 1 : 0,
             }}
           >
-            <FlyoutBody flyout={flyout} flyoutWidth={flyoutWidth} />
+            <FlyoutBody
+              flyout={flyout}
+              flyoutWidth={flyoutWidth}
+              isVisible={isVisible}
+            />
           </div>
         );
       })}
@@ -1592,8 +1596,8 @@ function FlyoutDragbar({
       className="cc-project-flyout-dragbar"
       style={{
         transform: transform ? `translate3d(${dx}px, 0, 0)` : undefined,
-        flex: "1 0 ",
-        width: "5px",
+        flex: "0 0 5px",
+        width: 5,
         height: "100%",
         cursor: "col-resize",
         ...(active ? { zIndex: 1000, backgroundColor: COLORS.GRAY } : {}),

@@ -156,10 +156,12 @@ function FileDragOverlay({
 
 export function FileDndProvider({
   project_id,
+  enabled = true,
   onUserFilesystemChange,
   children,
 }: {
   project_id: string;
+  enabled?: boolean;
   onUserFilesystemChange?: () => void;
   children: React.ReactNode;
 }) {
@@ -181,6 +183,7 @@ export function FileDndProvider({
   );
 
   useEffect(() => {
+    if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Shift") setShiftKey(true);
     };
@@ -193,7 +196,7 @@ export function FileDndProvider({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     if (!activeData) return;

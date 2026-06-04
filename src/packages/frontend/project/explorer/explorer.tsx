@@ -139,7 +139,7 @@ function sortDesc(active_file_sort?): {
   };
 }
 
-export function Explorer() {
+export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
@@ -432,7 +432,12 @@ export function Explorer() {
 
   const { val: clicked, inc: clickedOnExplorer } = useCounter();
   useEffect(() => {
-    if (visibleListing == null || file_action || disableExplorerKeyhandler) {
+    if (
+      !isVisible ||
+      visibleListing == null ||
+      file_action ||
+      disableExplorerKeyhandler
+    ) {
       return;
     }
     const handleKeyDown = (e): void => {
@@ -511,6 +516,7 @@ export function Explorer() {
     effective_current_path,
     visibleListing,
     file_action,
+    isVisible,
     flyout,
     clicked,
     disableExplorerKeyhandler,
@@ -712,6 +718,7 @@ You can either wait for this host to become available again, or move this ${proj
   return (
     <FileDndProvider
       project_id={project_id}
+      enabled={isVisible}
       onUserFilesystemChange={() => allowListingUpdatesFor()}
     >
       <div

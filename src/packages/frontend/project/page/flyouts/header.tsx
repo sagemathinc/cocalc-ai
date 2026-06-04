@@ -157,7 +157,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
         background: FIXED_TABS_BG_COLOR,
         borderRadius: "5px 5px 0 0",
         width: `${flyoutWidth - narrowerPX}px`,
-        paddingLeft: "10px",
+        paddingLeft: FLYOUT_PADDING,
         paddingTop: "10px",
         fontSize: "1.2em",
         marginRight: FLYOUT_PADDING,
