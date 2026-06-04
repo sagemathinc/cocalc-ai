@@ -228,6 +228,29 @@ Public ingress and peer health are separate. Cloudflare tunnels can expose the
 public site, but bay-to-bay health and control traffic should use private
 internal IPs and firewall rules scoped to bay VMs.
 
+The repeatable wrapper for a small cluster is `bay-cluster.sh`:
+
+```sh
+./src/scripts/bay-systemd/bay-cluster.sh install-topology \
+  --cluster bella \
+  --seed-bay bay-0 \
+  --bay bay-0=ubuntu@34.0.157.185=10.206.0.21 \
+  --bay bay-1=ubuntu@34.0.146.0=10.206.0.22
+
+./src/scripts/bay-systemd/bay-cluster.sh status \
+  --bay bay-0=ubuntu@34.0.157.185=10.206.0.21 \
+  --bay bay-1=ubuntu@34.0.146.0=10.206.0.22
+
+./src/scripts/bay-systemd/bay-cluster.sh health \
+  --bay bay-0=ubuntu@34.0.157.185=10.206.0.21 \
+  --bay bay-1=ubuntu@34.0.146.0=10.206.0.22
+```
+
+By default `install-topology` rotates `COCALC_CLUSTER_SHARED_SECRET` across all
+listed bays using a temporary secret file copied over SSH. Use `--secret-file`
+to install a pre-generated shared secret, or `--no-rotate-secret` to only update
+topology and preserve existing secrets.
+
 ## Important Constraints
 
 - The wrapper scripts expect environment to come from:
