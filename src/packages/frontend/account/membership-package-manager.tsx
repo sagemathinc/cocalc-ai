@@ -283,7 +283,7 @@ function makeDefaultSiteLicensePool({
 }): SiteLicensePoolConfig {
   return {
     pool_name: `Pool ${index + 1}`,
-    membership_class: (tiers[0]?.id ?? "member") as MembershipClass,
+    membership_class: (tiers[0]?.id ?? "standard") as MembershipClass,
     seat_count: 25,
     requires_approval: true,
     verification_policy: "email-domain",

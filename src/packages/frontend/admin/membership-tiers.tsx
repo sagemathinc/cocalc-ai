@@ -70,7 +70,6 @@ const TEMPLATE_KEYS = [
   "basic",
   "student",
   "standard",
-  "member",
   "instructor",
   "researcher",
   "pro",
@@ -3645,8 +3644,8 @@ export function MembershipTiers() {
           </>
         )}
         <Paragraph style={{ marginBottom: 0 }}>
-          Tip: Tier IDs should be stable slugs (e.g., <Text code>member</Text>).
-          Set <Text code>Visible</Text> for public purchase UI and{" "}
+          Tip: Use stable tier IDs, e.g. <Text code>standard</Text>. Set{" "}
+          <Text code>Visible</Text> for public purchase UI and{" "}
           <Text code>Course visible</Text> for course student memberships.
         </Paragraph>
       </div>
