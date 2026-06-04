@@ -28,10 +28,22 @@ import {
   type AdminRoute,
 } from "./routing";
 import { useActions } from "@cocalc/frontend/app-framework";
+import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { set_url_with_search } from "@cocalc/frontend/history";
 
 const headerStyle = { fontSize: "12pt" } as const;
 const { Paragraph, Text } = Typography;
+const IS_STAR_SETUP_PROFILE = cocalc_setup_profile === "star";
+const STAR_HIDDEN_ADMIN_SECTIONS = new Set([
+  "managed-cpu",
+  "managed-egress",
+  "bay-ops",
+  "project-backup-shards",
+  "software-licenses",
+  "sso",
+  "admin-purchase",
+  "site-licenses",
+]);
 
 export function AdminPage({
   route = { kind: "index" },
@@ -318,7 +330,13 @@ export function AdminPage({
     //       ),
     //       children: <UsageStatistics />,
     //     },
-  ];
+  ].filter(
+    (item) =>
+      !(
+        IS_STAR_SETUP_PROFILE &&
+        STAR_HIDDEN_ADMIN_SECTIONS.has(`${item?.key ?? ""}`)
+      ),
+  );
 
   return (
     <div

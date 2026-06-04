@@ -110,12 +110,21 @@ build_star_helper_bundles() {
       packages/server/build/star-helper-entrypoints/seed-star-poc.cjs
     cp scripts/star-poc/ensure-rootfs-cache.cjs \
       packages/project-host/build/star-helper-entrypoints/ensure-rootfs-cache.cjs
+    cp scripts/star-poc/publish-default-rootfs.cjs \
+      packages/server/build/star-helper-entrypoints/publish-default-rootfs.cjs
     rm -rf \
       "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
-      "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache"
+      "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
+      "$STAR_HELPER_BUILD_DIR/publish-default-rootfs"
     pnpm --filter @cocalc/launchpad exec ncc build \
       "$SRC_ROOT/packages/server/build/star-helper-entrypoints/seed-star-poc.cjs" \
       -o "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
+      --external bufferutil \
+      --external utf-8-validate \
+      --license licenses.txt
+    pnpm --filter @cocalc/launchpad exec ncc build \
+      "$SRC_ROOT/packages/server/build/star-helper-entrypoints/publish-default-rootfs.cjs" \
+      -o "$STAR_HELPER_BUILD_DIR/publish-default-rootfs" \
       --external bufferutil \
       --external utf-8-validate \
       --license licenses.txt
