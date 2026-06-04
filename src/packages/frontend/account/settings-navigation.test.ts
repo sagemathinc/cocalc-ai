@@ -99,7 +99,14 @@ describe("settings-navigation", () => {
     ).toEqual(["team-licenses", "site-licenses", "software-licenses"]);
     expect(
       overview.sections.find((section) => section.key === "billing")?.pages,
-    ).not.toContain("payment-methods");
+    ).toEqual([
+      "subscriptions",
+      "purchases",
+      "payments",
+      "payment-methods",
+      "statements",
+      "vouchers",
+    ]);
     expect(
       overview.sections.find((section) => section.key === "support")?.pages,
     ).toEqual(["support"]);

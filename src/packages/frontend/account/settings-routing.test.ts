@@ -27,6 +27,9 @@ describe("settings-routing", () => {
     expect(parseAccountSettingsRoute("settings/site-licenses")).toEqual({
       page: "site-licenses",
     });
+    expect(parseAccountSettingsRoute("settings/subscriptions")).toEqual({
+      page: "subscriptions",
+    });
     expect(parseAccountSettingsRoute("settings/vouchers")).toEqual({
       page: "vouchers",
     });
@@ -46,6 +49,9 @@ describe("settings-routing", () => {
     expect(getSettingsTargetPath({ page: "index" })).toBe("settings");
     expect(getSettingsTargetPath({ page: "vouchers" })).toBe(
       "settings/vouchers",
+    );
+    expect(getSettingsTargetPath({ page: "subscriptions" })).toBe(
+      "settings/subscriptions",
     );
     expect(getSettingsTargetPath({ page: "membership" })).toBe(
       "settings/membership",

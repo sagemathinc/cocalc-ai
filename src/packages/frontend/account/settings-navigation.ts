@@ -117,7 +117,11 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
     label: labels.billing,
     overview: "section",
     pages: [
-      { type: "page", page: "vouchers" },
+      {
+        type: "page",
+        page: "subscriptions",
+        visible: ({ isCommercial }) => isCommercial,
+      },
       {
         type: "page",
         page: "purchases",
@@ -131,7 +135,6 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
       {
         type: "page",
         page: "payment-methods",
-        overview: "hidden",
         visible: ({ isCommercial }) => isCommercial,
       },
       {
@@ -139,6 +142,7 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
         page: "statements",
         visible: ({ isCommercial }) => isCommercial,
       },
+      { type: "page", page: "vouchers" },
     ],
   },
   {
