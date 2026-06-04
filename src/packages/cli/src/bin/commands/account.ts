@@ -41,6 +41,20 @@ function serializeManagedEgressEvent(
   };
 }
 
+function assertUnsafeRehome({
+  unsafeRehome,
+  write,
+}: {
+  unsafeRehome?: boolean;
+  write?: boolean;
+}): void {
+  if (!unsafeRehome) {
+    throw new Error(
+      `account rehome is an exceptional unsafe operation; pass --unsafe-rehome${write ? " with --write" : ""} only after auditing account-owned data portability`,
+    );
+  }
+}
+
 function serializeMembershipDetails(
   details: MembershipDetails,
   account_id: string,
@@ -312,6 +326,11 @@ export function registerAccountCommand(
     .option("--reason <reason>", "operator-visible reason")
     .option("--campaign <id>", "operator-visible batch/campaign id")
     .option("-y, --yes", "skip interactive safety confirmation")
+    .option(
+      "--unsafe-rehome",
+      "acknowledge account rehome can orphan or lose non-portable account-owned data",
+      false,
+    )
     .action(
       async (
         accountIdentifier: string,
@@ -320,6 +339,7 @@ export function registerAccountCommand(
           reason?: string;
           campaign?: string;
           yes?: boolean;
+          unsafeRehome?: boolean;
         },
         command: Command,
       ) => {
@@ -344,6 +364,7 @@ export function registerAccountCommand(
               `refusing to rehome account '${label}' without --yes`,
             );
           }
+          assertUnsafeRehome({ unsafeRehome: opts.unsafeRehome });
           return await ctx.hub.system.rehomeAccount({
             user_account_id: accountId,
             dest_bay_id: destBayId,
@@ -412,6 +433,11 @@ export function registerAccountCommand(
     .option("--reason <reason>", "operator reason, e.g. maintenance or load")
     .option("--only-if-tag <tag>", "only drain accounts with this tag")
     .option("--write", "apply changes instead of dry run", false)
+    .option(
+      "--unsafe-rehome",
+      "required with --write; acknowledge account rehome can orphan or lose non-portable account-owned data",
+      false,
+    )
     .action(
       async (
         opts: {
@@ -422,6 +448,7 @@ export function registerAccountCommand(
           reason?: string;
           onlyIfTag?: string;
           write?: boolean;
+          unsafeRehome?: boolean;
         },
         command: Command,
       ) => {
@@ -433,6 +460,12 @@ export function registerAccountCommand(
           const destBayId = `${opts.destBay ?? ""}`.trim();
           if (!destBayId) {
             throw new Error("--dest-bay is required");
+          }
+          if (opts.write === true) {
+            assertUnsafeRehome({
+              unsafeRehome: opts.unsafeRehome,
+              write: true,
+            });
           }
           return await ctx.hub.system.drainAccountRehome({
             source_bay_id: `${opts.sourceBay ?? ""}`.trim() || undefined,

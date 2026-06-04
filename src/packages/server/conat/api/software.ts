@@ -1,5 +1,9 @@
 import getPool from "@cocalc/database/pool";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { uuid } from "@cocalc/util/misc";
 import {
   encodeSoftwareLicenseToken,
@@ -14,6 +18,17 @@ const logger = getLogger("server:conat:api:software");
 const PRIVATE_KEY_SETTING = "software_license_private_key";
 const ADMIN_LICENSE_LIST_COLUMNS =
   "id, tier_id, owner_account_id, created, expires_at, revoked_at, limits, features, notes, created_by, last_refresh_at";
+
+function isSeedBay(): boolean {
+  return getConfiguredBayId() === getConfiguredClusterSeedBayId();
+}
+
+function getSeedSoftwareLicenseClient() {
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: getConfiguredClusterSeedBayId(),
+  });
+}
 
 function requireAdmin(account_id?: string) {
   if (!account_id) {
@@ -71,6 +86,19 @@ async function recordEvent({
   );
 }
 
+export async function listLicenseTiersOnSeed({
+  include_disabled,
+}: {
+  include_disabled?: boolean;
+}) {
+  const pool = getPool();
+  const where = include_disabled ? "" : "WHERE coalesce(disabled,false)=false";
+  const { rows } = await pool.query(
+    `SELECT * FROM software_license_tiers ${where} ORDER BY id ASC`,
+  );
+  return rows;
+}
+
 export async function listLicenseTiers({
   account_id,
   include_disabled,
@@ -81,23 +109,20 @@ export async function listLicenseTiers({
   if (!(await requireAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  const pool = getPool();
-  const where = include_disabled ? "" : "WHERE coalesce(disabled,false)=false";
-  const { rows } = await pool.query(
-    `SELECT * FROM software_license_tiers ${where} ORDER BY id ASC`,
-  );
-  return rows;
+  if (!isSeedBay()) {
+    return await getSeedSoftwareLicenseClient().listSoftwareLicenseTiers({
+      actor_account_id: account_id!,
+      include_disabled,
+    });
+  }
+  return await listLicenseTiersOnSeed({ include_disabled });
 }
 
-export async function upsertLicenseTier({
-  account_id,
-  browser_id,
-  session_hash,
+export async function upsertLicenseTierOnSeed({
   tier,
+  actor_account_id,
 }: {
-  account_id?: string;
-  browser_id?: string | null;
-  session_hash?: string | null;
+  actor_account_id?: string;
   tier: {
     id: string;
     label?: string;
@@ -111,7 +136,6 @@ export async function upsertLicenseTier({
     notes?: string;
   };
 }) {
-  await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
   if (!tier?.id) {
     throw Error("tier.id must be set");
   }
@@ -145,20 +169,51 @@ export async function upsertLicenseTier({
       tier.notes ?? null,
     ],
   );
+  logger.info("upserted software license tier", {
+    tier_id: tier.id,
+    actor_account_id,
+  });
 }
 
-export async function listLicenses({
+export async function upsertLicenseTier({
   account_id,
+  browser_id,
+  session_hash,
+  tier,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  tier: {
+    id: string;
+    label?: string;
+    description?: string;
+    max_accounts?: number;
+    max_project_hosts?: number;
+    max_active_licenses?: number;
+    defaults?: Record<string, any>;
+    features?: Record<string, any>;
+    disabled?: boolean;
+    notes?: string;
+  };
+}) {
+  await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
+  if (!isSeedBay()) {
+    return await getSeedSoftwareLicenseClient().upsertSoftwareLicenseTier({
+      actor_account_id: account_id!,
+      tier,
+    });
+  }
+  return await upsertLicenseTierOnSeed({ tier, actor_account_id: account_id });
+}
+
+export async function listLicensesOnSeed({
   search,
   limit,
 }: {
-  account_id?: string;
   search?: string;
   limit?: number;
 }) {
-  if (!(await requireAdmin(account_id))) {
-    throw Error("must be an admin");
-  }
   const pool = getPool();
   const clauses: string[] = [];
   const params: any[] = [];
@@ -177,10 +232,30 @@ export async function listLicenses({
   return rows;
 }
 
-export async function createLicense({
+export async function listLicenses({
   account_id,
-  browser_id,
-  session_hash,
+  search,
+  limit,
+}: {
+  account_id?: string;
+  search?: string;
+  limit?: number;
+}) {
+  if (!(await requireAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  if (!isSeedBay()) {
+    return await getSeedSoftwareLicenseClient().listSoftwareLicenses({
+      actor_account_id: account_id!,
+      search,
+      limit,
+    });
+  }
+  return await listLicensesOnSeed({ search, limit });
+}
+
+export async function createLicenseOnSeed({
+  actor_account_id,
   tier_id,
   owner_account_id,
   product = "launchpad",
@@ -189,9 +264,7 @@ export async function createLicense({
   features,
   notes,
 }: {
-  account_id?: string;
-  browser_id?: string | null;
-  session_hash?: string | null;
+  actor_account_id?: string;
   tier_id: string;
   owner_account_id?: string;
   product?: "launchpad" | "rocket";
@@ -200,7 +273,6 @@ export async function createLicense({
   features?: Record<string, any>;
   notes?: string;
 }) {
-  await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
   const pool = getPool();
   const { rows: tiers } = await pool.query(
     "SELECT * FROM software_license_tiers WHERE id=$1",
@@ -243,7 +315,7 @@ export async function createLicense({
   const token = encodeSoftwareLicenseToken(
     signSoftwareLicense(payload, await getPrivateKey()),
   );
-  const owner = owner_account_id ?? account_id;
+  const owner = owner_account_id ?? actor_account_id;
   await pool.query(
     `INSERT INTO software_licenses
       (id, tier_id, owner_account_id, created, expires_at, revoked_at,
@@ -258,13 +330,13 @@ export async function createLicense({
       mergedLimits,
       mergedFeatures,
       notes ?? null,
-      account_id ?? null,
+      actor_account_id ?? null,
     ],
   );
   await recordEvent({
     license_id,
     event: "created",
-    actor_account_id: account_id,
+    actor_account_id,
     metadata: { tier_id, owner_account_id: owner },
   });
   const { rows } = await pool.query(
@@ -273,6 +345,76 @@ export async function createLicense({
   );
   logger.info("created software license", { license_id, tier_id, owner });
   return rows[0];
+}
+
+export async function createLicense({
+  account_id,
+  browser_id,
+  session_hash,
+  tier_id,
+  owner_account_id,
+  product = "launchpad",
+  expires_at,
+  limits,
+  features,
+  notes,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  tier_id: string;
+  owner_account_id?: string;
+  product?: "launchpad" | "rocket";
+  expires_at?: string;
+  limits?: Record<string, any>;
+  features?: Record<string, any>;
+  notes?: string;
+}) {
+  await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
+  if (!isSeedBay()) {
+    return await getSeedSoftwareLicenseClient().createSoftwareLicense({
+      actor_account_id: account_id!,
+      tier_id,
+      owner_account_id,
+      product,
+      expires_at,
+      limits,
+      features,
+      notes,
+    });
+  }
+  return await createLicenseOnSeed({
+    actor_account_id: account_id,
+    tier_id,
+    owner_account_id,
+    product,
+    expires_at,
+    limits,
+    features,
+    notes,
+  });
+}
+
+export async function revokeLicenseOnSeed({
+  actor_account_id,
+  license_id,
+  reason,
+}: {
+  actor_account_id?: string;
+  license_id: string;
+  reason?: string;
+}) {
+  const pool = getPool();
+  await pool.query(
+    "UPDATE software_licenses SET revoked_at=NOW() WHERE id=$1",
+    [license_id],
+  );
+  await recordEvent({
+    license_id,
+    event: "revoked",
+    actor_account_id,
+    metadata: { reason },
+  });
 }
 
 export async function revokeLicense({
@@ -289,16 +431,35 @@ export async function revokeLicense({
   reason?: string;
 }) {
   await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
+  if (!isSeedBay()) {
+    return await getSeedSoftwareLicenseClient().revokeSoftwareLicense({
+      actor_account_id: account_id!,
+      license_id,
+      reason,
+    });
+  }
+  return await revokeLicenseOnSeed({
+    actor_account_id: account_id,
+    license_id,
+    reason,
+  });
+}
+
+export async function restoreLicenseOnSeed({
+  actor_account_id,
+  license_id,
+}: {
+  actor_account_id?: string;
+  license_id: string;
+}) {
   const pool = getPool();
-  await pool.query(
-    "UPDATE software_licenses SET revoked_at=NOW() WHERE id=$1",
-    [license_id],
-  );
+  await pool.query("UPDATE software_licenses SET revoked_at=NULL WHERE id=$1", [
+    license_id,
+  ]);
   await recordEvent({
     license_id,
-    event: "revoked",
-    actor_account_id: account_id,
-    metadata: { reason },
+    event: "restored",
+    actor_account_id,
   });
 }
 
@@ -314,25 +475,39 @@ export async function restoreLicense({
   license_id: string;
 }) {
   await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
-  const pool = getPool();
-  await pool.query("UPDATE software_licenses SET revoked_at=NULL WHERE id=$1", [
-    license_id,
-  ]);
-  await recordEvent({
-    license_id,
-    event: "restored",
+  if (!isSeedBay()) {
+    return await getSeedSoftwareLicenseClient().restoreSoftwareLicense({
+      actor_account_id: account_id!,
+      license_id,
+    });
+  }
+  return await restoreLicenseOnSeed({
     actor_account_id: account_id,
+    license_id,
   });
 }
 
-export async function listMyLicenses({ account_id }: { account_id?: string }) {
-  if (!account_id) {
-    throw Error("must be signed in");
-  }
+export async function listOwnedLicensesOnSeed({
+  account_id,
+}: {
+  account_id: string;
+}) {
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT * FROM software_licenses WHERE owner_account_id=$1 ORDER BY created DESC",
     [account_id],
   );
   return rows;
+}
+
+export async function listMyLicenses({ account_id }: { account_id?: string }) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  if (!isSeedBay()) {
+    return await getSeedSoftwareLicenseClient().listOwnedSoftwareLicenses({
+      account_id,
+    });
+  }
+  return await listOwnedLicensesOnSeed({ account_id });
 }
