@@ -6,11 +6,9 @@
 import { Card, Space, Tag, Typography } from "antd";
 import { defineMessage } from "react-intl";
 import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-page";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { labels } from "@cocalc/frontend/i18n";
 
-import AdminPurchasePanel from "./admin-purchase-panel";
 import VoucherPurchasePanel from "./voucher-purchase-panel";
 
 const { Paragraph, Text, Title } = Typography;
@@ -19,8 +17,7 @@ export const STORE_SETTINGS_PAGE = {
   component: StorePage,
   description: defineMessage({
     id: "account.settings.overview.store",
-    defaultMessage:
-      "Purchase credit vouchers and access temporary admin purchase tools.",
+    defaultMessage: "Purchase credit vouchers inside the app.",
   }),
   icon: "shopping-cart",
   key: "store",
@@ -28,8 +25,6 @@ export const STORE_SETTINGS_PAGE = {
 } satisfies SettingsPageDefinition;
 
 export function StorePage() {
-  const isAdmin = !!useTypedRedux("account", "is_admin");
-
   return (
     <div style={{ padding: "20px", overflowY: "auto" }}>
       <Title level={3} style={{ marginBottom: 4 }}>
@@ -78,8 +73,6 @@ export function StorePage() {
             are a separate follow-up.
           </Paragraph>
         </Card>
-
-        {isAdmin && <AdminPurchasePanel />}
       </Space>
     </div>
   );

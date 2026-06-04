@@ -21,6 +21,7 @@ import { ProjectBackupShardsAdmin } from "./project-backup-shards";
 import { SsoAdmin } from "./sso";
 import { SiteSetupAdmin, SiteSetupBanner } from "./site-setup";
 import { SiteLicensesAdmin } from "./site-licenses";
+import { AdminPurchaseAdmin } from "./admin-purchase";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -287,6 +288,16 @@ export function AdminPage({
         </div>
       ),
       children: <MembershipTiers />,
+    },
+    {
+      key: "admin-purchase",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="shopping-cart" style={{ marginRight: "8px" }} /> Admin
+          Purchase
+        </div>
+      ),
+      children: <AdminPurchaseAdmin />,
     },
     {
       key: "site-licenses",

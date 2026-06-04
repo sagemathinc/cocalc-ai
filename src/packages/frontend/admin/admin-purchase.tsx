@@ -6,7 +6,6 @@
 import {
   Alert,
   Button,
-  Card,
   Divider,
   Flex,
   Input,
@@ -36,7 +35,7 @@ import { toDecimal } from "@cocalc/util/money";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { MAX_VOUCHERS, MAX_VOUCHER_VALUE } from "@cocalc/util/vouchers";
 
-import { adminPurchase } from "./api";
+import { adminPurchase } from "@cocalc/frontend/store/api";
 
 const { Paragraph, Text } = Typography;
 
@@ -51,7 +50,7 @@ interface MembershipTier extends MembershipTierWithPresentation {
   priority?: number;
 }
 
-export default function AdminPurchasePanel() {
+export function AdminPurchaseAdmin() {
   const [product, setProduct] = useState<Product>("membership");
   const [targetQuery, setTargetQuery] = useState<string>("");
   const [targetUser, setTargetUser] = useState<User | null>(null);
@@ -254,7 +253,7 @@ export default function AdminPurchasePanel() {
   }
 
   return (
-    <Card size="small" title="Admin-assisted purchase">
+    <>
       <Paragraph type="secondary">
         Create a manual purchase for another user. This supports discounts,
         custom prices, credit-funded purchases, and fully free comps, matching
@@ -455,6 +454,6 @@ export default function AdminPurchasePanel() {
         </Button>
       </Space>
       <FreshAuthModal {...freshAuthModalProps} />
-    </Card>
+    </>
   );
 }
