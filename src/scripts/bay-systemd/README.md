@@ -128,6 +128,14 @@ PROJECT_ID=projecthosts \
   ./src/scripts/bay-systemd/gcp-rocket-bootstrap-service-account.sh
 ```
 
+To update IAM roles for an existing service account without creating another
+JSON key:
+
+```sh
+PROJECT_ID=projecthosts GENERATE_KEY=0 \
+  ./src/scripts/bay-systemd/gcp-rocket-bootstrap-service-account.sh
+```
+
 The script prints a JSON service account key between explicit markers. Treat
 that JSON as a password and store it as a CoCalc project secret before passing
 it to `gcp-bootstrap-dogfood-bay.sh --key-file`.
@@ -147,6 +155,7 @@ The custom firewall role is intentionally narrower than
 - `compute.firewalls.get`
 - `compute.firewalls.list`
 - `compute.firewalls.update`
+- `compute.networks.updatePolicy`
 
 Set `INCLUDE_FIREWALL_ADMIN=0` to skip the custom role. If custom-role creation
 is blocked by organization policy, manually grant `roles/compute.securityAdmin`

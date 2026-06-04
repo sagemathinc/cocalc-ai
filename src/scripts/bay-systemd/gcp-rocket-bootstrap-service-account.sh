@@ -10,6 +10,7 @@ PROJECT_ID="${PROJECT_ID:-}"
 SA_NAME="${SA_NAME:-cocalc-rocket-bootstrap}"
 DISPLAY_NAME="${DISPLAY_NAME:-CoCalc Rocket Bootstrap}"
 ENABLE_SERVICES="${ENABLE_SERVICES:-1}"
+GENERATE_KEY="${GENERATE_KEY:-1}"
 INCLUDE_FIREWALL_ADMIN="${INCLUDE_FIREWALL_ADMIN:-1}"
 FIREWALL_ROLE_ID="${FIREWALL_ROLE_ID:-cocalcRocketFirewallAdmin}"
 FIREWALL_ROLE_TITLE="${FIREWALL_ROLE_TITLE:-CoCalc Rocket Firewall Admin}"
@@ -29,6 +30,7 @@ FIREWALL_PERMISSIONS=(
   compute.firewalls.get
   compute.firewalls.list
   compute.firewalls.update
+  compute.networks.updatePolicy
 )
 
 log() {
@@ -72,6 +74,7 @@ Environment:
   SA_NAME                    default: cocalc-rocket-bootstrap
   DISPLAY_NAME               default: CoCalc Rocket Bootstrap
   ENABLE_SERVICES            default: 1; set 0 to skip gcloud services enable
+  GENERATE_KEY               default: 1; set 0 to update IAM only
   INCLUDE_FIREWALL_ADMIN     default: 1; create/grant a custom firewall role
   FIREWALL_ROLE_ID           default: cocalcRocketFirewallAdmin
 
@@ -82,6 +85,7 @@ Firewall role:
   - compute.firewalls.get
   - compute.firewalls.list
   - compute.firewalls.update
+  - compute.networks.updatePolicy
 
   This is narrower than roles/compute.securityAdmin and is enough for scripts
   that idempotently create, inspect, update, or remove VPC firewall rules.
@@ -225,30 +229,40 @@ if [[ "$INCLUDE_FIREWALL_ADMIN" != "0" ]]; then
   fi
 fi
 
-KEY_PATH="$(mktemp)"
-log "Generating raw service account key JSON"
-gcloud iam service-accounts keys create "$KEY_PATH" \
-  --project "$PROJECT_ID" \
-  --iam-account="$SA_EMAIL" \
-  >/dev/null
+if [[ "$GENERATE_KEY" != "0" ]]; then
+  KEY_PATH="$(mktemp)"
+  log "Generating raw service account key JSON"
+  gcloud iam service-accounts keys create "$KEY_PATH" \
+    --project "$PROJECT_ID" \
+    --iam-account="$SA_EMAIL" \
+    >/dev/null
 
-cat <<EOF
+  cat <<EOF
 ${START_MARKER}
 $(cat "$KEY_PATH")
 ${END_MARKER}
 EOF
+fi
 
 cat >&2 <<EOF
 
-Created key for:
+Updated service account:
   project: ${PROJECT_ID}
   service_account: ${SA_EMAIL}
   firewall_role: $(if [[ "$INCLUDE_FIREWALL_ADMIN" != "0" ]]; then custom_role_name; else printf 'disabled'; fi)
+  generated_key: ${GENERATE_KEY}
 
+$(if [[ "$GENERATE_KEY" != "0" ]]; then cat <<'KEY_NOTE'
 Paste only the JSON between the markers into a CoCalc project secret.
 Then run the bay bootstrap helper with:
   --key-file /path/to/mounted/project/secret.json
 
 Treat this JSON as a password. Delete old keys from IAM when they are no
 longer needed.
+KEY_NOTE
+else cat <<'NO_KEY_NOTE'
+No key was generated. Existing service account keys continue to work after IAM
+propagates.
+NO_KEY_NOTE
+fi)
 EOF
