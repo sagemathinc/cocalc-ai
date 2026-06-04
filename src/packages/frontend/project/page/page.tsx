@@ -49,7 +49,8 @@ import { OOMWarning } from "../warnings/oom";
 import { RamWarning } from "../warnings/ram";
 import { FIX_BORDERS } from "./common";
 import { Content } from "./content";
-import { isFixedTab } from "./file-tab";
+import { FIXED_PROJECT_TABS, isFixedTab } from "./file-tab";
+import type { FixedTab } from "./file-tab";
 import { FlyoutBody } from "./flyouts/body";
 import { FLYOUT_DEFAULT_WIDTH_PX } from "./flyouts/consts";
 import { FlyoutHeader } from "./flyouts/header";
@@ -86,6 +87,7 @@ import {
 } from "./keyboard-navigation";
 import { shouldRenderMoveStatus } from "./move-status";
 import { getRecoverableActiveEditorPath } from "./active-editor-recovery";
+import { retainTab } from "./retained-tabs";
 import {
   hasProjectRoleForAccessLandingBypass,
   projectAccessSignInHrefForCurrentLocation,
@@ -215,6 +217,12 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     getFlyoutWidth(project_id),
   );
   const [oldFlyoutWidth, setOldFlyoutWidth] = useState(flyoutWidth);
+  const [retainedFlyouts, setRetainedFlyouts] = useState<readonly FixedTab[]>(
+    [],
+  );
+  const [retainedFixedTabs, setRetainedFixedTabs] = useState<
+    readonly FixedTab[]
+  >([]);
   const { pageWidthPx } = useAppContext();
   const workspaceChrome = workspaceStrongThemeChrome(
     projectCtx.workspaces.current,
@@ -286,6 +294,44 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     projectCtx.workspaces,
     workspaceStartupGuard,
   ]);
+
+  const displayProjectTab = useMemo(() => {
+    const displayTab = initialWorkspaceRender.displayActiveTab;
+    if (lifecycle.shouldForceHomeTab && displayTab === "files") {
+      return "home";
+    }
+    return displayTab;
+  }, [initialWorkspaceRender.displayActiveTab, lifecycle.shouldForceHomeTab]);
+
+  useEffect(() => {
+    if (
+      !is_active ||
+      hardDeleteBlocked ||
+      initialWorkspaceRender.pending ||
+      !isFixedTab(displayProjectTab) ||
+      FIXED_PROJECT_TABS[displayProjectTab].noFullPage
+    ) {
+      return;
+    }
+    setRetainedFixedTabs((tabs) => retainTab(tabs, displayProjectTab));
+  }, [
+    displayProjectTab,
+    hardDeleteBlocked,
+    initialWorkspaceRender.pending,
+    is_active,
+  ]);
+
+  useEffect(() => {
+    if (
+      !flyout ||
+      (fullscreen && fullscreen !== "project") ||
+      workspaceBlocked ||
+      hardDeleteBlocked
+    ) {
+      return;
+    }
+    setRetainedFlyouts((tabs) => retainTab(tabs, flyout));
+  }, [flyout, fullscreen, hardDeleteBlocked, workspaceBlocked]);
 
   useEffect(() => {
     if (!workspaceStartupGuard) return;
@@ -511,26 +557,44 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     }
     if (!is_active) {
       // see https://github.com/sagemathinc/cocalc/issues/3799
-      // Some of the fixed project tabs (none editors) are hooked
-      // into redux and moronic about rendering everything on every
-      // tiny change... Until that is fixed, it is critical to NOT
-      // render these pages at all, unless the tab is active
-      // and they are visible.
+      // Some fixed project tabs are expensive and hooked into broad redux
+      // state. We retain hidden fixed tabs only while this project is active,
+      // so switching within the project is smooth without making background
+      // projects do hidden panel work.
       return;
     }
-    let displayTab = initialWorkspaceRender.displayActiveTab;
-    if (lifecycle.shouldForceHomeTab && displayTab === "files") {
-      displayTab = "home";
+    if (initialWorkspaceRender.pending) {
+      return;
     }
-    if (
-      !initialWorkspaceRender.pending &&
-      displayTab &&
-      displayTab.slice(0, 7) !== EDITOR_PREFIX
-    ) {
-      return (
-        <Content key={displayTab} is_visible={true} tab_name={displayTab} />
-      );
+    const activeFixedTab = isFixedTab(displayProjectTab)
+      ? displayProjectTab
+      : null;
+    if (activeFixedTab != null) {
+      const fixedTabsToRender = retainedFixedTabs.includes(activeFixedTab)
+        ? retainedFixedTabs
+        : [...retainedFixedTabs, activeFixedTab];
+      return fixedTabsToRender.map((tab) => (
+        <Content
+          key={tab}
+          is_visible={displayProjectTab === tab}
+          tab_name={tab}
+        />
+      ));
     }
+    const retainedFixedContent = retainedFixedTabs.map((tab) => (
+      <Content key={tab} is_visible={false} tab_name={tab} />
+    ));
+    if (!displayProjectTab || displayProjectTab.slice(0, 7) === EDITOR_PREFIX) {
+      return retainedFixedContent;
+    }
+    return [
+      ...retainedFixedContent,
+      <Content
+        key={displayProjectTab}
+        is_visible={true}
+        tab_name={displayProjectTab}
+      />,
+    ];
   }
 
   function render_project_modal() {
@@ -554,22 +618,45 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   }
 
   function renderFlyout() {
-    if (!flyout) return;
     if (fullscreen && fullscreen !== "project") return;
+    if (!flyout && retainedFlyouts.length === 0) return;
 
+    const flyoutIsVisible = !!flyout;
     return (
-      <div style={{ display: "flex", flexDirection: "row" }}>
-        <FlyoutBody flyout={flyout} flyoutWidth={flyoutWidth} />
-        <DndContext
-          onDragStart={() => setOldFlyoutWidth(flyoutWidth)}
-          onDragEnd={(e) => updateDrag(e)}
-        >
-          <FlyoutDragbar
-            resetFlyoutWidth={resetFlyoutWidth}
-            flyoutLimit={flyoutLimit}
-            oldFlyoutWidth={oldFlyoutWidth}
-          />
-        </DndContext>
+      <div
+        style={
+          flyoutIsVisible
+            ? { display: "flex", flexDirection: "row" }
+            : {
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: -flyoutWidth - 20,
+                width: flyoutWidth,
+                display: "flex",
+                flexDirection: "row",
+                visibility: "hidden",
+                pointerEvents: "none",
+              }
+        }
+      >
+        <RetainedFlyoutBodies
+          activeFlyout={flyout}
+          flyouts={retainedFlyouts}
+          flyoutWidth={flyoutWidth}
+        />
+        {flyoutIsVisible ? (
+          <DndContext
+            onDragStart={() => setOldFlyoutWidth(flyoutWidth)}
+            onDragEnd={(e) => updateDrag(e)}
+          >
+            <FlyoutDragbar
+              resetFlyoutWidth={resetFlyoutWidth}
+              flyoutLimit={flyoutLimit}
+              oldFlyoutWidth={oldFlyoutWidth}
+            />
+          </DndContext>
+        ) : null}
       </div>
     );
   }
@@ -814,7 +901,14 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         {!hardDeleteBlocked && !isViewer && <ProjectWarningBanner />}
         {renderHostUnavailableBanner()}
         {renderTopRow()}
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <div
+          style={{
+            display: "flex",
+            flex: 1,
+            overflow: "hidden",
+            position: "relative",
+          }}
+        >
           {!workspaceBlocked &&
             !hardDeleteBlocked &&
             renderActivityBarButtons()}
@@ -1278,6 +1372,53 @@ function ProjectAccessLandingError({
           </Button>
         }
       />
+    </div>
+  );
+}
+
+function RetainedFlyoutBodies({
+  activeFlyout,
+  flyouts,
+  flyoutWidth,
+}: {
+  activeFlyout: FixedTab | null | undefined;
+  flyouts: readonly FixedTab[];
+  flyoutWidth: number;
+}) {
+  const visibleFlyouts = useMemo(() => {
+    if (!activeFlyout || flyouts.includes(activeFlyout)) {
+      return flyouts;
+    }
+    return [...flyouts, activeFlyout];
+  }, [activeFlyout, flyouts]);
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: flyoutWidth,
+        height: "100%",
+        flex: `0 0 ${flyoutWidth}px`,
+      }}
+    >
+      {visibleFlyouts.map((flyout) => {
+        const isVisible = flyout === activeFlyout;
+        return (
+          <div
+            key={flyout}
+            aria-hidden={!isVisible}
+            style={{
+              position: "absolute",
+              inset: 0,
+              visibility: isVisible ? "visible" : "hidden",
+              pointerEvents: isVisible ? "auto" : "none",
+              zIndex: isVisible ? 1 : 0,
+            }}
+          >
+            <FlyoutBody flyout={flyout} flyoutWidth={flyoutWidth} />
+          </div>
+        );
+      })}
     </div>
   );
 }
