@@ -50,6 +50,15 @@ use_node_26() {
   fi
 }
 
+clean_generated_bundle_workspaces() {
+  rm -rf \
+    packages/cli/build/bundle \
+    packages/launchpad/build/bundle \
+    packages/plus/build/bundle \
+    packages/project/build/bundle \
+    packages/project-host/build/bundle
+}
+
 build_runtime() {
   if [ "$STAR_RUNTIME_BUILD" = "0" ]; then
     log "skipping local build because STAR_RUNTIME_BUILD=0"
@@ -67,6 +76,7 @@ build_runtime() {
     if ! command -v pnpm >/dev/null 2>&1; then
       npm install -g pnpm@10.33.0
     fi
+    clean_generated_bundle_workspaces
     ./workspaces.py install
     pnpm --filter @cocalc/app-notebook build
     ./workspaces.py build --dev
