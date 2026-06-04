@@ -1008,7 +1008,7 @@ upgrade_hosts() {
   (
     cd "$SRC_DIR"
     refresh_hub_env
-    cocalc host upgrade --hub-source --wait --all-online --artifact project-host project tools bootstrap-environment
+    cocalc host upgrade --hub-source --wait --all-online --align-runtime-stack --artifact project-host project tools bootstrap-environment
   )
 }
 

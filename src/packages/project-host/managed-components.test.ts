@@ -99,4 +99,13 @@ describe("managed component status model", () => {
       "1776577465070",
     );
   });
+
+  it("infers bundle versions from process environment paths", () => {
+    expect(
+      __test__.inferBundleVersionFromEntries([
+        "project-host:conat-router",
+        "COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT=/opt/cocalc/project-host/bundles/20260604T135659Z-394027039884-dirty-e3b0c442/main/index.js",
+      ]),
+    ).toBe("20260604T135659Z-394027039884-dirty-e3b0c442");
+  });
 });
