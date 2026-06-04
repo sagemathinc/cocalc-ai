@@ -523,7 +523,7 @@ function PricingTierTile({
 }) {
   const label = tier.label ?? tier.id;
   const href = isAuthenticated
-    ? appPath("settings/store")
+    ? appPath("settings/membership")
     : appPath("auth/sign-up");
   const { token } = theme.useToken();
 

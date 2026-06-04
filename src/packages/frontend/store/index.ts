@@ -3,5 +3,4 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export { StorePage } from "./store-page";
-export { VoucherCenterPage } from "./voucher-center-page";
+export { VouchersPage } from "./vouchers-page";

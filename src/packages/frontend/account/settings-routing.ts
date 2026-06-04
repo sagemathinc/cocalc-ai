@@ -63,7 +63,6 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
     { page: "team-licenses", path: "settings/team-licenses" },
     { page: "site-licenses", path: "settings/site-licenses" },
     { page: "software-licenses", path: "settings/software-licenses" },
-    { page: "store", path: "settings/store" },
     { page: "vouchers", path: "settings/vouchers" },
     { page: "purchases", path: "settings/purchases" },
     { page: "payments", path: "settings/payments" },

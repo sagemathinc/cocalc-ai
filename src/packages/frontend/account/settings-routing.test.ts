@@ -44,7 +44,9 @@ describe("settings-routing", () => {
 
   it("builds canonical settings paths from leaf pages", () => {
     expect(getSettingsTargetPath({ page: "index" })).toBe("settings");
-    expect(getSettingsTargetPath({ page: "store" })).toBe("settings/store");
+    expect(getSettingsTargetPath({ page: "vouchers" })).toBe(
+      "settings/vouchers",
+    );
     expect(getSettingsTargetPath({ page: "membership" })).toBe(
       "settings/membership",
     );

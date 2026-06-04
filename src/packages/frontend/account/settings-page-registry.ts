@@ -23,9 +23,8 @@ import { PAYMENT_METHODS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/paymen
 import { PAYMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payments-page";
 import { PURCHASES_SETTINGS_PAGE } from "@cocalc/frontend/purchases/purchases-page";
 import { STATEMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/statements-page";
-import { STORE_SETTINGS_PAGE } from "@cocalc/frontend/store/store-page";
 import { USAGE_LIMITS_SETTINGS_PAGE } from "./usage-limits-page";
-import { VOUCHER_CENTER_SETTINGS_PAGE } from "@cocalc/frontend/store/voucher-center-page";
+import { VOUCHERS_SETTINGS_PAGE } from "@cocalc/frontend/store/vouchers-page";
 import { SUPPORT_TICKETS_SETTINGS_PAGE } from "@cocalc/frontend/support/tickets";
 import type { SettingsPageDefinition } from "./settings-page";
 
@@ -45,13 +44,12 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   profile: ACCOUNT_PREFERENCES_PROFILE_PAGE,
   purchases: PURCHASES_SETTINGS_PAGE,
   statements: STATEMENTS_SETTINGS_PAGE,
-  store: STORE_SETTINGS_PAGE,
   "team-licenses": TEAM_LICENSES_SETTINGS_PAGE,
   support: SUPPORT_TICKETS_SETTINGS_PAGE,
   "site-licenses": SITE_LICENSES_SETTINGS_PAGE,
   "software-licenses": SOFTWARE_LICENSES_SETTINGS_PAGE,
   "usage-limits": USAGE_LIMITS_SETTINGS_PAGE,
-  vouchers: VOUCHER_CENTER_SETTINGS_PAGE,
+  vouchers: VOUCHERS_SETTINGS_PAGE,
 } satisfies Record<RegisteredSettingsPageType, SettingsPageDefinition>;
 
 export type RegisteredSettingsPage = keyof typeof SETTINGS_PAGE_DEFINITIONS;

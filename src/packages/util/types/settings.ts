@@ -33,7 +33,6 @@ export const VALID_LICENSES_SUB_TYPES = [
 export type LicensesSubTabType = (typeof VALID_LICENSES_SUB_TYPES)[number];
 
 export const VALID_BILLING_SUB_TYPES = [
-  "store",
   "vouchers",
   "purchases",
   "payments",
@@ -44,7 +43,7 @@ export const VALID_BILLING_SUB_TYPES = [
 export type BillingSubTabType = (typeof VALID_BILLING_SUB_TYPES)[number];
 
 // Valid leaf settings pages. Menu/URL grouping is intentionally not part of
-// page identity, so callers can open "store" without knowing where it lives.
+// page identity, so callers can open a page without knowing where it lives.
 export const VALID_SETTINGS_PAGES = [
   "index",
   "profile",

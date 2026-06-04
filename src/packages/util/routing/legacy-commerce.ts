@@ -15,13 +15,13 @@ const BILLING_ROUTE_ALIASES: Record<string, NavigatePath> = {
 };
 
 const STORE_ROUTE_ALIASES: Record<string, NavigatePath> = {
-  "": "settings/store",
-  membership: "settings/store",
-  cart: "settings/store",
-  checkout: "settings/store",
-  processing: "settings/store",
-  congrats: "settings/store",
-  vouchers: "settings/store",
+  "": "settings/membership",
+  membership: "settings/membership",
+  cart: "settings/membership",
+  checkout: "settings/membership",
+  processing: "settings/membership",
+  congrats: "settings/membership",
+  vouchers: "settings/vouchers",
 };
 
 export function getLegacyCommerceTargetPath(

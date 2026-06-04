@@ -15,7 +15,7 @@ const visibleContext: SettingsNavigationContext = {
 
 describe("settings-navigation", () => {
   it("keeps menu grouping separate from page identity", () => {
-    expect(getSettingsNavigationGroupKey("store")).toBe("billing");
+    expect(getSettingsNavigationGroupKey("vouchers")).toBe("billing");
     expect(getSettingsNavigationGroupKey("team-licenses")).toBe("licenses");
     expect(getSettingsNavigationGroupKey("ai")).toBe("preferences");
     const licenses = ACCOUNT_SETTINGS_NAVIGATION.find(
@@ -34,7 +34,7 @@ describe("settings-navigation", () => {
       expect(licenses.pages.map(({ page }) => page)).toContain("team-licenses");
     }
     if (billing?.type === "group") {
-      expect(billing.pages.map(({ page }) => page)).toContain("store");
+      expect(billing.pages.map(({ page }) => page)).toContain("vouchers");
     }
     if (preferences?.type === "group") {
       expect(preferences.pages.map(({ page }) => page)).toContain("ai");

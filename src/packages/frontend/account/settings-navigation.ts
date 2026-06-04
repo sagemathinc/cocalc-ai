@@ -117,7 +117,6 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
     label: labels.billing,
     overview: "section",
     pages: [
-      { type: "page", page: "store" },
       { type: "page", page: "vouchers" },
       {
         type: "page",
