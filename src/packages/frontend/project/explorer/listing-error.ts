@@ -22,7 +22,7 @@ export function getUserFacingListingError(error: unknown): unknown {
     return `The project host is temporarily retrying authentication. Please wait about ${retrySeconds}s and refresh.`;
   }
   if (isTransientProjectHostListingError(error)) {
-    return "The project connection closed while the file listing was loading. Please wait a moment and refresh.";
+    return "The project connection closed while the file listing was loading. Please wait a moment.";
   }
   return error;
 }

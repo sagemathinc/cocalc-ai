@@ -5,7 +5,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { type FilesystemClient } from "@cocalc/conat/files/fs";
 import { getLogger } from "@cocalc/conat/logger";
 import { sleep } from "@cocalc/util/async-utils";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const logger = getLogger("frontend:project:listing:use-fs");
 const PROJECT_FS_RETRY_DELAYS_MS = [1000, 2000, 5000] as const;
@@ -38,7 +38,22 @@ export default function useFs({
   project_id: string;
   viewer?: boolean;
 }): FilesystemClient | null {
+  return useFsWithRefresh({ project_id, viewer }).fs;
+}
+
+export function useFsWithRefresh({
+  project_id,
+  viewer,
+}: {
+  project_id: string;
+  viewer?: boolean;
+}): { fs: FilesystemClient | null; refreshFs: () => void } {
   const [fs, setFs] = useState<FilesystemClient | null>(null);
+  const [generation, setGeneration] = useState(0);
+  const refreshFs = useCallback(() => {
+    setFs(null);
+    setGeneration((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     let canceled = false;
@@ -78,7 +93,7 @@ export default function useFs({
     return () => {
       canceled = true;
     };
-  }, [project_id, viewer]);
+  }, [generation, project_id, viewer]);
 
-  return fs;
+  return { fs, refreshFs };
 }

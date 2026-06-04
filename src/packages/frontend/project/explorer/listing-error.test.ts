@@ -70,13 +70,13 @@ describe("getUserFacingListingError", () => {
         message: 'once: "inbox" not emitted before "closed"',
       }),
     ).toBe(
-      "The project connection closed while the file listing was loading. Please wait a moment and refresh.",
+      "The project connection closed while the file listing was loading. Please wait a moment.",
     );
   });
 
   it("rewrites plain closed listing failures into a clear message", () => {
     expect(getUserFacingListingError(new Error("closed"))).toBe(
-      "The project connection closed while the file listing was loading. Please wait a moment and refresh.",
+      "The project connection closed while the file listing was loading. Please wait a moment.",
     );
   });
 
