@@ -750,6 +750,10 @@ function isHostAgentTitle(cmdline: string[]): boolean {
   return /^project-host:host-agent(?::\d+)?$/.test(title);
 }
 
+function isAcpWorkerTitle(cmdline: string[]): boolean {
+  return cmdline[0] === "project-host:acp-worker";
+}
+
 function matchesProjectHostCmdline(cmdline: string[]): boolean {
   return (
     cmdline.some(
@@ -881,6 +885,24 @@ function matchingConatPersistPids(
       (persistHealthPort != null && procPort === persistHealthPort) ||
       (!procData && persistHealthPort == null)
     ) {
+      matches.push(pid);
+    }
+  }
+  return matches;
+}
+
+function matchingAcpWorkerPids(dataDir: string): number[] {
+  const matches: number[] = [];
+  for (const pid of listProcPids()) {
+    if (pid === process.pid) continue;
+    const cmdline = readProcCmdline(pid);
+    if (!isAcpWorkerTitle(cmdline) && !matchesProjectHostCmdline(cmdline)) {
+      continue;
+    }
+    const env = readProcEnv(pid);
+    if (!isAcpWorkerEnv(env)) continue;
+    const procData = env.COCALC_DATA ?? env.DATA;
+    if (procData === dataDir || !procData) {
       matches.push(pid);
     }
   }
@@ -1366,6 +1388,10 @@ function cleanupStrayProcesses(opts: {
         "project-host conat persist",
       )
     : [];
+  const acpWorkerPids = terminatePids(
+    matchingAcpWorkerPids(dataDir),
+    "project-host acp worker",
+  );
   const sshpiperdPids = terminatePids(
     matchingSshpiperdPids(sshPort),
     "sshpiperd",
@@ -1374,6 +1400,7 @@ function cleanupStrayProcesses(opts: {
     projectHostPids.length +
     routerPids.length +
     persistPids.length +
+    acpWorkerPids.length +
     sshpiperdPids.length
   );
 }
@@ -2832,6 +2859,7 @@ export const __test__ = {
   inferProjectHostBundleVersionFromPid,
   isPodmanStalePauseState,
   isRunning,
+  matchingAcpWorkerPids,
   matchingHostAgentPids,
   matchingProjectHostPids,
   matchingSshpiperdPids,
