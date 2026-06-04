@@ -246,7 +246,7 @@ export class ConatSocketServer extends ConatSocketBase {
     }
     // write to all the sockets that are connected.
     for (const id in this.sockets) {
-      this.sockets[id].write(data, headers);
+      this.sockets[id].write(data, { headers });
     }
   };
 
