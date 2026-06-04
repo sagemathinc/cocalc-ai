@@ -268,6 +268,7 @@ export interface ClaimableMembershipPackage {
   requires_approval?: boolean;
   site_license_id?: string;
   pool_name?: string;
+  pool_description?: string;
   verification_policy?: SiteLicenseVerificationPolicy;
   exclusive_group?: string;
   pending_request_id?: string;
@@ -313,6 +314,7 @@ export type SiteLicensePoolRequestState =
 
 export interface SiteLicensePoolConfig {
   pool_name: string;
+  pool_description?: string | null;
   membership_class: MembershipClass;
   seat_count: number;
   requires_approval: boolean;
@@ -357,6 +359,7 @@ export interface SiteLicenseManager {
 
 export interface SiteLicensePoolSummary extends MembershipPackageDetails {
   pool_name: string;
+  pool_description?: string | null;
   requires_approval: boolean;
   verification_policy: SiteLicenseVerificationPolicy;
   exclusive_group: string;
@@ -940,6 +943,7 @@ export interface Purchases {
     owner_account_id?: string;
     site_license_id?: string;
     seat_count?: number;
+    pool_description?: string | null;
     expires_at?: Date | string | null;
     allowed_domains?: string[];
   }) => Promise<MembershipPackageDetails>;

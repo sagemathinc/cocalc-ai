@@ -854,6 +854,7 @@ async function startAccountLocalService(): Promise<void> {
       package_id,
       actor_account_id,
       seat_count,
+      pool_description,
       expires_at,
       allowed_domains,
     }) => {
@@ -863,6 +864,7 @@ async function startAccountLocalService(): Promise<void> {
           actor_account_id,
           package_id,
           seat_count,
+          pool_description,
           expires_at,
           allowed_domains,
         });

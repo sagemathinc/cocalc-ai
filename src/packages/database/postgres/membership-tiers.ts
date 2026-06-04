@@ -11,6 +11,7 @@ interface Query {
   store_visible?: boolean;
   store_description?: string | null;
   store_highlights?: string[] | null;
+  site_license_pool_description?: string | null;
   course_store_visible?: boolean;
   priority?: number;
   price_monthly?: number;
@@ -165,6 +166,7 @@ export default async function membershipTiersQuery(
       store_visible,
       store_description,
       store_highlights,
+      site_license_pool_description,
       course_store_visible,
       priority,
       price_monthly,
@@ -198,6 +200,7 @@ export default async function membershipTiersQuery(
                 "store_visible",
                 "store_description",
                 "store_highlights",
+                "site_license_pool_description",
                 "course_store_visible",
                 "priority",
                 "price_monthly",
@@ -217,13 +220,14 @@ export default async function membershipTiersQuery(
                 "created",
                 "updated"
               )
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::JSONB,$15::JSONB,$16::JSONB,$17::JSONB,$18::JSONB,$19,$20,$21::JSONB,NOW(),NOW())
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::JSONB,$16::JSONB,$17::JSONB,$18::JSONB,$19::JSONB,$20,$21,$22::JSONB,NOW(),NOW())
               ON CONFLICT (id)
               DO UPDATE SET
                 "label" = EXCLUDED.label,
                 "store_visible" = EXCLUDED.store_visible,
                 "store_description" = EXCLUDED.store_description,
                 "store_highlights" = EXCLUDED.store_highlights,
+                "site_license_pool_description" = EXCLUDED.site_license_pool_description,
                 "course_store_visible" = EXCLUDED.course_store_visible,
                 "priority" = EXCLUDED.priority,
                 "price_monthly" = EXCLUDED.price_monthly,
@@ -247,6 +251,7 @@ export default async function membershipTiersQuery(
         store_visible ?? false,
         store_description ?? null,
         store_highlights ?? null,
+        site_license_pool_description ?? null,
         course_store_visible ?? false,
         priority ?? 0,
         price_monthly ?? null,

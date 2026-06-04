@@ -110,6 +110,7 @@ export interface MembershipTierLike extends MembershipTierWithPresentation {
   priority?: number;
   store_visible?: boolean;
   disabled?: boolean;
+  site_license_pool_description?: string;
 }
 
 interface Props {
@@ -144,6 +145,7 @@ function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
 interface ClaimableMembershipPackagesPanelProps {
   compact?: boolean;
   onChanged?: () => void;
+  tiers?: MembershipTierLike[];
 }
 
 function CompactField({
@@ -296,15 +298,40 @@ function makeDefaultSiteLicensePool({
   tiers: MembershipTierLike[];
   index: number;
 }): SiteLicensePoolConfig {
+  const tier = tiers[0];
   return {
     pool_name: `Pool ${index + 1}`,
-    membership_class: (tiers[0]?.id ?? "standard") as MembershipClass,
+    pool_description: getTierSiteLicensePoolDescription(tier),
+    membership_class: (tier?.id ?? "standard") as MembershipClass,
     seat_count: 25,
     requires_approval: true,
     verification_policy: "email-domain",
     exclusive_group: `group-${index + 1}`,
     affiliation_reverification_days: 365,
     affiliation_reverification_grace_days: 30,
+  };
+}
+
+function getTierSiteLicensePoolDescription(tier?: MembershipTierLike): string {
+  return `${tier?.site_license_pool_description ?? ""}`.trim();
+}
+
+function getPoolDescriptionPatchForTierChange({
+  currentPool,
+  currentTier,
+  nextTier,
+}: {
+  currentPool: SiteLicensePoolConfig;
+  currentTier?: MembershipTierLike;
+  nextTier?: MembershipTierLike;
+}): Pick<SiteLicensePoolConfig, "pool_description"> | undefined {
+  const currentDescription = `${currentPool.pool_description ?? ""}`.trim();
+  const currentTierDescription = getTierSiteLicensePoolDescription(currentTier);
+  if (currentDescription && currentDescription !== currentTierDescription) {
+    return;
+  }
+  return {
+    pool_description: getTierSiteLicensePoolDescription(nextTier) || null,
   };
 }
 
@@ -369,16 +396,16 @@ function getAccountSecondaryLabel(
   return assignment.account_id;
 }
 
-function getClaimReasonLabel(
-  claimablePackage: ClaimableMembershipPackage,
-): string {
-  if (claimablePackage.reason === "email-assignment") {
-    return `Assigned to verified email ${claimablePackage.matched_email_address}`;
+function ClaimablePoolSummary({
+  claimablePackage,
+}: {
+  claimablePackage: ClaimableMembershipPackage;
+}) {
+  const description = `${claimablePackage.pool_description ?? ""}`.trim();
+  if (!description) {
+    return null;
   }
-  const poolName = claimablePackage.pool_name
-    ? `${claimablePackage.pool_name} pool`
-    : "site-license pool";
-  return `Verified domain match for ${poolName} via ${claimablePackage.matched_email_address}`;
+  return <Text type="secondary">{description}</Text>;
 }
 
 function dateLabel(value?: Date | string | null): string {
@@ -479,6 +506,7 @@ function getSiteLicenseSearchText(overview: SiteLicenseOverview): string {
 export function ClaimableMembershipPackagesPanel({
   compact,
   onChanged,
+  tiers = [],
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
   const email_address = useTypedRedux("account", "email_address");
@@ -497,6 +525,9 @@ export function ClaimableMembershipPackagesPanel({
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
+  const tierById = useMemo(() => {
+    return new Map(tiers.map((tier) => [tier.id, tier]));
+  }, [tiers]);
 
   async function refreshClaimables() {
     if (!account_id) {
@@ -584,76 +615,73 @@ export function ClaimableMembershipPackagesPanel({
 
   function renderClaimablePackages() {
     return (
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        {claimables.map((claimablePackage) => (
-          <Card
-            key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
-            size="small"
-            title={
-              <Space wrap>
-                <span>{getPackageKindLabel(claimablePackage.kind)}</span>
-                <Tag color="blue">
-                  {capitalize(claimablePackage.membership_class)}
-                </Tag>
-              </Space>
-            }
-            extra={
-              claimablePackage.requires_approval ? (
-                <Button
-                  type="primary"
-                  loading={requestingPackageId === claimablePackage.package_id}
-                  disabled={claimablePackage.pending_request_id != null}
-                  onClick={() => handlePrimaryAction(claimablePackage)}
+      <Space vertical size="middle" style={{ width: "100%" }}>
+        {claimables.map((claimablePackage) => {
+          const tier = tierById.get(claimablePackage.membership_class);
+          return (
+            <Card
+              key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
+              size="small"
+              title={
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 12,
+                    justifyContent: "space-between",
+                  }}
                 >
-                  {claimablePackage.pending_request_id
-                    ? "Request pending"
-                    : "Request access"}
-                </Button>
-              ) : (
-                <Button
-                  type="primary"
-                  loading={claimingPackageId === claimablePackage.package_id}
-                  onClick={() => handlePrimaryAction(claimablePackage)}
-                >
-                  Claim seat
-                </Button>
-              )
-            }
-          >
-            <Descriptions size="small" column={1}>
-              <Descriptions.Item label="Eligibility">
-                {getClaimReasonLabel(claimablePackage)}
-              </Descriptions.Item>
-              {claimablePackage.pool_name ? (
-                <Descriptions.Item label="Pool">
-                  {claimablePackage.pool_name}
-                </Descriptions.Item>
-              ) : null}
-              {claimablePackage.requires_approval ? (
-                <Descriptions.Item label="Approval">
-                  {claimablePackage.pending_request_id ? (
-                    <Tag color="gold">Pending manager review</Tag>
+                  <Text strong>
+                    {tier?.label ??
+                      capitalize(claimablePackage.membership_class)}
+                  </Text>
+                  {claimablePackage.pool_name ? (
+                    <Text type="secondary">{claimablePackage.pool_name}</Text>
+                  ) : null}
+                </div>
+              }
+            >
+              <Space vertical size="small" style={{ width: "100%" }}>
+                <ClaimablePoolSummary claimablePackage={claimablePackage} />
+                {claimablePackage.requires_terms_acceptance ? (
+                  <Text type="secondary">
+                    Review institution terms before claiming this membership.
+                  </Text>
+                ) : null}
+                {claimablePackage.expires_at ? (
+                  <Text type="secondary">
+                    Expires <TimeAgo date={claimablePackage.expires_at} />.
+                  </Text>
+                ) : null}
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  {claimablePackage.requires_approval ? (
+                    <Button
+                      type="primary"
+                      loading={
+                        requestingPackageId === claimablePackage.package_id
+                      }
+                      disabled={claimablePackage.pending_request_id != null}
+                      onClick={() => handlePrimaryAction(claimablePackage)}
+                    >
+                      {claimablePackage.pending_request_id
+                        ? "Request pending"
+                        : "Request access"}
+                    </Button>
                   ) : (
-                    <Tag color="blue">Manager approval required</Tag>
+                    <Button
+                      type="primary"
+                      loading={
+                        claimingPackageId === claimablePackage.package_id
+                      }
+                      onClick={() => handlePrimaryAction(claimablePackage)}
+                    >
+                      Claim seat
+                    </Button>
                   )}
-                </Descriptions.Item>
-              ) : null}
-              {claimablePackage.requires_terms_acceptance ? (
-                <Descriptions.Item label="Terms">
-                  <Tag color="purple">Review required</Tag>
-                </Descriptions.Item>
-              ) : null}
-              <Descriptions.Item label="Available seats">
-                {claimablePackage.available_seat_count}
-              </Descriptions.Item>
-              {claimablePackage.expires_at ? (
-                <Descriptions.Item label="Expires">
-                  <TimeAgo date={claimablePackage.expires_at} />
-                </Descriptions.Item>
-              ) : null}
-            </Descriptions>
-          </Card>
-        ))}
+                </div>
+              </Space>
+            </Card>
+          );
+        })}
       </Space>
     );
   }
@@ -737,6 +765,7 @@ export function ClaimableMembershipPackagesPanel({
               disabled={!loading && claimables.length === 0}
               loading={loading}
               onClick={() => setCompactModalOpen(true)}
+              type={claimables.length > 0 ? "primary" : undefined}
             >
               Claim site license membership
             </Button>
@@ -3059,6 +3088,7 @@ function ProvisionSiteLicenseModal({
     if (studentTier) {
       defaultPools.push({
         pool_name: "Students",
+        pool_description: getTierSiteLicensePoolDescription(studentTier),
         membership_class: studentTier.id as MembershipClass,
         seat_count: 5000,
         requires_approval: false,
@@ -3071,6 +3101,7 @@ function ProvisionSiteLicenseModal({
     if (instructorTier) {
       defaultPools.push({
         pool_name: "Instructors",
+        pool_description: getTierSiteLicensePoolDescription(instructorTier),
         membership_class: instructorTier.id as MembershipClass,
         seat_count: 200,
         requires_approval: true,
@@ -3083,6 +3114,7 @@ function ProvisionSiteLicenseModal({
     if (researcherTier) {
       defaultPools.push({
         pool_name: "Researchers",
+        pool_description: getTierSiteLicensePoolDescription(researcherTier),
         membership_class: researcherTier.id as MembershipClass,
         seat_count: 500,
         requires_approval: true,
@@ -3135,6 +3167,7 @@ function ProvisionSiteLicenseModal({
       const cleanPools = pools.map((pool) => ({
         ...pool,
         pool_name: `${pool.pool_name ?? ""}`.trim(),
+        pool_description: `${pool.pool_description ?? ""}`.trim() || null,
         exclusive_group: `${pool.exclusive_group ?? ""}`.trim() || null,
         seat_count: Math.max(1, Math.trunc(Number(pool.seat_count) || 1)),
         allowed_domains,
@@ -3645,9 +3678,19 @@ function ProvisionPoolEditModal({
           <CompactField label="Tier">
             <Select
               value={pool.membership_class}
-              onChange={(value) =>
-                onChange({ membership_class: value as MembershipClass })
-              }
+              onChange={(value) => {
+                const nextTier = siteLicenseTierOptions.find(
+                  (tier) => tier.id === value,
+                );
+                onChange({
+                  membership_class: value as MembershipClass,
+                  ...getPoolDescriptionPatchForTierChange({
+                    currentPool: pool,
+                    currentTier: selectedTier,
+                    nextTier,
+                  }),
+                });
+              }}
               options={siteLicenseTierOptions.map((tier) => ({
                 label: tier.label ?? capitalize(tier.id),
                 value: tier.id,
@@ -3665,6 +3708,18 @@ function ProvisionPoolEditModal({
             ) : null}
           </CompactField>
         </div>
+        <CompactField
+          label="Description"
+          help="Plain-language text shown to eligible users before they claim or request this pool."
+        >
+          <Input.TextArea
+            rows={3}
+            value={pool.pool_description ?? ""}
+            onChange={(event) =>
+              onChange({ pool_description: event.target.value })
+            }
+          />
+        </CompactField>
         <div
           style={{
             display: "grid",
@@ -3805,6 +3860,7 @@ function EditSiteLicenseModal({
   onUpdated: () => Promise<void>;
 }) {
   const [seatCount, setSeatCount] = useState<number>(1);
+  const [poolDescription, setPoolDescription] = useState<string>("");
   const [domains, setDomains] = useState<string[]>([]);
   const [domainSearch, setDomainSearch] = useState<string>("");
   const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
@@ -3814,6 +3870,7 @@ function EditSiteLicenseModal({
   useEffect(() => {
     if (!open || !membershipPackage) return;
     setSeatCount(membershipPackage.seat_count);
+    setPoolDescription(`${membershipPackage.metadata?.pool_description ?? ""}`);
     setDomains(normalizeDomainList(getPackageDomains(membershipPackage)));
     setDomainSearch("");
     setExpiresAt(
@@ -3839,6 +3896,7 @@ function EditSiteLicenseModal({
         owner_account_id: membershipPackage.owner_account_id,
         ...(siteLicenseId ? { site_license_id: siteLicenseId } : {}),
         seat_count: seatCount,
+        pool_description: poolDescription.trim() || null,
         allowed_domains,
         expires_at: expiresAt?.endOf("day").toDate() ?? null,
       });
@@ -3887,6 +3945,19 @@ function EditSiteLicenseModal({
           <Text type="secondary">
             Must be at least the current active assignment count ({activeSeats}
             ).
+          </Text>
+        </div>
+        <div>
+          <Text strong>Description</Text>
+          <Input.TextArea
+            rows={3}
+            value={poolDescription}
+            onChange={(event) => setPoolDescription(event.target.value)}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+          <Text type="secondary">
+            Plain-language text shown to eligible users before they claim or
+            request this pool.
           </Text>
         </div>
         <div>

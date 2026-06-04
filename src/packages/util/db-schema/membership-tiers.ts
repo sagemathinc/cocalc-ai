@@ -33,6 +33,7 @@ Table({
           store_visible: null,
           store_description: null,
           store_highlights: null,
+          site_license_pool_description: null,
           course_store_visible: null,
           priority: null,
           price_monthly: null,
@@ -60,6 +61,7 @@ Table({
           store_visible: null,
           store_description: null,
           store_highlights: null,
+          site_license_pool_description: null,
           course_store_visible: null,
           priority: null,
           price_monthly: null,
@@ -107,6 +109,10 @@ Table({
       type: "array",
       pg_type: "TEXT[]",
       desc: "Public pricing and purchase bullet points, one short string per item.",
+    },
+    site_license_pool_description: {
+      type: "string",
+      desc: "Default description copied into site-license pools using this tier.",
     },
     course_store_visible: {
       type: "boolean",

@@ -1313,7 +1313,10 @@ describe("purchases membership packages", () => {
       active_assignment_count: 0,
       available_seat_count: 12,
       assignments: [],
-      metadata: { allowed_domains: ["dept.example.edu", "example.edu"] },
+      metadata: {
+        allowed_domains: ["dept.example.edu", "example.edu"],
+        pool_description: "Eligible students.",
+      },
     });
 
     const { updateMembershipPackage } = await import("./purchases");
@@ -1324,6 +1327,7 @@ describe("purchases membership packages", () => {
       site_license_id: "license-1",
       package_id: "site-1",
       seat_count: 12,
+      pool_description: "Eligible students.",
       allowed_domains: ["Example.EDU", "@dept.example.edu"],
     });
 
@@ -1331,6 +1335,7 @@ describe("purchases membership packages", () => {
       actor_account_id: "admin-1",
       package_id: "site-1",
       seat_count: 12,
+      pool_description: "Eligible students.",
       expires_at: undefined,
       allowed_domains: ["dept.example.edu", "example.edu"],
     });
@@ -1347,6 +1352,7 @@ describe("purchases membership packages", () => {
       "dept.example.edu",
       "example.edu",
     ]);
+    expect(result.metadata?.pool_description).toBe("Eligible students.");
   });
 
   it("requires fresh auth for seed site-license pool updates", async () => {
@@ -1399,6 +1405,7 @@ describe("purchases membership packages", () => {
       package_id: "site-remote-1",
       actor_account_id: "admin-1",
       seat_count: undefined,
+      pool_description: undefined,
       expires_at: undefined,
       allowed_domains: ["dept.example.edu", "example.edu"],
     });

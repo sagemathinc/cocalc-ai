@@ -73,6 +73,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   Loading: () => <div>loading</div>,
+  Tooltip: ({ children }: any) => children,
 }));
 
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
@@ -153,8 +154,18 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 
 const TIERS = [
-  { id: "member", label: "Member", store_visible: true },
-  { id: "pro", label: "Pro", store_visible: true },
+  {
+    id: "member",
+    label: "Member",
+    site_license_pool_description: "Member site-license pool access.",
+    store_visible: true,
+  },
+  {
+    id: "pro",
+    label: "Pro",
+    site_license_pool_description: "Pro site-license pool access.",
+    store_visible: true,
+  },
 ];
 
 describe("MembershipPackageManager", () => {
@@ -751,6 +762,7 @@ describe("MembershipPackageManager", () => {
         owner_account_id: "owner-1",
         site_license_id: "license-1",
         seat_count: 75,
+        pool_description: null,
         allowed_domains: ["example.edu"],
         expires_at: null,
       });
@@ -1059,6 +1071,7 @@ describe("MembershipPackageManager", () => {
         site_license_id: "license-1",
         pool: expect.objectContaining({
           pool_name: "Pool 2",
+          pool_description: "Member site-license pool access.",
           membership_class: "member",
           seat_count: 25,
           requires_approval: true,
@@ -1076,7 +1089,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
     accountId = "account-1";
   });
 
-  it("claims a package for the signed-in account", async () => {
+  it("promotes the compact claim button when a site-license seat is claimable", async () => {
     getClaimableMembershipPackages.mockResolvedValue([
       {
         package_id: "site-1",
@@ -1088,22 +1101,63 @@ describe("ClaimableMembershipPackagesPanel", () => {
         reason: "domain-match",
       },
     ]);
+
+    render(<ClaimableMembershipPackagesPanel compact />);
+
+    const claimButton = await screen.findByRole("button", {
+      name: "Claim site license membership",
+    });
+
+    expect(claimButton).toHaveClass("ant-btn-primary");
+  });
+
+  it("claims a package for the signed-in account", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "site-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        pool_description: "Access for eligible example.edu users.",
+      },
+    ]);
     claimMembershipPackageSeat.mockResolvedValue({
       id: "assignment-1",
       package_id: "site-1",
       account_id: "account-1",
     });
 
-    render(<ClaimableMembershipPackagesPanel />);
+    render(
+      <ClaimableMembershipPackagesPanel
+        tiers={[
+          {
+            id: "member",
+            label: "Member",
+            site_license_pool_description:
+              "Tier default description should not show.",
+            store_highlights: ["More shared resources"],
+          },
+        ]}
+      />,
+    );
 
     await waitFor(() => {
       expect(screen.getByText("Claim memberships")).toBeTruthy();
+      expect(screen.getByText("Member")).toBeTruthy();
       expect(
-        screen.getByText(
-          /Verified domain match for site-license pool via ada@example.edu/i,
-        ),
+        screen.getByText("Access for eligible example.edu users."),
       ).toBeTruthy();
     });
+    expect(
+      screen.queryByText("Tier default description should not show."),
+    ).toBeNull();
+    expect(screen.queryByText("More shared resources")).toBeNull();
+    expect(screen.queryByText(/Verified domain match for/i)).toBeNull();
+    expect(screen.queryByText(/via ada@example.edu/i)).toBeNull();
+    expect(screen.queryByText("Available seats")).toBeNull();
 
     fireEvent.click(screen.getByText("Claim seat"));
 
@@ -1127,6 +1181,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
         reason: "domain-match",
         requires_approval: true,
         pool_name: "Instructors",
+        pool_description: "Instructor access for approved faculty.",
       },
     ]);
     requestSiteLicensePool.mockResolvedValue({
@@ -1136,12 +1191,32 @@ describe("ClaimableMembershipPackagesPanel", () => {
       state: "pending",
     });
 
-    render(<ClaimableMembershipPackagesPanel />);
+    render(
+      <ClaimableMembershipPackagesPanel
+        tiers={[
+          {
+            id: "pro",
+            label: "Pro",
+            site_license_pool_description:
+              "Tier default description should not show.",
+          },
+        ]}
+      />,
+    );
 
     await waitFor(() => {
+      expect(screen.getByText("Pro")).toBeTruthy();
+      expect(screen.getByText("Instructors")).toBeTruthy();
       expect(screen.getByText("Request access")).toBeTruthy();
-      expect(screen.getByText("Manager approval required")).toBeTruthy();
+      expect(
+        screen.getByText("Instructor access for approved faculty."),
+      ).toBeTruthy();
     });
+    expect(
+      screen.queryByText("Tier default description should not show."),
+    ).toBeNull();
+    expect(screen.queryByText("Manager approval required")).toBeNull();
+    expect(screen.queryByText("Approval")).toBeNull();
 
     fireEvent.click(screen.getByText("Request access"));
 
@@ -1179,7 +1254,11 @@ describe("ClaimableMembershipPackagesPanel", () => {
     render(<ClaimableMembershipPackagesPanel />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review required")).toBeTruthy();
+      expect(
+        screen.getByText(
+          "Review institution terms before claiming this membership.",
+        ),
+      ).toBeTruthy();
     });
 
     fireEvent.click(screen.getByText("Claim seat"));

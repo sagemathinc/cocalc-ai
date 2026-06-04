@@ -1906,6 +1906,7 @@ async function listSiteLicensePoolSummaries({
     .map((pkg) => ({
       ...pkg,
       pool_name: getPackagePoolName(pkg),
+      pool_description: normalizeOptionalString(pkg.metadata?.pool_description),
       requires_approval: pkg.metadata?.requires_approval === true,
       verification_policy: getPackageVerificationPolicy(pkg.metadata),
       exclusive_group: getPackageExclusiveGroup(pkg),
@@ -2701,6 +2702,7 @@ export async function adminProvisionSiteLicense({
             site_license_id,
             site_license_bay_id: normalizedBayId,
             pool_name: pool.pool_name,
+            pool_description: pool.pool_description,
             allowed_domains: pool.allowed_domains,
             requires_approval: pool.requires_approval,
             verification_policy: pool.verification_policy,
@@ -2728,6 +2730,7 @@ export async function adminProvisionSiteLicense({
         package_id: packageId,
         metadata: {
           pool_name: pool.pool_name,
+          pool_description: pool.pool_description,
           membership_class: pool.membership_class,
           seat_count: pool.seat_count,
           requires_approval: pool.requires_approval,
@@ -2755,12 +2758,14 @@ export async function updateSiteLicensePool({
   actor_account_id,
   package_id,
   seat_count,
+  pool_description,
   expires_at,
   allowed_domains,
 }: {
   actor_account_id: string;
   package_id: string;
   seat_count?: number;
+  pool_description?: string | null;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 }): Promise<MembershipPackageDetails> {
@@ -2775,6 +2780,10 @@ export async function updateSiteLicensePool({
     const updated = await updateMembershipPackageRecord({
       package_id: packageId,
       seat_count,
+      metadata_patch:
+        pool_description === undefined
+          ? undefined
+          : { pool_description: normalizeOptionalString(pool_description) },
       expires_at,
       allowed_domains:
         allowed_domains === undefined
@@ -2795,6 +2804,10 @@ export async function updateSiteLicensePool({
       package_id: packageId,
       metadata: {
         pool_name: getPackagePoolName(pkg),
+        pool_description:
+          pool_description === undefined
+            ? undefined
+            : normalizeOptionalString(pool_description),
         seat_count: seat_count ?? null,
         expires_at: expires_at ?? null,
         allowed_domains:
@@ -2864,6 +2877,7 @@ export async function addSiteLicensePool({
           site_license_id: siteLicenseId,
           site_license_bay_id: siteLicense.bay_id,
           pool_name: normalizedPool.pool_name,
+          pool_description: normalizedPool.pool_description,
           allowed_domains: normalizedPool.allowed_domains,
           requires_approval: normalizedPool.requires_approval,
           verification_policy: normalizedPool.verification_policy,
@@ -2894,6 +2908,7 @@ export async function addSiteLicensePool({
       package_id: packageId,
       metadata: {
         pool_name: normalizedPool.pool_name,
+        pool_description: normalizedPool.pool_description,
         membership_class: normalizedPool.membership_class,
         seat_count: normalizedPool.seat_count,
         requires_approval: normalizedPool.requires_approval,
@@ -3199,6 +3214,7 @@ function normalizePools(
 ): Array<
   SiteLicensePoolConfig & {
     allowed_domains: string[];
+    pool_description: string | null;
     exclusive_group: string;
     affiliation_reverification_days: number | null;
     affiliation_reverification_grace_days: number | null;
@@ -3219,6 +3235,7 @@ function normalizePools(
     return {
       ...pool,
       pool_name: normalizeString(pool.pool_name, "pool_name"),
+      pool_description: normalizeOptionalString(pool.pool_description),
       membership_class: normalizeString(
         pool.membership_class,
         "membership_class",

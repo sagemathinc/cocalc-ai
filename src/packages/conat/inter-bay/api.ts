@@ -1010,6 +1010,7 @@ export interface AccountLocalUpdateMembershipPackageRequest {
   package_id: string;
   actor_account_id: string;
   seat_count?: number;
+  pool_description?: string | null;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 }

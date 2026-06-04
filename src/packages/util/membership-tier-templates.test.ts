@@ -144,6 +144,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(basic.label).toBe("Basic");
     expect(basic.store_description).toMatch(/occasional light use/);
     expect(basic.store_highlights).toContain("More shared resources");
+    expect(basic.site_license_pool_description).toMatch(/covered by this pool/);
     expect(basic.store_visible).toBe(false);
     expect(basic.course_store_visible).toBe(false);
     expect(basic.price_monthly).toBe(8);
@@ -161,6 +162,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(standard.store_highlights).toContain(
       "Dedicated project host access, including GPU",
     );
+    expect(standard.site_license_pool_description).toMatch(/Everyday CoCalc/);
     expect(standard.store_visible).toBe(false);
     expect(standard.course_store_visible).toBe(false);
     expect(standard.price_monthly).toBe(24);

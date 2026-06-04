@@ -1416,12 +1416,14 @@ export async function updateMembershipPackage({
   seat_count,
   expires_at,
   allowed_domains,
+  metadata_patch,
   client,
 }: {
   package_id: string;
   seat_count?: number;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
+  metadata_patch?: Record<string, unknown>;
   client?: PoolClient;
 }): Promise<MembershipPackageDetails> {
   return await withPackageOwnerWriteFence({
@@ -1452,6 +1454,9 @@ export async function updateMembershipPackage({
       if (allowed_domains !== undefined && pkg.kind !== "site") {
         throw Error("allowed_domains can only be updated for site packages");
       }
+      if (metadata_patch !== undefined && pkg.kind !== "site") {
+        throw Error("metadata_patch can only be updated for site packages");
+      }
       const normalizedAllowedDomains =
         allowed_domains === undefined
           ? undefined
@@ -1474,11 +1479,14 @@ export async function updateMembershipPackage({
         });
       }
       const nextMetadata =
-        allowed_domains === undefined
+        allowed_domains === undefined && metadata_patch === undefined
           ? undefined
           : {
-              ...normalizeMetadata(pkg.metadata),
-              allowed_domains: normalizedAllowedDomains,
+              ...(normalizeMetadata(pkg.metadata) ?? {}),
+              ...(allowed_domains === undefined
+                ? {}
+                : { allowed_domains: normalizedAllowedDomains }),
+              ...(metadata_patch ?? {}),
             };
       const { rows } = await getQueryClient(
         dbClient,
@@ -1498,7 +1506,7 @@ export async function updateMembershipPackage({
           normalizedSeatCount ?? null,
           expires_at !== undefined,
           nextExpiresAt ?? null,
-          allowed_domains !== undefined,
+          nextMetadata !== undefined,
           nextMetadata ?? null,
         ],
       );
@@ -2077,6 +2085,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           available_seat_count,
           matched_email_address: assignment.email_address,
           reason: "email-assignment",
+          pool_name: getPackageStringMetadata(pkg, "pool_name"),
+          pool_description: getPackageStringMetadata(pkg, "pool_description"),
           metadata: normalizeMetadata(pkg.metadata),
         });
       }
@@ -2154,6 +2164,7 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
+          pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(
             pkg,
             "verification_policy",

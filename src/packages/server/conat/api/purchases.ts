@@ -483,6 +483,7 @@ export async function updateMembershipPackage({
   owner_account_id,
   site_license_id,
   seat_count,
+  pool_description,
   expires_at,
   allowed_domains,
 }: {
@@ -493,6 +494,7 @@ export async function updateMembershipPackage({
   owner_account_id?: string;
   site_license_id?: string;
   seat_count?: number;
+  pool_description?: string | null;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 } = {}): Promise<MembershipPackageDetails> {
@@ -514,6 +516,7 @@ export async function updateMembershipPackage({
         package_id,
         actor_account_id: actorId,
         seat_count,
+        pool_description,
         expires_at,
         allowed_domains:
           allowed_domains === undefined
@@ -525,6 +528,7 @@ export async function updateMembershipPackage({
       actor_account_id: actorId,
       package_id,
       seat_count,
+      pool_description,
       expires_at,
       allowed_domains:
         allowed_domains === undefined
@@ -558,6 +562,7 @@ export async function updateMembershipPackage({
       package_id,
       actor_account_id: actorId,
       seat_count,
+      pool_description,
       expires_at,
       allowed_domains: normalizedAllowedDomains,
     });
@@ -580,6 +585,7 @@ export async function updateMembershipPackage({
       actor_account_id: actorId,
       package_id,
       seat_count,
+      pool_description,
       expires_at,
       allowed_domains:
         allowed_domains === undefined

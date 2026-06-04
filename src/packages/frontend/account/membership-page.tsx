@@ -223,6 +223,7 @@ function MembershipSettingsContent() {
             <ClaimableMembershipPackagesPanel
               compact
               onChanged={refreshMembership}
+              tiers={Object.values(tierById)}
             />
           </Space>
           {isCommercial ? <UseBalance /> : null}
