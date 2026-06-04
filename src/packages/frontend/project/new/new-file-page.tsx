@@ -87,7 +87,6 @@ export default function NewFilePage(props: Props) {
   } = props;
   const inputRef = useRef<any>(null);
   const folderInputRef = useRef<any>(null);
-  const [moreFileTypesOpen, setMoreFileTypesOpen] = useState(false);
   useEffect(() => {
     if (!autoFocusFilename || !isVisible) return;
     setTimeout(() => {
@@ -97,11 +96,6 @@ export default function NewFilePage(props: Props) {
       }
     }, 1);
   }, [autoFocusFilename, isVisible]);
-  useEffect(() => {
-    if (!isVisible) {
-      setMoreFileTypesOpen(false);
-    }
-  }, [isVisible]);
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
   const selectedFilenameFamily =
@@ -595,23 +589,19 @@ export default function NewFilePage(props: Props) {
                 flexWrap: "wrap",
               }}
             >
-              <Select<string>
-                showSearch
-                allowClear
-                open={isVisible ? moreFileTypesOpen : false}
-                onOpenChange={(open) => setMoreFileTypesOpen(open)}
-                getPopupContainer={(trigger) =>
-                  trigger.parentElement ?? document.body
-                }
-                placeholder="Search file types..."
-                style={{ flex: "1 1 260px", minWidth: "200px" }}
-                value={undefined}
-                options={moreFileTypeOptions}
-                onSelect={(value: string) => {
-                  setMoreFileTypesOpen(false);
-                  quickCreate(value);
-                }}
-              />
+              {isVisible ? (
+                <Select<string>
+                  showSearch
+                  allowClear
+                  placeholder="Search file types..."
+                  style={{ flex: "1 1 260px", minWidth: "200px" }}
+                  value={undefined}
+                  options={moreFileTypeOptions}
+                  onSelect={(value: string) => {
+                    quickCreate(value);
+                  }}
+                />
+              ) : null}
               <Space size={6}>
                 <Button
                   size="small"
