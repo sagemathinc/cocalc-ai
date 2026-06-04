@@ -71,6 +71,11 @@ run() {
   "$@"
 }
 
+make_target_release_accessible() {
+  run chown "${BAY_USER}:${BAY_GROUP}" "$TARGET_RELEASE"
+  run chmod 0755 "$TARGET_RELEASE"
+}
+
 require_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
     echo "run this script as root" >&2
@@ -258,6 +263,7 @@ stage_source_release() {
   fi
 
   run mkdir -p "$TARGET_RELEASE"
+  make_target_release_accessible
   run rsync -a --delete \
     --exclude '/.git' \
     --exclude '/.local' \
@@ -274,7 +280,10 @@ stage_bundle_release() {
 
   run rm -rf "$TARGET_RELEASE"
   run mkdir -p "$TARGET_RELEASE"
+  make_target_release_accessible
   run tar -xf "$BUNDLE_PATH" -C "$TARGET_RELEASE" --strip-components=1
+  make_target_release_accessible
+  preserve_previous_static_assets
 }
 
 stage_static_bundle_release() {
@@ -296,16 +305,23 @@ stage_static_bundle_release() {
 
   run rm -rf "$TARGET_RELEASE"
   run mkdir -p "$TARGET_RELEASE"
+  make_target_release_accessible
   run cp -al "${current_release}/." "$TARGET_RELEASE/"
+  make_target_release_accessible
+
+  local extract_dir
+  extract_dir="$(mktemp -d "${TARGET_RELEASE}.static-bundle.XXXXXX")"
+  trap 'rm -rf "$extract_dir"' RETURN
+  run tar --no-same-owner -xf "$STATIC_BUNDLE_PATH" -C "$extract_dir" --strip-components=1
 
   run rm -rf \
-    "${TARGET_RELEASE}/runtime/control-plane/static" \
     "${TARGET_RELEASE}/runtime/control-plane/public" \
     "${TARGET_RELEASE}/runtime/control-plane/webapp" \
     "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp" \
     "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius" \
     "${TARGET_RELEASE}/bay-static-manifest.json"
-  run tar --no-same-owner -xf "$STATIC_BUNDLE_PATH" -C "$TARGET_RELEASE" --strip-components=1
+  run rsync -a "${extract_dir}/" "$TARGET_RELEASE/"
+  make_target_release_accessible
   run chown -R "${BAY_USER}:${BAY_GROUP}" \
     "${TARGET_RELEASE}/runtime/control-plane/static" \
     "${TARGET_RELEASE}/runtime/control-plane/public" \
@@ -313,6 +329,32 @@ stage_static_bundle_release() {
     "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp" \
     "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius" \
     "${TARGET_RELEASE}/bay-static-manifest.json"
+  rm -rf "$extract_dir"
+  trap - RETURN
+}
+
+preserve_previous_static_assets() {
+  if [[ ! -L "$CURRENT_LINK" ]]; then
+    return
+  fi
+
+  local current_release
+  current_release="$(readlink -f "$CURRENT_LINK")"
+  if [[ -z "$current_release" || ! -d "$current_release" || "$current_release" == "$TARGET_RELEASE" ]]; then
+    return
+  fi
+
+  local previous_static="${current_release}/runtime/control-plane/static"
+  local target_static="${TARGET_RELEASE}/runtime/control-plane/static"
+  if [[ ! -d "$previous_static" || ! -d "$target_static" ]]; then
+    return
+  fi
+
+  # Rspack chunks are hash-named and lazy-loaded by already-open clients.  When a
+  # release flips /static to new HTML and entrypoints, keep old chunk filenames
+  # available until the retained release ages out instead of stranding clients
+  # that navigate after the deploy.
+  run rsync -a --ignore-existing "${previous_static}/" "${target_static}/"
 }
 
 validate_release() {
