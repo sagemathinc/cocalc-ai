@@ -25,7 +25,6 @@ import {
 import { Icon, Loading, Title } from "@cocalc/frontend/components";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import BalanceButton from "@cocalc/frontend/purchases/balance-button";
 import { COLORS } from "@cocalc/util/theme";
 import { I18NSelector } from "./i18n-selector";
 import { SETTINGS_OVERVIEW_PAGE } from "./settings-index";
@@ -176,7 +175,6 @@ export const AccountPage: React.FC = () => {
   function renderExtraContent() {
     return (
       <Space wrap>
-        {navigationContext.isCommercial ? <BalanceButton /> : undefined}
         <I18NSelector isWide={isWide} />
         {!lite && <SignOut everywhere={false} narrow={!isWide} />}
       </Space>

@@ -59,10 +59,16 @@ describe("resolveMembershipForAccount", () => {
   it("returns membership class when subscription exists", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);
-    await createTestMembershipSubscription(account_id, { class: lowTier });
+    await createTestMembershipSubscription(account_id, {
+      class: lowTier,
+      cost: 72,
+      interval: "year",
+    });
     const result = await resolveMembershipForAccount(account_id);
     expect(result.class).toBe(lowTier);
     expect(result.source).toBe("subscription");
+    expect(result.subscription_cost).toBe(72);
+    expect(result.subscription_interval).toBe("year");
   });
 
   it("keeps a canceled paid-through subscription active until its period ends", async () => {
