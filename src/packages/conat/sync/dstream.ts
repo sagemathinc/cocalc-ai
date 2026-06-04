@@ -99,7 +99,11 @@ export class DStream<T = any> extends EventEmitter {
   // TODO: using Map for these will be better because we use .length a bunch, which is O(n) instead of O(1).
   private local: { [id: string]: T } = {};
   private publishOptions: {
-    [id: string]: { headers?: Headers };
+    [id: string]: {
+      headers?: Headers;
+      ttl?: number;
+      checkpoint?: CheckpointUpdate;
+    };
   } = {};
   private saved: { [seq: number]: T } = {};
   private opts: DStreamOptions;
@@ -418,7 +422,11 @@ export class DStream<T = any> extends EventEmitter {
     mesg: T,
     // NOTE: if you call this.headers(n) it is NOT visible until
     // the publish is confirmed. This could be changed with more work if it matters.
-    options?: { headers?: Headers; ttl?: number },
+    options?: {
+      headers?: Headers;
+      ttl?: number;
+      checkpoint?: CheckpointUpdate;
+    },
   ): void => {
     const id = randomId();
     this.local[id] = mesg;
