@@ -1399,6 +1399,7 @@ function RetainedFlyoutBodies({
         width: flyoutWidth,
         height: "100%",
         flex: `0 0 ${flyoutWidth}px`,
+        overflow: "hidden",
       }}
     >
       {visibleFlyouts.map((flyout) => {
