@@ -2,6 +2,7 @@
 
 const { createHash } = require("node:crypto");
 const { spawn } = require("node:child_process");
+const { accessSync, constants } = require("node:fs");
 const {
   access,
   mkdir,
@@ -18,7 +19,13 @@ function requireFallback(err, fallbackPath) {
   if (err?.code !== "MODULE_NOT_FOUND") {
     throw err;
   }
-  return require(join(process.cwd(), fallbackPath));
+  const fullPath = join(process.cwd(), fallbackPath);
+  try {
+    accessSync(fullPath, constants.R_OK);
+  } catch {
+    throw err;
+  }
+  return require(fullPath);
 }
 
 function requireDatabaseDev() {
@@ -51,6 +58,14 @@ function requireRootfsImages() {
   } catch (err) {
     return requireFallback(err, "packages/util/dist/rootfs-images.js");
   }
+}
+
+function verifyBundledImports() {
+  requireDatabaseDev();
+  requireDatabasePool();
+  requireRootfsReleases();
+  requireRootfsImages();
+  console.log(JSON.stringify({ ok: true, helper: "publish-default-rootfs" }));
 }
 
 function log(message) {
@@ -311,6 +326,11 @@ async function ensureLocalPostgresReady() {
 }
 
 async function main() {
+  if (process.env.COCALC_STAR_HELPER_VERIFY === "1") {
+    verifyBundledImports();
+    return;
+  }
+
   await ensureLocalPostgresReady();
 
   const sourceImage = `${process.env.STAR_DEFAULT_ROOTFS_IMAGE ?? ""}`.trim();

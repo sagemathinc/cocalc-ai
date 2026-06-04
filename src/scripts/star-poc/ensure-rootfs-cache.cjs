@@ -308,6 +308,11 @@ async function normalizeRootfs(image, rootfsPath) {
 }
 
 async function main() {
+  if (process.env.COCALC_STAR_HELPER_VERIFY === "1") {
+    console.log(JSON.stringify({ ok: true, helper: "ensure-rootfs-cache" }));
+    return;
+  }
+
   const image = `${process.env.STAR_DEFAULT_ROOTFS_IMAGE ?? ""}`.trim();
   if (!image) {
     throw new Error("STAR_DEFAULT_ROOTFS_IMAGE must be set");
