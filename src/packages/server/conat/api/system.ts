@@ -81,12 +81,13 @@ import getLogger from "@cocalc/backend/logger";
 import basePath from "@cocalc/backend/base-path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
-  getExternalCredential,
-  hasExternalCredential,
-  listExternalCredentials as listExternalCredentialsStore,
-  revokeExternalCredential as revokeExternalCredentialStore,
-  upsertExternalCredential,
-} from "@cocalc/server/external-credentials/store";
+  getExternalCredentialRouted,
+  hasExternalCredentialRouted,
+  listAccountExternalCredentialsRouted,
+  revokeAccountExternalCredentialRouted,
+  revokeExternalCredentialBySelectorRouted,
+  upsertExternalCredentialRouted,
+} from "@cocalc/server/external-credentials/routing";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
@@ -4630,7 +4631,9 @@ const CODEX_SUBSCRIPTION_KIND = "codex-subscription-auth-json";
 const OPENAI_API_KEY_KIND = "openai-api-key";
 
 function toExternalCredentialInfo(
-  credential: Awaited<ReturnType<typeof getExternalCredential>> | undefined,
+  credential:
+    | Awaited<ReturnType<typeof getExternalCredentialRouted>>
+    | undefined,
 ) {
   if (!credential) return undefined;
   return {
@@ -4672,7 +4675,7 @@ export async function listExternalCredentials({
   if (!account_id) {
     throw Error("must be signed in");
   }
-  return await listExternalCredentialsStore({
+  return await listAccountExternalCredentialsRouted({
     owner_account_id: account_id,
     provider,
     kind,
@@ -4704,7 +4707,7 @@ export async function revokeExternalCredential({
     session_hash,
     require_second_factor: false,
   });
-  const revoked = await revokeExternalCredentialStore({
+  const revoked = await revokeAccountExternalCredentialRouted({
     id,
     owner_account_id: account_id,
   });
@@ -4740,7 +4743,7 @@ export async function setOpenAiApiKey({
       session_hash,
       require_second_factor: false,
     });
-    const result = await upsertExternalCredential({
+    const result = await upsertExternalCredentialRouted({
       selector: {
         provider: "openai",
         kind: OPENAI_API_KEY_KIND,
@@ -4762,7 +4765,7 @@ export async function setOpenAiApiKey({
     session_hash,
     require_second_factor: false,
   });
-  const result = await upsertExternalCredential({
+  const result = await upsertExternalCredentialRouted({
     selector: {
       provider: "openai",
       kind: OPENAI_API_KEY_KIND,
@@ -4795,7 +4798,7 @@ export async function deleteOpenAiApiKey({
 
   if (project_id) {
     await assertProjectCollaborator(account_id, project_id);
-    const existing = await getExternalCredential({
+    const existing = await getExternalCredentialRouted({
       selector: {
         provider: "openai",
         kind: OPENAI_API_KEY_KIND,
@@ -4813,13 +4816,18 @@ export async function deleteOpenAiApiKey({
       session_hash,
       require_second_factor: false,
     });
-    const revoked = await revokeExternalCredentialStore({
-      id: existing.id,
+    const revoked = await revokeExternalCredentialBySelectorRouted({
+      selector: {
+        provider: "openai",
+        kind: OPENAI_API_KEY_KIND,
+        scope: "project",
+        project_id,
+      },
     });
     return { revoked, scope: "project" as const, project_id };
   }
 
-  const existing = await getExternalCredential({
+  const existing = await getExternalCredentialRouted({
     selector: {
       provider: "openai",
       kind: OPENAI_API_KEY_KIND,
@@ -4837,7 +4845,7 @@ export async function deleteOpenAiApiKey({
     session_hash,
     require_second_factor: false,
   });
-  const revoked = await revokeExternalCredentialStore({
+  const revoked = await revokeAccountExternalCredentialRouted({
     id: existing.id,
     owner_account_id: account_id,
   });
@@ -4859,7 +4867,7 @@ export async function getOpenAiApiKeyStatus({
   }
 
   const [accountCredential, projectCredential] = await Promise.all([
-    getExternalCredential({
+    getExternalCredentialRouted({
       selector: {
         provider: "openai",
         kind: OPENAI_API_KEY_KIND,
@@ -4869,7 +4877,7 @@ export async function getOpenAiApiKeyStatus({
       touchLastUsed: false,
     }),
     project_id
-      ? getExternalCredential({
+      ? getExternalCredentialRouted({
           selector: {
             provider: "openai",
             kind: OPENAI_API_KEY_KIND,
@@ -4914,7 +4922,7 @@ export async function getCodexPaymentSource({
     !!`${settings.openai_api_key ?? ""}`.trim();
   const [hasSubscription, hasProjectApiKeyStored, hasAccountApiKeyStored] =
     await Promise.all([
-      hasExternalCredential({
+      hasExternalCredentialRouted({
         selector: {
           provider: "openai",
           kind: CODEX_SUBSCRIPTION_KIND,
@@ -4923,7 +4931,7 @@ export async function getCodexPaymentSource({
         },
       }),
       project_id
-        ? hasExternalCredential({
+        ? hasExternalCredentialRouted({
             selector: {
               provider: "openai",
               kind: OPENAI_API_KEY_KIND,
@@ -4932,7 +4940,7 @@ export async function getCodexPaymentSource({
             },
           })
         : Promise.resolve(false),
-      hasExternalCredential({
+      hasExternalCredentialRouted({
         selector: {
           provider: "openai",
           kind: OPENAI_API_KEY_KIND,

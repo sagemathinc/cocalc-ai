@@ -8,6 +8,7 @@ export type TableOwnershipClass =
   | "account-home"
   | "project-owning"
   | "host-owning"
+  | "row-scoped"
   | "stable-bay"
   | "projection"
   | "cache"
@@ -73,7 +74,6 @@ export const TABLE_OWNERSHIP = {
       "account_second_factor_recovery_codes",
       "account_second_factors",
       "api_keys",
-      "external_credentials",
       "membership_grants",
       "membership_package_assignments",
       "membership_packages",
@@ -116,6 +116,20 @@ export const TABLE_OWNERSHIP = {
     },
     notes:
       "Account-owned billing ledger state. This must never be dropped or reinitialized during rehome; current rehome behavior is intentionally treated as unsafe.",
+  }),
+
+  ...entries(["external_credentials"], {
+    ownership: "row-scoped",
+    authority: "mixed",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      owner_account_id:
+        "Authority key for account-scoped credential rows; reads/writes route to the account home bay.",
+      project_id:
+        "Authority key for project-scoped credential rows; reads/writes route to the project owning bay.",
+    },
+    notes:
+      "External credential authority is determined by each row selector scope: account rows live on account home, project rows live on project owning bay, and site/organization rows live on the seed bay. Callers must use the external-credential routing helper instead of direct local store access.",
   }),
 
   ...entries(

@@ -16,14 +16,17 @@ jest.mock("./dangerous-session-auth", () => ({
     requireDangerousSessionAuthMock(...args),
 }));
 
-jest.mock("@cocalc/server/external-credentials/store", () => ({
+jest.mock("@cocalc/server/external-credentials/routing", () => ({
   __esModule: true,
-  getExternalCredential: (...args: any[]) => getExternalCredentialMock(...args),
-  hasExternalCredential: jest.fn(async () => false),
-  listExternalCredentials: jest.fn(async () => []),
-  revokeExternalCredential: (...args: any[]) =>
+  getExternalCredentialRouted: (...args: any[]) =>
+    getExternalCredentialMock(...args),
+  hasExternalCredentialRouted: jest.fn(async () => false),
+  listAccountExternalCredentialsRouted: jest.fn(async () => []),
+  revokeAccountExternalCredentialRouted: (...args: any[]) =>
     revokeExternalCredentialMock(...args),
-  upsertExternalCredential: (...args: any[]) =>
+  revokeExternalCredentialBySelectorRouted: (...args: any[]) =>
+    revokeExternalCredentialMock(...args),
+  upsertExternalCredentialRouted: (...args: any[]) =>
     upsertExternalCredentialMock(...args),
 }));
 
