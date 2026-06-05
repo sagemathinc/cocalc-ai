@@ -820,12 +820,44 @@ This avoids moving money history with accounts.
 
 ### Phase 7: Project Rehome Side-Table Audit
 
+Status: first audit slice implemented.
+
+Current project rehome reality:
+
+- project rehome copies the `projects` row and a small portable Conat
+  project-log payload;
+- it does not copy SQL side tables such as secrets, backup indexes, app
+  subdomains, copy/move operations, sync metadata, or project-scoped
+  credentials;
+- therefore project rehome remains an exceptional unsafe operation and must not
+  be treated as routine maintenance.
+
+Implemented:
+
+- extracted the project hard-delete SQL side-table cleanup list into a shared
+  module so it can be audited outside the delete implementation;
+- added a regression that every hard-delete side table has an ownership-manifest
+  entry;
+- added a regression that no project-owned hard-delete side table can be marked
+  `portable` unless it is explicitly included in the project rehome SQL portable
+  table set;
+- documented the current seed-global cleanup mismatch:
+  `project_app_public_subdomains` is seed-global in the manifest but still
+  reached by local project hard-delete cleanup.
+
 Tasks:
 
 - compare every table deleted by project hard-delete with project rehome;
 - classify each table as project-owning/projection/cache/ephemeral;
 - extend project rehome only for control-plane metadata that must survive;
 - explicitly exclude heavy project data-plane tables unless needed.
+- route hard-delete cleanup for seed-global project-attached records through
+  seed authority, starting with `project_app_public_subdomains`;
+- decide whether any SQL side tables become project-rehome portable:
+  - likely candidates: `project_secrets`, `project_backup_indexes`, selected
+    project-scoped `external_credentials`;
+  - likely non-candidates: `blobs`, `syncstrings`, `patches`, `cursors`, large
+    data-plane content.
 
 Important distinction:
 
