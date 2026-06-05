@@ -52,6 +52,8 @@ const LOADING_STYLE: CSS = {
   textAlign: "center",
   color: COLORS.GRAY,
 } as const;
+const VISIBLE_WINDOW_REPAIR_LIMIT = 200;
+const VISIBLE_WINDOW_REPAIR_DELAY_MS = 500;
 
 export const ProjectsPage: React.FC = () => {
   const intl = useIntl();
@@ -144,6 +146,26 @@ export const ProjectsPage: React.FC = () => {
     selected_hashtags,
     search,
   ]);
+
+  const visibleProjectionRepairKey = useMemo(
+    () => visible_projects.slice(0, VISIBLE_WINDOW_REPAIR_LIMIT).join("\n"),
+    [visible_projects],
+  );
+
+  useEffect(() => {
+    if (visibleProjectionRepairKey.length === 0) {
+      return;
+    }
+    const project_ids = visibleProjectionRepairKey.split("\n");
+    const timer = setTimeout(() => {
+      void redux.getActions("projects")?.repairProjectProjection?.({
+        kind: "visible-window",
+        project_ids,
+        reason: "visible-window",
+      });
+    }, VISIBLE_WINDOW_REPAIR_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [visibleProjectionRepairKey]);
 
   useEffect(() => {
     const visible = new Set(visible_projects);

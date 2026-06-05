@@ -173,6 +173,7 @@ export type ProjectProjectionRepairRequest =
     }
   | {
       kind: "visible-window";
+      project_ids?: string[];
       reason: ProjectProjectionRepairReason;
       force?: boolean;
     };
@@ -708,19 +709,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
         );
         return;
       }
-      case "visible-window":
+      case "visible-window": {
+        const project_ids = Array.from(
+          new globalThis.Set(request.project_ids ?? []),
+        );
         recordProjectionRepair({
           consumer: "projects",
           reason: request.reason,
           scope: {
             kind: "visible-window",
+            project_ids,
           },
         });
-        console.warn(
-          "project visible-window projection repair is not implemented yet",
-          { reason: request.reason },
+        await Promise.all(
+          project_ids.map((project_id) =>
+            this.loadProjectedProjectForCurrentAccount(
+              project_id,
+              request.reason,
+            ),
+          ),
         );
         return;
+      }
     }
   }
 
