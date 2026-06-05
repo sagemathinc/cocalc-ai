@@ -2952,6 +2952,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
       opts: {
         autostart?: boolean;
         onStartOp?: (op: { op_id?: string }) => void;
+        waitForStart?: boolean;
+        waitTimeoutMs?: number;
       } = {},
     ): Promise<boolean> => {
       if (!store.getIn(["project_map", project_id])) {
@@ -3023,6 +3025,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (host_id) {
           void this.ensure_host_info(host_id, true);
         }
+        if (opts.waitForStart) {
+          const summary = await this.waitForProjectStartOp({
+            op: resp,
+            timeout_ms: opts.waitTimeoutMs,
+          });
+          if (summary.status !== "succeeded") {
+            throw Error(summary.error ?? `project start ${summary.status}`);
+          }
+        }
       } catch (err) {
         if (extractRuntimeSponsorDenial(err)) {
           actions.setState({ control_error: "" });
@@ -3053,6 +3064,40 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return true;
     },
   );
+
+  private waitForProjectStartOp = async ({
+    op,
+    timeout_ms = 20 * 60 * 1000,
+  }: {
+    op: {
+      op_id?: string;
+      scope_type?: LroSummary["scope_type"];
+      scope_id?: string;
+      stream_name?: string;
+    };
+    timeout_ms?: number;
+  }): Promise<LroSummary> => {
+    if (!op.op_id || !op.scope_type) {
+      throw Error("project start operation did not return an LRO reference");
+    }
+    try {
+      return await webapp_client.conat_client.lroWait({
+        op_id: op.op_id,
+        stream_name: op.stream_name,
+        scope_type: op.scope_type,
+        scope_id: op.scope_id,
+        timeout_ms,
+      });
+    } catch (err) {
+      const summary = await webapp_client.conat_client.hub.lro.get({
+        op_id: op.op_id,
+      });
+      if (summary && isTerminal(summary.status)) {
+        return summary;
+      }
+      throw err;
+    }
+  };
 
   private resetProjectRuntimeAfterArchiveCycle = async (
     project_id: string,

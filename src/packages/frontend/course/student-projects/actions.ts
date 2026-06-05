@@ -369,7 +369,11 @@ export class StudentProjectsActions {
       // abort if canceled
       if (store.get("action_all_projects_state") !== state) return;
       // returns true/false, could be useful some day
-      await selectedAction(student_project_id);
+      if (action === "start") {
+        await selectedAction(student_project_id, { waitForStart: true });
+      } else {
+        await selectedAction(student_project_id);
+      }
     };
 
     try {
