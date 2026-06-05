@@ -584,6 +584,18 @@ export async function requestSiteLicensePool(opts: {
   return await (await getPurchasesHubRpc()).requestSiteLicensePool(opts);
 }
 
+export async function cancelSiteLicensePoolRequest(opts: {
+  request_id: string;
+}): Promise<SiteLicensePoolRequest> {
+  return await (await getPurchasesHubRpc()).cancelSiteLicensePoolRequest(opts);
+}
+
+export async function releaseSiteLicensePoolSeat(opts: {
+  package_id: string;
+}): Promise<{ revoked: boolean }> {
+  return await (await getPurchasesHubRpc()).releaseSiteLicensePoolSeat(opts);
+}
+
 export async function reviewSiteLicensePoolRequest(opts: {
   owner_account_id?: string;
   request_id: string;

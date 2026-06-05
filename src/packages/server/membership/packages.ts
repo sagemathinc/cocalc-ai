@@ -59,6 +59,14 @@ type Queryable = PoolClient | ReturnType<typeof getPool>;
 type ClaimableMembershipPackageWithBay = ClaimableMembershipPackage & {
   owner_bay_id: string;
 };
+export type SiteLicenseAccountSeatChange = {
+  package_id: string;
+  assignment_id: string;
+};
+export type SiteLicenseCanceledPoolRequest = {
+  id: string;
+  package_id: string;
+};
 type InstitutionalClaimDescriptor = {
   scope_key: string;
   scope_kind: string;
@@ -468,63 +476,118 @@ function getPackageExclusiveGroup(pkg: {
   );
 }
 
-async function getActiveSiteLicenseAssignmentInExclusiveGroup({
-  pkg,
+export async function revokeOtherActiveSiteLicenseAssignmentsForAccount({
+  site_license_id,
   account_id,
+  keep_package_id,
   client,
-  exclude_package_id,
 }: {
-  pkg: MembershipPackageRecord;
+  site_license_id: string;
   account_id: string;
-  client?: PoolClient;
-  exclude_package_id?: string;
-}): Promise<
-  | {
-      package_id: string;
-      assignment_id: string;
-      membership_class: string;
-    }
-  | undefined
-> {
-  if (pkg.kind !== "site") {
-    return;
+  keep_package_id?: string;
+  client: PoolClient;
+}): Promise<SiteLicenseAccountSeatChange[]> {
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  const accountId = `${account_id ?? ""}`.trim();
+  if (!siteLicenseId || !accountId) {
+    return [];
   }
-  const siteLicenseId = getSiteLicenseId(pkg.metadata);
-  if (!siteLicenseId) {
-    return;
-  }
-  const exclusiveGroup = getPackageExclusiveGroup(pkg);
-  const { rows } = await getQueryClient(client).query<{
-    assignment_id: string;
+  const { rows } = await client.query<{
     package_id: string;
-    membership_class: string;
+    assignment_id: string;
     metadata?: Record<string, unknown> | null;
   }>(
     `
-      SELECT
-        a.id AS assignment_id,
-        p.id AS package_id,
-        p.membership_class,
-        p.metadata
-      FROM membership_package_assignments a
-      JOIN membership_packages p
-        ON p.id = a.package_id
-      WHERE a.account_id = $1
-        AND a.revoked_at IS NULL
-        AND p.kind IN ('site', 'domain')
-        AND p.metadata ->> 'site_license_id' = $2
-        AND ($3::uuid IS NULL OR p.id <> $3::uuid)
-      ORDER BY a.assigned_at DESC NULLS LAST, a.created DESC NULLS LAST
+      SELECT p.id AS package_id,
+             a.id AS assignment_id,
+             a.metadata
+        FROM membership_package_assignments a
+        JOIN membership_packages p
+          ON p.id = a.package_id
+       WHERE a.account_id = $1
+         AND a.revoked_at IS NULL
+         AND p.kind IN ('site', 'domain')
+         AND p.metadata ->> 'site_license_id' = $2
+         AND ($3::uuid IS NULL OR p.id <> $3::uuid)
+       ORDER BY a.assigned_at DESC NULLS LAST, a.created DESC NULLS LAST
     `,
-    [account_id, siteLicenseId, exclude_package_id ?? null],
+    [accountId, siteLicenseId, keep_package_id ?? null],
   );
-  return rows.find(
-    (row) =>
-      getPackageExclusiveGroup({
-        membership_class: row.membership_class,
-        metadata: row.metadata,
-      }) === exclusiveGroup,
+  const revoked: SiteLicenseAccountSeatChange[] = [];
+  for (const row of rows) {
+    const didRevoke = await revokeMembershipPackageSeat(
+      {
+        package_id: row.package_id,
+        account_id: accountId,
+      },
+      client,
+    );
+    if (didRevoke) {
+      revoked.push(row);
+      const claim_scope_key =
+        `${row.metadata?.claim_scope_key ?? ""}`.trim() || undefined;
+      const claim_identity_key =
+        `${row.metadata?.claim_identity_key ?? ""}`.trim() || undefined;
+      const claim_reservation_id =
+        `${row.metadata?.claim_reservation_id ?? ""}`.trim() || undefined;
+      if (claim_scope_key && claim_identity_key) {
+        await revokeMembershipClaimIdentity({
+          scope_key: claim_scope_key,
+          canonical_identity: claim_identity_key,
+          account_id: accountId,
+          assignment_id: row.assignment_id,
+          reservation_id: claim_reservation_id,
+          client,
+        }).catch(() => undefined);
+      }
+    }
+  }
+  return revoked;
+}
+
+export async function cancelPendingSiteLicensePoolRequestsForAccount({
+  site_license_id,
+  account_id,
+  except_request_id,
+  reviewer_account_id,
+  review_note,
+  client,
+}: {
+  site_license_id: string;
+  account_id: string;
+  except_request_id?: string;
+  reviewer_account_id?: string | null;
+  review_note?: string | null;
+  client: Queryable;
+}): Promise<SiteLicenseCanceledPoolRequest[]> {
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  const accountId = `${account_id ?? ""}`.trim();
+  if (!siteLicenseId || !accountId) {
+    return [];
+  }
+  const { rows } = await client.query<SiteLicenseCanceledPoolRequest>(
+    `
+      UPDATE site_license_pool_requests
+         SET state = 'canceled',
+             reviewer_account_id = $3,
+             review_note = $4,
+             reviewed_at = NOW(),
+             updated = NOW()
+       WHERE site_license_id = $1
+         AND account_id = $2
+         AND state = 'pending'
+         AND ($5::uuid IS NULL OR id <> $5::uuid)
+       RETURNING id, package_id
+    `,
+    [
+      siteLicenseId,
+      accountId,
+      reviewer_account_id ?? null,
+      `${review_note ?? ""}`.trim() || null,
+      except_request_id ?? null,
+    ],
   );
+  return rows;
 }
 
 function getPackageStringMetadata(
@@ -2139,6 +2202,7 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
         assignment.email_address &&
         emailSet.has(assignment.email_address)
       ) {
+        const terms = await getSiteLicenseTermsForPackage({ pkg, client });
         claimables.set(pkg.id, {
           package_id: pkg.id,
           assignment_id: assignment.id,
@@ -2150,9 +2214,20 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           available_seat_count,
           matched_email_address: assignment.email_address,
           reason: "email-assignment",
+          requires_approval: packageRequiresApproval(pkg),
+          site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
+          verification_policy: getPackageStringMetadata(
+            pkg,
+            "verification_policy",
+          ) as ClaimableMembershipPackage["verification_policy"],
+          exclusive_group: getPackageStringMetadata(pkg, "exclusive_group"),
           seat_status: "claimable",
+          custom_terms_url: terms.custom_terms_url ?? null,
+          custom_policy_url: terms.custom_policy_url ?? null,
+          terms_version_label: terms.terms_version_label ?? null,
+          requires_terms_acceptance: requiresTermsAcceptance(terms),
           metadata: normalizeMetadata(pkg.metadata),
         });
       }
@@ -2190,21 +2265,10 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           const currentClaim = claimIdentityCache.get(claimIdentityKey) ?? null;
           blocked =
             currentClaim != null &&
-            (!packageRequiresApproval(pkg) ||
-              currentClaim.account_id !== account_id);
+            (currentClaim.account_id !== account_id ||
+              getSiteLicenseId(pkg.metadata) == null);
         }
         if (blocked) {
-          continue;
-        }
-        if (
-          !packageRequiresApproval(pkg) &&
-          (await getActiveSiteLicenseAssignmentInExclusiveGroup({
-            pkg,
-            account_id,
-            client,
-            exclude_package_id: pkg.id,
-          })) != null
-        ) {
           continue;
         }
         const pendingRequest =
@@ -2389,19 +2453,26 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
         if (existing) {
           return existing;
         }
-        const existingSameGroup =
-          await getActiveSiteLicenseAssignmentInExclusiveGroup({
-            pkg,
+        const siteLicenseId =
+          pkg.kind === "site" ? getSiteLicenseId(pkg.metadata) : undefined;
+        async function replaceExistingSiteLicenseSeats() {
+          if (!siteLicenseId) {
+            return;
+          }
+          await cancelPendingSiteLicensePoolRequestsForAccount({
+            site_license_id: siteLicenseId,
             account_id,
+            reviewer_account_id: account_id,
+            review_note: "Canceled by direct site-license seat claim.",
             client: dbClient,
-            exclude_package_id: package_id,
           });
-        if (existingSameGroup != null) {
-          throw Error(
-            `account already has an active site-license seat in this ${getPackageExclusiveGroup(pkg)} group`,
-          );
+          await revokeOtherActiveSiteLicenseAssignmentsForAccount({
+            site_license_id: siteLicenseId,
+            account_id,
+            keep_package_id: package_id,
+            client: dbClient,
+          });
         }
-
         const emailSet = new Set(verifiedEmailAddresses);
         const pendingAssignment = assignments.find(
           (assignment) =>
@@ -2416,6 +2487,9 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
                 pkg,
                 matched_email_address: pendingAssignment.email_address,
               });
+        if (pendingAssignment && pkg.kind === "site") {
+          await replaceExistingSiteLicenseSeats();
+        }
         if (pendingClaimDescriptor != null) {
           const reserved = await reserveMembershipClaimIdentity({
             scope_key: pendingClaimDescriptor.scope_key,
@@ -2548,6 +2622,7 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
         if (institutionalClaim == null) {
           throw Error("no claimable seat found for this account");
         }
+        await replaceExistingSiteLicenseSeats();
         const reserved = await reserveMembershipClaimIdentity({
           scope_key: institutionalClaim.scope_key,
           scope_kind: institutionalClaim.scope_kind,

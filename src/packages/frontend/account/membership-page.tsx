@@ -99,7 +99,7 @@ function MembershipSettingsContent() {
   >(undefined);
 
   if (!account_id) return null;
-  if (loading) return <Loading />;
+  if (loading && !membership) return <Loading />;
   if (error) return <Alert type="error" title={error} />;
   if (!membership) return null;
 

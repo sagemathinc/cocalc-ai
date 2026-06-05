@@ -401,8 +401,10 @@ export type SiteLicenseAuditAction =
   | "pool-updated"
   | "pool-archived"
   | "pool-request-created"
+  | "pool-request-canceled"
   | "pool-request-approved"
   | "pool-request-rejected"
+  | "seat-released-by-user"
   | "seat-released-for-upgrade"
   | "seat-affiliation-reverified"
   | "seat-released-after-reverification-grace";
@@ -1064,6 +1066,14 @@ export interface Purchases {
     requester_note?: string | null;
     accepted_terms?: boolean;
   }) => Promise<SiteLicensePoolRequest>;
+  cancelSiteLicensePoolRequest: (opts?: {
+    account_id?: string;
+    request_id?: string;
+  }) => Promise<SiteLicensePoolRequest>;
+  releaseSiteLicensePoolSeat: (opts?: {
+    account_id?: string;
+    package_id?: string;
+  }) => Promise<{ revoked: boolean }>;
   reviewSiteLicensePoolRequest: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1136,6 +1146,8 @@ export const purchases = {
   setSiteLicenseManager: authFirst,
   removeSiteLicenseManager: authFirst,
   requestSiteLicensePool: authFirst,
+  cancelSiteLicensePoolRequest: authFirst,
+  releaseSiteLicensePoolSeat: authFirst,
   reviewSiteLicensePoolRequest: authFirst,
   getSiteLicenseAffiliationReverificationStatus: authFirst,
   refreshSiteLicenseAffiliationVerification: authFirst,

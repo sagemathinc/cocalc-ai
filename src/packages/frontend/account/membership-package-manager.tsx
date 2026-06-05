@@ -53,6 +53,7 @@ import {
   adminProvisionSiteLicense,
   archiveSiteLicensePool,
   assignMembershipPackageSeat,
+  cancelSiteLicensePoolRequest,
   claimMembershipPackageSeat,
   getSiteLicenseAffiliationReverificationStatus,
   getClaimableMembershipPackages,
@@ -62,6 +63,7 @@ import {
   listSiteLicenseOverviews,
   processPaymentIntents,
   purchaseMembershipPackage,
+  releaseSiteLicensePoolSeat,
   refreshSiteLicenseAffiliationVerification,
   removeSiteLicenseManager,
   requestSiteLicensePool,
@@ -653,6 +655,12 @@ export function ClaimableMembershipPackagesPanel({
   const [error, setError] = useState<string>("");
   const [claimingPackageId, setClaimingPackageId] = useState<string>("");
   const [requestingPackageId, setRequestingPackageId] = useState<string>("");
+  const [releasingPackageId, setReleasingPackageId] = useState<string>("");
+  const [cancelingRequestId, setCancelingRequestId] = useState<string>("");
+  const [replacementClaimTarget, setReplacementClaimTarget] = useState<{
+    claimablePackage: ClaimableMembershipPackage;
+    accepted_terms: boolean;
+  } | null>(null);
   const [termsTarget, setTermsTarget] =
     useState<ClaimableMembershipPackage | null>(null);
   const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
@@ -729,6 +737,82 @@ export function ClaimableMembershipPackagesPanel({
     }
   }
 
+  async function releaseSeat(claimablePackage: ClaimableMembershipPackage) {
+    setReleasingPackageId(claimablePackage.package_id);
+    setError("");
+    try {
+      const result = await releaseSiteLicensePoolSeat({
+        package_id: claimablePackage.package_id,
+      });
+      if (!result.revoked) {
+        throw Error("Seat was not released. Refresh the page and try again.");
+      }
+      await refreshClaimables();
+      onChanged?.();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setReleasingPackageId("");
+    }
+  }
+
+  async function cancelRequest(claimablePackage: ClaimableMembershipPackage) {
+    const requestId = `${claimablePackage.pending_request_id ?? ""}`.trim();
+    if (!requestId) {
+      setError("Request was not canceled. Refresh the page and try again.");
+      return;
+    }
+    setCancelingRequestId(requestId);
+    setError("");
+    try {
+      await cancelSiteLicensePoolRequest({ request_id: requestId });
+      await refreshClaimables();
+      onChanged?.();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setCancelingRequestId("");
+    }
+  }
+
+  function isSameSiteLicense(
+    left: ClaimableMembershipPackage,
+    right: ClaimableMembershipPackage,
+  ): boolean {
+    const leftSiteLicenseId = `${left.site_license_id ?? ""}`.trim();
+    const rightSiteLicenseId = `${right.site_license_id ?? ""}`.trim();
+    return (
+      leftSiteLicenseId !== "" &&
+      rightSiteLicenseId !== "" &&
+      leftSiteLicenseId === rightSiteLicenseId
+    );
+  }
+
+  function claimWouldReleaseActiveSeat(
+    claimablePackage: ClaimableMembershipPackage,
+  ): boolean {
+    return claimables.some(
+      (otherPackage) =>
+        otherPackage.package_id !== claimablePackage.package_id &&
+        getClaimableSeatStatus(otherPackage) === "claimed" &&
+        isSameSiteLicense(otherPackage, claimablePackage),
+    );
+  }
+
+  async function claimOrConfirmReplacement(
+    claimablePackage: ClaimableMembershipPackage,
+    accepted_terms = false,
+  ) {
+    if (claimWouldReleaseActiveSeat(claimablePackage)) {
+      setReplacementClaimTarget({
+        claimablePackage,
+        accepted_terms,
+      });
+      return;
+    }
+    await claimPackage(claimablePackage, accepted_terms);
+  }
+
   function handlePrimaryAction(claimablePackage: ClaimableMembershipPackage) {
     if (claimablePackage.requires_terms_acceptance) {
       setTermsTarget(claimablePackage);
@@ -738,7 +822,7 @@ export function ClaimableMembershipPackagesPanel({
     if (claimablePackage.requires_approval) {
       void requestPool(claimablePackage);
     } else {
-      void claimPackage(claimablePackage);
+      void claimOrConfirmReplacement(claimablePackage);
     }
   }
 
@@ -782,22 +866,51 @@ export function ClaimableMembershipPackagesPanel({
                 ) : null}
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   {seatStatus === "claimed" ? (
-                    <Button disabled title="Seat claimed">
-                      Seat claimed
-                    </Button>
-                  ) : claimablePackage.requires_approval ? (
-                    <Button
-                      loading={
-                        requestingPackageId === claimablePackage.package_id
-                      }
-                      disabled={seatStatus === "pending"}
-                      title={seatStatus === "pending" ? "Request pending" : ""}
-                      onClick={() => handlePrimaryAction(claimablePackage)}
+                    <Popconfirm
+                      title="Release this seat?"
+                      description="This will remove this site-license membership from your account."
+                      okText="Release seat"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => void releaseSeat(claimablePackage)}
                     >
-                      {seatStatus === "pending"
-                        ? "Request pending"
-                        : "Request access"}
-                    </Button>
+                      <Button
+                        danger
+                        loading={
+                          releasingPackageId === claimablePackage.package_id
+                        }
+                      >
+                        Release seat
+                      </Button>
+                    </Popconfirm>
+                  ) : claimablePackage.requires_approval ? (
+                    seatStatus === "pending" ? (
+                      <Popconfirm
+                        title="Withdraw this request?"
+                        description="This will remove your pending request for this site-license membership."
+                        okText="Withdraw request"
+                        okButtonProps={{ danger: true }}
+                        onConfirm={() => void cancelRequest(claimablePackage)}
+                      >
+                        <Button
+                          danger
+                          loading={
+                            cancelingRequestId ===
+                            claimablePackage.pending_request_id
+                          }
+                        >
+                          Cancel request
+                        </Button>
+                      </Popconfirm>
+                    ) : (
+                      <Button
+                        loading={
+                          requestingPackageId === claimablePackage.package_id
+                        }
+                        onClick={() => handlePrimaryAction(claimablePackage)}
+                      >
+                        Request access
+                      </Button>
+                    )
                   ) : (
                     <Button
                       loading={
@@ -835,7 +948,7 @@ export function ClaimableMembershipPackagesPanel({
         if (target.requires_approval) {
           await requestPool(target, true);
         } else {
-          await claimPackage(target, true);
+          await claimOrConfirmReplacement(target, true);
         }
       }}
       destroyOnHidden
@@ -880,6 +993,30 @@ export function ClaimableMembershipPackagesPanel({
       </Space>
     </Modal>
   );
+  const replacementClaimModal = (
+    <Modal
+      open={replacementClaimTarget != null}
+      title="Replace current site-license seat?"
+      okText="Claim seat"
+      okButtonProps={{
+        loading:
+          replacementClaimTarget != null &&
+          claimingPackageId ===
+            replacementClaimTarget.claimablePackage.package_id,
+      }}
+      onCancel={() => setReplacementClaimTarget(null)}
+      onOk={async () => {
+        const target = replacementClaimTarget;
+        if (!target) return;
+        setReplacementClaimTarget(null);
+        await claimPackage(target.claimablePackage, target.accepted_terms);
+      }}
+      destroyOnHidden
+    >
+      Claiming this seat will release your current site-license membership and
+      cancel any pending requests for this site license.
+    </Modal>
+  );
 
   if (compact) {
     const disabledReason =
@@ -913,6 +1050,7 @@ export function ClaimableMembershipPackagesPanel({
           {renderClaimablePackages()}
         </Modal>
         {termsModal}
+        {replacementClaimModal}
       </>
     );
   }
@@ -961,6 +1099,7 @@ export function ClaimableMembershipPackagesPanel({
       ) : null}
       {!loading && claimables.length > 0 ? renderClaimablePackages() : null}
       {termsModal}
+      {replacementClaimModal}
     </div>
   );
 }

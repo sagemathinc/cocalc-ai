@@ -17,6 +17,8 @@ const getMembershipPackages = jest.fn();
 const getClaimableMembershipPackages = jest.fn();
 const claimMembershipPackageSeat = jest.fn();
 const requestSiteLicensePool = jest.fn();
+const cancelSiteLicensePoolRequest = jest.fn();
+const releaseSiteLicensePoolSeat = jest.fn();
 const getSiteLicenseOverview = jest.fn();
 const listSiteLicenseOverviews = jest.fn();
 const reviewSiteLicensePoolRequest = jest.fn();
@@ -111,6 +113,10 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
   claimMembershipPackageSeat: (...args: any[]) =>
     claimMembershipPackageSeat(...args),
   requestSiteLicensePool: (...args: any[]) => requestSiteLicensePool(...args),
+  cancelSiteLicensePoolRequest: (...args: any[]) =>
+    cancelSiteLicensePoolRequest(...args),
+  releaseSiteLicensePoolSeat: (...args: any[]) =>
+    releaseSiteLicensePoolSeat(...args),
   getSiteLicenseOverview: (...args: any[]) => getSiteLicenseOverview(...args),
   listSiteLicenseOverviews: (...args: any[]) =>
     listSiteLicenseOverviews(...args),
@@ -1594,6 +1600,59 @@ describe("ClaimableMembershipPackagesPanel", () => {
     });
   });
 
+  it("confirms before claiming a pool that replaces an active seat", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "student-pool-1",
+        assignment_id: "assignment-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 2,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        site_license_id: "license-1",
+        pool_name: "Student",
+        seat_status: "claimed",
+      },
+      {
+        package_id: "researcher-pool-1",
+        kind: "site",
+        membership_class: "pro",
+        owner_account_id: "owner-1",
+        available_seat_count: 2,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        site_license_id: "license-1",
+        pool_name: "Researcher",
+      },
+    ]);
+    claimMembershipPackageSeat.mockResolvedValue({
+      id: "assignment-2",
+      package_id: "researcher-pool-1",
+      account_id: "account-1",
+    });
+
+    render(<ClaimableMembershipPackagesPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Student")).toBeTruthy();
+      expect(screen.getByText("Researcher")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Claim seat" }));
+
+    await screen.findByText("Replace current site-license seat?");
+    expect(claimMembershipPackageSeat).not.toHaveBeenCalled();
+    const claimButtons = screen.getAllByText("Claim seat");
+    fireEvent.click(claimButtons[claimButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(claimMembershipPackageSeat).toHaveBeenCalledWith({
+        package_id: "researcher-pool-1",
+      });
+    });
+  });
+
   it("requests manager approval for an approval-required site-license pool", async () => {
     getClaimableMembershipPackages.mockResolvedValue([
       {
@@ -1657,7 +1716,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
     });
   });
 
-  it("shows an already claimed site-license pool with a disabled action", async () => {
+  it("releases an already claimed site-license pool after confirmation", async () => {
     getClaimableMembershipPackages.mockResolvedValue([
       {
         package_id: "student-pool-1",
@@ -1673,6 +1732,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
         seat_status: "claimed",
       },
     ]);
+    releaseSiteLicensePoolSeat.mockResolvedValue({ revoked: true });
 
     render(<ClaimableMembershipPackagesPanel />);
 
@@ -1680,9 +1740,62 @@ describe("ClaimableMembershipPackagesPanel", () => {
       expect(screen.getByText("Students")).toBeTruthy();
       expect(screen.getByText("Student access for example.edu.")).toBeTruthy();
     });
-    const button = screen.getByRole("button", { name: "Seat claimed" });
-    expect(button).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Release seat" }));
+    await screen.findByText("Release this seat?");
+    const releaseButtons = screen.getAllByText("Release seat");
+    fireEvent.click(releaseButtons[releaseButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(releaseSiteLicensePoolSeat).toHaveBeenCalledWith({
+        package_id: "student-pool-1",
+      });
+      expect(getClaimableMembershipPackages).toHaveBeenCalledTimes(2);
+    });
     expect(claimMembershipPackageSeat).not.toHaveBeenCalled();
+  });
+
+  it("cancels a pending site-license pool request after confirmation", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "instructor-pool-1",
+        kind: "site",
+        membership_class: "pro",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        requires_approval: true,
+        pool_name: "Instructors",
+        pool_description: "Instructor access for approved faculty.",
+        pending_request_id: "request-1",
+        pending_request_state: "pending",
+      },
+    ]);
+    cancelSiteLicensePoolRequest.mockResolvedValue({
+      id: "request-1",
+      package_id: "instructor-pool-1",
+      account_id: "account-1",
+      state: "canceled",
+    });
+
+    render(<ClaimableMembershipPackagesPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Instructors")).toBeTruthy();
+      expect(screen.getByText("Cancel request")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel request" }));
+    await screen.findByText("Withdraw this request?");
+    fireEvent.click(screen.getByText("Withdraw request"));
+
+    await waitFor(() => {
+      expect(cancelSiteLicensePoolRequest).toHaveBeenCalledWith({
+        request_id: "request-1",
+      });
+      expect(getClaimableMembershipPackages).toHaveBeenCalledTimes(2);
+    });
+    expect(requestSiteLicensePool).not.toHaveBeenCalled();
   });
 
   it("requires custom terms confirmation before claiming a site-license pool", async () => {

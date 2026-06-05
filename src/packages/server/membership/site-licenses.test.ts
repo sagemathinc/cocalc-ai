@@ -24,12 +24,14 @@ import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
   archiveSiteLicensePool,
+  cancelSiteLicensePoolRequest,
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
   listSiteLicenseAffiliationReverificationSeats,
   listSiteLicenseOverviews,
   releaseGraceExpiredSiteLicenseAffiliationSeats,
+  releaseSiteLicensePoolSeat,
   requestSiteLicensePool,
   refreshSiteLicenseAffiliationVerificationForAccount,
   removeSiteLicenseManager,
@@ -890,6 +892,7 @@ describe("site license seat pools", () => {
     await createTestAccount(second_owner_account_id);
     await createTestAccount(student_account_id);
     await markAdmin(admin_account_id);
+    await markVerifiedEmail(student_account_id, `student@${originalDomain}`);
 
     const overview = await provisionSiteLicenseForTest({
       actor_account_id: admin_account_id,
@@ -1557,7 +1560,7 @@ describe("site license seat pools", () => {
     expect(request.metadata?.terms_accepted_at).toBeTruthy();
   });
 
-  it("prevents direct claims for a second pool in the same exclusive group", async () => {
+  it("direct site-license claims replace the account's previous seat", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();
     const account_id = uuid();
@@ -1605,7 +1608,7 @@ describe("site license seat pools", () => {
           requires_approval: false,
           verification_policy: "email-domain",
           exclusive_group: "teaching",
-          allowed_domains: [researchDomain],
+          allowed_domains: [teachingDomain],
         },
         {
           pool_name: "Researchers",
@@ -1634,13 +1637,9 @@ describe("site license seat pools", () => {
     });
     const claimablesAfterStudentClaim =
       await listClaimableMembershipPackagesForAccount({ account_id });
-    expect(
-      claimablesAfterStudentClaim.some(
-        (claimable) => claimable.package_id === teachingStaffPool.id,
-      ),
-    ).toBe(false);
     expect(claimablesAfterStudentClaim).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ package_id: teachingStaffPool.id }),
         expect.objectContaining({ package_id: researcherPool.id }),
       ]),
     );
@@ -1654,9 +1653,25 @@ describe("site license seat pools", () => {
           `ada+research@${researchDomain}`,
         ],
       }),
-    ).rejects.toThrow(
-      "account already has an active site-license seat in this teaching group",
+    ).resolves.toEqual(
+      expect.objectContaining({
+        account_id,
+        package_id: teachingStaffPool.id,
+      }),
     );
+    const studentAssignments = await listMembershipPackageAssignments({
+      package_id: studentPool.id,
+      include_revoked: true,
+    });
+    expect(studentAssignments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          account_id,
+          revoked_at: expect.any(Date),
+        }),
+      ]),
+    );
+
     await expect(
       claimMembershipPackageSeat({
         account_id,
@@ -1668,6 +1683,234 @@ describe("site license seat pools", () => {
         package_id: researcherPool.id,
       }),
     );
+    const teachingStaffAssignments = await listMembershipPackageAssignments({
+      package_id: teachingStaffPool.id,
+      include_revoked: true,
+    });
+    expect(teachingStaffAssignments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          account_id,
+          revoked_at: expect.any(Date),
+        }),
+      ]),
+    );
+    const researcherAssignments = await listMembershipPackageAssignments({
+      package_id: researcherPool.id,
+      include_revoked: false,
+    });
+    expect(
+      researcherAssignments.some(
+        (assignment) => assignment.account_id === account_id,
+      ),
+    ).toBe(true);
+  });
+
+  it("replaces pending requests and keeps the active seat until approval", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    const domain = `switch-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(account_id, `ada@${domain}`);
+
+    const overview = await provisionSiteLicenseForTest({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Switch Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Student",
+          membership_class: studentTier,
+          seat_count: 5,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "student",
+        },
+        {
+          pool_name: "Instructor",
+          membership_class: instructorTier,
+          seat_count: 5,
+          requires_approval: true,
+          verification_policy: "manager-approval",
+          exclusive_group: "instructor",
+        },
+        {
+          pool_name: "Researcher",
+          membership_class: researcherTier,
+          seat_count: 5,
+          requires_approval: true,
+          verification_policy: "manager-approval",
+          exclusive_group: "researcher",
+        },
+      ],
+    });
+    const studentPool = overview.pools.find(
+      (pool) => pool.pool_name === "Student",
+    )!;
+    const instructorPool = overview.pools.find(
+      (pool) => pool.pool_name === "Instructor",
+    )!;
+    const researcherPool = overview.pools.find(
+      (pool) => pool.pool_name === "Researcher",
+    )!;
+
+    await claimMembershipPackageSeat({
+      account_id,
+      package_id: studentPool.id,
+    });
+    const instructorRequest = await requestSiteLicensePool({
+      account_id,
+      package_id: instructorPool.id,
+    });
+    const researcherRequest = await requestSiteLicensePool({
+      account_id,
+      package_id: researcherPool.id,
+    });
+
+    const { rows: requestRows } = await getPool().query<{
+      id: string;
+      state: string;
+    }>(
+      `SELECT id, state
+         FROM site_license_pool_requests
+        WHERE id = ANY($1::uuid[])
+        ORDER BY id`,
+      [[instructorRequest.id, researcherRequest.id]],
+    );
+    expect(requestRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: instructorRequest.id,
+          state: "canceled",
+        }),
+        expect.objectContaining({
+          id: researcherRequest.id,
+          state: "pending",
+        }),
+      ]),
+    );
+    let studentAssignments = await listMembershipPackageAssignments({
+      package_id: studentPool.id,
+      include_revoked: false,
+    });
+    expect(
+      studentAssignments.some(
+        (assignment) => assignment.account_id === account_id,
+      ),
+    ).toBe(true);
+
+    await reviewSiteLicensePoolRequest({
+      actor_account_id: owner_account_id,
+      request_id: researcherRequest.id,
+      action: "approve",
+    });
+    studentAssignments = await listMembershipPackageAssignments({
+      package_id: studentPool.id,
+      include_revoked: true,
+    });
+    expect(studentAssignments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          account_id,
+          revoked_at: expect.any(Date),
+        }),
+      ]),
+    );
+    const researcherAssignments = await listMembershipPackageAssignments({
+      package_id: researcherPool.id,
+      include_revoked: false,
+    });
+    expect(
+      researcherAssignments.some(
+        (assignment) => assignment.account_id === account_id,
+      ),
+    ).toBe(true);
+  });
+
+  it("lets users release their own seats and cancel their own requests", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    const other_account_id = uuid();
+    const domain = `self-service-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(account_id);
+    await createTestAccount(other_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(account_id, `ada@${domain}`);
+    await markVerifiedEmail(other_account_id, `other@${domain}`);
+
+    const overview = await provisionSiteLicenseForTest({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Self Service Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Student",
+          membership_class: studentTier,
+          seat_count: 5,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "student",
+        },
+        {
+          pool_name: "Instructor",
+          membership_class: instructorTier,
+          seat_count: 5,
+          requires_approval: true,
+          verification_policy: "manager-approval",
+          exclusive_group: "instructor",
+        },
+      ],
+    });
+    const studentPool = overview.pools.find(
+      (pool) => pool.pool_name === "Student",
+    )!;
+    const instructorPool = overview.pools.find(
+      (pool) => pool.pool_name === "Instructor",
+    )!;
+
+    await claimMembershipPackageSeat({
+      account_id,
+      package_id: studentPool.id,
+    });
+    await expect(
+      releaseSiteLicensePoolSeat({
+        account_id: other_account_id,
+        package_id: studentPool.id,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      releaseSiteLicensePoolSeat({
+        account_id,
+        package_id: studentPool.id,
+      }),
+    ).resolves.toBe(true);
+
+    const request = await requestSiteLicensePool({
+      account_id,
+      package_id: instructorPool.id,
+    });
+    await expect(
+      cancelSiteLicensePoolRequest({
+        account_id: other_account_id,
+        request_id: request.id,
+      }),
+    ).rejects.toThrow("can only cancel your own site-license request");
+    const canceled = await cancelSiteLicensePoolRequest({
+      account_id,
+      request_id: request.id,
+    });
+    expect(canceled.state).toBe("canceled");
   });
 
   it("classifies site-license affiliation reverification status", async () => {

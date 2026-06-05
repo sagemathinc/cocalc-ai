@@ -47,11 +47,15 @@ import {
 import {
   assignMembershipPackageSeat,
   assertNoActiveSiteLicenseDomainOverlap,
+  cancelPendingSiteLicensePoolRequestsForAccount,
   createMembershipPackage,
   getMembershipPackage,
   listMembershipPackageAssignments,
+  revokeOtherActiveSiteLicenseAssignmentsForAccount,
   revokeMembershipPackageSeat,
   updateMembershipPackage as updateMembershipPackageRecord,
+  type SiteLicenseAccountSeatChange,
+  type SiteLicenseCanceledPoolRequest,
 } from "./packages";
 import { listActiveMembershipGrantsForAccount } from "./grants";
 import {
@@ -172,8 +176,10 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "pool-updated",
   "pool-archived",
   "pool-request-created",
+  "pool-request-canceled",
   "pool-request-approved",
   "pool-request-rejected",
+  "seat-released-by-user",
   "seat-released-for-upgrade",
   "seat-affiliation-reverified",
   "seat-released-after-reverification-grace",
@@ -2564,6 +2570,121 @@ export async function revokeSiteLicensePoolSeat({
   return await withLocalSiteLicenseTransaction(revokeWithClient);
 }
 
+export async function releaseSiteLicensePoolSeat({
+  account_id,
+  package_id,
+  client,
+}: {
+  account_id: string;
+  package_id: string;
+  client?: PoolClient;
+}): Promise<boolean> {
+  const accountId = normalizeAccountId(account_id);
+  const packageId = normalizePackageId(package_id);
+  const releaseWithClient = async (dbClient: PoolClient): Promise<boolean> => {
+    const { siteLicense } = await getSiteLicenseForPackage(packageId, dbClient);
+    const assignments = await listMembershipPackageAssignments({
+      package_id: packageId,
+      include_revoked: false,
+      client: dbClient,
+    });
+    const assignment = assignments.find((row) => row.account_id === accountId);
+    if (!assignment) {
+      return false;
+    }
+    const revoked = await revokeMembershipPackageSeat(
+      {
+        package_id: packageId,
+        account_id: accountId,
+      },
+      dbClient,
+    );
+    if (revoked) {
+      await recordSiteLicenseAuditEvent({
+        site_license_id: siteLicense.id,
+        action: "seat-released-by-user",
+        actor_account_id: accountId,
+        target_account_id: accountId,
+        package_id: packageId,
+        metadata: {
+          assignment_id: assignment.id,
+        },
+        client: dbClient,
+      });
+    }
+    return revoked;
+  };
+
+  if (client != null) {
+    return await releaseWithClient(client);
+  }
+  return await withLocalSiteLicenseTransaction(releaseWithClient);
+}
+
+export async function cancelSiteLicensePoolRequest({
+  account_id,
+  request_id,
+  client,
+}: {
+  account_id: string;
+  request_id: string;
+  client?: PoolClient;
+}): Promise<SiteLicensePoolRequest> {
+  const accountId = normalizeAccountId(account_id);
+  const requestId = normalizeAccountId(request_id, "request_id");
+  const cancelWithClient = async (
+    dbClient: PoolClient,
+  ): Promise<SiteLicensePoolRequest> => {
+    const { rows } = await dbClient.query<RawSiteLicensePoolRequest>(
+      `SELECT *
+         FROM site_license_pool_requests
+        WHERE id=$1
+        FOR UPDATE`,
+      [requestId],
+    );
+    const request = normalizeSiteLicensePoolRequestRow(rows[0]);
+    if (!request) {
+      throw Error("site-license request not found");
+    }
+    if (request.account_id !== accountId) {
+      throw Error("can only cancel your own site-license request");
+    }
+    if (request.state !== "pending") {
+      throw Error(`request is not pending (state=${request.state})`);
+    }
+    const { siteLicense } = await getSiteLicenseForPackage(
+      request.package_id,
+      dbClient,
+    );
+    const canceled = await updateRequestState({
+      request_id: request.id,
+      state: "canceled",
+      reviewer_account_id: accountId,
+      review_note: "Canceled by requester.",
+      metadata: request.metadata,
+      client: dbClient,
+    });
+    await recordSiteLicenseAuditEvent({
+      site_license_id: siteLicense.id,
+      action: "pool-request-canceled",
+      actor_account_id: accountId,
+      target_account_id: accountId,
+      package_id: request.package_id,
+      request_id: request.id,
+      metadata: {
+        reason: "requester-canceled",
+      },
+      client: dbClient,
+    });
+    return canceled;
+  };
+
+  if (client != null) {
+    return await cancelWithClient(client);
+  }
+  return await withLocalSiteLicenseTransaction(cancelWithClient);
+}
+
 async function getSiteLicenseOverviewWithoutAuthorization({
   site_license_id,
   client,
@@ -3504,6 +3625,24 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
   ) {
     throw Error("account already has this site-license pool");
   }
+  const existingSamePackageRequestRows =
+    await pool.query<RawSiteLicensePoolRequest>(
+      `SELECT *
+         FROM site_license_pool_requests
+        WHERE site_license_id=$1
+          AND package_id=$2
+          AND state='pending'
+          AND account_id=$3
+        ORDER BY requested_at DESC
+        LIMIT 1`,
+      [siteLicense.id, packageId, accountId],
+    );
+  const existingSamePackageRequest = normalizeSiteLicensePoolRequestRow(
+    existingSamePackageRequestRows.rows[0],
+  );
+  if (existingSamePackageRequest) {
+    return existingSamePackageRequest;
+  }
   const exclusivePackageIds = await listSiteLicensePackageIdsByExclusiveGroup({
     site_license_id: siteLicense.id,
     exclusive_group: exclusiveGroup,
@@ -3515,18 +3654,16 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
        WHERE site_license_id=$1
          AND package_id = ANY($2::uuid[])
          AND state = 'pending'
-         AND (account_id=$3 OR canonical_identity=$4)
+         AND canonical_identity=$3
+         AND account_id <> $4
        ORDER BY requested_at DESC
        LIMIT 1`,
-    [siteLicense.id, exclusivePackageIds, accountId, canonicalIdentity],
+    [siteLicense.id, exclusivePackageIds, canonicalIdentity, accountId],
   );
   const existingRequest = normalizeSiteLicensePoolRequestRow(
     existingRequestRows.rows[0],
   );
   if (existingRequest) {
-    if (existingRequest.account_id === accountId) {
-      return existingRequest;
-    }
     throw Error("site-license pool request already exists");
   }
   const request_id = uuid();
@@ -3544,6 +3681,22 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     terms_accepted_at:
       accepted_terms === true ? new Date().toISOString() : null,
   };
+  const canceledRequests = await cancelPendingSiteLicensePoolRequestsForAccount(
+    {
+      site_license_id: siteLicense.id,
+      account_id: accountId,
+      reviewer_account_id: accountId,
+      review_note: "Canceled by a replacement site-license pool request.",
+      client: pool,
+    },
+  );
+  await recordCanceledPoolRequests({
+    site_license_id: siteLicense.id,
+    actor_account_id: accountId,
+    requests: canceledRequests,
+    reason: "replacement-request",
+    client: pool,
+  });
   const { rows } = await pool.query<RawSiteLicensePoolRequest>(
     `INSERT INTO site_license_pool_requests
        (id, site_license_id, package_id, account_id, matched_email_address,
@@ -3655,13 +3808,13 @@ export async function reviewSiteLicensePoolRequest({
         }
         const claimedDomain = request.matched_email_address.split("@")[1] ?? "";
         const exclusiveGroup = getPackageExclusiveGroup(pkg);
-        const releasedAssignments = await revokeOtherSiteLicenseAssignments({
-          site_license_id: siteLicense.id,
-          approved_package_id: pkg.id,
-          exclusive_group: exclusiveGroup,
-          account_id: request.account_id,
-          client,
-        });
+        const releasedAssignments =
+          await revokeOtherActiveSiteLicenseAssignmentsForAccount({
+            site_license_id: siteLicense.id,
+            keep_package_id: pkg.id,
+            account_id: request.account_id,
+            client,
+          });
         const scope_key = getClaimScopeKey(siteLicense.id, exclusiveGroup);
         const scope_kind = "site-license-exclusive-group";
         const reserved = await reserveMembershipClaimIdentity({
@@ -3739,22 +3892,15 @@ export async function reviewSiteLicensePoolRequest({
           },
           client,
         });
-        for (const released of releasedAssignments) {
-          await recordSiteLicenseAuditEvent({
-            site_license_id: siteLicense.id,
-            action: "seat-released-for-upgrade",
-            actor_account_id: actorAccountId,
-            target_account_id: request.account_id,
-            package_id: released.package_id,
-            request_id: request.id,
-            metadata: {
-              assignment_id: released.assignment_id,
-              replacement_package_id: pkg.id,
-              exclusive_group: exclusiveGroup,
-            },
-            client,
-          });
-        }
+        await recordReleasedSeatsForSwitch({
+          site_license_id: siteLicense.id,
+          actor_account_id: actorAccountId,
+          target_account_id: request.account_id,
+          replacement_package_id: pkg.id,
+          request_id: request.id,
+          released_assignments: releasedAssignments,
+          client,
+        });
         const approved = await updateRequestState({
           request_id: request.id,
           state: "approved",
@@ -3826,7 +3972,7 @@ async function updateRequestState({
   client,
 }: {
   request_id: string;
-  state: "approved" | "rejected";
+  state: "approved" | "rejected" | "canceled";
   reviewer_account_id: string;
   review_note?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -3853,82 +3999,65 @@ async function updateRequestState({
   return normalizeSiteLicensePoolRequestRow(rows[0])!;
 }
 
-async function revokeOtherSiteLicenseAssignments({
+async function recordCanceledPoolRequests({
   site_license_id,
-  approved_package_id,
-  exclusive_group,
-  account_id,
+  actor_account_id,
+  requests,
+  reason,
   client,
 }: {
   site_license_id: string;
-  approved_package_id: string;
-  exclusive_group: string;
-  account_id: string;
-  client: PoolClient;
-}): Promise<Array<{ package_id: string; assignment_id: string }>> {
-  const revokedAssignments: Array<{
-    package_id: string;
-    assignment_id: string;
-  }> = [];
-  const { rows } = await client.query<{
-    id: string;
-    membership_class: string;
-    metadata?: Record<string, unknown> | null;
-  }>(
-    `SELECT id, membership_class, metadata
-     FROM membership_packages
-     WHERE metadata->>'site_license_id'=$1
-       AND id <> $2`,
-    [site_license_id, approved_package_id],
-  );
-  for (const row of rows) {
-    if (
-      getPackageExclusiveGroup({
-        membership_class: row.membership_class,
-        metadata: row.metadata,
-      }) !== exclusive_group
-    ) {
-      continue;
-    }
-    const assignments = await listMembershipPackageAssignments({
-      package_id: row.id,
-      include_revoked: false,
+  actor_account_id: string;
+  requests: SiteLicenseCanceledPoolRequest[];
+  reason: string;
+  client: Queryable;
+}): Promise<void> {
+  for (const request of requests) {
+    await recordSiteLicenseAuditEvent({
+      site_license_id,
+      action: "pool-request-canceled",
+      actor_account_id,
+      target_account_id: actor_account_id,
+      package_id: request.package_id,
+      request_id: request.id,
+      metadata: { reason },
       client,
     });
-    const accountAssignments = assignments.filter(
-      (assignment) => assignment.account_id === account_id,
-    );
-    await revokeMembershipPackageSeat(
-      {
-        package_id: row.id,
-        account_id,
+  }
+}
+
+async function recordReleasedSeatsForSwitch({
+  site_license_id,
+  actor_account_id,
+  target_account_id,
+  replacement_package_id,
+  request_id,
+  released_assignments,
+  client,
+}: {
+  site_license_id: string;
+  actor_account_id: string;
+  target_account_id: string;
+  replacement_package_id: string;
+  request_id?: string;
+  released_assignments: SiteLicenseAccountSeatChange[];
+  client: PoolClient;
+}): Promise<void> {
+  for (const released of released_assignments) {
+    await recordSiteLicenseAuditEvent({
+      site_license_id,
+      action: "seat-released-for-upgrade",
+      actor_account_id,
+      target_account_id,
+      package_id: released.package_id,
+      request_id: request_id ?? null,
+      metadata: {
+        assignment_id: released.assignment_id,
+        replacement_package_id,
       },
       client,
-    );
-    for (const assignment of accountAssignments) {
-      revokedAssignments.push({
-        package_id: row.id,
-        assignment_id: assignment.id,
-      });
-      const scope_key = `${assignment.metadata?.claim_scope_key ?? ""}`.trim();
-      const canonical_identity =
-        `${assignment.metadata?.claim_identity_key ?? ""}`.trim();
-      if (!scope_key || !canonical_identity) {
-        continue;
-      }
-      await revokeMembershipClaimIdentity({
-        scope_key,
-        canonical_identity,
-        account_id,
-        assignment_id: assignment.id,
-        reservation_id:
-          `${assignment.metadata?.claim_reservation_id ?? ""}`.trim() ||
-          undefined,
-        client,
-      }).catch(() => undefined);
-    }
+    });
   }
-  return revokedAssignments;
 }
 
 async function withSiteLicenseRequestTransaction<T>({
