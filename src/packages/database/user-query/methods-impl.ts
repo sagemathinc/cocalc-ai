@@ -125,20 +125,22 @@ async function assertLegacyMentionRateLimit(
   const [notificationEvents, legacyMentions] = await Promise.all([
     callback2<any>(context._query.bind(context), {
       query: "SELECT COUNT(*) FROM notification_events",
-      where: {
-        "kind = $::TEXT": "mention",
-        "actor_account_id = $::UUID": actor_account_id,
-        [`created_at >= NOW() - interval '${MENTION_RATE_LIMIT_WINDOW_MINUTES} minutes'`]:
-          [],
-      },
+      where: [
+        {
+          "kind = $::TEXT": "mention",
+          "actor_account_id = $::UUID": actor_account_id,
+        },
+        `created_at >= NOW() - interval '${MENTION_RATE_LIMIT_WINDOW_MINUTES} minutes'`,
+      ],
     }),
     callback2<any>(context._query.bind(context), {
       query: "SELECT COUNT(*) FROM mentions",
-      where: {
-        "source = $::UUID": actor_account_id,
-        [`time >= NOW() - interval '${MENTION_RATE_LIMIT_WINDOW_MINUTES} minutes'`]:
-          [],
-      },
+      where: [
+        {
+          "source = $::UUID": actor_account_id,
+        },
+        `time >= NOW() - interval '${MENTION_RATE_LIMIT_WINDOW_MINUTES} minutes'`,
+      ],
     }),
   ]);
   const count =
@@ -1734,10 +1736,12 @@ export async function _user_set_query_mention_change_after(
     await assertLegacyMentionRateLimit(this, mention.source);
     const { rows } = await callback2<any>(this._query.bind(this), {
       query: "SELECT users FROM projects",
-      where: {
-        "project_id = $::UUID": mention.project_id,
-        "COALESCE(deleted, FALSE) IS NOT TRUE": [],
-      },
+      where: [
+        {
+          "project_id = $::UUID": mention.project_id,
+        },
+        "COALESCE(deleted, FALSE) IS NOT TRUE",
+      ],
     });
     const users = rows?.[0]?.users ?? {};
     const collaboratorGroups = new Set(["owner", "collaborator"]);

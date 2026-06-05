@@ -18,6 +18,7 @@ import type { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyte
 import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
 
 import type { JupyterActions } from "../browser-actions";
+import { kernelInfoField } from "../kernel-info-field";
 import type { Position } from "./types";
 
 interface AIGenerateCodeCellProps {
@@ -117,9 +118,9 @@ export function AIGenerateCodeCell({
       ),
     [frameActions, id],
   );
-  const kernelInfo = actions.store.get("kernel_info");
-  const kernelLanguage = kernelInfo?.get("language") ?? "python";
-  const kernelDisplay = kernelInfo?.get("display_name") ?? "Python 3";
+  const kernelInfo = actions.store?.get?.("kernel_info");
+  const kernelLanguage = kernelInfoField(kernelInfo, "language", "python");
+  const kernelDisplay = kernelInfoField(kernelInfo, "display_name", "Python 3");
   const placement =
     showAICellGen == null
       ? ""

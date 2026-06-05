@@ -77,6 +77,53 @@ describe("mention user-query outbox hooks", () => {
     });
   });
 
+  it("uses valid raw SQL predicates in mention authorization queries", async () => {
+    await runHook(
+      {},
+      {
+        time: new Date("2026-04-03T23:00:00.000Z"),
+        project_id: "11111111-1111-4111-8111-111111111111",
+        path: "chat/a.md",
+        target: "22222222-2222-4222-8222-222222222222",
+      },
+    );
+    expect(ctx._query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "SELECT COUNT(*) FROM notification_events",
+        where: [
+          {
+            "kind = $::TEXT": "mention",
+            "actor_account_id = $::UUID":
+              "11111111-1111-4111-8111-111111111111",
+          },
+          "created_at >= NOW() - interval '60 minutes'",
+        ],
+      }),
+    );
+    expect(ctx._query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "SELECT COUNT(*) FROM mentions",
+        where: [
+          {
+            "source = $::UUID": "11111111-1111-4111-8111-111111111111",
+          },
+          "time >= NOW() - interval '60 minutes'",
+        ],
+      }),
+    );
+    expect(ctx._query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "SELECT users FROM projects",
+        where: [
+          {
+            "project_id = $::UUID": "11111111-1111-4111-8111-111111111111",
+          },
+          "COALESCE(deleted, FALSE) IS NOT TRUE",
+        ],
+      }),
+    );
+  });
+
   it("emits an outbox event when mention read_state changes", async () => {
     await runHook(
       {
