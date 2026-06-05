@@ -48,6 +48,40 @@ run() {
   "$@"
 }
 
+wait_for_apt_locks() {
+  local timeout="${STAR_APT_LOCK_TIMEOUT:-900}"
+  local waited=0
+  local busy=0
+  while [ "$waited" -lt "$timeout" ]; do
+    busy=0
+    if command -v fuser >/dev/null 2>&1; then
+      for lock in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock; do
+        if [ -e "$lock" ] && fuser "$lock" >/dev/null 2>&1; then
+          busy=1
+        fi
+      done
+    fi
+    if pgrep -x apt-get >/dev/null 2>&1 ||
+      pgrep -x apt >/dev/null 2>&1 ||
+      pgrep -x dpkg >/dev/null 2>&1 ||
+      pgrep -x unattended-upgr >/dev/null 2>&1; then
+      busy=1
+    fi
+    [ "$busy" = "1" ] || return 0
+    if [ "$waited" = "0" ]; then
+      log "waiting for apt/dpkg lock held by another system process"
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  die "timed out after ${timeout}s waiting for apt/dpkg lock"
+}
+
+apt_get() {
+  wait_for_apt_locks
+  run apt-get "$@"
+}
+
 as_star_user() {
   sudo -H -u "$STAR_USER" bash -lc "cd '$STAR_HOME' && $*"
 }
@@ -60,8 +94,8 @@ require_root() {
 
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
-  run apt-get update
-  run apt-get install -y \
+  apt_get update
+  apt_get install -y \
     bash ca-certificates curl git jq openssl build-essential python3 \
     podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs \
     caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev
@@ -85,14 +119,18 @@ $(star_web_onboarding_caddy_proxy_routes)
   }
 }
 EOF
+  caddy fmt --overwrite "$caddy_config" >/dev/null || true
   caddy adapt --config "$caddy_config" >/dev/null
   install -m 0644 -o root -g root "$caddy_config" /etc/caddy/Caddyfile
   rm -f "$caddy_config"
   systemctl enable caddy >/dev/null
   systemctl restart caddy
   star_web_onboarding_write_status "reachable" "This VM is publicly reachable over HTTPS. Installing CoCalc Star now." ""
-  star_web_onboarding_print >&2
-  star_web_onboarding_wait_for_open
+  if star_web_onboarding_require_open; then
+    star_web_onboarding_wait_for_open
+  else
+    star_web_onboarding_print >&2
+  fi
 }
 
 host_has_nvidia_gpu() {
@@ -180,12 +218,12 @@ install_gpu_support() {
   fi
   STAR_HAS_GPU=1
   log "NVIDIA GPU detected; configuring Podman CDI support"
-  run apt-get install -y ca-certificates gnupg
+  apt_get install -y ca-certificates gnupg
   rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
   run bash -lc "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
   run bash -lc "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
-  run apt-get update
-  run apt-get install -y --allow-change-held-packages nvidia-container-toolkit
+  apt_get update
+  apt_get install -y --allow-change-held-packages nvidia-container-toolkit
   ldconfig || true
   install_nvidia_cdi_normalizer
   mkdir -p /etc/cdi
@@ -726,6 +764,7 @@ $(star_web_onboarding_caddy_routes)
   }
 }
 EOF
+  caddy fmt --overwrite "$caddy_config" >/dev/null || true
 
   grep -q '^ExecStart=' "$hub_unit" || die "generated hub systemd unit is invalid"
   grep -q '^ExecStart=' "$project_host_unit" || die "generated project-host systemd unit is invalid"

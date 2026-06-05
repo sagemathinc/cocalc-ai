@@ -400,12 +400,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return str(root / "__forbidden__")
         return str(safe)
 
-    def do_GET(self):
+    def _mark_opened_if_onboarding_path(self):
         raw_path = urllib.parse.urlsplit(self.path).path
         if raw_path == f"/{nonce}/" or raw_path.startswith(f"/{nonce}/status.json") or raw_path.startswith(f"/{nonce}/index.html"):
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n", encoding="utf-8")
+
+    def do_GET(self):
+        self._mark_opened_if_onboarding_path()
         return super().do_GET()
+
+    def do_HEAD(self):
+        self._mark_opened_if_onboarding_path()
+        return super().do_HEAD()
 
 
 class Server(socketserver.ThreadingTCPServer):
