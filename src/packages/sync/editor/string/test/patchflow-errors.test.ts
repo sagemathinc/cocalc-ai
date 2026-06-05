@@ -7,6 +7,7 @@ import { once } from "@cocalc/util/async-utils";
 import { SyncString } from "../sync";
 import { Client, fs } from "./client-test";
 import { a_txt } from "./data";
+import { Session as PatchflowSession } from "patchflow";
 
 class AlertingClient extends Client {
   public alerts: any[] = [];
@@ -57,5 +58,35 @@ describe("patchflow commit failures", () => {
     });
     expect(client.alerts[0].message).toContain(path);
     expect(client.alerts[0].message).toContain("db write failed");
+  });
+
+  it("retries cleanly after a transient patchflow init failure", async () => {
+    jest.setTimeout(10_000);
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    jest.spyOn(console, "trace").mockImplementation(() => {});
+    const originalInit = PatchflowSession.prototype.init;
+    let calls = 0;
+    jest.spyOn(PatchflowSession.prototype, "init").mockImplementation(function (
+      this: PatchflowSession,
+    ) {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.reject(new Error("transient patchflow init failure"));
+      }
+      return originalInit.call(this);
+    });
+
+    client = new AlertingClient(init_queries, client_id);
+    syncstring = new SyncString({
+      project_id,
+      path,
+      client,
+      fs,
+      noAutosave: true,
+    });
+
+    await once(syncstring, "ready");
+    expect(calls).toBeGreaterThan(1);
+    expect(syncstring.to_str()).toBe("");
   });
 });

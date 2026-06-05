@@ -1865,7 +1865,15 @@ export class SyncDoc extends EventEmitter {
         }
       }
     });
-    await this.patchflowSession.init();
+    try {
+      await this.patchflowSession.init();
+    } catch (err) {
+      this.patchflowSession.close();
+      this.patchflowSession = undefined;
+      this.patchflowStore = undefined;
+      this.patchflowCodec = undefined;
+      throw err;
+    }
     dbg("patchflow session initialized");
 
     // check if file was deleted
