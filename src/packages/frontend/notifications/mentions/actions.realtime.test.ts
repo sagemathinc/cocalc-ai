@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { Map as ImmutableMap } from "immutable";
+import { fromJS, Map as ImmutableMap } from "immutable";
 
 import { accountFeedStreamName } from "../../../conat/hub/api/account-feed";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
@@ -58,6 +58,8 @@ const mockedWebappClient = webapp_client as unknown as EventEmitter & {
       notifications: {
         list: jest.Mock;
         counts: jest.Mock;
+        markRead: jest.Mock;
+        save: jest.Mock;
       };
     };
   };
@@ -105,6 +107,16 @@ describe("MentionsActions realtime feed", () => {
       saved: 0,
       archived: 0,
       by_kind: {},
+    });
+    mockedWebappClient.conat_client.hub.notifications.markRead.mockResolvedValue(
+      {
+        updated_count: 0,
+        notification_ids: [],
+      },
+    );
+    mockedWebappClient.conat_client.hub.notifications.save.mockResolvedValue({
+      updated_count: 0,
+      notification_ids: [],
     });
   });
 
@@ -537,5 +549,123 @@ describe("MentionsActions realtime feed", () => {
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps read-state ack pending until touched notification rows repair", async () => {
+    jest.useFakeTimers();
+    mockedWebappClient.conat_client.hub.notifications.markRead.mockResolvedValue(
+      {
+        updated_count: 1,
+        notification_ids: ["n-1"],
+      },
+    );
+    mockedWebappClient.conat_client.hub.notifications.list.mockResolvedValue([
+      {
+        notification_id: "n-1",
+        kind: "mention",
+        project_id: null,
+        summary: {
+          title: "Notice",
+        },
+        read_state: {
+          read: true,
+          saved: false,
+        },
+        created_at: new Date("2026-04-05T00:00:00.000Z"),
+        updated_at: new Date("2026-04-05T00:00:00.000Z"),
+      },
+    ]);
+    mockedWebappClient.conat_client.hub.notifications.counts.mockResolvedValue({
+      total: 1,
+      unread: 0,
+      saved: 0,
+      archived: 0,
+      by_kind: {
+        mention: {
+          total: 1,
+          unread: 0,
+          saved: 0,
+          archived: 0,
+        },
+      },
+    });
+
+    let mentionsStore = ImmutableMap({
+      mentions: ImmutableMap({
+        "n-1": fromJS({
+          kind: "mention",
+          notification_id: "n-1",
+          project_id: null,
+          target: "acct-1",
+          time: new Date("2026-04-05T00:00:00.000Z"),
+          title: "Notice",
+          users: {
+            "acct-1": {
+              read: false,
+              saved: false,
+            },
+          },
+        }),
+      }),
+      unread_count: 1,
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        if (name === "mentions") {
+          return mentionsStore;
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((patch) => {
+        if (patch.mentions != null) {
+          mentionsStore = mentionsStore.merge(patch.mentions);
+        }
+      }),
+      removeActions: jest.fn(),
+    } as any;
+    const actions = new MentionsActions("mentions", redux);
+
+    try {
+      actions.markMany(["n-1"], "read");
+      await flushMicrotasks();
+
+      expect(
+        mentionsStore.getIn(["mentions", "n-1", "users", "acct-1", "read"]),
+      ).toBe(true);
+      expect(
+        mockedWebappClient.conat_client.hub.notifications.markRead,
+      ).toHaveBeenCalledWith({
+        notification_ids: ["n-1"],
+        read: true,
+      });
+      expect(
+        collectProjectionDiagnostics().consumers.notifications.last_ack_state,
+      ).toBe("pending");
+
+      await jest.advanceTimersByTimeAsync(5_000);
+      await flushMicrotasks();
+
+      expect(
+        mockedWebappClient.conat_client.hub.notifications.list,
+      ).toHaveBeenCalledWith({
+        notification_id: "n-1",
+        limit: 1,
+      });
+      const diagnostics =
+        collectProjectionDiagnostics().consumers.notifications;
+      expect(diagnostics.last_repair_reason).toBe("write-ack");
+      expect(diagnostics.last_repair_scope).toEqual({
+        kind: "notification-ids",
+        notification_ids: ["n-1"],
+      });
+      expect(diagnostics.last_ack_state).toBe("converged");
+      expect(diagnostics.pending_acks).toEqual({});
+      expect(mentionsStore.get("unread_count")).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

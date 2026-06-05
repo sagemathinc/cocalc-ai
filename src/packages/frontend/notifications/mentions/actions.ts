@@ -32,6 +32,7 @@ import {
   recordProjectionRepair,
   recordProjectionRepairFailure,
 } from "@cocalc/frontend/projection-diagnostics";
+import { writeAndWaitForProjection } from "@cocalc/frontend/projection-ack";
 
 const REFRESH_RETRY_INITIAL_MS = 5_000;
 const REFRESH_RETRY_MAX_MS = 60_000;
@@ -45,10 +46,17 @@ export type NotificationProjectionRepairReason =
   | "write-ack";
 
 export type NotificationProjectionRepairRequest = {
-  kind: "counts-and-inbox";
   reason: NotificationProjectionRepairReason;
   force?: boolean;
-};
+} & (
+  | {
+      kind: "counts-and-inbox";
+    }
+  | {
+      kind: "notification-ids";
+      notification_ids: string[];
+    }
+);
 
 function mentionSort(a: MentionInfo, b: MentionInfo): number {
   return b.get("time").getTime() - a.get("time").getTime();
@@ -154,6 +162,7 @@ export class MentionsActions extends Actions<MentionsState> {
   private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
   private realtimeFeedDiagnosticsCleanup?: () => void;
+  private notificationRowProjectionVersion = 0;
 
   _init() {
     this.destroyed = false;
@@ -286,6 +295,7 @@ export class MentionsActions extends Actions<MentionsState> {
         mentions: buildNotificationInboxMap({ account_id, rows }),
         unread_count: getUnreadNotificationCount(counts),
       });
+      this.notificationRowProjectionVersion += 1;
       this.lastSuccessfulRefreshAt = Date.now();
       this.clearRefreshRetry();
       await this.ensureRealtimeFeed(account_id);
@@ -395,19 +405,77 @@ export class MentionsActions extends Actions<MentionsState> {
     recordProjectionRepair({
       consumer: "notifications",
       reason: request.reason,
-      scope: request.kind,
+      scope:
+        request.kind === "notification-ids"
+          ? { kind: request.kind, notification_ids: request.notification_ids }
+          : request.kind,
     });
     try {
-      await this.refresh();
+      switch (request.kind) {
+        case "counts-and-inbox":
+          await this.refresh();
+          break;
+        case "notification-ids":
+          await this.repairNotificationIds(request.notification_ids);
+          break;
+      }
     } catch (err) {
       recordProjectionRepairFailure({
         consumer: "notifications",
         reason: request.reason,
-        scope: request.kind,
+        scope:
+          request.kind === "notification-ids"
+            ? { kind: request.kind, notification_ids: request.notification_ids }
+            : request.kind,
         error: err,
       });
       throw err;
     }
+  }
+
+  private async repairNotificationIds(
+    notification_ids: string[],
+  ): Promise<void> {
+    const account_id = this.getAccountId();
+    if (account_id == null) {
+      return;
+    }
+    const notifications = webapp_client.conat_client?.hub?.notifications;
+    if (notifications == null) {
+      throw new Error("notifications api is not available");
+    }
+    const ids = normalizeNotificationIds(notification_ids);
+    if (ids.length === 0) {
+      return;
+    }
+    const [rowsById, counts] = await Promise.all([
+      Promise.all(
+        ids.map(async (notification_id) => {
+          const rows = await notifications.list({ notification_id, limit: 1 });
+          return [notification_id, rows] as const;
+        }),
+      ),
+      notifications.counts({}),
+    ]);
+    let mentions = this.getMentions();
+    for (const [notification_id, rows] of rowsById) {
+      const row = rows[0];
+      if (row == null || row.read_state?.archived) {
+        mentions = mentions.remove(notification_id);
+      } else {
+        mentions = mentions.set(
+          notification_id,
+          buildNotificationMention(account_id, row),
+        );
+      }
+    }
+    this.setState({
+      mentions: mentions.sort(mentionSort) as MentionsMap,
+      unread_count: getUnreadNotificationCount(counts),
+    });
+    this.notificationRowProjectionVersion += 1;
+    this.lastSuccessfulRefreshAt = Date.now();
+    this.clearRefreshRetry();
   }
 
   private handleRealtimeFeedChange = (
@@ -452,12 +520,14 @@ export class MentionsActions extends Actions<MentionsState> {
             .set(event.notification.notification_id, mention)
             .sort(mentionSort) as MentionsMap,
         });
+        this.notificationRowProjectionVersion += 1;
         return;
       }
       case "notification.remove":
         this.setState({
           mentions: this.getMentions().remove(event.notification_id),
         });
+        this.notificationRowProjectionVersion += 1;
         return;
       case "notification.counts":
         this.setState({ unread_count: event.counts.unread });
@@ -550,11 +620,33 @@ export class MentionsActions extends Actions<MentionsState> {
     notification_ids: string[];
     read: boolean;
   }): Promise<void> {
-    if (opts.notification_ids.length === 0) {
+    const notification_ids = normalizeNotificationIds(opts.notification_ids);
+    if (notification_ids.length === 0) {
       return;
     }
     await this.ensureSignedIn();
-    await webapp_client.conat_client.hub.notifications.markRead(opts);
+    const baselineProjectionVersion = this.notificationRowProjectionVersion;
+    await writeAndWaitForProjection({
+      consumer: "notifications",
+      name: `notifications.read_state.${opts.read ? "read" : "unread"}`,
+      write: () =>
+        webapp_client.conat_client.hub.notifications.markRead({
+          notification_ids,
+          read: opts.read,
+        }),
+      matchesProjection: () =>
+        this.notificationReadStateMatches({
+          notification_ids,
+          read: opts.read,
+          afterProjectionVersion: baselineProjectionVersion,
+        }),
+      repair: () =>
+        this.repairNotificationProjection({
+          kind: "notification-ids",
+          notification_ids,
+          reason: "write-ack",
+        }),
+    });
   }
 
   private async updateSavedState(opts: {
@@ -622,6 +714,7 @@ export class MentionsActions extends Actions<MentionsState> {
       )
       .keySeq()
       .toArray();
+    this.applyOptimisticReadState(notification_ids, as === "read");
     try {
       await this.updateReadState({
         notification_ids,
@@ -629,7 +722,54 @@ export class MentionsActions extends Actions<MentionsState> {
       });
     } catch (err) {
       console.warn("WARNING: notifications markAll error -- ", err);
+      await this.refresh();
     }
+  }
+
+  private applyOptimisticReadState(
+    notification_ids: string[],
+    read: boolean,
+  ): void {
+    const account_id = this.getAccountId();
+    if (account_id == null) {
+      return;
+    }
+    let mentions = this.getMentions();
+    for (const id of notification_ids) {
+      const mention = mentions.get(id);
+      if (mention == null) {
+        continue;
+      }
+      mentions = mentions.set(
+        id,
+        mention.setIn(["users", account_id, "read"], read),
+      );
+    }
+    this.setState({ mentions });
+  }
+
+  private notificationReadStateMatches({
+    notification_ids,
+    read,
+    afterProjectionVersion,
+  }: {
+    notification_ids: string[];
+    read: boolean;
+    afterProjectionVersion: number;
+  }): boolean {
+    if (this.notificationRowProjectionVersion <= afterProjectionVersion) {
+      return false;
+    }
+    const account_id = this.getAccountId();
+    if (account_id == null) {
+      return false;
+    }
+    const mentions = this.getMentions();
+    return notification_ids.every(
+      (notification_id) =>
+        mentions.get(notification_id)?.getIn(["users", account_id, "read"]) ===
+        read,
+    );
   }
 
   public async saveAll(
@@ -682,4 +822,15 @@ export class MentionsActions extends Actions<MentionsState> {
       await this.refresh();
     });
   }
+}
+
+function normalizeNotificationIds(notification_ids: string[]): string[] {
+  return Array.from(
+    new globalThis.Set(
+      notification_ids.filter(
+        (notification_id): notification_id is string =>
+          typeof notification_id === "string" && notification_id.length > 0,
+      ),
+    ),
+  );
 }
