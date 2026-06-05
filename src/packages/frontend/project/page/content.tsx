@@ -273,7 +273,7 @@ interface EditorProps {
   // NOTE: this "component" part is a plain
   // object, and is not an immutable.Map, since
   // it has to store a react component.
-  component: { Editor?; redux_name?: string };
+  component: { Editor?; redux_name?: string; runtime_generation?: number };
 }
 
 const Editor: React.FC<EditorProps> = (props: EditorProps) => {
@@ -320,7 +320,7 @@ interface EditorContentProps {
   is_visible: boolean;
   chat_width: number;
   chatState?: ChatState;
-  component: { Editor?; redux_name?: string };
+  component: { Editor?; redux_name?: string; runtime_generation?: number };
   // if deleted, when
   deleted?: number;
 }
@@ -348,6 +348,9 @@ const EditorContent: React.FC<EditorContentProps> = ({
   // Render this here, since it is used in multiple places below.
   const editor = (
     <Editor
+      key={`${component.redux_name ?? "loading"}:${
+        component.runtime_generation ?? 0
+      }`}
       project_id={project_id}
       path={path}
       is_visible={is_visible}
