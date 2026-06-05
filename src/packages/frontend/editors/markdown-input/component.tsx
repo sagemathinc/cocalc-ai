@@ -34,6 +34,7 @@ import { useWorkspaceRecordForPath } from "@cocalc/frontend/project/workspaces/u
 import { len, trunc, trunc_middle } from "@cocalc/util/misc";
 import { Complete, Item } from "./complete";
 import { useMentionableUsers } from "./mentionable-users";
+import { normalizeMentionSearch } from "./mention-search";
 import { submit_mentions } from "./mentions";
 import { EditorFunctions, SelectionController } from "./types";
 import { resolveUndoHandler } from "./undo-policy";
@@ -1239,7 +1240,7 @@ export function MarkdownInput(props: Props) {
       change: (cm) => {
         const pos = cm.getCursor();
         const search = cm.getRange(cursor, pos);
-        set_mentions_search(search.trim().toLowerCase());
+        set_mentions_search(normalizeMentionSearch(search));
       },
     };
     cm.current.on("cursorActivity", mentions_cursor_ref.current.cursor);
