@@ -19,6 +19,7 @@ import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agen
 import type { AITools } from "@cocalc/jupyter/types";
 import type { JupyterActions } from "../browser-actions";
 import { CODE_BAR_BTN_STYLE } from "../consts";
+import { kernelInfoField } from "../kernel-info-field";
 
 interface Props {
   actions?: JupyterActions;
@@ -458,9 +459,9 @@ export function AgentCellTool({
 
   const isMarkdownCell = cellType === "markdown";
 
-  const kernelInfo = actions?.store.get("kernel_info");
-  const kernelLanguage = kernelInfo?.get("language") ?? "python";
-  const kernelDisplay = kernelInfo?.get("display_name") ?? "Python 3";
+  const kernelInfo = actions?.store?.get?.("kernel_info");
+  const kernelLanguage = kernelInfoField(kernelInfo, "language", "python");
+  const kernelDisplay = kernelInfoField(kernelInfo, "display_name", "Python 3");
 
   useEffect(() => {
     if (mode == null) return;
