@@ -114,15 +114,33 @@ function readProcCmdline(pid: number): string[] {
   }
 }
 
-function inferBundleVersionFromPid(pid: number): string | undefined {
-  const cmdline = readProcCmdline(pid);
-  for (const entry of cmdline) {
-    const match = entry.match(/\/project-host\/bundles\/([^/]+)\//);
+function readProcEnviron(pid: number): string[] {
+  try {
+    return readFileSync(`/proc/${pid}/environ`, "utf8")
+      .split("\0")
+      .filter((value) => value.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function inferBundleVersionFromEntries(entries: string[]): string | undefined {
+  for (const entry of entries) {
+    const match = entry.match(
+      /\/project-host\/(?:bundles|versions)\/([^/]+)\//,
+    );
     if (match?.[1]) {
       return match[1];
     }
   }
   return;
+}
+
+function inferBundleVersionFromPid(pid: number): string | undefined {
+  return (
+    inferBundleVersionFromEntries(readProcCmdline(pid)) ??
+    inferBundleVersionFromEntries(readProcEnviron(pid))
+  );
 }
 
 function uniqueNonEmpty(values: Array<string | undefined>): string[] {
@@ -295,4 +313,5 @@ export function getManagedComponentStatus(): HostManagedComponentStatus[] {
 export const __test__ = {
   summarizeManagedComponentStatus,
   normalizeProjectHostRuntimeVersion,
+  inferBundleVersionFromEntries,
 };

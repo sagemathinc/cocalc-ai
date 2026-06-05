@@ -23,6 +23,7 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { Gap, Icon, Loading, Paragraph } from "@cocalc/frontend/components";
+import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { TAGS, Tag, to_bool } from "@cocalc/util/db-schema/site-defaults";
@@ -86,6 +87,34 @@ const REMOVED_LEGACY_AI_EXTRAS = new Set<string>([
   "ollama_configuration",
   "custom_openai_configuration",
 ]);
+
+const IS_STAR_SETUP_PROFILE = cocalc_setup_profile === "star";
+const STAR_HIDDEN_SETTING_GROUPS = new Set<string>([
+  "Cloudflare",
+  "Compute / Project Hosts",
+  "Payments & Billing",
+]);
+const STAR_HIDDEN_SETTING_TAGS = new Set<string>([
+  "Cloudflare",
+  "Cloud",
+  "GPU",
+  "Hyperstack",
+  "Nebius",
+  "Pay as you Go",
+  "Project Hosts",
+  "SSO",
+  "Stripe",
+  "Licensing",
+]);
+const STAR_HIDDEN_SETTING_PREFIXES = [
+  "cloudflare_",
+  "google_cloud_",
+  "google_sso_",
+  "nebius_",
+  "project_hosts_",
+  "software_license",
+  "stripe_",
+];
 
 export default function SiteSettings({ close }) {
   const { inc: change } = useCounter();
@@ -211,10 +240,7 @@ export default function SiteSettings({ close }) {
 
   function shouldShowSetting(name: string, conf): boolean {
     if (data == null) return false;
-    if (
-      REMOVED_LEGACY_AI_SETTINGS.has(name) ||
-      REMOVED_LEGACY_AI_EXTRAS.has(name)
-    ) {
+    if (isRemovedSetting(name, conf)) {
       return false;
     }
     if (conf.hidden && !showHidden) return false;
@@ -256,6 +282,25 @@ export default function SiteSettings({ close }) {
     const tags = conf.tags ?? [];
     if (tags.includes("Cloudflare")) return "Cloudflare";
     return tags[0] ?? "Other";
+  }
+
+  function isRemovedSetting(name: string, conf?: any): boolean {
+    if (
+      REMOVED_LEGACY_AI_SETTINGS.has(name) ||
+      REMOVED_LEGACY_AI_EXTRAS.has(name)
+    ) {
+      return true;
+    }
+    if (!IS_STAR_SETUP_PROFILE) return false;
+    if (
+      STAR_HIDDEN_SETTING_PREFIXES.some((prefix) => name.startsWith(prefix))
+    ) {
+      return true;
+    }
+    if (conf == null) return false;
+    const group = conf.group ?? inferGroup(conf);
+    if (STAR_HIDDEN_SETTING_GROUPS.has(group)) return true;
+    return (conf.tags ?? []).some((tag) => STAR_HIDDEN_SETTING_TAGS.has(tag));
   }
 
   function matchesRequiredEquals(raw: any, equals: string | string[]) {
@@ -780,6 +825,7 @@ export default function SiteSettings({ close }) {
         name.startsWith("project_hosts_cloudflare_"),
     );
     const showCloudflareWarning =
+      !IS_STAR_SETUP_PROFILE &&
       cloudflareTunnelConfigured &&
       effectiveCloudflareStatus != null &&
       (!effectiveCloudflareStatus.running || effectiveCloudflareStatus.error);
@@ -803,7 +849,7 @@ export default function SiteSettings({ close }) {
             }
           />
         )}
-        {cloudflareTunnelConfigured && (
+        {!IS_STAR_SETUP_PROFILE && cloudflareTunnelConfigured && (
           <div
             style={{
               maxWidth: "800px",
@@ -877,13 +923,10 @@ export default function SiteSettings({ close }) {
     >();
     for (const configData of [site_settings_conf, EXTRAS]) {
       for (const name of keys(configData)) {
-        if (
-          REMOVED_LEGACY_AI_SETTINGS.has(name) ||
-          REMOVED_LEGACY_AI_EXTRAS.has(name)
-        ) {
+        const conf = configData[name];
+        if (isRemovedSetting(name, conf)) {
           continue;
         }
-        const conf = configData[name];
         if (!conf.required_when) continue;
         if (!isRequiredWhen(conf)) continue;
         if (!isMissingValue(name, conf)) continue;
@@ -906,13 +949,10 @@ export default function SiteSettings({ close }) {
     const status = new Map<string, boolean>();
     for (const configData of [site_settings_conf, EXTRAS]) {
       for (const name of keys(configData)) {
-        if (
-          REMOVED_LEGACY_AI_SETTINGS.has(name) ||
-          REMOVED_LEGACY_AI_EXTRAS.has(name)
-        ) {
+        const conf = configData[name];
+        if (isRemovedSetting(name, conf)) {
           continue;
         }
-        const conf = configData[name];
         const group = conf.group ?? inferGroup(conf);
         if (!status.has(group)) status.set(group, true);
         if (!conf.required_when) continue;
@@ -938,13 +978,10 @@ export default function SiteSettings({ close }) {
     const counts = new Map<string, Map<string, number>>();
     for (const configData of [site_settings_conf, EXTRAS]) {
       for (const name of keys(configData)) {
-        if (
-          REMOVED_LEGACY_AI_SETTINGS.has(name) ||
-          REMOVED_LEGACY_AI_EXTRAS.has(name)
-        ) {
+        const conf = configData[name];
+        if (isRemovedSetting(name, conf)) {
           continue;
         }
-        const conf = configData[name];
         if (!conf.required_when) continue;
         if (!isRequiredWhen(conf)) continue;
         if (!isMissingValue(name, conf)) continue;
@@ -962,13 +999,10 @@ export default function SiteSettings({ close }) {
     const allItems: { name: string; conf: any }[] = [];
     for (const configData of [site_settings_conf, EXTRAS]) {
       for (const name of keys(configData)) {
-        if (
-          REMOVED_LEGACY_AI_SETTINGS.has(name) ||
-          REMOVED_LEGACY_AI_EXTRAS.has(name)
-        ) {
+        const conf = configData[name];
+        if (isRemovedSetting(name, conf)) {
           continue;
         }
-        const conf = configData[name];
         allItems.push({ name, conf });
       }
     }

@@ -50,6 +50,15 @@ use_node_26() {
   fi
 }
 
+clean_generated_bundle_workspaces() {
+  rm -rf \
+    packages/cli/build/bundle \
+    packages/launchpad/build/bundle \
+    packages/plus/build/bundle \
+    packages/project/build/bundle \
+    packages/project-host/build/bundle
+}
+
 build_runtime() {
   if [ "$STAR_RUNTIME_BUILD" = "0" ]; then
     log "skipping local build because STAR_RUNTIME_BUILD=0"
@@ -67,6 +76,7 @@ build_runtime() {
     if ! command -v pnpm >/dev/null 2>&1; then
       npm install -g pnpm@10.33.0
     fi
+    clean_generated_bundle_workspaces
     ./workspaces.py install
     pnpm --filter @cocalc/app-notebook build
     ./workspaces.py build --dev
@@ -110,12 +120,21 @@ build_star_helper_bundles() {
       packages/server/build/star-helper-entrypoints/seed-star-poc.cjs
     cp scripts/star-poc/ensure-rootfs-cache.cjs \
       packages/project-host/build/star-helper-entrypoints/ensure-rootfs-cache.cjs
+    cp scripts/star-poc/publish-default-rootfs.cjs \
+      packages/server/build/star-helper-entrypoints/publish-default-rootfs.cjs
     rm -rf \
       "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
-      "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache"
+      "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
+      "$STAR_HELPER_BUILD_DIR/publish-default-rootfs"
     pnpm --filter @cocalc/launchpad exec ncc build \
       "$SRC_ROOT/packages/server/build/star-helper-entrypoints/seed-star-poc.cjs" \
       -o "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
+      --external bufferutil \
+      --external utf-8-validate \
+      --license licenses.txt
+    pnpm --filter @cocalc/launchpad exec ncc build \
+      "$SRC_ROOT/packages/server/build/star-helper-entrypoints/publish-default-rootfs.cjs" \
+      -o "$STAR_HELPER_BUILD_DIR/publish-default-rootfs" \
       --external bufferutil \
       --external utf-8-validate \
       --license licenses.txt
@@ -133,6 +152,9 @@ build_star_helper_bundles() {
     mkdir -p "$ensure_out/prebuilds/linux-x64" "$ensure_out/prebuilds/linux-arm64"
     cp "$node_pty_dir/prebuilds/linux-x64/pty.node" "$ensure_out/prebuilds/linux-x64/"
     cp "$node_pty_dir/prebuilds/linux-arm64/pty.node" "$ensure_out/prebuilds/linux-arm64/"
+    COCALC_STAR_HELPER_VERIFY=1 node "$STAR_HELPER_BUILD_DIR/seed-star-poc/index.cjs" >/dev/null
+    COCALC_STAR_HELPER_VERIFY=1 node "$STAR_HELPER_BUILD_DIR/publish-default-rootfs/index.cjs" >/dev/null
+    COCALC_STAR_HELPER_VERIFY=1 node "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache/index.cjs" >/dev/null
   )
 }
 
@@ -231,6 +253,7 @@ copy_runtime_payload() {
   ) | tar -C "$runtime_src/scripts/star-poc" -xf -
   mkdir -p "$runtime_src/scripts/star-poc/build"
   cp -a "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
+    "$STAR_HELPER_BUILD_DIR/publish-default-rootfs" \
     "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
     "$runtime_src/scripts/star-poc/build/"
   cp "$SRC_ROOT/packages/launchpad/build/bundle.tar.xz" \
@@ -251,6 +274,38 @@ copy_runtime_payload() {
     "$runtime_src/packages/server/cloud/bootstrap/"
 }
 
+verify_runtime_tarball() {
+  local tarball="$1"
+  local verify_dir="${tmp_dir}/verify-runtime"
+  log "verifying runtime tarball contents"
+  rm -rf "$verify_dir"
+  mkdir -p "$verify_dir"
+  tar -xzf "$tarball" -C "$verify_dir"
+
+  local required=(
+    "src/scripts/star-poc/build/seed-star-poc/index.cjs"
+    "src/scripts/star-poc/build/publish-default-rootfs/index.cjs"
+    "src/scripts/star-poc/build/ensure-rootfs-cache/index.cjs"
+    "src/scripts/star-poc/build/api-v2-routes-bundle/index.cjs"
+    "src/packages/launchpad/build/bundle.tar.xz"
+    "src/packages/cli/build/bundle/index.js"
+    "src/packages/project-host/build/bundle-linux.tar.xz"
+    "src/packages/project/build/bundle-linux.tar.xz"
+    "src/packages/project/build/tools-linux-$(runtime_tools_arch).tar.xz"
+  )
+  local path
+  for path in "${required[@]}"; do
+    [ -f "$verify_dir/$path" ] || die "runtime tarball missing $path"
+  done
+
+  (
+    cd "$verify_dir/src"
+    COCALC_STAR_HELPER_VERIFY=1 node scripts/star-poc/build/seed-star-poc/index.cjs >/dev/null
+    COCALC_STAR_HELPER_VERIFY=1 node scripts/star-poc/build/publish-default-rootfs/index.cjs >/dev/null
+    COCALC_STAR_HELPER_VERIFY=1 node scripts/star-poc/build/ensure-rootfs-cache/index.cjs >/dev/null
+  )
+}
+
 mkdir -p "$(dirname "$OUTPUT")"
 tmp_dir="$(mktemp -d)"
 cleanup() {
@@ -269,11 +324,13 @@ build_api_v2_routes_bundle
 [ -f "$SRC_ROOT/packages/project/build/bundle-linux.tar.xz" ] || die "missing project bundle tarball"
 [ -f "$SRC_ROOT/packages/project/build/tools-linux-$(runtime_tools_arch).tar.xz" ] || die "missing $(runtime_tools_arch) tools bundle"
 [ -f "$STAR_HELPER_BUILD_DIR/seed-star-poc/index.cjs" ] || die "missing bundled seed helper"
+[ -f "$STAR_HELPER_BUILD_DIR/publish-default-rootfs/index.cjs" ] || die "missing bundled rootfs publish helper"
 [ -f "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache/index.cjs" ] || die "missing bundled rootfs cache helper"
 [ -f "$STAR_HELPER_BUILD_DIR/api-v2-routes/index.cjs" ] || die "missing bundled api/v2 route manifest"
 
 copy_runtime_payload "$tmp_dir"
 log "creating $OUTPUT"
 tar -czf "$OUTPUT" -C "$tmp_dir" src
+verify_runtime_tarball "$OUTPUT"
 
 log "wrote $OUTPUT"

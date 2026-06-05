@@ -29,6 +29,7 @@ Important defaults:
   SRC_ROOT=$STAR_HOME/cocalc-ai/src
   STAR_ROOT=/var/lib/cocalc/star
   STAR_BASE_URL=http://127.0.0.1:9100
+  STAR_PUBLIC_URL=              optional public https://... URL
   STAR_BTRFS_IMAGE=/var/lib/cocalc/btrfs.img
   STAR_BTRFS_SIZE=100G
   STAR_BUILD=1
@@ -40,6 +41,9 @@ Safety:
   Set STAR_ASSUME_YES=1 for non-interactive installs. Without it, this script
   asks for confirmation because it changes system packages, systemd services,
   sudoers, mounts, and local runtime data.
+
+After install, configure direct HTTPS with:
+  sudo /opt/cocalc-star/source/src/scripts/star/star.sh https --domain star.example.com
 EOF
 }
 

@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 
-const { mkdirSync, writeFileSync, chmodSync } = require("node:fs");
+const { existsSync, mkdirSync, writeFileSync, chmodSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 
 function requireFallback(err, fallbackPath) {
   if (err?.code !== "MODULE_NOT_FOUND") {
     throw err;
   }
-  return require(join(process.cwd(), fallbackPath));
+  const fullPath = join(process.cwd(), fallbackPath);
+  if (!existsSync(fullPath)) {
+    throw err;
+  }
+  return require(fullPath);
 }
 
 function requireDatabaseDev() {
@@ -67,7 +71,22 @@ function requireBootstrapToken() {
   }
 }
 
+function verifyBundledImports() {
+  requireDatabaseDev();
+  requireDatabaseSchema();
+  requireDatabasePool();
+  requireProjectHosts();
+  requireBootstrapAdmin();
+  requireBootstrapToken();
+  console.log(JSON.stringify({ ok: true, helper: "seed-star-poc" }));
+}
+
 async function main() {
+  if (process.env.COCALC_STAR_HELPER_VERIFY === "1") {
+    verifyBundledImports();
+    return;
+  }
+
   const hostId =
     process.env.STAR_PROJECT_HOST_ID ?? "11111111-1111-4111-8111-111111111111";
   const hostName = process.env.STAR_PROJECT_HOST_NAME ?? "star-local";
@@ -147,6 +166,7 @@ async function main() {
     internal_url: "http://127.0.0.1:9002",
     ssh_server: "127.0.0.1:2222",
     status: "running",
+    tier: 0,
     metadata: {
       provider: "star",
       cloud_provider: "star",

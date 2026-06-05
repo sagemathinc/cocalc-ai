@@ -17,13 +17,15 @@ STAR_HOST_ID="${STAR_HOST_ID:-11111111-1111-4111-8111-111111111111}"
 STAR_PROJECT_HOST_REGION="${STAR_PROJECT_HOST_REGION:-wnam}"
 STAR_BASE_PORT="${STAR_BASE_PORT:-9100}"
 STAR_BASE_URL="${STAR_BASE_URL:-http://127.0.0.1:${STAR_BASE_PORT}}"
+STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
 STAR_BTRFS_IMAGE="${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}"
 STAR_BTRFS_SIZE="${STAR_BTRFS_SIZE:-100G}"
 STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-docker.io/buildpack-deps:26.04}"
-STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
+STAR_HARDEN_INSTALL_USER_SUDO="${STAR_HARDEN_INSTALL_USER_SUDO:-0}"
+STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-${STAR_HARDEN_INSTALL_USER_SUDO}}"
 STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
 STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
 
@@ -484,6 +486,17 @@ ensure_default_rootfs_cache() {
   as_star_user "set -a && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
 }
 
+publish_default_rootfs() {
+  if [ -z "${STAR_DEFAULT_ROOTFS_IMAGE:-}" ]; then
+    return
+  fi
+  local script="scripts/star-poc/publish-default-rootfs.cjs"
+  if [ -f "$SRC_ROOT/scripts/star-poc/build/publish-default-rootfs/index.cjs" ]; then
+    script="scripts/star-poc/build/publish-default-rootfs/index.cjs"
+  fi
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
+}
+
 write_env_files() {
   local site_master_key="${STAR_DATA}/secrets/site-master-key"
   if [ ! -f "$site_master_key" ]; then
@@ -502,6 +515,7 @@ write_env_files() {
     printf 'STAR_BASE_PORT=%q\n' "$STAR_BASE_PORT"
     printf 'STAR_BASE_URL=%q\n' "$STAR_BASE_URL"
     printf 'STAR_API=%q\n' "$STAR_BASE_URL"
+    printf 'STAR_PUBLIC_URL=%q\n' "$STAR_PUBLIC_URL"
     printf 'STAR_PROJECT_HOST_REGION=%q\n' "$STAR_PROJECT_HOST_REGION"
     printf 'STAR_INSTALL_ROOT=%q\n' "${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
     printf 'STAR_DEFAULT_ROOTFS_IMAGE=%q\n' "$STAR_DEFAULT_ROOTFS_IMAGE"
@@ -533,7 +547,7 @@ PORT=${STAR_BASE_PORT}
 COCALC_SSHD_PORT=$((STAR_BASE_PORT + 1))
 COCALC_OPEN_BROWSER=0
 COCALC_ALLOW_INSECURE_HTTP_MODE=true
-COCALC_SETTING_DNS=${STAR_BASE_URL}
+COCALC_SETTING_DNS=${STAR_PUBLIC_URL:-$STAR_BASE_URL}
 EOF
   chown "$STAR_USER:$STAR_USER" /etc/cocalc/star/hub.env
   chmod 600 /etc/cocalc/star/hub.env
@@ -661,6 +675,8 @@ WantedBy=multi-user.target
 EOF
 
   cat >"$caddy_config" <<EOF
+# cocalc-star managed caddyfile v1
+
 :80 {
   reverse_proxy 127.0.0.1:${STAR_BASE_PORT}
 }
@@ -691,7 +707,11 @@ EOF
 ${STAR_USER} ALL=(root) NOPASSWD: /bin/systemctl *, /bin/journalctl *, /usr/bin/tee *, /usr/bin/install *, /bin/mount *, /bin/umount *, /usr/bin/loginctl *
 EOF
   chmod 0440 /etc/sudoers.d/cocalc-star-admin
-  remove_broad_sudoers_for_star_user
+  if [ "$STAR_HARDEN_INSTALL_USER_SUDO" = "1" ]; then
+    remove_broad_sudoers_for_star_user
+  else
+    log "preserving existing sudo access for installer user ${STAR_USER}"
+  fi
   if [ "$STAR_REMOVE_GCP_SUDOERS" = "1" ]; then
     if id -nG "$STAR_USER" | tr ' ' '\n' | grep -qx google-sudoers; then
       gpasswd -d "$STAR_USER" google-sudoers || true
@@ -766,5 +786,6 @@ build_default_rootfs_image
 write_env_files
 ensure_default_rootfs_cache
 seed_database
+publish_default_rootfs
 install_systemd
 start_services
