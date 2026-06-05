@@ -376,13 +376,7 @@ export class StudentProjectsActions {
       }
     };
 
-    try {
-      await awaitMap(store.get_student_project_ids(), MAX_PARALLEL_TASKS, task);
-    } finally {
-      if (store.get("action_all_projects_state") === state) {
-        this.course_actions.setState({ action_all_projects_state: "any" });
-      }
-    }
+    await awaitMap(store.get_student_project_ids(), MAX_PARALLEL_TASKS, task);
   };
 
   cancel_action_all_student_projects = (): void => {

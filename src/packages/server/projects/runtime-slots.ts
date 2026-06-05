@@ -155,18 +155,6 @@ function getStarGlobalRunningProjectLimit(): number | undefined {
   );
 }
 
-function getRuntimeSlotLimit(
-  membership: Awaited<ReturnType<typeof resolveMembershipForAccount>>,
-): number | undefined {
-  if (isStarSetupProfile()) {
-    return undefined;
-  }
-  return normalizePositiveInteger(
-    getEffectiveMembershipUsageLimits(membership)
-      .max_sponsored_running_projects,
-  );
-}
-
 function expirationDate(ttl_ms: number | undefined): Date {
   return new Date(Date.now() + (ttl_ms ?? DEFAULT_RUNTIME_SLOT_TTL_MS));
 }
@@ -327,7 +315,10 @@ export async function getProjectRuntimeSlotDenialLocal({
   await assertStarGlobalRunningProjectCapacity(pool, project_id);
   const activeSlots = await loadActiveSlotsForSponsor(pool, sponsor_account_id);
   const membership = await resolveMembershipForAccount(sponsor_account_id);
-  const limit = getRuntimeSlotLimit(membership);
+  const limit = normalizePositiveInteger(
+    getEffectiveMembershipUsageLimits(membership)
+      .max_sponsored_running_projects,
+  );
   return runtimeSponsorSlotDenialFromActiveSlots({
     sponsor_account_id,
     project_id,
@@ -354,7 +345,10 @@ async function reserveProjectRuntimeSlotInTransaction(
   );
   const current = existingSlot ? activeSlots.length : activeSlots.length + 1;
   const membership = await resolveMembershipForAccount(opts.sponsor_account_id);
-  const limit = getRuntimeSlotLimit(membership);
+  const limit = normalizePositiveInteger(
+    getEffectiveMembershipUsageLimits(membership)
+      .max_sponsored_running_projects,
+  );
 
   if (!existingSlot && limit != null && activeSlots.length >= limit) {
     const denial = runtimeSponsorSlotDenialFromActiveSlots({
