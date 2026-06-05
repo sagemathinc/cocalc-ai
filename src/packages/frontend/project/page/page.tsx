@@ -512,10 +512,23 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if (archivedLike || hardDeleteBlocked) {
       return [];
     }
+    if (!is_active) {
+      return [];
+    }
     const v: React.JSX.Element[] = [];
+    const activeEditorPath =
+      initialWorkspaceRender.displayActiveTab?.startsWith(EDITOR_PREFIX)
+        ? tab_to_path(initialWorkspaceRender.displayActiveTab)
+        : undefined;
 
     initialWorkspaceRender.renderPaths.map((path) => {
       if (!path) {
+        return;
+      }
+      const component = open_files?.getIn([path, "component"]) as any;
+      const hasHydratedEditor =
+        component?.Editor != null || component?.get?.("Editor") != null;
+      if (path !== activeEditorPath && !hasHydratedEditor) {
         return;
       }
       const syncPathValue = open_files?.getIn([path, "sync_path"]);
