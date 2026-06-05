@@ -59,6 +59,9 @@ Implementation status as of 2026-06-02:
 - Raw installer and `star.sh status` access instructions now print
   copy/pasteable SSH tunnel guidance, the local bootstrap URL, and alternate
   local-port guidance while the bootstrap URL remains valid.
+- Caddy/Let's Encrypt over a public VM IP has been validated as the preferred
+  zero-config public-VM access path when ports 80/443 are reachable. SSH tunnel
+  access remains the private/LAN fallback, not the primary public-VM story.
 - Current implementation is a validated tarball + installer deployment, not a
   final marketplace image or SEA binary. SEA is now optional rather than a hard
   product requirement.
@@ -100,6 +103,68 @@ Star intentionally does not support:
 - arbitrary external project-host providers.
 
 Those are upsells to Launchpad/Rocket.
+
+## Current Product Goal: Zero-Config Public VM Appliance
+
+The immediate Star product target is a public-VM appliance proof of concept that
+feels genuinely zero-config for a user or agent who can create an Ubuntu VM with
+ports 80/443 open.
+
+Target user story:
+
+1. Create a fresh public Ubuntu VM.
+2. Paste one install command.
+3. The installer asks for the public IP/host to use, or accepts it via an
+   option/environment variable for agent-driven installs.
+4. Before doing the full install, the installer runs a quick public reachability
+   smoke test for ports 80/443 using a simple temporary HTTP/HTTPS endpoint or
+   equivalent Caddy dry-run path.
+5. The installer installs Star, configures Caddy + Let's Encrypt for the public
+   URL, starts the hub/project-host, and prints the HTTPS bootstrap URL.
+6. The user opens the bootstrap URL and creates the first admin account.
+7. Creating a project immediately gives working terminal, Jupyter, and LaTeX.
+8. Codex works once the user links their Codex/OpenAI subscription.
+9. The admin can invite another user through a copy/paste signup URL without
+   manually creating and sending a separate registration token.
+10. The invited user creates a project and/or collaborates on an existing
+    project.
+
+Primary public-VM access path:
+
+- Caddy + Let's Encrypt with a user-provided public DNS name, or an automatic
+  `sslip.io`-style hostname for early testing when the VM has a stable public
+  IP.
+- The installer should make this path obvious and should output the exact
+  working HTTPS bootstrap URL.
+
+Fallback/private access path:
+
+- SSH tunnel to `127.0.0.1:9100`.
+- This remains essential for private VMs, firewalled environments, laptop-local
+  VMs, and cases where ports 80/443 are unavailable.
+
+Non-goals for this proof of concept:
+
+- Cloudflare tunnel as the default.
+- CoCalc-managed DNS as the default.
+- Multi-bay or high availability.
+- Marketplace automation beyond what is needed to validate the same install
+  story on a marketplace-like VM.
+
+Release-blocking gaps for this story:
+
+- Installer option/env var for public URL/IP/hostname, with interactive prompt
+  only when not provided.
+- Public reachability smoke test before the expensive install path.
+- First-class Caddy/Let's Encrypt install/config/status path in `install.sh` and
+  `star.sh status`.
+- Bootstrap/status output that prints the HTTPS bootstrap URL and clearly
+  distinguishes it from SSH-tunnel fallback instructions.
+- Admin-visible invite URL for additional users, backed by a pre-created or
+  easily regenerated registration token.
+- Codex subscription-link UI should show the linking panel immediately with a
+  loading state while waiting for the OpenAI/device code instead of leaving the
+  user wondering whether anything is happening.
 
 ## Current Validated Implementation
 
@@ -988,7 +1053,28 @@ V1 interactive flow:
 13. Wait for health.
 14. Print admin registration link and the exact access instructions.
 
-The first visible user experience should be:
+For a public VM with ports 80/443 open, the first visible user experience should
+be:
+
+```text
+CoCalc Star is running.
+
+Public URL:
+https://<public-hostname>/
+
+Create the first admin account:
+https://<public-hostname>/auth/sign-up?registrationToken=<registration-token>&bootstrap=1
+
+Invite other users after admin setup:
+https://<public-hostname>/auth/sign-up?registrationToken=<invite-registration-token>
+
+Fallback private access is also available over SSH:
+ssh -L 9100:127.0.0.1:9100 <ssh-user>@<vm-ip-or-hostname>
+http://127.0.0.1:9100/auth/sign-up?registrationToken=<registration-token>&bootstrap=1
+```
+
+For a private VM, laptop-local VM, or public VM without ports 80/443 open, the
+first visible user experience should be:
 
 ```text
 CoCalc Star is running.
@@ -1007,19 +1093,18 @@ Admin setup:
 - Create account.
 - Enable 2FA.
 - Optionally configure email.
-- Create or import a RootFS.
 - Start a smoke-test project.
 ```
 
-The installer should avoid ambiguous hostnames in this output. For private
-first-run access, the safest default is always a local tunnel to
-`127.0.0.1:9100` on the VM. If the installer can infer the SSH user and public
-IP, it should print a complete command. If not, it should print placeholders
-with a short explanation.
+The installer should avoid ambiguous hostnames in this output. If the installer
+can infer the SSH user and public IP, it should print a complete tunnel command.
+If not, it should print placeholders with a short explanation.
 
-This is the immediate V1 access path. It is acceptable for the first public
-testing release because it avoids requiring DNS, TLS, Caddy, Cloudflare, or an
-open public HTTP port. It is not the final product-grade public access story.
+The public-VM path should prefer Caddy/Let's Encrypt when a public hostname is
+available. For early testing, an `sslip.io`-style hostname derived from the
+public IP is acceptable if the operator understands that the URL changes when
+the VM's public IP changes. For production-like use, recommend a real DNS name
+or a reserved/static cloud IP.
 
 ## Star Onboarding UI
 
@@ -1086,21 +1171,24 @@ local and preinstalled.
 
 No. Star's core value is avoiding Cloudflare/cloud-provider setup.
 
-If public HTTPS is needed, handle it later via:
+The default public-VM path should be:
 
-- operator-provided reverse proxy,
-- Caddy/Let's Encrypt,
-- marketplace public IP + manual DNS,
-- optional CoCalc-managed DNS/reverse-tunnel service,
-- or an optional Star Pro feature.
+- Caddy + Let's Encrypt,
+- user-provided DNS name when available,
+- `sslip.io`-style public-IP hostname for zero-config testing,
+- SSH tunnel fallback when public ports are unavailable.
+
+Cloudflare reverse tunnels are useful later for users behind NAT, changing IPs,
+or restrictive firewalls, but they are not the first/default Star experience
+because they add an external account, product dependency, and trust boundary.
 
 Future option:
 
 - `cocalc.ai` can offer an opt-in registration service that gives Star users a
   managed subdomain and reverse tunnel. This would make public access easier,
   provide a registration/support funnel, and avoid forcing operators to learn
-  DNS/TLS immediately. It is explicitly post-initial-release work, not a V1
-  blocker.
+  DNS/TLS immediately. It is explicitly post-initial-release work, not required
+  for the public-VM proof of concept.
 
 ### Does Star Need A Cloud Provider Adapter?
 
@@ -1196,9 +1284,11 @@ distribution convenience, not a substitute for a focused appliance experience.
    - paid cap - 25 accounts,
    - enforcement location - (not sure).
 3. Public URL/TLS:
-   - immediate V1: private SSH tunnel instructions printed by installer,
-   - supported follow-up: Caddy + Let's Encrypt once DNS points at the VM,
-   - later opt-in: CoCalc-managed subdomain/reverse tunnel,
+   - immediate public-VM path: Caddy + Let's Encrypt with a public hostname,
+   - zero-config testing path: `sslip.io`-style hostname from public IP,
+   - private fallback: SSH tunnel instructions printed by installer,
+   - later opt-in: CoCalc-managed subdomain/reverse tunnel or Cloudflare-style
+     tunnel for NAT/changing-IP environments,
    - operator-managed reverse proxy remains supported.
 4. Email:
    - optional &lt;-- this; not part of onboarding, but the functionality exists,
@@ -1336,6 +1426,43 @@ Validation:
   license entry, backups, resource budget, and custom RootFS are shown as
   optional/manual follow-up checks, not blockers.
 
+### Phase 3.5: Public VM HTTPS And Invite Flow
+
+Deliverable:
+
+- Installer accepts `STAR_PUBLIC_URL`, `STAR_PUBLIC_HOSTNAME`, or equivalent
+  CLI/env input for agent-friendly installs.
+- Interactive installer prompts for the public IP/hostname only when not
+  provided.
+- Installer can run a preflight reachability smoke test for ports 80/443 before
+  doing the expensive install.
+- Installer configures Caddy + Let's Encrypt for the public URL when requested.
+- `star.sh status` reports:
+  - hub/project-host health,
+  - public HTTPS URL,
+  - admin bootstrap URL while valid,
+  - invite/signup URL while valid,
+  - SSH tunnel fallback instructions.
+- Admin setup/profile UI shows the public URL/TLS state as a first-class Star
+  appliance status item.
+- First admin sees or can regenerate a copy/paste invite URL for additional
+  users without manually creating a registration token elsewhere.
+- Codex subscription-link UI renders immediately with a loading state while
+  waiting for the external/device code.
+
+Validation:
+
+- Fresh public GCP VM with ports 80/443 open installs with a single command and
+  yields a working HTTPS bootstrap URL.
+- Same install can run non-interactively by passing public URL/hostname input.
+- Caddy/Let's Encrypt failure leaves SSH tunnel fallback usable and prints a
+  clear next step.
+- First admin creates a project; terminal, Jupyter, and LaTeX work immediately.
+- Admin invite URL creates a second non-admin user.
+- Second user creates a project and can collaborate on an existing project.
+- Codex link flow visibly enters a loading state immediately, then shows the
+  actual code when available.
+
 ### Phase 4: Packaged Runtime
 
 Deliverable:
@@ -1455,6 +1582,11 @@ Manual:
 
 - Fresh Ubuntu 24.04 x86_64 VM.
 - Fresh Ubuntu 24.04 arm64 VM if SEA/build supports it. (USER: it definitely does)
+- Fresh public VM with ports 80/443 open and Caddy/Let's Encrypt configured.
+- Public-URL install using interactive hostname/IP prompt.
+- Public-URL install using non-interactive env/CLI input for agents.
+- Public HTTPS bootstrap via generated URL.
+- SSH-tunnel fallback when public HTTPS setup is skipped or fails.
 - Reboot recovery.
 - Upgrade/rollback.
 - Low-memory pressure behavior.
@@ -1463,6 +1595,10 @@ Manual:
 - Admin email configured.
 - Local/LAN-only access.
 - Public IP HTTP access.
+- Public IP HTTPS access through Caddy.
+- `sslip.io`-style hostname behavior when public IP changes.
+- Admin invite URL creates a second user without manual token creation.
+- Codex subscription-link UI shows immediate loading state and then the code.
 - Source checkout build/deploy.
 - Source deploy rollback.
 - Custom-build fingerprint visible in status/admin UI.
@@ -1475,6 +1611,11 @@ Smoke:
 - Start project.
 - Open terminal.
 - Open Jupyter.
+- Build/check LaTeX availability.
+- Link Codex subscription and start a minimal Codex interaction.
+- Invite second user.
+- Second user creates a project.
+- First and second user collaborate in one project.
 - Stop/start project.
 - Reboot VM while project is stopped and while project is running.
 
@@ -1496,43 +1637,60 @@ VM", is complete.
 
 Current recommended next step:
 
-1. Polish the post-install terminal output. Done for the raw installer and
-   `star.sh status`:
+1. Implement the public-VM Caddy/Let's Encrypt install path:
+   - accept public URL/hostname/IP via env/CLI for agents,
+   - prompt interactively only when not provided,
+   - run a fast public ports 80/443 reachability preflight,
+   - configure Caddy,
+   - print the HTTPS bootstrap URL,
+   - keep SSH tunnel output as fallback.
+2. Extend `star.sh status`:
    - print `CoCalc Star is running`,
+   - print public HTTPS URL and TLS/Caddy status,
+   - print the admin bootstrap URL while valid,
+   - print the invite/signup URL while valid,
    - print a complete `ssh -L 9100:127.0.0.1:9100 ...` command when possible,
-   - print the matching `http://127.0.0.1:9100/...` bootstrap URL,
-   - show the alternate local-port pattern when `9100` is already used locally,
-   - make `star.sh status` reprint the bootstrap/access instructions while the
-     bootstrap token remains valid.
-2. Polish the Star setup/admin profile so a Star operator sees local appliance
+   - show the alternate local-port pattern when `9100` is already used locally.
+3. Add the admin invite URL path:
+   - pre-create or lazily create a non-admin registration token,
+   - show a copy/paste signup URL to the first admin,
+   - make token rotation/regeneration clear,
+   - avoid requiring admins to manually create and send tokens before inviting
+     collaborators.
+4. Polish the Codex subscription-link UI:
+   - render the link panel immediately,
+   - show `Loading...` or equivalent while waiting for the external/device code,
+   - swap in the code as soon as it is available.
+5. Polish the Star setup/admin profile so a Star operator sees local appliance
    readiness, not Launchpad/Rocket cloud-provider setup:
    - first admin and 2FA,
    - local project-host health,
    - default RootFS status,
    - shared `/scratch` status,
    - smoke-test project action,
-   - optional email/public URL/backup reminders.
-3. Harden the installer across random clouds:
+   - public URL/TLS status,
+   - optional email/backup reminders.
+6. Harden the installer across random clouds:
    - detect apt/dpkg locks from `unattended-upgrades`,
    - wait with useful status messages instead of failing opaquely,
    - print clear guidance when package installation is blocked for too long,
    - keep the release directory rollback behavior on any failure.
-4. Build the local source deploy lane:
+7. Build the local source deploy lane:
    - put a CoCalc checkout on the same VM,
    - build a Star-compatible release from that checkout,
    - deploy it through the same versioned release/rollback mechanism,
    - confirm `star.sh status` reports the custom build fingerprint.
-5. Decide the external packaging surface:
+8. Decide the external packaging surface:
    - tarball + `install.sh`,
    - `.deb`/apt repository,
    - SEA wrapper,
    - marketplace image.
-6. Decide the Star product surface:
+9. Decide the Star product surface:
    - disable or hide cloud-provider setup,
    - disable or hide SaaS sales/Stripe flows,
    - keep Star focused on "one VM appliance" rather than "everything Launchpad
      can technically do".
-7. Keep using `src/scripts/star/validate-gce-release-upgrade.sh` as the release
+10. Keep using `src/scripts/star/validate-gce-release-upgrade.sh` as the release
    gate for any packaging or installer change.
 
 That proves Star is not only an appliance, but also a safe single-VM development
