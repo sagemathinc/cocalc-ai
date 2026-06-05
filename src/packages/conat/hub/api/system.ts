@@ -850,12 +850,15 @@ export interface SiteSettingsSyncBayResult {
   bay_id: string;
   status: "applied" | "failed" | "local" | "skipped";
   count?: number;
+  version?: number;
   error?: string;
 }
 
 export interface SiteSettingsSyncResult {
   local_bay_id: string;
   count: number;
+  scope?: string;
+  version?: number;
   bays: SiteSettingsSyncBayResult[];
 }
 

@@ -85,12 +85,23 @@ describe("site settings dangerous-session auth", () => {
         cb(undefined);
       }),
     };
-    getPoolQueryMock = jest.fn(async () => ({ rows: [] }));
+    let configVersion = 0;
+    getPoolQueryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("INSERT INTO global_config_versions")) {
+        configVersion += 1;
+        return { rows: [{ version: configVersion }] };
+      }
+      if (sql.includes("SELECT version FROM global_config_versions")) {
+        return { rows: configVersion ? [{ version: configVersion }] : [] };
+      }
+      return { rows: [] };
+    });
     centralLogMock = jest.fn(async () => undefined);
     listClusterBayRegistryMock = jest.fn(async () => []);
     getConfiguredBayIdMock = jest.fn(() => "seed");
     getConfiguredClusterSeedBayIdMock = jest.fn(() => "seed");
     bayOpsMock = jest.fn(() => ({
+      setServerSetting: jest.fn(),
       setSiteSettings: jest.fn(),
       syncSiteSettings: jest.fn(),
     }));
@@ -125,7 +136,7 @@ describe("site settings dangerous-session auth", () => {
     requireDangerousSessionAuthMock = jest.fn(async () => undefined);
     const { setSiteSettings } = await import("./system");
 
-    await setSiteSettings({
+    const result = await setSiteSettings({
       account_id: ACCOUNT_ID,
       browser_id: "browser-1",
       settings: [
@@ -134,6 +145,29 @@ describe("site settings dangerous-session auth", () => {
       ],
     });
 
+    expect(result).toMatchObject({
+      local_bay_id: "seed",
+      count: 2,
+      scope: "server_settings",
+      version: 1,
+      bays: [{ bay_id: "seed", status: "local", count: 2, version: 1 }],
+    });
+    const poolSqlCalls = getPoolQueryMock.mock.calls.map(([sql]) => `${sql}`);
+    expect(
+      poolSqlCalls.some((sql) =>
+        sql.includes("INSERT INTO global_config_versions"),
+      ),
+    ).toBe(true);
+    expect(
+      poolSqlCalls.some((sql) =>
+        sql.includes("INSERT INTO global_config_events"),
+      ),
+    ).toBe(true);
+    expect(
+      poolSqlCalls.some((sql) =>
+        sql.includes("INSERT INTO global_config_bay_state"),
+      ),
+    ).toBe(true);
     expect(centralLogMock).toHaveBeenCalledWith({
       event: "signup_email_domain_policy_changed",
       value: {
@@ -160,6 +194,47 @@ describe("site settings dangerous-session auth", () => {
         },
       },
     });
+  });
+
+  it("records seed version and attached-bay mirror state for propagated settings", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => undefined);
+    listClusterBayRegistryMock = jest.fn(async () => [
+      { bay_id: "seed" },
+      { bay_id: "attached-a" },
+    ]);
+    const setServerSetting = jest.fn(async () => undefined);
+    bayOpsMock = jest.fn(() => ({
+      setServerSetting,
+    }));
+    const { setSiteSettings } = await import("./system");
+
+    const result = await setSiteSettings({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      settings: [{ name: "site_name", value: "Seed Name" }],
+    });
+
+    expect(result).toMatchObject({
+      local_bay_id: "seed",
+      count: 1,
+      scope: "server_settings",
+      version: 1,
+      bays: [
+        { bay_id: "seed", status: "local", count: 1, version: 1 },
+        { bay_id: "attached-a", status: "applied", count: 1, version: 1 },
+      ],
+    });
+    expect(bayOpsMock).toHaveBeenCalledWith("attached-a", {
+      timeout_ms: 15_000,
+    });
+    expect(setServerSetting).toHaveBeenCalledWith({
+      name: "site_name",
+      value: "Seed Name",
+    });
+    const bayStateWrites = getPoolQueryMock.mock.calls.filter(([sql]) =>
+      `${sql}`.includes("INSERT INTO global_config_bay_state"),
+    );
+    expect(bayStateWrites).toHaveLength(2);
   });
 
   it("forwards attached-bay site settings writes to seed after fresh auth", async () => {

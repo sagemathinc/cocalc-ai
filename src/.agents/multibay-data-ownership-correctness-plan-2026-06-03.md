@@ -443,7 +443,7 @@ These still need classification, but probably should not block release:
 
 ## Server Settings Redesign
 
-### Current Pattern
+### Previous Pattern
 
 `setSiteSettings` normalizes updates, requires fresh admin auth, writes local
 `server_settings`, then calls inter-bay `setServerSetting` on other bays. The
@@ -456,8 +456,7 @@ ambiguous.
 
 1. Seed owns `server_settings`.
 2. All admin site-settings writes route to seed.
-3. Seed writes settings inside a transaction with a monotonically increasing
-   config version.
+3. Seed writes settings, then records a monotonically increasing config version.
 4. Seed records config changes in an outbox/table, e.g.
    `global_config_events`.
 5. Attached bays pull or receive changes and apply them as mirrors.
@@ -475,7 +474,7 @@ ambiguous.
 
 - `scope text primary key`;
 - `version bigint not null`;
-- `updated timestamptz not null`;
+- `updated_at timestamptz not null`;
 - `updated_by uuid`;
 - `metadata jsonb`.
 
@@ -485,15 +484,16 @@ ambiguous.
 - `scope text not null`;
 - `version bigint not null`;
 - `changes jsonb not null`;
-- `created timestamptz not null`;
+- `created_at timestamptz not null`;
 - `created_by uuid`;
+- `source_bay_id text`;
 
 `global_config_bay_state`
 
 - `bay_id text not null`;
 - `scope text not null`;
-- `applied_version bigint not null`;
-- `applied_at timestamptz not null`;
+- `applied_version bigint`;
+- `applied_at timestamptz`;
 - `last_error text`;
 - primary key `(bay_id, scope)`.
 
@@ -892,13 +892,14 @@ Important distinction:
 
 ### Phase 8: Global Config Seed Authority
 
-Status: seed-authoritative write routing implemented first pass.
+Status: seed-authoritative write routing plus first-pass version/event/state
+tracking implemented.
 
 Tasks:
 
-- implement seed-routed `setSiteSettings`; (first pass done)
-- add `server_settings` versioning;
-- add attached-bay mirror apply path;
+- implement seed-routed `setSiteSettings`; (done)
+- add `server_settings` versioning; (first pass done)
+- add attached-bay mirror apply path; (first pass done)
 - add periodic repair/sync worker;
 - add admin propagation status UI;
 - then bring `membership_tiers`, global buckets/repos, and catalog config under
@@ -916,12 +917,16 @@ Implemented:
 - the inter-bay Bay Ops service has explicit internal `setSiteSettings` and
   `syncSiteSettings` methods for this seed-authoritative path;
 - signup email-domain policy audit logs include both the seed write bay and the
-  source bay that initiated the admin request.
+  source bay that initiated the admin request;
+- seed writes create declared `global_config_versions` and
+  `global_config_events` rows for `scope='server_settings'`;
+- seed fan-out records declared `global_config_bay_state` rows for the seed and
+  each attached bay, preserving the previous applied version when a bay fails;
+- `SiteSettingsSyncResult` now returns additive `scope` and `version` fields so
+  callers can display or inspect the exact seed version involved.
 
 Still needed:
 
-- add version/epoch tables for `server_settings`;
-- record per-bay applied versions and last propagation errors;
 - add a periodic seed-to-bay repair worker;
 - expose propagation status in admin UI;
 - eventually make attached-bay mirror apply require a seed/internal authority

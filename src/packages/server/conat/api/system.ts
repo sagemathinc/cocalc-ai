@@ -670,6 +670,7 @@ export async function getBayDrainPreflight({
 }
 
 type SiteSettingUpdate = { name: string; value: string };
+const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
 
 const SITE_SETTING_NAMES = new Set<string>([
   ...Object.keys(site_settings_conf),
@@ -781,10 +782,115 @@ async function getConfiguredSiteSettingUpdates(): Promise<SiteSettingUpdate[]> {
   return settings;
 }
 
+function parseConfigVersion(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return Number(value);
+  }
+  return 0;
+}
+
+async function getGlobalConfigVersion(
+  scope: string,
+): Promise<number | undefined> {
+  const { rows } = await getPool().query(
+    "SELECT version FROM global_config_versions WHERE scope=$1",
+    [scope],
+  );
+  const version = parseConfigVersion(rows[0]?.version);
+  return version > 0 ? version : undefined;
+}
+
+async function recordGlobalConfigEventOnSeed({
+  scope,
+  account_id,
+  source_bay_id,
+  changes,
+}: {
+  scope: string;
+  account_id?: string;
+  source_bay_id?: string | null;
+  changes: unknown;
+}): Promise<number> {
+  const bayId = getConfiguredBayId();
+  const metadata = {
+    source_bay_id: source_bay_id ?? bayId,
+  };
+  const { rows } = await getPool().query(
+    `
+    INSERT INTO global_config_versions (scope, version, updated_at, updated_by, metadata)
+    VALUES ($1, 1, NOW(), $2, $3::jsonb)
+    ON CONFLICT (scope) DO UPDATE SET
+      version = global_config_versions.version + 1,
+      updated_at = NOW(),
+      updated_by = EXCLUDED.updated_by,
+      metadata = EXCLUDED.metadata
+    RETURNING version
+    `,
+    [scope, account_id ?? null, JSON.stringify(metadata)],
+  );
+  const version = parseConfigVersion(rows[0]?.version);
+  await getPool().query(
+    `
+    INSERT INTO global_config_events
+      (id, scope, version, changes, created_at, created_by, source_bay_id)
+    VALUES
+      ($1, $2, $3, $4::jsonb, NOW(), $5, $6)
+    `,
+    [
+      uuid(),
+      scope,
+      version,
+      JSON.stringify(changes),
+      account_id ?? null,
+      source_bay_id ?? bayId,
+    ],
+  );
+  return version;
+}
+
+async function recordGlobalConfigBayState({
+  scope,
+  bay_id,
+  version,
+  error,
+}: {
+  scope: string;
+  bay_id: string;
+  version: number;
+  error?: string;
+}): Promise<void> {
+  const appliedVersion = error == null ? version : null;
+  await getPool().query(
+    `
+    INSERT INTO global_config_bay_state
+      (bay_id, scope, applied_version, applied_at, last_error)
+    VALUES
+      ($1, $2, $3, CASE WHEN $4::text IS NULL THEN NOW() ELSE NULL END, $4)
+    ON CONFLICT (bay_id, scope) DO UPDATE SET
+      applied_version = CASE
+        WHEN EXCLUDED.last_error IS NULL THEN EXCLUDED.applied_version
+        ELSE global_config_bay_state.applied_version
+      END,
+      applied_at = CASE
+        WHEN EXCLUDED.last_error IS NULL THEN NOW()
+        ELSE global_config_bay_state.applied_at
+      END,
+      last_error = EXCLUDED.last_error
+    `,
+    [bay_id, scope, appliedVersion, error ?? null],
+  );
+}
+
 async function propagateSiteSettingsToBays(
   settings: SiteSettingUpdate[],
+  opts: { scope?: string; version?: number } = {},
 ): Promise<SiteSettingsSyncResult> {
   const local_bay_id = getConfiguredBayId();
+  const scope = opts.scope ?? SERVER_SETTINGS_CONFIG_SCOPE;
+  const version = opts.version;
   const registry = await listClusterBayRegistry();
   const remoteBayIds = [
     ...new Set(registry.map(({ bay_id }) => bay_id).filter(Boolean)),
@@ -792,10 +898,17 @@ async function propagateSiteSettingsToBays(
     .filter((bay_id) => bay_id !== local_bay_id)
     .sort();
   const bays: SiteSettingsSyncResult["bays"] = [
-    { bay_id: local_bay_id, status: "local", count: settings.length },
+    { bay_id: local_bay_id, status: "local", count: settings.length, version },
   ];
+  if (version != null) {
+    await recordGlobalConfigBayState({
+      scope,
+      bay_id: local_bay_id,
+      version,
+    });
+  }
   if (!remoteBayIds.length) {
-    return { local_bay_id, count: settings.length, bays };
+    return { local_bay_id, count: settings.length, scope, version, bays };
   }
 
   const results = await Promise.allSettled(
@@ -810,18 +923,29 @@ async function propagateSiteSettingsToBays(
   for (let i = 0; i < remoteBayIds.length; i += 1) {
     const bay_id = remoteBayIds[i];
     const result = results[i];
+    const error =
+      result.status === "fulfilled" ? undefined : `${result.reason}`;
+    if (version != null) {
+      await recordGlobalConfigBayState({
+        scope,
+        bay_id,
+        version,
+        error,
+      });
+    }
     bays.push(
       result.status === "fulfilled"
-        ? { bay_id, status: "applied", count: settings.length }
+        ? { bay_id, status: "applied", count: settings.length, version }
         : {
             bay_id,
             status: "failed",
             count: settings.length,
-            error: `${result.reason}`,
+            version,
+            error,
           },
     );
   }
-  return { local_bay_id, count: settings.length, bays };
+  return { local_bay_id, count: settings.length, scope, version, bays };
 }
 
 export async function setSiteSettingsOnSeed({
@@ -857,7 +981,16 @@ export async function setSiteSettingsOnSeed({
       source_bay_id,
     });
   }
-  return await propagateSiteSettingsToBays(updates);
+  const version = await recordGlobalConfigEventOnSeed({
+    scope: SERVER_SETTINGS_CONFIG_SCOPE,
+    account_id,
+    source_bay_id,
+    changes: { settings: updates.map(({ name }) => name).sort() },
+  });
+  return await propagateSiteSettingsToBays(updates, {
+    scope: SERVER_SETTINGS_CONFIG_SCOPE,
+    version,
+  });
 }
 
 async function syncSiteSettingsToBaysOnSeed(): Promise<SiteSettingsSyncResult> {
@@ -870,6 +1003,10 @@ async function syncSiteSettingsToBaysOnSeed(): Promise<SiteSettingsSyncResult> {
   }
   return await propagateSiteSettingsToBays(
     await getConfiguredSiteSettingUpdates(),
+    {
+      scope: SERVER_SETTINGS_CONFIG_SCOPE,
+      version: await getGlobalConfigVersion(SERVER_SETTINGS_CONFIG_SCOPE),
+    },
   );
 }
 
