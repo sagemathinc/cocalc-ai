@@ -80,8 +80,9 @@ wait_for_apt_locks() {
 }
 
 apt_get() {
+  local timeout="${STAR_APT_LOCK_TIMEOUT:-900}"
   wait_for_apt_locks
-  run apt-get "$@"
+  run apt-get -o "DPkg::Lock::Timeout=${timeout}" "$@"
 }
 
 automatic_apt_units() {
