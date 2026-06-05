@@ -857,6 +857,9 @@ Implemented:
     `project_backup_indexes`, and project-scoped `external_credentials` remain
     non-portable until they have table-specific copy, crypto/key, and
     invalidation semantics.
+- surfaced this decision manifest in project-rehome drain dry-runs as
+  `side_table_preflight`, so operators see which SQL side tables are ignored,
+  portable, or explicitly not preserved before running a dangerous drain.
 
 Tasks:
 

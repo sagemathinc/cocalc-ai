@@ -26,6 +26,10 @@ import {
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import {
+  getProjectRehomeSqlSideTablePreflight,
+  type ProjectRehomeSqlSideTablePreflight,
+} from "@cocalc/server/projects/rehome-side-tables";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const log = getLogger("server:projects:rehome");
@@ -67,6 +71,7 @@ export type ProjectRehomeDrainResult = {
   campaign_id: string | null;
   candidate_count: number;
   candidates: string[];
+  side_table_preflight: ProjectRehomeSqlSideTablePreflight;
   rehomed: ProjectControlRehomeResponse[];
   errors: Array<{ project_id: string; error: string }>;
 };
@@ -1101,6 +1106,7 @@ export async function drainProjectRehome({
     campaign_id: campaign_id ?? null,
     candidate_count: candidates.length,
     candidates,
+    side_table_preflight: getProjectRehomeSqlSideTablePreflight(),
     rehomed: [],
     errors: [],
   };

@@ -19,6 +19,13 @@ export interface ProjectRehomeSqlSideTableDecision {
   reason: string;
 }
 
+export interface ProjectRehomeSqlSideTablePreflight {
+  portable_tables: string[];
+  ignored_tables: string[];
+  non_portable_tables: Array<ProjectRehomeSqlSideTableDecision>;
+  summary: string;
+}
+
 export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
   project_collab_invites: {
     table: "project_collab_invites",
@@ -200,3 +207,41 @@ export const PROJECT_REHOME_PORTABLE_SQL_TABLES = Object.entries(
 )
   .filter(([, decision]) => decision.status === "portable")
   .map(([table]) => table);
+
+const IGNORED_REHOME_STATUSES =
+  new Set<ProjectRehomeSqlSideTableDecisionStatus>([
+    "projection",
+    "seed-global-cleanup",
+    "legacy-unused",
+    "audit-local",
+  ]);
+
+export function getProjectRehomeSqlSideTablePreflight(): ProjectRehomeSqlSideTablePreflight {
+  const decisions = Object.values(
+    PROJECT_REHOME_SQL_SIDE_TABLE_DECISION_VALUES,
+  );
+  const portable_tables = decisions
+    .filter((decision) => decision.status === "portable")
+    .map((decision) => decision.table)
+    .sort();
+  const ignored_tables = decisions
+    .filter((decision) => IGNORED_REHOME_STATUSES.has(decision.status))
+    .map((decision) => decision.table)
+    .sort();
+  const non_portable_tables = decisions
+    .filter(
+      (decision) =>
+        decision.status !== "portable" &&
+        !IGNORED_REHOME_STATUSES.has(decision.status),
+    )
+    .sort((a, b) => a.table.localeCompare(b.table));
+  return {
+    portable_tables,
+    ignored_tables,
+    non_portable_tables,
+    summary:
+      non_portable_tables.length === 0
+        ? "No non-portable SQL side tables are currently declared."
+        : `Project rehome does not preserve ${non_portable_tables.length} SQL side table(s); this remains an unsafe operator operation.`,
+  };
+}

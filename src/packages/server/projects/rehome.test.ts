@@ -660,6 +660,18 @@ describe("project rehome", () => {
       limit: 10,
       campaign_id: "drain-bay-0",
       candidates: [PROJECT_ID],
+      side_table_preflight: {
+        ignored_tables: expect.arrayContaining([
+          "cursors",
+          "patches",
+          "syncstrings",
+        ]),
+        non_portable_tables: expect.arrayContaining([
+          expect.objectContaining({ table: "project_secrets" }),
+          expect.objectContaining({ table: "project_backup_indexes" }),
+          expect.objectContaining({ table: "external_credentials" }),
+        ]),
+      },
       rehomed: [],
       errors: [],
     });
