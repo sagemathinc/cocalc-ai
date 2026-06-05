@@ -9,6 +9,7 @@ export type ProjectRehomeSqlSideTableDecisionStatus =
   | "projection"
   | "seed-global-cleanup"
   | "data-plane-excluded"
+  | "legacy-unused"
   | "audit-local"
   | "operation-local";
 
@@ -171,21 +172,21 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
   },
   patches: {
     table: "patches",
-    status: "data-plane-excluded",
+    status: "legacy-unused",
     reason:
-      "Patch rows are heavy project data-plane/TimeTravel content and must not be moved through hub project rehome.",
+      "Legacy Postgres sync table. It is no longer used for live project state; current sync state lives in Conat on the project host, so project rehome can ignore it.",
   },
   cursors: {
     table: "cursors",
-    status: "data-plane-excluded",
+    status: "legacy-unused",
     reason:
-      "Cursor rows are project data-plane/sync state and must not be moved through hub project rehome.",
+      "Legacy Postgres sync table. It is no longer used for live project state; current cursor/sync state lives in Conat on the project host, so project rehome can ignore it.",
   },
   syncstrings: {
     table: "syncstrings",
-    status: "data-plane-excluded",
+    status: "legacy-unused",
     reason:
-      "Syncstring rows are heavy project data-plane/TimeTravel content and must not be moved through hub project rehome.",
+      "Legacy Postgres sync table. It is no longer used for live project state; current sync state lives in Conat on the project host, so project rehome can ignore it.",
   },
 } as const satisfies Record<string, ProjectRehomeSqlSideTableDecision>;
 

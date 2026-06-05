@@ -382,14 +382,15 @@ Examples:
 - `notification_events_outbox`
 - `project_events_outbox`
 - project-scoped `external_credentials`
-- `blobs`, `syncstrings`, `patches`, `cursors`
+- `blobs`
+- legacy unused Postgres sync tables: `syncstrings`, `patches`, `cursors`
 
 Current concern:
 
 - project hard-delete knows many of these tables;
 - project rehome currently only copies project log portable state;
-- some are data-plane/project-host state, some are control-plane metadata, and
-  some are projections.
+- some are control-plane metadata, some are projections, and some are legacy
+  table definitions that are no longer active data stores.
 
 Target:
 
@@ -849,6 +850,9 @@ Implemented:
   - no SQL side table is marked portable for the current release;
   - projection rows are documented as rebuildable/refreshable;
   - heavy data-plane tables are explicitly excluded from hub-mediated rehome;
+  - legacy Postgres sync tables `syncstrings`, `patches`, and `cursors` are
+    documented as unused/ignored because live sync state now exists only in
+    Conat on the project host;
   - sensitive control-plane tables such as `project_secrets`,
     `project_backup_indexes`, and project-scoped `external_credentials` remain
     non-portable until they have table-specific copy, crypto/key, and
