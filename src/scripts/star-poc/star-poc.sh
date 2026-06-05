@@ -642,6 +642,22 @@ You can reprint this later with:
 EOF
 }
 
+print_invite_instructions() {
+  local invite_url="$1"
+  local public_url=""
+
+  [ -n "$invite_url" ] || return 0
+  if [ -n "${STAR_PUBLIC_URL:-}" ]; then
+    public_url="$(url_with_base "$invite_url" "$STAR_PUBLIC_URL")"
+  fi
+
+  cat <<EOF
+
+Invite another user with this signup URL:
+  ${public_url:-$invite_url}
+EOF
+}
+
 print_access_summary() {
   local public="${STAR_PUBLIC_URL:-}"
   printf 'local control plane: %s\n' "$STAR_API"
@@ -676,12 +692,17 @@ bootstrap_link() {
 access() {
   local result="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}"
   local url=""
+  local invite_url=""
   print_access_summary
   if [ -f "$result" ]; then
     url="$(json_string_field "$result" bootstrap_url || true)"
+    invite_url="$(json_string_field "$result" invite_url || true)"
   fi
   if [ -n "$url" ]; then
     print_access_instructions "$url"
+  fi
+  if [ -n "$invite_url" ]; then
+    print_invite_instructions "$invite_url"
   fi
 }
 

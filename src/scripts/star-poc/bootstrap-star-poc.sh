@@ -913,13 +913,18 @@ start_services() {
   sync
   systemctl --no-pager --full status cocalc-star-hub cocalc-star-project-host || true
   local bootstrap_url=""
+  local invite_url=""
   if [ -f "$STAR_ROOT/bootstrap-result.json" ]; then
     bootstrap_url="$(star_web_onboarding_json_string_field "$STAR_ROOT/bootstrap-result.json" bootstrap_url 2>/dev/null || true)"
     if [ -n "$bootstrap_url" ] && [ -n "${STAR_PUBLIC_URL:-}" ]; then
       bootstrap_url="$(star_web_onboarding_url_with_base "$bootstrap_url" "$STAR_PUBLIC_URL")"
     fi
+    invite_url="$(star_web_onboarding_json_string_field "$STAR_ROOT/bootstrap-result.json" invite_url 2>/dev/null || true)"
+    if [ -n "$invite_url" ] && [ -n "${STAR_PUBLIC_URL:-}" ]; then
+      invite_url="$(star_web_onboarding_url_with_base "$invite_url" "$STAR_PUBLIC_URL")"
+    fi
   fi
-  star_web_onboarding_write_status "ready" "CoCalc Star is running. Create the first admin account to finish setup." "$bootstrap_url"
+  star_web_onboarding_write_status "ready" "CoCalc Star is running. Create the first admin account to finish setup." "$bootstrap_url" "$invite_url"
   cat "$STAR_ROOT/bootstrap-result.json"
 }
 

@@ -322,14 +322,19 @@ star_web_onboarding_write_index() {
       failed: 100,
     };
 
-    function setAction(url, label) {
-      actions.innerHTML = "";
+    function addAction(url, label) {
       if (!url) return;
       const link = document.createElement("a");
       link.className = "button";
       link.href = url;
       link.textContent = label;
       actions.appendChild(link);
+    }
+
+    function setActions(status) {
+      actions.innerHTML = "";
+      addAction(status.bootstrap_url, "Create the first admin account");
+      addAction(status.invite_url, "Invite another user");
     }
 
     function setProgress(name) {
@@ -363,12 +368,12 @@ star_web_onboarding_write_index() {
           start.disabled = true;
           start.textContent = name === "ready" ? "Install complete" : "Install started";
         }
-        setAction(status.bootstrap_url, "Create the first admin account");
+        setActions(status);
       } catch (err) {
         phase.textContent = "waiting";
         message.textContent = "Waiting for the installer to write status...";
         setProgress("starting");
-        setAction("", "");
+        setActions({});
       }
     }
 
@@ -396,6 +401,7 @@ star_web_onboarding_write_status() {
   local phase="${1:-installing}"
   local message="${2:-Installing CoCalc Star...}"
   local bootstrap_url="${3:-}"
+  local invite_url="${4:-}"
   local dir status tmp
   dir="$(star_web_onboarding_dir)"
   mkdir -p "$dir"
@@ -405,6 +411,7 @@ star_web_onboarding_write_status() {
     MESSAGE="$message" \
     PUBLIC_URL="${STAR_PUBLIC_URL:-}" \
     BOOTSTRAP_URL="$bootstrap_url" \
+    INVITE_URL="$invite_url" \
     UPDATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     python3 - "$tmp" <<'PY'
 import json
@@ -417,6 +424,7 @@ payload = {
     "message": os.environ.get("MESSAGE", ""),
     "public_url": os.environ.get("PUBLIC_URL", ""),
     "bootstrap_url": os.environ.get("BOOTSTRAP_URL", ""),
+    "invite_url": os.environ.get("INVITE_URL", ""),
     "updated_at": os.environ.get("UPDATED_AT", ""),
 }
 with open(path, "w", encoding="utf-8") as f:
