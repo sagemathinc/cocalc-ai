@@ -119,6 +119,54 @@ describe("projection-backed read paths", () => {
     },
   );
 
+  it("persists project theme image updates through projects user_query", async () => {
+    await getPool().query(
+      `INSERT INTO accounts
+         (account_id, first_name, last_name, created, email_address, home_bay_id)
+       VALUES
+         ($1, 'Local', 'User', NOW(), 'local@example.com', 'bay-0')`,
+      [ACCOUNT_ID],
+    );
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, users, created, last_edited, deleted, theme)
+       VALUES
+         ($1, 'Theme Project', $2::JSONB, NOW(), NOW(), FALSE, NULL)`,
+      [
+        PROJECT_ID,
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+        }),
+      ],
+    );
+
+    await runUserQuery(
+      {
+        projects: {
+          project_id: PROJECT_ID,
+          theme: {
+            color: null,
+            accent_color: null,
+            icon: null,
+            image_blob: "theme-blob",
+          },
+        },
+      },
+      [{ set: true }],
+    );
+
+    const { rows } = await getPool().query<{ theme: any }>(
+      "SELECT theme FROM projects WHERE project_id = $1",
+      [PROJECT_ID],
+    );
+    expect(rows[0]?.theme).toEqual({
+      image_blob: "theme-blob",
+    });
+    expect(publishProjectFeedMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+    });
+  });
+
   it("allows direct account_project_index user_query reads for the signed-in account", async () => {
     await getPool().query(
       `INSERT INTO accounts
