@@ -46,6 +46,10 @@ jest.mock("@cocalc/frontend/webapp-client", () => {
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { MentionsActions } from "./actions";
 import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
+import {
+  collectProjectionDiagnostics,
+  resetProjectionDiagnosticsForTests,
+} from "@cocalc/frontend/projection-diagnostics";
 
 const mockedWebappClient = webapp_client as unknown as EventEmitter & {
   is_signed_in: jest.Mock;
@@ -88,6 +92,7 @@ async function flushMicrotasks(): Promise<void> {
 describe("MentionsActions realtime feed", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    resetProjectionDiagnosticsForTests();
     jest.useRealTimers();
     mockedWebappClient.is_signed_in.mockReturnValue(true);
     getSharedAccountDStreamMock.mockResolvedValue(new MockFeed());
@@ -128,6 +133,9 @@ describe("MentionsActions realtime feed", () => {
       ephemeral: true,
       maxListeners: 100,
     });
+    expect(
+      collectProjectionDiagnostics().consumers.notifications.attach_count,
+    ).toBe(1);
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(1);
@@ -193,6 +201,12 @@ describe("MentionsActions realtime feed", () => {
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(2);
+    const diagnostics = collectProjectionDiagnostics().consumers.notifications;
+    expect(diagnostics.event_count).toBe(2);
+    expect(diagnostics.last_event_type).toBe("notification.counts");
+    expect(diagnostics.history_gap_count).toBe(1);
+    expect(diagnostics.last_repair_reason).toBe("history-gap");
+    expect(diagnostics.last_repair_scope).toBe("counts-and-inbox");
   });
 
   it("only shows codex completion toasts for new unread notification arrivals", async () => {

@@ -25,10 +25,30 @@ import type { DStream } from "@cocalc/conat/sync/dstream";
 import { lite, remote_sync } from "@cocalc/frontend/lite";
 import { MAX_NOTIFICATION_INBOX_LIST_LIMIT } from "@cocalc/util/security-limits";
 import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
+import {
+  attachProjectionFeedDiagnostics,
+  recordProjectionFeedEvent,
+  recordProjectionHistoryGap,
+  recordProjectionRepair,
+  recordProjectionRepairFailure,
+} from "@cocalc/frontend/projection-diagnostics";
 
 const REFRESH_RETRY_INITIAL_MS = 5_000;
 const REFRESH_RETRY_MAX_MS = 60_000;
 const REFRESH_ON_RESUME_STALE_MS = 60_000;
+
+export type NotificationProjectionRepairReason =
+  | "history-gap"
+  | "foreground-wake"
+  | "manual-refresh"
+  | "diagnostic"
+  | "write-ack";
+
+export type NotificationProjectionRepairRequest = {
+  kind: "counts-and-inbox";
+  reason: NotificationProjectionRepairReason;
+  force?: boolean;
+};
 
 function mentionSort(a: MentionInfo, b: MentionInfo): number {
   return b.get("time").getTime() - a.get("time").getTime();
@@ -133,6 +153,7 @@ export class MentionsActions extends Actions<MentionsState> {
   };
   private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
+  private realtimeFeedDiagnosticsCleanup?: () => void;
 
   _init() {
     this.destroyed = false;
@@ -355,6 +376,8 @@ export class MentionsActions extends Actions<MentionsState> {
   }
 
   private closeRealtimeFeed(): void {
+    this.realtimeFeedDiagnosticsCleanup?.();
+    this.realtimeFeedDiagnosticsCleanup = undefined;
     if (this.realtimeFeed != null) {
       this.realtimeFeed.removeListener("change", this.handleRealtimeFeedChange);
       this.realtimeFeed.removeListener(
@@ -366,7 +389,36 @@ export class MentionsActions extends Actions<MentionsState> {
     this.realtimeFeedAccountId = undefined;
   }
 
-  private handleRealtimeFeedChange = (event?: AccountFeedEvent): void => {
+  public async repairNotificationProjection(
+    request: NotificationProjectionRepairRequest,
+  ): Promise<void> {
+    recordProjectionRepair({
+      consumer: "notifications",
+      reason: request.reason,
+      scope: request.kind,
+    });
+    try {
+      await this.refresh();
+    } catch (err) {
+      recordProjectionRepairFailure({
+        consumer: "notifications",
+        reason: request.reason,
+        scope: request.kind,
+        error: err,
+      });
+      throw err;
+    }
+  }
+
+  private handleRealtimeFeedChange = (
+    event?: AccountFeedEvent,
+    seq?: number,
+  ): void => {
+    recordProjectionFeedEvent({
+      consumer: "notifications",
+      event,
+      seq,
+    });
     const account_id = this.getAccountId();
     if (
       event == null ||
@@ -415,8 +467,15 @@ export class MentionsActions extends Actions<MentionsState> {
     }
   };
 
-  private handleRealtimeFeedHistoryGap = (): void => {
-    void this.refresh();
+  private handleRealtimeFeedHistoryGap = (info?: any): void => {
+    recordProjectionHistoryGap({
+      consumer: "notifications",
+      info,
+    });
+    void this.repairNotificationProjection({
+      kind: "counts-and-inbox",
+      reason: "history-gap",
+    });
   };
 
   private observeAccountStoreReady(): void {
@@ -468,6 +527,12 @@ export class MentionsActions extends Actions<MentionsState> {
       });
       feed.on("change", this.handleRealtimeFeedChange);
       feed.on("history-gap", this.handleRealtimeFeedHistoryGap);
+      this.realtimeFeedDiagnosticsCleanup = attachProjectionFeedDiagnostics({
+        consumer: "notifications",
+        account_id,
+        stream_name: accountFeedStreamName(),
+        stream: feed,
+      });
       this.realtimeFeed = feed;
       this.realtimeFeedAccountId = account_id;
     } catch (err) {
