@@ -669,6 +669,8 @@ Still needed:
 
 ### Phase 3: Admin Membership Entitlement Cleanup
 
+Status: implemented first pass 2026-06-04.
+
 Tasks:
 
 - decide whether `admin_assigned_memberships` is still needed; (ANS: YES, definitely needed still. overrides are far to fine grained)
@@ -679,6 +681,30 @@ Tasks:
 - if `portable`, include it in account rehome copy/clear state;
 - if `stable`, ensure unsafe account rehome warns/refuses when it exists;
 - add tests covering the chosen placement/portability behavior.
+
+Implemented artifacts:
+
+- `admin_assigned_memberships` remains an account-home table and is now marked
+  `portable` in the ownership manifest.
+- Local DB access is centralized in
+  `src/packages/server/membership/admin-assigned.ts`.
+- Admin UI RPCs `getAdminAssignedMembership`,
+  `setAdminAssignedMembership`, and `clearAdminAssignedMembership` resolve the
+  target account home bay before reading/writing.
+- Attached bays forward admin-assigned membership operations to the target
+  account home bay through account-local inter-bay RPCs.
+- Account rehome includes `admin_assigned_memberships` in the copied portable
+  account state.
+- Focused tests cover local reads, remote forwarding, and fresh-auth gating for
+  remote writes.
+
+Still needed:
+
+- the admin-assisted purchase path still writes admin-assigned membership rows
+  in the same transaction as billing ledger rows; fix that together with Phase
+  6 billing-ledger authority so commercial transactions remain coherent;
+- add an end-to-end rehome regression test that verifies an admin-assigned
+  membership survives account rehome.
 
 ### Phase 4: External Credentials Ownership Split
 

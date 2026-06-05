@@ -63,6 +63,7 @@ const PORTABLE_STATE_TABLES = [
   "account_impersonation_grants",
   "account_impersonation_sessions",
   "api_keys",
+  "admin_assigned_memberships",
   "account_entitlement_overrides",
   "account_entitlement_override_events",
   "membership_grants",
@@ -738,6 +739,7 @@ async function loadPortableState(
     account_impersonation_grants,
     account_impersonation_sessions,
     api_keys,
+    admin_assigned_memberships,
     account_entitlement_overrides,
     account_entitlement_override_events,
     account_persist_files,
@@ -754,6 +756,7 @@ async function loadPortableState(
     loadPortableRows("account_impersonation_grants", account_id),
     loadPortableRows("account_impersonation_sessions", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
+    loadPortableRows("admin_assigned_memberships", account_id),
     loadPortableRows("account_entitlement_overrides", account_id),
     loadPortableRows("account_entitlement_override_events", account_id),
     loadAccountPersistState(account_id),
@@ -774,6 +777,7 @@ async function loadPortableState(
     account_impersonation_grants,
     account_impersonation_sessions,
     api_keys,
+    admin_assigned_memberships,
     account_entitlement_overrides,
     account_entitlement_override_events,
     account_persist_files,
@@ -1201,6 +1205,7 @@ export async function copyAccountRehomeState({
   account_impersonation_grants,
   account_impersonation_sessions,
   api_keys,
+  admin_assigned_memberships,
   account_entitlement_overrides,
   account_entitlement_override_events,
   account_persist_files,
@@ -1281,6 +1286,11 @@ export async function copyAccountRehomeState({
     rows: api_keys ?? [],
   });
   await replacePortableRows({
+    table: "admin_assigned_memberships",
+    account_id: accountId,
+    rows: admin_assigned_memberships ?? [],
+  });
+  await replacePortableRows({
     table: "account_entitlement_overrides",
     account_id: accountId,
     rows: account_entitlement_overrides ?? [],
@@ -1326,6 +1336,7 @@ export async function copyAccountRehomeState({
     account_impersonation_sessions_rows:
       account_impersonation_sessions?.length ?? 0,
     api_keys_rows: api_keys?.length ?? 0,
+    admin_assigned_memberships_rows: admin_assigned_memberships?.length ?? 0,
     account_entitlement_overrides_rows:
       account_entitlement_overrides?.length ?? 0,
     account_entitlement_override_events_rows:

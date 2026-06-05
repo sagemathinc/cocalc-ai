@@ -72,7 +72,6 @@ export const TABLE_OWNERSHIP = {
       "account_resource_quarantine_audit_log",
       "account_second_factor_recovery_codes",
       "account_second_factors",
-      "admin_assigned_memberships",
       "api_keys",
       "external_credentials",
       "membership_grants",
@@ -98,6 +97,14 @@ export const TABLE_OWNERSHIP = {
         "Account-owned source-of-truth state. Reads/writes must route to the account home bay. Rehome remains unsafe until this table has explicit migration tests.",
     },
   ),
+
+  ...entries(["admin_assigned_memberships"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "portable",
+    notes:
+      "Account-home admin membership assignment. The assigned_by field is only an admin actor reference. Admin UI reads/writes route to the target account home bay, and account rehome copies this table.",
+  }),
 
   ...entries(["purchases"], {
     ownership: "account-home",
