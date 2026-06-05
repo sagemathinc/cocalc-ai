@@ -536,6 +536,37 @@ Plan:
 
 Estimate: `S-M`
 
+### P1-J: Disable Paged Block Markdown Editor By Default
+
+Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`
+
+Source item:
+
+- Alpha testers report that the full Slate markdown editor paging model is
+  weird and confusing.
+- The paged block markdown editor is implemented in
+  `packages/frontend/editors/slate/block-markdown-editor.tsx`.
+- It splits large markdown files into editable pages, but markdown files are
+  usually small enough that this optimization is unlikely to matter in normal
+  release usage.
+
+Plan:
+
+1. Put the paged block markdown editor behind a feature flag or advanced
+   setting.
+2. Default ordinary `.md` editing to the non-block editor path used by chat,
+   tasks, or a similar single-document Slate editor.
+3. Keep the block editor available only for explicit dogfood/performance
+   testing of unusually large markdown files.
+
+Exit criteria:
+
+- Opening a normal markdown file no longer shows confusing page boundaries.
+- Existing chat/tasks markdown editing behavior is not regressed.
+- The old block editor remains reachable for internal testing if needed.
+
+Estimate: `S-M`
+
 ## Quick Win Lane
 
 These should be picked off opportunistically while P0 work proceeds.
@@ -561,6 +592,9 @@ These should be picked off opportunistically while P0 work proceeds.
 7. Project stop no-op for already stopped/no-host projects.
    - Product: hosted/admin
    - Estimate: `S`
+8. Feature-flag/default-disable the paged block markdown editor.
+   - Product: all markdown editor surfaces
+   - Estimate: `S-M`
 
 ## Product Story And Positioning
 
