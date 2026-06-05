@@ -530,6 +530,18 @@ export async function addSiteLicensePool(opts: {
   });
 }
 
+export async function archiveSiteLicensePool(opts: {
+  package_id: string;
+}): Promise<SiteLicenseOverview> {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).archiveSiteLicensePool({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
+}
+
 export async function setSiteLicenseManager(opts: {
   site_license_id: string;
   target_account_id: string;

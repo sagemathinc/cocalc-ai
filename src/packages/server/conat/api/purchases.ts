@@ -47,6 +47,7 @@ import {
 import {
   addSiteLicensePool as addSiteLicensePool0,
   adminProvisionSiteLicense as adminProvisionSiteLicense0,
+  archiveSiteLicensePool as archiveSiteLicensePool0,
   getVerifiedEmailAddressesForAccount,
   listSiteLicenseOverviews as listSiteLicenseOverviews0,
   getSiteLicenseAffiliationReverificationStatusForAccount,
@@ -1027,6 +1028,41 @@ export async function addSiteLicensePool({
     return await getSeedSiteLicenseClient().addSiteLicensePool(opts);
   }
   return await addSiteLicensePool0(opts);
+}
+
+export async function archiveSiteLicensePool({
+  account_id,
+  browser_id,
+  session_hash,
+  package_id,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  package_id?: string;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const packageId = `${package_id ?? ""}`.trim();
+  if (!packageId) {
+    throw Error("package_id required");
+  }
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    package_id: packageId,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().archiveSiteLicensePool(opts);
+  }
+  return await archiveSiteLicensePool0(opts);
 }
 
 export async function setSiteLicenseManager({

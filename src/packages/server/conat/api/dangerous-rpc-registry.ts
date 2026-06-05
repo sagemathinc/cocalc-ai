@@ -537,6 +537,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "site-license commercial terms and domain entitlement mutation",
   },
+  "purchases.archiveSiteLicensePool": {
+    decision: "fresh-auth-required",
+    reason: "site-license commercial terms and domain entitlement mutation",
+  },
   "purchases.assignMembershipPackageSeat": {
     decision: "fresh-auth-required",
     reason: "paid membership seat assignment",

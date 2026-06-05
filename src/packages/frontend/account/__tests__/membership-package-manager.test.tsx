@@ -25,6 +25,7 @@ const purchaseMembershipPackage = jest.fn();
 const processPaymentIntents = jest.fn();
 const adminProvisionSiteLicense = jest.fn();
 const addSiteLicensePool = jest.fn();
+const archiveSiteLicensePool = jest.fn();
 const updateSiteLicense = jest.fn();
 const setSiteLicenseManager = jest.fn();
 const removeSiteLicenseManager = jest.fn();
@@ -123,6 +124,7 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
   adminProvisionSiteLicense: (...args: any[]) =>
     adminProvisionSiteLicense(...args),
   addSiteLicensePool: (...args: any[]) => addSiteLicensePool(...args),
+  archiveSiteLicensePool: (...args: any[]) => archiveSiteLicensePool(...args),
   updateSiteLicense: (...args: any[]) => updateSiteLicense(...args),
   setSiteLicenseManager: (...args: any[]) => setSiteLicenseManager(...args),
   removeSiteLicenseManager: (...args: any[]) =>
@@ -685,6 +687,166 @@ describe("MembershipPackageManager", () => {
     });
   });
 
+  it("lets admins revoke an active site-license pool seat", async () => {
+    isAdmin = true;
+    const activeOverview = {
+      site_license: {
+        id: "license-1",
+        name: "Campus License",
+        organization_name: "Example University",
+        bay_id: "bay-0",
+        owner_account_id: null,
+        allowed_domains: ["example.edu"],
+        metadata: {},
+      },
+      pools: [
+        {
+          id: "site-1",
+          owner_account_id: "owner-1",
+          kind: "site",
+          membership_class: "pro",
+          seat_count: 10,
+          active_assignment_count: 1,
+          available_seat_count: 9,
+          assignments: [
+            {
+              id: "assignment-1",
+              package_id: "site-1",
+              account_id: "user-1",
+              email_address: "grace@example.edu",
+              assigned_at: new Date("2026-05-01T00:00:00Z"),
+            },
+          ],
+          metadata: {
+            pool_name: "Students",
+            site_license_id: "license-1",
+            requires_approval: false,
+            verification_policy: "email-domain",
+            exclusive_group: "student",
+          },
+          pool_name: "Students",
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "student",
+          pending_request_count: 0,
+        },
+      ],
+      managers: [],
+      pending_requests: [],
+      recent_audit_events: [],
+    };
+    const emptyOverview = {
+      ...activeOverview,
+      pools: [
+        {
+          ...activeOverview.pools[0],
+          active_assignment_count: 0,
+          available_seat_count: 10,
+          assignments: [],
+        },
+      ],
+    };
+    listSiteLicenseOverviews
+      .mockResolvedValueOnce([activeOverview])
+      .mockResolvedValueOnce([emptyOverview]);
+    revokeMembershipPackageSeat.mockResolvedValue({ revoked: true });
+
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Campus License")).toBeTruthy();
+    });
+
+    fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Grace Hopper")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Revoke"));
+
+    await waitFor(() => {
+      expect(revokeMembershipPackageSeat).toHaveBeenCalledWith({
+        package_id: "site-1",
+        target_account_id: "user-1",
+        target_email_address: undefined,
+      });
+      expect(screen.getByText("No active seats.")).toBeTruthy();
+    });
+  });
+
+  it("lets admins archive an empty site-license pool", async () => {
+    isAdmin = true;
+    const activeOverview = {
+      site_license: {
+        id: "license-1",
+        name: "Campus License",
+        organization_name: "Example University",
+        bay_id: "bay-0",
+        owner_account_id: null,
+        allowed_domains: ["example.edu"],
+        metadata: {},
+      },
+      pools: [
+        {
+          id: "site-1",
+          owner_account_id: "owner-1",
+          kind: "site",
+          membership_class: "pro",
+          seat_count: 10,
+          active_assignment_count: 0,
+          available_seat_count: 10,
+          assignments: [],
+          metadata: {
+            pool_name: "Students",
+            site_license_id: "license-1",
+            requires_approval: false,
+            verification_policy: "email-domain",
+            exclusive_group: "student",
+          },
+          pool_name: "Students",
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "student",
+          pending_request_count: 0,
+        },
+      ],
+      managers: [],
+      pending_requests: [],
+      recent_audit_events: [],
+    };
+    listSiteLicenseOverviews
+      .mockResolvedValueOnce([activeOverview])
+      .mockResolvedValueOnce([{ ...activeOverview, pools: [] }]);
+    archiveSiteLicensePool.mockResolvedValue({ ...activeOverview, pools: [] });
+
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Campus License")).toBeTruthy();
+    });
+
+    fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Students")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Archive pool"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Archive")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("Archive"));
+
+    await waitFor(() => {
+      expect(archiveSiteLicensePool).toHaveBeenCalledWith({
+        package_id: "site-1",
+      });
+      expectTextNotVisible("Students");
+    });
+  });
+
   it("lets admins update a site-license pool from the dashboard", async () => {
     isAdmin = true;
     const sitePackage = {
@@ -835,6 +997,89 @@ describe("MembershipPackageManager", () => {
     ).toBeTruthy();
   });
 
+  it("uses the server-provided site-license viewer role for manager actions", async () => {
+    const sitePackage = {
+      id: "site-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "pro",
+      seat_count: 50,
+      active_assignment_count: 2,
+      available_seat_count: 48,
+      assignments: [],
+      metadata: {
+        allowed_domains: ["example.edu"],
+        pool_name: "Instructors",
+        site_license_id: "license-1",
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "instructor",
+      },
+      pool_name: "Instructors",
+      requires_approval: true,
+      verification_policy: "email-domain",
+      exclusive_group: "instructor",
+      pending_request_count: 1,
+    };
+    listSiteLicenseOverviews.mockResolvedValue([
+      {
+        site_license: {
+          id: "license-1",
+          name: "Campus License",
+          organization_name: "Example University",
+          bay_id: "bay-0",
+          owner_account_id: null,
+          allowed_domains: ["example.edu"],
+          metadata: {},
+        },
+        pools: [sitePackage],
+        managers: [
+          {
+            id: "manager-1",
+            site_license_id: "license-1",
+            account_id: "another-account",
+            role: "viewer",
+          },
+        ],
+        pending_requests: [
+          {
+            id: "request-1",
+            site_license_id: "license-1",
+            package_id: "site-1",
+            account_id: "student-1",
+            matched_email_address: "ada@example.edu",
+            canonical_identity: "ada@example.edu",
+            requested_membership_class: "pro",
+            state: "pending",
+            requested_at: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+        recent_audit_events: [],
+        viewer_role: "manager",
+      },
+    ]);
+    reviewSiteLicensePoolRequest.mockResolvedValue({
+      id: "request-1",
+      state: "approved",
+    });
+
+    render(<MembershipPackageManager mode="site" tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Approval queue")).toBeTruthy();
+      expect(screen.getByText("Approve")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Approve"));
+
+    await waitFor(() => {
+      expect(reviewSiteLicensePoolRequest).toHaveBeenCalledWith({
+        request_id: "request-1",
+        action: "approve",
+      });
+    });
+  });
+
   it("lets admins add site-license delegates with admin user search", async () => {
     isAdmin = true;
     const sitePackage = {
@@ -968,6 +1213,7 @@ describe("MembershipPackageManager", () => {
           },
         ],
         recent_audit_events: [],
+        viewer_role: "manager",
       },
     ]);
     reviewSiteLicensePoolRequest.mockResolvedValue({

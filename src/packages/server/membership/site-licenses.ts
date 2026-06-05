@@ -30,6 +30,7 @@ import type {
   SiteLicensePoolRequestState,
   SiteLicensePoolSummary,
   SiteLicenseRecord,
+  SiteLicenseViewerRole,
   SiteLicenseVerificationPolicy,
 } from "@cocalc/conat/hub/api/purchases";
 import {
@@ -169,6 +170,7 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "site-license-updated",
   "pool-created",
   "pool-updated",
+  "pool-archived",
   "pool-request-created",
   "pool-request-approved",
   "pool-request-rejected",
@@ -1672,6 +1674,27 @@ async function listSiteLicenseManagers(
   return rows.map(normalizeSiteLicenseManagerRow);
 }
 
+function addSiteLicenseViewerRole({
+  account_id,
+  admin = false,
+  overview,
+}: {
+  account_id: string;
+  admin?: boolean;
+  overview: SiteLicenseOverview;
+}): SiteLicenseOverview {
+  if (admin) {
+    return { ...overview, viewer_role: "admin" };
+  }
+  const viewer_role: SiteLicenseViewerRole = overview.managers.some(
+    (manager) =>
+      manager.account_id === account_id && manager.role === "manager",
+  )
+    ? "manager"
+    : "viewer";
+  return { ...overview, viewer_role };
+}
+
 async function assertSiteLicenseManager({
   account_id,
   site_license_id,
@@ -1903,6 +1926,7 @@ async function listSiteLicensePoolSummaries({
   });
   return details
     .filter((pkg) => pkg.metadata?.site_license_id === site_license.id)
+    .filter((pkg) => pkg.metadata?.archived_at == null)
     .map((pkg) => ({
       ...pkg,
       pool_name: getPackagePoolName(pkg),
@@ -2402,14 +2426,20 @@ export async function getSiteLicenseOverview({
     site_license_id,
     "site_license_id",
   );
+  const admin = await isAdmin(normalizedAccountId);
   await assertSiteLicenseManager({
     account_id: normalizedAccountId,
     site_license_id: normalizedSiteLicenseId,
     client,
   });
-  return await getSiteLicenseOverviewWithoutAuthorization({
+  const overview = await getSiteLicenseOverviewWithoutAuthorization({
     site_license_id: normalizedSiteLicenseId,
     client,
+  });
+  return addSiteLicenseViewerRole({
+    account_id: normalizedAccountId,
+    admin,
+    overview,
   });
 }
 
@@ -2456,13 +2486,20 @@ export async function listSiteLicenseOverviews({
         );
         return rows;
       })();
-  return await Promise.all(
+  const overviews = await Promise.all(
     rows.map((row) =>
       getSiteLicenseOverviewWithoutAuthorization({
         site_license_id: row.id,
         client,
       }),
     ),
+  );
+  return overviews.map((overview) =>
+    addSiteLicenseViewerRole({
+      account_id: normalizedAccountId,
+      admin,
+      overview,
+    }),
   );
 }
 
@@ -2818,6 +2855,76 @@ export async function updateSiteLicensePool({
       client,
     });
     return updated;
+  });
+}
+
+export async function archiveSiteLicensePool({
+  actor_account_id,
+  package_id,
+}: {
+  actor_account_id: string;
+  package_id: string;
+}): Promise<SiteLicenseOverview> {
+  const actorAccountId = normalizeAccountId(actor_account_id);
+  const packageId = normalizePackageId(package_id);
+  return await withLocalSiteLicenseTransaction(async (client) => {
+    const { siteLicense, pkg } = await getSiteLicenseForPackage(
+      packageId,
+      client,
+    );
+    await assertSiteLicenseAdmin({ account_id: actorAccountId });
+    const assignments = await listMembershipPackageAssignments({
+      package_id: packageId,
+      include_revoked: true,
+      client,
+    });
+    const activeAssignmentCount = assignments.filter(
+      (assignment) => assignment.revoked_at == null,
+    ).length;
+    if (activeAssignmentCount > 0) {
+      throw Error("cannot archive a pool with active seats");
+    }
+    const pendingRequests = await countPendingRequestsByPackage({
+      site_license_id: siteLicense.id,
+      client,
+    });
+    if ((pendingRequests.get(packageId) ?? 0) > 0) {
+      throw Error("cannot archive a pool with pending requests");
+    }
+    const archivedAt = new Date();
+    await updateMembershipPackageRecord({
+      package_id: packageId,
+      expires_at: archivedAt,
+      metadata_patch: {
+        archived_at: archivedAt.toISOString(),
+        archived_by_account_id: actorAccountId,
+      },
+      client,
+    });
+    await rebuildSiteLicenseDomainIndex({
+      site_license_id: siteLicense.id,
+      client,
+    });
+    await recordSiteLicenseAuditEvent({
+      site_license_id: siteLicense.id,
+      action: "pool-archived",
+      actor_account_id: actorAccountId,
+      package_id: packageId,
+      metadata: {
+        pool_name: getPackagePoolName(pkg),
+        membership_class: pkg.membership_class,
+        seat_count: pkg.seat_count,
+        active_assignment_count: activeAssignmentCount,
+        historical_assignment_count: assignments.length,
+        pending_request_count: pendingRequests.get(packageId) ?? 0,
+        archived_at: archivedAt.toISOString(),
+      },
+      client,
+    });
+    return await getSiteLicenseOverviewWithoutAuthorization({
+      site_license_id: siteLicense.id,
+      client,
+    });
   });
 }
 
@@ -3378,7 +3485,7 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
        FROM site_license_pool_requests
        WHERE site_license_id=$1
          AND package_id = ANY($2::uuid[])
-         AND state IN ('pending', 'approved')
+         AND state = 'pending'
          AND (account_id=$3 OR canonical_identity=$4)
        ORDER BY requested_at DESC
        LIMIT 1`,
@@ -3388,10 +3495,7 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     existingRequestRows.rows[0],
   );
   if (existingRequest) {
-    if (
-      existingRequest.account_id === accountId &&
-      existingRequest.state === "pending"
-    ) {
+    if (existingRequest.account_id === accountId) {
       return existingRequest;
     }
     throw Error("site-license pool request already exists");

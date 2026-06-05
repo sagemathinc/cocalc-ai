@@ -15,6 +15,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Progress,
   Radio,
   Select,
@@ -52,6 +53,7 @@ import Payments from "@cocalc/frontend/purchases/payments";
 import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
+  archiveSiteLicensePool,
   assignMembershipPackageSeat,
   claimMembershipPackageSeat,
   getSiteLicenseAffiliationReverificationStatus,
@@ -396,6 +398,26 @@ function getAccountSecondaryLabel(
   return assignment.account_id;
 }
 
+async function revokeSeatOrThrow({
+  package_id,
+  assignment,
+}: {
+  package_id: string;
+  assignment: MembershipPackageAssignment;
+}): Promise<void> {
+  const targetAccountId = assignment.account_id ?? undefined;
+  const result = await revokeMembershipPackageSeat({
+    package_id,
+    target_account_id: targetAccountId,
+    target_email_address: targetAccountId
+      ? undefined
+      : (assignment.email_address ?? undefined),
+  });
+  if (!result.revoked) {
+    throw Error("Seat was not revoked. Refresh the page and try again.");
+  }
+}
+
 function ClaimablePoolSummary({
   claimablePackage,
 }: {
@@ -501,6 +523,20 @@ function getSiteLicenseSearchText(overview: SiteLicenseOverview): string {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+}
+
+function canManageSiteLicenseOverview({
+  isAdmin,
+  overview,
+}: {
+  isAdmin: boolean;
+  overview: SiteLicenseOverview;
+}): boolean {
+  return (
+    isAdmin ||
+    overview.viewer_role === "admin" ||
+    overview.viewer_role === "manager"
+  );
 }
 
 export function ClaimableMembershipPackagesPanel({
@@ -1192,14 +1228,18 @@ export function MembershipPackageManager({
                 setAssignmentTarget(membershipPackage)
               }
               onRevokeSeat={async (membershipPackage, assignment) => {
-                await runFreshAuthAction(async () => {
-                  await revokeMembershipPackageSeat({
-                    package_id: membershipPackage.id,
-                    target_account_id: assignment.account_id ?? undefined,
-                    target_email_address: assignment.email_address ?? undefined,
+                setError("");
+                try {
+                  await runFreshAuthAction(async () => {
+                    await revokeSeatOrThrow({
+                      package_id: membershipPackage.id,
+                      assignment,
+                    });
+                    await handleChanged();
                   });
-                  await handleChanged();
-                });
+                } catch (err) {
+                  setError(`${err}`);
+                }
               }}
             />
           ) : null}
@@ -1243,7 +1283,6 @@ export function MembershipPackageManager({
               error={siteLicenseOverviewError}
               tiers={tiers}
               accountNames={accountNames}
-              accountId={account_id}
               isAdmin={false}
               reviewingRequestId={siteLicenseReviewLoadingId}
               onReview={async (_overview, request, action) => {
@@ -1264,14 +1303,18 @@ export function MembershipPackageManager({
                 }
               }}
               onRevokeSeat={async (pool, assignment) => {
-                await runFreshAuthAction(async () => {
-                  await revokeMembershipPackageSeat({
-                    package_id: pool.id,
-                    target_account_id: assignment.account_id ?? undefined,
-                    target_email_address: assignment.email_address ?? undefined,
+                setError("");
+                try {
+                  await runFreshAuthAction(async () => {
+                    await revokeSeatOrThrow({
+                      package_id: pool.id,
+                      assignment,
+                    });
+                    await handleChanged();
                   });
-                  await handleChanged();
-                });
+                } catch (err) {
+                  setError(`${err}`);
+                }
               }}
               onSetManager={async (
                 site_license_id,
@@ -1461,7 +1504,6 @@ export function SiteLicenseAdminPanel({
       error=""
       tiers={tiers}
       accountNames={accountNames}
-      accountId={account_id}
       isAdmin={true}
       reviewingRequestId={reviewingRequestId}
       showIntro={false}
@@ -1471,6 +1513,17 @@ export function SiteLicenseAdminPanel({
           await addSiteLicensePool({ site_license_id, pool });
           await handleChanged();
         });
+      }}
+      onArchivePool={async (pool) => {
+        setError("");
+        try {
+          await runFreshAuthAction(async () => {
+            await archiveSiteLicensePool({ package_id: pool.id });
+            await handleChanged();
+          });
+        } catch (err) {
+          setError(`${err}`);
+        }
       }}
       onReview={async (_overview, request, action) => {
         setReviewingRequestId(request.id);
@@ -1490,14 +1543,18 @@ export function SiteLicenseAdminPanel({
         }
       }}
       onRevokeSeat={async (pool, assignment) => {
-        await runFreshAuthAction(async () => {
-          await revokeMembershipPackageSeat({
-            package_id: pool.id,
-            target_account_id: assignment.account_id ?? undefined,
-            target_email_address: assignment.email_address ?? undefined,
+        setError("");
+        try {
+          await runFreshAuthAction(async () => {
+            await revokeSeatOrThrow({
+              package_id: pool.id,
+              assignment,
+            });
+            await handleChanged();
           });
-          await handleChanged();
-        });
+        } catch (err) {
+          setError(`${err}`);
+        }
       }}
       onUpdateLicense={async (site_license_id, updates) => {
         await runFreshAuthAction(async () => {
@@ -1764,11 +1821,11 @@ function SiteLicenseDashboard({
   error,
   tiers,
   accountNames,
-  accountId,
   isAdmin,
   reviewingRequestId,
   onEditPool,
   onAddPool,
+  onArchivePool,
   onReview,
   onRevokeSeat,
   onUpdateLicense,
@@ -1784,7 +1841,6 @@ function SiteLicenseDashboard({
     string,
     { first_name?: string; last_name?: string } | undefined
   >;
-  accountId?: string;
   isAdmin: boolean;
   reviewingRequestId: string;
   onEditPool?: (pool: SiteLicenseOverview["pools"][number]) => void;
@@ -1792,6 +1848,7 @@ function SiteLicenseDashboard({
     site_license_id: string,
     pool: SiteLicensePoolConfig,
   ) => Promise<void>;
+  onArchivePool?: (pool: SiteLicenseOverview["pools"][number]) => Promise<void>;
   onReview: (
     overview: SiteLicenseOverview,
     request: SiteLicensePoolRequest,
@@ -1828,6 +1885,7 @@ function SiteLicenseDashboard({
   showIntro?: boolean;
 }) {
   const [revokingSeat, setRevokingSeat] = useState<string>("");
+  const [archivingPoolId, setArchivingPoolId] = useState<string>("");
   const [editingLicense, setEditingLicense] =
     useState<SiteLicenseOverview | null>(null);
   const [addingPool, setAddingPool] = useState<{
@@ -1888,12 +1946,10 @@ function SiteLicenseDashboard({
             request.state === "pending",
         );
         const canEditManagers = isAdmin;
-        const canManageLicense =
-          isAdmin ||
-          overview.managers.some(
-            (manager) =>
-              manager.account_id === accountId && manager.role === "manager",
-          );
+        const canManageLicense = canManageSiteLicenseOverview({
+          isAdmin,
+          overview,
+        });
         return (
           <Card
             key={overview.site_license.id}
@@ -2229,6 +2285,35 @@ function SiteLicenseDashboard({
                                 >
                                   <Icon name="edit" /> Edit pool
                                 </Button>
+                              ) : null}
+                              {onArchivePool &&
+                              activeSeats === 0 &&
+                              pool.pending_request_count === 0 ? (
+                                <Popconfirm
+                                  title="Archive this pool?"
+                                  description="The pool will be hidden, but its audit history and past seat records will be preserved."
+                                  okButtonProps={{
+                                    danger: true,
+                                    loading: archivingPoolId === pool.id,
+                                  }}
+                                  okText="Archive"
+                                  onConfirm={async () => {
+                                    setArchivingPoolId(pool.id);
+                                    try {
+                                      await onArchivePool(pool);
+                                    } finally {
+                                      setArchivingPoolId("");
+                                    }
+                                  }}
+                                >
+                                  <Button
+                                    danger
+                                    size="small"
+                                    loading={archivingPoolId === pool.id}
+                                  >
+                                    <Icon name="trash" /> Archive pool
+                                  </Button>
+                                </Popconfirm>
                               ) : null}
                             </Space>
 

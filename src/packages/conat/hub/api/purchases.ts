@@ -357,6 +357,8 @@ export interface SiteLicenseManager {
   updated?: Date;
 }
 
+export type SiteLicenseViewerRole = "admin" | "manager" | "viewer";
+
 export interface SiteLicensePoolSummary extends MembershipPackageDetails {
   pool_name: string;
   pool_description?: string | null;
@@ -396,6 +398,7 @@ export type SiteLicenseAuditAction =
   | "site-license-updated"
   | "pool-created"
   | "pool-updated"
+  | "pool-archived"
   | "pool-request-created"
   | "pool-request-approved"
   | "pool-request-rejected"
@@ -420,6 +423,7 @@ export interface SiteLicenseOverview {
   pools: SiteLicensePoolSummary[];
   managers: SiteLicenseManager[];
   pending_requests: SiteLicensePoolRequest[];
+  viewer_role?: SiteLicenseViewerRole;
   recent_audit_events?: SiteLicenseAuditEvent[];
 }
 
@@ -1026,6 +1030,12 @@ export interface Purchases {
     site_license_id?: string;
     pool?: SiteLicensePoolConfig;
   }) => Promise<SiteLicenseOverview>;
+  archiveSiteLicensePool: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    package_id?: string;
+  }) => Promise<SiteLicenseOverview>;
   setSiteLicenseManager: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1116,6 +1126,7 @@ export const purchases = {
   getSiteLicenseOverview: authFirst,
   updateSiteLicense: authFirst,
   addSiteLicensePool: authFirst,
+  archiveSiteLicensePool: authFirst,
   setSiteLicenseManager: authFirst,
   removeSiteLicenseManager: authFirst,
   requestSiteLicensePool: authFirst,

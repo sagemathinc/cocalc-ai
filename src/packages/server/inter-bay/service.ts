@@ -149,6 +149,7 @@ import {
 import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
+  archiveSiteLicensePool,
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
@@ -884,6 +885,10 @@ async function startAccountLocalService(): Promise<void> {
       isSeedSiteLicenseBay()
         ? await addSiteLicensePool(opts)
         : await getSeedSiteLicenseClient().addSiteLicensePool(opts),
+    archiveSiteLicensePool: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await archiveSiteLicensePool(opts)
+        : await getSeedSiteLicenseClient().archiveSiteLicensePool(opts),
     setSiteLicenseManager: async (opts) =>
       isSeedSiteLicenseBay()
         ? await setSiteLicenseManager(opts)
