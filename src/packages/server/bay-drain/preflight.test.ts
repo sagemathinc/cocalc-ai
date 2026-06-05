@@ -34,6 +34,25 @@ describe("bay drain preflight", () => {
     expect(finding.severity).toBe("warn");
   });
 
+  it("blocks self-host connector state during normal drain", () => {
+    const result = evaluateBayDrainPreflight({
+      source_bay_id: "bay-a",
+      seed_bay_id: "seed",
+      tables: [
+        "self_host_connectors",
+        "self_host_connector_tokens",
+        "self_host_commands",
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.findings.map((item) => item.severity)).toEqual([
+      "block",
+      "block",
+      "block",
+    ]);
+  });
+
   it("allows cache and projection tables", () => {
     const result = evaluateBayDrainPreflight({
       source_bay_id: "bay-a",

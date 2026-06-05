@@ -21,6 +21,7 @@ export type TableAuthorityKey =
   | "owner_account_id"
   | "project_id"
   | "host_id"
+  | "connector_id"
   | "bay_id"
   | "local"
   | "none"
@@ -37,6 +38,7 @@ export type TableReferenceField =
   | "owner_account_id"
   | "project_id"
   | "host_id"
+  | "connector_id"
   | "bay_id";
 
 export interface TableOwnershipEntry {
@@ -194,6 +196,27 @@ export const TABLE_OWNERSHIP = {
 
   ...entries(
     [
+      "self_host_commands",
+      "self_host_connector_tokens",
+      "self_host_connectors",
+    ],
+    {
+      ownership: "host-owning",
+      authority: "connector_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        account_id:
+          "Owner or actor reference for pairing/connector actions, not placement authority.",
+        host_id:
+          "Attached project-host reference when known; the connector id is the stable self-host subresource key.",
+      },
+      notes:
+        "Self-host connector state is durable host-owned control-plane state. It must live on the host bay and is not portable until host rehome explicitly copies connector records, active pairing tokens, and any in-flight command state.",
+    },
+  ),
+
+  ...entries(
+    [
       "buckets",
       "crm_leads",
       "crm_organizations",
@@ -270,9 +293,6 @@ export const TABLE_OWNERSHIP = {
       "notification_email_outbox",
       "notification_events_outbox",
       "notification_target_outbox",
-      "self_host_commands",
-      "self_host_connector_tokens",
-      "self_host_connectors",
       "support_ticket_attempts",
     ],
     {

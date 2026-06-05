@@ -737,18 +737,28 @@ Still needed:
 
 ### Phase 5: Self-Host Connector Portability
 
-Tasks:
+Status: first safety slice implemented.
 
-- classify connector records as `host-owning`;
-- decide whether `self_host_connectors` are `portable` or `stable`;
-- if `portable`, include `self_host_connectors` in host rehome payload;
-- if `stable`, ensure unsafe host rehome warns/refuses when connectors exist;
-- decide token behavior:
-  - expired/pairing tokens can be dropped;
+Implemented:
+
+- classified `self_host_connectors`, `self_host_connector_tokens`, and
+  `self_host_commands` as `host-owning`;
+- added `connector_id` as an explicit manifest authority/reference key for
+  self-host connector subresources;
+- marked these tables `unsupported`, so normal bay drain/rehome blocks rather
+  than silently dropping connector auth or in-flight commands;
+- added a bay-drain preflight regression for the connector tables.
+
+Still needed:
+
+- decide later whether connector records should become `portable`;
+- if `portable`, include connector records in host rehome payload;
+- decide token copy/drop behavior before portability:
+  - expired/pairing tokens can probably be dropped;
   - active installation tokens may need copy if host rehome happens during
     setup;
-- decide whether `self_host_commands` is durable command state or ephemeral
-  queue;
+- decide whether completed `self_host_commands` can be treated as disposable
+  history while pending/sent commands remain blocking;
 - add host rehome tests for self-host connector continuity.
 
 ### Phase 6: Billing Ledger Authority
