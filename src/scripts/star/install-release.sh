@@ -31,7 +31,7 @@ Download or read a CoCalc Star release artifact, verify its internal checksums,
 and run the versioned installer included in the artifact.
 
 Examples:
-  sudo STAR_ASSUME_YES=1 ./install-release.sh https://example.com/cocalc-star.tar.gz
+  sudo ./install-release.sh https://example.com/cocalc-star.tar.gz
 
   curl -fsSL https://example.com/install-release.sh \
     | sudo bash -s -- https://example.com/cocalc-star.tar.gz
@@ -126,7 +126,7 @@ detect_public_url() {
 
 require_root() {
   if [ "$(id -u)" -ne 0 ]; then
-    die "run as root, e.g. sudo STAR_ASSUME_YES=1 $0 <release-url>"
+    die "run as root, e.g. sudo $0 <release-url>"
   fi
 }
 

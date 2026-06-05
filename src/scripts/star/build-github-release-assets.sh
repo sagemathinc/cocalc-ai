@@ -125,5 +125,5 @@ GitHub release upload example:
   gh release create "$release_id" "$installer_output" "$runtime_output" "${output_dir}/SHA256SUMS" --repo sagemathinc/cocalc-ai --title "CoCalc Star $release_id" --notes-file "$release_notes_output"
 
 Installer line after upload:
-  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo STAR_ASSUME_YES=1 bash
+  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo bash
 EOF
