@@ -672,7 +672,7 @@ export async function getBayDrainPreflight({
 }
 
 type SiteSettingUpdate = { name: string; value: string };
-const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
+export const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
 
 const SITE_SETTING_NAMES = new Set<string>([
   ...Object.keys(site_settings_conf),
@@ -995,7 +995,7 @@ export async function setSiteSettingsOnSeed({
   });
 }
 
-async function syncSiteSettingsToBaysOnSeed(): Promise<SiteSettingsSyncResult> {
+export async function syncSiteSettingsToBaysOnSeed(): Promise<SiteSettingsSyncResult> {
   const localBayId = getConfiguredBayId();
   const seedBayId = getConfiguredClusterSeedBayId();
   if (localBayId !== seedBayId) {
@@ -1040,25 +1040,18 @@ function classifyGlobalConfigBayState({
   return appliedVersion >= seedVersion ? "current" : "stale";
 }
 
-export async function getGlobalConfigPropagationStatus({
-  account_id,
+export async function getGlobalConfigPropagationStatusOnSeed({
   scope,
 }: {
-  account_id?: string;
   scope?: string;
 } = {}): Promise<GlobalConfigPropagationStatus> {
-  await assertAdmin(account_id);
   const currentBayId = getConfiguredBayId();
   const seedBayId = getConfiguredClusterSeedBayId();
   const normalizedScope = `${scope ?? ""}`.trim();
   if (currentBayId !== seedBayId) {
-    return await getInterBayBridge()
-      .bayOps(seedBayId, { timeout_ms: 15_000 })
-      .getGlobalConfigPropagationStatus({
-        account_id,
-        scope: normalizedScope || undefined,
-        source_bay_id: currentBayId,
-      });
+    throw Error(
+      `getGlobalConfigPropagationStatusOnSeed must run on seed bay '${seedBayId}', not '${currentBayId}'`,
+    );
   }
 
   const [versionResult, registry] = await Promise.all([
@@ -1152,6 +1145,31 @@ export async function getGlobalConfigPropagationStatus({
         };
       }),
   };
+}
+
+export async function getGlobalConfigPropagationStatus({
+  account_id,
+  scope,
+}: {
+  account_id?: string;
+  scope?: string;
+} = {}): Promise<GlobalConfigPropagationStatus> {
+  await assertAdmin(account_id);
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const normalizedScope = `${scope ?? ""}`.trim();
+  if (currentBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 15_000 })
+      .getGlobalConfigPropagationStatus({
+        account_id,
+        scope: normalizedScope || undefined,
+        source_bay_id: currentBayId,
+      });
+  }
+  return await getGlobalConfigPropagationStatusOnSeed({
+    scope: normalizedScope || undefined,
+  });
 }
 
 export async function setSiteSettings({
