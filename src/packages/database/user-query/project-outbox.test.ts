@@ -59,6 +59,36 @@ describe("project user-query outbox hooks", () => {
     });
   });
 
+  it("emits project.summary_changed for theme updates", async () => {
+    await runHook(
+      {
+        project_id: "11111111-1111-4111-8111-111111111111",
+        theme: {
+          color: "#112233",
+          accent_color: null,
+          icon: "folder-open",
+          image_blob: null,
+        },
+      },
+      {
+        project_id: "11111111-1111-4111-8111-111111111111",
+        theme: {
+          color: "#112233",
+          accent_color: null,
+          icon: "folder-open",
+          image_blob: "theme-blob",
+        },
+      },
+    );
+    expect(appendProjectOutboxEventForProject).toHaveBeenCalledWith({
+      event_type: "project.summary_changed",
+      project_id: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(ctx.publishProjectAccountFeedEventsBestEffort).toHaveBeenCalledWith({
+      project_id: "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
   it("ignores legacy project deleted marker changes", async () => {
     await runHook(
       {

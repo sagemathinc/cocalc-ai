@@ -187,6 +187,20 @@ function dateValueMs(value: unknown): number | undefined {
   return date != null ? date.getTime() : undefined;
 }
 
+function normalizeProjectThemeForWrite(
+  theme: ProjectTheme | null | undefined,
+): ProjectTheme | null {
+  const normalizedTheme: ProjectTheme = {
+    color: theme?.color ?? null,
+    accent_color: theme?.accent_color ?? null,
+    icon: theme?.icon?.trim() || null,
+    image_blob: theme?.image_blob?.trim() || null,
+  };
+  return Object.values(normalizedTheme).some((value) => value != null)
+    ? normalizedTheme
+    : null;
+}
+
 function isFreshAuthRequiredError(err: unknown): boolean {
   const code = `${(err as any)?.code ?? ""}`.trim().toLowerCase();
   const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
@@ -228,6 +242,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static REALTIME_FEED_BATCH_MS = 50;
   private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
   private static PROJECT_ROW_RECONCILE_DELAYS_MS = [1_000, 5_000] as const;
+  private static PROJECT_THEME_PROJECTION_WAIT_DELAYS_MS = [
+    0, 250, 1_000, 2_500,
+  ] as const;
   private static PROJECT_LIFECYCLE_RECONCILE_DELAYS_MS = [
     1_000, 5_000, 15_000, 30_000, 60_000, 120_000,
   ] as const;
@@ -961,6 +978,50 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.setState({ project_map } as ProjectsState);
     },
   );
+
+  private async waitForProjectedProjectTheme(
+    project_id: string,
+    theme: ProjectTheme | null,
+  ): Promise<boolean> {
+    const account_id = this.getAccountId();
+    if (!account_id || !project_id || !webapp_client.is_signed_in()) {
+      return false;
+    }
+    for (const delay of ProjectsActions.PROJECT_THEME_PROJECTION_WAIT_DELAYS_MS) {
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      let resp: any;
+      try {
+        resp = await webapp_client.async_query({
+          query: {
+            account_project_index: [
+              {
+                account_id,
+                project_id,
+                theme: null,
+              },
+            ],
+          },
+          options: [{ limit: 1 }],
+        });
+      } catch (err) {
+        console.warn("project theme projection check failed", {
+          project_id,
+          err,
+        });
+        continue;
+      }
+      const projectedTheme = normalizeProjectThemeForWrite(
+        resp?.query?.account_project_index?.[0]?.theme,
+      );
+      if (isEqual(projectedTheme, theme)) {
+        await this.loadProjectedProjectForCurrentAccount(project_id);
+        return true;
+      }
+    }
+    return false;
+  }
 
   private shouldPreserveLocalHostIdAfterMove({
     project_id,
@@ -2105,14 +2166,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
       );
       return;
     }
-    const normalizedTheme: ProjectTheme = {
-      color: theme?.color ?? null,
-      accent_color: theme?.accent_color ?? null,
-      icon: theme?.icon?.trim() || null,
-      image_blob: theme?.image_blob?.trim() || null,
-    };
+    const normalizedTheme = normalizeProjectThemeForWrite(theme);
     const before = store.getIn(["project_map", project_id, "theme"]);
-    const beforeJS = before?.toJS?.() ?? before ?? null;
+    const beforeJS = normalizeProjectThemeForWrite(
+      before?.toJS?.() ?? before ?? null,
+    );
     if (isEqual(beforeJS, normalizedTheme)) return;
     this.setProjectLocalTheme(project_id, normalizedTheme);
     try {
@@ -2120,6 +2178,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
         project_id,
         theme: normalizedTheme,
       });
+      if (
+        !(await this.waitForProjectedProjectTheme(project_id, normalizedTheme))
+      ) {
+        console.warn("project theme projection did not converge", {
+          project_id,
+        });
+      }
     } catch (err) {
       this.setProjectLocalTheme(project_id, beforeJS);
       throw err;

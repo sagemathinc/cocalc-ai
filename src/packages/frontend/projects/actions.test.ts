@@ -17,6 +17,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     account_id: "acct-1",
     browser_id: "browser-1",
+    is_signed_in: jest.fn(() => true),
     conat_client: {
       hub: {
         projects: {
@@ -150,8 +151,42 @@ describe("ProjectsActions project metadata updates", () => {
       color: "#123456",
       accent_color: "#abcdef",
       icon: "rocket",
-      image_blob: null,
+      image_blob: "theme-blob",
     };
+    mockedWebappClient.async_query
+      .mockResolvedValueOnce({
+        query: {
+          account_project_index: [
+            {
+              project_id,
+              theme,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        query: {
+          account_project_index: [
+            {
+              account_id: "acct-1",
+              project_id,
+              owning_bay_id: "bay-0",
+              host_id: null,
+              title: "Old title",
+              description: "Old description",
+              theme,
+              users_summary: {},
+              state_summary: {},
+              last_edited: null,
+              last_backup: null,
+              last_activity_at: null,
+              sort_key: null,
+              updated_at: null,
+              is_hidden: false,
+            },
+          ],
+        },
+      });
 
     await expect(
       actions.setProjectTheme(project_id, theme),
@@ -171,6 +206,25 @@ describe("ProjectsActions project metadata updates", () => {
         .getIn([project_id, "theme"])
         .toJS(),
     ).toEqual(theme);
+  });
+
+  it("does not persist an empty theme when the local project has no theme", async () => {
+    const { actions, async_log, redux } = makeActions();
+    actions.projects_query_set = jest.fn(async () => undefined);
+
+    await expect(
+      actions.setProjectTheme(project_id, {
+        color: null,
+        accent_color: null,
+        icon: null,
+        image_blob: null,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(actions.projects_query_set).not.toHaveBeenCalled();
+    expect(mockedWebappClient.async_query).not.toHaveBeenCalled();
+    expect(async_log).not.toHaveBeenCalled();
+    expect(redux._set_state).not.toHaveBeenCalled();
   });
 
   it("does not reject metadata saves when best-effort logging fails", async () => {
