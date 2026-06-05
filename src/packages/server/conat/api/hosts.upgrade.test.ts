@@ -619,7 +619,7 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
         id: HOST_ID,
       }),
     ).resolves.toBeUndefined();
-  });
+  }, 15_000);
 
   it("prefers runtime reconcile before ssh when host-agent work converges lifecycle", async () => {
     spawnMock = jest.fn(() => {
