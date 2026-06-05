@@ -1357,6 +1357,55 @@ describe("ClaimableMembershipPackagesPanel", () => {
     expect(claimButton).toHaveClass("ant-btn-primary");
   });
 
+  it("does not promote the compact claim button after a request is pending", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "site-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        requires_approval: true,
+        pending_request_id: "request-1",
+        pending_request_state: "pending",
+      },
+    ]);
+
+    render(<ClaimableMembershipPackagesPanel compact />);
+
+    const claimButton = await screen.findByRole("button", {
+      name: "Claim site license membership",
+    });
+
+    expect(claimButton).not.toHaveClass("ant-btn-primary");
+  });
+
+  it("does not promote the compact claim button after a site-license claim", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "site-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+      },
+    ]);
+
+    render(
+      <ClaimableMembershipPackagesPanel compact hasSiteLicenseMembership />,
+    );
+
+    const claimButton = await screen.findByRole("button", {
+      name: "Claim site license membership",
+    });
+
+    expect(claimButton).not.toHaveClass("ant-btn-primary");
+  });
+
   it("claims a package for the signed-in account", async () => {
     getClaimableMembershipPackages.mockResolvedValue([
       {

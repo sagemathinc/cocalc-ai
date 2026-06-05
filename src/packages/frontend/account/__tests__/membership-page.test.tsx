@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { MembershipPage } from "../membership-page";
 
 const useMembershipSettingsData = jest.fn();
+const mockClaimableMembershipPackagesPanel = jest.fn();
 const refresh = jest.fn();
 
 jest.mock("../membership-settings-data", () => ({
@@ -42,7 +43,10 @@ jest.mock("../settings-routing", () => ({
 }));
 
 jest.mock("../membership-package-manager", () => ({
-  ClaimableMembershipPackagesPanel: () => <button>Claim site license</button>,
+  ClaimableMembershipPackagesPanel: (props: unknown) => {
+    mockClaimableMembershipPackagesPanel(props);
+    return <button>Claim site license</button>;
+  },
   SiteLicenseReverificationPanel: () => null,
 }));
 
@@ -229,5 +233,55 @@ describe("MembershipPage", () => {
     expect(screen.getByText("More included AI usage")).toBeTruthy();
     expect(text).not.toContain("Billing:");
     expect(text).not.toContain("Limits:");
+    expect(mockClaimableMembershipPackagesPanel.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ hasSiteLicenseMembership: false }),
+    );
+  });
+
+  it("marks the claim panel only for site-license membership sources", () => {
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        candidateRows: [
+          {
+            expires: "2027-06-04T00:00:00.000Z",
+            key: "grant-standard-1",
+            selected: true,
+            source: "Site license",
+            sourceDetail: "Managed by the organization license.",
+            status: "Used",
+            tier: "Standard",
+          },
+        ],
+        details: {
+          candidates: [
+            {
+              class: "standard",
+              grant_source: "site-license",
+              source: "grant",
+            },
+          ],
+          selected: { class: "standard", source: "grant" },
+        },
+        membership: {
+          class: "standard",
+          grant_source: "site-license",
+          source: "grant",
+        },
+        tierById: {
+          standard: {
+            id: "standard",
+            label: "Standard",
+            store_description: "A solid choice for everyday work.",
+            store_highlights: [],
+          },
+        },
+      }),
+    );
+
+    render(<MembershipPage />);
+
+    expect(mockClaimableMembershipPackagesPanel.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ hasSiteLicenseMembership: true }),
+    );
   });
 });

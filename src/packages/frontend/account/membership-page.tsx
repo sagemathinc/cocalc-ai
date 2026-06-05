@@ -108,6 +108,11 @@ function MembershipSettingsContent() {
   const personalMembership = details?.candidates.find(
     (candidate) => candidate.source === "subscription",
   );
+  const hasSiteLicenseMembership =
+    membership.grant_source === "site-license" ||
+    details?.candidates.some(
+      (candidate) => candidate.grant_source === "site-license",
+    ) === true;
   const refreshMembership = () => {
     window.dispatchEvent(new Event("cocalc:membership-changed"));
     refresh();
@@ -222,6 +227,7 @@ function MembershipSettingsContent() {
             ) : null}
             <ClaimableMembershipPackagesPanel
               compact
+              hasSiteLicenseMembership={hasSiteLicenseMembership}
               onChanged={refreshMembership}
               tiers={Object.values(tierById)}
             />

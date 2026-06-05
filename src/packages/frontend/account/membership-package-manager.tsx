@@ -146,6 +146,7 @@ function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
 
 interface ClaimableMembershipPackagesPanelProps {
   compact?: boolean;
+  hasSiteLicenseMembership?: boolean;
   onChanged?: () => void;
   tiers?: MembershipTierLike[];
 }
@@ -541,6 +542,7 @@ function canManageSiteLicenseOverview({
 
 export function ClaimableMembershipPackagesPanel({
   compact,
+  hasSiteLicenseMembership = false,
   onChanged,
   tiers = [],
 }: ClaimableMembershipPackagesPanelProps) {
@@ -648,6 +650,12 @@ export function ClaimableMembershipPackagesPanel({
   }
   const emailVerified =
     !!email_address && !!email_address_verified?.get?.(email_address);
+  const compactButtonPrimary =
+    !hasSiteLicenseMembership &&
+    claimables.length > 0 &&
+    claimables.every(
+      (claimablePackage) => !claimablePackage.pending_request_id,
+    );
 
   function renderClaimablePackages() {
     return (
@@ -801,7 +809,7 @@ export function ClaimableMembershipPackagesPanel({
               disabled={!loading && claimables.length === 0}
               loading={loading}
               onClick={() => setCompactModalOpen(true)}
-              type={claimables.length > 0 ? "primary" : undefined}
+              type={compactButtonPrimary ? "primary" : undefined}
             >
               Claim site license membership
             </Button>
