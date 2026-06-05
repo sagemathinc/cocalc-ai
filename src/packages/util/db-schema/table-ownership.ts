@@ -83,7 +83,6 @@ export const TABLE_OWNERSHIP = {
       "password_reset",
       "password_reset_attempts",
       "remember_me",
-      "statements",
       "subscriptions",
       "usage_info",
     ],
@@ -117,7 +116,15 @@ export const TABLE_OWNERSHIP = {
         "Project reference for project-linked purchases, not placement authority.",
     },
     notes:
-      "Account-owned billing ledger state. This must never be dropped or reinitialized during rehome; current rehome behavior is intentionally treated as unsafe.",
+      "Account-owned commercial ledger state and current balance source input. Current writes route through account-home billing paths, but the long-term target is likely seed-global immutable ledger state with account-home projections. This must never be dropped, reinitialized, or moved by generic rehome/drain tooling.",
+  }),
+
+  ...entries(["statements"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    notes:
+      "Account-owned statement and balance snapshot state derived from purchases and tied to payment reconciliation. Current writes route through account-home billing paths, but the long-term target is likely seed-global immutable commercial statement state with account-home projections. This must never be dropped, reinitialized, or moved by generic rehome/drain tooling.",
   }),
 
   ...entries(["external_credentials"], {

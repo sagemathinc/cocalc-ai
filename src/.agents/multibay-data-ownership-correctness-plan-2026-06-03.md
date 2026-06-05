@@ -763,12 +763,50 @@ Still needed:
 
 ### Phase 6: Billing Ledger Authority
 
+Status: first safety slice implemented.
+
+Decision for the current release:
+
+- keep `purchases` and `statements` account-home authoritative for now, because
+  current billing, statement generation, Stripe/payment-intent reconciliation,
+  balance calculations, project-host spend-cap checks, and membership purchase
+  paths all assume account-home/local transactional access;
+- treat both tables as `unsupported` for routine drain/rehome;
+- make generic drain/rehome tooling block on these tables unless an explicit
+  unsafe operator path is used;
+- do not claim billing ledger portability until there is a dedicated migration
+  and routing design.
+
+Balance source-of-truth today:
+
+- `purchases` is the commercial ledger input used to compute account balance;
+- `statements` is statement/balance snapshot and payment reconciliation state
+  derived from the ledger;
+- losing either table, or reinitializing it on another bay, can incorrectly
+  change customer credit/debt.
+
+Long-term target:
+
+- move immutable commercial ledger/payment processor state to seed-global;
+- keep account-home projections for fast account UI and local spend checks;
+- route all new purchase/statement/payment writes to the seed authority;
+- version or rebuild account-home projections from seed.
+
+Implemented:
+
+- moved `statements` out of the generic account-home bucket and documented it as
+  explicit billing ledger state;
+- strengthened `purchases` notes to clarify that it is current balance source
+  input and not generic account state;
+- added bay-drain preflight regression coverage that both billing tables block
+  normal drain.
+
 Tasks:
 
-- decide seed-global versus account-home for `purchases` and `statements`;
+- design the seed-global billing migration;
 - document balance source-of-truth;
-- route all new purchase/statement writes accordingly;
-- add rehome or seed-routing tests;
+- route all new purchase/statement writes accordingly after migration;
+- add seed-routing and projection-rebuild tests;
 - ensure project-host spend caps and membership spend caps use the same account
   usage-window authority model.
 
