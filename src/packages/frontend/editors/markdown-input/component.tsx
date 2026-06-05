@@ -767,12 +767,15 @@ export function MarkdownInput(props: Props) {
         cm.current.on("change", (cm, changeObj) => {
           if (changeObj.text[0] == "@") {
             const before = cm
-              .getLine(changeObj.to.line)
-              .slice(changeObj.to.ch - 1, changeObj.to.ch)
+              .getLine(changeObj.from.line)
+              .slice(changeObj.from.ch - 1, changeObj.from.ch)
               ?.trim();
             // If previous character is whitespace or nothing, then activate mentions:
             if (!before || before == "(" || before == "[") {
-              show_mentions();
+              show_mentions({
+                line: changeObj.from.line,
+                ch: changeObj.from.ch,
+              });
             }
           }
         });
@@ -1185,7 +1188,7 @@ export function MarkdownInput(props: Props) {
   // Show the mentions popup selector.   We *do* allow mentioning ourself,
   // since Discord and Github both do, and maybe it's just one of those
   // "symmetry" things (like liking your own post) that people feel is right.
-  function show_mentions() {
+  function show_mentions(at?: { line: number; ch: number }) {
     if (cm.current == null) return;
     if (project_id == null) {
       throw Error("project_id and path must be set if enableMentions is set.");
@@ -1201,7 +1204,8 @@ export function MarkdownInput(props: Props) {
     set_mentions(v);
     set_mentions_search("");
 
-    const cursor = cm.current.getCursor();
+    const cursor =
+      at == null ? cm.current.getCursor() : { line: at.line, ch: at.ch + 1 };
     const pos = cm.current.cursorCoords(cursor, "local");
     const scrollOffset = cm.current.getScrollInfo().top;
     const top = pos.bottom - scrollOffset + PADDING_TOP;
@@ -1213,7 +1217,7 @@ export function MarkdownInput(props: Props) {
 
     let last_cursor = cursor;
     mentions_cursor_ref.current = {
-      from: { line: cursor.line, ch: cursor.ch - 1 },
+      from: at ?? { line: cursor.line, ch: cursor.ch - 1 },
       cursor: (cm) => {
         const pos = cm.getCursor();
         // The hitSide and sticky attributes of pos below
