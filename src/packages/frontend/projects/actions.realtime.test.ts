@@ -246,7 +246,11 @@ describe("ProjectsActions realtime feed", () => {
     } as any;
     const actions = new ProjectsActions("projects", redux);
 
-    await (actions as any).loadProjectedProjectForCurrentAccount("project-1");
+    await actions.repairProjectProjection({
+      kind: "project-ids",
+      project_ids: ["project-1"],
+      reason: "diagnostic",
+    });
 
     expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
       query: {
@@ -1945,7 +1949,14 @@ describe("ProjectsActions realtime feed", () => {
     );
   });
 
-  it("refreshes the current projects table on history-gap without forcing all projects", async () => {
+  it("repairs open project rows on history-gap without forcing a broad project load", async () => {
+    openProjects = List([
+      "00000000-0000-4000-8000-000000000101",
+      "00000000-0000-4000-8000-000000000102",
+    ]);
+    mockedWebappClient.async_query.mockResolvedValue({
+      query: { account_project_index: [] },
+    });
     const redux = {
       getStore: jest.fn((name: string) => {
         if (name === "account") {
@@ -1964,6 +1975,8 @@ describe("ProjectsActions realtime feed", () => {
 
     actions._init();
     await flush();
+    mockedWebappClient.async_query.mockClear();
+    refreshProjectsTableMock.mockClear();
 
     const feed = await getSharedAccountDStreamMock.mock.results[0].value;
     feed.emit("history-gap", {
@@ -1974,7 +1987,30 @@ describe("ProjectsActions realtime feed", () => {
     });
     await flush();
 
-    expect(refreshProjectsTableMock).toHaveBeenCalledTimes(1);
+    expect(refreshProjectsTableMock).not.toHaveBeenCalled();
+    expect(mockedWebappClient.async_query).toHaveBeenCalledTimes(2);
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: "00000000-0000-4000-8000-000000000101",
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: "00000000-0000-4000-8000-000000000102",
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
   });
 
   it("forwards project detail invalidation feed events to the project field helper", async () => {

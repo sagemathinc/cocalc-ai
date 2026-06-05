@@ -31,7 +31,7 @@ import type {
 } from "@cocalc/util/db-schema/projects";
 import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
-import { refresh_projects_table, switch_to_project } from "./table";
+import { switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
 import { evaluateHostOperational, hostLabel } from "./host-operational";
@@ -150,6 +150,32 @@ type ProjectIndexBootstrapRow = {
   updated_at?: string | Date | null;
   is_hidden?: boolean | null;
 };
+
+export type ProjectProjectionRepairReason =
+  | "write-ack"
+  | "project-start"
+  | "project-stop"
+  | "project-archive"
+  | "project-move"
+  | "history-gap"
+  | "foreground-wake"
+  | "visible-window"
+  | "manual-refresh"
+  | "diagnostic"
+  | "row-reconcile";
+
+export type ProjectProjectionRepairRequest =
+  | {
+      kind: "project-ids";
+      project_ids: string[];
+      reason: ProjectProjectionRepairReason;
+      force?: boolean;
+    }
+  | {
+      kind: "visible-window";
+      reason: ProjectProjectionRepairReason;
+      force?: boolean;
+    };
 
 function readMaybeImmutable(value: any, key: string): any {
   return value?.get?.(key) ?? value?.[key];
@@ -472,32 +498,34 @@ export class ProjectsActions extends Actions<ProjectsState> {
   };
 
   private async refreshProjectsProjectionAfterHistoryGap(): Promise<void> {
-    const account_id = this.getAccountId();
-    recordProjectionRepair({
-      consumer: "projects",
-      reason: "history-gap",
-      scope: "projects-table+account_project_index",
-    });
     try {
-      await Promise.all([
-        refresh_projects_table(),
-        this.loadProjectedProjectsForCurrentAccount(account_id),
-      ]);
+      await this.repairProjectProjection({
+        kind: "project-ids",
+        project_ids: this.getOpenProjectIds(),
+        reason: "history-gap",
+      });
     } catch (err) {
       recordProjectionRepairFailure({
         consumer: "projects",
         reason: "history-gap",
-        scope: "projects-table+account_project_index",
+        scope: "open-project-ids",
         error: err,
       });
       throw err;
     }
   }
 
-  private scheduleProjectedProjectReconcile(project_id: string): void {
+  private scheduleProjectedProjectReconcile(
+    project_id: string,
+    reason: ProjectProjectionRepairReason = "write-ack",
+  ): void {
     for (const delay of ProjectsActions.PROJECT_ROW_RECONCILE_DELAYS_MS) {
       const timer = setTimeout(() => {
-        void this.loadProjectedProjectForCurrentAccount(project_id);
+        void this.repairProjectProjection({
+          kind: "project-ids",
+          project_ids: [project_id],
+          reason,
+        });
       }, delay);
       (timer as any).unref?.();
     }
@@ -528,7 +556,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
         delete this.projectLifecycleReconcileTokens[project_id];
         return;
       }
-      await this.loadProjectedProjectForCurrentAccount(project_id);
+      await this.repairProjectProjection({
+        kind: "project-ids",
+        project_ids: [project_id],
+        reason: "project-start",
+      });
       if (this.projectLifecycleReconcileTokens[project_id] !== token) {
         return;
       }
@@ -635,6 +667,61 @@ export class ProjectsActions extends Actions<ProjectsState> {
       console.warn("project realtime feed error", err);
     }
     await this.loadProjectedProjectsForCurrentAccount(account_id);
+  }
+
+  private getOpenProjectIds(): string[] {
+    const openProjects = store.get("open_projects");
+    if (openProjects == null) return [];
+    const values =
+      typeof openProjects.toArray === "function"
+        ? openProjects.toArray()
+        : Array.isArray(openProjects)
+          ? openProjects
+          : [];
+    return values.filter(
+      (project_id): project_id is string =>
+        typeof project_id === "string" && project_id.length > 0,
+    );
+  }
+
+  public async repairProjectProjection(
+    request: ProjectProjectionRepairRequest,
+  ): Promise<void> {
+    switch (request.kind) {
+      case "project-ids": {
+        const project_ids = Array.from(new globalThis.Set(request.project_ids));
+        recordProjectionRepair({
+          consumer: "projects",
+          reason: request.reason,
+          scope: {
+            kind: "project-ids",
+            project_ids,
+          },
+        });
+        await Promise.all(
+          project_ids.map((project_id) =>
+            this.loadProjectedProjectForCurrentAccount(
+              project_id,
+              request.reason,
+            ),
+          ),
+        );
+        return;
+      }
+      case "visible-window":
+        recordProjectionRepair({
+          consumer: "projects",
+          reason: request.reason,
+          scope: {
+            kind: "visible-window",
+          },
+        });
+        console.warn(
+          "project visible-window projection repair is not implemented yet",
+          { reason: request.reason },
+        );
+        return;
+    }
   }
 
   private loadProjectedProjectsForCurrentAccount = reuseInFlight(
@@ -841,14 +928,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
   );
 
   private loadProjectedProjectForCurrentAccount = reuseInFlight(
-    async (project_id: string): Promise<void> => {
+    async (
+      project_id: string,
+      reason: ProjectProjectionRepairReason = "row-reconcile",
+    ): Promise<void> => {
       const account_id = this.getAccountId();
       if (!account_id || !project_id || !webapp_client.is_signed_in()) {
         return;
       }
       recordProjectionRepair({
         consumer: "projects",
-        reason: "row-reconcile",
+        reason,
         scope: { table: "account_project_index", project_id },
       });
       let resp: any;
@@ -880,7 +970,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       } catch (err) {
         recordProjectionRepairFailure({
           consumer: "projects",
-          reason: "row-reconcile",
+          reason,
           scope: { table: "account_project_index", project_id },
           error: err,
         });
@@ -1016,7 +1106,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
         resp?.query?.account_project_index?.[0]?.theme,
       );
       if (isEqual(projectedTheme, theme)) {
-        await this.loadProjectedProjectForCurrentAccount(project_id);
+        await this.repairProjectProjection({
+          kind: "project-ids",
+          project_ids: [project_id],
+          reason: "write-ack",
+        });
         return true;
       }
     }
@@ -3331,7 +3425,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       actions.setState({ control_error: "" });
       this.optimisticProjectStateUpdate(project_id, "opened");
-      this.scheduleProjectedProjectReconcile(project_id);
+      this.scheduleProjectedProjectReconcile(project_id, "project-stop");
       this.project_log(project_id, {
         event: "project_stopped",
         duration_ms: webapp_client.server_time().getTime() - t0,
@@ -3560,7 +3654,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     await this.resetProjectRuntimeAfterArchiveCycle(project_id, {
       closeOpenFiles: true,
     });
-    this.scheduleProjectedProjectReconcile(project_id);
+    this.scheduleProjectedProjectReconcile(project_id, "project-archive");
     this.project_log(project_id, {
       event: "project_archived",
       ...store.classify_project(project_id),
