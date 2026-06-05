@@ -183,7 +183,7 @@ describe("CodexCredentialsPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Not configured")).toBeTruthy();
+      expect(screen.getByText("Codex is not connected yet.")).toBeTruthy();
     });
   });
 
@@ -205,7 +205,7 @@ describe("CodexCredentialsPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Not configured")).toBeTruthy();
+      expect(screen.getByText("Codex is not connected yet.")).toBeTruthy();
     });
 
     await act(async () => {
@@ -215,7 +215,7 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(
         screen.getByText((text) =>
-          text.includes("Device auth status: pending"),
+          text.includes("Finish signing in with ChatGPT"),
         ),
       ).toBeTruthy();
     });
@@ -225,7 +225,7 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(
         screen.queryByText((text) =>
-          text.includes("Device auth status: pending"),
+          text.includes("Finish signing in with ChatGPT"),
         ),
       ).toBeNull();
       expect(screen.getByText("loading")).toBeTruthy();
@@ -266,7 +266,7 @@ describe("CodexCredentialsPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Not configured")).toBeTruthy();
+      expect(screen.getByText("Codex is not connected yet.")).toBeTruthy();
     });
 
     await act(async () => {
@@ -276,7 +276,7 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(
         screen.getByText((text) =>
-          text.includes("Device auth status: pending"),
+          text.includes("Finish signing in with ChatGPT"),
         ),
       ).toBeTruthy();
     });
@@ -291,7 +291,7 @@ describe("CodexCredentialsPanel", () => {
     });
   });
 
-  it("opens the ChatGPT subscription panel when sign-in starts", async () => {
+  it("keeps advanced sign-in options closed when embedded sign-in starts", async () => {
     getCodexPaymentSource.mockResolvedValue({ source: "none" });
     codexDeviceAuthStart.mockResolvedValue({
       id: "auth-1",
@@ -309,7 +309,7 @@ describe("CodexCredentialsPanel", () => {
     render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Not configured")).toBeTruthy();
+      expect(screen.getByText("Codex is not connected yet.")).toBeTruthy();
     });
     expect(screen.queryByText("Start device login")).toBeNull();
 
@@ -318,11 +318,11 @@ describe("CodexCredentialsPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Start device login")).toBeTruthy();
+      expect(screen.queryByText("Start device login")).toBeNull();
       expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
       expect(
         screen.getByText((text) =>
-          text.includes("Device auth status: pending"),
+          text.includes("Finish signing in with ChatGPT"),
         ),
       ).toBeTruthy();
     });
@@ -336,7 +336,7 @@ describe("CodexCredentialsPanel", () => {
     render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Not configured")).toBeTruthy();
+      expect(screen.getByText("Codex is not connected yet.")).toBeTruthy();
     });
 
     await act(async () => {
@@ -344,9 +344,11 @@ describe("CodexCredentialsPanel", () => {
     });
 
     expect(
-      screen.getByText((text) => text.includes("Starting Codex device login")),
+      screen.getByText((text) =>
+        text.includes("Getting your one-time sign-in code"),
+      ),
     ).toBeTruthy();
-    expect(screen.getByText("Start device login")).toBeTruthy();
+    expect(screen.queryByText("Start device login")).toBeNull();
 
     await act(async () => {
       started.resolve({
@@ -386,7 +388,7 @@ describe("CodexCredentialsPanel", () => {
     render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Not configured")).toBeTruthy();
+      expect(screen.getByText("Codex is not connected yet.")).toBeTruthy();
     });
 
     await act(async () => {
