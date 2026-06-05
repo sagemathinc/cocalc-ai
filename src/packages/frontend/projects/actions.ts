@@ -3220,6 +3220,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
         source_host_id: previous_host_id,
         dest_host_id: logInfo.dest_host_id,
       });
+      this.scheduleProjectedProjectReconcile(
+        logInfo.project_id,
+        "project-move",
+      );
     };
     void webapp_client.conat_client
       .lroWait({
