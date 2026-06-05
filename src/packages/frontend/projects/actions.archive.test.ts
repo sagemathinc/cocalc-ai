@@ -498,12 +498,10 @@ describe("ProjectsActions archive flow", () => {
         hostId: "host-1",
       });
 
-      jest.advanceTimersByTime(1_000);
-      await Promise.resolve();
-      expect(reconcile).toHaveBeenCalledWith(project_id);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(reconcile).toHaveBeenCalledWith(project_id, "project-start");
 
-      jest.advanceTimersByTime(5_000);
-      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(5_000);
       expect(reconcile).toHaveBeenCalledTimes(2);
     } finally {
       jest.useRealTimers();
