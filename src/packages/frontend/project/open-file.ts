@@ -364,7 +364,19 @@ export async function open_file(
       return;
       // closed
     }
-    actions.open_files.set(displayPath, "component", {});
+    actions.open_files.set(displayPath, "display_path", displayPath);
+    if (opts.foreground || opts.wait_for_ready || PRELOAD_BACKGROUND_TABS) {
+      actions.open_files.set(displayPath, "component", {});
+    }
+  }
+
+  if (!opts.foreground && !opts.wait_for_ready && !PRELOAD_BACKGROUND_TABS) {
+    // Session restore and other lazy background opens should only recreate the
+    // tab row. Hydrating the editor here stampedes project/file initialization
+    // on browser refresh.
+    actions.open_files?.set(displayPath, "fragmentId", opts.fragmentId ?? "");
+    redux.getActions("page").save_session();
+    return;
   }
 
   // intercept any requests to open files with an error when in kiosk mode

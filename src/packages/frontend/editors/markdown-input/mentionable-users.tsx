@@ -4,7 +4,7 @@
  */
 
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
-import { redux, useMemo } from "@cocalc/frontend/app-framework";
+import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { timestamp_cmp, trunc_middle } from "@cocalc/util/misc";
 import type { Item } from "./complete";
@@ -19,6 +19,7 @@ export function useMentionableUsers(): (
   opts?: Opts,
 ) => Item[] {
   const { project_id } = useProjectContext();
+  const user_map = useTypedRedux("users", "user_map");
 
   return useMemo(() => {
     return (search: string | undefined, opts?: Opts) => {
@@ -28,7 +29,7 @@ export function useMentionableUsers(): (
         opts,
       });
     };
-  }, [project_id]);
+  }, [project_id, user_map]);
 }
 
 interface Props {
@@ -74,7 +75,7 @@ function mentionableUsers({ search, project_id, opts }: Props): Item[] {
   const mentions: Item[] = [];
 
   for (const { account_id } of projectUsers) {
-    const fullname = usersStore.get_name(account_id) ?? "";
+    const fullname = usersStore.get_name(account_id)?.trim() || account_id;
     const searchText = fullname.toLowerCase();
     if (search != null && searchText.indexOf(search) === -1) continue;
     mentions.push({

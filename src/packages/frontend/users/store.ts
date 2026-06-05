@@ -105,7 +105,10 @@ export class UsersStore extends Store<UsersState> {
       if (shouldHydrateUserIdentity(m)) {
         actions.fetch_non_collaborator(account_id);
       }
-      return `${m.get("first_name")} ${m.get("last_name")}`;
+      const name = `${m.get("first_name") ?? ""} ${m.get("last_name") ?? ""}`
+        .trim()
+        .replace(/\s+/g, " ");
+      return name || undefined;
     } else {
       // look it up, which causes it to get saved in the store, which causes a new render later.
       actions.fetch_non_collaborator(account_id);

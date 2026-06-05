@@ -604,13 +604,13 @@ describe("open_file wait_for_ready", () => {
     jest.restoreAllMocks();
   });
 
-  it("returns immediately for background opens and continues readiness work in the background", async () => {
+  it("returns immediately for background opens without hydrating the editor", async () => {
     const path = "/home/user/background.txt";
-    const syncIdentity = deferred<string>();
     const ensureProjectIsOpen = jest.fn().mockResolvedValue(undefined);
     const openProject = jest.fn();
     const saveSession = jest.fn();
     const { open_files, openFilesState, store } = makeOpenFilesHarness();
+    const canonicalSyncIdentityPath = jest.fn();
 
     jest.spyOn(redux as any, "getStore").mockImplementation((name: string) => {
       if (name === "page") {
@@ -635,9 +635,7 @@ describe("open_file wait_for_ready", () => {
       get_store: () => store,
       open_files,
       fs: () => ({
-        canonicalSyncIdentityPath: jest
-          .fn()
-          .mockReturnValue(syncIdentity.promise),
+        canonicalSyncIdentityPath,
       }),
       ensureProjectIsOpen,
       open_in_new_browser_window: jest.fn(),
@@ -664,17 +662,12 @@ describe("open_file wait_for_ready", () => {
 
     expect(resolved).toBe(true);
 
-    expect(openFilesState.get(path)?.component).toEqual({});
+    expect(openFilesState.get(path)?.display_path).toBe(path);
+    expect(openFilesState.get(path)?.component).toBeUndefined();
+    expect(openFilesState.get(path)?.sync_path).toBeUndefined();
+    expect(openFilesState.get(path)?.ext).toBeUndefined();
+    expect(canonicalSyncIdentityPath).not.toHaveBeenCalled();
     expect(ensureProjectIsOpen).not.toHaveBeenCalled();
-
-    syncIdentity.resolve(path);
-    await Promise.resolve();
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(ensureProjectIsOpen).toHaveBeenCalledWith(false);
-    expect(openFilesState.get(path)?.sync_path).toBe(path);
-    expect(openFilesState.get(path)?.ext).toBe("txt");
     expect(saveSession).toHaveBeenCalled();
   });
 });

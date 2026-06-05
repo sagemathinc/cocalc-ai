@@ -1242,6 +1242,20 @@ export function MarkdownInput(props: Props) {
     cm.current.on("change", mentions_cursor_ref.current.change);
   }
 
+  const mentionsOpen = mentions != null;
+  useEffect(() => {
+    if (!mentionsOpen) {
+      return;
+    }
+    const v = mentionableUsers(undefined, {
+      avatarLLMSize: 20,
+      avatarUserSize: 20,
+    });
+    if (v.length > 0) {
+      set_mentions(v);
+    }
+  }, [mentionableUsers, mentionsOpen]);
+
   function close_mentions() {
     set_mentions(undefined);
     if (cm.current != null) {
@@ -1285,7 +1299,7 @@ export function MarkdownInput(props: Props) {
         onSelect={(account_id) => {
           if (mentions_cursor_ref.current == null) return;
           const name =
-            redux.getStore("users").get_name(account_id) ?? account_id;
+            redux.getStore("users").get_name(account_id)?.trim() ?? account_id;
           const text = "@" + trunc_middle(name, 64);
           if (cm.current == null) return;
           const from = mentions_cursor_ref.current.from;
