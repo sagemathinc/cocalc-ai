@@ -900,6 +900,7 @@ Tasks:
 - implement seed-routed `setSiteSettings`; (done)
 - add `server_settings` versioning; (first pass done)
 - add attached-bay mirror apply path; (first pass done)
+- add admin propagation status API; (first pass done)
 - add periodic repair/sync worker;
 - add admin propagation status UI;
 - then bring `membership_tiers`, global buckets/repos, and catalog config under
@@ -923,7 +924,10 @@ Implemented:
 - seed fan-out records declared `global_config_bay_state` rows for the seed and
   each attached bay, preserving the previous applied version when a bay fails;
 - `SiteSettingsSyncResult` now returns additive `scope` and `version` fields so
-  callers can display or inspect the exact seed version involved.
+  callers can display or inspect the exact seed version involved;
+- `system.getGlobalConfigPropagationStatus` reports seed version, per-bay
+  applied version, stale/missing/error state, and forwards attached-bay calls to
+  the seed for authoritative reads.
 
 Still needed:
 

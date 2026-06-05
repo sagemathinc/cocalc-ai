@@ -104,6 +104,7 @@ describe("site settings dangerous-session auth", () => {
       setServerSetting: jest.fn(),
       setSiteSettings: jest.fn(),
       syncSiteSettings: jest.fn(),
+      getGlobalConfigPropagationStatus: jest.fn(),
     }));
     isAdminMock = jest.fn(async () => true);
     requireDangerousSessionAuthMock = jest.fn(async () => {
@@ -284,6 +285,129 @@ describe("site settings dangerous-session auth", () => {
     expect(bayOpsMock).toHaveBeenCalledWith("seed", { timeout_ms: 15_000 });
     expect(syncSiteSettingsOnSeed).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      source_bay_id: "attached-a",
+    });
+  });
+
+  it("reports seed global config propagation status", async () => {
+    const updatedAt = new Date("2026-06-05T12:00:00.000Z");
+    const appliedAt = new Date("2026-06-05T12:01:00.000Z");
+    listClusterBayRegistryMock = jest.fn(async () => [
+      { bay_id: "seed" },
+      { bay_id: "attached-a" },
+      { bay_id: "attached-b" },
+    ]);
+    getPoolQueryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM global_config_versions")) {
+        return {
+          rows: [
+            {
+              scope: "server_settings",
+              version: "3",
+              updated_at: updatedAt,
+              updated_by: ACCOUNT_ID,
+              metadata: { source_bay_id: "seed" },
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM global_config_bay_state")) {
+        return {
+          rows: [
+            {
+              bay_id: "seed",
+              scope: "server_settings",
+              applied_version: "3",
+              applied_at: appliedAt,
+              last_error: null,
+            },
+            {
+              bay_id: "attached-a",
+              scope: "server_settings",
+              applied_version: "2",
+              applied_at: appliedAt,
+              last_error: null,
+            },
+            {
+              bay_id: "attached-b",
+              scope: "server_settings",
+              applied_version: "2",
+              applied_at: appliedAt,
+              last_error: "connection failed",
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { getGlobalConfigPropagationStatus } = await import("./system");
+
+    const result = await getGlobalConfigPropagationStatus({
+      account_id: ACCOUNT_ID,
+      scope: "server_settings",
+    });
+
+    expect(result).toMatchObject({
+      current_bay_id: "seed",
+      seed_bay_id: "seed",
+      scopes: [
+        {
+          scope: "server_settings",
+          seed_version: 3,
+          updated_at: "2026-06-05T12:00:00.000Z",
+          updated_by: ACCOUNT_ID,
+          metadata: { source_bay_id: "seed" },
+          bays: [
+            {
+              bay_id: "attached-a",
+              status: "stale",
+              applied_version: 2,
+              applied_at: "2026-06-05T12:01:00.000Z",
+              last_error: null,
+            },
+            {
+              bay_id: "attached-b",
+              status: "error",
+              applied_version: 2,
+              applied_at: "2026-06-05T12:01:00.000Z",
+              last_error: "connection failed",
+            },
+            {
+              bay_id: "seed",
+              status: "current",
+              applied_version: 3,
+              applied_at: "2026-06-05T12:01:00.000Z",
+              last_error: null,
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("forwards attached-bay global config propagation status to seed", async () => {
+    getConfiguredBayIdMock = jest.fn(() => "attached-a");
+    const getStatusOnSeed = jest.fn(async () => ({
+      current_bay_id: "seed",
+      seed_bay_id: "seed",
+      checked_at: "2026-06-05T12:00:00.000Z",
+      scopes: [],
+    }));
+    bayOpsMock = jest.fn(() => ({
+      getGlobalConfigPropagationStatus: getStatusOnSeed,
+    }));
+    const { getGlobalConfigPropagationStatus } = await import("./system");
+
+    const result = await getGlobalConfigPropagationStatus({
+      account_id: ACCOUNT_ID,
+      scope: "server_settings",
+    });
+
+    expect(result.current_bay_id).toBe("seed");
+    expect(bayOpsMock).toHaveBeenCalledWith("seed", { timeout_ms: 15_000 });
+    expect(getStatusOnSeed).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      scope: "server_settings",
       source_bay_id: "attached-a",
     });
   });
