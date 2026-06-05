@@ -344,6 +344,61 @@ describe("connected terminal resizing", () => {
     terminal.close();
   });
 
+  it("does not let new input overtake buffered disconnected input during reconnect", async () => {
+    const { Terminal, ptys } = loadTerminalModule();
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const actions = {
+      project_id: "project-1",
+      path: "/tmp/example.term",
+      get_term_env: jest.fn(() => ({})),
+      set_connection_status: jest.fn(),
+      set_title: jest.fn(),
+      set_error: jest.fn(),
+      _tree_is_single_leaf: jest.fn(() => false),
+      close_frame: jest.fn(),
+      open_code_editor_frame: jest.fn(),
+      _get_project_actions: jest.fn(() => ({
+        flag_file_activity: jest.fn(),
+        open_file: jest.fn(),
+        close_tab: jest.fn(),
+        isTabClosed: jest.fn(() => false),
+        open_directory: jest.fn(),
+      })),
+    } as any;
+
+    const terminal = new Terminal(actions, 0, "term-1", parent);
+    await terminal.connect();
+
+    ptys[0].socket.state = "closed";
+    terminal["ptyInputReady"] = false;
+    terminal.conn_write("git pu");
+
+    let resolveSpawn: (history: string) => void = () => {};
+    const spawnPromise = new Promise<string>((resolve) => {
+      resolveSpawn = resolve;
+    });
+    ptys[1].spawn = jest.fn(() => spawnPromise);
+    const reconnect = terminal.connect();
+    await Promise.resolve();
+
+    terminal.conn_write("sh");
+
+    expect(ptys[1].socket.write).not.toHaveBeenCalled();
+
+    resolveSpawn("");
+    await reconnect;
+
+    expect(ptys[1].socket.write.mock.calls.map(([message]) => message)).toEqual(
+      [
+        { data: "git pu", kind: "user" },
+        { data: "sh", kind: "user" },
+      ],
+    );
+
+    terminal.close();
+  });
+
   it("expedites reconnect when a disconnected terminal becomes visible", async () => {
     const { Terminal, reconnectResources } = loadTerminalModule();
     const parent = document.createElement("div");

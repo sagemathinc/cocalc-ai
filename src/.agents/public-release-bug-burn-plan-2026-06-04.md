@@ -109,6 +109,8 @@ First action:
 
 ### P0-B: Terminal Reconnect Must Preserve Input Order
 
+Status: fixed first pass 2026-06-05.
+
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`, `cocalc-cli` indirectly
 
 Source item:
@@ -136,8 +138,21 @@ Plan:
 
 Exit criteria:
 
-- No typed bytes can overtake older buffered bytes.
+- No typed bytes can overtake older buffered bytes. (done)
 - Reconnect states have either FIFO preservation or explicit, visible discard.
+  (FIFO preservation implemented)
+
+Implemented:
+
+- terminal input now only writes directly when the pty is connected and the
+  reconnect/spawn path has explicitly marked input ready;
+- if any older buffered input exists, later input is appended to the same FIFO
+  and the queue is drained in order;
+- deterministic frontend regression test covers:
+  - queue input while disconnected,
+  - start reconnect with spawn pending,
+  - type more input before flush,
+  - assert backend receives the original user order.
 
 Estimate: `M`
 
@@ -355,7 +370,7 @@ Decision required:
 - Either:
   1. explicitly exclude cross-region move from first public user-facing release,
      keeping it admin/internal only, or
-  2. treat it as P0 and fix UX/state convergence before release.  &lt;-- this: it's very important and easy to hit.  I just tried a simple cross region move and after 3 minutes got "transient error" and stuck forever just stopping, so it really is very broken right now:<img src="/blobs/paste-902fycigor6.png?uuid=b91e12ba-ccfe-4f6a-89ff-0ff119098466"   width="1059px"  height="408px"  style="object-fit:cover"/>
+  2. treat it as P0 and fix UX/state convergence before release. &lt;-- this: it's very important and easy to hit. I just tried a simple cross region move and after 3 minutes got "transient error" and stuck forever just stopping, so it really is very broken right now:<img src="/blobs/paste-902fycigor6.png?uuid=b91e12ba-ccfe-4f6a-89ff-0ff119098466"   width="1059px"  height="408px"  style="object-fit:cover"/>
 
 If in scope, plan:
 
