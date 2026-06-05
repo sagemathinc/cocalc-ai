@@ -4,6 +4,25 @@
  */
 
 import { fromJS, Map } from "immutable";
+import { EventEmitter } from "events";
+
+const getSharedAccountDStream = jest.fn();
+let signedIn = false;
+let accountId: string | undefined;
+let userMap = Map<string, any>();
+
+class MockFeed extends EventEmitter {
+  private closed = false;
+
+  isClosed() {
+    return this.closed;
+  }
+
+  close() {
+    this.closed = true;
+    this.emit("closed");
+  }
+}
 
 jest.mock("../app-framework", () => {
   class Table {}
@@ -18,7 +37,11 @@ jest.mock("../app-framework", () => {
         }
         if (name === "account") {
           return {
-            get: jest.fn(() => undefined),
+            get: jest.fn((key: string) => {
+              if (key === "account_id") return accountId;
+              if (key === "is_ready") return accountId != null;
+              return undefined;
+            }),
             on: jest.fn(),
             removeListener: jest.fn(),
           };
@@ -27,6 +50,7 @@ jest.mock("../app-framework", () => {
       }),
       createTable: jest.fn(() => ({
         _table: {
+          get_state: jest.fn(() => "connected"),
           on: jest.fn(),
         },
       })),
@@ -40,7 +64,7 @@ jest.mock("../app-framework", () => {
 
 jest.mock("../webapp-client", () => ({
   webapp_client: {
-    is_signed_in: jest.fn(() => false),
+    is_signed_in: jest.fn(() => signedIn),
     on: jest.fn(),
     conat_client: {
       on: jest.fn(),
@@ -51,17 +75,44 @@ jest.mock("../webapp-client", () => ({
 
 jest.mock("./actions", () => ({
   actions: {
-    setState: jest.fn(),
+    setState: jest.fn((patch) => {
+      if (patch.user_map != null) {
+        userMap = patch.user_map;
+      }
+    }),
   },
 }));
 
 jest.mock("./store", () => ({
   store: {
-    get: jest.fn(() => undefined),
+    get: jest.fn((key: string) => {
+      if (key === "user_map") return userMap;
+      return undefined;
+    }),
   },
 }));
 
+jest.mock("@cocalc/frontend/conat/account-dstream", () => ({
+  getSharedAccountDStream: (...args: any[]) => getSharedAccountDStream(...args),
+}));
+
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("users table helpers", () => {
+  beforeEach(async () => {
+    jest.resetModules();
+    getSharedAccountDStream.mockReset();
+    signedIn = false;
+    accountId = undefined;
+    userMap = Map<string, any>();
+    const { resetProjectionDiagnosticsForTests } =
+      await import("@cocalc/frontend/projection-diagnostics");
+    resetProjectionDiagnosticsForTests();
+  });
+
   it("builds collaborator rows with Date last_active and collaborator marker", async () => {
     const { buildCollaboratorRecord } = await import("./table");
 
@@ -113,5 +164,55 @@ describe("users table helpers", () => {
     expect(merged.getIn(["acct-old-collab", "collaborator"])).toBe(false);
     expect(merged.getIn(["acct-non-collab", "first_name"])).toBe("Fetched");
     expect(merged.getIn(["acct-new-collab", "collaborator"])).toBe(true);
+  });
+
+  it("records collaborator feed diagnostics and repairs on history gaps", async () => {
+    signedIn = true;
+    accountId = "acct-1";
+    const feed = new MockFeed();
+    getSharedAccountDStream.mockResolvedValue(feed);
+
+    await import("./table");
+    await flush();
+
+    const { collectProjectionDiagnostics } =
+      await import("@cocalc/frontend/projection-diagnostics");
+    expect(collectProjectionDiagnostics().consumers.users.attach_count).toBe(1);
+
+    feed.emit(
+      "change",
+      {
+        type: "collaborator.upsert",
+        account_id: "acct-1",
+        ts: Date.now(),
+        collaborator: {
+          account_id: "acct-collab",
+          first_name: "Ada",
+          last_name: "Lovelace",
+          name: "Ada Lovelace",
+          profile: null,
+          last_active: "2026-06-05T00:00:00.000Z",
+          common_project_count: 1,
+          updated_at: "2026-06-05T00:00:00.000Z",
+        },
+      },
+      19,
+    );
+
+    expect(userMap.getIn(["acct-collab", "collaborator"])).toBe(true);
+    expect(collectProjectionDiagnostics().consumers.users.last_event_type).toBe(
+      "collaborator.upsert",
+    );
+    expect(collectProjectionDiagnostics().consumers.users.last_seq).toBe(19);
+
+    feed.emit("history-gap", {
+      requested_start_seq: 2,
+      effective_start_seq: 5,
+    });
+
+    const diagnostics = collectProjectionDiagnostics().consumers.users;
+    expect(diagnostics.history_gap_count).toBe(1);
+    expect(diagnostics.last_repair_reason).toBe("snapshot-refresh");
+    expect(diagnostics.last_repair_scope).toBe("collaborators");
   });
 });

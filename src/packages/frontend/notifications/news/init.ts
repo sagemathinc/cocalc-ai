@@ -22,6 +22,12 @@ import {
 import { getAntdNotificationInstance } from "@cocalc/frontend/app/antd-notification";
 import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
+import {
+  attachProjectionFeedDiagnostics,
+  recordProjectionFeedEvent,
+  recordProjectionHistoryGap,
+  recordProjectionRepair,
+} from "@cocalc/frontend/projection-diagnostics";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { NewsItemWebapp, SYSTEM_CHANNEL } from "@cocalc/util/types/news";
@@ -427,8 +433,11 @@ let realtimeFeedAccountId: string | undefined;
 let signedInListener: (() => void) | undefined;
 let signedOutListener: (() => void) | undefined;
 let conatConnectedListener: (() => void) | undefined;
+let realtimeFeedDiagnosticsCleanup: (() => void) | undefined;
 
 function closeRealtimeFeed(): void {
+  realtimeFeedDiagnosticsCleanup?.();
+  realtimeFeedDiagnosticsCleanup = undefined;
   if (realtimeFeed == null) return;
   realtimeFeed.removeListener("change", handleRealtimeFeedChange);
   realtimeFeed.removeListener("history-gap", handleRealtimeFeedHistoryGap);
@@ -463,6 +472,12 @@ async function ensureRealtimeFeed(): Promise<void> {
     });
     feed.on("change", handleRealtimeFeedChange);
     feed.on("history-gap", handleRealtimeFeedHistoryGap);
+    realtimeFeedDiagnosticsCleanup = attachProjectionFeedDiagnostics({
+      consumer: "news",
+      account_id,
+      stream_name: accountFeedStreamName(),
+      stream: feed,
+    });
     realtimeFeed = feed;
     realtimeFeedAccountId = account_id;
   } catch (err) {
@@ -470,14 +485,36 @@ async function ensureRealtimeFeed(): Promise<void> {
   }
 }
 
-function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
+function handleRealtimeFeedChange(
+  event?: AccountFeedEvent,
+  seq?: number,
+): void {
+  recordProjectionFeedEvent({
+    consumer: "news",
+    event,
+    seq,
+  });
   if ((event as { type?: string } | undefined)?.type !== "news.refresh") {
     return;
   }
+  recordProjectionRepair({
+    consumer: "news",
+    reason: "feed-refresh",
+    scope: "news",
+  });
   void actions.refresh();
 }
 
-function handleRealtimeFeedHistoryGap(): void {
+function handleRealtimeFeedHistoryGap(info?: any): void {
+  recordProjectionHistoryGap({
+    consumer: "news",
+    info,
+  });
+  recordProjectionRepair({
+    consumer: "news",
+    reason: "history-gap",
+    scope: "news",
+  });
   void actions.refresh();
 }
 

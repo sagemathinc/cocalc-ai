@@ -153,6 +153,18 @@ export const ProjectsPage: React.FC = () => {
   );
 
   useEffect(() => {
+    const project_ids =
+      visibleProjectionRepairKey.length === 0
+        ? []
+        : visibleProjectionRepairKey.split("\n");
+    const actions = redux.getActions("projects");
+    actions?.setVisibleProjectWindowForRepair?.(project_ids);
+    return () => {
+      actions?.setVisibleProjectWindowForRepair?.([]);
+    };
+  }, [visibleProjectionRepairKey]);
+
+  useEffect(() => {
     if (visibleProjectionRepairKey.length === 0) {
       return;
     }
