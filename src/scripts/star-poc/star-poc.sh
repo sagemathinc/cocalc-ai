@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/web-onboarding.sh"
 STAR_CONFIG="${STAR_CONFIG:-/etc/cocalc/star/config.env}"
 if [ -f "$STAR_CONFIG" ]; then
   # shellcheck disable=SC1090
@@ -635,7 +637,10 @@ EOF
     cat <<EOF
 
 ${domain} {
-  reverse_proxy 127.0.0.1:${STAR_API##*:}
+$(star_web_onboarding_caddy_routes)
+  handle {
+    reverse_proxy 127.0.0.1:${STAR_API##*:}
+  }
 }
 EOF
   } >"$tmp"

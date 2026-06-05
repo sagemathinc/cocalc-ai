@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/web-onboarding.sh"
+
 if [ -z "${STAR_USER:-}" ]; then
   if [ "$(id -u)" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
     echo "[star] ERROR: set STAR_USER when running directly as root" >&2
@@ -18,6 +22,7 @@ STAR_PROJECT_HOST_REGION="${STAR_PROJECT_HOST_REGION:-wnam}"
 STAR_BASE_PORT="${STAR_BASE_PORT:-9100}"
 STAR_BASE_URL="${STAR_BASE_URL:-http://127.0.0.1:${STAR_BASE_PORT}}"
 STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
+STAR_WEB_ONBOARDING="${STAR_WEB_ONBOARDING:-auto}"
 STAR_BTRFS_IMAGE="${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}"
 STAR_BTRFS_SIZE="${STAR_BTRFS_SIZE:-100G}"
 STAR_BUILD="${STAR_BUILD:-1}"
@@ -61,6 +66,33 @@ install_packages() {
     podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs \
     caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev
   systemctl disable --now postgresql >/dev/null 2>&1 || true
+}
+
+start_web_onboarding() {
+  star_web_onboarding_enabled || return 0
+  local caddy_config site
+  site="$(star_web_onboarding_site_address)"
+  caddy_config="$(mktemp)"
+  star_web_onboarding_prepare
+  star_web_onboarding_start_server
+  cat >"$caddy_config" <<EOF
+# cocalc-star managed caddyfile v1
+
+${site} {
+$(star_web_onboarding_caddy_proxy_routes)
+  handle {
+    respond "CoCalc Star is installing. Open $(star_web_onboarding_url)" 200
+  }
+}
+EOF
+  caddy adapt --config "$caddy_config" >/dev/null
+  install -m 0644 -o root -g root "$caddy_config" /etc/caddy/Caddyfile
+  rm -f "$caddy_config"
+  systemctl enable caddy >/dev/null
+  systemctl restart caddy
+  star_web_onboarding_write_status "reachable" "This VM is publicly reachable over HTTPS. Installing CoCalc Star now." ""
+  star_web_onboarding_print >&2
+  star_web_onboarding_wait_for_open
 }
 
 host_has_nvidia_gpu() {
@@ -604,7 +636,7 @@ seed_database() {
 }
 
 install_systemd() {
-  local hub_unit project_host_unit caddy_config hub_workdir hub_exec hub_bundle_env project_host_workdir project_host_exec project_host_stop api_v2_routes_bundle
+  local hub_unit project_host_unit caddy_config hub_workdir hub_exec hub_bundle_env project_host_workdir project_host_exec project_host_stop api_v2_routes_bundle caddy_site
   hub_unit="$(mktemp)"
   project_host_unit="$(mktemp)"
   caddy_config="$(mktemp)"
@@ -683,11 +715,15 @@ TimeoutStopSec=40
 WantedBy=multi-user.target
 EOF
 
+  caddy_site="$(star_web_onboarding_site_address)"
   cat >"$caddy_config" <<EOF
 # cocalc-star managed caddyfile v1
 
-:80 {
-  reverse_proxy 127.0.0.1:${STAR_BASE_PORT}
+${caddy_site} {
+$(star_web_onboarding_caddy_routes)
+  handle {
+    reverse_proxy 127.0.0.1:${STAR_BASE_PORT}
+  }
 }
 EOF
 
@@ -764,7 +800,9 @@ remove_broad_sudoers_for_star_user() {
 }
 
 start_services() {
+  star_web_onboarding_write_status "starting-services" "Starting CoCalc Star services and waiting for the hub to answer." ""
   systemctl restart caddy
+  star_web_onboarding_stop_server
   systemctl restart cocalc-star-hub
   systemctl restart cocalc-star-project-host
   log "waiting for ${STAR_BASE_URL}/customize"
@@ -776,12 +814,32 @@ start_services() {
   done
   sync
   systemctl --no-pager --full status cocalc-star-hub cocalc-star-project-host || true
+  local bootstrap_url=""
+  if [ -f "$STAR_ROOT/bootstrap-result.json" ]; then
+    bootstrap_url="$(star_web_onboarding_json_string_field "$STAR_ROOT/bootstrap-result.json" bootstrap_url 2>/dev/null || true)"
+    if [ -n "$bootstrap_url" ] && [ -n "${STAR_PUBLIC_URL:-}" ]; then
+      bootstrap_url="$(star_web_onboarding_url_with_base "$bootstrap_url" "$STAR_PUBLIC_URL")"
+    fi
+  fi
+  star_web_onboarding_write_status "ready" "CoCalc Star is running. Create the first admin account to finish setup." "$bootstrap_url"
   cat "$STAR_ROOT/bootstrap-result.json"
+}
+
+web_onboarding_exit_trap() {
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    star_web_onboarding_write_status "failed" "The CoCalc Star install failed. Check the terminal output or SSH logs on the VM." "" || true
+  fi
+  star_web_onboarding_stop_server || true
+  exit "$status"
 }
 
 require_root
 install_packages
+trap web_onboarding_exit_trap EXIT
+start_web_onboarding
 install_gpu_support
+star_web_onboarding_write_status "runtime" "Preparing Linux user, Node.js, and Star runtime packages." ""
 ensure_subuids
 install_node
 build_source
@@ -791,10 +849,13 @@ ensure_btrfs
 install_wrappers
 configure_sudoers
 configure_users_and_dirs
+star_web_onboarding_write_status "rootfs" "Building and publishing the default Jupyter and LaTeX RootFS." ""
 build_default_rootfs_image
 write_env_files
 ensure_default_rootfs_cache
 seed_database
 publish_default_rootfs
+star_web_onboarding_write_status "systemd" "Installing systemd services and final Caddy routing." ""
 install_systemd
 start_services
+trap - EXIT
