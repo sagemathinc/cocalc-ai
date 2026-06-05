@@ -21,7 +21,12 @@ describe("ProjectActions host restart file runtime reset", () => {
     const components = new Map<string, any>([
       [
         "/display-a.ipynb",
-        { redux_name: "old-a", Editor: "EditorA", other: true },
+        {
+          redux_name: "old-a",
+          Editor: "EditorA",
+          other: true,
+          runtime_generation: 3,
+        },
       ],
       ["/display-b.ipynb", { redux_name: "old-b", Editor: "EditorB" }],
       ["/same-sync.txt", { redux_name: "old-c", Editor: "EditorC" }],
@@ -48,6 +53,7 @@ describe("ProjectActions host restart file runtime reset", () => {
       redux_name: undefined,
       Editor: undefined,
       other: true,
+      runtime_generation: 3,
     });
     expect(components.get("/display-b.ipynb")).toEqual({
       redux_name: undefined,

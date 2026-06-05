@@ -1598,6 +1598,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         if (this.open_files == null || current_info == null) return;
         current_info.redux_name = name;
         current_info.Editor = Editor;
+        current_info.runtime_generation =
+          (current_info.runtime_generation ?? 0) + 1;
         this.open_files.set(path, "component", { ...current_info });
         if (!opts.noFocus) {
           this.show_file(path);
@@ -1622,6 +1624,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             path,
             error,
           });
+        current_info.runtime_generation =
+          (current_info.runtime_generation ?? 0) + 1;
         this.open_files.set(path, "component", { ...current_info });
         if (!opts.noFocus) {
           this.show_file(path);

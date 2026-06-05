@@ -122,6 +122,8 @@ function summarizeOpenFile(openFiles: any, displayPath: string): any {
     display_path: plain?.display_path,
     chatState: plain?.chatState,
     fragmentId: plain?.fragmentId,
+    componentReduxName: plain?.component?.redux_name,
+    componentRuntimeGeneration: plain?.component?.runtime_generation,
     componentKeys:
       plain?.component != null && typeof plain.component === "object"
         ? Object.keys(plain.component)
