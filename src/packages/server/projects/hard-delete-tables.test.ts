@@ -78,6 +78,12 @@ describe("project hard-delete table ownership audit", () => {
         ) {
           return `${decision.table}: expected audit-local`;
         }
+        if (
+          decision.status === "legacy-unused" &&
+          !["cache", "ephemeral"].includes(entry.ownership)
+        ) {
+          return `${decision.table}: expected disposable legacy ownership`;
+        }
       })
       .filter(Boolean);
 

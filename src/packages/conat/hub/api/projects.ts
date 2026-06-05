@@ -1518,6 +1518,16 @@ export interface Projects {
     campaign_id: string | null;
     candidate_count: number;
     candidates: string[];
+    side_table_preflight: {
+      portable_tables: string[];
+      ignored_tables: string[];
+      non_portable_tables: Array<{
+        table: string;
+        status: string;
+        reason: string;
+      }>;
+      summary: string;
+    };
     rehomed: ProjectRehomeResponse[];
     errors: Array<{ project_id: string; error: string }>;
   }>;

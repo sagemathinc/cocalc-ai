@@ -145,7 +145,6 @@ export const TABLE_OWNERSHIP = {
     [
       "bookmarks",
       "blobs",
-      "cursors",
       "deleted_projects",
       "eval_inputs",
       "eval_outputs",
@@ -153,7 +152,6 @@ export const TABLE_OWNERSHIP = {
       "listings",
       "mentions",
       "messages",
-      "patches",
       "project_access_request_blocks",
       "project_access_requests",
       "project_backup_indexes",
@@ -162,7 +160,6 @@ export const TABLE_OWNERSHIP = {
       "project_events_outbox",
       "project_rootfs_states",
       "projects",
-      "syncstrings",
     ],
     {
       ownership: "project-owning",
@@ -177,6 +174,16 @@ export const TABLE_OWNERSHIP = {
         "Project-owned source-of-truth state. Reads/writes must route to the project owning bay. Rehome requires explicit table-specific copy/delete verification.",
     },
   ),
+
+  ...entries(["cursors", "patches", "syncstrings"], {
+    ownership: "ephemeral",
+    authority: "none",
+    portability: "rebuildable",
+    notes:
+      "Legacy Postgres sync table. It is no longer used for live project sync state; current sync state lives in Conat on the project host. Rows are expected to be empty/obsolete and may be ignored or dropped during drain/rehome.",
+    rebuild:
+      "No rebuild required; live sync state is not sourced from this table.",
+  }),
 
   ...entries(
     [
