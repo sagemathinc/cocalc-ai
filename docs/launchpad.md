@@ -1,14 +1,19 @@
-# CoCalc Launchpad - Minimal On-Prem Quick Start (Draft)
+# CoCalc Launchpad - Operator Control Plane Quick Start (Draft)
 
-This is a quick-start for the minimal on-prem mode. It favors max simplicity
-over scale. This mode is intended for small teams (3-10 users) and a small
-number of hosts.
+This is a quick-start for the lower-level Launchpad control plane. It is for
+operators and developers working on deployment modes, project-host connectivity,
+and product profiles.
+
+If you want the simplest public VM appliance for a lab, class, GPU box, agent
+sandbox, or small team, start with [CoCalc Star](./star.md) instead. Star wraps
+the Launchpad control plane with local Postgres, a local project host, Caddy
+HTTPS, default rootfs setup, and web onboarding.
 
 Status: draft / in development.
 
 ## Choose a Mode
 
-Launchpad supports two deployment modes (explicitly selected by an admin):
+Launchpad supports deployment modes that are explicitly selected by an admin:
 
 - **On\-prem \(local only\)**: all traffic is local, no Cloudflare tunnels, and
   backups use a local repo over SFTP. This document describes this mode.

@@ -9,7 +9,8 @@ export type PublicProductsRoute =
   | { view: "products" }
   | { view: "products-cocalc-launchpad" }
   | { view: "products-cocalc-plus" }
-  | { view: "products-cocalc-rocket" };
+  | { view: "products-cocalc-rocket" }
+  | { view: "products-cocalc-star" };
 
 function getRouteParts(pathname: string): string[] {
   const parts = pathname.split("?")[0].split("/").filter(Boolean);
@@ -30,6 +31,9 @@ export function getProductsRouteFromPath(
   }
   if (routeParts[1] === "cocalc-rocket") {
     return { view: "products-cocalc-rocket" };
+  }
+  if (routeParts[1] === "cocalc-star") {
+    return { view: "products-cocalc-star" };
   }
   return { view: "products" };
 }

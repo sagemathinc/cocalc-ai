@@ -78,18 +78,12 @@ describe("PublicHomeApp", () => {
     ).toBe("https://software.cocalc.ai/software/cocalc-plus/index.html");
     expect(
       screen
-        .getByRole("link", { name: "Download Launchpad" })
+        .getByRole("link", { name: "Install CoCalc Star" })
         .getAttribute("href"),
-    ).toBe("https://software.cocalc.ai/software/cocalc-launchpad/index.html");
+    ).toBe("/products/cocalc-star");
     expect(
-      screen
-        .getAllByRole("link", { name: "Launchpad" })
-        .some(
-          (link) =>
-            link.getAttribute("href") ===
-            "https://software.cocalc.ai/software/cocalc-launchpad/index.html",
-        ),
-    ).toBe(true);
+      screen.getByRole("link", { name: "CoCalc Star" }).getAttribute("href"),
+    ).toBe("/products/cocalc-star");
     expect(screen.queryByText("Open page")).toBeNull();
     expect(
       screen

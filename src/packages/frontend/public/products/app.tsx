@@ -27,6 +27,8 @@ function titleForRoute(route: PublicProductsRoute): string {
       return "CoCalc Plus";
     case "products-cocalc-rocket":
       return "CoCalc Rocket";
+    case "products-cocalc-star":
+      return "CoCalc Star";
     case "products":
     default:
       return "Ways to Run CoCalc";
@@ -35,7 +37,7 @@ function titleForRoute(route: PublicProductsRoute): string {
 
 function ProductsOverviewPage() {
   return (
-    <PublicGrid columns={2}>
+    <PublicGrid columns={3}>
       <PublicCard href={appPath("")} title="Hosted CoCalc">
         <Paragraph>
           Use the full hosted service when you want managed infrastructure,
@@ -50,14 +52,21 @@ function ProductsOverviewPage() {
           standing up a shared service.
         </Paragraph>
       </PublicCard>
+      <PublicCard href={publicPath("products/cocalc-star")} title="CoCalc Star">
+        <Paragraph style={{ margin: 0 }}>
+          The zero-config public VM appliance. Paste one command on a fresh
+          Ubuntu server, get HTTPS with Caddy and Let's Encrypt, then create
+          collaborative projects with notebooks, terminals, LaTeX, and agents.
+        </Paragraph>
+      </PublicCard>
       <PublicCard
         href={publicPath("products/cocalc-launchpad")}
         title="CoCalc Launchpad"
       >
         <Paragraph style={{ margin: 0 }}>
-          The lightweight control-plane bundle for small teams and self-hosted
-          deployments that want the CoCalc user model without the old Next.js
-          stack.
+          The lightweight control-plane bundle for operator-controlled
+          deployments, custom project-host work, and product development around
+          the same CoCalc user and project model.
         </Paragraph>
       </PublicCard>
       <PublicCard
@@ -65,9 +74,9 @@ function ProductsOverviewPage() {
         title="CoCalc Rocket"
       >
         <Paragraph style={{ margin: 0 }}>
-          The full self-hosted multi-user CoCalc deployment when you want the
-          hosted experience on infrastructure you control, whether directly or
-          as a managed service run for you.
+          The full production deployment path when you need multi-bay
+          architecture, larger operations, and the hosted CoCalc service model
+          on infrastructure you control.
         </Paragraph>
       </PublicCard>
     </PublicGrid>
@@ -98,12 +107,15 @@ function CocalcRocketPage() {
           Choose Rocket, Launchpad, or Plus
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Choose CoCalc Plus for a local single-user install. Choose Launchpad
-          when you want a lighter operator-focused shared deployment. Choose
-          Rocket when you want the full multi-user CoCalc service model on your
-          own infrastructure.
+          Choose CoCalc Plus for a local single-user install. Choose CoCalc Star
+          when you want a one-command public VM appliance. Choose Launchpad for
+          lighter operator-controlled deployments. Choose Rocket when you want
+          the full multi-user CoCalc service model on your own infrastructure.
         </Paragraph>
         <Flex gap={12} wrap>
+          <LinkButton href={publicPath("products/cocalc-star")}>
+            Compare with Star
+          </LinkButton>
           <LinkButton href={publicPath("products/cocalc-launchpad")}>
             Compare with Launchpad
           </LinkButton>
@@ -131,6 +143,90 @@ function CocalcRocketPage() {
   );
 }
 
+function CocalcStarPage() {
+  const installCommand =
+    "curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo bash";
+
+  return (
+    <>
+      <PublicGrid columns={3}>
+        <PublicSection>
+          <Title level={3} style={{ margin: 0 }}>
+            What CoCalc Star is
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            CoCalc Star is the single-VM CoCalc appliance. It is designed for a
+            fresh public Ubuntu server where port 443 is reachable from the
+            internet.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            The installer sets up the local control plane, project host,
+            Postgres, Caddy HTTPS, a default Jupyter/LaTeX root filesystem, and
+            a first-admin bootstrap URL.
+          </Paragraph>
+        </PublicSection>
+        <PublicSection>
+          <Title level={3} style={{ margin: 0 }}>
+            Install CoCalc Star
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            On a fresh Ubuntu 24.04 VM with ports 80 and 443 open, run:
+          </Paragraph>
+          <CodeCommand value={installCommand} />
+          <Flex gap={12} wrap>
+            <CopyCommandButton value={installCommand} />
+            <Button href="https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh">
+              Open install script
+            </Button>
+            <Button href="https://github.com/sagemathinc/cocalc-ai/releases/latest">
+              Latest release
+            </Button>
+          </Flex>
+          <Paragraph style={{ margin: 0 }}>
+            The default flow detects the public IPv4 address, uses sslip.io for
+            DNS, obtains a Let's Encrypt certificate through Caddy, and shows a
+            web onboarding page before continuing.
+          </Paragraph>
+        </PublicSection>
+        <PublicSection>
+          <Title level={3} style={{ margin: 0 }}>
+            When to choose Star
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Choose Star for a lab, course, GPU box, agent sandbox, or small team
+            where the operator owns the VM and wants collaborators using the
+            same browser-based CoCalc workspace.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            It is not the high-availability or multi-bay product. For that, move
+            up to Rocket; for lower-level operator and development flows, use
+            Launchpad.
+          </Paragraph>
+        </PublicSection>
+      </PublicGrid>
+      <PublicSection>
+        <Title level={3} style={{ margin: 0 }}>
+          Star, Launchpad, and Rocket
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          Star is the default public VM appliance. Launchpad is the lighter
+          control-plane bundle for operators and product development. Rocket is
+          the production deployment architecture for larger or managed
+          installations.
+        </Paragraph>
+        <Flex gap={12} wrap>
+          <LinkButton href={publicPath("products/cocalc-launchpad")}>
+            Compare with Launchpad
+          </LinkButton>
+          <LinkButton href={publicPath("products/cocalc-rocket")}>
+            Compare with Rocket
+          </LinkButton>
+        </Flex>
+      </PublicSection>
+    </>
+  );
+}
+
 function CocalcLaunchpadPage() {
   const installCommand =
     "curl -fsSL https://software.cocalc.ai/software/cocalc-launchpad/install.sh | bash";
@@ -143,14 +239,14 @@ function CocalcLaunchpadPage() {
             What CoCalc Launchpad is
           </Title>
           <Paragraph style={{ margin: 0 }}>
-            CoCalc Launchpad is the lightweight control-plane bundle for small
-            teams and self-hosted deployments. It is the clearest path when you
-            want a shared CoCalc environment that you operate yourself.
+            CoCalc Launchpad is the lightweight control-plane bundle for
+            operator-controlled self-hosted deployments. It is the right layer
+            when you are working on host connectivity, deployment automation,
+            custom product profiles, or the control-plane side of CoCalc.
           </Paragraph>
           <Paragraph style={{ margin: 0 }}>
-            It is aimed at rapid iteration, small deployments, and productized
-            use of the same collaborative workspace model that powers the hosted
-            service.
+            If your goal is a one-command public VM that people can use through
+            HTTPS immediately, start with CoCalc Star instead.
           </Paragraph>
         </PublicSection>
         <PublicSection>
@@ -193,14 +289,18 @@ function CocalcLaunchpadPage() {
       </PublicGrid>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Choose Launchpad or CoCalc Plus
+          Choose Star, Launchpad, or Plus
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Choose CoCalc Plus for a local single-user install. Choose Launchpad
-          when you want a shared deployment for a small team or an operator-run
-          instance with the same overall workspace model.
+          Choose CoCalc Plus for a local single-user install. Choose CoCalc Star
+          for a single public VM appliance. Choose Launchpad when you need the
+          lighter control-plane and host-operator layer rather than the packaged
+          appliance.
         </Paragraph>
         <Flex gap={12} wrap>
+          <LinkButton href={publicPath("products/cocalc-star")}>
+            Compare with Star
+          </LinkButton>
           <LinkButton href={publicPath("products/cocalc-plus")}>
             Compare with CoCalc Plus
           </LinkButton>
@@ -296,6 +396,8 @@ export default function PublicProductsApp({
         <CocalcPlusPage />
       ) : initialRoute.view === "products-cocalc-rocket" ? (
         <CocalcRocketPage />
+      ) : initialRoute.view === "products-cocalc-star" ? (
+        <CocalcStarPage />
       ) : initialRoute.view === "products-cocalc-launchpad" ? (
         <CocalcLaunchpadPage />
       ) : (
