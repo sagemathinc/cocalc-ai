@@ -29,8 +29,9 @@ import { CourseStore } from "../store";
 import { Result, run_in_all_projects } from "./run-in-all-projects";
 import type { StudentRecord } from "../store";
 
-// for tasks that are "easy" to run in parallel, e.g. starting projects
-export const MAX_PARALLEL_TASKS = 30;
+// Project starts can mount RootFS overlays and update host/control-plane state.
+// Keep course-wide start/stop fanout conservative for single-host Star installs.
+export const MAX_PARALLEL_TASKS = 5;
 
 export const RESEND_INVITE_BEFORE = days_ago(RESEND_INVITE_INTERVAL_DAYS);
 
