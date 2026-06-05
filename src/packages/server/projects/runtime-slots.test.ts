@@ -37,6 +37,7 @@ function makeSlot(project_id: string) {
 describe("runtime slot admission", () => {
   beforeEach(() => {
     delete process.env.COCALC_SETUP_PROFILE;
+    delete process.env.COCALC_STAR_MAX_RUNNING_PROJECTS;
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
@@ -50,6 +51,12 @@ describe("runtime slot admission", () => {
       }
       if (sql.includes("SELECT sponsor_account_id")) {
         return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("COUNT(DISTINCT project_id)")) {
+        return {
+          rows: [{ count: 0, includes_project: false }],
+          rowCount: 1,
+        };
       }
       if (sql.includes("SELECT banned FROM accounts")) {
         return { rows: [{ banned: false }], rowCount: 1 };
@@ -101,6 +108,12 @@ describe("runtime slot admission", () => {
       if (sql.includes("SELECT sponsor_account_id")) {
         return { rows: [makeSlot("other-project")], rowCount: 1 };
       }
+      if (sql.includes("COUNT(DISTINCT project_id)")) {
+        return {
+          rows: [{ count: 1, includes_project: false }],
+          rowCount: 1,
+        };
+      }
       if (sql.includes("SELECT banned FROM accounts")) {
         return { rows: [{ banned: false }], rowCount: 1 };
       }
@@ -136,6 +149,12 @@ describe("runtime slot admission", () => {
       if (sql.includes("SELECT sponsor_account_id")) {
         return { rows: [makeSlot("other-project")], rowCount: 1 };
       }
+      if (sql.includes("COUNT(DISTINCT project_id)")) {
+        return {
+          rows: [{ count: 1, includes_project: false }],
+          rowCount: 1,
+        };
+      }
       if (sql.includes("SELECT banned FROM accounts")) {
         return { rows: [{ banned: false }], rowCount: 1 };
       }
@@ -153,6 +172,84 @@ describe("runtime slot admission", () => {
     });
     expect(result.limit).toBeUndefined();
     expect(result.current).toBe(2);
+    expect(queryMock).toHaveBeenCalledWith("COMMIT");
+  });
+
+  it("enforces the global Star running-project cap", async () => {
+    process.env.COCALC_SETUP_PROFILE = "star";
+    process.env.COCALC_STAR_MAX_RUNNING_PROJECTS = "1";
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("UPDATE project_runtime_slots")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("COUNT(DISTINCT project_id)")) {
+        return {
+          rows: [{ count: 1, includes_project: false }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("SELECT banned FROM accounts")) {
+        return { rows: [{ banned: false }], rowCount: 1 };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const { reserveProjectRuntimeSlotLocal } = await import("./runtime-slots");
+    await expect(
+      reserveProjectRuntimeSlotLocal({
+        sponsor_account_id: "sponsor",
+        project_id: "project-1",
+        owning_bay_id: "bay-0",
+      }),
+    ).rejects.toThrow("CoCalc Star is already running 1/1 projects");
+    expect(queryMock).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("allows Star heartbeat/reservation refresh for a project already counted in the global cap", async () => {
+    process.env.COCALC_SETUP_PROFILE = "star";
+    process.env.COCALC_STAR_MAX_RUNNING_PROJECTS = "1";
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("UPDATE project_runtime_slots")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("COUNT(DISTINCT project_id)")) {
+        return {
+          rows: [{ count: 1, includes_project: true }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("SELECT sponsor_account_id")) {
+        return { rows: [makeSlot("project-1")], rowCount: 1 };
+      }
+      if (sql.includes("SELECT banned FROM accounts")) {
+        return { rows: [{ banned: false }], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO project_runtime_slots")) {
+        return { rows: [makeSlot("project-1")], rowCount: 1 };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const { reserveProjectRuntimeSlotLocal } = await import("./runtime-slots");
+    const result = await reserveProjectRuntimeSlotLocal({
+      sponsor_account_id: "sponsor",
+      project_id: "project-1",
+      owning_bay_id: "bay-0",
+    });
+    expect(result.limit).toBeUndefined();
+    expect(result.current).toBe(1);
     expect(queryMock).toHaveBeenCalledWith("COMMIT");
   });
 
