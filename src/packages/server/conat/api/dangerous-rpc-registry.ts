@@ -837,7 +837,13 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   },
   "system.setSiteSettings": {
     decision: "fresh-auth-required",
-    reason: "global site settings mutation propagates across bays",
+    reason:
+      "seed-authoritative global site settings mutation propagates across bays",
+  },
+  "system.setSiteSettingsOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "inter-bay seed implementation for site settings; public callers must use setSiteSettings with fresh auth",
   },
   "system.sendEmailVerification": {
     decision: "fresh-auth-not-required",

@@ -733,10 +733,12 @@ async function logSignupEmailDomainPolicyChange({
   account_id,
   updates,
   oldSettings,
+  source_bay_id,
 }: {
   account_id?: string;
   updates: SiteSettingUpdate[];
   oldSettings: SignupEmailDomainPolicySettings;
+  source_bay_id?: string | null;
 }): Promise<void> {
   const changed_setting_names = updates
     .map(({ name }) => name)
@@ -756,6 +758,7 @@ async function logSignupEmailDomainPolicyChange({
     value: {
       account_id,
       bay_id: getConfiguredBayId(),
+      source_bay_id: source_bay_id ?? getConfiguredBayId(),
       changed_setting_names,
       old_policy: auditSignupEmailDomainPolicy(
         normalizeSignupEmailDomainPolicy(oldSettings),
@@ -821,6 +824,55 @@ async function propagateSiteSettingsToBays(
   return { local_bay_id, count: settings.length, bays };
 }
 
+export async function setSiteSettingsOnSeed({
+  account_id,
+  settings,
+  source_bay_id,
+}: {
+  account_id?: string;
+  settings: SiteSettingUpdate[];
+  source_bay_id?: string | null;
+}): Promise<SiteSettingsSyncResult> {
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    throw Error(
+      `setSiteSettingsOnSeed must run on seed bay '${seedBayId}', not '${localBayId}'`,
+    );
+  }
+  const updates = settings.map(normalizeSiteSettingUpdate);
+  const signupEmailDomainPolicyOldSettings = updates.some(({ name }) =>
+    isSignupEmailDomainPolicySetting(name),
+  )
+    ? await getSignupEmailDomainPolicySettings()
+    : undefined;
+  for (const update of updates) {
+    await setSiteSettingLocal(update);
+  }
+  if (signupEmailDomainPolicyOldSettings != null) {
+    await logSignupEmailDomainPolicyChange({
+      account_id,
+      updates,
+      oldSettings: signupEmailDomainPolicyOldSettings,
+      source_bay_id,
+    });
+  }
+  return await propagateSiteSettingsToBays(updates);
+}
+
+async function syncSiteSettingsToBaysOnSeed(): Promise<SiteSettingsSyncResult> {
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    throw Error(
+      `syncSiteSettingsToBaysOnSeed must run on seed bay '${seedBayId}', not '${localBayId}'`,
+    );
+  }
+  return await propagateSiteSettingsToBays(
+    await getConfiguredSiteSettingUpdates(),
+  );
+}
+
 export async function setSiteSettings({
   account_id,
   browser_id,
@@ -840,22 +892,21 @@ export async function setSiteSettings({
     require_second_factor: true,
   });
   const updates = settings.map(normalizeSiteSettingUpdate);
-  const signupEmailDomainPolicyOldSettings = updates.some(({ name }) =>
-    isSignupEmailDomainPolicySetting(name),
-  )
-    ? await getSignupEmailDomainPolicySettings()
-    : undefined;
-  for (const update of updates) {
-    await setSiteSettingLocal(update);
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 15_000 })
+      .setSiteSettings({
+        account_id,
+        settings: updates,
+        source_bay_id: localBayId,
+      });
   }
-  if (signupEmailDomainPolicyOldSettings != null) {
-    await logSignupEmailDomainPolicyChange({
-      account_id,
-      updates,
-      oldSettings: signupEmailDomainPolicyOldSettings,
-    });
-  }
-  return await propagateSiteSettingsToBays(updates);
+  return await setSiteSettingsOnSeed({
+    account_id,
+    settings: updates,
+  });
 }
 
 export async function manageApiKeys({
@@ -907,9 +958,17 @@ export async function syncSiteSettingsToBays({
   account_id?: string;
 } = {}): Promise<SiteSettingsSyncResult> {
   await assertAdmin(account_id);
-  return await propagateSiteSettingsToBays(
-    await getConfiguredSiteSettingUpdates(),
-  );
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 15_000 })
+      .syncSiteSettings({
+        account_id,
+        source_bay_id: localBayId,
+      });
+  }
+  return await syncSiteSettingsToBaysOnSeed();
 }
 
 export async function setBayProjectOwnershipAdmission({

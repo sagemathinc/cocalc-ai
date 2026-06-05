@@ -46,6 +46,7 @@ import type {
   ProjectRuntimeSlotReport,
   RootfsQuotaReport,
   ServiceAdmissionDenialReport,
+  SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
 import type {
   ProjectActiveOperationSummary,
@@ -1355,6 +1356,17 @@ export interface BayOpsSetServerSettingRequest {
   readonly?: boolean;
 }
 
+export interface BayOpsSetSiteSettingsRequest {
+  account_id?: string;
+  settings: { name: string; value: string }[];
+  source_bay_id?: string | null;
+}
+
+export interface BayOpsSyncSiteSettingsRequest {
+  account_id?: string;
+  source_bay_id?: string | null;
+}
+
 export interface AuthTokenRequiresRequest {}
 
 export interface AuthTokenRedeemRequest {
@@ -1826,7 +1838,9 @@ export type BayOpsMethod =
   | "get-acp-admission-denial-report"
   | "get-service-admission-denial-report"
   | "get-project-runtime-slot-report"
-  | "set-server-setting";
+  | "set-server-setting"
+  | "set-site-settings"
+  | "sync-site-settings";
 export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
@@ -2892,6 +2906,12 @@ export interface InterBayBayOpsApi {
     opts: BayOpsProjectRuntimeSlotReportRequest,
   ) => Promise<ProjectRuntimeSlotReport>;
   setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
+  setSiteSettings: (
+    opts: BayOpsSetSiteSettingsRequest,
+  ) => Promise<SiteSettingsSyncResult>;
+  syncSiteSettings: (
+    opts: BayOpsSyncSiteSettingsRequest,
+  ) => Promise<SiteSettingsSyncResult>;
 }
 
 export interface InterBayAuthTokenApi {
@@ -6167,6 +6187,18 @@ export function createInterBayBayOpsClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "set-server-setting" }),
   });
+  const setSiteSettingsClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "setSiteSettings">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "set-site-settings" }),
+  });
+  const syncSiteSettingsClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "syncSiteSettings">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "sync-site-settings" }),
+  });
   const rootfsQuotaReportClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getRootfsQuotaReport">
   >({
@@ -6231,6 +6263,10 @@ export function createInterBayBayOpsClient({
       await projectRuntimeSlotReportClient.getProjectRuntimeSlotReport(opts),
     setServerSetting: async (opts) =>
       await setServerSettingClient.setServerSetting(opts),
+    setSiteSettings: async (opts) =>
+      await setSiteSettingsClient.setSiteSettings(opts),
+    syncSiteSettings: async (opts) =>
+      await syncSiteSettingsClient.syncSiteSettings(opts),
   };
 }
 
@@ -6305,6 +6341,28 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         setServerSetting: async (opts) => await impl.setServerSetting(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "setSiteSettings">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "set-site-settings",
+      }),
+      impl: {
+        setSiteSettings: async (opts) => await impl.setSiteSettings(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "syncSiteSettings">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "sync-site-settings",
+      }),
+      impl: {
+        syncSiteSettings: async (opts) => await impl.syncSiteSettings(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsCatalog">>({

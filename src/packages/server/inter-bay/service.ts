@@ -357,6 +357,8 @@ import {
   getProjectRuntimeSlotReport,
   getRootfsQuotaReport,
   getServiceAdmissionDenialReport,
+  setSiteSettingsOnSeed,
+  syncSiteSettingsToBays,
 } from "@cocalc/server/conat/api/system";
 import {
   setLocalProjectManageUsersOwnerOnly,
@@ -493,6 +495,9 @@ async function startBayOpsService(): Promise<void> {
     setServerSetting: async (opts) => {
       await callback2(db().set_server_setting, opts);
     },
+    setSiteSettings: async (opts) => await setSiteSettingsOnSeed(opts),
+    syncSiteSettings: async (opts) =>
+      await syncSiteSettingsToBays({ account_id: opts.account_id }),
   };
   services.push(
     ...createInterBayBayOpsHandlers({

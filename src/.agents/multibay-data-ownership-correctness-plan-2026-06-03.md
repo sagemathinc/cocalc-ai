@@ -892,15 +892,40 @@ Important distinction:
 
 ### Phase 8: Global Config Seed Authority
 
+Status: seed-authoritative write routing implemented first pass.
+
 Tasks:
 
-- implement seed-routed `setSiteSettings`;
+- implement seed-routed `setSiteSettings`; (first pass done)
 - add `server_settings` versioning;
 - add attached-bay mirror apply path;
 - add periodic repair/sync worker;
 - add admin propagation status UI;
 - then bring `membership_tiers`, global buckets/repos, and catalog config under
   the same framework where appropriate.
+
+Implemented:
+
+- public `system.setSiteSettings` still authenticates and requires fresh 2FA on
+  the receiving bay, but attached bays now forward the mutation to the seed bay
+  instead of writing local `server_settings` first;
+- `system.syncSiteSettingsToBays` also forwards to seed when invoked on an
+  attached bay, so manual repair syncs use seed as source of truth;
+- seed applies validated settings locally, then fans out mirror writes to
+  attached bays through the existing internal Bay Ops `setServerSetting` path;
+- the inter-bay Bay Ops service has explicit internal `setSiteSettings` and
+  `syncSiteSettings` methods for this seed-authoritative path;
+- signup email-domain policy audit logs include both the seed write bay and the
+  source bay that initiated the admin request.
+
+Still needed:
+
+- add version/epoch tables for `server_settings`;
+- record per-bay applied versions and last propagation errors;
+- add a periodic seed-to-bay repair worker;
+- expose propagation status in admin UI;
+- eventually make attached-bay mirror apply require a seed/internal authority
+  token distinct from generic Bay Ops trust.
 
 ### Phase 9: Drain Safety Gate
 
