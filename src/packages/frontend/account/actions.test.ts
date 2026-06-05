@@ -6,10 +6,18 @@
 import { AccountActions } from "./actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import api from "@cocalc/frontend/client/api";
+import { refreshAccountSnapshot } from "./table";
+
+const refreshAccountSnapshotMock =
+  refreshAccountSnapshot as jest.MockedFunction<typeof refreshAccountSnapshot>;
 
 jest.mock("@cocalc/frontend/client/api", () => ({
   __esModule: true,
   default: jest.fn(),
+}));
+
+jest.mock("./table", () => ({
+  refreshAccountSnapshot: jest.fn(async () => undefined),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -26,6 +34,10 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 
 describe("AccountActions.set_other_settings", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it("replaces the nested other_settings object instead of deep-merging it", () => {
     let currentOtherSettings: Record<string, any> = {
       vertical_fixed_bar: "both",
@@ -66,6 +78,17 @@ describe("AccountActions.set_other_settings", () => {
       },
       "shallow",
     );
+  });
+
+  it("repairs account projection with an explicit reason", async () => {
+    await AccountActions.prototype.repairAccountProjection.call(
+      {},
+      {
+        reason: "foreground-wake",
+      },
+    );
+
+    expect(refreshAccountSnapshotMock).toHaveBeenCalledWith("foreground-wake");
   });
 });
 

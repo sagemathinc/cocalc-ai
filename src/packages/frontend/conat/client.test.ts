@@ -5220,6 +5220,7 @@ describe("ConatClient main reconnect scheduling", () => {
     try {
       const projectId = "00000000-0000-4000-8000-000000000001";
       const ensureHostInfo = jest.fn();
+      const repairAccountProjection = jest.fn(async () => {});
       const repairProjectProjection = jest.fn(async () => {});
       const clients: any[] = [];
 
@@ -5279,6 +5280,7 @@ describe("ConatClient main reconnect scheduling", () => {
           }),
           getActions: jest.fn(() => ({
             ensure_host_info: ensureHostInfo,
+            repairAccountProjection,
             repairProjectProjection,
           })),
         },
@@ -5404,6 +5406,9 @@ describe("ConatClient main reconnect scheduling", () => {
 
       await jest.advanceTimersByTimeAsync(5_000);
       expect(resourceReconnect).toHaveBeenCalledTimes(1);
+      expect(repairAccountProjection).toHaveBeenCalledWith({
+        reason: "foreground-wake",
+      });
       expect(repairProjectProjection).toHaveBeenCalledWith({
         kind: "project-ids",
         project_ids: [projectId],

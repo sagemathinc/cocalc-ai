@@ -23,6 +23,14 @@ import {
   recordProjectionRepairFailure,
 } from "@cocalc/frontend/projection-diagnostics";
 
+export type AccountProjectionRepairReason =
+  | "write-ack"
+  | "history-gap"
+  | "foreground-wake"
+  | "manual-refresh"
+  | "diagnostic"
+  | "snapshot-refresh";
+
 export function normalizeAccountPatch(redux, obj: Record<string, any>) {
   const next = { ...obj };
   if (next.other_settings != null) {
@@ -195,27 +203,31 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
   }
 }
 
-export const refreshAccountSnapshot = reuseInFlight(async (): Promise<void> => {
-  if (realtimeRedux == null || recreateAccountTable == null) {
-    return;
-  }
-  recordProjectionRepair({
-    consumer: "account",
-    reason: "snapshot-refresh",
-    scope: "accounts",
-  });
-  try {
-    recreateAccountTable(realtimeRedux);
-  } catch (err) {
-    recordProjectionRepairFailure({
+export const refreshAccountSnapshot = reuseInFlight(
+  async (
+    reason: AccountProjectionRepairReason = "snapshot-refresh",
+  ): Promise<void> => {
+    if (realtimeRedux == null || recreateAccountTable == null) {
+      return;
+    }
+    recordProjectionRepair({
       consumer: "account",
-      reason: "snapshot-refresh",
+      reason,
       scope: "accounts",
-      error: err,
     });
-    throw err;
-  }
-});
+    try {
+      recreateAccountTable(realtimeRedux);
+    } catch (err) {
+      recordProjectionRepairFailure({
+        consumer: "account",
+        reason,
+        scope: "accounts",
+        error: err,
+      });
+      throw err;
+    }
+  },
+);
 
 function handleRealtimeFeedChange(
   event?: AccountFeedEvent,
@@ -244,7 +256,7 @@ function handleRealtimeFeedHistoryGap(info?: any): void {
     consumer: "account",
     info,
   });
-  void refreshAccountSnapshot();
+  void refreshAccountSnapshot("history-gap");
 }
 
 export function initAccountRealtime(opts: {

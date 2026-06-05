@@ -28,12 +28,21 @@ import {
   getSettingsUrlPath,
   parseAccountSettingsRoute,
 } from "./settings-routing";
-import { refreshAccountSnapshot } from "./table";
+import {
+  refreshAccountSnapshot,
+  type AccountProjectionRepairReason,
+} from "./table";
 import {
   recordProjectionAckConverged,
   recordProjectionAckFailed,
   recordProjectionAckStart,
 } from "@cocalc/frontend/projection-diagnostics";
+
+export type AccountProjectionRepairRequest = {
+  fields?: string[];
+  reason: AccountProjectionRepairReason;
+  force?: boolean;
+};
 
 // Define account actions
 export class AccountActions extends Actions<AccountState> {
@@ -247,6 +256,12 @@ export class AccountActions extends Actions<AccountState> {
     this.redux.getTable("account").set(obj);
   }
 
+  public async repairAccountProjection(
+    request: AccountProjectionRepairRequest,
+  ): Promise<void> {
+    await refreshAccountSnapshot(request.reason);
+  }
+
   public set_other_settings(name: string, value: any): void {
     void this.setOtherSettingsAndWaitForProjection(name, value).catch((err) => {
       console.warn("error setting account other_settings", {
@@ -285,7 +300,7 @@ export class AccountActions extends Actions<AccountState> {
         });
         return;
       }
-      await refreshAccountSnapshot();
+      await refreshAccountSnapshot("write-ack");
       if (await this.waitForOtherSettingProjection(name, value)) {
         recordProjectionAckConverged({
           consumer: "account",

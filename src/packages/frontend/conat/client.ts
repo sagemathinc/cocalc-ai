@@ -151,6 +151,7 @@ const ROUTED_HOST_RECONNECT_DELAYS_MS = [750, 2_000, 5_000] as const;
 const ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
+const FOREGROUND_WAKE_ACCOUNT_REPAIR_TIMEOUT_MS = 5_000;
 const FOREGROUND_WAKE_PROJECTION_REPAIR_TIMEOUT_MS = 5_000;
 const STALE_HUB_FORCE_RECONNECT_GRACE_MS = 5_000;
 const FOREGROUND_WAKE_PROJECT_HOST_PROBE_CONCURRENCY = 4;
@@ -479,7 +480,10 @@ export class ConatClient extends EventEmitter {
         return;
       }
       await this.probeRoutedHostsAfterForegroundWake(hiddenForMs);
-      await this.repairOpenProjectProjectionsAfterForegroundWake();
+      await Promise.all([
+        this.repairAccountProjectionAfterForegroundWake(),
+        this.repairOpenProjectProjectionsAfterForegroundWake(),
+      ]);
       this.reconnectCoordinator.requestResourceReconnects({
         includeBackground: true,
         force: true,
@@ -494,6 +498,29 @@ export class ConatClient extends EventEmitter {
         this.foregroundWakeRecovery = undefined;
       });
     await this.foregroundWakeRecovery;
+  };
+
+  private repairAccountProjectionAfterForegroundWake = async () => {
+    const actions = redux.getActions("account") as
+      | {
+          repairAccountProjection?: (request: {
+            reason: "foreground-wake";
+          }) => Promise<void>;
+        }
+      | undefined;
+    if (actions?.repairAccountProjection == null) {
+      return;
+    }
+    try {
+      await withTimeout(
+        actions.repairAccountProjection({
+          reason: "foreground-wake",
+        }),
+        FOREGROUND_WAKE_ACCOUNT_REPAIR_TIMEOUT_MS,
+      );
+    } catch (err) {
+      console.warn("foreground wake account projection repair failed", err);
+    }
   };
 
   private repairOpenProjectProjectionsAfterForegroundWake = async () => {
