@@ -122,4 +122,69 @@ describe("account lro summary feed reconnect handling", () => {
       resetAccountLroSummaryFeedForTests();
     }
   });
+
+  it("records lro summary feed diagnostics and history-gap repair", async () => {
+    const feed = new FakeDStream();
+    getSharedAccountDStream.mockResolvedValueOnce(feed);
+
+    const {
+      collectProjectionDiagnostics: collect,
+      resetProjectionDiagnosticsForTests,
+    } = await import("@cocalc/frontend/projection-diagnostics");
+    resetProjectionDiagnosticsForTests();
+    const {
+      getAccountLroSummaries,
+      resetAccountLroSummaryFeedForTests,
+      subscribeAccountLroSummaryFeed,
+    } = await import("./account-summary-feed");
+    const reasons: string[] = [];
+    const unsubscribe = subscribeAccountLroSummaryFeed((reason) => {
+      reasons.push(reason);
+    });
+    try {
+      await flush();
+
+      expect(collect().consumers["lro-summary"].attach_count).toBe(1);
+
+      feed.emit(
+        "change",
+        {
+          type: "lro.summary",
+          account_id: "account-1",
+          ts: Date.now(),
+          summary: {
+            op_id: "op-1",
+            kind: "project-start",
+            status: "running",
+            scope_type: "project",
+            scope_id: "project-1",
+            created_at: "2026-06-05T00:00:00.000Z",
+            updated_at: "2026-06-05T00:00:00.000Z",
+          },
+        },
+        12,
+      );
+
+      expect(getAccountLroSummaries()).toHaveLength(1);
+      expect(collect().consumers["lro-summary"].last_event_type).toBe(
+        "lro.summary",
+      );
+      expect(collect().consumers["lro-summary"].last_seq).toBe(12);
+
+      reasons.length = 0;
+      feed.emit("history-gap", {
+        requested_start_seq: 3,
+        effective_start_seq: 7,
+      });
+
+      expect(reasons).toEqual(["reset"]);
+      const diagnostics = collect().consumers["lro-summary"];
+      expect(diagnostics.history_gap_count).toBe(1);
+      expect(diagnostics.last_repair_reason).toBe("history-gap");
+      expect(diagnostics.last_repair_scope).toBe("active-scopes");
+    } finally {
+      unsubscribe();
+      resetAccountLroSummaryFeedForTests();
+    }
+  });
 });
