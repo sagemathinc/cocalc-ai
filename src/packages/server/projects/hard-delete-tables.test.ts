@@ -9,8 +9,12 @@ import {
   PROJECT_HARD_DELETE_SEED_GLOBAL_TABLES,
   PROJECT_HARD_DELETE_SIDE_TABLES,
 } from "./hard-delete-tables";
+import {
+  PROJECT_REHOME_PORTABLE_SQL_TABLES,
+  PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS,
+} from "./rehome-side-tables";
 
-const PROJECT_REHOME_PORTABLE_SQL_TABLES = new Set<string>();
+const PORTABLE_TABLES = new Set(PROJECT_REHOME_PORTABLE_SQL_TABLES);
 
 describe("project hard-delete table ownership audit", () => {
   it("classifies every SQL side table that project hard-delete cleans up", () => {
@@ -27,11 +31,57 @@ describe("project hard-delete table ownership audit", () => {
       return (
         entry?.ownership === "project-owning" &&
         entry.portability === "portable" &&
-        !PROJECT_REHOME_PORTABLE_SQL_TABLES.has(table)
+        !PORTABLE_TABLES.has(table)
       );
     });
 
     expect(unsafePortable).toEqual([]);
+  });
+
+  it("has an explicit project rehome decision for every hard-delete side table", () => {
+    const decisions = new Set(
+      Object.keys(PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS),
+    );
+    const missing = PROJECT_HARD_DELETE_SIDE_TABLES.filter(
+      (table) => !decisions.has(table),
+    );
+    const extras = [...decisions].filter(
+      (table) => !PROJECT_HARD_DELETE_SIDE_TABLES.includes(table as any),
+    );
+
+    expect(missing).toEqual([]);
+    expect(extras).toEqual([]);
+  });
+
+  it("keeps project rehome side-table decisions consistent with ownership", () => {
+    const mismatches = Object.values(PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS)
+      .map((decision) => {
+        const entry = POSTGRES_TABLE_OWNERSHIP[decision.table];
+        if (!entry) {
+          return `${decision.table}: missing ownership`;
+        }
+        if (
+          decision.status === "seed-global-cleanup" &&
+          entry.ownership !== "seed-global"
+        ) {
+          return `${decision.table}: expected seed-global`;
+        }
+        if (
+          decision.status === "projection" &&
+          entry.ownership !== "projection"
+        ) {
+          return `${decision.table}: expected projection`;
+        }
+        if (
+          decision.status === "audit-local" &&
+          entry.ownership !== "audit-local"
+        ) {
+          return `${decision.table}: expected audit-local`;
+        }
+      })
+      .filter(Boolean);
+
+    expect(mismatches).toEqual([]);
   });
 
   it("keeps seed-global cleanup out of the local project-id delete list", () => {

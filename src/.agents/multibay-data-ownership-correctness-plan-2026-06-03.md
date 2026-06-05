@@ -845,6 +845,14 @@ Implemented:
   of the local project-owned table cleanup loop;
 - added hard-delete integration coverage for releasing project app public
   subdomains and DNS records.
+- added an explicit project-rehome SQL side-table decision manifest:
+  - no SQL side table is marked portable for the current release;
+  - projection rows are documented as rebuildable/refreshable;
+  - heavy data-plane tables are explicitly excluded from hub-mediated rehome;
+  - sensitive control-plane tables such as `project_secrets`,
+    `project_backup_indexes`, and project-scoped `external_credentials` remain
+    non-portable until they have table-specific copy, crypto/key, and
+    invalidation semantics.
 
 Tasks:
 
@@ -852,11 +860,14 @@ Tasks:
 - classify each table as project-owning/projection/cache/ephemeral;
 - extend project rehome only for control-plane metadata that must survive;
 - explicitly exclude heavy project data-plane tables unless needed.
-- decide whether any SQL side tables become project-rehome portable:
-  - likely candidates: `project_secrets`, `project_backup_indexes`, selected
-    project-scoped `external_credentials`;
-  - likely non-candidates: `blobs`, `syncstrings`, `patches`, `cursors`, large
-    data-plane content.
+- if project rehome is ever promoted beyond an unsafe escape hatch, design
+  table-specific portability for:
+  - `project_secrets`: decrypt/re-encrypt or shared-key model plus runtime cache
+    invalidation;
+  - `project_backup_indexes`: backup storage/bucket/object reconciliation;
+  - project-scoped `external_credentials`: encrypted credential copy and routing
+    semantics;
+  - access/public metadata such as listings/invites/public exposure.
 
 Important distinction:
 
