@@ -151,6 +151,7 @@ const ROUTED_HOST_RECONNECT_DELAYS_MS = [750, 2_000, 5_000] as const;
 const ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
+const FOREGROUND_WAKE_PROJECTION_REPAIR_TIMEOUT_MS = 5_000;
 const STALE_HUB_FORCE_RECONNECT_GRACE_MS = 5_000;
 const FOREGROUND_WAKE_PROJECT_HOST_PROBE_CONCURRENCY = 4;
 const RECONNECT_DEBUG_STORAGE_KEY = "cocalc.debug.reconnect";
@@ -478,6 +479,7 @@ export class ConatClient extends EventEmitter {
         return;
       }
       await this.probeRoutedHostsAfterForegroundWake(hiddenForMs);
+      await this.repairOpenProjectProjectionsAfterForegroundWake();
       this.reconnectCoordinator.requestResourceReconnects({
         includeBackground: true,
         force: true,
@@ -492,6 +494,48 @@ export class ConatClient extends EventEmitter {
         this.foregroundWakeRecovery = undefined;
       });
     await this.foregroundWakeRecovery;
+  };
+
+  private repairOpenProjectProjectionsAfterForegroundWake = async () => {
+    const projectsStore = redux.getStore("projects");
+    const openProjects = projectsStore?.get("open_projects");
+    const project_ids =
+      typeof openProjects?.toArray === "function"
+        ? openProjects.toArray()
+        : Array.isArray(openProjects)
+          ? openProjects
+          : [];
+    const normalizedProjectIds = project_ids.filter(
+      (project_id): project_id is string =>
+        typeof project_id === "string" && project_id.length > 0,
+    );
+    if (normalizedProjectIds.length === 0) {
+      return;
+    }
+    const actions = redux.getActions("projects") as
+      | {
+          repairProjectProjection?: (request: {
+            kind: "project-ids";
+            project_ids: string[];
+            reason: "foreground-wake";
+          }) => Promise<void>;
+        }
+      | undefined;
+    if (actions?.repairProjectProjection == null) {
+      return;
+    }
+    try {
+      await withTimeout(
+        actions.repairProjectProjection({
+          kind: "project-ids",
+          project_ids: normalizedProjectIds,
+          reason: "foreground-wake",
+        }),
+        FOREGROUND_WAKE_PROJECTION_REPAIR_TIMEOUT_MS,
+      );
+    } catch (err) {
+      console.warn("foreground wake project projection repair failed", err);
+    }
   };
 
   private probeRoutedHostsAfterForegroundWake = async (
