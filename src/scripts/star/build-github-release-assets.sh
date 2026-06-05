@@ -88,20 +88,21 @@ CoCalc Star runtime release from commit $(short_head).
 Run this on a fresh Ubuntu VM:
 
 \`\`\`sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \\
-  | sudo STAR_ASSUME_YES=1 bash
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo bash
 \`\`\`
 
-If you know the SSH target for the VM, include it so the installer prints an exact
-port-forward command at the end:
+The installer auto-detects the VM public IPv4 address and uses sslip.io for the
+zero-config public HTTPS onboarding URL when possible.
+
+If you know the SSH target for the VM, include it so the fallback local access
+instructions can print an exact port-forward command:
 
 \`\`\`sh
 curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \\
-  | sudo STAR_ASSUME_YES=1 STAR_SSH_TARGET=ubuntu@<vm-ip-or-hostname> bash
+  | sudo STAR_SSH_TARGET=ubuntu@<vm-ip-or-hostname> bash
 \`\`\`
 
-After install, keep the printed SSH tunnel open on your laptop and open the
-printed local bootstrap URL to create the admin account.
+After install, open the printed public bootstrap URL to create the admin account.
 
 ## Assets
 

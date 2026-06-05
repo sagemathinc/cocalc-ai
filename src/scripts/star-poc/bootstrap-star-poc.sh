@@ -33,6 +33,8 @@ STAR_HARDEN_INSTALL_USER_SUDO="${STAR_HARDEN_INSTALL_USER_SUDO:-0}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-${STAR_HARDEN_INSTALL_USER_SUDO}}"
 STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
 STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
+STAR_AUTO_APT_STATE_DIR=""
+STAR_AUTO_APT_DISABLED=0
 
 log() {
   printf '[star] %s\n' "$*" >&2
@@ -80,6 +82,41 @@ wait_for_apt_locks() {
 apt_get() {
   wait_for_apt_locks
   run apt-get "$@"
+}
+
+automatic_apt_units() {
+  printf '%s\n' apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service
+}
+
+disable_automatic_apt() {
+  STAR_AUTO_APT_DISABLED=1
+  STAR_AUTO_APT_STATE_DIR="$(mktemp -d)"
+  local unit
+  for unit in $(automatic_apt_units); do
+    systemctl is-enabled "$unit" >"${STAR_AUTO_APT_STATE_DIR}/${unit}.enabled" 2>/dev/null || true
+    systemctl is-active "$unit" >"${STAR_AUTO_APT_STATE_DIR}/${unit}.active" 2>/dev/null || true
+  done
+  log "temporarily disabling automatic apt services during install"
+  systemctl stop apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+  systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true
+  systemctl disable apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service >/dev/null 2>&1 || true
+}
+
+restore_automatic_apt() {
+  [ "$STAR_AUTO_APT_DISABLED" = "1" ] || return 0
+  [ -n "$STAR_AUTO_APT_STATE_DIR" ] && [ -d "$STAR_AUTO_APT_STATE_DIR" ] || return 0
+  local unit
+  log "restoring automatic apt service state"
+  for unit in $(automatic_apt_units); do
+    if grep -qx enabled "${STAR_AUTO_APT_STATE_DIR}/${unit}.enabled" 2>/dev/null; then
+      systemctl enable "$unit" >/dev/null 2>&1 || true
+    fi
+    if grep -qx active "${STAR_AUTO_APT_STATE_DIR}/${unit}.active" 2>/dev/null; then
+      systemctl start "$unit" >/dev/null 2>&1 || true
+    fi
+  done
+  rm -rf "$STAR_AUTO_APT_STATE_DIR"
+  STAR_AUTO_APT_DISABLED=0
 }
 
 as_star_user() {
@@ -870,12 +907,14 @@ web_onboarding_exit_trap() {
     star_web_onboarding_write_status "failed" "The CoCalc Star install failed. Check the terminal output or SSH logs on the VM." "" || true
   fi
   star_web_onboarding_stop_server || true
+  restore_automatic_apt || true
   exit "$status"
 }
 
 require_root
-install_packages
 trap web_onboarding_exit_trap EXIT
+disable_automatic_apt
+install_packages
 start_web_onboarding
 install_gpu_support
 star_web_onboarding_write_status "runtime" "Preparing Linux user, Node.js, and Star runtime packages." ""
@@ -897,4 +936,5 @@ publish_default_rootfs
 star_web_onboarding_write_status "systemd" "Installing systemd services and final Caddy routing." ""
 install_systemd
 start_services
+restore_automatic_apt
 trap - EXIT

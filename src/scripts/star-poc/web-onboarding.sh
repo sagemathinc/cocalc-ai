@@ -179,10 +179,7 @@ star_web_onboarding_write_index() {
       min-height: 100vh;
       font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
       color: var(--ink);
-      background:
-        radial-gradient(circle at 15% 10%, rgba(185, 85, 43, 0.16), transparent 32rem),
-        radial-gradient(circle at 85% 20%, rgba(31, 111, 87, 0.18), transparent 30rem),
-        linear-gradient(135deg, #fbf5e9 0%, var(--bg) 60%, #ece1cd 100%);
+      background: var(--bg);
       display: grid;
       place-items: center;
       padding: 2rem;
@@ -450,6 +447,12 @@ star_web_onboarding_wait_for_open() {
   local marker
   marker="$(star_web_onboarding_open_marker)"
   printf '\nOpen this HTTPS onboarding URL to continue the install:\n  %s\n\n' "$(star_web_onboarding_url)" >&2
+  cat >&2 <<'EOF'
+If this URL does not load, the VM has not properly exposed TCP port 443
+publicly. Inspect the VM firewall, network tags, security group, or cloud
+ingress configuration, then refresh the URL.
+
+EOF
   printf 'Waiting up to %s seconds for the browser to reach the VM...\n' "$timeout" >&2
   for _ in $(seq 1 "$timeout"); do
     if [ -f "$marker" ]; then
