@@ -484,6 +484,60 @@ function dateLabel(value?: Date | string | null): string {
   return date.toISOString().slice(0, 10);
 }
 
+function getSiteLicenseDisplayTitle(
+  siteLicense: SiteLicenseOverview["site_license"],
+): string {
+  const name = `${siteLicense.name ?? ""}`.trim();
+  const organizationName = `${siteLicense.organization_name ?? ""}`.trim();
+  const normalizedName = name.toLowerCase();
+  const normalizedOrganizationName = organizationName.toLowerCase();
+  if (
+    name &&
+    organizationName &&
+    normalizedName !== normalizedOrganizationName
+  ) {
+    return `${name} - ${organizationName}`;
+  }
+  return name || organizationName || "Site license";
+}
+
+function siteLicenseDate(value?: Date | string | null): Dayjs | undefined {
+  if (!value) return undefined;
+  const date = dayjs(value);
+  return date.isValid() ? date : undefined;
+}
+
+function formatSiteLicenseDate(value: Dayjs): string {
+  return value.format("MMMM D, YYYY");
+}
+
+function getSiteLicenseLifecycleInfo(
+  siteLicense: SiteLicenseOverview["site_license"],
+): {
+  expired: boolean;
+  expires?: string;
+  starts?: string;
+} {
+  const today = dayjs().startOf("day");
+  const startsAt = siteLicenseDate(siteLicense.starts_at);
+  const expiresAt = siteLicenseDate(siteLicense.expires_at);
+  const starts =
+    startsAt != null && startsAt.startOf("day").isAfter(today)
+      ? `Starts on ${formatSiteLicenseDate(startsAt)}`
+      : undefined;
+  if (expiresAt == null) {
+    return { expired: false, starts };
+  }
+  const expired = expiresAt.startOf("day").isBefore(today);
+  return {
+    expired,
+    expires: `${expired ? "Expired on" : "Valid until"} ${formatSiteLicenseDate(
+      expiresAt,
+    )}`,
+    starts,
+  };
+}
+
 function countPendingRequests(overview: SiteLicenseOverview): number {
   return overview.pending_requests.filter(
     (request) => request.state === "pending",
@@ -1987,6 +2041,18 @@ function SiteLicenseDashboard({
           isAdmin,
           overview,
         });
+        const lifecycleInfo = getSiteLicenseLifecycleInfo(
+          overview.site_license,
+        );
+        const lifecycleItems = [
+          lifecycleInfo.starts,
+          lifecycleInfo.expired ? undefined : lifecycleInfo.expires,
+        ].filter((item): item is string => !!item);
+        const domains = overview.site_license.allowed_domains ?? [];
+        const hasDocuments =
+          !!overview.site_license.terms_version_label ||
+          !!overview.site_license.custom_terms_url ||
+          !!overview.site_license.custom_policy_url;
         return (
           <Card
             key={overview.site_license.id}
@@ -2015,56 +2081,67 @@ function SiteLicenseDashboard({
                   size={8}
                   style={{ maxWidth: 720 }}
                 >
+                  <Title level={3} style={{ color: "white", margin: 0 }}>
+                    {getSiteLicenseDisplayTitle(overview.site_license)}
+                  </Title>
+                  {lifecycleInfo.expired && lifecycleInfo.expires ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      title={lifecycleInfo.expires}
+                      style={{ maxWidth: 520 }}
+                    />
+                  ) : lifecycleItems.length > 0 ? (
+                    <Paragraph style={{ color: "white", marginBottom: 0 }}>
+                      {lifecycleItems.join(" · ")}
+                    </Paragraph>
+                  ) : null}
                   <Space wrap>
-                    <Tag color="blue">Site license</Tag>
-                    <Tag>{overview.site_license.organization_name}</Tag>
-                    {totals.pendingRequests ? (
-                      <Tag color="gold">
-                        {totals.pendingRequests} pending requests
-                      </Tag>
+                    <Text strong style={{ color: "white" }}>
+                      Covered domains:
+                    </Text>
+                    {domains.length > 0 ? (
+                      domains.map((domain) => <Tag key={domain}>{domain}</Tag>)
                     ) : (
-                      <Tag color="green">No pending requests</Tag>
+                      <Text style={{ color: "white" }}>none configured</Text>
                     )}
                   </Space>
-                  <Title level={3} style={{ color: "white", margin: 0 }}>
-                    {overview.site_license.name}
-                  </Title>
-                  <Paragraph style={{ color: "white", marginBottom: 0 }}>
-                    {dateLabel(overview.site_license.starts_at)} to{" "}
-                    {dateLabel(overview.site_license.expires_at)}
-                    {" · "}
-                    renewal {overview.site_license.renewal_policy ?? "none"}
-                    {" · "}
-                    overage {overview.site_license.overage_policy ?? "none"}
-                  </Paragraph>
-                  <Space wrap>
-                    {overview.site_license.allowed_domains.map((domain) => (
-                      <Tag key={domain}>{domain}</Tag>
-                    ))}
-                    {overview.site_license.terms_version_label ? (
-                      <Tag>{overview.site_license.terms_version_label}</Tag>
-                    ) : null}
-                    {overview.site_license.custom_terms_url ? (
-                      <a
-                        href={overview.site_license.custom_terms_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ color: "white", textDecoration: "underline" }}
-                      >
-                        terms
-                      </a>
-                    ) : null}
-                    {overview.site_license.custom_policy_url ? (
-                      <a
-                        href={overview.site_license.custom_policy_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ color: "white", textDecoration: "underline" }}
-                      >
-                        policy
-                      </a>
-                    ) : null}
-                  </Space>
+                  {hasDocuments ? (
+                    <Space wrap>
+                      <Text strong style={{ color: "white" }}>
+                        Documents:
+                      </Text>
+                      {overview.site_license.terms_version_label ? (
+                        <Tag>{overview.site_license.terms_version_label}</Tag>
+                      ) : null}
+                      {overview.site_license.custom_terms_url ? (
+                        <a
+                          href={overview.site_license.custom_terms_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            color: "white",
+                            textDecoration: "underline",
+                          }}
+                        >
+                          terms
+                        </a>
+                      ) : null}
+                      {overview.site_license.custom_policy_url ? (
+                        <a
+                          href={overview.site_license.custom_policy_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            color: "white",
+                            textDecoration: "underline",
+                          }}
+                        >
+                          policy
+                        </a>
+                      ) : null}
+                    </Space>
+                  ) : null}
                 </Space>
                 <Space wrap>
                   <SiteLicenseMetricCard

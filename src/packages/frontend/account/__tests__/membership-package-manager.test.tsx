@@ -171,6 +171,70 @@ const TIERS = [
   },
 ];
 
+function makeSitePackage(patch: Record<string, any> = {}) {
+  return {
+    id: "site-1",
+    owner_account_id: "owner-1",
+    kind: "site",
+    membership_class: "pro",
+    seat_count: 50,
+    active_assignment_count: 0,
+    available_seat_count: 50,
+    assignments: [],
+    metadata: {
+      allowed_domains: ["example.edu"],
+      pool_name: "Students",
+      site_license_id: "license-1",
+      requires_approval: false,
+      verification_policy: "email-domain",
+      exclusive_group: "student",
+    },
+    pool_name: "Students",
+    requires_approval: false,
+    verification_policy: "email-domain",
+    exclusive_group: "student",
+    pending_request_count: 0,
+    ...patch,
+  };
+}
+
+function makeSiteLicenseOverview({
+  managers = [
+    {
+      id: "manager-1",
+      site_license_id: "license-1",
+      account_id: "owner-1",
+      role: "manager",
+    },
+  ],
+  pending_requests = [],
+  pools,
+  site_license = {},
+}: {
+  managers?: any[];
+  pending_requests?: any[];
+  pools?: any[];
+  site_license?: Record<string, any>;
+} = {}) {
+  return {
+    site_license: {
+      id: "license-1",
+      name: "Campus License",
+      organization_name: "Example University",
+      bay_id: "bay-0",
+      owner_account_id: null,
+      allowed_domains: ["example.edu"],
+      metadata: {},
+      ...site_license,
+    },
+    pools: pools ?? [makeSitePackage()],
+    managers,
+    pending_requests,
+    recent_audit_events: [],
+    viewer_role: "manager",
+  };
+}
+
 describe("membership package managers", () => {
   beforeAll(() => {
     Object.defineProperty(window, "getComputedStyle", {
@@ -944,7 +1008,9 @@ describe("membership package managers", () => {
     render(<SiteLicenseManager tiers={TIERS} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Campus License")).toBeTruthy();
+      expect(
+        screen.getByText("Campus License - Example University"),
+      ).toBeTruthy();
     });
 
     expect(screen.queryByText("Site-license manager dashboard")).toBeNull();
@@ -957,6 +1023,99 @@ describe("membership package managers", () => {
         "Only CoCalc admins can change delegated site-license roles.",
       ),
     ).toBeTruthy();
+  });
+
+  it("renders customer-facing site-license header details", async () => {
+    listSiteLicenseOverviews.mockResolvedValue([
+      makeSiteLicenseOverview({
+        pending_requests: [
+          {
+            id: "request-1",
+            site_license_id: "license-1",
+            package_id: "site-1",
+            account_id: "student-1",
+            matched_email_address: "ada@greatplains.edu",
+            canonical_identity: "ada@greatplains.edu",
+            requested_membership_class: "pro",
+            state: "pending",
+            requested_at: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+        pools: [
+          makeSitePackage({
+            pending_request_count: 1,
+          }),
+        ],
+        site_license: {
+          name: "CoCalc",
+          organization_name: "University of Great Plains",
+          allowed_domains: ["greatplains.edu"],
+          starts_at: new Date(2099, 5, 5),
+          expires_at: new Date(2099, 11, 31),
+          renewal_policy: "annual",
+          overage_policy: "hard-cap",
+        },
+      }),
+    ]);
+
+    render(<SiteLicenseManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("CoCalc - University of Great Plains"),
+      ).toBeTruthy();
+    });
+    expect(
+      screen.getByText(
+        "Starts on June 5, 2099 · Valid until December 31, 2099",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Covered domains:")).toBeTruthy();
+    expect(screen.getByText("greatplains.edu")).toBeTruthy();
+    expect(screen.queryByText("Site license")).toBeNull();
+    expect(screen.queryByText("University of Great Plains")).toBeNull();
+    expect(screen.queryByText("1 pending requests")).toBeNull();
+    expect(screen.queryByText(/renewal/i)).toBeNull();
+    expect(screen.queryByText(/overage/i)).toBeNull();
+  });
+
+  it("falls back to organization name when the license title is empty", async () => {
+    listSiteLicenseOverviews.mockResolvedValue([
+      makeSiteLicenseOverview({
+        site_license: {
+          name: "",
+          organization_name: "Example University",
+          allowed_domains: [],
+        },
+      }),
+    ]);
+
+    render(<SiteLicenseManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Example University")).toBeTruthy();
+    });
+    expect(screen.queryByText(" - Example University")).toBeNull();
+    expect(screen.getByText("none configured")).toBeTruthy();
+  });
+
+  it("renders expired site licenses prominently without start dates", async () => {
+    listSiteLicenseOverviews.mockResolvedValue([
+      makeSiteLicenseOverview({
+        site_license: {
+          starts_at: new Date(2000, 0, 1),
+          expires_at: new Date(2000, 5, 5),
+        },
+      }),
+    ]);
+
+    render(<SiteLicenseManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Expired on June 5, 2000")).toBeTruthy();
+    });
+    expect(screen.queryByText(/Starts on/)).toBeNull();
+    expect(screen.queryByText(/Valid until/)).toBeNull();
   });
 
   it("uses the server-provided site-license viewer role for manager actions", async () => {
