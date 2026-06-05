@@ -438,6 +438,13 @@ prepare_runtime_artifacts() {
 
 ensure_btrfs() {
   mkdir -p /var/lib/cocalc /mnt/cocalc
+  if mountpoint -q /mnt/cocalc; then
+    local fstype
+    fstype="$(findmnt -n -o FSTYPE --target /mnt/cocalc 2>/dev/null || true)"
+    if [ "$fstype" != "btrfs" ]; then
+      die "/mnt/cocalc is already mounted as ${fstype:-unknown}, but CoCalc Star project storage requires btrfs subvolume support. Use a fresh supported Ubuntu 24.04 VM, unmount /mnt/cocalc, or configure STAR_BTRFS_IMAGE/STAR_BTRFS_SIZE so the installer can mount a btrfs data image."
+    fi
+  fi
   if [ ! -f "$STAR_BTRFS_IMAGE" ]; then
     run truncate -s "$STAR_BTRFS_SIZE" "$STAR_BTRFS_IMAGE"
     run mkfs.btrfs -f "$STAR_BTRFS_IMAGE"
@@ -447,6 +454,9 @@ ensure_btrfs() {
   fi
   if ! mountpoint -q /mnt/cocalc; then
     run mount /mnt/cocalc
+  fi
+  if [ "$(findmnt -n -o FSTYPE --target /mnt/cocalc 2>/dev/null || true)" != "btrfs" ]; then
+    die "/mnt/cocalc is not mounted as btrfs after setup; CoCalc Star cannot safely start projects without btrfs subvolume support."
   fi
   mkdir -p /mnt/cocalc/data/tmp /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
   chmod 1777 /mnt/cocalc/data/tmp
