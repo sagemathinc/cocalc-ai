@@ -902,7 +902,7 @@ Tasks:
 - add attached-bay mirror apply path; (first pass done)
 - add admin propagation status API; (first pass done)
 - add periodic repair/sync worker; (first pass done for `server_settings`)
-- add admin propagation status UI;
+- add admin propagation status UI; (first pass done for Site Settings)
 - then bring `membership_tiers`, global buckets/repos, and catalog config under
   the same framework where appropriate.
 
@@ -930,11 +930,13 @@ Implemented:
   the seed for authoritative reads;
 - seed/standalone Conat startup runs global config mirror repair maintenance for
   `scope='server_settings'`, which checks propagation state and only calls the
-  seed sync path when a bay is stale, missing, or errored.
+  seed sync path when a bay is stale, missing, or errored;
+- the admin Site Settings page shows seed version and per-bay propagation state
+  for `scope='server_settings'`, with manual refresh and automatic refresh after
+  saves or explicit syncs.
 
 Still needed:
 
-- expose propagation status in admin UI;
 - eventually make attached-bay mirror apply require a seed/internal authority
   token distinct from generic Bay Ops trust.
 
