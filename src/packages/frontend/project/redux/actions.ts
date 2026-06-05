@@ -1181,8 +1181,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
         const info = store.get("open_files").getIn([path, "component"]) as any;
         if (info == null) {
-          // shouldn't happen...
-          return;
+          // Lazy session restore creates tab rows without editor component
+          // bootstrap. Foregrounding such a tab is the signal to hydrate it.
+          this.open_files?.set(path, "component", {});
         }
         this.ensureOpenFileComponent(path, { noFocus: opts.noFocus });
     }
