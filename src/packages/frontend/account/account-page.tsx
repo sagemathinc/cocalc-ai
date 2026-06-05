@@ -135,9 +135,9 @@ export const AccountPage: React.FC = () => {
     const titles: Partial<Record<SettingsPageType, string>> = {};
 
     function addPage(page: SettingsPageType): any | undefined {
-      const definition = pageDefinitions[page];
+      const definition: SettingsPageDefinition = pageDefinitions[page];
       contentComponents[page] = definition.component;
-      titles[page] = intl.formatMessage(definition.label);
+      titles[page] = intl.formatMessage(definition.title ?? definition.label);
       return { key: page, label: renderLabel(definition) };
     }
 

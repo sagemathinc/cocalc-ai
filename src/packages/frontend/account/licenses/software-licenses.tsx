@@ -4,14 +4,28 @@
 
 import { Button, Table, Typography } from "antd";
 import dayjs from "dayjs";
+import { defineMessage } from "react-intl";
 
 import { React } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Loading } from "@cocalc/frontend/components";
 import CopyToClipBoard from "@cocalc/frontend/components/copy-to-clipboard";
+import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { SoftwareLicense } from "@cocalc/util/db-schema/software-licenses";
+import type { SettingsPageDefinition } from "../settings-page";
 
 const { Paragraph, Title, Text } = Typography;
+
+export const SOFTWARE_LICENSES_SETTINGS_PAGE = {
+  component: SoftwareLicensesPage,
+  description: defineMessage({
+    id: "account.settings.overview.software_licenses",
+    defaultMessage: "Manage Launchpad/Rocket software license tokens.",
+  }),
+  icon: "key",
+  key: "software-licenses",
+  label: labels.software,
+} satisfies SettingsPageDefinition;
 
 function formatShortId(value?: string) {
   if (!value) return "";

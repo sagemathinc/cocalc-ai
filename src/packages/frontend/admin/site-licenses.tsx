@@ -4,56 +4,15 @@
  */
 
 import { Alert, Space, Typography } from "antd";
-import { useEffect, useState } from "react";
 
 import { SiteLicenseAdminPanel } from "@cocalc/frontend/account/membership-package-manager";
-import type { MembershipTierLike } from "@cocalc/frontend/account/membership-package-manager";
-import api from "@cocalc/frontend/client/api";
+import { useMembershipTiers } from "@cocalc/frontend/account/membership-tiers";
 import { Loading } from "@cocalc/frontend/components";
 
 const { Paragraph, Title } = Typography;
 
-interface MembershipTiersResponse {
-  error?: string;
-  tiers?: MembershipTierLike[];
-}
-
 export function SiteLicensesAdmin() {
-  const [tiers, setTiers] = useState<MembershipTierLike[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let canceled = false;
-    async function load() {
-      setLoading(true);
-      setError("");
-      try {
-        const result = (await api(
-          "purchases/get-membership-tiers",
-        )) as MembershipTiersResponse;
-        if (result?.error) {
-          throw Error(result.error);
-        }
-        if (!canceled) {
-          setTiers(result?.tiers ?? []);
-        }
-      } catch (err) {
-        if (!canceled) {
-          setTiers([]);
-          setError(`${err}`);
-        }
-      } finally {
-        if (!canceled) {
-          setLoading(false);
-        }
-      }
-    }
-    void load();
-    return () => {
-      canceled = true;
-    };
-  }, []);
+  const { error, loading, tiers } = useMembershipTiers();
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>

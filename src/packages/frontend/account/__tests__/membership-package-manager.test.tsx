@@ -8,8 +8,9 @@ import {
 
 import {
   ClaimableMembershipPackagesPanel,
-  MembershipPackageManager,
+  SiteLicenseManager,
   SiteLicenseAdminPanel,
+  TeamPackageManager,
 } from "../membership-package-manager";
 
 const getMembershipPackages = jest.fn();
@@ -170,7 +171,7 @@ const TIERS = [
   },
 ];
 
-describe("MembershipPackageManager", () => {
+describe("membership package managers", () => {
   beforeAll(() => {
     Object.defineProperty(window, "getComputedStyle", {
       configurable: true,
@@ -221,7 +222,7 @@ describe("MembershipPackageManager", () => {
     });
   });
 
-  it("renders team packages and the site-license dashboard", async () => {
+  it("renders team packages without loading site-license dashboards", async () => {
     getMembershipPackages.mockResolvedValue([
       {
         id: "team-1",
@@ -242,57 +243,13 @@ describe("MembershipPackageManager", () => {
         metadata: { interval: "month", seat_price: 10 },
       },
     ]);
-    listSiteLicenseOverviews.mockResolvedValue([
-      {
-        site_license: {
-          id: "license-1",
-          name: "Campus License",
-          organization_name: "Example University",
-          bay_id: "bay-0",
-          owner_account_id: null,
-          allowed_domains: ["example.edu"],
-          metadata: {},
-        },
-        pools: [
-          {
-            id: "site-1",
-            owner_account_id: "owner-1",
-            kind: "site",
-            membership_class: "pro",
-            seat_count: 50,
-            active_assignment_count: 0,
-            available_seat_count: 50,
-            assignments: [],
-            metadata: {
-              allowed_domains: ["example.edu"],
-              pool_name: "Students",
-              site_license_id: "license-1",
-              requires_approval: false,
-              verification_policy: "email-domain",
-              exclusive_group: "student",
-            },
-            pool_name: "Students",
-            requires_approval: false,
-            verification_policy: "email-domain",
-            exclusive_group: "student",
-            pending_request_count: 0,
-          },
-        ],
-        managers: [],
-        pending_requests: [],
-        recent_audit_events: [],
-      },
-    ]);
-
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<TeamPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
       expect(screen.getByText("Team packages")).toBeTruthy();
-      expect(screen.getByText("Site-license manager dashboard")).toBeTruthy();
-      expect(screen.getByText("Example University")).toBeTruthy();
-      expect(screen.getByText("example.edu")).toBeTruthy();
       expect(screen.getByText("Grace Hopper")).toBeTruthy();
     });
+    expect(listSiteLicenseOverviews).not.toHaveBeenCalled();
   });
 
   it("purchases a new team package", async () => {
@@ -311,7 +268,7 @@ describe("MembershipPackageManager", () => {
       purchase_id: 1,
     });
 
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<TeamPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
       expect(screen.getByText("Buy team seats")).toBeTruthy();
@@ -361,7 +318,7 @@ describe("MembershipPackageManager", () => {
     });
     isPurchaseAllowed.mockResolvedValue({ allowed: true, chargeAmount: 10 });
 
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<TeamPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
       expect(screen.getByText("Add seats")).toBeTruthy();
@@ -405,7 +362,7 @@ describe("MembershipPackageManager", () => {
       assigned_at: new Date(),
     });
 
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<TeamPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
       expect(screen.getAllByText("Assign seat").length).toBeGreaterThan(0);
@@ -461,7 +418,7 @@ describe("MembershipPackageManager", () => {
       assigned_at: new Date(),
     });
 
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<TeamPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
       expect(screen.getAllByText("Assign seat").length).toBeGreaterThan(0);
@@ -984,12 +941,13 @@ describe("MembershipPackageManager", () => {
       },
     ]);
 
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<SiteLicenseManager tiers={TIERS} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Site-license manager dashboard")).toBeTruthy();
+      expect(screen.getByText("Campus License")).toBeTruthy();
     });
 
+    expect(screen.queryByText("Site-license manager dashboard")).toBeNull();
     expect(screen.queryByText("Edit license")).toBeNull();
     expect(screen.queryByText("Edit pool")).toBeNull();
     expect(screen.queryByText("Add pool")).toBeNull();
@@ -1067,7 +1025,7 @@ describe("MembershipPackageManager", () => {
       state: "approved",
     });
 
-    render(<MembershipPackageManager mode="site" tiers={TIERS} />);
+    render(<SiteLicenseManager tiers={TIERS} />);
 
     await waitFor(() => {
       expect(screen.getByText("Approval queue")).toBeTruthy();
@@ -1225,7 +1183,7 @@ describe("MembershipPackageManager", () => {
       state: "approved",
     });
 
-    render(<MembershipPackageManager tiers={TIERS} />);
+    render(<SiteLicenseManager tiers={TIERS} />);
 
     await waitFor(() => {
       expect(screen.getByText("Approval queue")).toBeTruthy();
