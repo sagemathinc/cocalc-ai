@@ -248,6 +248,7 @@ Open design question:
 
 - whether Cloudflare routes all browser traffic to seed first, or can route to
   attached bays directly after bootstrap.
+  ANSWER: This was decided long ago; all browser traffic is routed directly to the attached bay. This is required for performance if bays are geographically distributed.
 
 Pragmatic first step:
 

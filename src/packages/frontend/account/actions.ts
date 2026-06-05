@@ -29,6 +29,11 @@ import {
   parseAccountSettingsRoute,
 } from "./settings-routing";
 import { refreshAccountSnapshot } from "./table";
+import {
+  recordProjectionAckConverged,
+  recordProjectionAckFailed,
+  recordProjectionAckStart,
+} from "@cocalc/frontend/projection-diagnostics";
 
 // Define account actions
 export class AccountActions extends Actions<AccountState> {
@@ -259,19 +264,56 @@ export class AccountActions extends Actions<AccountState> {
     name: string,
     value: any,
   ): Promise<void> {
+    const ackId = `other_settings:${name}:${Date.now()}:${Math.random()}`;
+    const ackName = `account.other_settings.${name}`;
+    recordProjectionAckStart({
+      consumer: "account",
+      id: ackId,
+      name: ackName,
+    });
     const current =
       this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
-    await this.redux
-      .getTable("account")
-      .set({ other_settings: { ...current, [name]: value } }, "shallow");
-    if (await this.waitForOtherSettingProjection(name, value)) {
-      return;
-    }
-    await refreshAccountSnapshot();
-    if (!(await this.waitForOtherSettingProjection(name, value))) {
+    try {
+      await this.redux
+        .getTable("account")
+        .set({ other_settings: { ...current, [name]: value } }, "shallow");
+      if (await this.waitForOtherSettingProjection(name, value)) {
+        recordProjectionAckConverged({
+          consumer: "account",
+          id: ackId,
+          name: ackName,
+        });
+        return;
+      }
+      await refreshAccountSnapshot();
+      if (await this.waitForOtherSettingProjection(name, value)) {
+        recordProjectionAckConverged({
+          consumer: "account",
+          id: ackId,
+          name: ackName,
+        });
+        return;
+      }
+      const err = new Error(
+        "account other_settings projection did not converge",
+      );
+      recordProjectionAckFailed({
+        consumer: "account",
+        id: ackId,
+        name: ackName,
+        error: err,
+      });
       console.warn("account other_settings projection did not converge", {
         name,
       });
+    } catch (err) {
+      recordProjectionAckFailed({
+        consumer: "account",
+        id: ackId,
+        name: ackName,
+        error: err,
+      });
+      throw err;
     }
   }
 

@@ -53,6 +53,13 @@ import {
   DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
   type ProjectViewerReadPolicy,
 } from "@cocalc/util/project-access";
+import {
+  attachProjectionFeedDiagnostics,
+  recordProjectionFeedEvent,
+  recordProjectionHistoryGap,
+  recordProjectionRepair,
+  recordProjectionRepairFailure,
+} from "@cocalc/frontend/projection-diagnostics";
 
 import type {
   CourseInfo,
@@ -180,6 +187,20 @@ function dateValueMs(value: unknown): number | undefined {
   return date != null ? date.getTime() : undefined;
 }
 
+function normalizeProjectThemeForWrite(
+  theme: ProjectTheme | null | undefined,
+): ProjectTheme | null {
+  const normalizedTheme: ProjectTheme = {
+    color: theme?.color ?? null,
+    accent_color: theme?.accent_color ?? null,
+    icon: theme?.icon?.trim() || null,
+    image_blob: theme?.image_blob?.trim() || null,
+  };
+  return Object.values(normalizedTheme).some((value) => value != null)
+    ? normalizedTheme
+    : null;
+}
+
 function isFreshAuthRequiredError(err: unknown): boolean {
   const code = `${(err as any)?.code ?? ""}`.trim().toLowerCase();
   const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
@@ -221,6 +242,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static REALTIME_FEED_BATCH_MS = 50;
   private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
   private static PROJECT_ROW_RECONCILE_DELAYS_MS = [1_000, 5_000] as const;
+  private static PROJECT_THEME_PROJECTION_WAIT_DELAYS_MS = [
+    0, 250, 1_000, 2_500,
+  ] as const;
   private static PROJECT_LIFECYCLE_RECONCILE_DELAYS_MS = [
     1_000, 5_000, 15_000, 30_000, 60_000, 120_000,
   ] as const;
@@ -239,6 +263,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   };
   private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
+  private realtimeFeedDiagnosticsCleanup?: () => void;
   private realtimeFeedFlushTimer?: ReturnType<typeof setTimeout>;
   private pendingProjectFeedUpserts: Record<
     string,
@@ -388,6 +413,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private closeRealtimeFeed(): void {
     this.flushPendingProjectFeedChanges();
+    this.realtimeFeedDiagnosticsCleanup?.();
+    this.realtimeFeedDiagnosticsCleanup = undefined;
     if (this.realtimeFeed != null) {
       this.realtimeFeed.removeListener("change", this.handleRealtimeFeedChange);
       this.realtimeFeed.removeListener(
@@ -399,7 +426,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
     this.realtimeFeedAccountId = undefined;
   }
 
-  private handleRealtimeFeedChange = (event?: AccountFeedEvent): void => {
+  private handleRealtimeFeedChange = (
+    event?: AccountFeedEvent,
+    seq?: number,
+  ): void => {
+    recordProjectionFeedEvent({
+      consumer: "projects",
+      event,
+      seq,
+    });
     if (event == null) {
       return;
     }
@@ -427,11 +462,37 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   };
 
-  private handleRealtimeFeedHistoryGap = (): void => {
+  private handleRealtimeFeedHistoryGap = (info?: any): void => {
+    recordProjectionHistoryGap({
+      consumer: "projects",
+      info,
+    });
     this.flushPendingProjectFeedChanges();
-    void refresh_projects_table();
-    void this.loadProjectedProjectsForCurrentAccount(this.getAccountId());
+    void this.refreshProjectsProjectionAfterHistoryGap();
   };
+
+  private async refreshProjectsProjectionAfterHistoryGap(): Promise<void> {
+    const account_id = this.getAccountId();
+    recordProjectionRepair({
+      consumer: "projects",
+      reason: "history-gap",
+      scope: "projects-table+account_project_index",
+    });
+    try {
+      await Promise.all([
+        refresh_projects_table(),
+        this.loadProjectedProjectsForCurrentAccount(account_id),
+      ]);
+    } catch (err) {
+      recordProjectionRepairFailure({
+        consumer: "projects",
+        reason: "history-gap",
+        scope: "projects-table+account_project_index",
+        error: err,
+      });
+      throw err;
+    }
+  }
 
   private scheduleProjectedProjectReconcile(project_id: string): void {
     for (const delay of ProjectsActions.PROJECT_ROW_RECONCILE_DELAYS_MS) {
@@ -562,6 +623,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
       feed.on("change", this.handleRealtimeFeedChange);
       feed.on("history-gap", this.handleRealtimeFeedHistoryGap);
+      this.realtimeFeedDiagnosticsCleanup = attachProjectionFeedDiagnostics({
+        consumer: "projects",
+        account_id,
+        stream_name: accountFeedStreamName(),
+        stream: feed,
+      });
       this.realtimeFeed = feed;
       this.realtimeFeedAccountId = account_id;
     } catch (err) {
@@ -575,6 +642,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
       if (!account_id || !webapp_client.is_signed_in()) {
         return;
       }
+      recordProjectionRepair({
+        consumer: "projects",
+        reason: "bootstrap",
+        scope: {
+          table: "account_project_index",
+          limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT,
+        },
+      });
       let resp: any;
       try {
         resp = await webapp_client.async_query({
@@ -602,6 +677,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
           options: [{ limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT }],
         });
       } catch (err) {
+        recordProjectionRepairFailure({
+          consumer: "projects",
+          reason: "bootstrap",
+          scope: {
+            table: "account_project_index",
+            limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT,
+          },
+          error: err,
+        });
         console.warn("project projected bootstrap failed", err);
         return;
       }
@@ -762,6 +846,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
       if (!account_id || !project_id || !webapp_client.is_signed_in()) {
         return;
       }
+      recordProjectionRepair({
+        consumer: "projects",
+        reason: "row-reconcile",
+        scope: { table: "account_project_index", project_id },
+      });
       let resp: any;
       try {
         resp = await webapp_client.async_query({
@@ -789,6 +878,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
           options: [{ limit: 1 }],
         });
       } catch (err) {
+        recordProjectionRepairFailure({
+          consumer: "projects",
+          reason: "row-reconcile",
+          scope: { table: "account_project_index", project_id },
+          error: err,
+        });
         console.warn("project projected row reconcile failed", {
           project_id,
           err,
@@ -883,6 +978,50 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.setState({ project_map } as ProjectsState);
     },
   );
+
+  private async waitForProjectedProjectTheme(
+    project_id: string,
+    theme: ProjectTheme | null,
+  ): Promise<boolean> {
+    const account_id = this.getAccountId();
+    if (!account_id || !project_id || !webapp_client.is_signed_in()) {
+      return false;
+    }
+    for (const delay of ProjectsActions.PROJECT_THEME_PROJECTION_WAIT_DELAYS_MS) {
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      let resp: any;
+      try {
+        resp = await webapp_client.async_query({
+          query: {
+            account_project_index: [
+              {
+                account_id,
+                project_id,
+                theme: null,
+              },
+            ],
+          },
+          options: [{ limit: 1 }],
+        });
+      } catch (err) {
+        console.warn("project theme projection check failed", {
+          project_id,
+          err,
+        });
+        continue;
+      }
+      const projectedTheme = normalizeProjectThemeForWrite(
+        resp?.query?.account_project_index?.[0]?.theme,
+      );
+      if (isEqual(projectedTheme, theme)) {
+        await this.loadProjectedProjectForCurrentAccount(project_id);
+        return true;
+      }
+    }
+    return false;
+  }
 
   private shouldPreserveLocalHostIdAfterMove({
     project_id,
@@ -2027,14 +2166,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
       );
       return;
     }
-    const normalizedTheme: ProjectTheme = {
-      color: theme?.color ?? null,
-      accent_color: theme?.accent_color ?? null,
-      icon: theme?.icon?.trim() || null,
-      image_blob: theme?.image_blob?.trim() || null,
-    };
+    const normalizedTheme = normalizeProjectThemeForWrite(theme);
     const before = store.getIn(["project_map", project_id, "theme"]);
-    const beforeJS = before?.toJS?.() ?? before ?? null;
+    const beforeJS = normalizeProjectThemeForWrite(
+      before?.toJS?.() ?? before ?? null,
+    );
     if (isEqual(beforeJS, normalizedTheme)) return;
     this.setProjectLocalTheme(project_id, normalizedTheme);
     try {
@@ -2042,6 +2178,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
         project_id,
         theme: normalizedTheme,
       });
+      if (
+        !(await this.waitForProjectedProjectTheme(project_id, normalizedTheme))
+      ) {
+        console.warn("project theme projection did not converge", {
+          project_id,
+        });
+      }
     } catch (err) {
       this.setProjectLocalTheme(project_id, beforeJS);
       throw err;
