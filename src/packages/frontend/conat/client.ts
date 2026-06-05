@@ -485,6 +485,7 @@ export class ConatClient extends EventEmitter {
         this.repairAccountProjectionAfterForegroundWake(),
         this.repairNotificationProjectionAfterForegroundWake(),
         this.repairOpenProjectProjectionsAfterForegroundWake(),
+        this.repairVisibleProjectWindowAfterForegroundWake(),
       ]);
       this.reconnectCoordinator.requestResourceReconnects({
         includeBackground: true,
@@ -592,6 +593,34 @@ export class ConatClient extends EventEmitter {
       );
     } catch (err) {
       console.warn("foreground wake project projection repair failed", err);
+    }
+  };
+
+  private repairVisibleProjectWindowAfterForegroundWake = async () => {
+    const actions = redux.getActions("projects") as
+      | {
+          repairProjectProjection?: (request: {
+            kind: "visible-window";
+            reason: "foreground-wake";
+          }) => Promise<void>;
+        }
+      | undefined;
+    if (actions?.repairProjectProjection == null) {
+      return;
+    }
+    try {
+      await withTimeout(
+        actions.repairProjectProjection({
+          kind: "visible-window",
+          reason: "foreground-wake",
+        }),
+        FOREGROUND_WAKE_PROJECTION_REPAIR_TIMEOUT_MS,
+      );
+    } catch (err) {
+      console.warn(
+        "foreground wake visible project window projection repair failed",
+        err,
+      );
     }
   };
 

@@ -331,6 +331,72 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-2", "title"])).toBe("Visible Project");
   });
 
+  it("repairs the stored visible project window when project ids are omitted", async () => {
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: "project-3",
+            title: "Stored Visible Project",
+            description: "stored visible window repair",
+            theme: null,
+            host_id: "host-1",
+            owning_bay_id: "bay-0",
+            users_summary: {
+              "acct-1": { group: "owner" },
+            },
+            state_summary: { state: "running" },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            last_edited: "2026-04-05T03:00:00.000Z",
+            last_backup: null,
+            updated_at: "2026-04-05T03:00:00.000Z",
+            is_hidden: false,
+          },
+        ],
+      },
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions.setVisibleProjectWindowForRepair(["project-3", "project-3", ""]);
+    await actions.repairProjectProjection({
+      kind: "visible-window",
+      reason: "foreground-wake",
+    });
+
+    expect(mockedWebappClient.async_query).toHaveBeenCalledTimes(1);
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: "project-3",
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+    expect(projectMap.getIn(["project-3", "title"])).toBe(
+      "Stored Visible Project",
+    );
+  });
+
   it("replaces project users from realtime upserts instead of preserving removed members", async () => {
     projectMap = ImmutableMap<string, any>([
       [

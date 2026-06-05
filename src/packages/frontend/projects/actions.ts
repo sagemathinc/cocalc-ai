@@ -312,6 +312,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     Object.create(null);
   private projectLifecycleReconcileTokens: Record<string, number> =
     Object.create(null);
+  private visibleProjectWindowIds: string[] = [];
 
   _init() {
     this.signedInListener = () => {
@@ -685,6 +686,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
     );
   }
 
+  public setVisibleProjectWindowForRepair(project_ids: string[]): void {
+    this.visibleProjectWindowIds = Array.from(
+      new globalThis.Set(
+        project_ids.filter(
+          (project_id): project_id is string =>
+            typeof project_id === "string" && project_id.length > 0,
+        ),
+      ),
+    );
+  }
+
   public async repairProjectProjection(
     request: ProjectProjectionRepairRequest,
   ): Promise<void> {
@@ -711,7 +723,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       case "visible-window": {
         const project_ids = Array.from(
-          new globalThis.Set(request.project_ids ?? []),
+          new globalThis.Set(
+            request.project_ids ?? this.visibleProjectWindowIds,
+          ),
         );
         recordProjectionRepair({
           consumer: "projects",

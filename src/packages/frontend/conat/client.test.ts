@@ -5420,6 +5420,10 @@ describe("ConatClient main reconnect scheduling", () => {
         project_ids: [projectId],
         reason: "foreground-wake",
       });
+      expect(repairProjectProjection).toHaveBeenCalledWith({
+        kind: "visible-window",
+        reason: "foreground-wake",
+      });
     } finally {
       hasFocusSpy.mockRestore();
       randomSpy.mockRestore();
