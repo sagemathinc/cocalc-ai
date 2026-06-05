@@ -74,11 +74,12 @@ start_web_onboarding() {
   site="$(star_web_onboarding_site_address)"
   caddy_config="$(mktemp)"
   star_web_onboarding_prepare
+  star_web_onboarding_start_server
   cat >"$caddy_config" <<EOF
 # cocalc-star managed caddyfile v1
 
 ${site} {
-$(star_web_onboarding_caddy_routes)
+$(star_web_onboarding_caddy_proxy_routes)
   handle {
     respond "CoCalc Star is installing. Open $(star_web_onboarding_url)" 200
   }
@@ -91,6 +92,7 @@ EOF
   systemctl restart caddy
   star_web_onboarding_write_status "reachable" "This VM is publicly reachable over HTTPS. Installing CoCalc Star now." ""
   star_web_onboarding_print >&2
+  star_web_onboarding_wait_for_open
 }
 
 host_has_nvidia_gpu() {
@@ -800,6 +802,7 @@ remove_broad_sudoers_for_star_user() {
 start_services() {
   star_web_onboarding_write_status "starting-services" "Starting CoCalc Star services and waiting for the hub to answer." ""
   systemctl restart caddy
+  star_web_onboarding_stop_server
   systemctl restart cocalc-star-hub
   systemctl restart cocalc-star-project-host
   log "waiting for ${STAR_BASE_URL}/customize"
@@ -827,13 +830,14 @@ web_onboarding_exit_trap() {
   if [ "$status" -ne 0 ]; then
     star_web_onboarding_write_status "failed" "The CoCalc Star install failed. Check the terminal output or SSH logs on the VM." "" || true
   fi
+  star_web_onboarding_stop_server || true
   exit "$status"
 }
 
 require_root
 install_packages
-start_web_onboarding
 trap web_onboarding_exit_trap EXIT
+start_web_onboarding
 install_gpu_support
 star_web_onboarding_write_status "runtime" "Preparing Linux user, Node.js, and Star runtime packages." ""
 ensure_subuids

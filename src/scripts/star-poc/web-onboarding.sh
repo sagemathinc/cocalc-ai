@@ -95,6 +95,32 @@ star_web_onboarding_site_address() {
   fi
 }
 
+star_web_onboarding_port() {
+  printf '%s\n' "${STAR_WEB_ONBOARDING_PORT:-9199}"
+}
+
+star_web_onboarding_pid_file() {
+  printf '%s\n' "$(star_web_onboarding_root)/server.pid"
+}
+
+star_web_onboarding_open_marker() {
+  printf '%s\n' "$(star_web_onboarding_dir)/opened"
+}
+
+star_web_onboarding_require_open() {
+  case "${STAR_WEB_ONBOARDING_REQUIRE_OPEN:-auto}" in
+    1 | true | yes | on) return 0 ;;
+    0 | false | no | off) return 1 ;;
+    auto | "")
+      [ "${STAR_ASSUME_YES:-0}" != "1" ] && [ -t 0 ]
+      ;;
+    *)
+      printf '[star-web-onboarding] invalid STAR_WEB_ONBOARDING_REQUIRE_OPEN=%s\n' "${STAR_WEB_ONBOARDING_REQUIRE_OPEN}" >&2
+      return 1
+      ;;
+  esac
+}
+
 star_web_onboarding_json_string_field() {
   local file="$1"
   local field="$2"
@@ -321,6 +347,114 @@ PY
   mv "$tmp" "$status"
 }
 
+star_web_onboarding_start_server() {
+  star_web_onboarding_enabled || return 0
+  local root nonce port pid_file log_file marker
+  root="$(star_web_onboarding_root)"
+  nonce="$(star_web_onboarding_nonce)"
+  port="$(star_web_onboarding_port)"
+  pid_file="$(star_web_onboarding_pid_file)"
+  log_file="${root}/server.log"
+  marker="$(star_web_onboarding_open_marker)"
+
+  if [ -f "$pid_file" ]; then
+    local existing_pid
+    existing_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [ -n "$existing_pid" ] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+      return 0
+    fi
+    rm -f "$pid_file"
+  fi
+
+  mkdir -p "$root"
+  python3 - "$root" "$nonce" "$port" "$marker" >"$log_file" 2>&1 <<'PY' &
+import http.server
+import os
+import pathlib
+import socketserver
+import sys
+import time
+import urllib.parse
+
+root = pathlib.Path(sys.argv[1]).resolve()
+nonce = sys.argv[2]
+port = int(sys.argv[3])
+marker = pathlib.Path(sys.argv[4])
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        sys.stderr.write("[%s] %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), fmt % args))
+
+    def _safe_path(self):
+        raw_path = urllib.parse.urlsplit(self.path).path
+        path = urllib.parse.unquote(raw_path).lstrip("/")
+        candidate = (root / path).resolve()
+        if candidate == root or root in candidate.parents:
+            return candidate
+        return None
+
+    def translate_path(self, path):
+        safe = self._safe_path()
+        if safe is None:
+            return str(root / "__forbidden__")
+        return str(safe)
+
+    def do_GET(self):
+        raw_path = urllib.parse.urlsplit(self.path).path
+        if raw_path == f"/{nonce}/" or raw_path.startswith(f"/{nonce}/status.json") or raw_path.startswith(f"/{nonce}/index.html"):
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n", encoding="utf-8")
+        return super().do_GET()
+
+
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+
+
+os.chdir(root)
+with Server(("127.0.0.1", port), Handler) as httpd:
+    httpd.serve_forever()
+PY
+  printf '%s\n' "$!" >"$pid_file"
+}
+
+star_web_onboarding_stop_server() {
+  star_web_onboarding_enabled || return 0
+  local pid_file pid
+  pid_file="$(star_web_onboarding_pid_file)"
+  [ -f "$pid_file" ] || return 0
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+      kill -0 "$pid" >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+    kill -9 "$pid" >/dev/null 2>&1 || true
+  fi
+  rm -f "$pid_file"
+}
+
+star_web_onboarding_wait_for_open() {
+  star_web_onboarding_enabled || return 0
+  star_web_onboarding_require_open || return 0
+  local timeout="${STAR_WEB_ONBOARDING_OPEN_TIMEOUT:-900}"
+  local marker
+  marker="$(star_web_onboarding_open_marker)"
+  printf '\nOpen this HTTPS onboarding URL to continue the install:\n  %s\n\n' "$(star_web_onboarding_url)" >&2
+  printf 'Waiting up to %s seconds for the browser to reach the VM...\n' "$timeout" >&2
+  for _ in $(seq 1 "$timeout"); do
+    if [ -f "$marker" ]; then
+      printf 'Web onboarding page reached. Continuing install.\n' >&2
+      return 0
+    fi
+    sleep 1
+  done
+  printf '[star-web-onboarding] timed out waiting for browser to open %s\n' "$(star_web_onboarding_url)" >&2
+  return 1
+}
+
 star_web_onboarding_caddy_routes() {
   local root
   root="$(star_web_onboarding_root)"
@@ -328,6 +462,14 @@ star_web_onboarding_caddy_routes() {
   handle_path /star-install/* {
     root * ${root}
     file_server
+  }
+EOF
+}
+
+star_web_onboarding_caddy_proxy_routes() {
+  cat <<EOF
+  handle_path /star-install/* {
+    reverse_proxy 127.0.0.1:$(star_web_onboarding_port)
   }
 EOF
 }
