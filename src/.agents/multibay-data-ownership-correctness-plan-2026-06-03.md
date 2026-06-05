@@ -860,6 +860,13 @@ Implemented:
 - surfaced this decision manifest in project-rehome drain dry-runs as
   `side_table_preflight`, so operators see which SQL side tables are ignored,
   portable, or explicitly not preserved before running a dangerous drain.
+- added CLI-facing `rehome_danger` output for `project rehome-drain` that
+  explains the concrete consequence: non-portable project-owned SQL side tables
+  may be left behind or lost, and writes require the explicit
+  `--write --unsafe-rehome` workflow after dry-run review.
+- updated the admin bay-ops copy/paste command panel to show project rehome as
+  an unsafe escape hatch, with a dry-run command first and a separate
+  `--write --unsafe-rehome` command for the exceptional mutation step.
 
 Tasks:
 

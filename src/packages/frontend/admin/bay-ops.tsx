@@ -78,6 +78,7 @@ function commandList(bay: BayOpsOverviewBay): string[] {
     `cocalc bay restore-test ${id} --remote-only`,
     `cocalc bay project-ownership-admission ${id} --accepts no --note "maintenance drain"`,
     `cocalc project rehome-drain --source-bay ${id} --dest-bay <dest-bay> --limit 25 --reason maintenance`,
+    `cocalc project rehome-drain --source-bay ${id} --dest-bay <dest-bay> --limit 25 --reason maintenance --write --unsafe-rehome`,
     `cocalc account rehome-drain --source-bay ${id} --dest-bay <dest-bay> --limit 25 --reason maintenance`,
   ];
 }
@@ -361,6 +362,13 @@ function Detail({ bay }: { bay: BayOpsOverviewBay }) {
         </Typography.Text>
       </Space>
       <Card size="small" title="Copy/paste operator commands">
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="Project rehome is an unsafe escape hatch"
+          description="Run project rehome-drain without --write first and inspect side_table_preflight. The --write --unsafe-rehome command can leave non-portable project-owned SQL side tables behind unless the operator has explicitly audited or accepted that data loss."
+        />
         {commandList(bay).map((command) => (
           <Typography.Paragraph
             key={command}

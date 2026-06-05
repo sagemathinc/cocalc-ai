@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  annotateProjectRehomeDrainDanger,
   assertProjectLogRuntimeAvailable,
   assertProjectRehomeConfirmed,
   getMovePlacementFallbackTimeoutMs,
@@ -62,7 +63,45 @@ test("assertProjectRehomeConfirmed refuses rehome without --yes", () => {
         dest_bay_id: "bay-2",
         yes: true,
       }),
-    /--unsafe-rehome/,
+    /SQL side tables.*--unsafe-rehome/,
+  );
+});
+
+test("annotateProjectRehomeDrainDanger explains non-portable side-table risk", () => {
+  const result = annotateProjectRehomeDrainDanger({
+    source_bay_id: "bay-1",
+    dest_bay_id: "bay-2",
+    dry_run: true,
+    candidate_count: 1,
+    side_table_preflight: {
+      portable_tables: [],
+      ignored_tables: ["patches"],
+      non_portable_tables: [
+        {
+          table: "project_secrets",
+          status: "requires_table_specific_portability",
+          reason: "encrypted project secrets need explicit copy semantics",
+        },
+      ],
+      summary:
+        "Project rehome does not preserve 1 project-owned SQL side table.",
+    },
+  });
+
+  assert.equal(
+    result.rehome_danger.severity,
+    "unsafe_non_portable_project_side_tables",
+  );
+  assert.match(result.rehome_danger.consequence, /leave these.*behind/);
+  assert.deepEqual(result.rehome_danger.ignored_tables, ["patches"]);
+  assert.equal(
+    result.rehome_danger.non_portable_tables[0]?.table,
+    "project_secrets",
+  );
+  assert.equal(result.rehome_danger.write_requires, "--write --unsafe-rehome");
+  assert.match(
+    result.rehome_danger.required_operator_workflow.join("\n"),
+    /dry-run.*side_table_preflight.*--write --unsafe-rehome/s,
   );
 });
 
