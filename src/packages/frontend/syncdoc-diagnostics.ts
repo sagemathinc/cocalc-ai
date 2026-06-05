@@ -8,6 +8,7 @@ import {
   redux,
   redux_name,
 } from "@cocalc/frontend/app-framework";
+import { collectProjectionDiagnostics } from "@cocalc/frontend/projection-diagnostics";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 
 export const SYNCDOC_DIAGNOSTICS_STORAGE_KEY = "cocalc.debug.syncdoc";
@@ -228,6 +229,7 @@ export function collectSyncdocDiagnostics({
       listeners: collectReduxListenerDiagnostics(),
       hooks: collectReduxHookSubscriptionDiagnostics(),
     },
+    projections: collectProjectionDiagnostics(),
     projects: collectProjectDiagnostics(),
     recentEvents: diagnosticEvents.slice(),
   };

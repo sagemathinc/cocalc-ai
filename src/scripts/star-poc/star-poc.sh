@@ -496,7 +496,7 @@ print_access_instructions() {
   local bootstrap_url="$1"
   local local_port="${2:-9100}"
   local ssh_target="${STAR_SSH_TARGET:-}"
-  local localhost_url public_url
+  local localhost_url public_url=""
 
   [ -n "$bootstrap_url" ] || return 0
   localhost_url="$(local_bootstrap_url "$bootstrap_url" "$local_port")"

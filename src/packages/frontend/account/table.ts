@@ -15,6 +15,13 @@ import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream"
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { redux as appRedux } from "@cocalc/frontend/app-framework";
 import { lite } from "@cocalc/frontend/lite";
+import {
+  attachProjectionFeedDiagnostics,
+  recordProjectionFeedEvent,
+  recordProjectionHistoryGap,
+  recordProjectionRepair,
+  recordProjectionRepairFailure,
+} from "@cocalc/frontend/projection-diagnostics";
 
 export function normalizeAccountPatch(redux, obj: Record<string, any>) {
   const next = { ...obj };
@@ -128,6 +135,7 @@ let rememberMeFailedListener: (() => void) | undefined;
 let conatConnectedListener: (() => void) | undefined;
 let realtimeFeed: DStream<AccountFeedEvent> | undefined;
 let realtimeFeedAccountId: string | undefined;
+let realtimeFeedDiagnosticsCleanup: (() => void) | undefined;
 let realtimeRedux: any;
 let recreateAccountTable: ((redux) => void) | undefined;
 
@@ -138,6 +146,8 @@ function getAccountId(): string | undefined {
 }
 
 function closeRealtimeFeed(): void {
+  realtimeFeedDiagnosticsCleanup?.();
+  realtimeFeedDiagnosticsCleanup = undefined;
   if (realtimeFeed != null) {
     realtimeFeed.removeListener("change", handleRealtimeFeedChange);
     realtimeFeed.removeListener("history-gap", handleRealtimeFeedHistoryGap);
@@ -172,6 +182,12 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
     });
     feed.on("change", handleRealtimeFeedChange);
     feed.on("history-gap", handleRealtimeFeedHistoryGap);
+    realtimeFeedDiagnosticsCleanup = attachProjectionFeedDiagnostics({
+      consumer: "account",
+      account_id,
+      stream_name: accountFeedStreamName(),
+      stream: feed,
+    });
     realtimeFeed = feed;
     realtimeFeedAccountId = account_id;
   } catch (err) {
@@ -179,14 +195,37 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
   }
 }
 
-const refreshAccountSnapshot = reuseInFlight(async (): Promise<void> => {
+export const refreshAccountSnapshot = reuseInFlight(async (): Promise<void> => {
   if (realtimeRedux == null || recreateAccountTable == null) {
     return;
   }
-  recreateAccountTable(realtimeRedux);
+  recordProjectionRepair({
+    consumer: "account",
+    reason: "snapshot-refresh",
+    scope: "accounts",
+  });
+  try {
+    recreateAccountTable(realtimeRedux);
+  } catch (err) {
+    recordProjectionRepairFailure({
+      consumer: "account",
+      reason: "snapshot-refresh",
+      scope: "accounts",
+      error: err,
+    });
+    throw err;
+  }
 });
 
-function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
+function handleRealtimeFeedChange(
+  event?: AccountFeedEvent,
+  seq?: number,
+): void {
+  recordProjectionFeedEvent({
+    consumer: "account",
+    event,
+    seq,
+  });
   if (
     event == null ||
     event.type !== "account.upsert" ||
@@ -200,7 +239,11 @@ function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
   });
 }
 
-function handleRealtimeFeedHistoryGap(): void {
+function handleRealtimeFeedHistoryGap(info?: any): void {
+  recordProjectionHistoryGap({
+    consumer: "account",
+    info,
+  });
   void refreshAccountSnapshot();
 }
 

@@ -211,7 +211,10 @@ function projectSyncConat(project_id: string, caller: string) {
   return webapp_client.conat_client.projectConatSync({
     project_id,
     caller,
-    requireRouting: true,
+    // Use direct project-host routing when the browser already has host info,
+    // but do not turn a brief routing-info race during project open/reconnect
+    // into a permanent editor load failure.
+    requireRouting: false,
   });
 }
 

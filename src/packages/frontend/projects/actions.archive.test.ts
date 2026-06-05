@@ -492,11 +492,17 @@ describe("ProjectsActions archive flow", () => {
       ).toBe(true);
       expect(reconcile).not.toHaveBeenCalled();
 
+      configureProject({
+        state: "starting",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+
       jest.advanceTimersByTime(1_000);
       await Promise.resolve();
       expect(reconcile).toHaveBeenCalledWith(project_id);
 
-      jest.advanceTimersByTime(4_000);
+      jest.advanceTimersByTime(5_000);
       await Promise.resolve();
       expect(reconcile).toHaveBeenCalledTimes(2);
     } finally {
