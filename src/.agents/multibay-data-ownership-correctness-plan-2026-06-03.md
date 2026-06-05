@@ -708,20 +708,32 @@ Still needed:
 
 ### Phase 4: External Credentials Ownership Split
 
-Tasks:
+Status: mostly implemented.
 
-- add scope-aware routing helpers:
+Implemented:
+
+- added scope-aware routing helpers:
   - account scope -&gt; account home;
   - project scope -&gt; project owning bay;
   - site scope -&gt; seed;
   - organization scope -&gt; seed for now;
-- update system/host APIs to use these helpers before store access;
-- decide whether account/project scoped rows are `portable` or `stable`;
+- added a dedicated bay-addressed `inter-bay-external-credentials` service;
+- updated system/host APIs to use the routing helpers before store access;
+- classified `external_credentials` as `row-scoped` in the manifest, with
+  account/project/seed authority determined by each row selector scope;
+- treated these rows as `unsupported` for rehome/drain, so normal bay drain
+  remains blocked unless an explicit unsafe override is used;
+- added focused routing tests for local account, remote account, remote
+  project, and seed-scoped credential access.
+
+Still needed:
+
+- decide later whether account/project scoped credential rows should become
+  `portable`;
 - if `portable`, include account/project scoped rows in account/project
-  rehome;
-- if `stable`, ensure unsafe rehome warns/refuses when credentials exist;
-- add tests for the chosen credential portability behavior;
-- explicitly check encryption/decryption after move.
+  rehome copy/clear state;
+- explicitly check encryption/decryption after move before ever making them
+  portable.
 
 ### Phase 5: Self-Host Connector Portability
 

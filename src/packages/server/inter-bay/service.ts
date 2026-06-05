@@ -14,6 +14,7 @@ import {
   createInterBayProjectCollabInviteHandlers,
   createInterBayProjectDetailsHandler,
   createInterBayProjectSecretsHandlers,
+  createInterBayExternalCredentialsHandlers,
   createInterBayHostConnectionHandler,
   createInterBayHostControlHandler,
   createInterBayProjectHostAuthTokenHandler,
@@ -44,6 +45,7 @@ import {
   type InterBayProjectCollabInviteApi,
   type InterBayProjectDetailsApi,
   type InterBayProjectSecretsApi,
+  type InterBayExternalCredentialsApi,
   type InterBayHostConnectionApi,
   type InterBayHostControlApi,
   type InterBayProjectHostAuthTokenApi,
@@ -186,6 +188,14 @@ import {
   getAdminAssignedMembershipLocal,
   setAdminAssignedMembershipLocal,
 } from "@cocalc/server/membership/admin-assigned";
+import {
+  getExternalCredential,
+  hasExternalCredential,
+  listExternalCredentials,
+  revokeExternalCredential,
+  touchExternalCredential,
+  upsertExternalCredential,
+} from "@cocalc/server/external-credentials/store";
 import { getDedicatedHostPolicySnapshotLocal } from "@cocalc/server/project-host/admission";
 import {
   closeDedicatedHostPurchaseSessionLocal,
@@ -398,6 +408,7 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectReferenceService();
     await startProjectDetailsService();
     await startProjectSecretsService();
+    await startExternalCredentialsService();
     await startHostConnectionService();
     await startHostControlService();
     await startProjectHostAuthTokenService();
@@ -1294,6 +1305,45 @@ async function startProjectSecretsService(): Promise<void> {
   };
   services.push(
     ...createInterBayProjectSecretsHandlers({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startExternalCredentialsService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayExternalCredentialsApi = {
+    upsert: async ({ selector, payload, metadata }) =>
+      await upsertExternalCredential({ selector, payload, metadata }),
+    get: async ({ selector, touch_last_used }) =>
+      await getExternalCredential({
+        selector,
+        touchLastUsed: touch_last_used,
+      }),
+    has: async ({ selector }) => await hasExternalCredential({ selector }),
+    touch: async ({ selector }) => await touchExternalCredential({ selector }),
+    list: async ({
+      owner_account_id,
+      include_revoked,
+      provider,
+      kind,
+      scope,
+    }) =>
+      await listExternalCredentials({
+        owner_account_id,
+        includeRevoked: include_revoked,
+        provider,
+        kind,
+        scope,
+      }),
+    revoke: async ({ id, owner_account_id }) =>
+      await revokeExternalCredential({ id, owner_account_id }),
+  };
+  services.push(
+    ...createInterBayExternalCredentialsHandlers({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

@@ -16,6 +16,7 @@ import type {
 } from "@cocalc/conat/hub/api/account-feed";
 import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 import type {
+  ExternalCredentialSelector,
   Host,
   HostAccessEntry,
   HostConnectionInfo,
@@ -1849,6 +1850,13 @@ export type ProjectSecretsMethod =
   | "export-for-copy"
   | "import-for-copy"
   | "generate-ssh-key-secret";
+export type ExternalCredentialMethod =
+  | "upsert"
+  | "get"
+  | "has"
+  | "touch"
+  | "list"
+  | "revoke";
 export type AccountProjectFeedMethod = "upsert" | "remove";
 
 interface ResolveProjectBayApi {
@@ -1991,6 +1999,47 @@ export interface InterBayProjectSecretsApi {
     secret_name?: string;
     epoch?: number;
   }) => Promise<GenerateProjectSshKeySecretResult>;
+}
+
+export interface InterBayExternalCredentialInfo {
+  id: string;
+  provider: string;
+  kind: string;
+  scope: ExternalCredentialSelector["scope"];
+  owner_account_id?: string;
+  project_id?: string;
+  organization_id?: string;
+  metadata: Record<string, any>;
+  created: Date;
+  updated: Date;
+  revoked: Date | null;
+  last_used: Date | null;
+}
+
+export interface InterBayExternalCredentialRecord extends InterBayExternalCredentialInfo {
+  payload: string;
+}
+
+export interface InterBayExternalCredentialsApi {
+  upsert: (opts: {
+    selector: ExternalCredentialSelector;
+    payload: string;
+    metadata?: Record<string, any>;
+  }) => Promise<{ id: string; created: boolean }>;
+  get: (opts: {
+    selector: ExternalCredentialSelector;
+    touch_last_used?: boolean;
+  }) => Promise<InterBayExternalCredentialRecord | undefined>;
+  has: (opts: { selector: ExternalCredentialSelector }) => Promise<boolean>;
+  touch: (opts: { selector: ExternalCredentialSelector }) => Promise<boolean>;
+  list: (opts: {
+    owner_account_id: string;
+    include_revoked?: boolean;
+    provider?: string;
+    kind?: string;
+    scope?: ExternalCredentialSelector["scope"];
+  }) => Promise<InterBayExternalCredentialInfo[]>;
+  revoke: (opts: { id: string; owner_account_id?: string }) => Promise<boolean>;
 }
 
 export interface InterBayHostConnectionApi {
@@ -3059,6 +3108,20 @@ const PROJECT_SECRETS_METHOD_SPECS = [
   method: ProjectSecretsMethod;
 }>;
 
+type ExternalCredentialName = keyof InterBayExternalCredentialsApi;
+
+const EXTERNAL_CREDENTIAL_METHOD_SPECS = [
+  { name: "upsert", method: "upsert" },
+  { name: "get", method: "get" },
+  { name: "has", method: "has" },
+  { name: "touch", method: "touch" },
+  { name: "list", method: "list" },
+  { name: "revoke", method: "revoke" },
+] as const satisfies ReadonlyArray<{
+  name: ExternalCredentialName;
+  method: ExternalCredentialMethod;
+}>;
+
 function createInterBayHostControlMethodClient<K extends HostControlName>({
   client,
   dest_bay,
@@ -3206,6 +3269,16 @@ export function projectSecretsSubject({
   method: ProjectSecretsMethod;
 }): string {
   return `bay.${dest_bay}.rpc.project-secrets.${method}`;
+}
+
+export function externalCredentialsSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: ExternalCredentialMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.external-credentials.${method}`;
 }
 
 export function accountProjectFeedSubject({
@@ -3639,6 +3712,29 @@ export function createInterBayProjectSecretsClient({
   return api;
 }
 
+export function createInterBayExternalCredentialsClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayExternalCredentialsApi {
+  const api = {} as InterBayExternalCredentialsApi;
+  for (const { name, method } of EXTERNAL_CREDENTIAL_METHOD_SPECS) {
+    const methodClient = createServiceClient<
+      Pick<InterBayExternalCredentialsApi, typeof name>
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: externalCredentialsSubject({ dest_bay, method }),
+    });
+    (api as any)[name] = async (...args: any[]) =>
+      await (methodClient as any)[name](...args);
+  }
+  return api;
+}
+
 export function createInterBayHostConnectionClient({
   client,
   dest_bay,
@@ -3758,6 +3854,28 @@ export function createInterBayProjectSecretsHandlers({
           ...args: Parameters<InterBayProjectSecretsApi[typeof name]>
         ) => await (impl[name] as any)(...args),
       } as Pick<InterBayProjectSecretsApi, typeof name>,
+    }),
+  );
+}
+
+export function createInterBayExternalCredentialsHandlers({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayExternalCredentialsApi;
+}): ConatService[] {
+  return EXTERNAL_CREDENTIAL_METHOD_SPECS.map(({ name, method }) =>
+    createServiceHandler<Pick<InterBayExternalCredentialsApi, typeof name>>({
+      ...options,
+      service: "inter-bay-external-credentials",
+      subject: externalCredentialsSubject({ dest_bay: bay_id, method }),
+      impl: {
+        [name]: async (
+          ...args: Parameters<InterBayExternalCredentialsApi[typeof name]>
+        ) => await (impl[name] as any)(...args),
+      } as Pick<InterBayExternalCredentialsApi, typeof name>,
     }),
   );
 }

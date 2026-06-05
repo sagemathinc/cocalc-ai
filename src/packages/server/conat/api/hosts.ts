@@ -133,12 +133,12 @@ import {
   createPairingTokenForHost,
 } from "@cocalc/server/self-host/connector-tokens";
 import {
-  getExternalCredential as getExternalCredentialDb,
-  hasExternalCredential as hasExternalCredentialDb,
-  touchExternalCredential as touchExternalCredentialDb,
-  upsertExternalCredential as upsertExternalCredentialDb,
-  type ExternalCredentialScope,
-} from "@cocalc/server/external-credentials/store";
+  getExternalCredentialRouted,
+  hasExternalCredentialRouted,
+  touchExternalCredentialRouted,
+  upsertExternalCredentialRouted,
+} from "@cocalc/server/external-credentials/routing";
+import { type ExternalCredentialScope } from "@cocalc/server/external-credentials/store";
 import {
   ensureSelfHostReverseTunnel,
   runConnectorInstallOverSsh,
@@ -2385,7 +2385,7 @@ export async function upsertExternalCredential({
     });
   }
 
-  return await upsertExternalCredentialDb({
+  return await upsertExternalCredentialRouted({
     selector: {
       provider: normalized.provider,
       kind: normalized.kind,
@@ -2463,7 +2463,7 @@ export async function getExternalCredential({
     });
   }
 
-  const result = await getExternalCredentialDb({
+  const result = await getExternalCredentialRouted({
     selector: {
       provider: normalized.provider,
       kind: normalized.kind,
@@ -2540,7 +2540,7 @@ export async function hasExternalCredential({
     });
   }
 
-  return await hasExternalCredentialDb({
+  return await hasExternalCredentialRouted({
     selector: {
       provider: normalized.provider,
       kind: normalized.kind,
@@ -2605,7 +2605,7 @@ export async function touchExternalCredential({
     });
   }
 
-  return await touchExternalCredentialDb({
+  return await touchExternalCredentialRouted({
     selector: {
       provider: normalized.provider,
       kind: normalized.kind,
