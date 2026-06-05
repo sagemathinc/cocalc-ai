@@ -43,7 +43,7 @@ describe("generic editor syncdoc client routing", () => {
     expect(mockProjectConatSync).toHaveBeenCalledWith({
       project_id: "00000000-0000-4000-8000-000000000001",
       caller: "syncstring2",
-      requireRouting: true,
+      requireRouting: false,
     });
     expect(mockString).toHaveBeenCalledWith({
       project_id: "00000000-0000-4000-8000-000000000001",
@@ -68,12 +68,12 @@ describe("generic editor syncdoc client routing", () => {
     expect(mockProjectConatSync).toHaveBeenCalledWith({
       project_id: "00000000-0000-4000-8000-000000000002",
       caller: "syncdb2",
-      requireRouting: true,
+      requireRouting: false,
     });
     expect(mockProjectConatSync).toHaveBeenCalledWith({
       project_id: "00000000-0000-4000-8000-000000000003",
       caller: "immerdb2",
-      requireRouting: true,
+      requireRouting: false,
     });
     expect(mockDb).toHaveBeenCalledWith(
       expect.objectContaining({
