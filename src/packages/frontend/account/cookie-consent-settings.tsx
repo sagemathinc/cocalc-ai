@@ -74,7 +74,7 @@ export function CookieConsentSettings(): React.JSX.Element | null {
             message="You have not yet acknowledged the cookie banner."
           />
         ) : (
-          <Space direction="vertical" size="small" style={{ width: "100%" }}>
+          <Space vertical size="small" style={{ width: "100%" }}>
             {COOKIE_CATEGORIES.map((category) => (
               <CategoryStatus
                 key={category.key}

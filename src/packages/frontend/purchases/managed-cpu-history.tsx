@@ -368,7 +368,7 @@ function TopProjects({
   projects: ManagedCpuAdminProjectSummary[];
 }) {
   return (
-    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+    <Space vertical size={6} style={{ width: "100%" }}>
       {projects.map((project) => (
         <div
           key={`${project.account_id}:${project.project_id ?? "none"}:${project.host_id ?? "none"}`}
@@ -389,7 +389,7 @@ function TopProjects({
 
 function TopAccounts({ accounts }: { accounts: ManagedCpuAccountSummary[] }) {
   return (
-    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+    <Space vertical size={6} style={{ width: "100%" }}>
       {accounts.map((account) => (
         <div key={account.account_id}>
           <Text>{getAccountLabel(account)}</Text>
@@ -410,7 +410,7 @@ function RecentEvents({ events }: { events: ManagedCpuEventSummary[] }) {
     );
   }
   return (
-    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+    <Space vertical size={6} style={{ width: "100%" }}>
       {events.map((event, i) => (
         <div
           key={`${event.account_id ?? "none"}:${event.project_id ?? "none"}:${event.sample_ended_at}:${i}`}

@@ -123,9 +123,9 @@ function MembershipSettingsContent() {
   };
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space vertical size="middle" style={{ width: "100%" }}>
       <Card size="small" title="Effective membership">
-        <Space direction="vertical" style={{ width: "100%" }}>
+        <Space vertical style={{ width: "100%" }}>
           <Text strong>
             {effectiveMembershipSummary({
               membership,
@@ -165,7 +165,7 @@ function MembershipSettingsContent() {
       </Card>
 
       <Card size="small" title="Membership sources">
-        <Space direction="vertical" style={{ width: "100%" }}>
+        <Space vertical style={{ width: "100%" }}>
           {candidateRows.length === 0 ? (
             <Text type="secondary">No active membership sources.</Text>
           ) : (
@@ -189,7 +189,7 @@ function MembershipSettingsContent() {
                   title: "Source",
                   dataIndex: "source",
                   render: (value, row) => (
-                    <Space direction="vertical" size={0}>
+                    <Space vertical size={0}>
                       <Text>{value}</Text>
                       <Text type="secondary">{row.sourceDetail}</Text>
                     </Space>
@@ -256,7 +256,7 @@ function EffectiveTierDescription({ tier }: { tier: MembershipTier }) {
   const highlights = effectiveTierHighlights(tier, presentation);
 
   return (
-    <Space direction="vertical" size="small" style={{ width: "100%" }}>
+    <Space vertical size="small" style={{ width: "100%" }}>
       {description ? <Text type="secondary">{description}</Text> : null}
       {highlights.length > 0 ? (
         <ul style={{ margin: 0, paddingLeft: 20 }}>
