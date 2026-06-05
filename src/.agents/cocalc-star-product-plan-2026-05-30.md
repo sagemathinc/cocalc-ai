@@ -113,6 +113,10 @@ Implementation status as of 2026-06-05:
 - Star seed/bootstrap now creates a normal reusable invite registration token
   and exposes a copy/paste signup URL in the bootstrap result, terminal access
   output, and web onboarding completion page.
+- Course "start all student projects" now holds each frontend fanout slot until
+  the project-start LRO reaches a terminal state. This makes the existing
+  course concurrency limit throttle real project starts instead of just LRO
+  queue submission.
 - Current implementation is a validated tarball + installer deployment, not a
   final marketplace image or SEA binary. SEA is now optional rather than a hard
   product requirement.
@@ -257,8 +261,11 @@ Release-blocking gaps for this story:
 - Codex subscription-link UI should show the linking panel immediately with a
   loading state while waiting for the OpenAI/device code instead of leaving the
   user wondering whether anything is happening.
-- Throttled bulk-start queue, so a course or stress-test action cannot make the
-  appliance unusable even when the global cap has spare capacity.
+- Bulk-start protection follow-up:
+  - the course frontend now throttles real project-start completion,
+  - follow-up: move large bulk-start orchestration to a server-side LRO/queue
+    with one status stream, especially for non-course tools and CLI/admin
+    workflows.
 
 ## Current Validated Implementation
 
@@ -399,8 +406,10 @@ Product conclusion:
   configurable by an admin who accepts the risk. The backend cap now exists;
   follow-up UI/status work should make the cap obvious to admins before they
   hit it.
-- Course/bulk operations must use a central queue with throttled concurrency
-  and one status stream rather than launching many independent client waiters.
+- Course/bulk operations should ultimately use a central queue with throttled
+  concurrency and one status stream rather than launching many independent
+  client waiters. Course start-all now avoids the worst queue-submission burst,
+  but a server-side bulk-start LRO is still the more robust long-term shape.
 - "This VM could fit 1000 containers" is not a public product promise until the
   Star control plane supports multiple hub workers or otherwise isolates
   interactive traffic from bulk operations.
