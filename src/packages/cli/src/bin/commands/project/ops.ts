@@ -32,6 +32,25 @@ type ProjectRuntimeStateLike = {
   state?: { state?: string } | null;
 };
 
+type ProjectRehomeDrainSideTablePreflight = {
+  portable_tables: string[];
+  ignored_tables: string[];
+  non_portable_tables: Array<{
+    table: string;
+    status: string;
+    reason: string;
+  }>;
+  summary: string;
+};
+
+type ProjectRehomeDrainResultLike = {
+  source_bay_id: string;
+  dest_bay_id: string;
+  dry_run: boolean;
+  candidate_count: number;
+  side_table_preflight?: ProjectRehomeDrainSideTablePreflight | null;
+};
+
 const PROJECT_LOG_RUNTIME_STATES = new Set([
   "running",
   "starting",
@@ -82,9 +101,50 @@ export function assertProjectRehomeConfirmed({
   }
   if (!unsafeRehome) {
     throw new Error(
-      `project rehome is an exceptional unsafe operation; pass --unsafe-rehome only after auditing project-owned data portability`,
+      `project rehome is an exceptional unsafe operation: project-owned SQL side tables may be left behind or lost; pass --unsafe-rehome only after auditing project-owned data portability`,
     );
   }
+}
+
+export function annotateProjectRehomeDrainDanger<
+  T extends ProjectRehomeDrainResultLike,
+>(
+  result: T,
+): T & {
+  rehome_danger: {
+    severity: "unsafe_non_portable_project_side_tables" | "unsafe_escape_hatch";
+    summary: string;
+    consequence: string;
+    non_portable_tables: ProjectRehomeDrainSideTablePreflight["non_portable_tables"];
+    ignored_tables: string[];
+    required_operator_workflow: string[];
+    write_requires: string;
+  };
+} {
+  const preflight = result.side_table_preflight;
+  const nonPortableTables = preflight?.non_portable_tables ?? [];
+  return {
+    ...result,
+    rehome_danger: {
+      severity: nonPortableTables.length
+        ? "unsafe_non_portable_project_side_tables"
+        : "unsafe_escape_hatch",
+      summary:
+        preflight?.summary ??
+        "Project rehome is an exceptional unsafe operation and has no side-table preflight summary in this response.",
+      consequence: nonPortableTables.length
+        ? "Moving project control-plane ownership can leave these project-owned SQL side tables behind or otherwise fail to preserve them."
+        : "Project rehome remains an exceptional escape hatch, not a routine drain primitive.",
+      non_portable_tables: nonPortableTables,
+      ignored_tables: preflight?.ignored_tables ?? [],
+      required_operator_workflow: [
+        "Run this dry-run command without --write and inspect side_table_preflight plus rehome_danger.",
+        "Back up, manually migrate, or explicitly accept loss of any non_portable_tables that must survive.",
+        "Only then rerun with --write --unsafe-rehome.",
+      ],
+      write_requires: "--write --unsafe-rehome",
+    },
+  };
 }
 
 function normalizeProjectLogTime(value: unknown): Date | null {
@@ -912,17 +972,19 @@ export function registerProjectOpsCommands(
           }
           if (opts.write === true && !opts.unsafeRehome) {
             throw new Error(
-              "project rehome-drain --write is unsafe; pass --unsafe-rehome only after auditing project-owned data portability",
+              "project rehome-drain --write is unsafe: project-owned SQL side tables may be left behind or lost; run a dry-run, inspect side_table_preflight, then pass --unsafe-rehome only after auditing project-owned data portability",
             );
           }
-          return await ctx.hub.projects.drainProjectRehome({
-            source_bay_id: opts.sourceBay?.trim() || undefined,
-            dest_bay_id: opts.destBay.trim(),
-            limit,
-            dry_run: opts.write !== true,
-            campaign_id: opts.campaign,
-            reason: opts.reason,
-          });
+          return annotateProjectRehomeDrainDanger(
+            await ctx.hub.projects.drainProjectRehome({
+              source_bay_id: opts.sourceBay?.trim() || undefined,
+              dest_bay_id: opts.destBay.trim(),
+              limit,
+              dry_run: opts.write !== true,
+              campaign_id: opts.campaign,
+              reason: opts.reason,
+            }),
+          );
         });
       },
     );
