@@ -80,8 +80,9 @@ wait_for_apt_locks() {
 }
 
 apt_get() {
+  local timeout="${STAR_APT_LOCK_TIMEOUT:-900}"
   wait_for_apt_locks
-  run apt-get "$@"
+  run apt-get -o "DPkg::Lock::Timeout=${timeout}" "$@"
 }
 
 automatic_apt_units() {
@@ -438,6 +439,13 @@ prepare_runtime_artifacts() {
 
 ensure_btrfs() {
   mkdir -p /var/lib/cocalc /mnt/cocalc
+  if mountpoint -q /mnt/cocalc; then
+    local fstype
+    fstype="$(findmnt -n -o FSTYPE --target /mnt/cocalc 2>/dev/null || true)"
+    if [ "$fstype" != "btrfs" ]; then
+      die "/mnt/cocalc is already mounted as ${fstype:-unknown}, but CoCalc Star project storage requires btrfs subvolume support. Use a fresh supported Ubuntu 24.04 VM, unmount /mnt/cocalc, or configure STAR_BTRFS_IMAGE/STAR_BTRFS_SIZE so the installer can mount a btrfs data image."
+    fi
+  fi
   if [ ! -f "$STAR_BTRFS_IMAGE" ]; then
     run truncate -s "$STAR_BTRFS_SIZE" "$STAR_BTRFS_IMAGE"
     run mkfs.btrfs -f "$STAR_BTRFS_IMAGE"
@@ -447,6 +455,9 @@ ensure_btrfs() {
   fi
   if ! mountpoint -q /mnt/cocalc; then
     run mount /mnt/cocalc
+  fi
+  if [ "$(findmnt -n -o FSTYPE --target /mnt/cocalc 2>/dev/null || true)" != "btrfs" ]; then
+    die "/mnt/cocalc is not mounted as btrfs after setup; CoCalc Star cannot safely start projects without btrfs subvolume support."
   fi
   mkdir -p /mnt/cocalc/data/tmp /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
   chmod 1777 /mnt/cocalc/data/tmp
@@ -903,13 +914,18 @@ start_services() {
   sync
   systemctl --no-pager --full status cocalc-star-hub cocalc-star-project-host || true
   local bootstrap_url=""
+  local invite_url=""
   if [ -f "$STAR_ROOT/bootstrap-result.json" ]; then
     bootstrap_url="$(star_web_onboarding_json_string_field "$STAR_ROOT/bootstrap-result.json" bootstrap_url 2>/dev/null || true)"
     if [ -n "$bootstrap_url" ] && [ -n "${STAR_PUBLIC_URL:-}" ]; then
       bootstrap_url="$(star_web_onboarding_url_with_base "$bootstrap_url" "$STAR_PUBLIC_URL")"
     fi
+    invite_url="$(star_web_onboarding_json_string_field "$STAR_ROOT/bootstrap-result.json" invite_url 2>/dev/null || true)"
+    if [ -n "$invite_url" ] && [ -n "${STAR_PUBLIC_URL:-}" ]; then
+      invite_url="$(star_web_onboarding_url_with_base "$invite_url" "$STAR_PUBLIC_URL")"
+    fi
   fi
-  star_web_onboarding_write_status "ready" "CoCalc Star is running. Create the first admin account to finish setup." "$bootstrap_url"
+  star_web_onboarding_write_status "ready" "CoCalc Star is running. Create the first admin account to finish setup." "$bootstrap_url" "$invite_url"
   cat "$STAR_ROOT/bootstrap-result.json"
 }
 

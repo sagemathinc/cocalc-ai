@@ -123,7 +123,8 @@ async function main() {
     throw new Error("database pool module did not export getPool");
   }
   const { upsertProjectHost } = requireProjectHosts();
-  const { ensureBootstrapAdminToken } = requireBootstrapAdmin();
+  const { ensureBootstrapAdminToken, ensureStarInviteRegistrationToken } =
+    requireBootstrapAdmin();
   const { createProjectHostMasterConatToken } = requireBootstrapToken();
 
   await syncSchema();
@@ -197,12 +198,14 @@ async function main() {
   chmodSync(masterTokenPath, 0o600);
 
   const bootstrapUrl = await ensureBootstrapAdminToken({ baseUrl });
+  const inviteUrl = await ensureStarInviteRegistrationToken({ baseUrl });
   await pool.end();
 
   const result = {
     ok: true,
     host_id: hostId,
     bootstrap_url: bootstrapUrl ?? null,
+    invite_url: inviteUrl,
     master_conat_token_path: masterTokenPath,
   };
   const resultJson = JSON.stringify(result, null, 2);

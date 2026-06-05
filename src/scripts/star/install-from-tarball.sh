@@ -277,5 +277,6 @@ rm -rf "$rollback_state_dir"
 trap - EXIT
 log "installed release $STAR_RELEASE_ID"
 if [ -x "${STAR_INSTALL_SOURCE}/src/scripts/star/star.sh" ]; then
-  "${STAR_INSTALL_SOURCE}/src/scripts/star/star.sh" bootstrap-link || true
+  "${STAR_INSTALL_SOURCE}/src/scripts/star/star.sh" reconcile-runtime-state || true
+  "${STAR_INSTALL_SOURCE}/src/scripts/star/star.sh" access || true
 fi

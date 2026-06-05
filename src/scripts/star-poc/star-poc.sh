@@ -43,6 +43,9 @@ Commands:
   restart [all|hub|host] Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
   access                 Print public/local access and bootstrap instructions.
+  reconcile-runtime-state
+                         Mark hub-side running project state stopped when the
+                         corresponding project container is not running.
   bootstrap-link         Print the bootstrap registration link, if still present.
   https --domain <name>  Configure Caddy automatic HTTPS for a public domain.
   uninstall              Stop and remove Star service hooks; preserve data by default.
@@ -446,6 +449,83 @@ logs() {
   sudo journalctl -u "$svc" -n "$lines" --no-pager
 }
 
+reconcile_runtime_state() {
+  [ -f /etc/cocalc/star/hub.env ] || {
+    log "missing /etc/cocalc/star/hub.env"
+    exit 1
+  }
+  local star_uid live_file
+  star_uid="$(id -u "$STAR_USER" 2>/dev/null || true)"
+  [ -n "$star_uid" ] || {
+    log "missing Star runtime user: $STAR_USER"
+    exit 1
+  }
+  live_file="$(mktemp -t cocalc-star-live-projects.XXXXXX)"
+  trap 'rm -f "$live_file"' RETURN
+  sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" \
+    podman ps --filter label=role=project --format '{{.Names}}' 2>/dev/null |
+    sed -n 's/^project-\([0-9a-fA-F-]\{36\}\)$/\1/p' >"$live_file"
+
+  # shellcheck disable=SC1091
+  set -a
+  source /etc/cocalc/star/hub.env
+  set +a
+
+  psql -v ON_ERROR_STOP=1 -v live_file="$live_file" <<'SQL'
+CREATE TEMP TABLE star_live_project_containers(project_id uuid PRIMARY KEY);
+\copy star_live_project_containers(project_id) FROM :'live_file'
+
+CREATE TEMP TABLE star_stale_runtime_projects AS
+  SELECT p.project_id
+    FROM projects p
+    LEFT JOIN star_live_project_containers live USING (project_id)
+   WHERE COALESCE(p.state->>'state', '') IN ('running', 'starting')
+     AND COALESCE(p.deleted, false) IS NOT TRUE
+     AND live.project_id IS NULL;
+
+WITH updated AS (
+  UPDATE projects p
+     SET state = jsonb_build_object(
+           'state', 'opened',
+           'time', now()::text,
+           'error', 'CoCalc Star runtime reconciliation: project container was not running'
+         )
+    FROM star_stale_runtime_projects stale
+   WHERE p.project_id = stale.project_id
+   RETURNING p.project_id
+)
+SELECT 'projects_marked_opened' AS metric, count(*)::text AS value FROM updated;
+
+WITH updated AS (
+  UPDATE project_runtime_slots s
+     SET state = 'expired',
+         heartbeat_at = now(),
+         expires_at = now(),
+         metadata = COALESCE(metadata, '{}'::jsonb) ||
+           jsonb_build_object('expired_by', 'star-runtime-reconcile')
+    FROM star_stale_runtime_projects stale
+   WHERE s.project_id = stale.project_id
+     AND s.state IN ('starting', 'running')
+   RETURNING s.project_id
+)
+SELECT 'runtime_slots_expired' AS metric, count(*)::text AS value FROM updated;
+
+DO $$
+BEGIN
+  IF to_regclass('public.project_active_operations') IS NOT NULL THEN
+    DELETE FROM project_active_operations a
+      USING star_stale_runtime_projects stale
+      WHERE a.project_id = stale.project_id;
+  END IF;
+END $$;
+
+SELECT 'live_project_containers' AS metric, count(*)::text AS value
+  FROM star_live_project_containers;
+SELECT 'stale_runtime_projects' AS metric, count(*)::text AS value
+  FROM star_stale_runtime_projects;
+SQL
+}
+
 local_bootstrap_url() {
   local url="$1"
   local local_port="${2:-9100}"
@@ -562,6 +642,22 @@ You can reprint this later with:
 EOF
 }
 
+print_invite_instructions() {
+  local invite_url="$1"
+  local public_url=""
+
+  [ -n "$invite_url" ] || return 0
+  if [ -n "${STAR_PUBLIC_URL:-}" ]; then
+    public_url="$(url_with_base "$invite_url" "$STAR_PUBLIC_URL")"
+  fi
+
+  cat <<EOF
+
+Invite another user with this signup URL:
+  ${public_url:-$invite_url}
+EOF
+}
+
 print_access_summary() {
   local public="${STAR_PUBLIC_URL:-}"
   printf 'local control plane: %s\n' "$STAR_API"
@@ -596,12 +692,17 @@ bootstrap_link() {
 access() {
   local result="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}"
   local url=""
+  local invite_url=""
   print_access_summary
   if [ -f "$result" ]; then
     url="$(json_string_field "$result" bootstrap_url || true)"
+    invite_url="$(json_string_field "$result" invite_url || true)"
   fi
   if [ -n "$url" ]; then
     print_access_instructions "$url"
+  fi
+  if [ -n "$invite_url" ]; then
+    print_invite_instructions "$invite_url"
   fi
 }
 
@@ -1025,6 +1126,9 @@ case "${1:-}" in
     ;;
   access)
     access
+    ;;
+  reconcile-runtime-state)
+    reconcile_runtime_state
     ;;
   bootstrap-link)
     bootstrap_link

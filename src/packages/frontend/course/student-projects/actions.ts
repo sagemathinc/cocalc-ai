@@ -369,16 +369,14 @@ export class StudentProjectsActions {
       // abort if canceled
       if (store.get("action_all_projects_state") !== state) return;
       // returns true/false, could be useful some day
-      await selectedAction(student_project_id);
+      if (action === "start") {
+        await selectedAction(student_project_id, { waitForStart: true });
+      } else {
+        await selectedAction(student_project_id);
+      }
     };
 
-    try {
-      await awaitMap(store.get_student_project_ids(), MAX_PARALLEL_TASKS, task);
-    } finally {
-      if (store.get("action_all_projects_state") === state) {
-        this.course_actions.setState({ action_all_projects_state: "any" });
-      }
-    }
+    await awaitMap(store.get_student_project_ids(), MAX_PARALLEL_TASKS, task);
   };
 
   cancel_action_all_student_projects = (): void => {
