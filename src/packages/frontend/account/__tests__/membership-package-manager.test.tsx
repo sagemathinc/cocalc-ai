@@ -923,8 +923,12 @@ describe("MembershipPackageManager", () => {
         package_id: "site-1",
         owner_account_id: "owner-1",
         site_license_id: "license-1",
+        pool_name: "Students",
         seat_count: 75,
         pool_description: null,
+        requires_approval: false,
+        affiliation_reverification_days: null,
+        affiliation_reverification_grace_days: null,
         allowed_domains: ["example.edu"],
         expires_at: null,
       });

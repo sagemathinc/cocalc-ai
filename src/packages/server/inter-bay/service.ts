@@ -854,8 +854,12 @@ async function startAccountLocalService(): Promise<void> {
     updateMembershipPackage: async ({
       package_id,
       actor_account_id,
+      pool_name,
       seat_count,
       pool_description,
+      requires_approval,
+      affiliation_reverification_days,
+      affiliation_reverification_grace_days,
       expires_at,
       allowed_domains,
     }) => {
@@ -864,8 +868,12 @@ async function startAccountLocalService(): Promise<void> {
         return await updateSiteLicensePool({
           actor_account_id,
           package_id,
+          pool_name,
           seat_count,
           pool_description,
+          requires_approval,
+          affiliation_reverification_days,
+          affiliation_reverification_grace_days,
           expires_at,
           allowed_domains,
         });

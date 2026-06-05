@@ -1417,6 +1417,7 @@ export async function updateMembershipPackage({
   expires_at,
   allowed_domains,
   metadata_patch,
+  assignment_metadata_patch,
   client,
 }: {
   package_id: string;
@@ -1424,6 +1425,7 @@ export async function updateMembershipPackage({
   expires_at?: Date | string | null;
   allowed_domains?: string[];
   metadata_patch?: Record<string, unknown>;
+  assignment_metadata_patch?: Record<string, unknown>;
   client?: PoolClient;
 }): Promise<MembershipPackageDetails> {
   return await withPackageOwnerWriteFence({
@@ -1431,7 +1433,7 @@ export async function updateMembershipPackage({
     action: "update membership package",
     client,
     fn: async ({ client: dbClient, pkg }) => {
-      const assignments = await listMembershipPackageAssignments({
+      let assignments = await listMembershipPackageAssignments({
         package_id,
         include_revoked: false,
         client: dbClient,
@@ -1456,6 +1458,11 @@ export async function updateMembershipPackage({
       }
       if (metadata_patch !== undefined && pkg.kind !== "site") {
         throw Error("metadata_patch can only be updated for site packages");
+      }
+      if (assignment_metadata_patch !== undefined && pkg.kind !== "site") {
+        throw Error(
+          "assignment_metadata_patch can only be updated for site packages",
+        );
       }
       const normalizedAllowedDomains =
         allowed_domains === undefined
@@ -1513,6 +1520,23 @@ export async function updateMembershipPackage({
       const updatedPackage = normalizePackageRecord(rows[0]);
       if (!updatedPackage) {
         throw Error("membership package not found");
+      }
+      if (assignment_metadata_patch !== undefined) {
+        await getQueryClient(dbClient).query(
+          `
+            UPDATE membership_package_assignments
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                updated = NOW()
+            WHERE package_id = $1
+              AND revoked_at IS NULL
+          `,
+          [package_id, assignment_metadata_patch],
+        );
+        assignments = await listMembershipPackageAssignments({
+          package_id,
+          include_revoked: false,
+          client: dbClient,
+        });
       }
       for (const assignment of assignments) {
         await syncUpdatedGrantForAssignment({

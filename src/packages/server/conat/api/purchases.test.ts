@@ -1365,16 +1365,24 @@ describe("purchases membership packages", () => {
       owner_account_id: "owner-1",
       site_license_id: "license-1",
       package_id: "site-1",
+      pool_name: "Students",
       seat_count: 12,
       pool_description: "Eligible students.",
+      requires_approval: true,
+      affiliation_reverification_days: 180,
+      affiliation_reverification_grace_days: 30,
       allowed_domains: ["Example.EDU", "@dept.example.edu"],
     });
 
     expect(updateSiteLicensePoolMock).toHaveBeenCalledWith({
       actor_account_id: "admin-1",
       package_id: "site-1",
+      pool_name: "Students",
       seat_count: 12,
       pool_description: "Eligible students.",
+      requires_approval: true,
+      affiliation_reverification_days: 180,
+      affiliation_reverification_grace_days: 30,
       expires_at: undefined,
       allowed_domains: ["dept.example.edu", "example.edu"],
     });
@@ -1437,14 +1445,22 @@ describe("purchases membership packages", () => {
       owner_account_id: "owner-1",
       site_license_id: "license-1",
       package_id: "site-remote-1",
+      pool_name: "Researchers",
+      requires_approval: false,
+      affiliation_reverification_days: 365,
+      affiliation_reverification_grace_days: 45,
       allowed_domains: ["Example.EDU", "@dept.example.edu"],
     });
 
     expect(interBayUpdateMembershipPackageMock).toHaveBeenCalledWith({
       package_id: "site-remote-1",
       actor_account_id: "admin-1",
+      pool_name: "Researchers",
       seat_count: undefined,
       pool_description: undefined,
+      requires_approval: false,
+      affiliation_reverification_days: 365,
+      affiliation_reverification_grace_days: 45,
       expires_at: undefined,
       allowed_domains: ["dept.example.edu", "example.edu"],
     });

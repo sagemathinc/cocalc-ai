@@ -25,7 +25,7 @@ const STORE_MARKETING = {
       "Start using CoCalc with just enough resources to explore the platform and do basic work.",
     store_highlights: [],
     site_license_pool_description:
-      "Basic access for eligible users covered by this site license.",
+      "Basic CoCalc access for evaluation and occasional use.",
   },
   basic: {
     store_description: "For occasional light use.",
@@ -34,8 +34,7 @@ const STORE_MARKETING = {
       "Access better shared hosts",
       "Modest included AI usage",
     ],
-    site_license_pool_description:
-      "Light paid access for eligible users covered by this pool.",
+    site_license_pool_description: "Light CoCalc access for occasional work.",
   },
   student: {
     store_description:
@@ -45,8 +44,7 @@ const STORE_MARKETING = {
       "Resources for class projects",
       "Access throughout the academic term",
     ],
-    site_license_pool_description:
-      "Course access for eligible students covered by this site license.",
+    site_license_pool_description: "Course-focused CoCalc access for students.",
   },
   standard: {
     store_description: "A solid choice for everyday work.",
@@ -55,8 +53,7 @@ const STORE_MARKETING = {
       "Dedicated project host access, including GPU",
       "Larger included AI allowance",
     ],
-    site_license_pool_description:
-      "Everyday CoCalc access for eligible users covered by this pool.",
+    site_license_pool_description: "Everyday CoCalc access for regular work.",
   },
   instructor: {
     store_description:
@@ -67,7 +64,7 @@ const STORE_MARKETING = {
       "More room for teaching workflows",
     ],
     site_license_pool_description:
-      "Teaching access for eligible instructors and course staff.",
+      "Teaching-focused CoCalc access for instructors and course staff.",
   },
   researcher: {
     store_description:
@@ -78,7 +75,7 @@ const STORE_MARKETING = {
       "Advanced OCI RootFS image import",
     ],
     site_license_pool_description:
-      "Research access for eligible users with larger project workloads.",
+      "Research-focused CoCalc access for larger project workloads.",
   },
   pro: {
     store_description:
@@ -89,7 +86,7 @@ const STORE_MARKETING = {
       "Postpaid billing for dedicated hosts",
     ],
     site_license_pool_description:
-      "Advanced access for eligible users working on demanding projects.",
+      "Advanced CoCalc access for demanding projects.",
   },
 } as const;
 

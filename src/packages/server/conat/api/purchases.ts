@@ -483,8 +483,12 @@ export async function updateMembershipPackage({
   package_id,
   owner_account_id,
   site_license_id,
+  pool_name,
   seat_count,
   pool_description,
+  requires_approval,
+  affiliation_reverification_days,
+  affiliation_reverification_grace_days,
   expires_at,
   allowed_domains,
 }: {
@@ -494,8 +498,12 @@ export async function updateMembershipPackage({
   package_id?: string;
   owner_account_id?: string;
   site_license_id?: string;
+  pool_name?: string;
   seat_count?: number;
   pool_description?: string | null;
+  requires_approval?: boolean;
+  affiliation_reverification_days?: number | null;
+  affiliation_reverification_grace_days?: number | null;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 } = {}): Promise<MembershipPackageDetails> {
@@ -516,8 +524,12 @@ export async function updateMembershipPackage({
       return await getSeedSiteLicenseClient().updateMembershipPackage({
         package_id,
         actor_account_id: actorId,
+        pool_name,
         seat_count,
         pool_description,
+        requires_approval,
+        affiliation_reverification_days,
+        affiliation_reverification_grace_days,
         expires_at,
         allowed_domains:
           allowed_domains === undefined
@@ -528,8 +540,12 @@ export async function updateMembershipPackage({
     return await updateSiteLicensePool0({
       actor_account_id: actorId,
       package_id,
+      pool_name,
       seat_count,
       pool_description,
+      requires_approval,
+      affiliation_reverification_days,
+      affiliation_reverification_grace_days,
       expires_at,
       allowed_domains:
         allowed_domains === undefined
@@ -562,8 +578,12 @@ export async function updateMembershipPackage({
     }).updateMembershipPackage({
       package_id,
       actor_account_id: actorId,
+      pool_name,
       seat_count,
       pool_description,
+      requires_approval,
+      affiliation_reverification_days,
+      affiliation_reverification_grace_days,
       expires_at,
       allowed_domains: normalizedAllowedDomains,
     });
@@ -585,8 +605,12 @@ export async function updateMembershipPackage({
     return await updateSiteLicensePool0({
       actor_account_id: actorId,
       package_id,
+      pool_name,
       seat_count,
       pool_description,
+      requires_approval,
+      affiliation_reverification_days,
+      affiliation_reverification_grace_days,
       expires_at,
       allowed_domains:
         allowed_domains === undefined

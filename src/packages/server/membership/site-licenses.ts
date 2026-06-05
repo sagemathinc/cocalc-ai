@@ -2794,15 +2794,23 @@ export async function adminProvisionSiteLicense({
 export async function updateSiteLicensePool({
   actor_account_id,
   package_id,
+  pool_name,
   seat_count,
   pool_description,
+  requires_approval,
+  affiliation_reverification_days,
+  affiliation_reverification_grace_days,
   expires_at,
   allowed_domains,
 }: {
   actor_account_id: string;
   package_id: string;
+  pool_name?: string;
   seat_count?: number;
   pool_description?: string | null;
+  requires_approval?: boolean;
+  affiliation_reverification_days?: number | null;
+  affiliation_reverification_grace_days?: number | null;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 }): Promise<MembershipPackageDetails> {
@@ -2814,18 +2822,37 @@ export async function updateSiteLicensePool({
       client,
     );
     await assertSiteLicenseAdmin({ account_id: actorAccountId });
+    const metadataPatch: Record<string, unknown> = {};
+    if (pool_name !== undefined) {
+      metadataPatch.pool_name = normalizeString(pool_name, "pool_name");
+    }
+    if (pool_description !== undefined) {
+      metadataPatch.pool_description =
+        normalizeOptionalString(pool_description);
+    }
+    if (requires_approval !== undefined) {
+      metadataPatch.requires_approval = requires_approval === true;
+    }
+    if (affiliation_reverification_days !== undefined) {
+      metadataPatch.affiliation_reverification_days =
+        normalizeOptionalPositiveInt(affiliation_reverification_days);
+    }
+    if (affiliation_reverification_grace_days !== undefined) {
+      metadataPatch.affiliation_reverification_grace_days =
+        normalizeOptionalPositiveInt(affiliation_reverification_grace_days);
+    }
+    const hasMetadataPatch = Object.keys(metadataPatch).length > 0;
+    const normalizedAllowedDomains =
+      allowed_domains === undefined
+        ? undefined
+        : normalizeAllowedDomains(allowed_domains);
     const updated = await updateMembershipPackageRecord({
       package_id: packageId,
       seat_count,
-      metadata_patch:
-        pool_description === undefined
-          ? undefined
-          : { pool_description: normalizeOptionalString(pool_description) },
+      metadata_patch: hasMetadataPatch ? metadataPatch : undefined,
+      assignment_metadata_patch: hasMetadataPatch ? metadataPatch : undefined,
       expires_at,
-      allowed_domains:
-        allowed_domains === undefined
-          ? undefined
-          : normalizeAllowedDomains(allowed_domains),
+      allowed_domains: normalizedAllowedDomains,
       client,
     });
     if (allowed_domains !== undefined) {
@@ -2840,17 +2867,19 @@ export async function updateSiteLicensePool({
       actor_account_id: actorAccountId,
       package_id: packageId,
       metadata: {
-        pool_name: getPackagePoolName(pkg),
-        pool_description:
-          pool_description === undefined
-            ? undefined
-            : normalizeOptionalString(pool_description),
+        pool_name:
+          typeof metadataPatch.pool_name === "string"
+            ? metadataPatch.pool_name
+            : getPackagePoolName(pkg),
+        pool_description: metadataPatch.pool_description,
         seat_count: seat_count ?? null,
+        requires_approval: metadataPatch.requires_approval,
+        affiliation_reverification_days:
+          metadataPatch.affiliation_reverification_days,
+        affiliation_reverification_grace_days:
+          metadataPatch.affiliation_reverification_grace_days,
         expires_at: expires_at ?? null,
-        allowed_domains:
-          allowed_domains === undefined
-            ? undefined
-            : normalizeAllowedDomains(allowed_domains),
+        allowed_domains: normalizedAllowedDomains,
       },
       client,
     });

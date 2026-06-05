@@ -368,6 +368,66 @@ function normalizeDomainList(values: string[]): string[] {
   ).sort();
 }
 
+const SITE_LICENSE_VERIFICATION_OPTIONS: {
+  label: string;
+  value: SiteLicenseVerificationPolicy;
+}[] = [
+  { label: "Email domain", value: "email-domain" },
+  { label: "Manager approval", value: "manager-approval" },
+  { label: "SSO affiliation", value: "sso-affiliation" },
+];
+
+function normalizeSiteLicenseVerificationPolicy(
+  value: unknown,
+): SiteLicenseVerificationPolicy {
+  const policy = `${value ?? ""}`.trim();
+  if (
+    policy === "email-domain" ||
+    policy === "manager-approval" ||
+    policy === "sso-affiliation"
+  ) {
+    return policy;
+  }
+  return "email-domain";
+}
+
+function normalizeOptionalPositiveInteger(value: unknown): number | null {
+  if (value == null) return null;
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized <= 0) {
+    return null;
+  }
+  return normalized;
+}
+
+function siteLicensePoolConfigFromPackage(
+  membershipPackage: MembershipPackageDetails,
+): SiteLicensePoolConfig {
+  const metadata = membershipPackage.metadata ?? {};
+  return {
+    pool_name:
+      `${metadata.pool_name ?? ""}`.trim() ||
+      capitalize(membershipPackage.membership_class),
+    pool_description: `${metadata.pool_description ?? ""}`.trim() || null,
+    membership_class: membershipPackage.membership_class,
+    seat_count: membershipPackage.seat_count,
+    requires_approval: metadata.requires_approval === true,
+    verification_policy: normalizeSiteLicenseVerificationPolicy(
+      metadata.verification_policy,
+    ),
+    exclusive_group:
+      `${metadata.exclusive_group ?? ""}`.trim() ||
+      membershipPackage.membership_class,
+    affiliation_reverification_days: normalizeOptionalPositiveInteger(
+      metadata.affiliation_reverification_days,
+    ),
+    affiliation_reverification_grace_days: normalizeOptionalPositiveInteger(
+      metadata.affiliation_reverification_grace_days,
+    ),
+    allowed_domains: normalizeDomainList(getPackageDomains(membershipPackage)),
+  };
+}
+
 function getAccountDisplayName(
   assignment: MembershipPackageAssignment,
   names: Record<
@@ -1361,6 +1421,7 @@ export function MembershipPackageManager({
       <EditSiteLicenseModal
         open={editTarget != null}
         membershipPackage={editTarget}
+        tiers={tiers}
         onClose={() => setEditTarget(null)}
         onUpdated={async () => {
           setEditTarget(null);
@@ -1652,6 +1713,7 @@ export function SiteLicenseAdminPanel({
       <EditSiteLicenseModal
         open={editTarget != null}
         membershipPackage={editTarget}
+        tiers={tiers}
         onClose={() => setEditTarget(null)}
         onUpdated={async () => {
           setEditTarget(null);
@@ -3257,30 +3319,34 @@ function ProvisionSiteLicenseModal({
       if (allowed_domains.length === 0) {
         throw Error("Enter at least one allowed email domain.");
       }
-      const cleanPools = pools.map((pool) => ({
-        ...pool,
-        pool_name: `${pool.pool_name ?? ""}`.trim(),
-        pool_description: `${pool.pool_description ?? ""}`.trim() || null,
-        exclusive_group: `${pool.exclusive_group ?? ""}`.trim() || null,
-        seat_count: Math.max(1, Math.trunc(Number(pool.seat_count) || 1)),
-        allowed_domains,
-        affiliation_reverification_days:
-          pool.affiliation_reverification_days == null
-            ? null
-            : Math.max(
-                1,
-                Math.trunc(Number(pool.affiliation_reverification_days) || 1),
-              ),
-        affiliation_reverification_grace_days:
-          pool.affiliation_reverification_grace_days == null
-            ? null
-            : Math.max(
-                1,
-                Math.trunc(
-                  Number(pool.affiliation_reverification_grace_days) || 1,
+      const cleanPools = pools.map((pool) => {
+        const poolDomains = normalizeDomainList(pool.allowed_domains ?? []);
+        return {
+          ...pool,
+          pool_name: `${pool.pool_name ?? ""}`.trim(),
+          pool_description: `${pool.pool_description ?? ""}`.trim() || null,
+          exclusive_group: `${pool.exclusive_group ?? ""}`.trim() || null,
+          seat_count: Math.max(1, Math.trunc(Number(pool.seat_count) || 1)),
+          allowed_domains:
+            poolDomains.length > 0 ? poolDomains : allowed_domains,
+          affiliation_reverification_days:
+            pool.affiliation_reverification_days == null
+              ? null
+              : Math.max(
+                  1,
+                  Math.trunc(Number(pool.affiliation_reverification_days) || 1),
                 ),
-              ),
-      }));
+          affiliation_reverification_grace_days:
+            pool.affiliation_reverification_grace_days == null
+              ? null
+              : Math.max(
+                  1,
+                  Math.trunc(
+                    Number(pool.affiliation_reverification_grace_days) || 1,
+                  ),
+                ),
+        };
+      });
       if (cleanPools.length === 0) {
         throw Error("Add at least one pool.");
       }
@@ -3703,6 +3769,10 @@ function ProvisionPoolEditModal({
   onChange,
   onClose,
   mode = "edit",
+  activeSeatCount = 0,
+  domainsRequired = false,
+  expiresAt,
+  onExpiresAtChange,
   error,
   submitting,
   onSubmit,
@@ -3713,16 +3783,36 @@ function ProvisionPoolEditModal({
   siteLicenseTierOptions: MembershipTierLike[];
   onChange: (patch: Partial<SiteLicensePoolConfig>) => void;
   onClose: () => void;
-  mode?: "edit" | "add";
+  mode?: "edit" | "add" | "persisted";
+  activeSeatCount?: number;
+  domainsRequired?: boolean;
+  expiresAt?: Dayjs | null;
+  onExpiresAtChange?: (value: Dayjs | null) => void;
   error?: string;
   submitting?: boolean;
   onSubmit?: () => Promise<void>;
 }) {
+  const [domainSearch, setDomainSearch] = useState<string>("");
+  useEffect(() => {
+    if (open) {
+      setDomainSearch("");
+    }
+  }, [open, pool?.pool_name]);
   if (pool == null) return null;
   const theme = getProvisionPoolTheme(pool, poolIndex);
   const selectedTier = siteLicenseTierOptions.find(
     (tier) => tier.id === pool.membership_class,
   );
+  const isAdd = mode === "add";
+  const isPersisted = mode === "persisted";
+  const seatMin = Math.max(1, activeSeatCount);
+  const setDomains = (values: string[]) => {
+    const next = normalizeDomainList(values);
+    onChange({
+      allowed_domains: domainsRequired || next.length > 0 ? next : undefined,
+    });
+    setDomainSearch("");
+  };
 
   return (
     <Modal
@@ -3730,14 +3820,14 @@ function ProvisionPoolEditModal({
       onCancel={onClose}
       onOk={onSubmit ?? onClose}
       okButtonProps={{ loading: submitting }}
-      okText={mode === "add" ? "Add pool" : "Done"}
+      okText={isAdd ? "Add pool" : isPersisted ? "Save pool" : "Done"}
       width={760}
+      destroyOnHidden
       title={
         <Space>
           <Icon name={theme.icon} style={{ color: theme.accent }} />
           <span>
-            {mode === "add" ? "Add" : "Edit"}{" "}
-            {pool.pool_name || `Pool ${poolIndex + 1}`}
+            {isAdd ? "Add" : "Edit"} {pool.pool_name || `Pool ${poolIndex + 1}`}
           </span>
         </Space>
       }
@@ -3749,9 +3839,11 @@ function ProvisionPoolEditModal({
           showIcon
           title={theme.description}
           description={
-            mode === "add"
+            isAdd
               ? "This creates a new seed/global site-license pool after fresh auth. Existing pools and assignments are unchanged."
-              : "Changes are applied immediately to the provisioning draft. They are not saved until you provision the site license."
+              : isPersisted
+                ? "Pool name, description, seats, access mode, domains, expiration, and reverification timing can be updated. Internal tier, verification policy, and exclusive group are read-only after creation."
+                : "Changes are applied immediately to the provisioning draft. They are not saved until you provision the site license."
           }
         />
         <div
@@ -3768,8 +3860,16 @@ function ProvisionPoolEditModal({
               style={{ width: "100%" }}
             />
           </CompactField>
-          <CompactField label="Tier">
+          <CompactField
+            label="Tier"
+            help={
+              isPersisted
+                ? "Internal entitlement tier; create a new pool to change it."
+                : undefined
+            }
+          >
             <Select
+              disabled={isPersisted}
               value={pool.membership_class}
               onChange={(value) => {
                 const nextTier = siteLicenseTierOptions.find(
@@ -3813,6 +3913,27 @@ function ProvisionPoolEditModal({
             }
           />
         </CompactField>
+        <CompactField
+          label="Allowed email domains"
+          help={
+            domainsRequired
+              ? "Add or remove domains for future verified-domain claims. Existing claimed seats stay assigned unless you revoke them explicitly."
+              : "Leave empty to use the site-license domains."
+          }
+        >
+          <Select
+            mode="tags"
+            tokenSeparators={[",", " ", "\n", ";"]}
+            value={pool.allowed_domains ?? []}
+            onSearch={setDomainSearch}
+            onChange={(values) => setDomains(values)}
+            onBlur={() =>
+              setDomains([...(pool.allowed_domains ?? []), domainSearch])
+            }
+            placeholder="example.edu, department.example.edu"
+            style={{ width: "100%" }}
+          />
+        </CompactField>
         <div
           style={{
             display: "grid",
@@ -3822,19 +3943,29 @@ function ProvisionPoolEditModal({
         >
           <CompactField label="Seats">
             <InputNumber
-              min={1}
+              min={seatMin}
               precision={0}
               value={pool.seat_count}
-              onChange={(value) => onChange({ seat_count: Number(value ?? 1) })}
+              onChange={(value) =>
+                onChange({ seat_count: Number(value ?? seatMin) })
+              }
               style={{ width: "100%" }}
             />
+            {isPersisted ? (
+              <Text type="secondary">
+                Must be at least the current active assignment count (
+                {activeSeatCount}).
+              </Text>
+            ) : null}
           </CompactField>
           <CompactField
             label="Access mode"
             help={
-              pool.requires_approval
-                ? "Users submit a request and a site-license manager approves it."
-                : "Eligible users with a verified matching email can claim directly."
+              isPersisted
+                ? "Changing this affects future claims and requests only."
+                : pool.requires_approval
+                  ? "Users submit a request and a site-license manager approves it."
+                  : "Eligible users with a verified matching email can claim directly."
             }
           >
             <Radio.Group
@@ -3857,12 +3988,26 @@ function ProvisionPoolEditModal({
             </Radio.Group>
           </CompactField>
         </div>
+        {onExpiresAtChange ? (
+          <CompactField
+            label="Expires at"
+            help="Changing this updates active membership grants for assigned or claimed seats."
+          >
+            <DatePicker
+              allowClear
+              value={expiresAt}
+              onChange={onExpiresAtChange}
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+        ) : null}
         <Divider style={{ margin: "0" }} />
         <Space orientation="vertical" size={2}>
           <Text strong>Advanced policy</Text>
           <Text type="secondary">
-            Exclusive groups avoid double-counting seats. Pools in the same
-            group replace each other; pools in different groups can coexist.
+            {isPersisted
+              ? "Verification and exclusive-group policy are fixed for existing pools. Reverification timing remains editable."
+              : "Exclusive groups avoid double-counting seats. Pools in the same group replace each other; pools in different groups can coexist."}
           </Text>
         </Space>
         <div
@@ -3878,17 +4023,14 @@ function ProvisionPoolEditModal({
             help="Proof required for this pool."
           >
             <Select
+              disabled={isPersisted}
               value={pool.verification_policy}
               onChange={(value) =>
                 onChange({
                   verification_policy: value as SiteLicenseVerificationPolicy,
                 })
               }
-              options={[
-                { label: "Email domain", value: "email-domain" },
-                { label: "Manager approval", value: "manager-approval" },
-                { label: "SSO affiliation", value: "sso-affiliation" },
-              ]}
+              options={SITE_LICENSE_VERIFICATION_OPTIONS}
               style={{ width: "100%" }}
             />
           </CompactField>
@@ -3897,6 +4039,7 @@ function ProvisionPoolEditModal({
             help="Same group seats replace each other."
           >
             <Input
+              disabled={isPersisted}
               value={`${pool.exclusive_group ?? ""}`}
               onChange={(event) =>
                 onChange({ exclusive_group: event.target.value })
@@ -3944,28 +4087,44 @@ function ProvisionPoolEditModal({
 function EditSiteLicenseModal({
   open,
   membershipPackage,
+  tiers,
   onClose,
   onUpdated,
 }: {
   open: boolean;
   membershipPackage: MembershipPackageDetails | null;
+  tiers: MembershipTierLike[];
   onClose: () => void;
   onUpdated: () => Promise<void>;
 }) {
-  const [seatCount, setSeatCount] = useState<number>(1);
-  const [poolDescription, setPoolDescription] = useState<string>("");
-  const [domains, setDomains] = useState<string[]>([]);
-  const [domainSearch, setDomainSearch] = useState<string>("");
+  const [pool, setPool] = useState<SiteLicensePoolConfig | undefined>();
   const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const siteLicenseTierOptions = useMemo(() => {
+    const options = getSiteLicenseProvisioningTiers(tiers);
+    const membershipClass = membershipPackage?.membership_class;
+    if (
+      membershipClass == null ||
+      options.some((tier) => tier.id === membershipClass)
+    ) {
+      return options;
+    }
+    return [
+      {
+        id: membershipClass,
+        label: capitalize(membershipClass),
+      },
+      ...options,
+    ];
+  }, [membershipPackage?.membership_class, tiers]);
 
   useEffect(() => {
-    if (!open || !membershipPackage) return;
-    setSeatCount(membershipPackage.seat_count);
-    setPoolDescription(`${membershipPackage.metadata?.pool_description ?? ""}`);
-    setDomains(normalizeDomainList(getPackageDomains(membershipPackage)));
-    setDomainSearch("");
+    if (!open || !membershipPackage) {
+      setPool(undefined);
+      return;
+    }
+    setPool(siteLicensePoolConfigFromPackage(membershipPackage));
     setExpiresAt(
       membershipPackage.expires_at ? dayjs(membershipPackage.expires_at) : null,
     );
@@ -3978,7 +4137,8 @@ function EditSiteLicenseModal({
     setSubmitting(true);
     setError("");
     try {
-      const allowed_domains = normalizeDomainList([...domains, domainSearch]);
+      if (pool == null) return;
+      const allowed_domains = normalizeDomainList(pool.allowed_domains ?? []);
       if (allowed_domains.length === 0) {
         throw Error("Enter at least one allowed email domain.");
       }
@@ -3988,8 +4148,14 @@ function EditSiteLicenseModal({
         package_id: membershipPackage.id,
         owner_account_id: membershipPackage.owner_account_id,
         ...(siteLicenseId ? { site_license_id: siteLicenseId } : {}),
-        seat_count: seatCount,
-        pool_description: poolDescription.trim() || null,
+        pool_name: pool.pool_name.trim(),
+        seat_count: pool.seat_count,
+        pool_description: `${pool.pool_description ?? ""}`.trim() || null,
+        requires_approval: pool.requires_approval === true,
+        affiliation_reverification_days:
+          pool.affiliation_reverification_days ?? null,
+        affiliation_reverification_grace_days:
+          pool.affiliation_reverification_grace_days ?? null,
         allowed_domains,
         expires_at: expiresAt?.endOf("day").toDate() ?? null,
       });
@@ -4003,91 +4169,24 @@ function EditSiteLicenseModal({
 
   const activeSeats = membershipPackage?.active_assignment_count ?? 0;
   return (
-    <Modal
+    <ProvisionPoolEditModal
       open={open}
-      onCancel={onClose}
-      onOk={save}
-      okButtonProps={{ loading: submitting }}
-      okText="Save pool"
-      destroyOnHidden
-      title="Edit seat pool"
-    >
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        {error ? (
-          <Alert
-            type="error"
-            title={error}
-            closable
-            onClose={() => setError("")}
-          />
-        ) : null}
-        <Alert
-          type="info"
-          showIcon
-          title="Changing the expiration date updates active membership grants for assigned or claimed seats. Changing domains only affects future site-license claims; it does not revoke existing claimed seats."
-        />
-        <div>
-          <Text strong>Seats</Text>
-          <InputNumber
-            min={Math.max(1, activeSeats)}
-            precision={0}
-            value={seatCount}
-            onChange={(value) => setSeatCount(Number(value ?? 1))}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-          <Text type="secondary">
-            Must be at least the current active assignment count ({activeSeats}
-            ).
-          </Text>
-        </div>
-        <div>
-          <Text strong>Description</Text>
-          <Input.TextArea
-            rows={3}
-            value={poolDescription}
-            onChange={(event) => setPoolDescription(event.target.value)}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-          <Text type="secondary">
-            Plain-language text shown to eligible users before they claim or
-            request this pool.
-          </Text>
-        </div>
-        <div>
-          <Text strong>Allowed email domains</Text>
-          <Select
-            mode="tags"
-            tokenSeparators={[",", " ", "\n", ";"]}
-            value={domains}
-            onSearch={setDomainSearch}
-            onChange={(values) => {
-              setDomains(normalizeDomainList(values));
-              setDomainSearch("");
-            }}
-            onBlur={() => {
-              const next = normalizeDomainList([...domains, domainSearch]);
-              setDomains(next);
-              setDomainSearch("");
-            }}
-            placeholder="example.edu, department.example.edu"
-            style={{ width: "100%", marginTop: 6 }}
-          />
-          <Text type="secondary">
-            Add or remove domains for future verified-domain claims. Existing
-            claimed seats stay assigned unless you revoke them explicitly.
-          </Text>
-        </div>
-        <div>
-          <Text strong>Expires at</Text>
-          <DatePicker
-            allowClear
-            value={expiresAt}
-            onChange={setExpiresAt}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-        </div>
-      </Space>
-    </Modal>
+      pool={pool}
+      poolIndex={0}
+      siteLicenseTierOptions={siteLicenseTierOptions}
+      onChange={(patch) =>
+        setPool((current) => (current ? { ...current, ...patch } : current))
+      }
+      onClose={onClose}
+      mode="persisted"
+      activeSeatCount={activeSeats}
+      domainsRequired
+      expiresAt={expiresAt}
+      onExpiresAtChange={setExpiresAt}
+      error={error}
+      submitting={submitting}
+      onSubmit={save}
+    />
   );
 }
 

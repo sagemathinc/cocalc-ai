@@ -882,11 +882,13 @@ describe("site license seat pools", () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();
     const second_owner_account_id = uuid();
+    const student_account_id = uuid();
     const originalDomain = `edit-original-${uuid().slice(0, 8)}.edu`;
     const updatedDomain = `edit-updated-${uuid().slice(0, 8)}.edu`;
     await createTestAccount(admin_account_id);
     await createTestAccount(owner_account_id);
     await createTestAccount(second_owner_account_id);
+    await createTestAccount(student_account_id);
     await markAdmin(admin_account_id);
 
     const overview = await provisionSiteLicenseForTest({
@@ -907,6 +909,10 @@ describe("site license seat pools", () => {
         },
       ],
     });
+    await claimMembershipPackageSeat({
+      package_id: overview.pools[0].id,
+      account_id: student_account_id,
+    });
 
     await expect(
       updateSiteLicensePool({
@@ -917,12 +923,41 @@ describe("site license seat pools", () => {
       }),
     ).rejects.toThrow("must be an admin");
 
-    await updateSiteLicensePool({
+    const updated = await updateSiteLicensePool({
       actor_account_id: admin_account_id,
       package_id: overview.pools[0].id,
+      pool_name: "Researchers",
       seat_count: 25,
+      pool_description: "Research access.",
+      requires_approval: true,
+      affiliation_reverification_days: 180,
+      affiliation_reverification_grace_days: 30,
       allowed_domains: [updatedDomain],
     });
+    expect(updated.metadata).toMatchObject({
+      pool_name: "Researchers",
+      pool_description: "Research access.",
+      requires_approval: true,
+      affiliation_reverification_days: 180,
+      affiliation_reverification_grace_days: 30,
+      allowed_domains: [updatedDomain],
+    });
+    await expect(
+      listMembershipPackageAssignments({
+        package_id: overview.pools[0].id,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        account_id: student_account_id,
+        metadata: expect.objectContaining({
+          pool_name: "Researchers",
+          pool_description: "Research access.",
+          requires_approval: true,
+          affiliation_reverification_days: 180,
+          affiliation_reverification_grace_days: 30,
+        }),
+      }),
+    ]);
 
     await expect(
       getPool().query(

@@ -421,8 +421,12 @@ export async function updateMembershipPackage(opts: {
   package_id: string;
   owner_account_id?: string;
   site_license_id?: string;
+  pool_name?: string;
   seat_count?: number;
   pool_description?: string | null;
+  requires_approval?: boolean;
+  affiliation_reverification_days?: number | null;
+  affiliation_reverification_grace_days?: number | null;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 }): Promise<MembershipPackageDetails> {
