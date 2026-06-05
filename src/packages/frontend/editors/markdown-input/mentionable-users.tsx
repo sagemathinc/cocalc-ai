@@ -38,7 +38,7 @@ interface Props {
   opts?: Opts;
 }
 
-function mentionableUsers({ search, project_id, opts }: Props): Item[] {
+export function mentionableUsers({ search, project_id, opts }: Props): Item[] {
   const { avatarUserSize = 24 } = opts ?? {};
 
   const users = redux
@@ -75,7 +75,10 @@ function mentionableUsers({ search, project_id, opts }: Props): Item[] {
   const mentions: Item[] = [];
 
   for (const { account_id } of projectUsers) {
-    const fullname = usersStore.get_name(account_id)?.trim() || account_id;
+    const fullname = usersStore.get_name(account_id)?.trim();
+    if (!fullname) {
+      continue;
+    }
     const searchText = fullname.toLowerCase();
     if (search != null && searchText.indexOf(search) === -1) continue;
     mentions.push({
