@@ -117,6 +117,8 @@ Implementation status as of 2026-06-05:
   the project-start LRO reaches a terminal state. This makes the existing
   course concurrency limit throttle real project starts instead of just LRO
   queue submission.
+- The Codex subscription-link panel now opens immediately and shows a loading
+  message while CoCalc waits for Codex to return the device code and link.
 - Current implementation is a validated tarball + installer deployment, not a
   final marketplace image or SEA binary. SEA is now optional rather than a hard
   product requirement.
@@ -258,9 +260,6 @@ Release-blocking gaps for this story:
     root filesystem is not already suitable.
 - Bootstrap/status output that prints the HTTPS bootstrap URL and clearly
   distinguishes it from SSH-tunnel fallback instructions.
-- Codex subscription-link UI should show the linking panel immediately with a
-  loading state while waiting for the OpenAI/device code instead of leaving the
-  user wondering whether anything is happening.
 - Bulk-start protection follow-up:
   - the course frontend now throttles real project-start completion,
   - follow-up: move large bulk-start orchestration to a server-side LRO/queue
