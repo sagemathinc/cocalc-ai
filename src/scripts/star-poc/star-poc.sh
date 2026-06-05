@@ -17,6 +17,7 @@ STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:local
 STAR_INSTALL_ROOT="${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
 STAR_RELEASES_DIR="${STAR_RELEASES_DIR:-${STAR_INSTALL_ROOT}/releases}"
 STAR_SOURCE_LINK="${STAR_SOURCE_LINK:-${STAR_INSTALL_ROOT}/source}"
+STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
 if [ -z "${SRC_ROOT:-}" ]; then
   if [ -d "${STAR_SOURCE_LINK}/src" ]; then
     SRC_ROOT="${STAR_SOURCE_LINK}/src"
@@ -39,7 +40,9 @@ Commands:
   rollback [release-id]  Roll back to a release. Defaults to previous release.
   restart [all|hub|host] Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
+  access                 Print public/local access and bootstrap instructions.
   bootstrap-link         Print the bootstrap registration link, if still present.
+  https --domain <name>  Configure Caddy automatic HTTPS for a public domain.
   uninstall              Stop and remove Star service hooks; preserve data by default.
 
 This is intentionally small and operator-oriented. It manages a CoCalc Star
@@ -249,6 +252,9 @@ status() {
     log "customize endpoint is not reachable at ${STAR_API}"
   fi
 
+  printf '\nAccess:\n'
+  print_access_summary
+
   printf '\nDatabase:\n'
   if [ -f /etc/cocalc/star/hub.env ]; then
     grep -E '^(COCALC_DB|COCALC_LOCAL_POSTGRES|COCALC_LOCAL_PG_SOCKET_DIR|COCALC_LOCAL_PG_ENV_FILE)=' /etc/cocalc/star/hub.env || true
@@ -454,6 +460,28 @@ local_bootstrap_url() {
   esac
 }
 
+url_with_base() {
+  local url="$1"
+  local base="$2"
+  local path
+  base="${base%/}"
+  case "$url" in
+    *://*/*)
+      path="/${url#*://*/}"
+      ;;
+    *://*)
+      path="/"
+      ;;
+    /*)
+      path="$url"
+      ;;
+    *)
+      path="/"
+      ;;
+  esac
+  printf '%s%s' "$base" "$path"
+}
+
 json_string_field() {
   local file="$1"
   local field="$2"
@@ -468,14 +496,29 @@ print_access_instructions() {
   local bootstrap_url="$1"
   local local_port="${2:-9100}"
   local ssh_target="${STAR_SSH_TARGET:-}"
-  local localhost_url
+  local localhost_url public_url
 
   [ -n "$bootstrap_url" ] || return 0
   localhost_url="$(local_bootstrap_url "$bootstrap_url" "$local_port")"
+  if [ -n "${STAR_PUBLIC_URL:-}" ]; then
+    public_url="$(url_with_base "$bootstrap_url" "$STAR_PUBLIC_URL")"
+  fi
 
   cat <<EOF
 
 CoCalc Star is running.
+EOF
+
+  if [ -n "$public_url" ]; then
+    cat <<EOF
+
+Open this HTTPS URL to create the first admin account:
+  ${public_url}
+
+EOF
+  fi
+
+  cat <<EOF
 
 From your laptop, open an SSH tunnel to this VM:
 EOF
@@ -517,6 +560,22 @@ You can reprint this later with:
 EOF
 }
 
+print_access_summary() {
+  local public="${STAR_PUBLIC_URL:-}"
+  printf 'local control plane: %s\n' "$STAR_API"
+  if [ -n "$public" ]; then
+    printf 'public HTTPS URL:   %s\n' "$public"
+  else
+    printf 'public HTTPS URL:   not configured\n'
+    printf 'configure HTTPS:    sudo %s https --domain <dns-name> [--email <email>]\n' "$0"
+  fi
+  if systemctl is-active --quiet caddy 2>/dev/null; then
+    printf 'caddy service:      active\n'
+  else
+    printf 'caddy service:      %s\n' "$(systemctl is-active caddy 2>/dev/null || true)"
+  fi
+}
+
 bootstrap_link() {
   local result="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}"
   local url
@@ -530,6 +589,167 @@ bootstrap_link() {
     exit 1
   }
   print_access_instructions "$url"
+}
+
+access() {
+  local result="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}"
+  local url=""
+  print_access_summary
+  if [ -f "$result" ]; then
+    url="$(json_string_field "$result" bootstrap_url || true)"
+  fi
+  if [ -n "$url" ]; then
+    print_access_instructions "$url"
+  fi
+}
+
+validate_https_domain() {
+  local domain="$1"
+  case "$domain" in
+    "" | *://* | */* | *:* | *[!A-Za-z0-9.-]* | .* | *..* | *.)
+      return 1
+      ;;
+  esac
+  [[ "$domain" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]]
+}
+
+validate_https_email() {
+  local email="$1"
+  [ -z "$email" ] || [[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]
+}
+
+write_star_caddyfile() {
+  local domain="$1"
+  local email="$2"
+  local tmp="$3"
+  {
+    printf '# cocalc-star managed caddyfile v1\n'
+    if [ -n "$email" ]; then
+      cat <<EOF
+
+{
+  email ${email}
+}
+EOF
+    fi
+    cat <<EOF
+
+${domain} {
+  reverse_proxy 127.0.0.1:${STAR_API##*:}
+}
+EOF
+  } >"$tmp"
+}
+
+set_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local mode="$4"
+  local owner="$5"
+  local tmp
+  tmp="$(mktemp)"
+  if [ -f "$file" ]; then
+    grep -v -E "^${key}=" "$file" >"$tmp" || true
+  fi
+  printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  sudo install -m "$mode" -o "${owner%:*}" -g "${owner#*:}" "$tmp" "$file"
+  rm -f "$tmp"
+}
+
+configure_https() {
+  local domain="" email="" tmp public_url port
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --domain)
+        [ $# -ge 2 ] || {
+          log "missing value for --domain"
+          exit 2
+        }
+        domain="${2:-}"
+        shift 2
+        ;;
+      --email)
+        [ $# -ge 2 ] || {
+          log "missing value for --email"
+          exit 2
+        }
+        email="${2:-}"
+        shift 2
+        ;;
+      -h | --help)
+        cat <<'EOF'
+Usage: star.sh https --domain <dns-name> [--email <email>]
+
+Configure Caddy automatic HTTPS for CoCalc Star.
+
+Prerequisites:
+  - the DNS name resolves to this VM's public IP,
+  - inbound TCP ports 80 and 443 are open to the VM,
+  - no other service owns /etc/caddy/Caddyfile unless it is Star-managed.
+EOF
+        return 0
+        ;;
+      *)
+        log "unknown https option: $1"
+        exit 2
+        ;;
+    esac
+  done
+  if ! validate_https_domain "$domain"; then
+    log "invalid domain: ${domain:-<missing>}; pass a DNS name such as star.example.com"
+    exit 2
+  fi
+  if ! validate_https_email "$email"; then
+    log "invalid email: $email"
+    exit 2
+  fi
+  if [ "$(id -u)" -ne 0 ]; then
+    log "run as root, e.g. sudo $0 https --domain $domain"
+    exit 1
+  fi
+  if [ -f /etc/caddy/Caddyfile ] && ! is_generated_star_caddyfile /etc/caddy/Caddyfile; then
+    log "refusing to replace non-Star Caddyfile at /etc/caddy/Caddyfile"
+    exit 1
+  fi
+  port="${STAR_API##*:}"
+  case "$port" in
+    '' | *[!0-9]*)
+      log "cannot infer local Star port from STAR_API=$STAR_API"
+      exit 1
+      ;;
+  esac
+  tmp="$(mktemp)"
+  write_star_caddyfile "$domain" "$email" "$tmp"
+  if command -v caddy >/dev/null 2>&1; then
+    caddy adapt --config "$tmp" >/dev/null
+  fi
+  sudo install -m 0644 -o root -g root "$tmp" /etc/caddy/Caddyfile
+  rm -f "$tmp"
+
+  public_url="https://${domain}"
+  sudo install -d -m 0755 -o root -g root /etc/cocalc/star
+  set_env_value /etc/cocalc/star/config.env STAR_PUBLIC_URL "$public_url" 0644 root:root
+  if [ -f /etc/cocalc/star/hub.env ]; then
+    set_env_value /etc/cocalc/star/hub.env COCALC_SETTING_DNS "$public_url" 0600 "$STAR_USER:$STAR_USER"
+  fi
+
+  sudo systemctl enable caddy >/dev/null
+  sudo systemctl reload caddy >/dev/null 2>&1 || sudo systemctl restart caddy
+  sudo systemctl restart cocalc-star-hub
+
+  STAR_PUBLIC_URL="$public_url"
+  export STAR_PUBLIC_URL
+  cat <<EOF
+Configured CoCalc Star HTTPS.
+
+Public URL:
+  ${public_url}
+
+Caddy will obtain and renew the certificate automatically once DNS resolves to
+this VM and inbound TCP ports 80 and 443 are open.
+EOF
+  access
 }
 
 confirm_uninstall() {
@@ -599,8 +819,12 @@ backup_and_remove_file() {
 is_generated_star_caddyfile() {
   local path="${1:-/etc/caddy/Caddyfile}"
   [ -f "$path" ] || return 1
+  if grep -q '^# cocalc-star managed caddyfile v1$' "$path"; then
+    grep -q "^[[:space:]]*reverse_proxy[[:space:]]\\+127.0.0.1:${STAR_API##*:}[[:space:]]*$" "$path"
+    return
+  fi
   grep -q '^:80[[:space:]]*{' "$path" || return 1
-  grep -q "^[[:space:]]*reverse_proxy[[:space:]]\\+127.0.0.1:${STAR_BASE_PORT}[[:space:]]*$" "$path" || return 1
+  grep -q "^[[:space:]]*reverse_proxy[[:space:]]\\+127.0.0.1:${STAR_API##*:}[[:space:]]*$" "$path" || return 1
   awk '
     /^[[:space:]]*$/ { next }
     /^[[:space:]]*#/ { next }
@@ -793,8 +1017,15 @@ case "${1:-}" in
     shift
     logs "$@"
     ;;
+  access)
+    access
+    ;;
   bootstrap-link)
     bootstrap_link
+    ;;
+  https)
+    shift
+    configure_https "$@"
     ;;
   uninstall)
     shift

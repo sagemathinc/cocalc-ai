@@ -17,6 +17,7 @@ STAR_HOST_ID="${STAR_HOST_ID:-11111111-1111-4111-8111-111111111111}"
 STAR_PROJECT_HOST_REGION="${STAR_PROJECT_HOST_REGION:-wnam}"
 STAR_BASE_PORT="${STAR_BASE_PORT:-9100}"
 STAR_BASE_URL="${STAR_BASE_URL:-http://127.0.0.1:${STAR_BASE_PORT}}"
+STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
 STAR_BTRFS_IMAGE="${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}"
 STAR_BTRFS_SIZE="${STAR_BTRFS_SIZE:-100G}"
 STAR_BUILD="${STAR_BUILD:-1}"
@@ -514,6 +515,7 @@ write_env_files() {
     printf 'STAR_BASE_PORT=%q\n' "$STAR_BASE_PORT"
     printf 'STAR_BASE_URL=%q\n' "$STAR_BASE_URL"
     printf 'STAR_API=%q\n' "$STAR_BASE_URL"
+    printf 'STAR_PUBLIC_URL=%q\n' "$STAR_PUBLIC_URL"
     printf 'STAR_PROJECT_HOST_REGION=%q\n' "$STAR_PROJECT_HOST_REGION"
     printf 'STAR_INSTALL_ROOT=%q\n' "${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
     printf 'STAR_DEFAULT_ROOTFS_IMAGE=%q\n' "$STAR_DEFAULT_ROOTFS_IMAGE"
@@ -545,7 +547,7 @@ PORT=${STAR_BASE_PORT}
 COCALC_SSHD_PORT=$((STAR_BASE_PORT + 1))
 COCALC_OPEN_BROWSER=0
 COCALC_ALLOW_INSECURE_HTTP_MODE=true
-COCALC_SETTING_DNS=${STAR_BASE_URL}
+COCALC_SETTING_DNS=${STAR_PUBLIC_URL:-$STAR_BASE_URL}
 EOF
   chown "$STAR_USER:$STAR_USER" /etc/cocalc/star/hub.env
   chmod 600 /etc/cocalc/star/hub.env
@@ -673,6 +675,8 @@ WantedBy=multi-user.target
 EOF
 
   cat >"$caddy_config" <<EOF
+# cocalc-star managed caddyfile v1
+
 :80 {
   reverse_proxy 127.0.0.1:${STAR_BASE_PORT}
 }
