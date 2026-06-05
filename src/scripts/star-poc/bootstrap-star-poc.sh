@@ -139,6 +139,18 @@ install_packages() {
   systemctl disable --now postgresql >/dev/null 2>&1 || true
 }
 
+configure_kernel_limits() {
+  local path="/etc/sysctl.d/90-cocalc-star.conf"
+  cat >"$path" <<'EOF'
+# CoCalc Star can run hundreds of rootless Podman project containers.
+# The distro default per-user key quota is commonly 200, which runc can hit
+# around 100 containers while creating container session keyrings.
+kernel.keys.maxkeys = 1000000
+kernel.keys.maxbytes = 25000000
+EOF
+  run sysctl --system >/dev/null
+}
+
 start_web_onboarding() {
   star_web_onboarding_enabled || return 0
   local caddy_config site
@@ -915,6 +927,7 @@ require_root
 trap web_onboarding_exit_trap EXIT
 disable_automatic_apt
 install_packages
+configure_kernel_limits
 start_web_onboarding
 install_gpu_support
 star_web_onboarding_write_status "runtime" "Preparing Linux user, Node.js, and Star runtime packages." ""
