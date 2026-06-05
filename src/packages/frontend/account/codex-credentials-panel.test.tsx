@@ -328,6 +328,47 @@ describe("CodexCredentialsPanel", () => {
     });
   });
 
+  it("shows the device login panel while waiting for the start RPC", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "none" });
+    const started = deferred<any>();
+    codexDeviceAuthStart.mockReturnValue(started.promise);
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Not configured")).toBeTruthy();
+    });
+
+    await act(async () => {
+      screen.getByText("Sign in with ChatGPT").click();
+    });
+
+    expect(
+      screen.getByText((text) => text.includes("Starting Codex device login")),
+    ).toBeTruthy();
+    expect(screen.getByText("Start device login")).toBeTruthy();
+
+    await act(async () => {
+      started.resolve({
+        id: "auth-1",
+        projectId: "project-1",
+        accountId: "account-1",
+        codexHome: "/tmp/.codex",
+        state: "pending",
+        verificationUrl: "https://chatgpt.com/device",
+        userCode: "ABCD-EFGH",
+        output: "",
+        startedAt: 1,
+        updatedAt: 1,
+      });
+      await started.promise;
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
+    });
+  });
+
   it("shows device login instructions parsed from raw Codex output", async () => {
     getCodexPaymentSource.mockResolvedValue({ source: "none" });
     codexDeviceAuthStart.mockResolvedValue({

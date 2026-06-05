@@ -460,7 +460,9 @@ function CodexCredentialsPanelBody({
   };
 
   const renderDeviceAuthLogin = () => {
-    if (!deviceAuth && !deviceAuthError) return null;
+    if (!deviceAuth && !deviceAuthError && !deviceAuthActionPending) {
+      return null;
+    }
     const userCode =
       deviceAuth?.userCode ?? parseDeviceAuthUserCode(deviceAuth?.output);
     const verificationUrl =
@@ -470,6 +472,14 @@ function CodexCredentialsPanelBody({
       <Space orientation="vertical" size={8} style={{ width: "100%" }}>
         {deviceAuthError ? (
           <Alert type="error" showIcon title={deviceAuthError} />
+        ) : null}
+        {!deviceAuth && deviceAuthActionPending ? (
+          <Alert
+            type="info"
+            showIcon
+            title="Starting Codex device login"
+            description="CoCalc is asking Codex for a one-time device code. The code and link will appear here as soon as Codex returns them."
+          />
         ) : null}
         {deviceAuth ? (
           <Alert
