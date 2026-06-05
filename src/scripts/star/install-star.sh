@@ -30,6 +30,7 @@ Important defaults:
   STAR_ROOT=/var/lib/cocalc/star
   STAR_BASE_URL=http://127.0.0.1:9100
   STAR_PUBLIC_URL=              optional public https://... URL
+  STAR_WEB_ONBOARDING=auto      serve /star-install/<nonce>/ when public URL is set
   STAR_BTRFS_IMAGE=/var/lib/cocalc/btrfs.img
   STAR_BTRFS_SIZE=100G
   STAR_BUILD=1
