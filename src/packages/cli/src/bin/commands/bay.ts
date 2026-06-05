@@ -192,6 +192,31 @@ export function registerBayCommand(
     });
 
   bay
+    .command("drain-preflight [bay_id]")
+    .description(
+      "inspect whether a bay still has durable state that blocks deletion/drain",
+    )
+    .option(
+      "--unsafe-rehome",
+      "downgrade known unsupported owned-state blockers to warnings after explicit operator audit",
+      false,
+    )
+    .action(
+      async (
+        bay_id: string | undefined,
+        opts: { unsafeRehome?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "bay drain-preflight", async (ctx) => {
+          return await ctx.hub.system.getBayDrainPreflight({
+            bay_id: bay_id?.trim() || undefined,
+            unsafe_rehome: opts.unsafeRehome === true,
+          });
+        });
+      },
+    );
+
+  bay
     .command("backfill")
     .description("backfill persisted bay ownership fields in one-bay mode")
     .option("--bay-id <bay_id>", "override the bay id to write")

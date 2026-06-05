@@ -50,6 +50,7 @@ export const system = {
   listBays: authFirst,
   getBayOpsOverview: authFirstRequireAccount,
   getBayOpsDetail: authFirstRequireAccount,
+  getBayDrainPreflight: authFirstRequireAccount,
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
   getBayBackups: authFirst,
@@ -813,9 +814,36 @@ export interface BayOpsDetail {
   checked_at: string;
   load?: BayLoadInfo;
   backups?: BayBackupsInfo;
+  drain_preflight?: BayDrainPreflightResult;
   load_error?: string | null;
   backups_error?: string | null;
+  drain_preflight_error?: string | null;
   routed: boolean;
+}
+
+export type BayDrainPreflightSeverity = "ok" | "warn" | "block";
+
+export interface BayDrainPreflightFinding {
+  table: string;
+  severity: BayDrainPreflightSeverity;
+  ownership?: string;
+  portability?: string;
+  estimated_rows?: number | null;
+  reason: string;
+}
+
+export interface BayDrainPreflightResult {
+  source_bay_id: string;
+  seed_bay_id: string;
+  unsafe_rehome: boolean;
+  ok: boolean;
+  summary: {
+    ok: number;
+    warn: number;
+    block: number;
+    tables: number;
+  };
+  findings: BayDrainPreflightFinding[];
 }
 
 export interface SiteSettingsSyncBayResult {
@@ -1491,6 +1519,12 @@ export interface System {
     account_id?: string;
     bay_id: string;
   }) => Promise<BayOpsDetail>;
+
+  getBayDrainPreflight: (opts: {
+    account_id?: string;
+    bay_id?: string;
+    unsafe_rehome?: boolean;
+  }) => Promise<BayDrainPreflightResult>;
 
   setBayProjectOwnershipAdmission: (opts: {
     account_id?: string;

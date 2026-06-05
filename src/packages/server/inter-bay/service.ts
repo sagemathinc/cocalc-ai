@@ -89,6 +89,7 @@ import {
   registerBayPresenceLocal,
   startBayRegistrationHeartbeat,
 } from "@cocalc/server/bay-registry";
+import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
 import { startManagedBayCloudflared } from "@cocalc/server/bay-cloudflared";
 import {
   applyAccountProjectFeedRemoveOnHomeBay,
@@ -458,6 +459,12 @@ async function startBayOpsService(): Promise<void> {
         account_id,
         bay_id,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    getDrainPreflight: async ({ unsafe_rehome }) =>
+      await runBayDrainPreflight({
+        source_bay_id: bay_id,
+        seed_bay_id: getConfiguredClusterSeedBayId(),
+        unsafe_rehome,
       }),
     getRootfsCatalog: async ({ account_id }) =>
       await listVisibleRootfsImages(account_id, {

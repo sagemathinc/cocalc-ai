@@ -41,6 +41,7 @@ import type {
 import type {
   AcpAdmissionDenialReport,
   BayBackupsInfo,
+  BayDrainPreflightResult,
   BayLoadInfo,
   ProjectRuntimeSlotReport,
   RootfsQuotaReport,
@@ -1297,6 +1298,11 @@ export interface BayOpsHealthRequest {
   account_id?: string;
 }
 
+export interface BayOpsDrainPreflightRequest {
+  account_id?: string;
+  unsafe_rehome?: boolean;
+}
+
 export interface BayOpsRootfsQuotaReportRequest {
   account_id?: string;
   window_minutes?: number;
@@ -1814,6 +1820,7 @@ export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod =
   | "get-load"
   | "get-backups"
+  | "get-drain-preflight"
   | "get-rootfs-catalog"
   | "get-rootfs-quota-report"
   | "get-acp-admission-denial-report"
@@ -2866,6 +2873,9 @@ export interface InterBayBayRegistryApi {
 export interface InterBayBayOpsApi {
   getLoad: (opts: BayOpsHealthRequest) => Promise<BayLoadInfo>;
   getBackups: (opts: BayOpsHealthRequest) => Promise<BayBackupsInfo>;
+  getDrainPreflight: (
+    opts: BayOpsDrainPreflightRequest,
+  ) => Promise<BayDrainPreflightResult>;
   getRootfsCatalog: (
     opts: BayOpsRootfsCatalogRequest,
   ) => Promise<RootfsImageManifest>;
@@ -6145,6 +6155,12 @@ export function createInterBayBayOpsClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "get-backups" }),
   });
+  const drainPreflightClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getDrainPreflight">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "get-drain-preflight" }),
+  });
   const setServerSettingClient = createServiceClient<
     Pick<InterBayBayOpsApi, "setServerSetting">
   >({
@@ -6199,6 +6215,8 @@ export function createInterBayBayOpsClient({
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
+    getDrainPreflight: async (opts) =>
+      await drainPreflightClient.getDrainPreflight(opts),
     getRootfsCatalog: async (opts) =>
       await rootfsCatalogClient.getRootfsCatalog(opts),
     getRootfsQuotaReport: async (opts) =>
@@ -6265,6 +6283,17 @@ export function createInterBayBayOpsHandlers({
       subject: bayOpsSubject({ dest_bay: bay_id, method: "get-backups" }),
       impl: {
         getBackups: async (opts) => await impl.getBackups(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getDrainPreflight">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-drain-preflight",
+      }),
+      impl: {
+        getDrainPreflight: async (opts) => await impl.getDrainPreflight(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "setServerSetting">>({

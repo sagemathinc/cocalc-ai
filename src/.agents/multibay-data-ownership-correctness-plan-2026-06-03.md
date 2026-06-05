@@ -920,20 +920,28 @@ Implemented artifacts:
 
 - `src/packages/server/bay-drain/preflight.ts` evaluates local table names
   against the ownership manifest.
+- Preflight findings include approximate row counts from Postgres catalog
+  statistics, avoiding expensive `COUNT(*)` scans during operational drain
+  review.
 - Unknown tables always block drain.
 - Unsupported/stable authoritative state blocks by default and downgrades only
   with an explicit `unsafe_rehome` override.
 - Cache, ephemeral, and projection tables are treated as safe to drop/rebuild.
 - Seed-global tables on non-seed bays warn, since they should be mirrors or
   reconcilable from seed.
+- `system.getBayDrainPreflight` routes the preflight to the requested bay via
+  the existing inter-bay Bay Ops service.
+- `cocalc bay drain-preflight [bay_id]` exposes the full report to operators.
+- The Bay Ops admin detail panel now shows drain-preflight blockers/warnings and
+  links operators to the full CLI report.
 
 Still needed:
 
-- wire this evaluator into the actual drain/rehome CLI/admin paths;
 - require an explicit unsafe flag for rehome-style operations that would leave
   or move unsupported account/project/host-owned state;
-- add row-count/detail reporting so operators see which ownership classes remain
-  on a bay before deletion.
+- decide whether future destructive bay-delete/drain commands should hard-block
+  on this report automatically, or remain copy/paste operator workflows until
+  bay deletion itself exists as a first-class command.
 
 ## Definition of Done
 

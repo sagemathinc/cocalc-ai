@@ -16,14 +16,20 @@ export interface BayDrainPreflightFinding {
   severity: BayDrainPreflightSeverity;
   ownership?: TableOwnershipEntry["ownership"];
   portability?: TableOwnershipEntry["portability"];
+  estimated_rows?: number | null;
   reason: string;
+}
+
+export interface BayDrainPreflightTableStats {
+  table: string;
+  estimated_rows?: number | null;
 }
 
 export interface BayDrainPreflightOptions {
   source_bay_id: string;
   seed_bay_id: string;
   unsafe_rehome?: boolean;
-  tables?: string[];
+  tables?: Array<string | BayDrainPreflightTableStats>;
 }
 
 export interface BayDrainPreflightResult {
@@ -31,6 +37,12 @@ export interface BayDrainPreflightResult {
   seed_bay_id: string;
   unsafe_rehome: boolean;
   ok: boolean;
+  summary: {
+    ok: number;
+    warn: number;
+    block: number;
+    tables: number;
+  };
   findings: BayDrainPreflightFinding[];
 }
 
@@ -44,11 +56,13 @@ function finding({
   table,
   entry,
   severity,
+  estimated_rows,
   reason,
 }: {
   table: string;
   entry?: TableOwnershipEntry;
   severity: BayDrainPreflightSeverity;
+  estimated_rows?: number | null;
   reason: string;
 }): BayDrainPreflightFinding {
   return {
@@ -56,6 +70,7 @@ function finding({
     severity,
     ownership: entry?.ownership,
     portability: entry?.portability,
+    estimated_rows,
     reason,
   };
 }
@@ -65,12 +80,17 @@ export function evaluateBayDrainTable({
   source_bay_id,
   seed_bay_id,
   unsafe_rehome = false,
-}: BayDrainPreflightOptions & { table: string }): BayDrainPreflightFinding {
+  estimated_rows,
+}: BayDrainPreflightOptions & {
+  table: string;
+  estimated_rows?: number | null;
+}): BayDrainPreflightFinding {
   const entry = POSTGRES_TABLE_OWNERSHIP[table];
   if (entry == null) {
     return finding({
       table,
       severity: "block",
+      estimated_rows,
       reason:
         "table is not in the multibay ownership manifest; classify it before draining this bay",
     });
@@ -81,6 +101,7 @@ export function evaluateBayDrainTable({
         table,
         entry,
         severity: "warn",
+        estimated_rows,
         reason:
           "seed-global table exists on a non-seed bay; it should be a mirror/cache or be reconciled from seed before bay deletion",
       });
@@ -89,6 +110,7 @@ export function evaluateBayDrainTable({
       table,
       entry,
       severity: "ok",
+      estimated_rows,
       reason: "seed bay owns this seed-global table",
     });
   }
@@ -97,6 +119,7 @@ export function evaluateBayDrainTable({
       table,
       entry,
       severity: "ok",
+      estimated_rows,
       reason: `${entry.ownership} state is documented as disposable or rebuildable`,
     });
   }
@@ -105,6 +128,7 @@ export function evaluateBayDrainTable({
       table,
       entry,
       severity: "warn",
+      estimated_rows,
       reason:
         "local audit history remains on this bay; export it if operational/legal retention requires it",
     });
@@ -114,6 +138,7 @@ export function evaluateBayDrainTable({
       table,
       entry,
       severity: "ok",
+      estimated_rows,
       reason: `${entry.ownership} state is ${entry.portability}`,
     });
   }
@@ -122,6 +147,7 @@ export function evaluateBayDrainTable({
       table,
       entry,
       severity: "warn",
+      estimated_rows,
       reason: `${entry.ownership} state is ${entry.portability}; continuing only because unsafe_rehome is set`,
     });
   }
@@ -129,8 +155,15 @@ export function evaluateBayDrainTable({
     table,
     entry,
     severity: "block",
+    estimated_rows,
     reason: `${entry.ownership} state is ${entry.portability}; pass an explicit unsafe override only after auditing rows on this bay`,
   });
+}
+
+function normalizeTableStats(
+  table: string | BayDrainPreflightTableStats,
+): BayDrainPreflightTableStats {
+  return typeof table === "string" ? { table } : table;
 }
 
 export function evaluateBayDrainPreflight({
@@ -139,34 +172,65 @@ export function evaluateBayDrainPreflight({
   unsafe_rehome = false,
   tables = Object.keys(POSTGRES_TABLE_OWNERSHIP),
 }: BayDrainPreflightOptions): BayDrainPreflightResult {
-  const findings = [...new Set(tables)].sort().map((table) =>
-    evaluateBayDrainTable({
-      table,
-      source_bay_id,
-      seed_bay_id,
-      unsafe_rehome,
-    }),
+  const tableStats = new Map<string, BayDrainPreflightTableStats>();
+  for (const table of tables) {
+    const stats = normalizeTableStats(table);
+    tableStats.set(stats.table, stats);
+  }
+  const findings = [...tableStats.values()]
+    .sort((a, b) => a.table.localeCompare(b.table))
+    .map((stats) =>
+      evaluateBayDrainTable({
+        table: stats.table,
+        estimated_rows: stats.estimated_rows,
+        source_bay_id,
+        seed_bay_id,
+        unsafe_rehome,
+      }),
+    );
+  const summary = findings.reduce(
+    (counts, item) => {
+      counts[item.severity] += 1;
+      return counts;
+    },
+    { ok: 0, warn: 0, block: 0, tables: findings.length },
   );
   return {
     source_bay_id,
     seed_bay_id,
     unsafe_rehome,
-    ok: !findings.some((item) => item.severity === "block"),
+    ok: summary.block === 0,
+    summary,
     findings,
   };
 }
 
-export async function listLocalPostgresTables(): Promise<string[]> {
-  const { rows } = await getPool("medium").query<{ table_name: string }>(
+export async function listLocalPostgresTableStats(): Promise<
+  BayDrainPreflightTableStats[]
+> {
+  const { rows } = await getPool("medium").query<{
+    table_name: string;
+    estimated_rows: number | string | null;
+  }>(
     `
-      SELECT table_name
-        FROM information_schema.tables
-       WHERE table_schema = 'public'
-         AND table_type = 'BASE TABLE'
-       ORDER BY table_name
+      SELECT c.relname AS table_name,
+             GREATEST(c.reltuples, 0)::BIGINT AS estimated_rows
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND c.relkind = 'r'
+       ORDER BY c.relname
     `,
   );
-  return rows.map((row) => row.table_name);
+  return rows.map((row) => ({
+    table: row.table_name,
+    estimated_rows:
+      row.estimated_rows == null ? null : Number(row.estimated_rows),
+  }));
+}
+
+export async function listLocalPostgresTables(): Promise<string[]> {
+  return (await listLocalPostgresTableStats()).map((row) => row.table);
 }
 
 export async function runBayDrainPreflight(
@@ -174,6 +238,6 @@ export async function runBayDrainPreflight(
 ): Promise<BayDrainPreflightResult> {
   return evaluateBayDrainPreflight({
     ...opts,
-    tables: await listLocalPostgresTables(),
+    tables: await listLocalPostgresTableStats(),
   });
 }

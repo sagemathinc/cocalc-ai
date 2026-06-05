@@ -10,6 +10,7 @@ import { ErrorDisplay, Loading, TimeAgo } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   BayLoadProjectionStatus,
+  BayDrainPreflightFinding,
   BayOpsDetail,
   BayOpsOverview,
   BayOpsOverviewBay,
@@ -74,6 +75,7 @@ function commandList(bay: BayOpsOverviewBay): string[] {
     `cocalc bay show ${id}`,
     `cocalc bay load ${id}`,
     `cocalc bay backups ${id}`,
+    `cocalc bay drain-preflight ${id}`,
     `cocalc bay backup ${id}`,
     `cocalc bay restore-test ${id} --remote-only`,
     `cocalc bay project-ownership-admission ${id} --accepts no --note "maintenance drain"`,
@@ -232,6 +234,84 @@ function BackupHealth({ detail }: { detail: BayOpsDetail }) {
   );
 }
 
+function findingColor(finding: BayDrainPreflightFinding): string | undefined {
+  if (finding.severity === "block") return "red";
+  if (finding.severity === "warn") return "orange";
+  return "green";
+}
+
+function DrainPreflightHealth({ detail }: { detail: BayOpsDetail }) {
+  const preflight = detail.drain_preflight;
+  if (detail.drain_preflight_error) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        message="Failed to load drain preflight"
+        description={detail.drain_preflight_error}
+      />
+    );
+  }
+  if (!preflight) {
+    return (
+      <Typography.Text type="secondary">
+        No drain preflight snapshot.
+      </Typography.Text>
+    );
+  }
+  const importantFindings = preflight.findings.filter(
+    (finding) => finding.severity !== "ok",
+  );
+  const important = importantFindings.slice(0, 8);
+  const command = `cocalc bay drain-preflight ${preflight.source_bay_id}`;
+  return (
+    <Space direction="vertical" size={8} style={{ width: "100%" }}>
+      <Space wrap>
+        <Tag color={preflight.ok ? "green" : "red"}>
+          {preflight.ok ? "drain allowed" : "drain blocked"}
+        </Tag>
+        <Tag color={preflight.summary.block ? "red" : undefined}>
+          blockers {count(preflight.summary.block)}
+        </Tag>
+        <Tag color={preflight.summary.warn ? "orange" : undefined}>
+          warnings {count(preflight.summary.warn)}
+        </Tag>
+        <Tag>tables {count(preflight.summary.tables)}</Tag>
+      </Space>
+      {important.length ? (
+        <Space direction="vertical" size={4} style={{ width: "100%" }}>
+          {important.map((finding) => (
+            <Typography.Text key={finding.table}>
+              <Tag color={findingColor(finding)}>{finding.severity}</Tag>
+              <Typography.Text code>{finding.table}</Typography.Text>{" "}
+              <Typography.Text type="secondary">
+                {finding.ownership ?? "unknown"}/{finding.portability ?? "n/a"}
+                {finding.estimated_rows != null
+                  ? `, approx rows ${count(finding.estimated_rows)}`
+                  : ""}
+                : {finding.reason}
+              </Typography.Text>
+            </Typography.Text>
+          ))}
+          {importantFindings.length > important.length ? (
+            <Typography.Text type="secondary">
+              Showing first {important.length} blockers/warnings. Use{" "}
+              <Typography.Text code copyable={{ text: command }}>
+                {command}
+              </Typography.Text>{" "}
+              for the full report.
+            </Typography.Text>
+          ) : null}
+        </Space>
+      ) : (
+        <Typography.Text type="secondary">
+          No blocking or warning findings.
+        </Typography.Text>
+      )}
+    </Space>
+  );
+}
+
 function LoadHealth({ detail }: { detail: BayOpsDetail }) {
   const load = detail.load;
   if (detail.load_error) {
@@ -331,6 +411,9 @@ function BayHealth({ bay }: { bay: BayOpsOverviewBay }) {
           </Card>
           <Card size="small" title="Backup and restore readiness">
             <BackupHealth detail={detail} />
+          </Card>
+          <Card size="small" title="Drain preflight">
+            <DrainPreflightHealth detail={detail} />
           </Card>
         </Space>
       ) : null}

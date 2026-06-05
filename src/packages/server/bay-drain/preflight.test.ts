@@ -79,7 +79,24 @@ describe("bay drain preflight", () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(result.summary).toEqual({ ok: 2, warn: 0, block: 0, tables: 2 });
     expect(result.findings.map((item) => item.severity)).toEqual(["ok", "ok"]);
+  });
+
+  it("includes approximate row counts when provided", () => {
+    const result = evaluateBayDrainPreflight({
+      source_bay_id: "bay-a",
+      seed_bay_id: "seed",
+      tables: [
+        { table: "purchases", estimated_rows: 42 },
+        { table: "account_project_index", estimated_rows: 1000 },
+      ],
+    });
+
+    expect(result.summary).toEqual({ ok: 1, warn: 0, block: 1, tables: 2 });
+    expect(result.findings.map((item) => item.estimated_rows)).toEqual([
+      1000, 42,
+    ]);
   });
 
   it("warns about seed-global tables on non-seed bays", () => {

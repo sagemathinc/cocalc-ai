@@ -33,6 +33,7 @@ import {
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
 import { recordBrowserAutomationAuditEvent } from "./browser-automation-audit";
 import { db } from "@cocalc/database";
 import manageApiKeys0 from "@cocalc/server/api/manage";
@@ -606,12 +607,23 @@ export async function getBayOpsDetail({
             await getBayLoad({ account_id, bay_id: currentBayId }),
           getBackups: async (_opts: { account_id?: string }) =>
             await getBayBackups({ account_id, bay_id: currentBayId }),
+          getDrainPreflight: async (_opts: {
+            account_id?: string;
+            unsafe_rehome?: boolean;
+          }) =>
+            await runBayDrainPreflight({
+              source_bay_id: currentBayId,
+              seed_bay_id: getConfiguredClusterSeedBayId(),
+              unsafe_rehome: _opts.unsafe_rehome,
+            }),
         }
       : getInterBayBridge().bayOps(requestedBayId, { timeout_ms: 15_000 });
-  const [loadResult, backupsResult] = await Promise.allSettled([
-    api.getLoad({ account_id }),
-    api.getBackups({ account_id }),
-  ]);
+  const [loadResult, backupsResult, drainPreflightResult] =
+    await Promise.allSettled([
+      api.getLoad({ account_id }),
+      api.getBackups({ account_id }),
+      api.getDrainPreflight({ account_id }),
+    ]);
 
   return {
     bay_id: requestedBayId,
@@ -620,9 +632,41 @@ export async function getBayOpsDetail({
     load: loadResult.status === "fulfilled" ? loadResult.value : undefined,
     backups:
       backupsResult.status === "fulfilled" ? backupsResult.value : undefined,
+    drain_preflight:
+      drainPreflightResult.status === "fulfilled"
+        ? drainPreflightResult.value
+        : undefined,
     load_error: settledError(loadResult),
     backups_error: settledError(backupsResult),
+    drain_preflight_error: settledError(drainPreflightResult),
   };
+}
+
+export async function getBayDrainPreflight({
+  account_id,
+  bay_id,
+  unsafe_rehome,
+}: {
+  account_id?: string;
+  bay_id?: string;
+  unsafe_rehome?: boolean;
+}) {
+  await assertAdmin(account_id);
+  const currentBayId = getConfiguredBayId();
+  const requestedBayId = `${bay_id ?? currentBayId}`.trim();
+  if (!requestedBayId) {
+    throw Error("bay_id is required");
+  }
+  if (requestedBayId === currentBayId) {
+    return await runBayDrainPreflight({
+      source_bay_id: currentBayId,
+      seed_bay_id: getConfiguredClusterSeedBayId(),
+      unsafe_rehome,
+    });
+  }
+  return await getInterBayBridge()
+    .bayOps(requestedBayId, { timeout_ms: 15_000 })
+    .getDrainPreflight({ account_id, unsafe_rehome });
 }
 
 type SiteSettingUpdate = { name: string; value: string };
