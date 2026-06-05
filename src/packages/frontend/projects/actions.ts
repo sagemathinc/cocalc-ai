@@ -53,6 +53,13 @@ import {
   DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
   type ProjectViewerReadPolicy,
 } from "@cocalc/util/project-access";
+import {
+  attachProjectionFeedDiagnostics,
+  recordProjectionFeedEvent,
+  recordProjectionHistoryGap,
+  recordProjectionRepair,
+  recordProjectionRepairFailure,
+} from "@cocalc/frontend/projection-diagnostics";
 
 import type {
   CourseInfo,
@@ -239,6 +246,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   };
   private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
+  private realtimeFeedDiagnosticsCleanup?: () => void;
   private realtimeFeedFlushTimer?: ReturnType<typeof setTimeout>;
   private pendingProjectFeedUpserts: Record<
     string,
@@ -388,6 +396,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private closeRealtimeFeed(): void {
     this.flushPendingProjectFeedChanges();
+    this.realtimeFeedDiagnosticsCleanup?.();
+    this.realtimeFeedDiagnosticsCleanup = undefined;
     if (this.realtimeFeed != null) {
       this.realtimeFeed.removeListener("change", this.handleRealtimeFeedChange);
       this.realtimeFeed.removeListener(
@@ -399,7 +409,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
     this.realtimeFeedAccountId = undefined;
   }
 
-  private handleRealtimeFeedChange = (event?: AccountFeedEvent): void => {
+  private handleRealtimeFeedChange = (
+    event?: AccountFeedEvent,
+    seq?: number,
+  ): void => {
+    recordProjectionFeedEvent({
+      consumer: "projects",
+      event,
+      seq,
+    });
     if (event == null) {
       return;
     }
@@ -427,11 +445,37 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   };
 
-  private handleRealtimeFeedHistoryGap = (): void => {
+  private handleRealtimeFeedHistoryGap = (info?: any): void => {
+    recordProjectionHistoryGap({
+      consumer: "projects",
+      info,
+    });
     this.flushPendingProjectFeedChanges();
-    void refresh_projects_table();
-    void this.loadProjectedProjectsForCurrentAccount(this.getAccountId());
+    void this.refreshProjectsProjectionAfterHistoryGap();
   };
+
+  private async refreshProjectsProjectionAfterHistoryGap(): Promise<void> {
+    const account_id = this.getAccountId();
+    recordProjectionRepair({
+      consumer: "projects",
+      reason: "history-gap",
+      scope: "projects-table+account_project_index",
+    });
+    try {
+      await Promise.all([
+        refresh_projects_table(),
+        this.loadProjectedProjectsForCurrentAccount(account_id),
+      ]);
+    } catch (err) {
+      recordProjectionRepairFailure({
+        consumer: "projects",
+        reason: "history-gap",
+        scope: "projects-table+account_project_index",
+        error: err,
+      });
+      throw err;
+    }
+  }
 
   private scheduleProjectedProjectReconcile(project_id: string): void {
     for (const delay of ProjectsActions.PROJECT_ROW_RECONCILE_DELAYS_MS) {
@@ -562,6 +606,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
       feed.on("change", this.handleRealtimeFeedChange);
       feed.on("history-gap", this.handleRealtimeFeedHistoryGap);
+      this.realtimeFeedDiagnosticsCleanup = attachProjectionFeedDiagnostics({
+        consumer: "projects",
+        account_id,
+        stream_name: accountFeedStreamName(),
+        stream: feed,
+      });
       this.realtimeFeed = feed;
       this.realtimeFeedAccountId = account_id;
     } catch (err) {
@@ -575,6 +625,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
       if (!account_id || !webapp_client.is_signed_in()) {
         return;
       }
+      recordProjectionRepair({
+        consumer: "projects",
+        reason: "bootstrap",
+        scope: {
+          table: "account_project_index",
+          limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT,
+        },
+      });
       let resp: any;
       try {
         resp = await webapp_client.async_query({
@@ -602,6 +660,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
           options: [{ limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT }],
         });
       } catch (err) {
+        recordProjectionRepairFailure({
+          consumer: "projects",
+          reason: "bootstrap",
+          scope: {
+            table: "account_project_index",
+            limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT,
+          },
+          error: err,
+        });
         console.warn("project projected bootstrap failed", err);
         return;
       }
@@ -762,6 +829,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
       if (!account_id || !project_id || !webapp_client.is_signed_in()) {
         return;
       }
+      recordProjectionRepair({
+        consumer: "projects",
+        reason: "row-reconcile",
+        scope: { table: "account_project_index", project_id },
+      });
       let resp: any;
       try {
         resp = await webapp_client.async_query({
@@ -789,6 +861,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
           options: [{ limit: 1 }],
         });
       } catch (err) {
+        recordProjectionRepairFailure({
+          consumer: "projects",
+          reason: "row-reconcile",
+          scope: { table: "account_project_index", project_id },
+          error: err,
+        });
         console.warn("project projected row reconcile failed", {
           project_id,
           err,
