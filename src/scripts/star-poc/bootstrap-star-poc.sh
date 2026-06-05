@@ -499,11 +499,20 @@ publish_default_rootfs() {
 
 write_env_files() {
   local site_master_key="${STAR_DATA}/secrets/site-master-key"
+  local existing_public_url=""
   if [ ! -f "$site_master_key" ]; then
     mkdir -p "$(dirname "$site_master_key")"
     openssl rand -base64 32 >"$site_master_key"
     chmod 600 "$site_master_key"
     chown "$STAR_USER:$STAR_USER" "$site_master_key"
+  fi
+  if [ -z "$STAR_PUBLIC_URL" ] && [ -f /etc/cocalc/star/config.env ]; then
+    existing_public_url="$(
+      env -i bash -c 'source /etc/cocalc/star/config.env; printf "%s" "${STAR_PUBLIC_URL:-}"'
+    )"
+    if [ -n "$existing_public_url" ]; then
+      STAR_PUBLIC_URL="$existing_public_url"
+    fi
   fi
 
   {
