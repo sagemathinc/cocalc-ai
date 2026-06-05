@@ -1090,6 +1090,61 @@ describe("membership package managers", () => {
     expect(screen.queryByText("Pro seats")).toBeNull();
   });
 
+  it("renders approval requests compactly in oldest-first order", async () => {
+    getNames.mockResolvedValue({
+      "student-older": { first_name: "Ada", last_name: "Lovelace" },
+      "student-newer": { first_name: "Grace", last_name: "Hopper" },
+    });
+    listSiteLicenseOverviews.mockResolvedValue([
+      makeSiteLicenseOverview({
+        pending_requests: [
+          {
+            id: "request-newer",
+            site_license_id: "license-1",
+            package_id: "instructor-pool",
+            account_id: "student-newer",
+            matched_email_address: "grace@example.edu",
+            canonical_identity: "grace@example.edu",
+            requested_membership_class: "pro",
+            state: "pending",
+            requested_at: new Date("2026-05-02T00:00:00Z"),
+          },
+          {
+            id: "request-older",
+            site_license_id: "license-1",
+            package_id: "instructor-pool",
+            account_id: "student-older",
+            matched_email_address: "ada@example.edu",
+            canonical_identity: "ada@example.edu",
+            requested_membership_class: "pro",
+            state: "pending",
+            requested_at: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+        pools: [
+          makeSitePackage({
+            id: "instructor-pool",
+            pool_name: "Instructor",
+            pending_request_count: 2,
+          }),
+        ],
+      }),
+    ]);
+
+    const { container } = render(<SiteLicenseManager tiers={TIERS} />);
+
+    const older = await screen.findByText("Ada Lovelace");
+    const newer = await screen.findByText("Grace Hopper");
+
+    expect(container.textContent).toContain(
+      "Ada Lovelace (ada@example.edu) requested Instructor seat time-ago",
+    );
+    expect(container.textContent).not.toContain("account student-older");
+    expect(
+      older.compareDocumentPosition(newer) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("falls back to organization name when the license title is empty", async () => {
     listSiteLicenseOverviews.mockResolvedValue([
       makeSiteLicenseOverview({

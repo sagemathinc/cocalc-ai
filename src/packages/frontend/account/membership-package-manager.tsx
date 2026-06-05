@@ -447,6 +447,28 @@ function getAccountSecondaryLabel(
   return assignment.account_id;
 }
 
+function getRequestAccountDisplay({
+  names,
+  request,
+}: {
+  names: Record<
+    string,
+    { first_name?: string; last_name?: string } | undefined
+  >;
+  request: SiteLicensePoolRequest;
+}): {
+  email?: string;
+  name: string;
+} {
+  const name = names[request.account_id];
+  const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
+  const email = `${request.matched_email_address ?? ""}`.trim();
+  return {
+    email: fullName && email ? email : undefined,
+    name: fullName || email || request.account_id,
+  };
+}
+
 async function revokeSeatOrThrow({
   package_id,
   assignment,
@@ -493,6 +515,13 @@ function dateLabel(value?: Date | string | null): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return `${value}`;
   return date.toISOString().slice(0, 10);
+}
+
+function dateSortValue(value?: Date | string | null): number {
+  if (!value) return Number.MAX_SAFE_INTEGER;
+  const date = value instanceof Date ? value : new Date(value);
+  const time = date.getTime();
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
 }
 
 function getSiteLicenseDisplayTitle(
@@ -1453,17 +1482,18 @@ export function SiteLicenseManager({
     void refreshSiteLicenseOverviews();
   }, [account_id]);
 
-  const assignedAccountIds = useMemo(() => {
+  const dashboardAccountIds = useMemo(() => {
     return Array.from(
       new Set(
         siteLicenseOverviews
-          .flatMap((overview) =>
-            overview.pools.flatMap((pool) =>
+          .flatMap((overview) => [
+            ...overview.pools.flatMap((pool) =>
               pool.assignments
                 .filter(isActiveAssignment)
                 .map((assignment) => assignment.account_id),
             ),
-          )
+            ...overview.pending_requests.map((request) => request.account_id),
+          ])
           .filter((value): value is string => !!value),
       ),
     );
@@ -1472,13 +1502,13 @@ export function SiteLicenseManager({
   useEffect(() => {
     let canceled = false;
     async function loadNames() {
-      if (assignedAccountIds.length === 0) {
+      if (dashboardAccountIds.length === 0) {
         setAccountNames({});
         return;
       }
       try {
         const next =
-          await webapp_client.users_client.getNames(assignedAccountIds);
+          await webapp_client.users_client.getNames(dashboardAccountIds);
         if (!canceled) {
           setAccountNames(next ?? {});
         }
@@ -1492,7 +1522,7 @@ export function SiteLicenseManager({
     return () => {
       canceled = true;
     };
-  }, [assignedAccountIds]);
+  }, [dashboardAccountIds]);
 
   const handleChanged = async () => {
     await refreshSiteLicenseOverviews();
@@ -1652,18 +1682,19 @@ export function SiteLicenseAdminPanel({
     void refreshOverviews();
   }, [account_id, refreshToken]);
 
-  const assignedAccountIds = useMemo(
+  const dashboardAccountIds = useMemo(
     () =>
       Array.from(
         new Set(
           overviews
-            .flatMap((overview) =>
-              overview.pools.flatMap((pool) =>
+            .flatMap((overview) => [
+              ...overview.pools.flatMap((pool) =>
                 pool.assignments
                   .filter(isActiveAssignment)
                   .map((assignment) => assignment.account_id),
               ),
-            )
+              ...overview.pending_requests.map((request) => request.account_id),
+            ])
             .filter((value): value is string => !!value),
         ),
       ),
@@ -1673,13 +1704,13 @@ export function SiteLicenseAdminPanel({
   useEffect(() => {
     let canceled = false;
     async function loadNames() {
-      if (assignedAccountIds.length === 0) {
+      if (dashboardAccountIds.length === 0) {
         setAccountNames({});
         return;
       }
       try {
         const next =
-          await webapp_client.users_client.getNames(assignedAccountIds);
+          await webapp_client.users_client.getNames(dashboardAccountIds);
         if (!canceled) {
           setAccountNames(next ?? {});
         }
@@ -1693,7 +1724,7 @@ export function SiteLicenseAdminPanel({
     return () => {
       canceled = true;
     };
-  }, [assignedAccountIds]);
+  }, [dashboardAccountIds]);
 
   async function handleChanged() {
     await refreshOverviews();
@@ -2090,13 +2121,19 @@ function SiteLicenseDashboard({
     () => getSiteLicenseProvisioningTiers(tiers),
     [tiers],
   );
-  const requests = overviews.flatMap((overview) =>
-    overview.pending_requests.map((request) => ({
-      overview,
-      request,
-      pool: overview.pools.find((pool) => pool.id === request.package_id),
-    })),
-  );
+  const requests = overviews
+    .flatMap((overview) =>
+      overview.pending_requests.map((request) => ({
+        overview,
+        request,
+        pool: overview.pools.find((pool) => pool.id === request.package_id),
+      })),
+    )
+    .sort(
+      (left, right) =>
+        dateSortValue(left.request.requested_at) -
+        dateSortValue(right.request.requested_at),
+    );
   if (loading) {
     return (
       <Card size="small">
@@ -2268,64 +2305,70 @@ function SiteLicenseDashboard({
                       size="small"
                       style={{ width: "100%" }}
                     >
-                      {overviewRequests.map(({ request, pool }) => (
-                        <div
-                          key={request.id}
-                          style={{
-                            alignItems: "flex-start",
-                            background: "white",
-                            border: `1px solid ${COLORS.GRAY_LL}`,
-                            borderRadius: 12,
-                            display: "flex",
-                            gap: 16,
-                            justifyContent: "space-between",
-                            padding: 12,
-                          }}
-                        >
-                          <Space orientation="vertical" size={2}>
-                            <Space wrap>
-                              <Text strong>
-                                {request.matched_email_address}
+                      {overviewRequests.map(({ request, pool }) => {
+                        const accountDisplay = getRequestAccountDisplay({
+                          names: accountNames,
+                          request,
+                        });
+                        return (
+                          <div
+                            key={request.id}
+                            style={{
+                              alignItems: "flex-start",
+                              background: "white",
+                              border: `1px solid ${COLORS.GRAY_LL}`,
+                              borderRadius: 12,
+                              display: "flex",
+                              gap: 16,
+                              justifyContent: "space-between",
+                              padding: 12,
+                            }}
+                          >
+                            <Space orientation="vertical" size={2}>
+                              <Text>
+                                <Text strong>{accountDisplay.name}</Text>
+                                {accountDisplay.email ? (
+                                  <Text type="secondary">
+                                    {" "}
+                                    ({accountDisplay.email})
+                                  </Text>
+                                ) : null}
+                                {" requested "}
+                                <Text strong>
+                                  {pool?.pool_name ?? "site-license"}
+                                </Text>
+                                {" seat "}
+                                <TimeAgo date={request.requested_at} />
                               </Text>
-                              <Tag color="blue">
-                                {capitalize(request.requested_membership_class)}
-                              </Tag>
-                              {pool?.pool_name ? (
-                                <Tag>{pool.pool_name}</Tag>
+                              {request.requester_note ? (
+                                <Text>{request.requester_note}</Text>
                               ) : null}
                             </Space>
-                            <Text type="secondary">
-                              account {request.account_id}; requested{" "}
-                              <TimeAgo date={request.requested_at} />
-                            </Text>
-                            {request.requester_note ? (
-                              <Text>{request.requester_note}</Text>
+                            {canManageLicense ? (
+                              <Space>
+                                <Button
+                                  type="primary"
+                                  loading={reviewingRequestId === request.id}
+                                  onClick={() =>
+                                    void onReview(overview, request, "approve")
+                                  }
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  danger
+                                  loading={reviewingRequestId === request.id}
+                                  onClick={() =>
+                                    void onReview(overview, request, "reject")
+                                  }
+                                >
+                                  Reject
+                                </Button>
+                              </Space>
                             ) : null}
-                          </Space>
-                          {canManageLicense ? (
-                            <Space>
-                              <Button
-                                type="primary"
-                                loading={reviewingRequestId === request.id}
-                                onClick={() =>
-                                  void onReview(overview, request, "approve")
-                                }
-                              >
-                                Approve
-                              </Button>
-                              <Button
-                                danger
-                                loading={reviewingRequestId === request.id}
-                                onClick={() =>
-                                  void onReview(overview, request, "reject")
-                                }
-                              >
-                                Reject
-                              </Button>
-                            </Space>
-                          ) : null}
-                        </div>
-                      ))}
+                          </div>
+                        );
+                      })}
                     </Space>
                   </Card>
                 ) : null}
