@@ -111,6 +111,9 @@ describe("ProjectsActions move flow", () => {
     jest
       .spyOn(actions as any, "ensure_host_info")
       .mockResolvedValue(undefined as any);
+    const scheduleProjectedProjectReconcile = jest
+      .spyOn(actions as any, "scheduleProjectedProjectReconcile")
+      .mockImplementation(() => undefined);
     mockedRefreshProjectsTable.mockImplementation(async () => {
       projectMap = projectMap.setIn([project_id, "host_id"], "host-old");
     });
@@ -151,5 +154,9 @@ describe("ProjectsActions move flow", () => {
       move_reopen_required: true,
     });
     expect(projectActions.resetProjectHostRuntime).toHaveBeenCalled();
+    expect(scheduleProjectedProjectReconcile).toHaveBeenCalledWith(
+      project_id,
+      "project-move",
+    );
   });
 });

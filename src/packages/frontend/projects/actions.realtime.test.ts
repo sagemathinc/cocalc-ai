@@ -246,7 +246,11 @@ describe("ProjectsActions realtime feed", () => {
     } as any;
     const actions = new ProjectsActions("projects", redux);
 
-    await (actions as any).loadProjectedProjectForCurrentAccount("project-1");
+    await actions.repairProjectProjection({
+      kind: "project-ids",
+      project_ids: ["project-1"],
+      reason: "diagnostic",
+    });
 
     expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
       query: {
@@ -261,6 +265,70 @@ describe("ProjectsActions realtime feed", () => {
     });
     expect(projectMap.getIn(["project-1", "title"])).toBe("Targeted Project");
     expect(projectMap.getIn(["project-1", "state", "state"])).toBe("running");
+  });
+
+  it("repairs visible project window rows from explicit project ids", async () => {
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: "project-2",
+            title: "Visible Project",
+            description: "visible window repair",
+            theme: null,
+            host_id: "host-1",
+            owning_bay_id: "bay-0",
+            users_summary: {
+              "acct-1": { group: "owner" },
+            },
+            state_summary: { state: "running" },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            last_edited: "2026-04-05T03:00:00.000Z",
+            last_backup: null,
+            updated_at: "2026-04-05T03:00:00.000Z",
+            is_hidden: false,
+          },
+        ],
+      },
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    await actions.repairProjectProjection({
+      kind: "visible-window",
+      project_ids: ["project-2", "project-2"],
+      reason: "visible-window",
+    });
+
+    expect(mockedWebappClient.async_query).toHaveBeenCalledTimes(1);
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: "project-2",
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+    expect(projectMap.getIn(["project-2", "title"])).toBe("Visible Project");
   });
 
   it("replaces project users from realtime upserts instead of preserving removed members", async () => {
@@ -1945,7 +2013,14 @@ describe("ProjectsActions realtime feed", () => {
     );
   });
 
-  it("refreshes the current projects table on history-gap without forcing all projects", async () => {
+  it("repairs open project rows on history-gap without forcing a broad project load", async () => {
+    openProjects = List([
+      "00000000-0000-4000-8000-000000000101",
+      "00000000-0000-4000-8000-000000000102",
+    ]);
+    mockedWebappClient.async_query.mockResolvedValue({
+      query: { account_project_index: [] },
+    });
     const redux = {
       getStore: jest.fn((name: string) => {
         if (name === "account") {
@@ -1964,6 +2039,8 @@ describe("ProjectsActions realtime feed", () => {
 
     actions._init();
     await flush();
+    mockedWebappClient.async_query.mockClear();
+    refreshProjectsTableMock.mockClear();
 
     const feed = await getSharedAccountDStreamMock.mock.results[0].value;
     feed.emit("history-gap", {
@@ -1974,7 +2051,30 @@ describe("ProjectsActions realtime feed", () => {
     });
     await flush();
 
-    expect(refreshProjectsTableMock).toHaveBeenCalledTimes(1);
+    expect(refreshProjectsTableMock).not.toHaveBeenCalled();
+    expect(mockedWebappClient.async_query).toHaveBeenCalledTimes(2);
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: "00000000-0000-4000-8000-000000000101",
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: "00000000-0000-4000-8000-000000000102",
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
   });
 
   it("forwards project detail invalidation feed events to the project field helper", async () => {
