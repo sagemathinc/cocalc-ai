@@ -4,7 +4,11 @@
  */
 
 import { POSTGRES_TABLE_OWNERSHIP } from "@cocalc/util/db-schema";
-import { PROJECT_HARD_DELETE_SIDE_TABLES } from "./hard-delete-tables";
+import {
+  PROJECT_HARD_DELETE_PROJECT_ID_TABLES,
+  PROJECT_HARD_DELETE_SEED_GLOBAL_TABLES,
+  PROJECT_HARD_DELETE_SIDE_TABLES,
+} from "./hard-delete-tables";
 
 const PROJECT_REHOME_PORTABLE_SQL_TABLES = new Set<string>();
 
@@ -30,11 +34,17 @@ describe("project hard-delete table ownership audit", () => {
     expect(unsafePortable).toEqual([]);
   });
 
-  it("documents seed-global tables still reached by local project hard-delete cleanup", () => {
-    const seedGlobalTables = PROJECT_HARD_DELETE_SIDE_TABLES.filter(
+  it("keeps seed-global cleanup out of the local project-id delete list", () => {
+    const seedGlobalTables = PROJECT_HARD_DELETE_PROJECT_ID_TABLES.filter(
       (table) => POSTGRES_TABLE_OWNERSHIP[table]?.ownership === "seed-global",
     ).sort();
 
-    expect(seedGlobalTables).toEqual(["project_app_public_subdomains"]);
+    expect(seedGlobalTables).toEqual([]);
+  });
+
+  it("documents seed-global project-attached cleanup tables", () => {
+    expect([...PROJECT_HARD_DELETE_SEED_GLOBAL_TABLES]).toEqual([
+      "project_app_public_subdomains",
+    ]);
   });
 });

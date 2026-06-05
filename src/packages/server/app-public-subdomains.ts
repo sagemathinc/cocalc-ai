@@ -328,6 +328,31 @@ export async function releaseProjectAppPublicSubdomain(opts: {
   return { released: true };
 }
 
+export async function releaseProjectAppPublicSubdomainsForProject(opts: {
+  project_id: string;
+}): Promise<{ released: number }> {
+  await ensureSchema();
+  const project_id = `${opts.project_id ?? ""}`.trim();
+  if (!project_id) return { released: 0 };
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+      DELETE FROM ${TABLE}
+      WHERE project_id=$1
+      RETURNING hostname, dns_record_id
+    `,
+    [project_id],
+  );
+  for (const row of rows) {
+    await deleteAppSubdomainDns({
+      record_id: row.dns_record_id ?? undefined,
+      hostname: row.hostname ?? undefined,
+    });
+    hostCache.delete(`${row.hostname ?? ""}`.toLowerCase());
+  }
+  return { released: rows.length };
+}
+
 export async function getPublicAppRouteByHostname(
   hostnameRaw: string,
 ): Promise<PublicAppRouteTarget | undefined> {

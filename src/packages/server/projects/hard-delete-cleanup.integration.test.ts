@@ -8,6 +8,7 @@ import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 const publishAccountFeedEventBestEffortMock = jest.fn();
 const stopProjectOnHostMock = jest.fn();
 const deleteProjectDataOnHostMock = jest.fn();
+const deleteAppSubdomainDnsMock = jest.fn();
 const releaseProjectBackupRepoAssignmentMock = jest.fn();
 const resolveProjectBackupRepoAssignmentMock = jest.fn();
 
@@ -47,6 +48,13 @@ jest.mock("@cocalc/server/project-host/control", () => ({
   stopProjectOnHost: (...args: any[]) => stopProjectOnHostMock(...args),
   deleteProjectDataOnHost: (...args: any[]) =>
     deleteProjectDataOnHostMock(...args),
+}));
+
+jest.mock("@cocalc/server/cloud/dns", () => ({
+  __esModule: true,
+  deleteAppSubdomainDns: (...args: any[]) => deleteAppSubdomainDnsMock(...args),
+  getCnameTargetForHostname: jest.fn(),
+  hasDns: jest.fn(async () => false),
 }));
 
 jest.mock("@cocalc/server/project-backup", () => ({
@@ -135,6 +143,7 @@ async function ensureSupplementalSchemas(): Promise<void> {
       hostname TEXT NOT NULL,
       base_path TEXT NOT NULL,
       ttl_s INTEGER NOT NULL,
+      dns_record_id TEXT,
       PRIMARY KEY (project_id, app_id)
     )
   `);
@@ -222,6 +231,12 @@ async function seedCleanupRows(): Promise<void> {
     [PROJECT_ID, BACKUP_REPO_ID],
   );
   await getPool().query(
+    `INSERT INTO project_app_public_subdomains
+       (project_id, app_id, label, hostname, base_path, ttl_s, dns_record_id)
+     VALUES ($1, 'server', 'server', 'server.example.com', '/', 60, 'dns-1')`,
+    [PROJECT_ID],
+  );
+  await getPool().query(
     `INSERT INTO project_events_outbox
        (event_id, project_id, owning_bay_id, event_type, payload_json,
         created_at)
@@ -289,6 +304,7 @@ describe("hard delete project cleanup", () => {
     publishAccountFeedEventBestEffortMock.mockResolvedValue(undefined);
     stopProjectOnHostMock.mockResolvedValue(undefined);
     deleteProjectDataOnHostMock.mockResolvedValue(undefined);
+    deleteAppSubdomainDnsMock.mockResolvedValue(undefined);
     releaseProjectBackupRepoAssignmentMock.mockResolvedValue(undefined);
     resolveProjectBackupRepoAssignmentMock.mockResolvedValue(undefined);
   });
@@ -306,6 +322,7 @@ describe("hard delete project cleanup", () => {
         notification_events_outbox,
         patches,
         project_active_operations,
+        project_app_public_subdomains,
         project_backup_indexes,
         project_backup_repo_assignments,
         project_events_outbox,
@@ -338,6 +355,7 @@ describe("hard delete project cleanup", () => {
         "notification_events_outbox",
         "patches",
         "project_active_operations",
+        "project_app_public_subdomains",
         "project_backup_indexes",
         "project_backup_repo_assignments",
         "project_events_outbox",
@@ -359,6 +377,13 @@ describe("hard delete project cleanup", () => {
     await expect(countRows("project_secrets", "project_id=$1")).resolves.toBe(
       0,
     );
+    await expect(
+      countRows("project_app_public_subdomains", "project_id=$1"),
+    ).resolves.toBe(0);
+    expect(deleteAppSubdomainDnsMock).toHaveBeenCalledWith({
+      record_id: "dns-1",
+      hostname: "server.example.com",
+    });
     await expect(countRows("syncstrings", "project_id=$1")).resolves.toBe(0);
     await expect(
       getPool().query("SELECT COUNT(*)::int AS count FROM patches", []),

@@ -1662,6 +1662,7 @@ export type HostConnectionMethod =
   | "get-seed-backup-config"
   | "resolve-seed-backup-repo-assignment"
   | "release-seed-backup-repo-assignment"
+  | "release-seed-project-app-public-subdomains"
   | "get-seed-project-backup-shards"
   | "record-project-backup"
   | "record-project-backup-index"
@@ -2204,6 +2205,9 @@ export interface InterBayHostConnectionApi {
   releaseSeedBackupRepoAssignment: (opts: {
     project_id: string;
   }) => Promise<void>;
+  releaseSeedProjectAppPublicSubdomains: (opts: {
+    project_id: string;
+  }) => Promise<{ released: number }>;
   getSeedProjectBackupShards: (opts?: { region?: string | null }) => Promise<{
     checked_at: string;
     active_shards_per_region: number;
@@ -2380,6 +2384,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "releaseSeedBackupRepoAssignment",
     method: "release-seed-backup-repo-assignment",
+  },
+  {
+    name: "releaseSeedProjectAppPublicSubdomains",
+    method: "release-seed-project-app-public-subdomains",
   },
   {
     name: "getSeedProjectBackupShards",

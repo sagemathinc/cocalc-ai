@@ -841,9 +841,10 @@ Implemented:
 - added a regression that no project-owned hard-delete side table can be marked
   `portable` unless it is explicitly included in the project rehome SQL portable
   table set;
-- documented the current seed-global cleanup mismatch:
-  `project_app_public_subdomains` is seed-global in the manifest but still
-  reached by local project hard-delete cleanup.
+- routed `project_app_public_subdomains` cleanup through seed authority instead
+  of the local project-owned table cleanup loop;
+- added hard-delete integration coverage for releasing project app public
+  subdomains and DNS records.
 
 Tasks:
 
@@ -851,8 +852,6 @@ Tasks:
 - classify each table as project-owning/projection/cache/ephemeral;
 - extend project rehome only for control-plane metadata that must survive;
 - explicitly exclude heavy project data-plane tables unless needed.
-- route hard-delete cleanup for seed-global project-attached records through
-  seed authority, starting with `project_app_public_subdomains`;
 - decide whether any SQL side tables become project-rehome portable:
   - likely candidates: `project_secrets`, `project_backup_indexes`, selected
     project-scoped `external_credentials`;

@@ -312,6 +312,7 @@ import {
   releaseProjectBackupRepoAssignment,
   resolveProjectBackupRepoAssignment,
 } from "@cocalc/server/project-backup";
+import { releaseProjectAppPublicSubdomainsForProject } from "@cocalc/server/app-public-subdomains";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   acceptHostRehome,
@@ -1844,6 +1845,8 @@ async function startHostConnectionService(): Promise<void> {
       await releaseProjectBackupRepoAssignment({
         project_id,
       }),
+    releaseSeedProjectAppPublicSubdomains: async ({ project_id }) =>
+      await releaseProjectAppPublicSubdomainsForProject({ project_id }),
     getSeedProjectBackupShards: async (opts = {}) =>
       await getProjectBackupShardAdminStatus({
         region: opts.region,

@@ -20,11 +20,14 @@ export const PROJECT_HARD_DELETE_PROJECT_ID_TABLES = [
   "usage_info",
   "external_credentials",
   "bookmarks",
-  "project_app_public_subdomains",
   "notification_events_outbox",
   "project_events_outbox",
   "account_project_index",
   "account_notification_index",
+] as const;
+
+export const PROJECT_HARD_DELETE_SEED_GLOBAL_TABLES = [
+  "project_app_public_subdomains",
 ] as const;
 
 export const PROJECT_HARD_DELETE_CUSTOM_TABLES = [
@@ -39,5 +42,6 @@ export const PROJECT_HARD_DELETE_CUSTOM_TABLES = [
 
 export const PROJECT_HARD_DELETE_SIDE_TABLES = [
   ...PROJECT_HARD_DELETE_PROJECT_ID_TABLES,
+  ...PROJECT_HARD_DELETE_SEED_GLOBAL_TABLES,
   ...PROJECT_HARD_DELETE_CUSTOM_TABLES,
 ] as const;

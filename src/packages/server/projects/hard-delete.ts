@@ -8,6 +8,10 @@ import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import { ConatError } from "@cocalc/conat/core/client";
 import getPool from "@cocalc/database/pool";
 import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
+import { releaseProjectAppPublicSubdomainsForProject } from "@cocalc/server/app-public-subdomains";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
   deleteProjectDataOnHost,
   stopProjectOnHost,
@@ -48,6 +52,16 @@ type ProjectRow = {
 type ProjectAccess = {
   project: ProjectRow;
 };
+
+async function releaseSeedProjectAppPublicSubdomains(project_id: string) {
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (getConfiguredBayId() === seedBayId) {
+    return await releaseProjectAppPublicSubdomainsForProject({ project_id });
+  }
+  return await getInterBayBridge()
+    .hostConnection(seedBayId, { timeout_ms: 30_000 })
+    .releaseSeedProjectAppPublicSubdomains({ project_id });
+}
 
 export type HardDeleteProjectProgressUpdate = {
   step: string;
@@ -912,11 +926,18 @@ export async function hardDeleteProject({
   });
   let backupAssignmentReleased = false;
   try {
+    const seedPurgedTables: string[] = [];
     if (project.backup_repo_id) {
       await releaseProjectBackupRepoAssignment({
         project_id: project.project_id,
       });
       backupAssignmentReleased = true;
+    }
+    const publicSubdomains = await releaseSeedProjectAppPublicSubdomains(
+      project.project_id,
+    );
+    if (publicSubdomains.released > 0) {
+      seedPurgedTables.push("project_app_public_subdomains");
     }
     const purged_tables = await purgeProjectRows({
       project,
@@ -943,7 +964,7 @@ export async function hardDeleteProject({
       project_id,
       host_id: project.host_id,
       backup,
-      purged_tables,
+      purged_tables: [...seedPurgedTables, ...purged_tables],
     };
   } catch (err) {
     if (backupAssignmentReleased && project.backup_repo_id) {
