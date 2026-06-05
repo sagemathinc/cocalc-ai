@@ -922,7 +922,6 @@ ensure_subuids
 install_node
 build_source
 prepare_runtime_artifacts
-stop_existing_services
 ensure_btrfs
 install_wrappers
 configure_sudoers
@@ -934,6 +933,7 @@ ensure_default_rootfs_cache
 seed_database
 publish_default_rootfs
 star_web_onboarding_write_status "systemd" "Installing systemd services and final Caddy routing." ""
+stop_existing_services
 install_systemd
 start_services
 restore_automatic_apt

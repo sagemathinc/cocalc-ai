@@ -232,6 +232,9 @@ restore_previous_release() {
       rm -f "$STAR_INSTALL_SOURCE"
     fi
     restore_mutable_state
+    if [ -n "$previous_source" ]; then
+      systemctl start cocalc-star-hub.service cocalc-star-project-host.service >/dev/null 2>&1 || true
+    fi
   fi
   rm -rf "$rollback_state_dir"
   exit "$status"
