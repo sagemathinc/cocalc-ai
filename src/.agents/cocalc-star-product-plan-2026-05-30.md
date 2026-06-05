@@ -116,17 +116,19 @@ Target user story:
 2. Paste one install command.
 3. The installer asks for the public IP/host to use, or accepts it via an
    option/environment variable for agent-driven installs.
-4. Before doing the full install, the installer runs a quick public reachability
-   smoke test for ports 80/443 using a simple temporary HTTP/HTTPS endpoint or
-   equivalent Caddy dry-run path.
-5. The installer installs Star, configures Caddy + Let's Encrypt for the public
-   URL, starts the hub/project-host, and prints the HTTPS bootstrap URL.
-6. The user opens the bootstrap URL and creates the first admin account.
-7. Creating a project immediately gives working terminal, Jupyter, and LaTeX.
-8. Codex works once the user links their Codex/OpenAI subscription.
-9. The admin can invite another user through a copy/paste signup URL without
+4. The installer sets up Caddy/Let's Encrypt first and prints a temporary
+   nonce-protected onboarding URL.
+5. The user opens that temporary HTTPS onboarding page to prove public DNS/IP,
+   ports 80/443, TLS, and browser access all work.
+6. The installer continues the full Star install and streams progress to that
+   web page.
+7. The final web page and terminal output show the HTTPS bootstrap URL.
+8. The user opens the bootstrap URL and creates the first admin account.
+9. Creating a project immediately gives working terminal, Jupyter, and LaTeX.
+10. Codex works once the user links their Codex/OpenAI subscription.
+11. The admin can invite another user through a copy/paste signup URL without
    manually creating and sending a separate registration token.
-10. The invited user creates a project and/or collaborates on an existing
+12. The invited user creates a project and/or collaborates on an existing
     project.
 
 Primary public-VM access path:
@@ -134,8 +136,19 @@ Primary public-VM access path:
 - Caddy + Let's Encrypt with a user-provided public DNS name, or an automatic
   `sslip.io`-style hostname for early testing when the VM has a stable public
   IP.
+- Human interactive installs should use a temporary web onboarding page as the
+  public reachability proof and progress UI.
 - The installer should make this path obvious and should output the exact
-  working HTTPS bootstrap URL.
+  working HTTPS bootstrap URL in both the web page and terminal.
+
+Headless/agent public-VM path:
+
+- The same install must support non-interactive operation via env/CLI input.
+- Agents should be able to disable the web-confirmation gate with a flag such
+  as `STAR_WEB_ONBOARDING=0`, while still configuring Caddy and printing
+  machine-readable final URLs.
+- In headless mode, public reachability should be checked automatically and
+  reported in terminal/status output.
 
 Fallback/private access path:
 
@@ -155,7 +168,14 @@ Release-blocking gaps for this story:
 
 - Installer option/env var for public URL/IP/hostname, with interactive prompt
   only when not provided.
-- Public reachability smoke test before the expensive install path.
+- Web onboarding mode:
+  - install/configure Caddy first,
+  - serve a nonce-protected temporary public HTTPS page,
+  - require a human to open it before continuing by default,
+  - stream install progress and final URLs to that page,
+  - expose no secrets or command execution controls through that page.
+- Headless/agent bypass for web onboarding, with deterministic terminal/status
+  output.
 - First-class Caddy/Let's Encrypt install/config/status path in `install.sh` and
   `star.sh status`.
 - Bootstrap/status output that prints the HTTPS bootstrap URL and clearly
@@ -1057,6 +1077,18 @@ For a public VM with ports 80/443 open, the first visible user experience should
 be:
 
 ```text
+CoCalc Star public onboarding is ready.
+
+Open this temporary HTTPS page to verify public access and continue install:
+https://<public-hostname>/star-install/<nonce>
+
+The page will stream install status and show the final bootstrap URL.
+```
+
+After the install finishes, both the web onboarding page and terminal should
+show:
+
+```text
 CoCalc Star is running.
 
 Public URL:
@@ -1105,6 +1137,14 @@ available. For early testing, an `sslip.io`-style hostname derived from the
 public IP is acceptable if the operator understands that the URL changes when
 the VM's public IP changes. For production-like use, recommend a real DNS name
 or a reserved/static cloud IP.
+
+The web onboarding page should be:
+
+- served by Caddy over the same public HTTPS path that will serve CoCalc,
+- protected by an unguessable one-time nonce in the URL,
+- read-only from the browser's perspective,
+- limited to status/progress/final URLs and sanitized logs,
+- disabled by explicit non-interactive/agent flags.
 
 ## Star Onboarding UI
 
@@ -1437,6 +1477,14 @@ Deliverable:
 - Installer can run a preflight reachability smoke test for ports 80/443 before
   doing the expensive install.
 - Installer configures Caddy + Let's Encrypt for the public URL when requested.
+- Human interactive installer starts a temporary HTTPS web onboarding page
+  before the full install, then waits for the user to open it before
+  continuing.
+- Web onboarding page streams sanitized install progress and final URLs.
+- Web onboarding page is nonce-protected and read-only; it must not expose
+  secrets or browser-triggered command execution.
+- Non-interactive/agent mode can disable the web-confirmation gate while still
+  configuring public HTTPS and printing deterministic final URLs.
 - `star.sh status` reports:
   - hub/project-host health,
   - public HTTPS URL,
@@ -1453,7 +1501,10 @@ Deliverable:
 Validation:
 
 - Fresh public GCP VM with ports 80/443 open installs with a single command and
-  yields a working HTTPS bootstrap URL.
+  first yields a working temporary HTTPS onboarding page, then a working HTTPS
+  bootstrap URL.
+- Human install refuses or clearly pauses until the onboarding URL is opened,
+  unless web onboarding is explicitly disabled.
 - Same install can run non-interactively by passing public URL/hostname input.
 - Caddy/Let's Encrypt failure leaves SSH tunnel fallback usable and prints a
   clear next step.
@@ -1585,6 +1636,10 @@ Manual:
 - Fresh public VM with ports 80/443 open and Caddy/Let's Encrypt configured.
 - Public-URL install using interactive hostname/IP prompt.
 - Public-URL install using non-interactive env/CLI input for agents.
+- Temporary HTTPS web onboarding page opens before the full install continues.
+- Web onboarding page streams install progress and final bootstrap/invite URLs.
+- Headless install bypasses web onboarding and still prints deterministic final
+  URLs.
 - Public HTTPS bootstrap via generated URL.
 - SSH-tunnel fallback when public HTTPS setup is skipped or fails.
 - Reboot recovery.
@@ -1640,9 +1695,12 @@ Current recommended next step:
 1. Implement the public-VM Caddy/Let's Encrypt install path:
    - accept public URL/hostname/IP via env/CLI for agents,
    - prompt interactively only when not provided,
-   - run a fast public ports 80/443 reachability preflight,
-   - configure Caddy,
-   - print the HTTPS bootstrap URL,
+   - configure Caddy first,
+   - serve a temporary nonce-protected HTTPS onboarding page,
+   - require the human operator to open that page before continuing by default,
+   - stream sanitized install progress and final URLs to the page,
+   - support `STAR_WEB_ONBOARDING=0` or equivalent for headless agents,
+   - print the final HTTPS bootstrap URL,
    - keep SSH tunnel output as fallback.
 2. Extend `star.sh status`:
    - print `CoCalc Star is running`,
