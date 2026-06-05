@@ -21,11 +21,16 @@ let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let hostControlCreateProjectMock: jest.Mock;
 let copyProjectSecretsMock: jest.Mock;
+let initializeProjectRootfsStatesMock: jest.Mock;
+let cloneProjectRootfsStatesMock: jest.Mock;
 let insertedProjectId: string | undefined;
 
 const ACCOUNT_ID = "6e22d250-68d4-46fb-9851-80fbeaa2d6b6";
 const SOURCE_PROJECT_ID = "9a79d9ef-d6a5-4ae1-a215-f594e864637c";
 const HOST_ID = "39d74365-65fe-4f13-8efc-ad6b6e58f3ee";
+const STAR_ROOTFS_IMAGE =
+  "cocalc.local/rootfs/113f7173e66b81668ebf6f460485d38144e1026f50679d22241b272bcefb7e42";
+const STAR_ROOTFS_IMAGE_ID = "official-cocalc-star-rootfs";
 
 function isRootfsScanSelectionQuery(sql: string): boolean {
   return (
@@ -182,9 +187,18 @@ jest.mock("@cocalc/server/projects/project-secrets", () => ({
   copyProjectSecrets: (...args: any[]) => copyProjectSecretsMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/rootfs-state", () => ({
+  __esModule: true,
+  initializeProjectRootfsStates: (...args: any[]) =>
+    initializeProjectRootfsStatesMock(...args),
+  cloneProjectRootfsStates: (...args: any[]) =>
+    cloneProjectRootfsStatesMock(...args),
+}));
+
 describe("projects.createProject clone routing", () => {
   beforeEach(() => {
     jest.resetModules();
+    delete process.env.COCALC_SETUP_PROFILE;
     insertedProjectId = undefined;
     cloneMock = jest.fn(async () => undefined);
     hostCreateProjectMock = jest.fn(async () => undefined);
@@ -225,6 +239,8 @@ describe("projects.createProject clone routing", () => {
       conflicts: [],
       missing: [],
     }));
+    initializeProjectRootfsStatesMock = jest.fn(async () => undefined);
+    cloneProjectRootfsStatesMock = jest.fn(async () => undefined);
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
@@ -384,6 +400,79 @@ describe("projects.createProject clone routing", () => {
         }),
       }),
     );
+  });
+
+  it("uses the official Star RootFS as the server-side default in the Star profile", async () => {
+    process.env.COCALC_SETUP_PROFILE = "star";
+    let insertedRootfsImage: string | null = null;
+    let insertedRootfsImageId: string | null = null;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes("SELECT COUNT(*)::BIGINT AS count") &&
+        sql.includes("COALESCE(users -> $1::text ->> 'group', '') = 'owner'")
+      ) {
+        return { rows: [{ count: "0" }] };
+      }
+      if (
+        sql.includes("SELECT runtime_image") &&
+        sql.includes("FROM rootfs_images") &&
+        sql.includes("WHERE image_id=$1")
+      ) {
+        expect(params).toEqual([STAR_ROOTFS_IMAGE_ID]);
+        return { rows: [{ runtime_image: STAR_ROOTFS_IMAGE }] };
+      }
+      if (isRootfsScanSelectionQuery(sql)) {
+        return rootfsScanAllowedRows({ image_id: STAR_ROOTFS_IMAGE_ID });
+      }
+      if (sql.startsWith("INSERT INTO projects ")) {
+        insertedProjectId = params[0];
+        insertedRootfsImage = params[4];
+        insertedRootfsImageId = params[5];
+        return { rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO project_rootfs_states")) {
+        expect(params[0]).toBe(insertedProjectId);
+        expect(params[2]).toBe(STAR_ROOTFS_IMAGE);
+        expect(params[4]).toBe(STAR_ROOTFS_IMAGE_ID);
+        return { rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const createProject = (await import("./create")).default;
+    const project_id = await createProject({
+      title: "Star default RootFS test",
+      description: "desc",
+      account_id: ACCOUNT_ID,
+      start: false,
+    });
+
+    expect(typeof project_id).toBe("string");
+    expect(insertedRootfsImage).toBe(STAR_ROOTFS_IMAGE);
+    expect(insertedRootfsImageId).toBe(STAR_ROOTFS_IMAGE_ID);
+    expect(initializeProjectRootfsStatesMock).toHaveBeenCalledWith({
+      project_id,
+      image: STAR_ROOTFS_IMAGE,
+      image_id: STAR_ROOTFS_IMAGE_ID,
+      set_by_account_id: ACCOUNT_ID,
+    });
   });
 
   it("validates the cloned current RootFS state before copying files", async () => {

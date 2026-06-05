@@ -19,6 +19,19 @@ export type LroWaitUpdate = Pick<
   "op_id" | "status" | "error" | "result" | "progress_summary"
 >;
 
+function isTransientLroPollError(err: unknown): boolean {
+  const code = `${(err as any)?.code ?? ""}`;
+  if (code === "503" || code === "408") {
+    return true;
+  }
+  const message = `${err ?? ""}`.toLowerCase();
+  return (
+    message.includes("server is busy") ||
+    message.includes("api server is busy") ||
+    message.includes("timeout")
+  );
+}
+
 export async function waitForLro({
   hub,
   opId,
@@ -38,11 +51,32 @@ export async function waitForLro({
   let lastStatus = "unknown";
   let lastError: string | null | undefined;
   let lastProgressKey = "";
+  let transientPollFailures = 0;
 
   while (Date.now() - started <= timeoutMs) {
-    const summary = (await hub.lro.get({ op_id: opId })) as
-      | LroStatusSummaryLike
-      | undefined;
+    let summary: LroStatusSummaryLike | undefined;
+    try {
+      summary = (await hub.lro.get({ op_id: opId })) as
+        | LroStatusSummaryLike
+        | undefined;
+      transientPollFailures = 0;
+    } catch (err) {
+      if (!isTransientLroPollError(err)) {
+        throw err;
+      }
+      transientPollFailures += 1;
+      const retryPollMs = Math.max(250, pollMs);
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          Math.min(
+            retryPollMs * 10,
+            retryPollMs * Math.min(transientPollFailures + 1, 10),
+          ),
+        ),
+      );
+      continue;
+    }
     const status = summary?.status ?? "unknown";
     lastStatus = status;
     lastError = summary?.error;
