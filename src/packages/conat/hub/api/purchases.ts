@@ -273,6 +273,7 @@ export interface ClaimableMembershipPackage {
   exclusive_group?: string;
   pending_request_id?: string;
   pending_request_state?: SiteLicensePoolRequestState;
+  seat_status?: "claimable" | "claimed" | "pending";
   custom_terms_url?: string | null;
   custom_policy_url?: string | null;
   terms_version_label?: string | null;
@@ -978,6 +979,7 @@ export interface Purchases {
   }) => Promise<{ revoked: boolean }>;
   getClaimableMembershipPackages: (opts?: {
     account_id?: string;
+    include_claimed_site_license_pools?: boolean;
   }) => Promise<ClaimableMembershipPackage[]>;
   claimMembershipPackageSeat: (opts?: {
     account_id?: string;

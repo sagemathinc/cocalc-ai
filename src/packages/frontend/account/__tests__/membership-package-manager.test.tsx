@@ -1044,6 +1044,7 @@ describe("membership package managers", () => {
         pools: [
           makeSitePackage({
             pending_request_count: 1,
+            pool_description: "Research access for approved groups.",
           }),
         ],
         site_license: {
@@ -1077,6 +1078,10 @@ describe("membership package managers", () => {
     expect(screen.queryByText("1 pending requests")).toBeNull();
     expect(screen.queryByText(/renewal/i)).toBeNull();
     expect(screen.queryByText(/overage/i)).toBeNull();
+    expect(
+      screen.getByText("Research access for approved groups."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Pro seats")).toBeNull();
   });
 
   it("falls back to organization name when the license title is empty", async () => {
@@ -1537,6 +1542,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
         available_seat_count: 3,
         matched_email_address: "ada@example.edu",
         reason: "domain-match",
+        pool_name: "Students",
         pool_description: "Access for eligible example.edu users.",
       },
     ]);
@@ -1562,11 +1568,12 @@ describe("ClaimableMembershipPackagesPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Claim memberships")).toBeTruthy();
-      expect(screen.getByText("Member")).toBeTruthy();
+      expect(screen.getByText("Students")).toBeTruthy();
       expect(
         screen.getByText("Access for eligible example.edu users."),
       ).toBeTruthy();
     });
+    expect(screen.queryByText("Member")).toBeNull();
     expect(
       screen.queryByText("Tier default description should not show."),
     ).toBeNull();
@@ -1574,6 +1581,8 @@ describe("ClaimableMembershipPackagesPanel", () => {
     expect(screen.queryByText(/Verified domain match for/i)).toBeNull();
     expect(screen.queryByText(/via ada@example.edu/i)).toBeNull();
     expect(screen.queryByText("Available seats")).toBeNull();
+
+    expect(screen.getByText("Claim seat")).not.toHaveClass("ant-btn-primary");
 
     fireEvent.click(screen.getByText("Claim seat"));
 
@@ -1621,18 +1630,21 @@ describe("ClaimableMembershipPackagesPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Pro")).toBeTruthy();
       expect(screen.getByText("Instructors")).toBeTruthy();
       expect(screen.getByText("Request access")).toBeTruthy();
       expect(
         screen.getByText("Instructor access for approved faculty."),
       ).toBeTruthy();
     });
+    expect(screen.queryByText("Pro")).toBeNull();
     expect(
       screen.queryByText("Tier default description should not show."),
     ).toBeNull();
     expect(screen.queryByText("Manager approval required")).toBeNull();
     expect(screen.queryByText("Approval")).toBeNull();
+    expect(screen.getByText("Request access")).not.toHaveClass(
+      "ant-btn-primary",
+    );
 
     fireEvent.click(screen.getByText("Request access"));
 
@@ -1643,6 +1655,34 @@ describe("ClaimableMembershipPackagesPanel", () => {
       });
       expect(claimMembershipPackageSeat).not.toHaveBeenCalled();
     });
+  });
+
+  it("shows an already claimed site-license pool with a disabled action", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "student-pool-1",
+        assignment_id: "assignment-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 2,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        pool_name: "Students",
+        pool_description: "Student access for example.edu.",
+        seat_status: "claimed",
+      },
+    ]);
+
+    render(<ClaimableMembershipPackagesPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Students")).toBeTruthy();
+      expect(screen.getByText("Student access for example.edu.")).toBeTruthy();
+    });
+    const button = screen.getByRole("button", { name: "Seat claimed" });
+    expect(button).toBeDisabled();
+    expect(claimMembershipPackageSeat).not.toHaveBeenCalled();
   });
 
   it("requires custom terms confirmation before claiming a site-license pool", async () => {

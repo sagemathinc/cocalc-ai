@@ -907,19 +907,25 @@ async function startAccountLocalService(): Promise<void> {
         : await getSeedSiteLicenseClient().removeSiteLicenseManager(opts),
     getClaimableMembershipPackages: async ({
       account_id,
+      include_claimed_site_license_pools,
       verified_email_addresses,
     }) => {
       const rows = await listLocalClaimableMembershipPackagesForVerifiedEmails({
         account_id,
+        include_claimed_site_license_pools,
         verified_email_addresses,
       });
       return isSeedSiteLicenseBay()
         ? rows
         : rows.filter((row) => row.kind !== "site");
     },
-    getClaimableMembershipPackagesForAccount: async ({ account_id }) =>
+    getClaimableMembershipPackagesForAccount: async ({
+      account_id,
+      include_claimed_site_license_pools,
+    }) =>
       await listClaimableMembershipPackagesForAccount({
         account_id,
+        include_claimed_site_license_pools,
       }),
     claimMembershipPackageSeat: async ({
       package_id,

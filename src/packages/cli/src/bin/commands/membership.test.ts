@@ -581,7 +581,7 @@ test("membership site-license provision parses pools and owner", async () => {
     "--domain",
     "Example.EDU,@dept.example.edu",
     "--pools-json",
-    '[{"pool_name":"Students","membership_class":"student","seat_count":5000,"requires_approval":false,"verification_policy":"email-domain"},{"pool_name":"Instructors","membership_class":"instructor","seat_count":200,"requires_approval":true,"verification_policy":"manager-approval","exclusive_group":"teaching"}]',
+    '[{"pool_name":"Student","membership_class":"student","seat_count":5000,"requires_approval":false,"verification_policy":"email-domain"},{"pool_name":"Instructor","membership_class":"instructor","seat_count":200,"requires_approval":true,"verification_policy":"manager-approval","exclusive_group":"teaching"}]',
     "--custom-terms-url",
     "https://example.edu/terms",
   ]);
@@ -596,7 +596,7 @@ test("membership site-license provision parses pools and owner", async () => {
     allowed_domains: ["dept.example.edu", "example.edu"],
     pools: [
       {
-        pool_name: "Students",
+        pool_name: "Student",
         membership_class: "student",
         seat_count: 5000,
         requires_approval: false,
@@ -608,7 +608,7 @@ test("membership site-license provision parses pools and owner", async () => {
         metadata: undefined,
       },
       {
-        pool_name: "Instructors",
+        pool_name: "Instructor",
         membership_class: "instructor",
         seat_count: 200,
         requires_approval: true,

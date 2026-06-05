@@ -768,8 +768,10 @@ export async function revokeMembershipPackageSeat({
 
 export async function getClaimableMembershipPackages({
   account_id,
+  include_claimed_site_license_pools,
 }: {
   account_id?: string;
+  include_claimed_site_license_pools?: boolean;
 }) {
   const actorId = requireAccount(account_id);
   const home_bay_id = await resolveTargetAccountHomeBay({
@@ -782,10 +784,16 @@ export async function getClaimableMembershipPackages({
       dest_bay: home_bay_id,
     }).getClaimableMembershipPackagesForAccount({
       account_id: actorId,
+      ...(include_claimed_site_license_pools
+        ? { include_claimed_site_license_pools }
+        : {}),
     });
   }
   return await listClaimableMembershipPackagesForAccount({
     account_id: actorId,
+    ...(include_claimed_site_license_pools
+      ? { include_claimed_site_license_pools }
+      : {}),
   });
 }
 

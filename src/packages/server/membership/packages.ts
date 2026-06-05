@@ -2002,9 +2002,11 @@ export async function revokeMembershipPackageSeat(
 
 export async function listClaimableMembershipPackagesForAccount({
   account_id,
+  include_claimed_site_license_pools = false,
   client,
 }: {
   account_id: string;
+  include_claimed_site_license_pools?: boolean;
   client?: PoolClient;
 }): Promise<ClaimableMembershipPackage[]> {
   const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
@@ -2016,6 +2018,7 @@ export async function listClaimableMembershipPackagesForAccount({
   }
   const claimables = await listClaimableMembershipPackagesAcrossCluster({
     account_id,
+    include_claimed_site_license_pools,
     verified_email_addresses: verifiedEmailAddresses,
     client,
   });
@@ -2028,10 +2031,12 @@ export async function listClaimableMembershipPackagesForAccount({
 
 export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
   account_id,
+  include_claimed_site_license_pools = false,
   verified_email_addresses,
   client,
 }: {
   account_id: string;
+  include_claimed_site_license_pools?: boolean;
   verified_email_addresses: string[];
   client?: PoolClient;
 }): Promise<ClaimableMembershipPackage[]> {
@@ -2080,11 +2085,9 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
       include_revoked: false,
       client,
     });
-    if (
-      assignments.some((assignment) => assignment.account_id === account_id)
-    ) {
-      continue;
-    }
+    const accountAssignment = assignments.find(
+      (assignment) => assignment.account_id === account_id,
+    );
     const active_assignment_count = assignments.filter(
       (assignment) => !assignment.revoked_at,
     ).length;
@@ -2092,6 +2095,44 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
       0,
       pkg.seat_count - active_assignment_count,
     );
+    if (accountAssignment != null) {
+      if (include_claimed_site_license_pools && pkg.kind === "site") {
+        const matchedEmailAddress =
+          accountAssignment.email_address &&
+          emailSet.has(accountAssignment.email_address)
+            ? accountAssignment.email_address
+            : verifiedEmailAddresses[0];
+        const terms = await getSiteLicenseTermsForPackage({ pkg, client });
+        claimables.set(pkg.id, {
+          package_id: pkg.id,
+          assignment_id: accountAssignment.id,
+          kind: pkg.kind,
+          membership_class: pkg.membership_class,
+          owner_account_id: pkg.owner_account_id,
+          starts_at: pkg.starts_at,
+          expires_at: pkg.expires_at ?? null,
+          available_seat_count,
+          matched_email_address: matchedEmailAddress,
+          reason: "domain-match",
+          requires_approval: packageRequiresApproval(pkg),
+          site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          pool_name: getPackageStringMetadata(pkg, "pool_name"),
+          pool_description: getPackageStringMetadata(pkg, "pool_description"),
+          verification_policy: getPackageStringMetadata(
+            pkg,
+            "verification_policy",
+          ) as ClaimableMembershipPackage["verification_policy"],
+          exclusive_group: getPackageStringMetadata(pkg, "exclusive_group"),
+          seat_status: "claimed",
+          custom_terms_url: terms.custom_terms_url ?? null,
+          custom_policy_url: terms.custom_policy_url ?? null,
+          terms_version_label: terms.terms_version_label ?? null,
+          requires_terms_acceptance: requiresTermsAcceptance(terms),
+          metadata: normalizeMetadata(pkg.metadata),
+        });
+      }
+      continue;
+    }
     for (const assignment of assignments) {
       if (
         assignment.account_id == null &&
@@ -2111,6 +2152,7 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "email-assignment",
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
+          seat_status: "claimable",
           metadata: normalizeMetadata(pkg.metadata),
         });
       }
@@ -2197,6 +2239,7 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           pending_request_id: pendingRequest?.id,
           pending_request_state:
             pendingRequest?.state as ClaimableMembershipPackage["pending_request_state"],
+          seat_status: pendingRequest ? "pending" : "claimable",
           custom_terms_url: terms.custom_terms_url ?? null,
           custom_policy_url: terms.custom_policy_url ?? null,
           terms_version_label: terms.terms_version_label ?? null,
@@ -2211,10 +2254,12 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
 
 async function listClaimableMembershipPackagesAcrossCluster({
   account_id,
+  include_claimed_site_license_pools = false,
   verified_email_addresses,
   client,
 }: {
   account_id: string;
+  include_claimed_site_license_pools?: boolean;
   verified_email_addresses: string[];
   client?: PoolClient;
 }): Promise<ClaimableMembershipPackageWithBay[]> {
@@ -2235,6 +2280,7 @@ async function listClaimableMembershipPackagesAcrossCluster({
   addClaimables(
     await listLocalClaimableMembershipPackagesForVerifiedEmails({
       account_id,
+      include_claimed_site_license_pools,
       verified_email_addresses,
       client,
     }),
@@ -2247,6 +2293,7 @@ async function listClaimableMembershipPackagesAcrossCluster({
       dest_bay: seedBayId,
     }).getClaimableMembershipPackages({
       account_id,
+      include_claimed_site_license_pools,
       verified_email_addresses,
     });
     addClaimables(seedRows, seedBayId, (row) => row.kind === "site");
@@ -2258,6 +2305,7 @@ async function listClaimableMembershipPackagesAcrossCluster({
       dest_bay: bay_id,
     }).getClaimableMembershipPackages({
       account_id,
+      include_claimed_site_license_pools,
       verified_email_addresses,
     });
     addClaimables(remoteRows, bay_id, (row) => row.kind !== "site");

@@ -479,10 +479,12 @@ export async function revokeMembershipPackageSeat(opts: {
   });
 }
 
-export async function getClaimableMembershipPackages(): Promise<
-  ClaimableMembershipPackage[]
-> {
-  return await (await getPurchasesHubRpc()).getClaimableMembershipPackages({});
+export async function getClaimableMembershipPackages(opts?: {
+  include_claimed_site_license_pools?: boolean;
+}): Promise<ClaimableMembershipPackage[]> {
+  return await (
+    await getPurchasesHubRpc()
+  ).getClaimableMembershipPackages(opts ?? {});
 }
 
 export async function claimMembershipPackageSeat(opts: {

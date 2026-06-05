@@ -477,6 +477,15 @@ function ClaimablePoolSummary({
   return <Text type="secondary">{description}</Text>;
 }
 
+function getClaimableSeatStatus(
+  claimablePackage: ClaimableMembershipPackage,
+): NonNullable<ClaimableMembershipPackage["seat_status"]> {
+  return (
+    claimablePackage.seat_status ??
+    (claimablePackage.pending_request_id ? "pending" : "claimable")
+  );
+}
+
 function dateLabel(value?: Date | string | null): string {
   if (!value) return "none";
   const date = value instanceof Date ? value : new Date(value);
@@ -586,17 +595,6 @@ function getOverviewSeatTotals(overview: SiteLicenseOverview): {
   };
 }
 
-function getPolicyColor(policy: SiteLicenseVerificationPolicy): string {
-  switch (policy) {
-    case "email-domain":
-      return "green";
-    case "manager-approval":
-      return "gold";
-    case "sso-affiliation":
-      return "blue";
-  }
-}
-
 function getSiteLicensePeriodLabel(overview: SiteLicenseOverview): string {
   const starts = dateLabel(overview.site_license.starts_at);
   const expires = dateLabel(overview.site_license.expires_at);
@@ -644,7 +642,6 @@ export function ClaimableMembershipPackagesPanel({
   compact,
   hasSiteLicenseMembership = false,
   onChanged,
-  tiers = [],
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
   const email_address = useTypedRedux("account", "email_address");
@@ -663,10 +660,6 @@ export function ClaimableMembershipPackagesPanel({
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
-  const tierById = useMemo(() => {
-    return new Map(tiers.map((tier) => [tier.id, tier]));
-  }, [tiers]);
-
   async function refreshClaimables() {
     if (!account_id) {
       setClaimables([]);
@@ -677,7 +670,11 @@ export function ClaimableMembershipPackagesPanel({
     setLoading(true);
     setError("");
     try {
-      setClaimables(await getClaimableMembershipPackages());
+      setClaimables(
+        await getClaimableMembershipPackages({
+          include_claimed_site_license_pools: true,
+        }),
+      );
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -752,37 +749,24 @@ export function ClaimableMembershipPackagesPanel({
     !!email_address && !!email_address_verified?.get?.(email_address);
   const compactButtonPrimary =
     !hasSiteLicenseMembership &&
-    claimables.length > 0 &&
-    claimables.every(
-      (claimablePackage) => !claimablePackage.pending_request_id,
+    claimables.some(
+      (claimablePackage) =>
+        getClaimableSeatStatus(claimablePackage) === "claimable",
     );
 
   function renderClaimablePackages() {
     return (
       <Space vertical size="middle" style={{ width: "100%" }}>
         {claimables.map((claimablePackage) => {
-          const tier = tierById.get(claimablePackage.membership_class);
+          const seatStatus = getClaimableSeatStatus(claimablePackage);
+          const title =
+            `${claimablePackage.pool_name ?? ""}`.trim() ||
+            "Site license membership";
           return (
             <Card
               key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
               size="small"
-              title={
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 12,
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <Text strong>
-                    {tier?.label ??
-                      capitalize(claimablePackage.membership_class)}
-                  </Text>
-                  {claimablePackage.pool_name ? (
-                    <Text type="secondary">{claimablePackage.pool_name}</Text>
-                  ) : null}
-                </div>
-              }
+              title={<Text strong>{title}</Text>}
             >
               <Space vertical size="small" style={{ width: "100%" }}>
                 <ClaimablePoolSummary claimablePackage={claimablePackage} />
@@ -797,22 +781,25 @@ export function ClaimableMembershipPackagesPanel({
                   </Text>
                 ) : null}
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  {claimablePackage.requires_approval ? (
+                  {seatStatus === "claimed" ? (
+                    <Button disabled title="Seat claimed">
+                      Seat claimed
+                    </Button>
+                  ) : claimablePackage.requires_approval ? (
                     <Button
-                      type="primary"
                       loading={
                         requestingPackageId === claimablePackage.package_id
                       }
-                      disabled={claimablePackage.pending_request_id != null}
+                      disabled={seatStatus === "pending"}
+                      title={seatStatus === "pending" ? "Request pending" : ""}
                       onClick={() => handlePrimaryAction(claimablePackage)}
                     >
-                      {claimablePackage.pending_request_id
+                      {seatStatus === "pending"
                         ? "Request pending"
                         : "Request access"}
                     </Button>
                   ) : (
                     <Button
-                      type="primary"
                       loading={
                         claimingPackageId === claimablePackage.package_id
                       }
@@ -1759,42 +1746,6 @@ export function SiteLicenseAdminPanel({
   );
 }
 
-function SiteLicenseMetricCard({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: number | string;
-  tone?: "blue" | "green" | "gold" | "neutral";
-}) {
-  const toneStyle =
-    tone === "blue"
-      ? { background: COLORS.ANTD_BG_BLUE_L, color: COLORS.BLUE_DD }
-      : tone === "green"
-        ? { background: COLORS.BS_GREEN_LL, color: COLORS.ANTD_GREEN_D }
-        : tone === "gold"
-          ? { background: COLORS.YELL_LLL, color: COLORS.BRWN }
-          : { background: COLORS.GRAY_LLL, color: COLORS.GRAY_D };
-
-  return (
-    <div
-      style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
-        borderRadius: 14,
-        minWidth: 142,
-        padding: "12px 14px",
-        ...toneStyle,
-      }}
-    >
-      <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.8 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.15 }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 function SiteLicenseSummaryTable({
   overviews,
   selectedSiteLicenseId,
@@ -2030,7 +1981,6 @@ function SiteLicenseDashboard({
   return (
     <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       {overviews.map((overview) => {
-        const totals = getOverviewSeatTotals(overview);
         const overviewRequests = requests.filter(
           ({ overview: requestOverview, request }) =>
             requestOverview.site_license.id === overview.site_license.id &&
@@ -2144,26 +2094,6 @@ function SiteLicenseDashboard({
                   ) : null}
                 </Space>
                 <Space wrap>
-                  <SiteLicenseMetricCard
-                    label="Total seats"
-                    value={totals.totalSeats}
-                    tone="blue"
-                  />
-                  <SiteLicenseMetricCard
-                    label="Active"
-                    value={totals.activeSeats}
-                    tone="green"
-                  />
-                  <SiteLicenseMetricCard
-                    label="Available"
-                    value={totals.availableSeats}
-                    tone="neutral"
-                  />
-                  <SiteLicenseMetricCard
-                    label="Pending"
-                    value={totals.pendingRequests}
-                    tone={totals.pendingRequests ? "gold" : "neutral"}
-                  />
                   {onUpdateLicense ? (
                     <Button ghost onClick={() => setEditingLicense(overview)}>
                       <Icon name="edit" /> Edit license
@@ -2274,10 +2204,6 @@ function SiteLicenseDashboard({
                     <Title level={5} style={{ margin: 0 }}>
                       Seat pools
                     </Title>
-                    <Text type="secondary">
-                      Pools can have distinct policies for students,
-                      instructors, researchers, or other campus groups.
-                    </Text>
                     {onAddPool ? (
                       <Button
                         onClick={() =>
@@ -2304,9 +2230,14 @@ function SiteLicenseDashboard({
                   >
                     {overview.pools.map((pool) => {
                       const activeSeats = getPoolActiveSeats(pool);
-                      const availableSeats = getPoolAvailableSeats(pool);
+                      const description =
+                        `${pool.pool_description ?? ""}`.trim();
                       const utilizationPercent =
                         getPoolUtilizationPercent(pool);
+                      const canArchivePool =
+                        onArchivePool != null &&
+                        activeSeats === 0 &&
+                        pool.pending_request_count === 0;
                       return (
                         <Card
                           size="small"
@@ -2330,19 +2261,14 @@ function SiteLicenseDashboard({
                                 width: "100%",
                               }}
                             >
-                              <Space orientation="vertical" size={2}>
-                                <Text strong style={{ fontSize: 16 }}>
-                                  {pool.pool_name}
-                                </Text>
-                                <Text type="secondary">
-                                  {capitalize(pool.membership_class)} seats
-                                </Text>
-                              </Space>
-                              <Tag
-                                color={getPolicyColor(pool.verification_policy)}
-                              >
-                                {pool.verification_policy}
-                              </Tag>
+                              <Text strong style={{ fontSize: 16 }}>
+                                {pool.pool_name}
+                              </Text>
+                              {pool.requires_approval ? (
+                                <Tag color="gold">Approval required</Tag>
+                              ) : (
+                                <Tag color="green">Self claim</Tag>
+                              )}
                             </Space>
 
                             <div>
@@ -2369,67 +2295,49 @@ function SiteLicenseDashboard({
                                 }
                               />
                             </div>
+                            {description ? (
+                              <Text type="secondary">{description}</Text>
+                            ) : null}
 
-                            <Space wrap>
-                              <Tag color="green">{activeSeats} active</Tag>
-                              <Tag color="blue">{availableSeats} free</Tag>
-                              <Tag color="gold">
-                                {pool.pending_request_count} pending
-                              </Tag>
-                              {pool.requires_approval ? (
-                                <Tag color="gold">approval required</Tag>
-                              ) : (
-                                <Tag color="green">self claim</Tag>
-                              )}
-                              <Tag>group: {pool.exclusive_group}</Tag>
-                              <Tag>
-                                reverify:{" "}
-                                {pool.affiliation_reverification_days ?? "off"}d
-                              </Tag>
-                              <Tag>
-                                grace:{" "}
-                                {pool.affiliation_reverification_grace_days ??
-                                  "off"}
-                                d
-                              </Tag>
-                              {onEditPool ? (
-                                <Button
-                                  size="small"
-                                  onClick={() => onEditPool(pool)}
-                                >
-                                  <Icon name="edit" /> Edit pool
-                                </Button>
-                              ) : null}
-                              {onArchivePool &&
-                              activeSeats === 0 &&
-                              pool.pending_request_count === 0 ? (
-                                <Popconfirm
-                                  title="Archive this pool?"
-                                  description="The pool will be hidden, but its audit history and past seat records will be preserved."
-                                  okButtonProps={{
-                                    danger: true,
-                                    loading: archivingPoolId === pool.id,
-                                  }}
-                                  okText="Archive"
-                                  onConfirm={async () => {
-                                    setArchivingPoolId(pool.id);
-                                    try {
-                                      await onArchivePool(pool);
-                                    } finally {
-                                      setArchivingPoolId("");
-                                    }
-                                  }}
-                                >
+                            {onEditPool || canArchivePool ? (
+                              <Space wrap>
+                                {onEditPool ? (
                                   <Button
-                                    danger
                                     size="small"
-                                    loading={archivingPoolId === pool.id}
+                                    onClick={() => onEditPool(pool)}
                                   >
-                                    <Icon name="trash" /> Archive pool
+                                    <Icon name="edit" /> Edit pool
                                   </Button>
-                                </Popconfirm>
-                              ) : null}
-                            </Space>
+                                ) : null}
+                                {canArchivePool ? (
+                                  <Popconfirm
+                                    title="Archive this pool?"
+                                    description="The pool will be hidden, but its audit history and past seat records will be preserved."
+                                    okButtonProps={{
+                                      danger: true,
+                                      loading: archivingPoolId === pool.id,
+                                    }}
+                                    okText="Archive"
+                                    onConfirm={async () => {
+                                      setArchivingPoolId(pool.id);
+                                      try {
+                                        await onArchivePool?.(pool);
+                                      } finally {
+                                        setArchivingPoolId("");
+                                      }
+                                    }}
+                                  >
+                                    <Button
+                                      danger
+                                      size="small"
+                                      loading={archivingPoolId === pool.id}
+                                    >
+                                      <Icon name="trash" /> Archive pool
+                                    </Button>
+                                  </Popconfirm>
+                                ) : null}
+                              </Space>
+                            ) : null}
 
                             {pool.assignments.filter(isActiveAssignment)
                               .length === 0 ? (
@@ -3286,7 +3194,7 @@ function ProvisionSiteLicenseModal({
     const defaultPools: SiteLicensePoolConfig[] = [];
     if (studentTier) {
       defaultPools.push({
-        pool_name: "Students",
+        pool_name: "Student",
         pool_description: getTierSiteLicensePoolDescription(studentTier),
         membership_class: studentTier.id as MembershipClass,
         seat_count: 5000,
@@ -3299,7 +3207,7 @@ function ProvisionSiteLicenseModal({
     }
     if (instructorTier) {
       defaultPools.push({
-        pool_name: "Instructors",
+        pool_name: "Instructor",
         pool_description: getTierSiteLicensePoolDescription(instructorTier),
         membership_class: instructorTier.id as MembershipClass,
         seat_count: 200,
@@ -3312,7 +3220,7 @@ function ProvisionSiteLicenseModal({
     }
     if (researcherTier) {
       defaultPools.push({
-        pool_name: "Researchers",
+        pool_name: "Researcher",
         pool_description: getTierSiteLicensePoolDescription(researcherTier),
         membership_class: researcherTier.id as MembershipClass,
         seat_count: 500,
