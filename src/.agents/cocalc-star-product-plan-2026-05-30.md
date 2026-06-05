@@ -101,6 +101,18 @@ Implementation status as of 2026-06-05:
   conservative global running-project cap and bulk-start throttling that
   protects interactive usability. Star should not advertise "RAM times 10"
   running projects until the control plane is scaled or isolated.
+- Star now enforces a global running/starting project cap in runtime-slot
+  admission. The default is intentionally conservative and can be overridden by
+  `COCALC_STAR_MAX_RUNNING_PROJECTS`.
+- The Star installer now fails early when the project data path is mounted on a
+  filesystem that cannot support btrfs subvolumes, instead of letting the first
+  project start fail later.
+- Star upgrades now run runtime-state reconciliation to clear stale project
+  states, active operations, and runtime slots when containers disappeared
+  during upgrade/restart.
+- Star seed/bootstrap now creates a normal reusable invite registration token
+  and exposes a copy/paste signup URL in the bootstrap result, terminal access
+  output, and web onboarding completion page.
 - Current implementation is a validated tarball + installer deployment, not a
   final marketplace image or SEA binary. SEA is now optional rather than a hard
   product requirement.
@@ -236,22 +248,17 @@ Release-blocking gaps for this story:
   - never leave the VM in a surprising package-management state.
 - Early filesystem/runtime preflight:
   - Ubuntu 24.04 is the supported V1 target,
-  - project-host data path must support btrfs subvolumes or the installer must
-    create one,
   - unsupported Ubuntu 26.04/non-btrfs layouts must fail before the expensive
-    install or project-start path.
-- Upgrade/recovery reconciliation:
-  - stale running projects, active operations, runtime slots, and missing
-    containers must be reconciled after Star upgrade/restart.
+    install or project-start path,
+  - follow-up: optionally provision a dedicated btrfs data volume when the VM
+    root filesystem is not already suitable.
 - Bootstrap/status output that prints the HTTPS bootstrap URL and clearly
   distinguishes it from SSH-tunnel fallback instructions.
-- Admin-visible invite URL for additional users, backed by a pre-created or
-  easily regenerated registration token.
 - Codex subscription-link UI should show the linking panel immediately with a
   loading state while waiting for the OpenAI/device code instead of leaving the
   user wondering whether anything is happening.
-- Product-level global running-project cap plus throttled bulk-start queue, so
-  a course or stress-test action cannot make the appliance unusable.
+- Throttled bulk-start queue, so a course or stress-test action cannot make the
+  appliance unusable even when the global cap has spare capacity.
 
 ## Current Validated Implementation
 
@@ -363,9 +370,9 @@ Problems exposed:
   The installer should wait with clear progress and only fail after a long,
   explicit timeout.
 - Star upgrades can leave stale control-plane runtime state if project
-  containers disappear during an upgrade. The installer/operator path needs a
-  reconciliation step that marks missing containers stopped and clears stale
-  active operations/runtime slots.
+  containers disappear during an upgrade. This is now handled by Star
+  runtime-state reconciliation, but the path should remain covered by upgrade
+  tests.
 - Under very high bulk-start load, independent CLI waiters and the single hub
   process can make the UI unusable even when the project-host and VM still have
   plenty of CPU/RAM headroom.
@@ -389,7 +396,9 @@ Product conclusion:
 - Star V1 should optimize for a reliable small-team appliance experience, not
   maximum container density.
 - Default running-project limits should be conservative, visible, and
-  configurable by an admin who accepts the risk.
+  configurable by an admin who accepts the risk. The backend cap now exists;
+  follow-up UI/status work should make the cap obvious to admins before they
+  hit it.
 - Course/bulk operations must use a central queue with throttled concurrency
   and one status stream rather than launching many independent client waiters.
 - "This VM could fit 1000 containers" is not a public product promise until the
