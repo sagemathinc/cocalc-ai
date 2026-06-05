@@ -36,6 +36,7 @@ function makeSlot(project_id: string) {
 
 describe("runtime slot admission", () => {
   beforeEach(() => {
+    delete process.env.COCALC_SETUP_PROFILE;
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
@@ -118,6 +119,41 @@ describe("runtime slot admission", () => {
       }),
     ).rejects.toBeInstanceOf(RuntimeSponsorSlotsExhaustedError);
     expect(queryMock).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("does not enforce membership runtime slot caps in the Star profile", async () => {
+    process.env.COCALC_SETUP_PROFILE = "star";
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("UPDATE project_runtime_slots")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("SELECT sponsor_account_id")) {
+        return { rows: [makeSlot("other-project")], rowCount: 1 };
+      }
+      if (sql.includes("SELECT banned FROM accounts")) {
+        return { rows: [{ banned: false }], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO project_runtime_slots")) {
+        return { rows: [makeSlot("project-1")], rowCount: 1 };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const { reserveProjectRuntimeSlotLocal } = await import("./runtime-slots");
+    const result = await reserveProjectRuntimeSlotLocal({
+      sponsor_account_id: "sponsor",
+      project_id: "project-1",
+      owning_bay_id: "bay-0",
+    });
+    expect(result.limit).toBeUndefined();
+    expect(result.current).toBe(2);
+    expect(queryMock).toHaveBeenCalledWith("COMMIT");
   });
 
   it("denies runtime slot reservation for banned sponsors", async () => {
