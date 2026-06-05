@@ -114,6 +114,28 @@ describe("ProjectsActions project metadata updates", () => {
     },
   );
 
+  it("forces direct projects_query_set calls to use set semantics", async () => {
+    const { actions } = makeActions();
+    const patch = {
+      project_id,
+      theme: {
+        color: null,
+        accent_color: null,
+        icon: null,
+        image_blob: "theme-blob",
+      },
+    };
+
+    await actions.projects_query_set(patch);
+
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        projects: patch,
+      },
+      options: [{ set: true }],
+    });
+  });
+
   it("rolls back the local optimistic update when the direct query fails", async () => {
     const { actions, redux } = makeActions();
     const err = Error("write failed");
@@ -206,6 +228,74 @@ describe("ProjectsActions project metadata updates", () => {
         .getIn([project_id, "theme"])
         .toJS(),
     ).toEqual(theme);
+  });
+
+  it("persists a non-empty theme even when it already matches local project_map", async () => {
+    const theme = {
+      color: null,
+      accent_color: null,
+      icon: null,
+      image_blob: "theme-blob",
+    };
+    const projectMap = baseProjectMap.setIn(
+      [project_id, "theme"],
+      ImmutableMap(theme),
+    );
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? projectMap : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+
+    const { actions } = makeActions();
+    actions.projects_query_set = jest.fn(async () => undefined);
+    mockedWebappClient.async_query
+      .mockResolvedValueOnce({
+        query: {
+          account_project_index: [
+            {
+              project_id,
+              theme,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        query: {
+          account_project_index: [
+            {
+              account_id: "acct-1",
+              project_id,
+              owning_bay_id: "bay-0",
+              host_id: null,
+              title: "Old title",
+              description: "Old description",
+              theme,
+              users_summary: {},
+              state_summary: {},
+              last_edited: null,
+              last_backup: null,
+              last_activity_at: null,
+              sort_key: null,
+              updated_at: null,
+              is_hidden: false,
+            },
+          ],
+        },
+      });
+
+    await expect(
+      actions.setProjectTheme(project_id, theme),
+    ).resolves.toBeUndefined();
+
+    expect(actions.projects_query_set).toHaveBeenCalledWith({
+      project_id,
+      theme,
+    });
   });
 
   it("does not persist an empty theme when the local project has no theme", async () => {

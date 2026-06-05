@@ -1680,6 +1680,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       query: {
         projects: obj,
       },
+      options: [{ set: true }],
     });
   }
 
@@ -2171,8 +2172,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const beforeJS = normalizeProjectThemeForWrite(
       before?.toJS?.() ?? before ?? null,
     );
-    if (isEqual(beforeJS, normalizedTheme)) return;
-    this.setProjectLocalTheme(project_id, normalizedTheme);
+    const localThemeChanged = !isEqual(beforeJS, normalizedTheme);
+    if (!localThemeChanged && normalizedTheme == null) return;
+    if (localThemeChanged) {
+      this.setProjectLocalTheme(project_id, normalizedTheme);
+    }
     try {
       await this.projects_query_set({
         project_id,
@@ -2186,7 +2190,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
         });
       }
     } catch (err) {
-      this.setProjectLocalTheme(project_id, beforeJS);
+      if (localThemeChanged) {
+        this.setProjectLocalTheme(project_id, beforeJS);
+      }
       throw err;
     }
     this.logProjectMetadataUpdate(project_id, {
