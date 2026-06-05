@@ -828,6 +828,149 @@ describe("ProjectsActions realtime feed", () => {
     );
   });
 
+  it("accepts an older projection after an optimistic start state expires", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000055";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          title: "Optimistic Start Project",
+          state: ImmutableMap({
+            state: "starting",
+            time: "2026-04-05T03:05:00.000Z",
+            source: "optimistic",
+          }),
+        }),
+      ],
+    ]);
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      getProjectStore: jest.fn(() => ImmutableMap()),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.parse("2026-04-05T03:00:00.000Z"),
+      account_id: "acct-1",
+      project: {
+        project_id: projectId,
+        title: "Optimistic Start Project",
+        description: "",
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {
+          "acct-1": { group: "owner" },
+        },
+        state: {
+          state: "opened",
+          time: "2026-04-05T03:00:00.000Z",
+        },
+        last_active: { "acct-1": "2026-04-05T03:00:00.000Z" },
+        last_edited: "2026-04-05T03:00:00.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(projectMap.getIn([projectId, "state", "state"])).toBe("opened");
+  });
+
+  it("keeps an optimistic start state while the tracked start LRO is active", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000056";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          title: "Active Start Project",
+          state: ImmutableMap({
+            state: "starting",
+            time: "2026-04-05T03:05:00.000Z",
+            source: "optimistic",
+          }),
+        }),
+      ],
+    ]);
+    const projectStore = ImmutableMap({
+      start_lro: ImmutableMap({
+        summary: ImmutableMap({
+          status: "running",
+        }),
+      }),
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      getProjectStore: jest.fn(() => projectStore),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.parse("2026-04-05T03:00:00.000Z"),
+      account_id: "acct-1",
+      project: {
+        project_id: projectId,
+        title: "Active Start Project",
+        description: "",
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {
+          "acct-1": { group: "owner" },
+        },
+        state: {
+          state: "opened",
+          time: "2026-04-05T03:00:00.000Z",
+        },
+        last_active: { "acct-1": "2026-04-05T03:00:00.000Z" },
+        last_edited: "2026-04-05T03:00:00.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(projectMap.getIn([projectId, "state", "state"])).toBe("starting");
+  });
+
   it("keeps a newer local last_edited when a realtime upsert is older", async () => {
     const projectId = "00000000-0000-4000-8000-000000000006";
     projectMap = ImmutableMap<string, any>([

@@ -27,7 +27,15 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 
 describe("AccountActions.set_other_settings", () => {
   it("replaces the nested other_settings object instead of deep-merging it", () => {
-    const set = jest.fn();
+    let currentOtherSettings: Record<string, any> = {
+      vertical_fixed_bar: "both",
+      launcher: {
+        quickCreate: ["chat", "ipynb"],
+      },
+    };
+    const set = jest.fn((obj) => {
+      currentOtherSettings = obj.other_settings;
+    });
     const launcher = {
       quickCreate: ["rmd", "qmd", "slides", "py"],
     };
@@ -36,23 +44,18 @@ describe("AccountActions.set_other_settings", () => {
         get: (name: string) =>
           name === "other_settings"
             ? {
-                toJS: () => ({
-                  vertical_fixed_bar: "both",
-                  launcher: {
-                    quickCreate: ["chat", "ipynb"],
-                  },
-                }),
+                get: (key: string) => currentOtherSettings[key],
+                toJS: () => currentOtherSettings,
               }
             : undefined,
       }),
       getTable: () => ({ set }),
     };
 
-    AccountActions.prototype.set_other_settings.call(
-      { redux },
-      "launcher",
-      launcher,
-    );
+    const actions = Object.create(AccountActions.prototype);
+    actions.redux = redux;
+
+    actions.set_other_settings("launcher", launcher);
 
     expect(set).toHaveBeenCalledWith(
       {

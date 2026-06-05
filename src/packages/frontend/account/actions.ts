@@ -11,6 +11,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { set_url } from "@cocalc/frontend/history";
 import { deleteRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { clearStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
+import { isEqual } from "lodash";
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { define, required } from "@cocalc/util/fill";
@@ -27,6 +28,7 @@ import {
   getSettingsUrlPath,
   parseAccountSettingsRoute,
 } from "./settings-routing";
+import { refreshAccountSnapshot } from "./table";
 
 // Define account actions
 export class AccountActions extends Actions<AccountState> {
@@ -241,16 +243,87 @@ export class AccountActions extends Actions<AccountState> {
   }
 
   public set_other_settings(name: string, value: any): void {
+    void this.setOtherSettingsAndWaitForProjection(name, value).catch((err) => {
+      console.warn("error setting account other_settings", {
+        name,
+        err: `${err}`,
+      });
+      alert_message({
+        type: "error",
+        message: `Error saving account setting '${name}' -- ${err}`,
+      });
+    });
+  }
+
+  private async setOtherSettingsAndWaitForProjection(
+    name: string,
+    value: any,
+  ): Promise<void> {
     const current =
       this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
-    void this.redux
+    await this.redux
       .getTable("account")
       .set({ other_settings: { ...current, [name]: value } }, "shallow");
+    if (await this.waitForOtherSettingProjection(name, value)) {
+      return;
+    }
+    await refreshAccountSnapshot();
+    if (!(await this.waitForOtherSettingProjection(name, value))) {
+      console.warn("account other_settings projection did not converge", {
+        name,
+      });
+    }
   }
 
   set_editor_settings = (name: string, value) => {
     this.set_account_table({ editor_settings: { [name]: value } });
   };
+
+  private getOtherSettingValue(name: string): any {
+    const accountStore = this.redux.getStore("account");
+    const value =
+      accountStore?.getIn?.(["other_settings", name]) ??
+      accountStore?.get("other_settings")?.get?.(name);
+    return value?.toJS?.() ?? value;
+  }
+
+  private otherSettingProjectionMatches(name: string, value: any): boolean {
+    return isEqual(this.getOtherSettingValue(name), value);
+  }
+
+  private waitForOtherSettingProjection(
+    name: string,
+    value: any,
+    timeoutMs = 2_500,
+  ): Promise<boolean> {
+    if (this.otherSettingProjectionMatches(name, value)) {
+      return Promise.resolve(true);
+    }
+    const accountStore = this.redux.getStore("account");
+    if (accountStore?.on == null) {
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (result: boolean) => {
+        if (done) {
+          return;
+        }
+        done = true;
+        clearTimeout(timer);
+        accountStore.removeListener?.("change", onChange);
+        resolve(result);
+      };
+      const onChange = () => {
+        if (this.otherSettingProjectionMatches(name, value)) {
+          finish(true);
+        }
+      };
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      accountStore.on("change", onChange);
+      onChange();
+    });
+  }
 
   public set_show_purchase_form(show: boolean) {
     // this controls the default state of the software license purchase form in account → software licenses

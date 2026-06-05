@@ -179,7 +179,7 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
   }
 }
 
-const refreshAccountSnapshot = reuseInFlight(async (): Promise<void> => {
+export const refreshAccountSnapshot = reuseInFlight(async (): Promise<void> => {
   if (realtimeRedux == null || recreateAccountTable == null) {
     return;
   }

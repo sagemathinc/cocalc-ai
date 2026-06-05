@@ -221,6 +221,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static REALTIME_FEED_BATCH_MS = 50;
   private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
   private static PROJECT_ROW_RECONCILE_DELAYS_MS = [1_000, 5_000] as const;
+  private static PROJECT_LIFECYCLE_RECONCILE_DELAYS_MS = [
+    1_000, 5_000, 15_000, 30_000, 60_000, 120_000,
+  ] as const;
+  private static OPTIMISTIC_PROJECT_STATE_MAX_PRESERVE_MS = 90_000;
   private static MOVE_TRANSITION_GRACE_MS = 5 * 60_000;
   private static ACTIVE_MOVE_RETENTION_MS = 8 * 60 * 60_000;
   private signedInListener?: () => void;
@@ -253,6 +257,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private recentProjectMoveSummaries: Record<string, LroSummary> =
     Object.create(null);
   private recentHostInfoLookupFailureAt: Record<string, number> =
+    Object.create(null);
+  private projectLifecycleReconcileTokens: Record<string, number> =
     Object.create(null);
 
   _init() {
@@ -436,6 +442,69 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   }
 
+  private scheduleProjectLifecycleReconcile({
+    project_id,
+    optimisticState,
+    reason,
+  }: {
+    project_id: string;
+    optimisticState: string;
+    reason: string;
+  }): void {
+    const token = (this.projectLifecycleReconcileTokens[project_id] ?? 0) + 1;
+    this.projectLifecycleReconcileTokens[project_id] = token;
+    const run = async (index: number): Promise<void> => {
+      if (this.projectLifecycleReconcileTokens[project_id] !== token) {
+        return;
+      }
+      const currentState = store.getIn([
+        "project_map",
+        project_id,
+        "state",
+        "state",
+      ]);
+      if (currentState !== optimisticState) {
+        delete this.projectLifecycleReconcileTokens[project_id];
+        return;
+      }
+      await this.loadProjectedProjectForCurrentAccount(project_id);
+      if (this.projectLifecycleReconcileTokens[project_id] !== token) {
+        return;
+      }
+      const nextState = store.getIn([
+        "project_map",
+        project_id,
+        "state",
+        "state",
+      ]);
+      if (nextState !== optimisticState) {
+        delete this.projectLifecycleReconcileTokens[project_id];
+        return;
+      }
+      const delay =
+        ProjectsActions.PROJECT_LIFECYCLE_RECONCILE_DELAYS_MS[index];
+      if (delay == null) {
+        delete this.projectLifecycleReconcileTokens[project_id];
+        console.warn("project lifecycle projection did not converge", {
+          project_id,
+          optimisticState,
+          reason,
+        });
+        return;
+      }
+      const timer = setTimeout(() => {
+        void run(index + 1);
+      }, delay);
+      (timer as any).unref?.();
+    };
+    const initialDelay =
+      ProjectsActions.PROJECT_LIFECYCLE_RECONCILE_DELAYS_MS[0];
+    const timer = setTimeout(() => {
+      void run(1);
+    }, initialDelay);
+    (timer as any).unref?.();
+  }
+
   private observeAccountStoreReady(): void {
     const onReady = this.accountStoreReadyListener;
     if (onReady == null) {
@@ -592,6 +661,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         }
         if (
           this.shouldPreserveNewerLocalState({
+            project_id: row.project_id,
             currentProject,
             incomingState: row.state_summary ?? undefined,
           })
@@ -769,6 +839,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       if (
         this.shouldPreserveNewerLocalState({
+          project_id,
           currentProject,
           incomingState: row.state_summary ?? undefined,
         })
@@ -860,9 +931,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }
 
   private shouldPreserveNewerLocalState({
+    project_id,
     currentProject,
     incomingState,
   }: {
+    project_id: string;
     currentProject: Map<string, any>;
     incomingState?: Record<string, any> | null;
   }): boolean {
@@ -878,6 +951,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (currentStateName === "starting" && incomingStateName === "running") {
       return false;
     }
+    if (
+      currentStateName === "starting" &&
+      readMaybeImmutable(currentState, "source") === "optimistic"
+    ) {
+      const startStatus = this.getProjectStartLroStatus(project_id);
+      if (startStatus != null) {
+        if (startStatus === "queued" || startStatus === "running") {
+          return true;
+        }
+        if (startStatus !== "succeeded") {
+          return false;
+        }
+      }
+      const currentMs = stateTimeMs(currentState);
+      if (
+        currentMs != null &&
+        Date.now() - currentMs >
+          ProjectsActions.OPTIMISTIC_PROJECT_STATE_MAX_PRESERVE_MS
+      ) {
+        return false;
+      }
+    }
     if (currentStateName === "stopping" && incomingStateName === "opened") {
       return false;
     }
@@ -887,6 +982,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     const incomingMs = stateTimeMs(incomingState);
     return incomingMs == null || incomingMs < currentMs;
+  }
+
+  private getProjectStartLroStatus(project_id: string): string | undefined {
+    const startLro = this.redux
+      .getProjectStore?.(project_id)
+      ?.get?.("start_lro");
+    const status =
+      readMaybeImmutableIn(startLro, ["summary", "status"]) ??
+      readMaybeImmutable(startLro, "status");
+    return typeof status === "string" ? status : undefined;
   }
 
   private shouldPreserveNewerLocalLastEdited({
@@ -1114,6 +1219,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       if (
         this.shouldPreserveNewerLocalState({
+          project_id: row.project_id,
           currentProject,
           incomingState: row.state ?? undefined,
         })
@@ -1189,6 +1295,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     let nextProject = this.mergeProjectFeedRow(currentProject, row);
     if (
       this.shouldPreserveNewerLocalState({
+        project_id: row.project_id,
         currentProject,
         incomingState: row.state ?? undefined,
       })
@@ -1287,6 +1394,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       let nextProject = incomingProject as Map<string, any>;
       if (
         this.shouldPreserveNewerLocalState({
+          project_id,
           currentProject,
           incomingState: nextProject.get("state"),
         })
@@ -2677,7 +2785,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
         throw err;
       }
       actions.setState({ control_error: "" });
-      this.scheduleProjectedProjectReconcile(project_id);
+      this.scheduleProjectLifecycleReconcile({
+        project_id,
+        optimisticState: "starting",
+        reason: "start_project",
+      });
 
       this.project_log(project_id, {
         event: "project_started",
@@ -2761,9 +2873,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     // restart are so fas we won't see anything otherwise, which is very disturbing.
     const project_map = store.get("project_map");
     if (project_map != null) {
-      const project = project_map
-        .get(project_id)
-        ?.set("state", fromJS({ state, time: new Date() }));
+      const project = project_map.get(project_id)?.set(
+        "state",
+        fromJS({
+          state,
+          time: new Date(),
+          source: "optimistic",
+        }),
+      );
       if (project != null) {
         this.setState({
           project_map: project_map.set(project_id, project),
