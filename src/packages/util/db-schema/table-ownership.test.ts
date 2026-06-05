@@ -14,6 +14,7 @@ const REFERENCE_FIELDS = [
   "owner_account_id",
   "project_id",
   "host_id",
+  "connector_id",
   "bay_id",
 ] as const satisfies readonly TableReferenceField[];
 
@@ -59,6 +60,14 @@ const ALLOWED_OWNERSHIP_BY_REFERENCE_FIELD: Record<
     "projection",
     "row-scoped",
     "seed-global",
+    "stable-bay",
+  ]),
+  connector_id: new Set([
+    "audit-local",
+    "cache",
+    "ephemeral",
+    "host-owning",
+    "projection",
     "stable-bay",
   ]),
   bay_id: new Set([

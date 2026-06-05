@@ -306,6 +306,8 @@ Estimate: `L`
 
 ### P0-G: Static Upgrade File Retention
 
+USER: It turns out we did this yesterday already for the multibay systemd deployment (rocket = cocalc.ai).
+
 Products: `cocalc.ai`, `cocalc-star`, `cocalc-launchpad`
 
 Source item:
@@ -353,7 +355,7 @@ Decision required:
 - Either:
   1. explicitly exclude cross-region move from first public user-facing release,
      keeping it admin/internal only, or
-  2. treat it as P0 and fix UX/state convergence before release.
+  2. treat it as P0 and fix UX/state convergence before release.  &lt;-- this: it's very important and easy to hit.  I just tried a simple cross region move and after 3 minutes got "transient error" and stuck forever just stopping, so it really is very broken right now:<img src="/blobs/paste-902fycigor6.png?uuid=b91e12ba-ccfe-4f6a-89ff-0ff119098466"   width="1059px"  height="408px"  style="object-fit:cover"/>
 
 If in scope, plan:
 
