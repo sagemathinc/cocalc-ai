@@ -128,6 +128,19 @@ function projectStartFailureMessage({
   return `${action} failed: status=${summary.status} error=${summary.error ?? "unknown"}`;
 }
 
+function projectStartSucceeded(summary: {
+  status: string;
+  error?: string | null;
+}): boolean {
+  // Project-start LRO progress can report the project lifecycle state as the
+  // summary status. At scale we have observed "running" without the LRO being
+  // finalized to "succeeded" before the CLI wait timeout.
+  return (
+    summary.status === "succeeded" ||
+    (summary.status === "running" && summary.error == null)
+  );
+}
+
 function isAsyncExecOutput(
   result: ExecuteCodeOutput,
 ): result is ExecuteCodeOutputAsync {
@@ -480,12 +493,12 @@ export function registerProjectBasicCommands(
               timeoutMs: ctx.timeoutMs,
               pollMs: ctx.pollMs,
             });
-            if (summary.timedOut) {
+            if (summary.timedOut && !projectStartSucceeded(summary)) {
               throw new Error(
                 `timeout waiting for start op ${op.op_id}; last status=${summary.status}`,
               );
             }
-            if (summary.status !== "succeeded") {
+            if (!projectStartSucceeded(summary)) {
               throw new Error(
                 projectStartFailureMessage({ action: "start", summary }),
               );
@@ -562,12 +575,12 @@ export function registerProjectBasicCommands(
               timeoutMs: ctx.timeoutMs,
               pollMs: ctx.pollMs,
             });
-            if (summary.timedOut) {
+            if (summary.timedOut && !projectStartSucceeded(summary)) {
               throw new Error(
                 `timeout waiting for restart op ${op.op_id}; last status=${summary.status}`,
               );
             }
-            if (summary.status !== "succeeded") {
+            if (!projectStartSucceeded(summary)) {
               throw new Error(
                 projectStartFailureMessage({ action: "restart", summary }),
               );

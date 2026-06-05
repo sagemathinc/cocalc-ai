@@ -179,10 +179,7 @@ star_web_onboarding_write_index() {
       min-height: 100vh;
       font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
       color: var(--ink);
-      background:
-        radial-gradient(circle at 15% 10%, rgba(185, 85, 43, 0.16), transparent 32rem),
-        radial-gradient(circle at 85% 20%, rgba(31, 111, 87, 0.18), transparent 30rem),
-        linear-gradient(135deg, #fbf5e9 0%, var(--bg) 60%, #ece1cd 100%);
+      background: var(--bg);
       display: grid;
       place-items: center;
       padding: 2rem;
@@ -224,7 +221,18 @@ star_web_onboarding_write_index() {
       margin-bottom: 0.55rem;
     }
     .message { color: var(--muted); margin: 0; }
-    a.button {
+    ul {
+      margin: 1.25rem 0 0;
+      padding-left: 1.25rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .estimate {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--accent-2);
+      margin-top: 1rem;
+    }
+    a.button, button.button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -235,6 +243,27 @@ star_web_onboarding_write_index() {
       background: var(--accent);
       text-decoration: none;
       font-weight: 700;
+      border: 0;
+      cursor: pointer;
+      font: inherit;
+    }
+    button.button:disabled {
+      cursor: default;
+      opacity: 0.68;
+    }
+    .progress-wrap {
+      margin-top: 1.25rem;
+      height: 0.75rem;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.62);
+    }
+    .progress {
+      width: 5%;
+      height: 100%;
+      background: var(--accent);
+      transition: width 400ms ease;
     }
     .meta {
       margin-top: 2rem;
@@ -255,11 +284,23 @@ star_web_onboarding_write_index() {
   <main>
     <div class="eyebrow">CoCalc Star public VM setup</div>
     <h1>Your server is reachable.</h1>
-    <p>This HTTPS page is being served from the VM before the full CoCalc install finishes. Keep it open; it will update automatically.</p>
+    <p>This installer will configure a single-VM CoCalc Star server on this machine.</p>
+    <ul>
+      <li>Install required Ubuntu packages and system services.</li>
+      <li>Configure Caddy with automatic HTTPS for this public URL.</li>
+      <li>Create local PostgreSQL and CoCalc Star runtime state.</li>
+      <li>Prepare the default Jupyter, terminal, and LaTeX project image.</li>
+      <li>Start CoCalc and show the first-admin account link.</li>
+    </ul>
+    <p class="estimate">Estimated time: about 5 minutes.</p>
+    <button class="button" id="start">Start install</button>
     <section class="status" aria-live="polite">
       <div class="phase" id="phase">starting</div>
       <p class="message" id="message">Waiting for installer status...</p>
       <div id="actions"></div>
+      <div class="progress-wrap" aria-label="Install progress">
+        <div class="progress" id="progress"></div>
+      </div>
     </section>
     <p class="meta">This page is protected by a one-time path token. It is not a backup or admin console; it only shows this install status and final bootstrap link.</p>
   </main>
@@ -267,6 +308,19 @@ star_web_onboarding_write_index() {
     const phase = document.getElementById("phase");
     const message = document.getElementById("message");
     const actions = document.getElementById("actions");
+    const progress = document.getElementById("progress");
+    const start = document.getElementById("start");
+
+    const progressByPhase = {
+      starting: 5,
+      reachable: 10,
+      runtime: 25,
+      rootfs: 65,
+      systemd: 82,
+      "starting-services": 92,
+      ready: 100,
+      failed: 100,
+    };
 
     function setAction(url, label) {
       actions.innerHTML = "";
@@ -278,21 +332,47 @@ star_web_onboarding_write_index() {
       actions.appendChild(link);
     }
 
+    function setProgress(name) {
+      progress.style.width = (progressByPhase[name] || 12) + "%";
+    }
+
+    async function continueInstall() {
+      start.disabled = true;
+      start.textContent = "Starting install...";
+      try {
+        const response = await fetch("continue", { method: "POST", cache: "no-store" });
+        if (!response.ok) throw new Error(response.statusText);
+        start.textContent = "Install started";
+      } catch (err) {
+        start.disabled = false;
+        start.textContent = "Start install";
+        message.textContent = "Could not notify the installer. Refresh this page and try again.";
+      }
+    }
+
     async function poll() {
       try {
         const response = await fetch("status.json?ts=" + Date.now(), { cache: "no-store" });
         if (!response.ok) throw new Error(response.statusText);
         const status = await response.json();
-        phase.textContent = status.phase || "installing";
+        const name = status.phase || "installing";
+        phase.textContent = name;
         message.textContent = status.message || "Installing CoCalc Star...";
+        setProgress(name);
+        if (["runtime", "rootfs", "systemd", "starting-services", "ready"].includes(name)) {
+          start.disabled = true;
+          start.textContent = name === "ready" ? "Install complete" : "Install started";
+        }
         setAction(status.bootstrap_url, "Create the first admin account");
       } catch (err) {
         phase.textContent = "waiting";
         message.textContent = "Waiting for the installer to write status...";
+        setProgress("starting");
         setAction("", "");
       }
     }
 
+    start.addEventListener("click", continueInstall);
     poll();
     setInterval(poll, 2000);
   </script>
@@ -400,12 +480,41 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return str(root / "__forbidden__")
         return str(safe)
 
-    def do_GET(self):
+    def _mark_opened(self):
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n", encoding="utf-8")
+
+    def _is_continue_path(self):
         raw_path = urllib.parse.urlsplit(self.path).path
-        if raw_path == f"/{nonce}/" or raw_path.startswith(f"/{nonce}/status.json") or raw_path.startswith(f"/{nonce}/index.html"):
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n", encoding="utf-8")
+        return raw_path == f"/{nonce}/continue"
+
+    def _continue_response(self):
+        self._mark_opened()
+        body = b'{"ok":true}\n'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self._is_continue_path():
+            return self._continue_response()
         return super().do_GET()
+
+    def do_HEAD(self):
+        if self._is_continue_path():
+            self._mark_opened()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            return
+        return super().do_HEAD()
+
+    def do_POST(self):
+        if self._is_continue_path():
+            return self._continue_response()
+        self.send_error(404)
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -442,8 +551,14 @@ star_web_onboarding_wait_for_open() {
   local timeout="${STAR_WEB_ONBOARDING_OPEN_TIMEOUT:-900}"
   local marker
   marker="$(star_web_onboarding_open_marker)"
-  printf '\nOpen this HTTPS onboarding URL to continue the install:\n  %s\n\n' "$(star_web_onboarding_url)" >&2
-  printf 'Waiting up to %s seconds for the browser to reach the VM...\n' "$timeout" >&2
+  printf '\nOpen this HTTPS onboarding URL, then click Start install:\n  %s\n\n' "$(star_web_onboarding_url)" >&2
+  cat >&2 <<'EOF'
+If this URL does not load, the VM has not properly exposed TCP port 443
+publicly. Inspect the VM firewall, network tags, security group, or cloud
+ingress configuration, then refresh the URL.
+
+EOF
+  printf 'Waiting up to %s seconds for the web page to start the install...\n' "$timeout" >&2
   for _ in $(seq 1 "$timeout"); do
     if [ -f "$marker" ]; then
       printf 'Web onboarding page reached. Continuing install.\n' >&2
@@ -451,7 +566,7 @@ star_web_onboarding_wait_for_open() {
     fi
     sleep 1
   done
-  printf '[star-web-onboarding] timed out waiting for browser to open %s\n' "$(star_web_onboarding_url)" >&2
+  printf '[star-web-onboarding] timed out waiting for the web page to start the install: %s\n' "$(star_web_onboarding_url)" >&2
   return 1
 }
 

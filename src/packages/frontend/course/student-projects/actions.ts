@@ -29,8 +29,9 @@ import { CourseStore } from "../store";
 import { Result, run_in_all_projects } from "./run-in-all-projects";
 import type { StudentRecord } from "../store";
 
-// for tasks that are "easy" to run in parallel, e.g. starting projects
-export const MAX_PARALLEL_TASKS = 30;
+// Project starts can mount RootFS overlays and update host/control-plane state.
+// Keep course-wide start/stop fanout conservative for single-host Star installs.
+export const MAX_PARALLEL_TASKS = 5;
 
 export const RESEND_INVITE_BEFORE = days_ago(RESEND_INVITE_INTERVAL_DAYS);
 
@@ -371,7 +372,13 @@ export class StudentProjectsActions {
       await selectedAction(student_project_id);
     };
 
-    await awaitMap(store.get_student_project_ids(), MAX_PARALLEL_TASKS, task);
+    try {
+      await awaitMap(store.get_student_project_ids(), MAX_PARALLEL_TASKS, task);
+    } finally {
+      if (store.get("action_all_projects_state") === state) {
+        this.course_actions.setState({ action_all_projects_state: "any" });
+      }
+    }
   };
 
   cancel_action_all_student_projects = (): void => {

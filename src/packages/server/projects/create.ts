@@ -63,11 +63,45 @@ import {
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const PROJECT_RUNTIME_SLOT_TTL_MS = 30 * 60 * 1000;
+const STAR_DEFAULT_ROOTFS_IMAGE_ID = "official-cocalc-star-rootfs";
 // Explicit host placement provisions the workspace on the target host during
 // createProject. Under filesystem pressure that can take much longer than the
 // default RPC timeout, and timing out too early causes the hub to retry the
 // same project_id while the first create is still running.
 const PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS = 5 * 60 * 1000;
+
+function isStarSetupProfile(): boolean {
+  return `${process.env.COCALC_SETUP_PROFILE ?? ""}`.trim() === "star";
+}
+
+async function getStarDefaultRootfsImage(): Promise<{
+  image: string;
+  image_id: string;
+} | null> {
+  if (!isStarSetupProfile()) {
+    return null;
+  }
+  const { rows } = await getPool().query<{
+    runtime_image: string | null;
+  }>(
+    `SELECT runtime_image
+       FROM rootfs_images
+      WHERE image_id=$1
+        AND COALESCE(deleted, false)=false
+        AND COALESCE(hidden, false)=false
+        AND COALESCE(blocked, false)=false
+      LIMIT 1`,
+    [STAR_DEFAULT_ROOTFS_IMAGE_ID],
+  );
+  const image = `${rows[0]?.runtime_image ?? ""}`.trim();
+  if (!image) {
+    log.warn("Star default RootFS image is not available", {
+      image_id: STAR_DEFAULT_ROOTFS_IMAGE_ID,
+    });
+    return null;
+  }
+  return { image, image_id: STAR_DEFAULT_ROOTFS_IMAGE_ID };
+}
 
 function publishStartLroSummaryBestEffort({
   scope_type,
@@ -374,6 +408,14 @@ export default async function createProject(opts: CreateProjectOptions) {
         `${rows[0].owning_bay_id}`.trim() || projectOwningBayId;
     }
     preferredBackupRepoId = rows[0]?.backup_repo_id ?? null;
+  }
+
+  if (!opts.rootfs_image && !rootfs_image && !src_project_id) {
+    const starDefaultRootfs = await getStarDefaultRootfsImage();
+    if (starDefaultRootfs != null) {
+      opts.rootfs_image = starDefaultRootfs.image;
+      opts.rootfs_image_id = starDefaultRootfs.image_id;
+    }
   }
 
   const projectRootfsImage = assertValidRootfsImageName(

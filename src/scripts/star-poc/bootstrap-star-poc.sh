@@ -33,6 +33,8 @@ STAR_HARDEN_INSTALL_USER_SUDO="${STAR_HARDEN_INSTALL_USER_SUDO:-0}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-${STAR_HARDEN_INSTALL_USER_SUDO}}"
 STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
 STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
+STAR_AUTO_APT_STATE_DIR=""
+STAR_AUTO_APT_DISABLED=0
 
 log() {
   printf '[star] %s\n' "$*" >&2
@@ -48,6 +50,75 @@ run() {
   "$@"
 }
 
+wait_for_apt_locks() {
+  local timeout="${STAR_APT_LOCK_TIMEOUT:-900}"
+  local waited=0
+  local busy=0
+  while [ "$waited" -lt "$timeout" ]; do
+    busy=0
+    if command -v fuser >/dev/null 2>&1; then
+      for lock in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock; do
+        if [ -e "$lock" ] && fuser "$lock" >/dev/null 2>&1; then
+          busy=1
+        fi
+      done
+    fi
+    if pgrep -x apt-get >/dev/null 2>&1 ||
+      pgrep -x apt >/dev/null 2>&1 ||
+      pgrep -x dpkg >/dev/null 2>&1 ||
+      pgrep -x unattended-upgr >/dev/null 2>&1; then
+      busy=1
+    fi
+    [ "$busy" = "1" ] || return 0
+    if [ "$waited" = "0" ]; then
+      log "waiting for apt/dpkg lock held by another system process"
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  die "timed out after ${timeout}s waiting for apt/dpkg lock"
+}
+
+apt_get() {
+  wait_for_apt_locks
+  run apt-get "$@"
+}
+
+automatic_apt_units() {
+  printf '%s\n' apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service
+}
+
+disable_automatic_apt() {
+  STAR_AUTO_APT_DISABLED=1
+  STAR_AUTO_APT_STATE_DIR="$(mktemp -d)"
+  local unit
+  for unit in $(automatic_apt_units); do
+    systemctl is-enabled "$unit" >"${STAR_AUTO_APT_STATE_DIR}/${unit}.enabled" 2>/dev/null || true
+    systemctl is-active "$unit" >"${STAR_AUTO_APT_STATE_DIR}/${unit}.active" 2>/dev/null || true
+  done
+  log "temporarily disabling automatic apt services during install"
+  systemctl stop apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+  systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true
+  systemctl disable apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service >/dev/null 2>&1 || true
+}
+
+restore_automatic_apt() {
+  [ "$STAR_AUTO_APT_DISABLED" = "1" ] || return 0
+  [ -n "$STAR_AUTO_APT_STATE_DIR" ] && [ -d "$STAR_AUTO_APT_STATE_DIR" ] || return 0
+  local unit
+  log "restoring automatic apt service state"
+  for unit in $(automatic_apt_units); do
+    if grep -qx enabled "${STAR_AUTO_APT_STATE_DIR}/${unit}.enabled" 2>/dev/null; then
+      systemctl enable "$unit" >/dev/null 2>&1 || true
+    fi
+    if grep -qx active "${STAR_AUTO_APT_STATE_DIR}/${unit}.active" 2>/dev/null; then
+      systemctl start "$unit" >/dev/null 2>&1 || true
+    fi
+  done
+  rm -rf "$STAR_AUTO_APT_STATE_DIR"
+  STAR_AUTO_APT_DISABLED=0
+}
+
 as_star_user() {
   sudo -H -u "$STAR_USER" bash -lc "cd '$STAR_HOME' && $*"
 }
@@ -60,12 +131,24 @@ require_root() {
 
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
-  run apt-get update
-  run apt-get install -y \
+  apt_get update
+  apt_get install -y \
     bash ca-certificates curl git jq openssl build-essential python3 \
     podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs \
     caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev
   systemctl disable --now postgresql >/dev/null 2>&1 || true
+}
+
+configure_kernel_limits() {
+  local path="/etc/sysctl.d/90-cocalc-star.conf"
+  cat >"$path" <<'EOF'
+# CoCalc Star can run hundreds of rootless Podman project containers.
+# The distro default per-user key quota is commonly 200, which runc can hit
+# around 100 containers while creating container session keyrings.
+kernel.keys.maxkeys = 1000000
+kernel.keys.maxbytes = 25000000
+EOF
+  run sysctl --system >/dev/null
 }
 
 start_web_onboarding() {
@@ -85,14 +168,18 @@ $(star_web_onboarding_caddy_proxy_routes)
   }
 }
 EOF
+  caddy fmt --overwrite "$caddy_config" >/dev/null || true
   caddy adapt --config "$caddy_config" >/dev/null
   install -m 0644 -o root -g root "$caddy_config" /etc/caddy/Caddyfile
   rm -f "$caddy_config"
   systemctl enable caddy >/dev/null
   systemctl restart caddy
   star_web_onboarding_write_status "reachable" "This VM is publicly reachable over HTTPS. Installing CoCalc Star now." ""
-  star_web_onboarding_print >&2
-  star_web_onboarding_wait_for_open
+  if star_web_onboarding_require_open; then
+    star_web_onboarding_wait_for_open
+  else
+    star_web_onboarding_print >&2
+  fi
 }
 
 host_has_nvidia_gpu() {
@@ -180,12 +267,12 @@ install_gpu_support() {
   fi
   STAR_HAS_GPU=1
   log "NVIDIA GPU detected; configuring Podman CDI support"
-  run apt-get install -y ca-certificates gnupg
+  apt_get install -y ca-certificates gnupg
   rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
   run bash -lc "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
   run bash -lc "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
-  run apt-get update
-  run apt-get install -y --allow-change-held-packages nvidia-container-toolkit
+  apt_get update
+  apt_get install -y --allow-change-held-packages nvidia-container-toolkit
   ldconfig || true
   install_nvidia_cdi_normalizer
   mkdir -p /etc/cdi
@@ -726,6 +813,7 @@ $(star_web_onboarding_caddy_routes)
   }
 }
 EOF
+  caddy fmt --overwrite "$caddy_config" >/dev/null || true
 
   grep -q '^ExecStart=' "$hub_unit" || die "generated hub systemd unit is invalid"
   grep -q '^ExecStart=' "$project_host_unit" || die "generated project-host systemd unit is invalid"
@@ -831,12 +919,15 @@ web_onboarding_exit_trap() {
     star_web_onboarding_write_status "failed" "The CoCalc Star install failed. Check the terminal output or SSH logs on the VM." "" || true
   fi
   star_web_onboarding_stop_server || true
+  restore_automatic_apt || true
   exit "$status"
 }
 
 require_root
-install_packages
 trap web_onboarding_exit_trap EXIT
+disable_automatic_apt
+install_packages
+configure_kernel_limits
 start_web_onboarding
 install_gpu_support
 star_web_onboarding_write_status "runtime" "Preparing Linux user, Node.js, and Star runtime packages." ""
@@ -844,7 +935,6 @@ ensure_subuids
 install_node
 build_source
 prepare_runtime_artifacts
-stop_existing_services
 ensure_btrfs
 install_wrappers
 configure_sudoers
@@ -856,6 +946,8 @@ ensure_default_rootfs_cache
 seed_database
 publish_default_rootfs
 star_web_onboarding_write_status "systemd" "Installing systemd services and final Caddy routing." ""
+stop_existing_services
 install_systemd
 start_services
+restore_automatic_apt
 trap - EXIT

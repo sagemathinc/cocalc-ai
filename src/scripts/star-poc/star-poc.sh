@@ -727,6 +727,7 @@ EOF
   tmp="$(mktemp)"
   write_star_caddyfile "$domain" "$email" "$tmp"
   if command -v caddy >/dev/null 2>&1; then
+    caddy fmt --overwrite "$tmp" >/dev/null || true
     caddy adapt --config "$tmp" >/dev/null
   fi
   sudo install -m 0644 -o root -g root "$tmp" /etc/caddy/Caddyfile

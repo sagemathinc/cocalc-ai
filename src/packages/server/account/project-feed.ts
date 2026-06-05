@@ -8,6 +8,7 @@ import getPool from "@cocalc/database/pool";
 import {
   applyProjectEventToAccountCollaboratorIndex,
   loadLatestCollaboratorProjectionEvent,
+  retryAccountCollaboratorIndexDeadlock,
 } from "@cocalc/database/postgres/account-collaborator-index-projector";
 import { computeAccountProjectFeedEvents } from "@cocalc/database/postgres/account-project-index-projector";
 import {
@@ -327,11 +328,14 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
       collaboratorEvent != null &&
       collaboratorEvent.event_id === latestEvent?.event_id
     ) {
-      const collaborator = await applyProjectEventToAccountCollaboratorIndex({
-        db: client,
-        bay_id,
-        event: collaboratorEvent,
-      });
+      const collaborator = await retryAccountCollaboratorIndexDeadlock(
+        async () =>
+          await applyProjectEventToAccountCollaboratorIndex({
+            db: client,
+            bay_id,
+            event: collaboratorEvent,
+          }),
+      );
       collaboratorFeedEvents = collaborator.feed_events;
     }
   } finally {
