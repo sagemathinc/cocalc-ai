@@ -2,7 +2,7 @@
 import { buildAutomationAcpConfig } from "../automation-request-config";
 
 describe("buildAutomationAcpConfig", () => {
-  it("preserves full-access codex thread settings for automation runs", () => {
+  it("preserves full-access codex settings except the interactive session id", () => {
     expect(
       buildAutomationAcpConfig({
         chatPath: "/home/wstein/project/example.chat",
@@ -19,7 +19,6 @@ describe("buildAutomationAcpConfig", () => {
         },
       }),
     ).toEqual({
-      sessionId: "thread-session-1",
       model: "gpt-5.3-codex-spark",
       reasoning: "low",
       workingDirectory: "/srv/work",

@@ -1,6 +1,5 @@
 import type { CodexThreadConfig } from "@cocalc/chat";
 import {
-  normalizeCodexSessionId,
   resolveCodexSessionMode,
   type CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
@@ -92,9 +91,8 @@ export function buildAutomationAcpConfig({
   if (codexPathOverride) {
     next.codexPathOverride = codexPathOverride;
   }
-  const sessionId = normalizeCodexSessionId(field<string>(config, "sessionId"));
-  if (sessionId) {
-    next.sessionId = sessionId;
-  }
+  // Automation must not reuse the interactive chat thread's Codex session.
+  // Codex keeps active goal state in the session, so sharing it lets scheduled
+  // runs contaminate later human turns with automation continuation context.
   return next;
 }
