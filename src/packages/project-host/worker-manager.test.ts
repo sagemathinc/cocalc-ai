@@ -454,7 +454,7 @@ describe("ACP worker control startup grace", () => {
     });
 
     expect(
-      __test__.workerDatabaseHeartbeatFresh({
+      __test__.workerDatabaseStateProtectsUnresponsiveWorker({
         pid: 1003,
         env: {
           COCALC_ACP_INSTANCE_ID: "worker-current",
@@ -464,7 +464,7 @@ describe("ACP worker control startup grace", () => {
     ).toBe(true);
   });
 
-  it("does not treat a stale database heartbeat as live", () => {
+  it("does not treat a stale database heartbeat without running jobs as live", () => {
     jest.spyOn(Date, "now").mockReturnValue(100_000);
     mockGetAcpWorker.mockReturnValue({
       worker_id: "worker-current",
@@ -475,11 +475,11 @@ describe("ACP worker control startup grace", () => {
       state: "active",
       started_at: 1_000,
       last_heartbeat_at: 70_000,
-      last_seen_running_jobs: 1,
+      last_seen_running_jobs: 0,
     });
 
     expect(
-      __test__.workerDatabaseHeartbeatFresh({
+      __test__.workerDatabaseStateProtectsUnresponsiveWorker({
         pid: 1004,
         env: {
           COCALC_ACP_INSTANCE_ID: "worker-current",
@@ -487,5 +487,30 @@ describe("ACP worker control startup grace", () => {
         cmdline: ["project-host:acp-worker"],
       } as any),
     ).toBe(false);
+  });
+
+  it("protects an unresponsive worker with running jobs even when its heartbeat is stale", () => {
+    jest.spyOn(Date, "now").mockReturnValue(100_000);
+    mockGetAcpWorker.mockReturnValue({
+      worker_id: "worker-current",
+      host_id: "host-1",
+      bundle_version: "current",
+      bundle_path: "/opt/cocalc/project-host/bundles/current",
+      pid: 1005,
+      state: "active",
+      started_at: 1_000,
+      last_heartbeat_at: 70_000,
+      last_seen_running_jobs: 1,
+    });
+
+    expect(
+      __test__.workerDatabaseStateProtectsUnresponsiveWorker({
+        pid: 1005,
+        env: {
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+        },
+        cmdline: ["project-host:acp-worker"],
+      } as any),
+    ).toBe(true);
   });
 });
