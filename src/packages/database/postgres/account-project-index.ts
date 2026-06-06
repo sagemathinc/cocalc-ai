@@ -27,12 +27,23 @@ export interface AccountProjectIndexProjectListRow {
   project_id: string;
   title: string;
   description: string;
+  theme: Record<string, any> | null;
   host_id: string | null;
   owning_bay_id: string;
   is_hidden: boolean;
+  state_summary: Record<string, any>;
+  users_summary: Record<string, any>;
+  last_activity_at: Date | null;
+  last_edited: Date | null;
+  last_backup: Date | null;
   sort_key: Date | null;
   updated_at: Date | null;
 }
+
+export type AccountProjectIndexProjectListSort =
+  | "last_edited"
+  | "title"
+  | "state";
 
 function normalizeBayId(raw?: string): string {
   const bay_id = `${raw ?? ""}`.trim();
@@ -62,16 +73,60 @@ function normalizeLimit(raw?: number): number {
   return limit;
 }
 
+function normalizeOffset(raw?: number): number {
+  const offset = raw ?? 0;
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw Error("offset must be a nonnegative integer");
+  }
+  return offset;
+}
+
+function normalizeSearch(raw?: string): string | undefined {
+  const search = `${raw ?? ""}`.trim();
+  return search ? search : undefined;
+}
+
+function normalizeSort(
+  raw?: AccountProjectIndexProjectListSort,
+): AccountProjectIndexProjectListSort {
+  switch (raw) {
+    case "title":
+    case "state":
+    case "last_edited":
+    case undefined:
+      return raw ?? "last_edited";
+    default:
+      throw Error(`unsupported project list sort '${raw}'`);
+  }
+}
+
+function orderBySql(sort: AccountProjectIndexProjectListSort): string {
+  switch (sort) {
+    case "title":
+      return "LOWER(COALESCE(title, '')) ASC, sort_key DESC NULLS LAST, project_id ASC";
+    case "state":
+      return "LOWER(COALESCE(state_summary->>'state', '')) ASC, sort_key DESC NULLS LAST, project_id ASC";
+    case "last_edited":
+      return "sort_key DESC NULLS LAST, updated_at DESC NULLS LAST, project_id ASC";
+  }
+}
+
 export async function listProjectedProjectsForAccount(opts: {
   account_id: string;
   limit?: number;
+  offset?: number;
   project_id?: string;
   title?: string;
   host_id?: string | null;
   include_hidden?: boolean;
+  search?: string;
+  sort?: AccountProjectIndexProjectListSort;
 }): Promise<AccountProjectIndexProjectListRow[]> {
   const account_id = normalizeAccountId(opts.account_id);
   const limit = normalizeLimit(opts.limit);
+  const offset = normalizeOffset(opts.offset);
+  const search = normalizeSearch(opts.search);
+  const sort = normalizeSort(opts.sort);
   const where: string[] = ["account_id = $1::UUID"];
   const params: any[] = [account_id];
   let i = params.length;
@@ -97,22 +152,41 @@ export async function listProjectedProjectsForAccount(opts: {
       params.push(normalizeUuid(opts.host_id, "host id"));
     }
   }
+  if (search != null) {
+    for (const word of search.split(/\s+/)) {
+      const pattern = `%${word.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+      i += 1;
+      where.push(
+        `(title ILIKE $${i} ESCAPE '\\' OR description ILIKE $${i} ESCAPE '\\' OR state_summary->>'state' ILIKE $${i} ESCAPE '\\')`,
+      );
+      params.push(pattern);
+    }
+  }
   i += 1;
   params.push(limit);
+  i += 1;
+  params.push(offset);
   const { rows } = await getPool().query<AccountProjectIndexProjectListRow>(
     `SELECT
        project_id,
        COALESCE(title, '') AS title,
        COALESCE(description, '') AS description,
+       theme,
        host_id,
        COALESCE(NULLIF(BTRIM(owning_bay_id), ''), 'bay-0') AS owning_bay_id,
        COALESCE(is_hidden, FALSE) AS is_hidden,
+       COALESCE(state_summary, '{}'::JSONB) AS state_summary,
+       COALESCE(users_summary, '{}'::JSONB) AS users_summary,
+       last_activity_at,
+       last_edited,
+       last_backup,
        sort_key,
        updated_at
      FROM account_project_index
      WHERE ${where.join(" AND ")}
-     ORDER BY sort_key DESC NULLS LAST, updated_at DESC NULLS LAST, project_id ASC
-     LIMIT $${i}`,
+     ORDER BY ${orderBySql(sort)}
+     LIMIT $${i - 1}
+     OFFSET $${i}`,
     params,
   );
   return rows;

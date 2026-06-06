@@ -16,6 +16,7 @@ import {
   recordProjectionRepairFailure,
   resetProjectionDiagnosticsForTests,
 } from "./projection-diagnostics";
+import { writeAndWaitForProjection } from "./projection-ack";
 
 class MockStream extends EventEmitter {
   private closed = false;
@@ -123,4 +124,34 @@ test("tracks pending and failed write acknowledgements", () => {
   expect(account.repair_failure_count).toBe(1);
   expect(account.pending_acks).toEqual({});
   expect(account.last_ack_state).toBe("failed");
+});
+
+test("write acknowledgement repairs before converging", async () => {
+  jest.useFakeTimers();
+  try {
+    let repaired = false;
+    const ack = writeAndWaitForProjection({
+      consumer: "notifications",
+      name: "notifications.read_state.read",
+      write: jest.fn(async () => undefined),
+      matchesProjection: () => repaired,
+      repair: jest.fn(async () => {
+        repaired = true;
+      }),
+    });
+
+    await Promise.resolve();
+    expect(
+      collectProjectionDiagnostics().consumers.notifications.pending_acks,
+    ).not.toEqual({});
+
+    await jest.advanceTimersByTimeAsync(5_000);
+    await ack;
+
+    const diagnostics = collectProjectionDiagnostics().consumers.notifications;
+    expect(diagnostics.last_ack_state).toBe("converged");
+    expect(diagnostics.pending_acks).toEqual({});
+  } finally {
+    jest.useRealTimers();
+  }
 });
