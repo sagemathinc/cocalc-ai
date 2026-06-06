@@ -405,6 +405,10 @@ const ACP_CURRENT_WORKER_TURN_RECOVERY_GRACE_MS = envNumber(
   "COCALC_ACP_CURRENT_WORKER_TURN_RECOVERY_GRACE_MS",
   10_000,
 );
+const ACP_CURRENT_WORKER_WRITER_STALE_MS = envNumber(
+  "COCALC_ACP_CURRENT_WORKER_WRITER_STALE_MS",
+  35 * 60_000,
+);
 const ACP_ORPHAN_TURN_RECOVERY_GRACE_MS = envNumber(
   "COCALC_ACP_ORPHAN_TURN_RECOVERY_GRACE_MS",
   2 * 60_000,
@@ -1627,6 +1631,7 @@ export class ChatStreamWriter {
   private readonly timeTravelOps = new Set<Promise<void>>();
   private timeTravelDisposePromise?: Promise<void>;
   private leaseFinalized = false;
+  private lastActivityAt = Date.now();
   private patchflowVersionBaseline?: number;
   private patchflowVersionLatest?: number;
   private patchflowVersionPeak?: number;
@@ -2103,7 +2108,12 @@ export class ChatStreamWriter {
 
   isClosed = () => this.closed;
 
+  lastActivityAgeMs(now = Date.now()): number {
+    return Math.max(0, now - this.lastActivityAt);
+  }
+
   private async initialize(): Promise<void> {
+    this.lastActivityAt = Date.now();
     const db = await this.syncdbPromise;
     this.syncdb = db;
     if (!db.isReady()) {
@@ -2190,6 +2200,7 @@ export class ChatStreamWriter {
   async handle(payload?: AcpStreamPayload | null): Promise<void> {
     await this.ready;
     if (this.closed) return;
+    this.lastActivityAt = Date.now();
     if (payload == null) {
       this.dispose();
       return;
@@ -2233,6 +2244,7 @@ export class ChatStreamWriter {
     { persist }: { persist: boolean },
   ): void {
     if (this.closed) return;
+    this.lastActivityAt = Date.now();
     this.heartbeatLease();
     if ((payload.seq ?? -1) >= this.seq) {
       this.seq = (payload.seq ?? -1) + 1;
@@ -2887,6 +2899,7 @@ export class ChatStreamWriter {
   }
 
   private commit = throttle((generating: boolean): void => {
+    this.lastActivityAt = Date.now();
     this.heartbeatLease();
     const content = this.content ?? "";
     logger.debug("commit", {
@@ -3191,6 +3204,7 @@ export class ChatStreamWriter {
 
   private registerThreadKey(key: string): void {
     if (!key) return;
+    this.lastActivityAt = Date.now();
     this.threadKeys.add(key);
     chatWritersByThreadId.set(key, this);
     logWriterCounts("register-thread", { threadId: key });
@@ -3778,24 +3792,23 @@ export async function disposeAllChatWritersForTests(): Promise<void> {
   );
 }
 
-function hasLiveChatWriterForTurn(turn: {
+function findChatWriterForTurn(turn: {
   project_id: string;
   path: string;
   message_date: string;
   thread_id?: string | null;
   session_id?: string | null;
-}): boolean {
-  if (
-    chatWritersByChatKey.has(
-      chatKey({
-        project_id: turn.project_id,
-        path: turn.path,
-        message_date: turn.message_date,
-        sender_id: "",
-      }),
-    )
-  ) {
-    return true;
+}): ChatStreamWriter | undefined {
+  const writer = chatWritersByChatKey.get(
+    chatKey({
+      project_id: turn.project_id,
+      path: turn.path,
+      message_date: turn.message_date,
+      sender_id: "",
+    }),
+  );
+  if (writer != null) {
+    return writer;
   }
   const ids = new Set<string>();
   const threadId = `${turn.thread_id ?? ""}`.trim();
@@ -3803,10 +3816,41 @@ function hasLiveChatWriterForTurn(turn: {
   if (threadId) ids.add(threadId);
   if (sessionId) ids.add(sessionId);
   for (const id of ids) {
-    if (chatWritersByThreadId.has(id)) {
-      return true;
+    const writer = chatWritersByThreadId.get(id);
+    if (writer != null) {
+      return writer;
     }
   }
+  return undefined;
+}
+
+function hasRecentChatWriterForTurn(
+  turn: {
+    project_id: string;
+    path: string;
+    message_date: string;
+    thread_id?: string | null;
+    session_id?: string | null;
+  },
+  opts: { staleMs: number; recoveryReason: string },
+): boolean {
+  const writer = findChatWriterForTurn(turn);
+  if (writer == null) return false;
+  const ageMs = writer.lastActivityAgeMs();
+  if (ageMs < opts.staleMs) {
+    return true;
+  }
+  logger.warn("disposing stale ACP chat writer during recovery", {
+    project_id: turn.project_id,
+    path: turn.path,
+    message_date: turn.message_date,
+    thread_id: turn.thread_id,
+    session_id: turn.session_id,
+    age_ms: ageMs,
+    stale_ms: opts.staleMs,
+    recovery_reason: opts.recoveryReason,
+  });
+  writer.dispose(true);
   return false;
 }
 
@@ -4558,17 +4602,27 @@ export async function recoverCurrentWorkerStuckAcpTurns(
     recoveryReason?: string;
     interruptedNotice?: string;
     graceMs?: number;
+    writerStaleMs?: number;
   } = {},
 ): Promise<number> {
   const recoveryReason = opts.recoveryReason ?? "backend lost live Codex turn";
   const interruptedNotice =
     opts.interruptedNotice ?? STALE_TURN_INTERRUPTED_NOTICE;
   const graceMs = opts.graceMs ?? ACP_CURRENT_WORKER_TURN_RECOVERY_GRACE_MS;
+  const writerStaleMs =
+    opts.writerStaleMs ?? ACP_CURRENT_WORKER_WRITER_STALE_MS;
   const now = Date.now();
   let recovered = 0;
   for (const turn of listRunningAcpTurnLeases()) {
     if (turn.owner_instance_id !== ACP_INSTANCE_ID) continue;
-    if (hasLiveChatWriterForTurn(turn)) continue;
+    if (
+      hasRecentChatWriterForTurn(turn, {
+        staleMs: writerStaleMs,
+        recoveryReason,
+      })
+    ) {
+      continue;
+    }
     const heartbeatAt = Number(turn.heartbeat_at ?? 0);
     const startedAt = Number(turn.started_at ?? 0);
     const referenceAt =
