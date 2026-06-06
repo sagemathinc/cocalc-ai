@@ -1,4 +1,5 @@
 import { Map, Set as ImmutableSet } from "immutable";
+import { EventEmitter } from "events";
 
 const mockNewsState: any = {};
 let mockNewsStore: any;
@@ -123,11 +124,37 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: mockWebappClient,
 }));
 
-import { NewsActions } from "./init";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
+import {
+  collectProjectionDiagnostics,
+  resetProjectionDiagnosticsForTests,
+} from "@cocalc/frontend/projection-diagnostics";
+import { init, NewsActions } from "./init";
+
+const mockGetSharedAccountDStream = getSharedAccountDStream as jest.Mock;
+
+class MockFeed extends EventEmitter {
+  private closed = false;
+
+  isClosed() {
+    return this.closed;
+  }
+
+  close() {
+    this.closed = true;
+    this.emit("closed");
+  }
+}
+
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 describe("news notifications loading recovery", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    resetProjectionDiagnosticsForTests();
     Object.assign(mockNewsState, {
       loading: true,
       unread: 0,
@@ -136,6 +163,7 @@ describe("news notifications loading recovery", () => {
     });
     mockWebappClient.is_signed_in.mockReturnValue(true);
     mockListNews.mockResolvedValue([]);
+    mockGetSharedAccountDStream.mockReset();
     mockGetSharedAccountDkv.mockResolvedValue({
       getAll: () => ({}),
       isClosed: () => false,
@@ -175,5 +203,48 @@ describe("news notifications loading recovery", () => {
     expect(mockGetSharedAccountDkv).not.toHaveBeenCalled();
     expect(mockListNews).toHaveBeenCalledTimes(1);
     expect(mockNewsState.loading).toBe(false);
+  });
+
+  it("records news feed diagnostics and repairs on refresh events", async () => {
+    const feed = new MockFeed();
+    mockGetSharedAccountDStream.mockResolvedValue(feed);
+    mockAccountStore = {
+      async_wait: jest.fn(),
+      get: jest.fn(() => undefined),
+      get_account_id: jest.fn(() => "acct-1"),
+    };
+
+    init();
+    await flush();
+
+    expect(collectProjectionDiagnostics().consumers.news.attach_count).toBe(1);
+
+    feed.emit(
+      "change",
+      {
+        type: "news.refresh",
+        account_id: "acct-1",
+        ts: Date.now(),
+      },
+      27,
+    );
+    await flush();
+
+    let diagnostics = collectProjectionDiagnostics().consumers.news;
+    expect(diagnostics.last_event_type).toBe("news.refresh");
+    expect(diagnostics.last_seq).toBe(27);
+    expect(diagnostics.last_repair_reason).toBe("feed-refresh");
+    expect(diagnostics.last_repair_scope).toBe("news");
+
+    feed.emit("history-gap", {
+      requested_start_seq: 4,
+      effective_start_seq: 9,
+    });
+    await flush();
+
+    diagnostics = collectProjectionDiagnostics().consumers.news;
+    expect(diagnostics.history_gap_count).toBe(1);
+    expect(diagnostics.last_repair_reason).toBe("history-gap");
+    expect(diagnostics.last_repair_scope).toBe("news");
   });
 });

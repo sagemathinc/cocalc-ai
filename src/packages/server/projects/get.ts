@@ -5,6 +5,7 @@
 */
 
 import { listProjectedProjectsForAccount } from "@cocalc/database/postgres/account-project-index";
+import type { AccountProjectIndexProjectListSort } from "@cocalc/database/postgres/account-project-index";
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -46,11 +47,18 @@ function getProjectListReadMode(): ProjectListReadMode {
 async function getProjectsFromProjection(opts: {
   account_id: string;
   limit: number;
+  offset: number;
+  hidden: boolean;
+  search?: string;
+  sort: AccountProjectIndexProjectListSort;
 }): Promise<DBProject[]> {
   const rows = await listProjectedProjectsForAccount({
     account_id: opts.account_id,
     limit: opts.limit,
-    include_hidden: false,
+    offset: opts.offset,
+    include_hidden: opts.hidden,
+    search: opts.search,
+    sort: opts.sort,
   });
   return rows.map((row) => ({
     project_id: row.project_id,
@@ -63,9 +71,17 @@ async function getProjectsFromProjection(opts: {
 export default async function getProjects({
   account_id,
   limit = 50,
+  offset = 0,
+  hidden = false,
+  search,
+  sort = "last_edited",
 }: {
   account_id: string;
   limit?: number;
+  offset?: number;
+  hidden?: boolean;
+  search?: string;
+  sort?: AccountProjectIndexProjectListSort;
 }): Promise<DBProject[]> {
   if (!isValidUUID(account_id)) {
     throw Error("account_id must be a UUIDv4");
@@ -73,10 +89,20 @@ export default async function getProjects({
   if (limit <= 0) {
     return [];
   }
+  if (offset < 0) {
+    throw Error("offset must be nonnegative");
+  }
   const readMode = getProjectListReadMode();
   if (readMode !== "off") {
     try {
-      const projected = await getProjectsFromProjection({ account_id, limit });
+      const projected = await getProjectsFromProjection({
+        account_id,
+        limit,
+        offset,
+        hidden,
+        search,
+        sort,
+      });
       if (readMode === "only" || projected.length > 0) {
         return projected;
       }
@@ -96,10 +122,17 @@ export default async function getProjects({
           users #>> ARRAY[$1::TEXT, 'group']::TEXT[],
           ''
         ) IN ('owner', 'collaborator', 'viewer')
-        AND (users#>>'{${account_id},hide}')::BOOLEAN IS NOT TRUE
+        AND ($3::BOOLEAN OR (users#>>'{${account_id},hide}')::BOOLEAN IS NOT TRUE)
+        AND (
+          $4::TEXT IS NULL OR
+          title ILIKE $4::TEXT OR
+          description ILIKE $4::TEXT OR
+          state->>'state' ILIKE $4::TEXT
+        )
       ORDER BY last_edited DESC
-      LIMIT $2`,
-    [account_id, limit],
+      LIMIT $2
+      OFFSET $5`,
+    [account_id, limit, hidden, search ? `%${search}%` : null, offset],
   );
   return rows;
 }

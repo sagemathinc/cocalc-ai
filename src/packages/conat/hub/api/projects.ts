@@ -590,6 +590,24 @@ export interface ChatStoreDeleteResult {
 export type ProjectRegion = string | null;
 export type ProjectCreated = Date | string | null;
 export type ProjectEnv = Record<string, string> | null;
+export type AccountProjectListWindowSort = "last_edited" | "title" | "state";
+export interface AccountProjectListWindowRow {
+  project_id: string;
+  title: string;
+  description: string;
+  theme: Record<string, any> | null;
+  host_id: string | null;
+  owning_bay_id: string;
+  is_hidden: boolean;
+  deletion_protection: boolean;
+  state_summary: Record<string, any>;
+  users_summary: Record<string, any>;
+  last_activity_at: Date | string | null;
+  last_edited: Date | string | null;
+  last_backup: Date | string | null;
+  sort_key: Date | string | null;
+  updated_at: Date | string | null;
+}
 export interface ProjectSecretMetadata {
   project_id: string;
   name: string;
@@ -651,6 +669,7 @@ export const projects = {
   listCollaborators: authFirstRequireAccount,
   getProjectCollaboratorInviteUsage: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
+  listAccountProjectWindow: authFirstRequireAccount,
   getProjectRegion: authFirstRequireAccount,
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
@@ -1038,6 +1057,15 @@ export interface Projects {
     account_id?: string;
     limit?: number;
   }) => Promise<MyCollaboratorRow[]>;
+
+  listAccountProjectWindow: (opts: {
+    account_id?: string;
+    limit?: number;
+    offset?: number;
+    hidden?: boolean;
+    search?: string;
+    sort?: AccountProjectListWindowSort;
+  }) => Promise<AccountProjectListWindowRow[]>;
 
   inviteCollaborator: ({
     account_id,

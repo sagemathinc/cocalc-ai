@@ -2,6 +2,8 @@
 
 Use this as a quick entry point to the new subsystem docs added in late 2025. Each link is to a full write\-up; the paragraph summarizes the concrete behavior and implementation details.
 
+- [star.md](./star.md) — CoCalc Star product and deployment plan for the single public VM appliance. Describes the zero-config user story, one-line installer, sslip.io + Caddy + Let's Encrypt HTTPS path, onboarding page, first-admin bootstrap flow, invite-user goal, first-release support target, and boundaries versus Plus, Launchpad, and Rocket.
+
 - [project\-rootfs.md](./project-rootfs.md) — How a project’s root filesystem image is chosen and flows through the stack. The hub reads `rootfs_image` \(or legacy `compute_image`\), sends it to the project\-host, which resolves the image, caches it locally, runs a lightweight host-side preflight, and then hands it to project\-runner. At first start, the runtime bootstraps `user:2001:2001`, `sudo`, and CA certificates inside the project overlay before dropping privileges. Overlayfs uppers under `.local/share/overlay/` are captured in snapshots/backups and move with the project. Supports Docker/OCI refs today \(defaulting to Docker Hub\), with planned support for local rootfs directories.
 
 - [project\-backups.md](./project-backups.md) — Backup pipeline using btrfs snapshots \+ rustic. Describes what’s included \(project files \+ per\-project persist store\), excluded \(btrfs snapshots\), flow \(take RO snapshot, rustic backup to repo, drop snapshot\), restore to any host, job states, failure/restart behavior, and the current hosted storage model \(region buckets on R2 with DB-assigned shared repos\). Notes daily scheduling, concurrency limits, observability, and open items like pruning policy.

@@ -392,6 +392,67 @@ test("project exec waits for an async job to complete", async () => {
   assert.equal(returned?.stdout, "done\n");
 });
 
+test("project start --wait accepts running as successful start state", async () => {
+  let startOpts: any;
+  let waitedOpId: string | undefined;
+  let returned: any;
+
+  const deps = {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        timeoutMs: 300_000,
+        pollMs: 1_000,
+        hub: {
+          projects: {
+            start: async (opts) => {
+              startOpts = opts;
+              return { op_id: "start-op-1" };
+            },
+          },
+        },
+      };
+      returned = await fn(ctx);
+    },
+    resolveProjectFromArgOrContext: async (_ctx, project) => ({
+      project_id: project ?? "project-id",
+      title: "Project",
+    }),
+    waitForLro: async (_ctx, opId) => {
+      waitedOpId = opId;
+      return {
+        op_id: opId,
+        status: "running",
+        timedOut: true,
+      };
+    },
+  };
+
+  const program = new Command();
+  const project = program.command("project");
+  registerProjectBasicCommands(project, deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "project",
+    "start",
+    "--project",
+    "project-id",
+    "--wait",
+  ]);
+
+  assert.deepEqual(startOpts, {
+    project_id: "project-id",
+    wait: false,
+  });
+  assert.equal(waitedOpId, "start-op-1");
+  assert.deepEqual(returned, {
+    project_id: "project-id",
+    op_id: "start-op-1",
+    status: "running",
+  });
+});
+
 test("project where returns the owning bay for the resolved project", async () => {
   let captured: any;
 

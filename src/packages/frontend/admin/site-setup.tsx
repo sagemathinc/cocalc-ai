@@ -18,7 +18,12 @@ import {
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
-import { ErrorDisplay, Icon, Loading } from "@cocalc/frontend/components";
+import {
+  CopyToClipBoard,
+  ErrorDisplay,
+  Icon,
+  Loading,
+} from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   SiteSetupStatus,
@@ -344,6 +349,41 @@ function ProgressSummary({ status }: { status: SiteSetupStatus }) {
   );
 }
 
+function StarInviteCard({ inviteUrl }: { inviteUrl?: string }) {
+  if (!inviteUrl) return null;
+  return (
+    <Card
+      size="small"
+      title={
+        <Space>
+          <Icon name="user-plus" />
+          <span>Invite users</span>
+        </Space>
+      }
+      style={subtlePanelStyle}
+    >
+      <Paragraph>
+        Share this sign-up link with people who should be able to create
+        accounts on this CoCalc Star instance.
+      </Paragraph>
+      <CopyToClipBoard
+        value={inviteUrl}
+        inputWidth="min(76vw, 720px)"
+        copyTip="Invite link copied"
+      />
+      <Space wrap style={{ marginTop: 12 }}>
+        <Button href={inviteUrl} target="_blank">
+          Open invite sign-up page
+        </Button>
+        <Text type="secondary">
+          The link uses the reusable Star registration token created during
+          install.
+        </Text>
+      </Space>
+    </Card>
+  );
+}
+
 export function SiteSetupBanner({ onOpenSetup }: { onOpenSetup: () => void }) {
   const [status, setStatus] = useState<SiteSetupStatus>();
 
@@ -455,6 +495,7 @@ export function SiteSetupAdmin() {
       {status ? (
         <>
           <ProgressSummary status={status} />
+          {isStar ? <StarInviteCard inviteUrl={status.invite_url} /> : null}
           <Title level={4} style={{ marginBottom: 0 }}>
             Required Setup Gates
           </Title>

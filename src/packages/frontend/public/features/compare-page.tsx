@@ -72,7 +72,7 @@ const DECISION_ROWS = [
   },
   {
     cocalc:
-      "The same user model can start hosted and later move to CoCalc Plus, Launchpad, or custom deployment.",
+      "The same user model can start hosted and later move to CoCalc Plus, CoCalc Star, Launchpad, Rocket, or custom deployment.",
     key: "deployment",
     question: "Do deployment options matter?",
     typical:
@@ -270,7 +270,7 @@ export default function CompareFeaturePage({
           items={[
             "Technical courses where notebooks, grading, student support, and shared infrastructure all need to work together.",
             "Research or engineering teams that want notebooks, terminals, and technical documents in the same collaborative environment.",
-            "Organizations that may start hosted and later want CoCalc Plus, Launchpad, or a custom deployment without changing the user model.",
+            "Organizations that may start hosted and later want CoCalc Plus, CoCalc Star, Launchpad, Rocket, or a custom deployment without changing the user model.",
           ]}
         />
       </PublicSection>

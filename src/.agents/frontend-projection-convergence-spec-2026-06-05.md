@@ -642,7 +642,9 @@ window queries.
 Deliverables:
 
 - backend query for project list window from `account_project_index`
+  - implemented for the DB helper and authenticated hub `projects.listAccountProjectWindow`
 - frontend state for visible window IDs
+  - started: projects store now records the last loaded backend window and the projects page prefetches/merges the current top window as a convergence aid
 - Projects table renders joined window IDs + `project_map`
 - feed events mark visible window dirty or repair affected rows
 

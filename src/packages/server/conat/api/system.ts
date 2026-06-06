@@ -110,6 +110,7 @@ import {
 } from "@cocalc/server/project-backup/r2";
 import { applyLaunchpadCloudflareTunnelSettings } from "@cocalc/server/launchpad/onprem-sshd";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
+import { ensureStarInviteRegistrationToken } from "@cocalc/server/auth/bootstrap-admin";
 import { getNebiusRegionConfigFromSettings } from "@cocalc/server/cloud/nebius-credentials";
 import type {
   CloudflareTunnelApplyResult,
@@ -3375,10 +3376,12 @@ function emailSetupState(settings: any): SiteSetupStep {
 
 function buildSiteSetupStatus({
   counts,
+  inviteUrl,
   profile,
   steps,
 }: {
   counts: SiteSetupStatus["counts"];
+  inviteUrl?: string;
   profile: SiteSetupStatus["profile"];
   steps: SiteSetupStep[];
 }): SiteSetupStatus {
@@ -3390,6 +3393,7 @@ function buildSiteSetupStatus({
     profile,
     checked_at: new Date().toISOString(),
     ready: hardGatesDone === hardGates.length,
+    invite_url: inviteUrl,
     hard_gates_total: hardGates.length,
     hard_gates_done: hardGatesDone,
     steps,
@@ -3429,6 +3433,7 @@ export async function getSiteSetupStatus({
   };
 
   if (profile === "star") {
+    const inviteUrl = await ensureStarInviteRegistrationToken();
     const totalMemoryGiB = totalmem() / 1024 ** 3;
     const totalMemoryLabel = `${totalMemoryGiB.toFixed(1)} GiB`;
     const defaultRootfsImage = clean(
@@ -3579,7 +3584,7 @@ export async function getSiteSetupStatus({
         ],
       }),
     ];
-    return buildSiteSetupStatus({ counts, profile, steps });
+    return buildSiteSetupStatus({ counts, inviteUrl, profile, steps });
   }
 
   const steps: SiteSetupStep[] = [

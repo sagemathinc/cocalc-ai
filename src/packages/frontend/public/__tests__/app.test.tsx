@@ -131,6 +131,11 @@ describe("section route parsers", () => {
     ).toEqual({
       view: "products-cocalc-rocket",
     });
+    expect(
+      getProductsRouteFromPath(publicPath("products/cocalc-star")),
+    ).toEqual({
+      view: "products-cocalc-star",
+    });
     expect(getPublicRouteFromPath(publicPath("docs"))).toEqual({
       route: { view: "docs-index" },
       section: "docs",
@@ -942,6 +947,18 @@ describe("PublicApp", () => {
 
     expect(screen.getByText("Install CoCalc Launchpad")).not.toBeNull();
     expect(screen.getByText("What the installer does")).not.toBeNull();
+  });
+
+  it("renders the cocalc star page", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={productsRoute({ view: "products-cocalc-star" })}
+      />,
+    );
+
+    expect(screen.getByText("Install CoCalc Star")).not.toBeNull();
+    expect(screen.getByText("What CoCalc Star is")).not.toBeNull();
   });
 
   it("renders the cocalc rocket page", async () => {

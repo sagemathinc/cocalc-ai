@@ -371,7 +371,8 @@ function isNonBtrfsError(err: unknown): boolean {
   const text = `${err}`;
   return (
     text.includes("not a btrfs filesystem") ||
-    text.includes("Not a Btrfs filesystem")
+    text.includes("Not a Btrfs filesystem") ||
+    text.includes("Inappropriate ioctl for device")
   );
 }
 
@@ -1247,3 +1248,7 @@ export async function gcDeletedManagedRootfsCacheEntries(): Promise<HostRootfsGc
   }
   return result;
 }
+
+export const __test__ = {
+  isNonBtrfsError,
+};

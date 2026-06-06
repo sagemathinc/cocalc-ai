@@ -4,7 +4,15 @@ set -euo pipefail
 DEFAULT_RELEASE_BASE_URL="https://github.com/sagemathinc/cocalc-ai/releases/latest/download"
 RELEASE_BASE_URL="${COCALC_STAR_RELEASE_BASE_URL:-$DEFAULT_RELEASE_BASE_URL}"
 RELEASE_URL="${COCALC_STAR_RELEASE_URL:-${1:-}}"
-STAR_ASSUME_YES="${STAR_ASSUME_YES:-0}"
+if [ -z "${STAR_ASSUME_YES+x}" ]; then
+  if [ -t 0 ]; then
+    STAR_ASSUME_YES=0
+  else
+    STAR_ASSUME_YES=1
+  fi
+fi
+STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
+STAR_PUBLIC_URL_AUTO="${STAR_PUBLIC_URL_AUTO:-1}"
 
 log() {
   printf '[star-install-release] %s\n' "$*" >&2
@@ -23,13 +31,13 @@ Download or read a CoCalc Star release artifact, verify its internal checksums,
 and run the versioned installer included in the artifact.
 
 Examples:
-  sudo STAR_ASSUME_YES=1 ./install-release.sh https://example.com/cocalc-star.tar.gz
+  sudo ./install-release.sh https://example.com/cocalc-star.tar.gz
 
   curl -fsSL https://example.com/install-release.sh \
-    | sudo STAR_ASSUME_YES=1 bash -s -- https://example.com/cocalc-star.tar.gz
+    | sudo bash -s -- https://example.com/cocalc-star.tar.gz
 
   curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \
-    | sudo STAR_ASSUME_YES=1 bash
+    | sudo bash
 
 Environment:
   COCALC_STAR_RELEASE_URL   Alternative to the positional release URL/path.
@@ -39,7 +47,12 @@ Environment:
                             https://github.com/sagemathinc/cocalc-ai/releases/latest/download
   COCALC_STAR_RELEASE_ARCH  Override auto-detected Linux arch: x64 or arm64.
   COCALC_STAR_RELEASE_ASSET Override default asset name.
-  STAR_ASSUME_YES=1         Required for non-interactive installs.
+  STAR_ASSUME_YES=1         Skip destructive install confirmation. Defaults to
+                            1 for piped non-interactive installs and 0 for
+                            interactive local script runs.
+  STAR_PUBLIC_URL           Public https:// URL. Defaults to
+                            https://<detected-public-ip>.sslip.io when possible.
+  STAR_PUBLIC_URL_AUTO=0    Disable automatic sslip.io public URL detection.
   STAR_INSTALL_ROOT         Passed through to the release installer.
   STAR_USER                 Passed through to the release installer.
   STAR_SSH_TARGET           Optional SSH target to show in post-install tunnel
@@ -73,9 +86,47 @@ default_release_url() {
   printf '%s/%s\n' "${RELEASE_BASE_URL%/}" "$asset"
 }
 
+valid_ipv4() {
+  local ip="$1"
+  case "$ip" in
+    *[!0-9.]* | *.*.*.*.* | .* | *. | *..*) return 1 ;;
+  esac
+  IFS=. read -r a b c d extra <<EOF
+$ip
+EOF
+  [ -z "${extra:-}" ] || return 1
+  for part in "$a" "$b" "$c" "$d"; do
+    [ -n "$part" ] || return 1
+    [ "$part" -ge 0 ] 2>/dev/null && [ "$part" -le 255 ] || return 1
+  done
+}
+
+detect_public_url() {
+  if [ -n "${STAR_PUBLIC_URL:-}" ]; then
+    export STAR_PUBLIC_URL
+    return
+  fi
+  case "$STAR_PUBLIC_URL_AUTO" in
+    0 | false | no | off) return ;;
+  esac
+  local ip
+  ip="$(curl -4fsSL --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null || true)"
+  if valid_ipv4 "$ip"; then
+    STAR_PUBLIC_URL="https://${ip}.sslip.io"
+    export STAR_PUBLIC_URL
+    if [ -z "${STAR_WEB_ONBOARDING_REQUIRE_OPEN+x}" ]; then
+      STAR_WEB_ONBOARDING_REQUIRE_OPEN=1
+      export STAR_WEB_ONBOARDING_REQUIRE_OPEN
+    fi
+    log "detected public URL ${STAR_PUBLIC_URL}"
+  else
+    log "could not detect public IPv4 address; continuing without public HTTPS onboarding"
+  fi
+}
+
 require_root() {
   if [ "$(id -u)" -ne 0 ]; then
-    die "run as root, e.g. sudo STAR_ASSUME_YES=1 $0 <release-url>"
+    die "run as root, e.g. sudo $0 <release-url>"
   fi
 }
 
@@ -134,6 +185,7 @@ fi
 }
 
 require_root
+detect_public_url
 confirm_destructive_install
 
 command -v tar >/dev/null 2>&1 || die "tar is required"
@@ -159,4 +211,6 @@ release_dir="$(find_release_dir "$extract_dir")"
 log "running release installer"
 cd "$release_dir"
 export STAR_ASSUME_YES
+export STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
+export STAR_WEB_ONBOARDING_REQUIRE_OPEN="${STAR_WEB_ONBOARDING_REQUIRE_OPEN:-}"
 exec ./install.sh

@@ -221,6 +221,79 @@ describe("account_project_index rebuild", () => {
     ]);
   });
 
+  it("supports backend project list windows with search, sort, and offset", async () => {
+    await getPool().query(
+      `INSERT INTO account_project_index
+         (account_id, project_id, owning_bay_id, host_id, title, description,
+          users_summary, state_summary, last_activity_at, last_opened_at,
+          is_hidden, sort_key, updated_at)
+       VALUES
+         ($1, $2, $7, NULL, 'Alpha Notes', 'linear algebra',
+          '{}'::JSONB, '{"state":"running"}'::JSONB, NULL, NULL, FALSE, $8, $8),
+         ($1, $3, $7, NULL, 'Beta Search Hit', 'topology',
+          '{}'::JSONB, '{"state":"stopped"}'::JSONB, NULL, NULL, FALSE, $9, $9),
+         ($1, $4, $7, NULL, 'Gamma Search Hit', 'geometry',
+          '{}'::JSONB, '{"state":"running"}'::JSONB, NULL, NULL, FALSE, $10, $10),
+         ($1, $5, $7, NULL, 'Hidden Search Hit', 'geometry',
+          '{}'::JSONB, '{"state":"running"}'::JSONB, NULL, NULL, TRUE, $11, $11),
+         ($1, $6, $7, NULL, 'Delta', 'searchable geometry',
+          '{}'::JSONB, '{"state":"starting"}'::JSONB, NULL, NULL, FALSE, $12, $12)`,
+      [
+        ACCOUNT_ID,
+        "44444444-4444-4444-8444-444444444441",
+        "44444444-4444-4444-8444-444444444442",
+        "44444444-4444-4444-8444-444444444443",
+        "44444444-4444-4444-8444-444444444444",
+        "44444444-4444-4444-8444-444444444445",
+        LOCAL_BAY_ID,
+        new Date("2026-04-03T20:00:00.000Z"),
+        new Date("2026-04-03T21:00:00.000Z"),
+        new Date("2026-04-03T22:00:00.000Z"),
+        new Date("2026-04-03T23:00:00.000Z"),
+        new Date("2026-04-03T19:00:00.000Z"),
+      ],
+    );
+
+    await expect(
+      listProjectedProjectsForAccount({
+        account_id: ACCOUNT_ID,
+        search: "search hit",
+        sort: "title",
+        limit: 1,
+        offset: 1,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        title: "Gamma Search Hit",
+        is_hidden: false,
+        state_summary: { state: "running" },
+      }),
+    ]);
+
+    await expect(
+      listProjectedProjectsForAccount({
+        account_id: ACCOUNT_ID,
+        search: "geometry",
+        sort: "state",
+        include_hidden: true,
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        title: "Hidden Search Hit",
+        is_hidden: true,
+      }),
+      expect.objectContaining({
+        title: "Gamma Search Hit",
+        state_summary: { state: "running" },
+      }),
+      expect.objectContaining({
+        title: "Delta",
+        state_summary: { state: "starting" },
+      }),
+    ]);
+  });
+
   it("preserves last_opened_at for existing projected rows during rebuild", async () => {
     await getPool().query(
       `INSERT INTO accounts (account_id, first_name, last_name, created, email_address, home_bay_id)

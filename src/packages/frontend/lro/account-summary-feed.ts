@@ -11,6 +11,12 @@ import {
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { isTerminal } from "./utils";
+import {
+  attachProjectionFeedDiagnostics,
+  recordProjectionFeedEvent,
+  recordProjectionHistoryGap,
+  recordProjectionRepair,
+} from "@cocalc/frontend/projection-diagnostics";
 
 type FeedReason = "change" | "reset";
 type Listener = (reason: FeedReason) => void;
@@ -31,6 +37,7 @@ let signedInListener: (() => void) | undefined;
 let signedOutListener: (() => void) | undefined;
 let rememberMeFailedListener: (() => void) | undefined;
 let conatConnectedListener: (() => void) | undefined;
+let realtimeFeedDiagnosticsCleanup: (() => void) | undefined;
 
 function notify(reason: FeedReason): void {
   for (const listener of Array.from(listeners)) {
@@ -45,6 +52,8 @@ function getAccountId(): string | undefined {
 }
 
 function closeRealtimeFeed(): void {
+  realtimeFeedDiagnosticsCleanup?.();
+  realtimeFeedDiagnosticsCleanup = undefined;
   if (realtimeFeed != null) {
     realtimeFeed.removeListener("change", handleRealtimeFeedChange);
     realtimeFeed.removeListener("history-gap", handleRealtimeFeedHistoryGap);
@@ -76,6 +85,11 @@ async function reconnectRealtimeFeedForCurrentAccount(): Promise<void> {
   closeRealtimeFeed();
   // Reconnects can miss summary updates while the transport is down.
   // Force scoped consumers to re-bootstrap from the source of truth.
+  recordProjectionRepair({
+    consumer: "lro-summary",
+    reason: "reconnect",
+    scope: "active-scopes",
+  });
   notify("reset");
   await ensureRealtimeFeedForCurrentAccount();
 }
@@ -113,6 +127,12 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
     }
     feed.on("change", handleRealtimeFeedChange);
     feed.on("history-gap", handleRealtimeFeedHistoryGap);
+    realtimeFeedDiagnosticsCleanup = attachProjectionFeedDiagnostics({
+      consumer: "lro-summary",
+      account_id,
+      stream_name: accountFeedStreamName(),
+      stream: feed,
+    });
     realtimeFeed = feed;
     realtimeFeedAccountId = account_id;
   } catch (err) {
@@ -120,7 +140,15 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
   }
 }
 
-function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
+function handleRealtimeFeedChange(
+  event?: AccountFeedEvent,
+  seq?: number,
+): void {
+  recordProjectionFeedEvent({
+    consumer: "lro-summary",
+    event,
+    seq,
+  });
   if (event == null || event.type !== "lro.summary") {
     return;
   }
@@ -128,7 +156,16 @@ function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
   notify("change");
 }
 
-function handleRealtimeFeedHistoryGap(): void {
+function handleRealtimeFeedHistoryGap(info?: any): void {
+  recordProjectionHistoryGap({
+    consumer: "lro-summary",
+    info,
+  });
+  recordProjectionRepair({
+    consumer: "lro-summary",
+    reason: "history-gap",
+    scope: "active-scopes",
+  });
   notify("reset");
 }
 

@@ -2,7 +2,7 @@
 
 Status: `active implementation plan`
 
-Implementation status as of 2026-06-02:
+Implementation status as of 2026-06-05:
 
 - Phase 1 is substantially proven on fresh Ubuntu 24.04 x86_64 GCP VMs.
 - A tarball installer path exists and has been validated from a clean VM.
@@ -49,19 +49,76 @@ Implementation status as of 2026-06-02:
   custom RootFS images are supported follow-up checks, not first-run blockers.
 - The public GitHub-release installer path works on fresh GCP, Lambda Cloud, and
   Hyperstack VMs in the current testing cycle. Install time is typically about
-  2-3 minutes after the VM is ready.
+  2-5 minutes after the VM is ready.
+- The public install command still needs a stable short URL before public
+  release; the long GitHub release URL form is for internal validation.
 - GPU passthrough works on tested Lambda Cloud GPU VMs: `nvidia-smi`, PyTorch,
   and TensorFlow all detected the GPU inside projects after Star project-host
   GPU auto-detection was enabled.
-- The default RootFS image is now `buildpack-deps:26.04`, and the installer
-  caches/publishes the managed default RootFS so project backups work without
-  asking the operator to publish the launch image first.
+- The default RootFS is now an official managed Star RootFS built from the
+  selected base image with Jupyter and LaTeX installed. The installer
+  caches/publishes it so project backups work without asking the operator to
+  publish the launch image first, and project creation should use this managed
+  RootFS by default across browser, CLI, API, and course paths.
 - Raw installer and `star.sh status` access instructions now print
   copy/pasteable SSH tunnel guidance, the local bootstrap URL, and alternate
   local-port guidance while the bootstrap URL remains valid.
 - Caddy/Let's Encrypt over a public VM IP has been validated as the preferred
   zero-config public-VM access path when ports 80/443 are reachable. SSH tunnel
   access remains the private/LAN fallback, not the primary public-VM story.
+- The temporary web-onboarding path has been validated on a real public GCP VM:
+  Caddy/Let's Encrypt proved public reachability first, the browser page
+  continued the install, the admin bootstrap URL worked, and a project could be
+  created and used over HTTPS.
+- The installer must keep the onboarding output unambiguous: print the
+  temporary HTTPS URL once, and immediately explain that failure to open it
+  means the VM is not exposing port 443 publicly or DNS/IP routing is wrong.
+- Public-VM installs on GCP and Lambda exposed two cloud-realism requirements:
+  handle `apt`/`dpkg` locks from unattended upgrades by waiting with clear
+  status, and fail early when the project-host data path cannot support btrfs
+  subvolumes.
+- Lambda Cloud Ubuntu 24.04 GPU validation succeeded, including GPU detection
+  inside projects.
+- GCP Ubuntu 26.04 on the tested default disk layout failed first project start
+  with `Could not create subvolume: Inappropriate ioctl for device`; Ubuntu
+  26.04 and non-btrfs data layouts are not in the V1 support envelope until the
+  installer either provisions a correct btrfs data path or blocks with precise
+  remediation.
+- Star now seeds the local project-host as a shared pool host so non-admin users
+  can create projects on the appliance.
+- Star now publishes and uses an official managed default RootFS image for
+  ordinary project creation. CLI/API-created projects must use the same
+  official Star RootFS instead of falling back to a generic OCI image and doing
+  package bootstrap work at start time.
+- A 100-student course workflow was validated on a large Lambda VM: create
+  course, add 100 students, provision projects, assign files with copy-on-write,
+  and start the projects.
+- A 946-running-project stress test on a 224 GiB RAM Lambda VM did not hit the
+  obvious hardware limit; it hit the single Star hub/control-plane usability
+  limit. The browser became unreliable while the single hub node process and
+  bulk start waiters were overloaded.
+- The scale test establishes a product requirement: Star V1 needs a
+  conservative global running-project cap and bulk-start throttling that
+  protects interactive usability. Star should not advertise "RAM times 10"
+  running projects until the control plane is scaled or isolated.
+- Star now enforces a global running/starting project cap in runtime-slot
+  admission. The default is intentionally conservative and can be overridden by
+  `COCALC_STAR_MAX_RUNNING_PROJECTS`.
+- The Star installer now fails early when the project data path is mounted on a
+  filesystem that cannot support btrfs subvolumes, instead of letting the first
+  project start fail later.
+- Star upgrades now run runtime-state reconciliation to clear stale project
+  states, active operations, and runtime slots when containers disappeared
+  during upgrade/restart.
+- Star seed/bootstrap now creates a normal reusable invite registration token
+  and exposes a copy/paste signup URL in the bootstrap result, terminal access
+  output, and web onboarding completion page.
+- Course "start all student projects" now holds each frontend fanout slot until
+  the project-start LRO reaches a terminal state. This makes the existing
+  course concurrency limit throttle real project starts instead of just LRO
+  queue submission.
+- The Codex subscription-link panel now opens immediately and shows a loading
+  message while CoCalc waits for Codex to return the device code and link.
 - Current implementation is a validated tarball + installer deployment, not a
   final marketplace image or SEA binary. SEA is now optional rather than a hard
   product requirement.
@@ -127,7 +184,7 @@ Target user story:
 9. Creating a project immediately gives working terminal, Jupyter, and LaTeX.
 10. Codex works once the user links their Codex/OpenAI subscription.
 11. The admin can invite another user through a copy/paste signup URL without
-   manually creating and sending a separate registration token.
+    manually creating and sending a separate registration token.
 12. The invited user creates a project and/or collaborates on an existing
     project.
 
@@ -166,6 +223,9 @@ Non-goals for this proof of concept:
 
 Release-blocking gaps for this story:
 
+- Stable, short public install command that hides release-asset details from
+  the user. The long GitHub release URL form is acceptable for internal testing
+  but not for first public release.
 - Installer option/env var for public URL/IP/hostname, with interactive prompt
   only when not provided.
 - Web onboarding mode:
@@ -174,17 +234,37 @@ Release-blocking gaps for this story:
   - require a human to open it before continuing by default,
   - stream install progress and final URLs to that page,
   - expose no secrets or command execution controls through that page.
+- Web onboarding terminal output that prints the temporary URL exactly once and
+  explicitly says: if this URL cannot be opened, inspect the VM firewall,
+  security group, public IP, DNS, and port 443 exposure.
+- Web onboarding page that feels like a standard installer:
+  - no decorative gradient-heavy marketing page,
+  - clear list of what will happen,
+  - "Continue install" button,
+  - approximate five-minute time estimate,
+  - horizontal progress indicator,
+  - final admin bootstrap and invite URLs.
 - Headless/agent bypass for web onboarding, with deterministic terminal/status
   output.
 - First-class Caddy/Let's Encrypt install/config/status path in `install.sh` and
   `star.sh status`.
+- Robust package-install behavior:
+  - wait for unattended-upgrades/apt locks with useful progress,
+  - restore/enable ordinary unattended-upgrades behavior after install,
+  - never leave the VM in a surprising package-management state.
+- Early filesystem/runtime preflight:
+  - Ubuntu 24.04 is the supported V1 target,
+  - unsupported Ubuntu 26.04/non-btrfs layouts must fail before the expensive
+    install or project-start path,
+  - follow-up: optionally provision a dedicated btrfs data volume when the VM
+    root filesystem is not already suitable.
 - Bootstrap/status output that prints the HTTPS bootstrap URL and clearly
   distinguishes it from SSH-tunnel fallback instructions.
-- Admin-visible invite URL for additional users, backed by a pre-created or
-  easily regenerated registration token.
-- Codex subscription-link UI should show the linking panel immediately with a
-  loading state while waiting for the OpenAI/device code instead of leaving the
-  user wondering whether anything is happening.
+- Bulk-start protection follow-up:
+  - the course frontend now throttles real project-start completion,
+  - follow-up: move large bulk-start orchestration to a server-side LRO/queue
+    with one status stream, especially for non-course tools and CLI/admin
+    workflows.
 
 ## Current Validated Implementation
 
@@ -213,8 +293,11 @@ The current working implementation is deliberately simple:
 - Run the project-host managed Conat router on `127.0.0.1:9112`.
 - Run the project-host Conat persist health endpoint on `127.0.0.1:9212`.
 - Use local Postgres for the hub/control-plane database.
-- Build/cache a default RootFS from `buildpack-deps:26.04` with Jupyter and
-  LaTeX.
+- Build/cache/publish an official managed Star RootFS from the selected base
+  image with Jupyter and LaTeX installed.
+- Use that official Star RootFS as the server-side default for browser, CLI,
+  API, and course-created projects unless the caller explicitly selects another
+  RootFS.
 - Mount the backend tools bundle into project containers so tools such as
   `dropbear` come from the CoCalc tools bundle, not from the RootFS image.
 
@@ -253,7 +336,8 @@ Recommended VM:
 Hard product limits:
 
 - Small account limit, e.g. 5-25 accounts depending on pricing/licensing.
-- Conservative simultaneous-running-project limit derived from RAM.
+- Conservative simultaneous-running-project limit derived from both RAM and
+  control-plane usability.
 - No external project-host creation.
 - One local project-host only.
 
@@ -263,6 +347,71 @@ The installer must explicitly warn:
 > users, systemd services, directories, container/runtime state, local database
 > state, and firewall/reverse-proxy configuration. Do not run it on a shared
 > machine.
+
+## Public VM And Scale Test Findings, 2026-06-05
+
+The first serious public-VM and scale tests materially changed the V1 product
+definition.
+
+Validated:
+
+- The Caddy/Let's Encrypt plus `sslip.io` public-VM path is the right default
+  zero-config story when a VM has ports 80/443 open.
+- The temporary web-onboarding page is a useful reachability proof. If the user
+  cannot open it, the problem is outside CoCalc Star: firewall, cloud security
+  group, public IP, DNS, or port 443 routing.
+- Lambda Cloud Ubuntu 24.04 worked cleanly, including GPU detection inside
+  projects.
+- A 100-student course setup and bulk file assignment is viable and compelling
+  on a large single VM.
+- Copy-on-write local assignment makes course file distribution nearly instant
+  in the single-host Star model.
+
+Problems exposed:
+
+- GCP's current default Ubuntu 26.04 path is not yet supported. The tested VM
+  failed at project start because the data path was not a btrfs filesystem and
+  project start attempted to create btrfs subvolumes.
+- Fresh Ubuntu VMs can have unattended upgrades holding the `apt`/`dpkg` lock.
+  The installer should wait with clear progress and only fail after a long,
+  explicit timeout.
+- Star upgrades can leave stale control-plane runtime state if project
+  containers disappear during an upgrade. This is now handled by Star
+  runtime-state reconciliation, but the path should remain covered by upgrade
+  tests.
+- Under very high bulk-start load, independent CLI waiters and the single hub
+  process can make the UI unusable even when the project-host and VM still have
+  plenty of CPU/RAM headroom.
+- Long-running-operation polling must tolerate transient hub busy/timeouts,
+  because a polling failure is not the same as an operation failure.
+
+Scale-test result:
+
+- On a 224 GiB RAM Lambda VM, Star reached about 946 running project containers
+  using under half the available RAM.
+- The failure mode was not memory exhaustion. The failure mode was
+  control-plane saturation and poor human usability: the browser saw connection
+  errors and ordinary UI interactions degraded badly.
+- Many scale-test projects had been created without the official Star RootFS,
+  causing avoidable package bootstrap work during startup. This made the test
+  harsher than a correctly-configured Star install, but it also proved that
+  Star must set the server-side default RootFS for every creation path.
+
+Product conclusion:
+
+- Star V1 should optimize for a reliable small-team appliance experience, not
+  maximum container density.
+- Default running-project limits should be conservative, visible, and
+  configurable by an admin who accepts the risk. The backend cap now exists;
+  follow-up UI/status work should make the cap obvious to admins before they
+  hit it.
+- Course/bulk operations should ultimately use a central queue with throttled
+  concurrency and one status stream rather than launching many independent
+  client waiters. Course start-all now avoids the worst queue-submission burst,
+  but a server-side bulk-start LRO is still the more robust long-term shape.
+- "This VM could fit 1000 containers" is not a public product promise until the
+  Star control plane supports multiple hub workers or otherwise isolates
+  interactive traffic from bulk operations.
 
 ## Source-Code Findings
 
@@ -652,16 +801,29 @@ Recommended V1 resource defaults:
 - If RAM > 16 GiB, reserve `max(6 GiB, 20% RAM)`.
 - Project memory budget = total RAM - reserve.
 - Default per-project memory = 2 GiB.
-- Max running projects = floor(project memory budget / default per-project
-  memory), capped by product/license account limits.
+- Memory-derived running projects = floor(project memory budget /
+  default-per-project memory).
+- V1 default max running projects = min(memory-derived running projects,
+  control-plane usability cap).
+- Initial control-plane usability cap should be conservative, e.g.
+  `min(100, max(5, floor(total_ram_gb * 2)))`, until bulk-start and hub scaling
+  measurements justify a higher default.
+- Admins may raise the cap, but the UI should warn that this can make the
+  appliance sluggish or temporarily unusable during bulk project starts.
 
 Examples:
 
-| VM RAM | Reserved | Project budget | Default active projects |
-| ------ | -------- | -------------- | ----------------------- |
-| 16 GiB | 6 GiB    | 10 GiB         | 5                       |
-| 32 GiB | 6.4 GiB  | 25.6 GiB       | 12                      |
-| 64 GiB | 12.8 GiB | 51.2 GiB       | 25                      |
+| VM RAM  | Reserved | Project budget | Default active projects |
+| ------- | -------- | -------------- | ----------------------- |
+| 16 GiB  | 6 GiB    | 10 GiB         | 5                       |
+| 32 GiB  | 6.4 GiB  | 25.6 GiB       | 12                      |
+| 64 GiB  | 12.8 GiB | 51.2 GiB       | 25                      |
+| 224 GiB | 44.8 GiB | 179.2 GiB      | 100 initial cap         |
+
+Do not use `(RAM in GB) * 10` as a V1 product default. The 2026-06-05 Lambda
+test suggests the project-host/container layer may eventually support that
+density on large machines, but the single Star hub/control plane became the
+dominant usability bottleneck first.
 
 Use existing controls:
 
@@ -701,6 +863,12 @@ Recommendation:
 - Use membership/runtime-slot limits for actual enforcement.
 - Use Star settings for derived defaults and UI display.
 - License gates can cap the derived value.
+- Add a global Star running-project cap in addition to per-account sponsorship
+  limits, so course/bulk starts cannot overload the whole appliance even if one
+  admin account has a high sponsorship limit.
+- Course "start all" and similar bulk actions should enqueue work against this
+  global cap and report progress from one bulk operation rather than creating a
+  stampede of independent project-start waiters.
 
 ## Storage Model
 
@@ -1498,6 +1666,33 @@ Deliverable:
 - Codex subscription-link UI renders immediately with a loading state while
   waiting for the external/device code.
 
+Status: partially implemented and validated.
+
+Validated:
+
+- GCP public VM with ports 80/443 open can serve the temporary HTTPS onboarding
+  page through Caddy/Let's Encrypt.
+- Opening the onboarding URL proves public reachability and can continue the
+  install.
+- Final HTTPS bootstrap worked in the browser, and the admin could create
+  projects and use the server.
+- Lambda Cloud public VM install worked cleanly on Ubuntu 24.04, including GPU
+  visibility inside projects.
+
+Remaining:
+
+- Replace the long GitHub release command with a stable short public command.
+- Print the temporary onboarding URL only once, with explicit port-443/firewall
+  troubleshooting text.
+- Keep the onboarding page visually plain and installer-like: no decorative
+  gradient, clear steps, continue button, five-minute estimate, progress bar.
+- Wait for `apt`/`dpkg` locks instead of failing on unattended upgrades.
+- Re-enable or preserve normal unattended-upgrades behavior after install.
+- Block or remediate unsupported filesystem layouts before project start.
+- Ensure `star.sh status` can re-display public URL, bootstrap URL while valid,
+  invite URL while valid, and SSH fallback.
+- Add the admin invite URL flow and Codex loading-state polish.
+
 Validation:
 
 - Fresh public GCP VM with ports 80/443 open installs with a single command and
@@ -1513,6 +1708,44 @@ Validation:
 - Second user creates a project and can collaborate on an existing project.
 - Codex link flow visibly enters a loading state immediately, then shows the
   actual code when available.
+
+### Phase 3.6: Star Scale And Usability Guardrails
+
+Deliverable:
+
+- Global Star running-project cap, separate from per-account sponsorship caps.
+- Conservative default derived from RAM and control-plane usability, not just
+  theoretical container density.
+- Admin UI/status display for:
+  - configured global running cap,
+  - currently running projects,
+  - queued/starting bulk operations,
+  - warning when the cap is raised beyond the recommended default.
+- Course "start all" and similar bulk actions run through one throttled queue
+  and one bulk progress stream.
+- CLI/API bulk start paths avoid spawning many independent waiters against the
+  hub.
+- Star upgrade/restart reconciles missing containers, stale active operations,
+  stale long-running operations, and expired runtime slots.
+- Project start admission fails quickly and clearly when the global cap is
+  reached, instead of queuing indefinitely or overloading the hub.
+
+Status: required for first public release.
+
+Validation:
+
+- On a recommended 8 vCPU / 32 GiB VM, start projects up to the default cap and
+  verify the browser remains responsive.
+- On a large VM, create a 100-student course, provision projects, assign files,
+  and start all projects without making the admin UI unusable.
+- Re-run the large Lambda-style test after the official RootFS default and bulk
+  throttling are in place. The target is not 1000 running projects for V1; the
+  target is predictable behavior, clear caps, and no browser-breaking
+  stampedes.
+- Upgrade while projects are running, then verify runtime state reconciles with
+  actual containers.
+- Kill the hub during a bulk start and verify active operations either resume
+  safely or fail with actionable status.
 
 ### Phase 4: Packaged Runtime
 
@@ -1633,6 +1866,8 @@ Manual:
 
 - Fresh Ubuntu 24.04 x86_64 VM.
 - Fresh Ubuntu 24.04 arm64 VM if SEA/build supports it. (USER: it definitely does)
+- Fresh Ubuntu 26.04 VM should fail early or be explicitly remediated before
+  project start if the data path does not support btrfs subvolumes.
 - Fresh public VM with ports 80/443 open and Caddy/Let's Encrypt configured.
 - Public-URL install using interactive hostname/IP prompt.
 - Public-URL install using non-interactive env/CLI input for agents.
@@ -1654,6 +1889,24 @@ Manual:
 - `sslip.io`-style hostname behavior when public IP changes.
 - Admin invite URL creates a second user without manual token creation.
 - Codex subscription-link UI shows immediate loading state and then the code.
+- 100-student course:
+  - add 100 students,
+  - provision projects,
+  - assign files,
+  - start projects through the bulk queue,
+  - verify the browser remains usable throughout.
+- Running-project cap:
+  - starts above the cap fail or queue with clear status,
+  - admin UI/status shows current running count and configured cap,
+  - raising the cap displays a usability warning.
+- Large-VM exploratory stress test:
+  - verify project-host/container capacity separately from interactive hub
+    usability,
+  - do not treat maximum container count as a V1 product promise.
+- Upgrade/restart reconciliation:
+  - missing containers are marked stopped,
+  - stale active operations and runtime slots are cleared or failed
+    deterministically.
 - Source checkout build/deploy.
 - Source deploy rollback.
 - Custom-build fingerprint visible in status/admin UI.
@@ -1690,69 +1943,80 @@ Smoke:
 The old recommended next step, "prove the basic appliance on a throwaway Ubuntu
 VM", is complete.
 
-Current recommended next step:
+Current recommended finish plan for first public release:
 
-1. Implement the public-VM Caddy/Let's Encrypt install path:
+1. Make the install command public-release quality:
+   - provide one short stable command instead of a long GitHub release URL,
+   - keep an explicit release override for agents and internal tests,
    - accept public URL/hostname/IP via env/CLI for agents,
-   - prompt interactively only when not provided,
-   - configure Caddy first,
-   - serve a temporary nonce-protected HTTPS onboarding page,
-   - require the human operator to open that page before continuing by default,
-   - stream sanitized install progress and final URLs to the page,
-   - support `STAR_WEB_ONBOARDING=0` or equivalent for headless agents,
-   - print the final HTTPS bootstrap URL,
-   - keep SSH tunnel output as fallback.
-2. Extend `star.sh status`:
-   - print `CoCalc Star is running`,
-   - print public HTTPS URL and TLS/Caddy status,
-   - print the admin bootstrap URL while valid,
-   - print the invite/signup URL while valid,
-   - print a complete `ssh -L 9100:127.0.0.1:9100 ...` command when possible,
-   - show the alternate local-port pattern when `9100` is already used locally.
-3. Add the admin invite URL path:
-   - pre-create or lazily create a non-admin registration token,
-   - show a copy/paste signup URL to the first admin,
-   - make token rotation/regeneration clear,
-   - avoid requiring admins to manually create and send tokens before inviting
-     collaborators.
-4. Polish the Codex subscription-link UI:
-   - render the link panel immediately,
-   - show `Loading...` or equivalent while waiting for the external/device code,
-   - swap in the code as soon as it is available.
-5. Polish the Star setup/admin profile so a Star operator sees local appliance
-   readiness, not Launchpad/Rocket cloud-provider setup:
-   - first admin and 2FA,
-   - local project-host health,
-   - default RootFS status,
-   - shared `/scratch` status,
-   - smoke-test project action,
-   - public URL/TLS status,
-   - optional email/backup reminders.
-6. Harden the installer across random clouds:
-   - detect apt/dpkg locks from `unattended-upgrades`,
-   - wait with useful status messages instead of failing opaquely,
-   - print clear guidance when package installation is blocked for too long,
-   - keep the release directory rollback behavior on any failure.
-7. Build the local source deploy lane:
-   - put a CoCalc checkout on the same VM,
-   - build a Star-compatible release from that checkout,
-   - deploy it through the same versioned release/rollback mechanism,
-   - confirm `star.sh status` reports the custom build fingerprint.
-8. Decide the external packaging surface:
-   - tarball + `install.sh`,
-   - `.deb`/apt repository,
-   - SEA wrapper,
-   - marketplace image.
-9. Decide the Star product surface:
-   - disable or hide cloud-provider setup,
-   - disable or hide SaaS sales/Stripe flows,
-   - keep Star focused on "one VM appliance" rather than "everything Launchpad
-     can technically do".
-10. Keep using `src/scripts/star/validate-gce-release-upgrade.sh` as the release
-   gate for any packaging or installer change.
+   - prompt interactively only when not provided.
+2. Finish public web onboarding:
+   - configure Caddy/Let's Encrypt first,
+   - print the temporary HTTPS onboarding URL exactly once,
+   - explain that failure to open it means port 443/firewall/DNS/public-IP
+     exposure is wrong,
+   - serve a nonce-protected read-only installer page,
+   - make the page plain and installer-like with clear steps, a continue
+     button, five-minute estimate, progress bar, and final URLs,
+   - support a deterministic headless bypass for agents.
+3. Harden install preflight and failure behavior:
+   - wait for unattended-upgrades/apt locks with useful progress,
+   - preserve or re-enable normal unattended-upgrades behavior after install,
+   - support Ubuntu 24.04 as the V1 target,
+   - block Ubuntu 26.04/non-btrfs project-host data layouts until they are
+     explicitly supported,
+   - verify bundle completeness before publishing a release,
+   - keep rollback/release-directory restoration on any failure.
+4. Make Star usable by a small team immediately:
+   - seed the local host as a shared pool host for all accounts,
+   - use the official managed Star RootFS for every project creation path,
+   - keep the create-project host selector hidden in the Star profile when
+     there is only one host,
+   - show/copy an invite signup URL without manual admin token creation,
+   - make the Codex subscription-link UI show a loading state immediately.
+5. Add V1 scale guardrails:
+   - implement a global running-project cap,
+   - use a conservative default such as `min(100, max(5, floor(RAM_GB * 2)))`,
+   - expose the cap and current running count in status/admin UI,
+   - throttle course/bulk starts through one server-side queue,
+   - make start failures at the cap immediate and understandable,
+   - reconcile stale runtime state after upgrade/restart.
+6. Validate the first-release story end to end:
+   - fresh GCP Ubuntu 24.04 public VM with ports 80/443 open,
+   - fresh Lambda Ubuntu 24.04 public VM, including one GPU VM,
+   - fresh private VM using SSH tunnel fallback,
+   - admin bootstrap, project create/start, terminal, Jupyter, LaTeX,
+   - invite second user and collaborate,
+   - 100-student course provision/assign/start within the cap,
+   - reboot recovery,
+   - upgrade and rollback with running-project reconciliation.
 
-That proves Star is not only an appliance, but also a safe single-VM development
-and customer-customization target.
+Suggested first public-release acceptance criterion:
+
+- A non-developer can create a fresh Ubuntu 24.04 public VM, paste one command,
+  open the temporary HTTPS onboarding page, create the first admin account,
+  create a project, open terminal/Jupyter/LaTeX, invite one collaborator, and
+  keep using the appliance without seeing cloud-provider setup, Launchpad/Rocket
+  controls, or unexplained resource-limit failures.
+
+Post-release follow-up:
+
+- Build the local source deploy lane:
+  - put a CoCalc checkout on the same VM,
+  - build a Star-compatible release from that checkout,
+  - deploy it through the same versioned release/rollback mechanism,
+  - confirm `star.sh status` reports the custom build fingerprint.
+- Decide the external packaging surface:
+  - tarball + `install.sh`,
+  - `.deb`/apt repository,
+  - SEA wrapper,
+  - marketplace image.
+- Keep using `src/scripts/star/validate-gce-release-upgrade.sh` as the release
+  gate for any packaging or installer change.
+
+That proves Star can later become a safe single-VM development and
+customer-customization target, but it should not distract from the first public
+appliance release.
 
 ## Rocket Lifecycle Alignment
 

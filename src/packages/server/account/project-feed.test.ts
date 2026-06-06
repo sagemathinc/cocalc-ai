@@ -43,6 +43,8 @@ jest.mock(
       loadLatestCollaboratorProjectionEventMock(...args),
     applyProjectEventToAccountCollaboratorIndex: (...args: any[]) =>
       applyProjectEventToAccountCollaboratorIndexMock(...args),
+    retryAccountCollaboratorIndexDeadlock: async (fn: () => Promise<any>) =>
+      await fn(),
   }),
 );
 

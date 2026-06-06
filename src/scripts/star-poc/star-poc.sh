@@ -40,9 +40,13 @@ Commands:
   releases               List installed releases.
   upgrade <url|tarball>  Install a new release artifact.
   rollback [release-id]  Roll back to a release. Defaults to previous release.
-  restart [all|hub|host] Restart Star services. Default: all.
+  restart [all|hub|rest|host]
+                         Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
   access                 Print public/local access and bootstrap instructions.
+  reconcile-runtime-state
+                         Mark hub-side running project state stopped when the
+                         corresponding project container is not running.
   bootstrap-link         Print the bootstrap registration link, if still present.
   https --domain <name>  Configure Caddy automatic HTTPS for a public domain.
   uninstall              Stop and remove Star service hooks; preserve data by default.
@@ -66,6 +70,7 @@ replace_symlink() {
 service_name() {
   case "${1:-}" in
     hub) printf 'cocalc-star-hub' ;;
+    rest | rest-server) printf 'cocalc-star-rest-server' ;;
     host | project-host) printf 'cocalc-star-project-host' ;;
     *) return 1 ;;
   esac
@@ -140,8 +145,10 @@ doctor() {
   }
 
   check "hub service is active" systemctl is-active --quiet cocalc-star-hub
+  check "REST server service is active" systemctl is-active --quiet cocalc-star-rest-server
   check "project-host service is active" systemctl is-active --quiet cocalc-star-project-host
   check "hub systemd unit is installed" grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-hub.service
+  check "REST server systemd unit is installed" grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-rest-server.service
   check "project-host systemd unit is installed" grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-project-host.service
   check "customize endpoint is reachable" curl -fsS "${STAR_API}/customize"
   [ -n "$star_uid" ] && ok "Star runtime user exists" || fail "Star runtime user exists"
@@ -187,6 +194,8 @@ doctor() {
   check "user systemd manager is active" systemctl is-active --quiet "user@${star_uid}.service"
   check "standard podman runtime dir exists" test -d "/run/user/${star_uid}"
   check "btrfs data mount is active" mountpoint -q /mnt/cocalc
+  check "project-host data directory is on btrfs" bash -lc \
+    "test \"\$(findmnt -n -o FSTYPE --target '${COCALC_DATA:-${DATA:-/mnt/cocalc/data}}' 2>/dev/null)\" = btrfs"
   check "shared scratch mount is active" mountpoint -q /mnt/cocalc-scratch
   check "shared scratch shared directory exists" test -d /mnt/cocalc-scratch/shared
   check "shared scratch shared directory is writable" as_star_user bash -lc 'test -w /mnt/cocalc-scratch/shared'
@@ -194,7 +203,8 @@ doctor() {
   check "project-host rootctl wrapper is installed" test -x /usr/local/sbin/cocalc-project-host-rootctl
   check "project bundle exists" test -d "${SRC_ROOT}/packages/project/build"
 
-  local rootfs_cache_dir="${STAR_ROOT}/project-host/0/cache/images"
+  local project_host_data="${COCALC_DATA:-${DATA:-/mnt/cocalc/data}}"
+  local rootfs_cache_dir="${COCALC_IMAGE_CACHE:-${project_host_data}/cache/images}"
   local rootfs_path
   rootfs_path="$(find "$rootfs_cache_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | head -1 || true)"
   if [ -n "$rootfs_path" ]; then
@@ -231,6 +241,7 @@ status() {
   trap 'rm -f "$customize_json"' RETURN
 
   show_service cocalc-star-hub
+  show_service cocalc-star-rest-server
   show_service cocalc-star-project-host
 
   printf '\nAPI customize:\n'
@@ -394,7 +405,7 @@ rollback_release() {
   }
   replace_symlink "$release_dir/source" "$STAR_SOURCE_LINK"
   replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"
-  sudo systemctl restart cocalc-star-hub cocalc-star-project-host
+  sudo systemctl restart cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host
   wait_for_runtime_health
   printf 'rolled back to %s\n' "$release_id"
 }
@@ -421,9 +432,9 @@ restart() {
   local target="${1:-all}"
   case "$target" in
     all)
-      sudo systemctl restart cocalc-star-hub cocalc-star-project-host
+      sudo systemctl restart cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host
       ;;
-    hub | host | project-host)
+    hub | rest | rest-server | host | project-host)
       sudo systemctl restart "$(service_name "$target")"
       ;;
     *)
@@ -444,6 +455,83 @@ logs() {
     exit 2
   }
   sudo journalctl -u "$svc" -n "$lines" --no-pager
+}
+
+reconcile_runtime_state() {
+  [ -f /etc/cocalc/star/hub.env ] || {
+    log "missing /etc/cocalc/star/hub.env"
+    exit 1
+  }
+  local star_uid live_file
+  star_uid="$(id -u "$STAR_USER" 2>/dev/null || true)"
+  [ -n "$star_uid" ] || {
+    log "missing Star runtime user: $STAR_USER"
+    exit 1
+  }
+  live_file="$(mktemp -t cocalc-star-live-projects.XXXXXX)"
+  trap 'rm -f "$live_file"' RETURN
+  sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" \
+    podman ps --filter label=role=project --format '{{.Names}}' 2>/dev/null |
+    sed -n 's/^project-\([0-9a-fA-F-]\{36\}\)$/\1/p' >"$live_file"
+
+  # shellcheck disable=SC1091
+  set -a
+  source /etc/cocalc/star/hub.env
+  set +a
+
+  psql -v ON_ERROR_STOP=1 -v live_file="$live_file" <<'SQL'
+CREATE TEMP TABLE star_live_project_containers(project_id uuid PRIMARY KEY);
+\copy star_live_project_containers(project_id) FROM :'live_file'
+
+CREATE TEMP TABLE star_stale_runtime_projects AS
+  SELECT p.project_id
+    FROM projects p
+    LEFT JOIN star_live_project_containers live USING (project_id)
+   WHERE COALESCE(p.state->>'state', '') IN ('running', 'starting')
+     AND COALESCE(p.deleted, false) IS NOT TRUE
+     AND live.project_id IS NULL;
+
+WITH updated AS (
+  UPDATE projects p
+     SET state = jsonb_build_object(
+           'state', 'opened',
+           'time', now()::text,
+           'error', 'CoCalc Star runtime reconciliation: project container was not running'
+         )
+    FROM star_stale_runtime_projects stale
+   WHERE p.project_id = stale.project_id
+   RETURNING p.project_id
+)
+SELECT 'projects_marked_opened' AS metric, count(*)::text AS value FROM updated;
+
+WITH updated AS (
+  UPDATE project_runtime_slots s
+     SET state = 'expired',
+         heartbeat_at = now(),
+         expires_at = now(),
+         metadata = COALESCE(metadata, '{}'::jsonb) ||
+           jsonb_build_object('expired_by', 'star-runtime-reconcile')
+    FROM star_stale_runtime_projects stale
+   WHERE s.project_id = stale.project_id
+     AND s.state IN ('starting', 'running')
+   RETURNING s.project_id
+)
+SELECT 'runtime_slots_expired' AS metric, count(*)::text AS value FROM updated;
+
+DO $$
+BEGIN
+  IF to_regclass('public.project_active_operations') IS NOT NULL THEN
+    DELETE FROM project_active_operations a
+      USING star_stale_runtime_projects stale
+      WHERE a.project_id = stale.project_id;
+  END IF;
+END $$;
+
+SELECT 'live_project_containers' AS metric, count(*)::text AS value
+  FROM star_live_project_containers;
+SELECT 'stale_runtime_projects' AS metric, count(*)::text AS value
+  FROM star_stale_runtime_projects;
+SQL
 }
 
 local_bootstrap_url() {
@@ -562,6 +650,22 @@ You can reprint this later with:
 EOF
 }
 
+print_invite_instructions() {
+  local invite_url="$1"
+  local public_url=""
+
+  [ -n "$invite_url" ] || return 0
+  if [ -n "${STAR_PUBLIC_URL:-}" ]; then
+    public_url="$(url_with_base "$invite_url" "$STAR_PUBLIC_URL")"
+  fi
+
+  cat <<EOF
+
+Invite another user with this signup URL:
+  ${public_url:-$invite_url}
+EOF
+}
+
 print_access_summary() {
   local public="${STAR_PUBLIC_URL:-}"
   printf 'local control plane: %s\n' "$STAR_API"
@@ -596,12 +700,17 @@ bootstrap_link() {
 access() {
   local result="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}"
   local url=""
+  local invite_url=""
   print_access_summary
   if [ -f "$result" ]; then
     url="$(json_string_field "$result" bootstrap_url || true)"
+    invite_url="$(json_string_field "$result" invite_url || true)"
   fi
   if [ -n "$url" ]; then
     print_access_instructions "$url"
+  fi
+  if [ -n "$invite_url" ]; then
+    print_invite_instructions "$invite_url"
   fi
 }
 
@@ -727,6 +836,7 @@ EOF
   tmp="$(mktemp)"
   write_star_caddyfile "$domain" "$email" "$tmp"
   if command -v caddy >/dev/null 2>&1; then
+    caddy fmt --overwrite "$tmp" >/dev/null || true
     caddy adapt --config "$tmp" >/dev/null
   fi
   sudo install -m 0644 -o root -g root "$tmp" /etc/caddy/Caddyfile
@@ -922,10 +1032,12 @@ EOF
   log "stopping Star services"
   systemctl stop cocalc-star-project-host.service >/dev/null 2>&1 || true
   stop_star_project_containers
+  systemctl stop cocalc-star-rest-server.service >/dev/null 2>&1 || true
   systemctl stop cocalc-star-hub.service >/dev/null 2>&1 || true
 
   log "disabling Star services"
   systemctl disable cocalc-star-project-host.service >/dev/null 2>&1 || true
+  systemctl disable cocalc-star-rest-server.service >/dev/null 2>&1 || true
   systemctl disable cocalc-star-hub.service >/dev/null 2>&1 || true
 
   if is_generated_star_caddyfile /etc/caddy/Caddyfile; then
@@ -936,6 +1048,7 @@ EOF
   log "removing Star service/config hooks"
   install -d -m 0700 "$backup_dir"
   backup_and_remove_file /etc/systemd/system/cocalc-star-hub.service "$backup_dir"
+  backup_and_remove_file /etc/systemd/system/cocalc-star-rest-server.service "$backup_dir"
   backup_and_remove_file /etc/systemd/system/cocalc-star-project-host.service "$backup_dir"
   backup_and_remove_file /etc/cocalc/star/hub.env "$backup_dir"
   backup_and_remove_file /etc/cocalc/star/config.env "$backup_dir"
@@ -1024,6 +1137,9 @@ case "${1:-}" in
     ;;
   access)
     access
+    ;;
+  reconcile-runtime-state)
+    reconcile_runtime_state
     ;;
   bootstrap-link)
     bootstrap_link

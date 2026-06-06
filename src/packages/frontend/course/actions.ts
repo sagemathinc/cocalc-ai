@@ -92,6 +92,21 @@ export class CourseActions extends Actions<CourseState> {
     return true;
   };
 
+  public syncdb_doc_is_ready = (): boolean => {
+    if (this.syncdb == null || this.syncdb.get_state() === "closed") {
+      return false;
+    }
+    try {
+      this.syncdb.get_doc();
+      return true;
+    } catch (err) {
+      if (`${err}`.includes("doc must be set")) {
+        return false;
+      }
+      throw err;
+    }
+  };
+
   private store_is_initialized = (): boolean => {
     const store = this.redux.getStore<CourseState, CourseStore>(this.name);
     if (store == null) {
@@ -147,9 +162,7 @@ export class CourseActions extends Actions<CourseState> {
 
   // Get one object from this.syncdb as a Javascript object (or undefined)
   get_one = (obj: SyncDBRecord): SyncDBRecord | undefined => {
-    if (
-      this.syncdb != null ? this.syncdb.get_state() === "closed" : undefined
-    ) {
+    if (!this.syncdb_doc_is_ready()) {
       return;
     }
     const x: any = this.syncdb.get_one(obj);
@@ -315,6 +328,10 @@ export class CourseActions extends Actions<CourseState> {
       handout?: HandoutRecord;
       store: CourseStore;
     } = { store: this.get_store() };
+
+    if (!this.syncdb_doc_is_ready()) {
+      return r;
+    }
 
     if (opts.student_id) {
       const student = this.syncdb?.get_one({

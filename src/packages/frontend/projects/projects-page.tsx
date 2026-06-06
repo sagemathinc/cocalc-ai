@@ -153,6 +153,18 @@ export const ProjectsPage: React.FC = () => {
   );
 
   useEffect(() => {
+    const project_ids =
+      visibleProjectionRepairKey.length === 0
+        ? []
+        : visibleProjectionRepairKey.split("\n");
+    const actions = redux.getActions("projects");
+    actions?.setVisibleProjectWindowForRepair?.(project_ids);
+    return () => {
+      actions?.setVisibleProjectWindowForRepair?.([]);
+    };
+  }, [visibleProjectionRepairKey]);
+
+  useEffect(() => {
     if (visibleProjectionRepairKey.length === 0) {
       return;
     }
@@ -166,6 +178,24 @@ export const ProjectsPage: React.FC = () => {
     }, VISIBLE_WINDOW_REPAIR_DELAY_MS);
     return () => clearTimeout(timer);
   }, [visibleProjectionRepairKey]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // This backend window is a convergence aid: it refreshes the same top
+      // slice the user is likely looking at without replacing the richer local
+      // search/filter semantics used for rendering.
+      void redux
+        .getActions("projects")
+        ?.loadProjectListWindowForCurrentAccount?.({
+          limit: VISIBLE_WINDOW_REPAIR_LIMIT,
+          offset: 0,
+          hidden,
+          search,
+          sort: "last_edited",
+        });
+    }, VISIBLE_WINDOW_REPAIR_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [hidden, search]);
 
   useEffect(() => {
     const visible = new Set(visible_projects);

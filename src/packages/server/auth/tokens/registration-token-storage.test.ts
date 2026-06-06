@@ -15,7 +15,10 @@ import {
   storedRegistrationTokenMatches,
 } from "@cocalc/database/postgres/account/registration-token-secret";
 import { resetServerSettingsCache } from "@cocalc/database/settings/server-settings";
-import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
+import {
+  ensureBootstrapAdminToken,
+  ensureStarInviteRegistrationToken,
+} from "@cocalc/server/auth/bootstrap-admin";
 import {
   redeemRegistrationTokenDirect,
   validateRegistrationTokenDirect,
@@ -239,5 +242,45 @@ describe("registration token storage protection", () => {
     await expect(
       storedRegistrationTokenMatches(rawRows[0].token, secondToken!),
     ).resolves.toBe(true);
+  });
+
+  it("creates a reusable Star invite token that is visible to admins", async () => {
+    const firstUrl = await ensureStarInviteRegistrationToken({
+      baseUrl: "https://star.example/",
+    });
+    const first = new URL(firstUrl);
+    const firstToken = first.searchParams.get("registrationToken");
+    expect(first.origin).toBe("https://star.example");
+    expect(first.pathname).toBe("/auth/sign-up");
+    expect(first.searchParams.get("bootstrap")).toBeNull();
+    expect(firstToken).toBeTruthy();
+
+    const rawRows = await rawRegistrationTokenRows();
+    expect(rawRows).toHaveLength(1);
+    expect(rawRows[0].descr).toBe("CoCalc Star Invite");
+    expect(rawRows[0].limit).toBeNull();
+    expect(rawRows[0].customize).toMatchObject({ star_invite: true });
+    expect(isEncryptedRegistrationTokenValue(rawRows[0].token)).toBe(true);
+    await expect(
+      storedRegistrationTokenMatches(rawRows[0].token, firstToken!),
+    ).resolves.toBe(true);
+
+    const visibleRows = await registrationTokensQuery(queryDb(), [], {
+      token: "*",
+    });
+    expect(visibleRows).toEqual([
+      expect.objectContaining({
+        token: firstToken,
+        descr: "CoCalc Star Invite",
+        limit: null,
+      }),
+    ]);
+
+    const secondUrl = await ensureStarInviteRegistrationToken({
+      baseUrl: "https://star.example/",
+    });
+    expect(new URL(secondUrl).searchParams.get("registrationToken")).toBe(
+      firstToken,
+    );
   });
 });

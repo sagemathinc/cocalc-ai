@@ -1,5 +1,7 @@
 export {};
 
+const ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS = 10 * 60 * 1000;
+
 let assertCollabMock: jest.Mock;
 let createLroMock: jest.Mock;
 let updateLroMock: jest.Mock;
@@ -207,7 +209,7 @@ describe("projects.restart", () => {
       epoch: 4,
     });
     expect(projectControlBridgeMock).toHaveBeenCalledWith("bay-1", {
-      timeout_ms: 8 * 60 * 60 * 1000,
+      timeout_ms: ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS,
     });
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({

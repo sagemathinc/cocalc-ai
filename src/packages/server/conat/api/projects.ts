@@ -122,6 +122,8 @@ import type {
   ImportPublicPathResult,
   PublicPathInspectionResult,
   AccountRuntimeSponsorStatus,
+  AccountProjectListWindowRow,
+  AccountProjectListWindowSort,
   ProjectActiveOperationSummary,
   ProjectCopyDestination,
   ProjectCopyRow,
@@ -147,6 +149,7 @@ import type {
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
+import { listProjectedProjectsForAccount } from "@cocalc/database/postgres/account-project-index";
 import { validateProjectEnv } from "@cocalc/util/project-secrets";
 import {
   copyProjectSecrets as copyProjectSecretsInDb,
@@ -211,14 +214,23 @@ import {
   type RuntimeSponsorDenial,
 } from "@cocalc/util/runtime-sponsor-denial";
 
-// Start/restart can legitimately take a long time because the owning bay may
-// need to provision storage, restore data, pull rootfs layers, or seal a
-// mutable rootfs into a release artifact before the operation fully completes.
-// The initial hub RPC returns immediately when wait=false, but the background
-// worker still calls the typed inter-bay project-control service and must not
-// inherit the short default Conat request timeout.
-const PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+// Ordinary starts should fail fast enough that stale runtime slots and active
+// operations do not block scale tests for hours. Explicit backup restores can
+// legitimately take much longer.
+const ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS = 10 * 60 * 1000;
+const RESTORE_PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 const PROJECT_MOVE_RUNTIME_SLOT_TTL_MS = 8 * 60 * 60 * 1000;
+const ACCOUNT_PROJECT_LIST_WINDOW_MAX_LIMIT = 500;
+
+function projectStartControlTimeoutMs({
+  restore_backup_id,
+}: {
+  restore_backup_id?: string;
+}): number {
+  return restore_backup_id
+    ? RESTORE_PROJECT_START_CONTROL_TIMEOUT_MS
+    : ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS;
+}
 
 async function enrichRuntimeSponsorDenial({
   denial,
@@ -1518,6 +1530,66 @@ export async function getAccountRuntimeSponsorStatus({
   };
 }
 
+function normalizeProjectListWindowLimit(limit?: number): number {
+  if (limit == null) {
+    return 50;
+  }
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw Error("limit must be a positive integer");
+  }
+  return Math.min(limit, ACCOUNT_PROJECT_LIST_WINDOW_MAX_LIMIT);
+}
+
+function normalizeProjectListWindowOffset(offset?: number): number {
+  if (offset == null) {
+    return 0;
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw Error("offset must be a nonnegative integer");
+  }
+  return offset;
+}
+
+function normalizeProjectListWindowSort(
+  sort?: AccountProjectListWindowSort,
+): AccountProjectListWindowSort {
+  switch (sort) {
+    case undefined:
+      return "last_edited";
+    case "last_edited":
+    case "title":
+    case "state":
+      return sort;
+    default:
+      throw Error(`unsupported project list sort '${sort}'`);
+  }
+}
+
+export async function listAccountProjectWindow({
+  account_id,
+  limit,
+  offset,
+  hidden,
+  search,
+  sort,
+}: {
+  account_id: string;
+  limit?: number;
+  offset?: number;
+  hidden?: boolean;
+  search?: string;
+  sort?: AccountProjectListWindowSort;
+}): Promise<AccountProjectListWindowRow[]> {
+  return await listProjectedProjectsForAccount({
+    account_id,
+    limit: normalizeProjectListWindowLimit(limit),
+    offset: normalizeProjectListWindowOffset(offset),
+    include_hidden: !!hidden,
+    search,
+    sort: normalizeProjectListWindowSort(sort),
+  });
+}
+
 export async function getCourseStudentAccess({
   account_id,
   project_id,
@@ -2521,7 +2593,7 @@ async function runProjectStartLikeAction({
     }
     await getInterBayBridge()
       .projectControl(ownership.bay_id, {
-        timeout_ms: PROJECT_START_CONTROL_TIMEOUT_MS,
+        timeout_ms: projectStartControlTimeoutMs({ restore_backup_id }),
       })
       .checkStartAdmission({
         project_id,
@@ -2620,7 +2692,7 @@ async function runProjectStartLikeAction({
       }
       const projectControl = getInterBayBridge().projectControl(
         ownership.bay_id,
-        { timeout_ms: PROJECT_START_CONTROL_TIMEOUT_MS },
+        { timeout_ms: projectStartControlTimeoutMs({ restore_backup_id }) },
       );
       if (kind === "start") {
         await projectControl.start({

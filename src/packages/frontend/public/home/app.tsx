@@ -224,7 +224,7 @@ function Hero({ config, siteName }: { config?: HomeConfig; siteName: string }) {
                 "Minimal free tier",
                 "Standard trial planned",
                 "Free CoCalc Plus",
-                "Self-host with Launchpad",
+                "Self-host with Star",
               ].map((item) => (
                 <Tag key={item} color="blue" style={{ marginInlineEnd: 0 }}>
                   {item}
@@ -487,16 +487,16 @@ function ProductOptionsSection() {
       title: "CoCalc Plus",
     },
     {
-      body: "Run a compact self-hosted site for a class, lab, or small team.",
-      icon: "rocket",
+      body: "Paste one command on a public Ubuntu VM and get a shared HTTPS CoCalc appliance.",
+      icon: "star",
       tag: "Self-hosted",
-      title: "Launchpad",
+      title: "CoCalc Star",
     },
     {
-      body: "Step up to a larger deployment model for organizations with more active users.",
+      body: "Use Launchpad or Rocket for operator-managed deployments, custom hosts, and production scale.",
       icon: "servers",
-      tag: "Enterprise",
-      title: "Rocket",
+      tag: "Operators",
+      title: "Launchpad + Rocket",
     },
   ] satisfies {
     body: string;
@@ -515,19 +515,15 @@ function ProductOptionsSection() {
             </Title>
             <Paragraph style={{ fontSize: 18, margin: 0 }}>
               Use the public cloud, install the free single-user CoCalc Plus
-              app, run a small self-hosted Launchpad site, or step up to Rocket
-              for larger deployments.
+              app, run your own public VM with CoCalc Star, or step up to
+              Launchpad and Rocket for operator-managed deployments.
             </Paragraph>
             <Flex gap={12} wrap>
               <Button href={appPath("products")} type="primary">
                 Compare products
               </Button>
-              <Button
-                href="https://software.cocalc.ai/software/cocalc-launchpad/index.html"
-                rel="noreferrer"
-                target="_blank"
-              >
-                Launchpad
+              <Button href={appPath("products/cocalc-star")}>
+                CoCalc Star
               </Button>
             </Flex>
           </PublicSection>
@@ -887,11 +883,11 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
       title: "CoCalc Plus",
     },
     {
-      body: "Run a compact self-hosted CoCalc site for a lab, class, or small team.",
-      button: "Download Launchpad",
-      href: "https://software.cocalc.ai/software/cocalc-launchpad/index.html",
-      icon: "rocket",
-      title: "CoCalc Launchpad",
+      body: "Run a shared CoCalc appliance on a public Ubuntu VM with automatic HTTPS.",
+      button: "Install CoCalc Star",
+      href: appPath("products/cocalc-star"),
+      icon: "star",
+      title: "CoCalc Star",
     },
   ] satisfies {
     body: string;

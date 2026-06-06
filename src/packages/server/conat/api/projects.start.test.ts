@@ -1,5 +1,8 @@
 export {};
 
+const ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS = 10 * 60 * 1000;
+const RESTORE_PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+
 let assertCollabMock: jest.Mock;
 let createLroMock: jest.Mock;
 let updateLroMock: jest.Mock;
@@ -232,13 +235,45 @@ describe("projects.start", () => {
       epoch: 0,
     });
     expect(projectControlBridgeMock).toHaveBeenCalledWith("bay-0", {
-      timeout_ms: 8 * 60 * 60 * 1000,
+      timeout_ms: ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS,
     });
     expect(supersedeOlderProjectStartLrosMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       keep_op_id: "op-1",
     });
     expect(publishLroSummaryMock).toHaveBeenCalled();
+  });
+
+  it("keeps the long control timeout for explicit backup restores", async () => {
+    const { start } = await import("./projects");
+
+    await start({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      restore_backup_id: "backup-1",
+      wait: false,
+    });
+
+    await flushBackgroundStartTask();
+
+    expect(projectControlBridgeMock).toHaveBeenCalledWith("bay-0", {
+      timeout_ms: RESTORE_PROJECT_START_CONTROL_TIMEOUT_MS,
+    });
+    expect(interBayCheckStartAdmissionMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      restore_backup_id: "backup-1",
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
+    expect(interBayStartMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      restore_backup_id: "backup-1",
+      lro_op_id: "op-1",
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
   });
 
   it("rejects non-admin managed egress override before creating a start lro", async () => {

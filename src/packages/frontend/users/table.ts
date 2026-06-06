@@ -16,6 +16,13 @@ import { getLogger } from "@cocalc/frontend/logger";
 import { once } from "@cocalc/util/async-utils";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
+import {
+  attachProjectionFeedDiagnostics,
+  recordProjectionFeedEvent,
+  recordProjectionHistoryGap,
+  recordProjectionRepair,
+  recordProjectionRepairFailure,
+} from "@cocalc/frontend/projection-diagnostics";
 import { Table, redux } from "../app-framework";
 import { COCALC_MINIMAL } from "../fullscreen";
 import { webapp_client } from "../webapp-client";
@@ -142,12 +149,16 @@ let observedAccountStore:
   | undefined;
 let realtimeFeed: DStream<AccountFeedEvent> | undefined;
 let realtimeFeedAccountId: string | undefined;
+let realtimeFeedDiagnosticsCleanup: (() => void) | undefined;
+let realtimeFeedInFlight: Promise<void> | undefined;
 
 function getAccountId(): string | undefined {
   return redux.getStore("account")?.get("account_id");
 }
 
 function closeRealtimeFeed(): void {
+  realtimeFeedDiagnosticsCleanup?.();
+  realtimeFeedDiagnosticsCleanup = undefined;
   if (realtimeFeed != null) {
     realtimeFeed.removeListener("change", handleRealtimeFeedChange);
     realtimeFeed.removeListener("history-gap", handleRealtimeFeedHistoryGap);
@@ -157,6 +168,18 @@ function closeRealtimeFeed(): void {
 }
 
 async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
+  if (realtimeFeedInFlight != null) {
+    return await realtimeFeedInFlight;
+  }
+  realtimeFeedInFlight = ensureRealtimeFeedForCurrentAccountImpl().finally(
+    () => {
+      realtimeFeedInFlight = undefined;
+    },
+  );
+  return await realtimeFeedInFlight;
+}
+
+async function ensureRealtimeFeedForCurrentAccountImpl(): Promise<void> {
   if (!webapp_client.is_signed_in() || getKioskProjectId() != null) {
     closeRealtimeFeed();
     return;
@@ -182,6 +205,12 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
     });
     feed.on("change", handleRealtimeFeedChange);
     feed.on("history-gap", handleRealtimeFeedHistoryGap);
+    realtimeFeedDiagnosticsCleanup = attachProjectionFeedDiagnostics({
+      consumer: "users",
+      account_id,
+      stream_name: accountFeedStreamName(),
+      stream: feed,
+    });
     realtimeFeed = feed;
     realtimeFeedAccountId = account_id;
   } catch (err) {
@@ -193,8 +222,23 @@ const refreshUsersTable = reuseInFlight(async (): Promise<void> => {
   if (!shouldHaveUsersTable()) {
     return;
   }
+  recordProjectionRepair({
+    consumer: "users",
+    reason: "snapshot-refresh",
+    scope: "collaborators",
+  });
   redux.removeTable("users");
-  await createUsersTableUntilConnected();
+  try {
+    await createUsersTableUntilConnected();
+  } catch (err) {
+    recordProjectionRepairFailure({
+      consumer: "users",
+      reason: "snapshot-refresh",
+      scope: "collaborators",
+      error: err,
+    });
+    throw err;
+  }
 });
 
 async function waitForUsersTableConnected(
@@ -224,7 +268,15 @@ async function createUsersTableUntilConnected(): Promise<void> {
   }
 }
 
-function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
+function handleRealtimeFeedChange(
+  event?: AccountFeedEvent,
+  seq?: number,
+): void {
+  recordProjectionFeedEvent({
+    consumer: "users",
+    event,
+    seq,
+  });
   if (event == null) {
     return;
   }
@@ -240,7 +292,11 @@ function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
   }
 }
 
-function handleRealtimeFeedHistoryGap(): void {
+function handleRealtimeFeedHistoryGap(info?: any): void {
+  recordProjectionHistoryGap({
+    consumer: "users",
+    info,
+  });
   void refreshUsersTable();
 }
 
