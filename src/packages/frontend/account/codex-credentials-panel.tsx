@@ -47,19 +47,6 @@ const recommendedCardStyle: CSSProperties = {
   padding: 16,
 };
 
-const optionGridStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-  gap: 12,
-};
-
-const optionCardStyle: CSSProperties = {
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  borderRadius: 12,
-  background: "white",
-  padding: 14,
-};
-
 const deviceAuthCodeStyle: CSSProperties = {
   border: `1px solid ${COLORS.GRAY_L0}`,
   borderRadius: 8,
@@ -214,6 +201,7 @@ function CodexCredentialsPanelBody({
     (key: string | string[]) => {
       let nextKeys = Array.isArray(key) ? key : [key];
       if (
+        !embedded &&
         deviceAuthPending &&
         !nextKeys.includes(SUBSCRIPTION_AUTH_PANEL_KEY)
       ) {
@@ -221,7 +209,7 @@ function CodexCredentialsPanelBody({
       }
       setOpenCredentialPanelKeys(nextKeys);
     },
-    [deviceAuthPending],
+    [deviceAuthPending, embedded],
   );
 
   const recentProjectId = useMemo(() => {
@@ -419,7 +407,9 @@ function CodexCredentialsPanelBody({
   };
 
   const startDeviceAuth = async () => {
-    openSubscriptionAuthPanel();
+    if (!embedded) {
+      openSubscriptionAuthPanel();
+    }
     if (!authProjectId) {
       setDeviceAuthError(
         "No project available. Create or open a project, then retry.",
@@ -460,7 +450,9 @@ function CodexCredentialsPanelBody({
   };
 
   const renderDeviceAuthLogin = () => {
-    if (!deviceAuth && !deviceAuthError) return null;
+    if (!deviceAuth && !deviceAuthError && !deviceAuthActionPending) {
+      return null;
+    }
     const userCode =
       deviceAuth?.userCode ?? parseDeviceAuthUserCode(deviceAuth?.output);
     const verificationUrl =
@@ -471,14 +463,28 @@ function CodexCredentialsPanelBody({
         {deviceAuthError ? (
           <Alert type="error" showIcon title={deviceAuthError} />
         ) : null}
+        {!deviceAuth && deviceAuthActionPending ? (
+          <Alert
+            type="info"
+            showIcon
+            title="Getting your one-time sign-in code..."
+            description="This usually takes a few seconds. Keep this dialog open; the code and link will appear here automatically."
+          />
+        ) : null}
         {deviceAuth ? (
           <Alert
             type={DEVICE_AUTH_ALERT_TYPE[deviceAuth.state]}
             showIcon
-            title={`Device auth status: ${deviceAuth.state}`}
+            title={
+              deviceAuth.state === "pending"
+                ? "Finish signing in with ChatGPT"
+                : deviceAuth.state === "completed"
+                  ? "Codex is connected"
+                  : `Codex sign-in ${deviceAuth.state}`
+            }
             description={
               deviceAuth.state === "pending"
-                ? "Open the link below, paste the code, and keep this dialog open while CoCalc polls for completion."
+                ? "Copy the code, open the link, and sign in. CoCalc will detect completion automatically."
                 : deviceAuth.error
                   ? deviceAuth.error
                   : undefined
@@ -489,8 +495,8 @@ function CodexCredentialsPanelBody({
           <Alert
             type="info"
             showIcon
-            title="Waiting for device login instructions"
-            description="CoCalc is starting Codex device login and will show the one-time code and link here as soon as Codex prints them."
+            title="Waiting for Codex sign-in instructions..."
+            description="The one-time code and link will appear here as soon as Codex returns them."
           />
         ) : null}
         {userCode && deviceAuth?.state !== "completed" ? (
@@ -628,10 +634,10 @@ function CodexCredentialsPanelBody({
   }, [authProjectId, deviceAuth?.id, deviceAuth?.state]);
 
   useEffect(() => {
-    if (deviceAuthPending) {
+    if (deviceAuthPending && !embedded) {
       openSubscriptionAuthPanel();
     }
-  }, [deviceAuthPending, openSubscriptionAuthPanel]);
+  }, [deviceAuthPending, embedded, openSubscriptionAuthPanel]);
 
   const content = (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
@@ -640,13 +646,12 @@ function CodexCredentialsPanelBody({
           <Space wrap>
             <Tag color="green">Recommended</Tag>
             <Text strong style={{ fontSize: 18 }}>
-              Use your ChatGPT Codex subscription
+              Connect Codex with ChatGPT
             </Text>
           </Space>
           <Text type="secondary">
-            This is the best default for Codex in CoCalc: no shared billing
-            surprises, clear usage limits in ChatGPT, and the same Codex account
-            you use elsewhere.
+            Sign in once to use your ChatGPT Codex subscription in CoCalc. No
+            API key is needed.
           </Text>
           <Space wrap>
             <Button
@@ -655,7 +660,9 @@ function CodexCredentialsPanelBody({
               loading={deviceAuthActionPending}
               disabled={!authProjectId || deviceAuth?.state === "pending"}
             >
-              Sign in with ChatGPT
+              {deviceAuthActionPending
+                ? "Getting sign-in code..."
+                : "Sign in with ChatGPT"}
             </Button>
             <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
               View Codex usage
@@ -666,96 +673,84 @@ function CodexCredentialsPanelBody({
       {renderDeviceAuthLogin()}
       {loading && <Loading />}
       {!loading && error && <Alert type="error" title={error} />}
-      {!loading && !error && paymentSource && (
-        <Alert
-          type={paymentSource.source === "none" ? "warning" : "info"}
-          title={
-            <Space>
-              <span>Current Codex payment source:</span>
-              <Tag color={paymentSource.source === "none" ? "default" : "blue"}>
-                {sourceLabel(
-                  paymentSource.source as CodexPaymentSourceInfo["source"],
-                )}
-              </Tag>
-            </Space>
-          }
-          description={
-            lite ? (
-              <Text type="secondary">
-                Codex will prefer your ChatGPT Plan. Use an OpenAI API key only
-                as a fallback.
-              </Text>
-            ) : (
-              <>
-                <Text type="secondary">
-                  Order: ChatGPT Plan, Project OpenAI API key, Account OpenAI
-                  API key, then Site OpenAI API key.
-                </Text>
-                <Space wrap>
-                  <Tag
-                    color={paymentSource.hasSubscription ? "green" : "default"}
-                  >
-                    ChatGPT plan
-                  </Tag>
-                  <Tag
-                    color={paymentSource.hasProjectApiKey ? "green" : "default"}
-                  >
-                    project key
-                  </Tag>
-                  <Tag
-                    color={paymentSource.hasAccountApiKey ? "green" : "default"}
-                  >
-                    account key
-                  </Tag>
-                  <Tag
-                    color={paymentSource.hasSiteApiKey ? "green" : "default"}
-                  >
-                    site key
-                  </Tag>
-                  <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
-                </Space>
-                {paymentSource.hasSubscription ? (
-                  <div style={{ marginTop: 8 }}>
-                    <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-                      Check ChatGPT Codex usage
-                    </a>
-                  </div>
-                ) : null}
-              </>
-            )
-          }
-        />
+      {!loading && !error && embedded && paymentSource?.source === "none" && (
+        <Text type="secondary">Codex is not connected yet.</Text>
       )}
-      <div style={optionGridStyle}>
-        <div
-          style={{
-            ...optionCardStyle,
-          }}
-        >
-          <Space orientation="vertical" size={6}>
-            <Space wrap>
-              <Tag color="green">Best choice</Tag>
-              <Text strong>ChatGPT Plan</Text>
-            </Space>
-            <Text type="secondary">
-              Recommended for support, teaching, and normal Codex use. Sign in
-              once, then retry the failed request.
-            </Text>
-          </Space>
-        </div>
-        <div style={optionCardStyle}>
-          <Space orientation="vertical" size={6}>
-            <Space wrap>
-              <Tag>Fallback</Tag>
-              <Text strong>OpenAI API key</Text>
-            </Space>
-            <Text type="secondary">
-              Useful for account or project-specific billing. In hosted CoCalc,
-              keys are lower priority than a ChatGPT Plan.
-            </Text>
-          </Space>
-        </div>
-      </div>
+      {!loading &&
+        !error &&
+        paymentSource &&
+        (paymentSource.source === "none" && embedded ? null : (
+          <Alert
+            type={paymentSource.source === "none" ? "warning" : "info"}
+            title={
+              <Space>
+                <span>Current Codex payment source:</span>
+                <Tag
+                  color={paymentSource.source === "none" ? "default" : "blue"}
+                >
+                  {sourceLabel(
+                    paymentSource.source as CodexPaymentSourceInfo["source"],
+                  )}
+                </Tag>
+              </Space>
+            }
+            description={
+              lite ? (
+                <Text type="secondary">
+                  Codex will prefer your ChatGPT Plan. Use an OpenAI API key
+                  only as a fallback.
+                </Text>
+              ) : (
+                <>
+                  <Text type="secondary">
+                    Order: ChatGPT Plan, Project OpenAI API key, Account OpenAI
+                    API key, then Site OpenAI API key.
+                  </Text>
+                  <Space wrap>
+                    <Tag
+                      color={
+                        paymentSource.hasSubscription ? "green" : "default"
+                      }
+                    >
+                      ChatGPT plan
+                    </Tag>
+                    <Tag
+                      color={
+                        paymentSource.hasProjectApiKey ? "green" : "default"
+                      }
+                    >
+                      project key
+                    </Tag>
+                    <Tag
+                      color={
+                        paymentSource.hasAccountApiKey ? "green" : "default"
+                      }
+                    >
+                      account key
+                    </Tag>
+                    <Tag
+                      color={paymentSource.hasSiteApiKey ? "green" : "default"}
+                    >
+                      site key
+                    </Tag>
+                    <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
+                  </Space>
+                  {paymentSource.hasSubscription ? (
+                    <div style={{ marginTop: 8 }}>
+                      <a
+                        href={CODEX_USAGE_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Check ChatGPT Codex usage
+                      </a>
+                    </div>
+                  ) : null}
+                </>
+              )
+            }
+          />
+        ))}
       <Collapse
         size="small"
         activeKey={openCredentialPanelKeys}
@@ -763,9 +758,7 @@ function CodexCredentialsPanelBody({
         items={[
           {
             key: SUBSCRIPTION_AUTH_PANEL_KEY,
-            label: lite
-              ? "Option A: Connect ChatGPT Plan"
-              : "Connect ChatGPT subscription",
+            label: "Advanced ChatGPT sign-in options",
             children: (
               <Space orientation="vertical" size={8} style={{ width: "100%" }}>
                 <Text type="secondary">

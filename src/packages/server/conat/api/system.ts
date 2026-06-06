@@ -33,6 +33,7 @@ import {
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
 import { recordBrowserAutomationAuditEvent } from "./browser-automation-audit";
 import { db } from "@cocalc/database";
 import manageApiKeys0 from "@cocalc/server/api/manage";
@@ -109,6 +110,7 @@ import {
 } from "@cocalc/server/project-backup/r2";
 import { applyLaunchpadCloudflareTunnelSettings } from "@cocalc/server/launchpad/onprem-sshd";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
+import { ensureStarInviteRegistrationToken } from "@cocalc/server/auth/bootstrap-admin";
 import { getNebiusRegionConfigFromSettings } from "@cocalc/server/cloud/nebius-credentials";
 import type {
   CloudflareTunnelApplyResult,
@@ -268,6 +270,8 @@ import type {
   RootfsQuotaUsageRow,
   ServiceAdmissionDenialReport,
   ServiceAdmissionDenialSummary,
+  GlobalConfigPropagationBayState,
+  GlobalConfigPropagationStatus,
   ProjectBackupShardAdminStatus,
   SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
@@ -606,12 +610,23 @@ export async function getBayOpsDetail({
             await getBayLoad({ account_id, bay_id: currentBayId }),
           getBackups: async (_opts: { account_id?: string }) =>
             await getBayBackups({ account_id, bay_id: currentBayId }),
+          getDrainPreflight: async (_opts: {
+            account_id?: string;
+            unsafe_rehome?: boolean;
+          }) =>
+            await runBayDrainPreflight({
+              source_bay_id: currentBayId,
+              seed_bay_id: getConfiguredClusterSeedBayId(),
+              unsafe_rehome: _opts.unsafe_rehome,
+            }),
         }
       : getInterBayBridge().bayOps(requestedBayId, { timeout_ms: 15_000 });
-  const [loadResult, backupsResult] = await Promise.allSettled([
-    api.getLoad({ account_id }),
-    api.getBackups({ account_id }),
-  ]);
+  const [loadResult, backupsResult, drainPreflightResult] =
+    await Promise.allSettled([
+      api.getLoad({ account_id }),
+      api.getBackups({ account_id }),
+      api.getDrainPreflight({ account_id }),
+    ]);
 
   return {
     bay_id: requestedBayId,
@@ -620,12 +635,45 @@ export async function getBayOpsDetail({
     load: loadResult.status === "fulfilled" ? loadResult.value : undefined,
     backups:
       backupsResult.status === "fulfilled" ? backupsResult.value : undefined,
+    drain_preflight:
+      drainPreflightResult.status === "fulfilled"
+        ? drainPreflightResult.value
+        : undefined,
     load_error: settledError(loadResult),
     backups_error: settledError(backupsResult),
+    drain_preflight_error: settledError(drainPreflightResult),
   };
 }
 
+export async function getBayDrainPreflight({
+  account_id,
+  bay_id,
+  unsafe_rehome,
+}: {
+  account_id?: string;
+  bay_id?: string;
+  unsafe_rehome?: boolean;
+}) {
+  await assertAdmin(account_id);
+  const currentBayId = getConfiguredBayId();
+  const requestedBayId = `${bay_id ?? currentBayId}`.trim();
+  if (!requestedBayId) {
+    throw Error("bay_id is required");
+  }
+  if (requestedBayId === currentBayId) {
+    return await runBayDrainPreflight({
+      source_bay_id: currentBayId,
+      seed_bay_id: getConfiguredClusterSeedBayId(),
+      unsafe_rehome,
+    });
+  }
+  return await getInterBayBridge()
+    .bayOps(requestedBayId, { timeout_ms: 15_000 })
+    .getDrainPreflight({ account_id, unsafe_rehome });
+}
+
 type SiteSettingUpdate = { name: string; value: string };
+export const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
 
 const SITE_SETTING_NAMES = new Set<string>([
   ...Object.keys(site_settings_conf),
@@ -689,10 +737,12 @@ async function logSignupEmailDomainPolicyChange({
   account_id,
   updates,
   oldSettings,
+  source_bay_id,
 }: {
   account_id?: string;
   updates: SiteSettingUpdate[];
   oldSettings: SignupEmailDomainPolicySettings;
+  source_bay_id?: string | null;
 }): Promise<void> {
   const changed_setting_names = updates
     .map(({ name }) => name)
@@ -712,6 +762,7 @@ async function logSignupEmailDomainPolicyChange({
     value: {
       account_id,
       bay_id: getConfiguredBayId(),
+      source_bay_id: source_bay_id ?? getConfiguredBayId(),
       changed_setting_names,
       old_policy: auditSignupEmailDomainPolicy(
         normalizeSignupEmailDomainPolicy(oldSettings),
@@ -734,10 +785,115 @@ async function getConfiguredSiteSettingUpdates(): Promise<SiteSettingUpdate[]> {
   return settings;
 }
 
+function parseConfigVersion(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return Number(value);
+  }
+  return 0;
+}
+
+async function getGlobalConfigVersion(
+  scope: string,
+): Promise<number | undefined> {
+  const { rows } = await getPool().query(
+    "SELECT version FROM global_config_versions WHERE scope=$1",
+    [scope],
+  );
+  const version = parseConfigVersion(rows[0]?.version);
+  return version > 0 ? version : undefined;
+}
+
+async function recordGlobalConfigEventOnSeed({
+  scope,
+  account_id,
+  source_bay_id,
+  changes,
+}: {
+  scope: string;
+  account_id?: string;
+  source_bay_id?: string | null;
+  changes: unknown;
+}): Promise<number> {
+  const bayId = getConfiguredBayId();
+  const metadata = {
+    source_bay_id: source_bay_id ?? bayId,
+  };
+  const { rows } = await getPool().query(
+    `
+    INSERT INTO global_config_versions (scope, version, updated_at, updated_by, metadata)
+    VALUES ($1, 1, NOW(), $2, $3::jsonb)
+    ON CONFLICT (scope) DO UPDATE SET
+      version = global_config_versions.version + 1,
+      updated_at = NOW(),
+      updated_by = EXCLUDED.updated_by,
+      metadata = EXCLUDED.metadata
+    RETURNING version
+    `,
+    [scope, account_id ?? null, JSON.stringify(metadata)],
+  );
+  const version = parseConfigVersion(rows[0]?.version);
+  await getPool().query(
+    `
+    INSERT INTO global_config_events
+      (id, scope, version, changes, created_at, created_by, source_bay_id)
+    VALUES
+      ($1, $2, $3, $4::jsonb, NOW(), $5, $6)
+    `,
+    [
+      uuid(),
+      scope,
+      version,
+      JSON.stringify(changes),
+      account_id ?? null,
+      source_bay_id ?? bayId,
+    ],
+  );
+  return version;
+}
+
+async function recordGlobalConfigBayState({
+  scope,
+  bay_id,
+  version,
+  error,
+}: {
+  scope: string;
+  bay_id: string;
+  version: number;
+  error?: string;
+}): Promise<void> {
+  const appliedVersion = error == null ? version : null;
+  await getPool().query(
+    `
+    INSERT INTO global_config_bay_state
+      (bay_id, scope, applied_version, applied_at, last_error)
+    VALUES
+      ($1, $2, $3, CASE WHEN $4::text IS NULL THEN NOW() ELSE NULL END, $4)
+    ON CONFLICT (bay_id, scope) DO UPDATE SET
+      applied_version = CASE
+        WHEN EXCLUDED.last_error IS NULL THEN EXCLUDED.applied_version
+        ELSE global_config_bay_state.applied_version
+      END,
+      applied_at = CASE
+        WHEN EXCLUDED.last_error IS NULL THEN NOW()
+        ELSE global_config_bay_state.applied_at
+      END,
+      last_error = EXCLUDED.last_error
+    `,
+    [bay_id, scope, appliedVersion, error ?? null],
+  );
+}
+
 async function propagateSiteSettingsToBays(
   settings: SiteSettingUpdate[],
+  opts: { scope?: string; version?: number } = {},
 ): Promise<SiteSettingsSyncResult> {
   const local_bay_id = getConfiguredBayId();
+  const scope = opts.scope ?? SERVER_SETTINGS_CONFIG_SCOPE;
+  const version = opts.version;
   const registry = await listClusterBayRegistry();
   const remoteBayIds = [
     ...new Set(registry.map(({ bay_id }) => bay_id).filter(Boolean)),
@@ -745,10 +901,17 @@ async function propagateSiteSettingsToBays(
     .filter((bay_id) => bay_id !== local_bay_id)
     .sort();
   const bays: SiteSettingsSyncResult["bays"] = [
-    { bay_id: local_bay_id, status: "local", count: settings.length },
+    { bay_id: local_bay_id, status: "local", count: settings.length, version },
   ];
+  if (version != null) {
+    await recordGlobalConfigBayState({
+      scope,
+      bay_id: local_bay_id,
+      version,
+    });
+  }
   if (!remoteBayIds.length) {
-    return { local_bay_id, count: settings.length, bays };
+    return { local_bay_id, count: settings.length, scope, version, bays };
   }
 
   const results = await Promise.allSettled(
@@ -763,18 +926,251 @@ async function propagateSiteSettingsToBays(
   for (let i = 0; i < remoteBayIds.length; i += 1) {
     const bay_id = remoteBayIds[i];
     const result = results[i];
+    const error =
+      result.status === "fulfilled" ? undefined : `${result.reason}`;
+    if (version != null) {
+      await recordGlobalConfigBayState({
+        scope,
+        bay_id,
+        version,
+        error,
+      });
+    }
     bays.push(
       result.status === "fulfilled"
-        ? { bay_id, status: "applied", count: settings.length }
+        ? { bay_id, status: "applied", count: settings.length, version }
         : {
             bay_id,
             status: "failed",
             count: settings.length,
-            error: `${result.reason}`,
+            version,
+            error,
           },
     );
   }
-  return { local_bay_id, count: settings.length, bays };
+  return { local_bay_id, count: settings.length, scope, version, bays };
+}
+
+export async function setSiteSettingsOnSeed({
+  account_id,
+  settings,
+  source_bay_id,
+}: {
+  account_id?: string;
+  settings: SiteSettingUpdate[];
+  source_bay_id?: string | null;
+}): Promise<SiteSettingsSyncResult> {
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    throw Error(
+      `setSiteSettingsOnSeed must run on seed bay '${seedBayId}', not '${localBayId}'`,
+    );
+  }
+  const updates = settings.map(normalizeSiteSettingUpdate);
+  const signupEmailDomainPolicyOldSettings = updates.some(({ name }) =>
+    isSignupEmailDomainPolicySetting(name),
+  )
+    ? await getSignupEmailDomainPolicySettings()
+    : undefined;
+  for (const update of updates) {
+    await setSiteSettingLocal(update);
+  }
+  if (signupEmailDomainPolicyOldSettings != null) {
+    await logSignupEmailDomainPolicyChange({
+      account_id,
+      updates,
+      oldSettings: signupEmailDomainPolicyOldSettings,
+      source_bay_id,
+    });
+  }
+  const version = await recordGlobalConfigEventOnSeed({
+    scope: SERVER_SETTINGS_CONFIG_SCOPE,
+    account_id,
+    source_bay_id,
+    changes: { settings: updates.map(({ name }) => name).sort() },
+  });
+  return await propagateSiteSettingsToBays(updates, {
+    scope: SERVER_SETTINGS_CONFIG_SCOPE,
+    version,
+  });
+}
+
+export async function syncSiteSettingsToBaysOnSeed(): Promise<SiteSettingsSyncResult> {
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    throw Error(
+      `syncSiteSettingsToBaysOnSeed must run on seed bay '${seedBayId}', not '${localBayId}'`,
+    );
+  }
+  return await propagateSiteSettingsToBays(
+    await getConfiguredSiteSettingUpdates(),
+    {
+      scope: SERVER_SETTINGS_CONFIG_SCOPE,
+      version: await getGlobalConfigVersion(SERVER_SETTINGS_CONFIG_SCOPE),
+    },
+  );
+}
+
+function toIsoString(value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  return `${value}`;
+}
+
+function classifyGlobalConfigBayState({
+  seedVersion,
+  appliedVersion,
+  lastError,
+}: {
+  seedVersion?: number;
+  appliedVersion?: number;
+  lastError?: string | null;
+}): GlobalConfigPropagationBayState {
+  if (lastError) {
+    return "error";
+  }
+  if (seedVersion == null || appliedVersion == null) {
+    return "missing";
+  }
+  return appliedVersion >= seedVersion ? "current" : "stale";
+}
+
+export async function getGlobalConfigPropagationStatusOnSeed({
+  scope,
+}: {
+  scope?: string;
+} = {}): Promise<GlobalConfigPropagationStatus> {
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const normalizedScope = `${scope ?? ""}`.trim();
+  if (currentBayId !== seedBayId) {
+    throw Error(
+      `getGlobalConfigPropagationStatusOnSeed must run on seed bay '${seedBayId}', not '${currentBayId}'`,
+    );
+  }
+
+  const [versionResult, registry] = await Promise.all([
+    normalizedScope
+      ? getPool().query(
+          `
+          SELECT scope, version, updated_at, updated_by, metadata
+          FROM global_config_versions
+          WHERE scope=$1
+          `,
+          [normalizedScope],
+        )
+      : getPool().query(
+          `
+          SELECT scope, version, updated_at, updated_by, metadata
+          FROM global_config_versions
+          ORDER BY scope
+          `,
+        ),
+    listClusterBayRegistry(),
+  ]);
+  const versionRows = [...versionResult.rows];
+  if (
+    normalizedScope &&
+    !versionRows.some((row) => row.scope === normalizedScope)
+  ) {
+    versionRows.push({
+      scope: normalizedScope,
+      version: null,
+      updated_at: null,
+      updated_by: null,
+      metadata: null,
+    });
+  }
+  const scopes = versionRows.map((row) => `${row.scope}`);
+  const stateResult = scopes.length
+    ? await getPool().query(
+        `
+        SELECT bay_id, scope, applied_version, applied_at, last_error
+        FROM global_config_bay_state
+        WHERE scope=ANY($1)
+        `,
+        [scopes],
+      )
+    : { rows: [] };
+  const states = new Map<string, any>();
+  for (const row of stateResult.rows) {
+    states.set(`${row.scope}\0${row.bay_id}`, row);
+  }
+  const bayIds = [
+    ...new Set([
+      seedBayId,
+      currentBayId,
+      ...registry.map(({ bay_id }) => bay_id).filter(Boolean),
+    ]),
+  ].sort();
+
+  return {
+    current_bay_id: currentBayId,
+    seed_bay_id: seedBayId,
+    checked_at: new Date().toISOString(),
+    scopes: versionRows
+      .sort((a, b) => `${a.scope}`.localeCompare(`${b.scope}`))
+      .map((row) => {
+        const seedVersion = parseConfigVersion(row.version);
+        const version = seedVersion > 0 ? seedVersion : undefined;
+        return {
+          scope: `${row.scope}`,
+          seed_version: version,
+          updated_at: toIsoString(row.updated_at),
+          updated_by: row.updated_by ?? null,
+          metadata: row.metadata ?? null,
+          bays: bayIds.map((bay_id) => {
+            const state = states.get(`${row.scope}\0${bay_id}`);
+            const appliedVersion = parseConfigVersion(state?.applied_version);
+            const applied_version =
+              appliedVersion > 0 ? appliedVersion : undefined;
+            const last_error = state?.last_error ?? null;
+            return {
+              bay_id,
+              status: classifyGlobalConfigBayState({
+                seedVersion: version,
+                appliedVersion: applied_version,
+                lastError: last_error,
+              }),
+              applied_version,
+              applied_at: toIsoString(state?.applied_at),
+              last_error,
+            };
+          }),
+        };
+      }),
+  };
+}
+
+export async function getGlobalConfigPropagationStatus({
+  account_id,
+  scope,
+}: {
+  account_id?: string;
+  scope?: string;
+} = {}): Promise<GlobalConfigPropagationStatus> {
+  await assertAdmin(account_id);
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const normalizedScope = `${scope ?? ""}`.trim();
+  if (currentBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 15_000 })
+      .getGlobalConfigPropagationStatus({
+        account_id,
+        scope: normalizedScope || undefined,
+        source_bay_id: currentBayId,
+      });
+  }
+  return await getGlobalConfigPropagationStatusOnSeed({
+    scope: normalizedScope || undefined,
+  });
 }
 
 export async function setSiteSettings({
@@ -796,22 +1192,21 @@ export async function setSiteSettings({
     require_second_factor: true,
   });
   const updates = settings.map(normalizeSiteSettingUpdate);
-  const signupEmailDomainPolicyOldSettings = updates.some(({ name }) =>
-    isSignupEmailDomainPolicySetting(name),
-  )
-    ? await getSignupEmailDomainPolicySettings()
-    : undefined;
-  for (const update of updates) {
-    await setSiteSettingLocal(update);
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 15_000 })
+      .setSiteSettings({
+        account_id,
+        settings: updates,
+        source_bay_id: localBayId,
+      });
   }
-  if (signupEmailDomainPolicyOldSettings != null) {
-    await logSignupEmailDomainPolicyChange({
-      account_id,
-      updates,
-      oldSettings: signupEmailDomainPolicyOldSettings,
-    });
-  }
-  return await propagateSiteSettingsToBays(updates);
+  return await setSiteSettingsOnSeed({
+    account_id,
+    settings: updates,
+  });
 }
 
 export async function manageApiKeys({
@@ -863,9 +1258,17 @@ export async function syncSiteSettingsToBays({
   account_id?: string;
 } = {}): Promise<SiteSettingsSyncResult> {
   await assertAdmin(account_id);
-  return await propagateSiteSettingsToBays(
-    await getConfiguredSiteSettingUpdates(),
-  );
+  const localBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (localBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 15_000 })
+      .syncSiteSettings({
+        account_id,
+        source_bay_id: localBayId,
+      });
+  }
+  return await syncSiteSettingsToBaysOnSeed();
 }
 
 export async function setBayProjectOwnershipAdmission({
@@ -2973,10 +3376,12 @@ function emailSetupState(settings: any): SiteSetupStep {
 
 function buildSiteSetupStatus({
   counts,
+  inviteUrl,
   profile,
   steps,
 }: {
   counts: SiteSetupStatus["counts"];
+  inviteUrl?: string;
   profile: SiteSetupStatus["profile"];
   steps: SiteSetupStep[];
 }): SiteSetupStatus {
@@ -2988,6 +3393,7 @@ function buildSiteSetupStatus({
     profile,
     checked_at: new Date().toISOString(),
     ready: hardGatesDone === hardGates.length,
+    invite_url: inviteUrl,
     hard_gates_total: hardGates.length,
     hard_gates_done: hardGatesDone,
     steps,
@@ -3027,6 +3433,7 @@ export async function getSiteSetupStatus({
   };
 
   if (profile === "star") {
+    const inviteUrl = await ensureStarInviteRegistrationToken();
     const totalMemoryGiB = totalmem() / 1024 ** 3;
     const totalMemoryLabel = `${totalMemoryGiB.toFixed(1)} GiB`;
     const defaultRootfsImage = clean(
@@ -3177,7 +3584,7 @@ export async function getSiteSetupStatus({
         ],
       }),
     ];
-    return buildSiteSetupStatus({ counts, profile, steps });
+    return buildSiteSetupStatus({ counts, inviteUrl, profile, steps });
   }
 
   const steps: SiteSetupStep[] = [

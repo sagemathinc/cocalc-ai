@@ -634,7 +634,7 @@ export const TIER_TEMPLATES = {
       create_hosts: true,
       project_host_tier: 2,
     },
-    usage_limits: usageLimitsTemplate(4, 10, {
+    usage_limits: usageLimitsTemplate(4, 1000, {
       ...cpuUsageLimits(1000, 5000),
       notification_email_send_limit_5h: 1000,
       notification_email_send_limit_7d: 5000,

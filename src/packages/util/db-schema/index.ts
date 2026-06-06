@@ -42,6 +42,7 @@ import "./crm";
 import "./deleted-projects";
 import "./email-counter";
 import "./external-credentials";
+import "./global-config";
 import "./hub-servers";
 import "./instances"; // probably deprecated
 import "./listings";

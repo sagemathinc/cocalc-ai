@@ -42,7 +42,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(
       (tier.usage_limits as Record<string, unknown>)
         ?.max_sponsored_running_projects,
-    ).toBe(10);
+    ).toBe(1000);
     expect((tier.usage_limits as Record<string, unknown>)?.rootfs_count).toBe(
       250,
     );

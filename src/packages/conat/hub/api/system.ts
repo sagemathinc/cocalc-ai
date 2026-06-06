@@ -50,6 +50,8 @@ export const system = {
   listBays: authFirst,
   getBayOpsOverview: authFirstRequireAccount,
   getBayOpsDetail: authFirstRequireAccount,
+  getBayDrainPreflight: authFirstRequireAccount,
+  getGlobalConfigPropagationStatus: authFirstRequireAccount,
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
   getBayBackups: authFirst,
@@ -813,22 +815,82 @@ export interface BayOpsDetail {
   checked_at: string;
   load?: BayLoadInfo;
   backups?: BayBackupsInfo;
+  drain_preflight?: BayDrainPreflightResult;
   load_error?: string | null;
   backups_error?: string | null;
+  drain_preflight_error?: string | null;
   routed: boolean;
+}
+
+export type BayDrainPreflightSeverity = "ok" | "warn" | "block";
+
+export interface BayDrainPreflightFinding {
+  table: string;
+  severity: BayDrainPreflightSeverity;
+  ownership?: string;
+  portability?: string;
+  estimated_rows?: number | null;
+  reason: string;
+}
+
+export interface BayDrainPreflightResult {
+  source_bay_id: string;
+  seed_bay_id: string;
+  unsafe_rehome: boolean;
+  ok: boolean;
+  summary: {
+    ok: number;
+    warn: number;
+    block: number;
+    tables: number;
+  };
+  findings: BayDrainPreflightFinding[];
 }
 
 export interface SiteSettingsSyncBayResult {
   bay_id: string;
   status: "applied" | "failed" | "local" | "skipped";
   count?: number;
+  version?: number;
   error?: string;
 }
 
 export interface SiteSettingsSyncResult {
   local_bay_id: string;
   count: number;
+  scope?: string;
+  version?: number;
   bays: SiteSettingsSyncBayResult[];
+}
+
+export type GlobalConfigPropagationBayState =
+  | "current"
+  | "stale"
+  | "missing"
+  | "error";
+
+export interface GlobalConfigPropagationBayStatus {
+  bay_id: string;
+  status: GlobalConfigPropagationBayState;
+  applied_version?: number;
+  applied_at?: string | null;
+  last_error?: string | null;
+}
+
+export interface GlobalConfigPropagationScopeStatus {
+  scope: string;
+  seed_version?: number;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  metadata?: Record<string, any> | null;
+  bays: GlobalConfigPropagationBayStatus[];
+}
+
+export interface GlobalConfigPropagationStatus {
+  current_bay_id: string;
+  seed_bay_id: string;
+  checked_at: string;
+  scopes: GlobalConfigPropagationScopeStatus[];
 }
 
 export type SiteSetupStepState =
@@ -852,6 +914,7 @@ export interface SiteSetupStatus {
   profile: "launchpad-cloud" | "star";
   checked_at: string;
   ready: boolean;
+  invite_url?: string;
   hard_gates_total: number;
   hard_gates_done: number;
   steps: SiteSetupStep[];
@@ -1491,6 +1554,17 @@ export interface System {
     account_id?: string;
     bay_id: string;
   }) => Promise<BayOpsDetail>;
+
+  getBayDrainPreflight: (opts: {
+    account_id?: string;
+    bay_id?: string;
+    unsafe_rehome?: boolean;
+  }) => Promise<BayDrainPreflightResult>;
+
+  getGlobalConfigPropagationStatus: (opts?: {
+    account_id?: string;
+    scope?: string;
+  }) => Promise<GlobalConfigPropagationStatus>;
 
   setBayProjectOwnershipAdmission: (opts: {
     account_id?: string;

@@ -16,7 +16,7 @@ STAR_HOME="$(getent passwd "$STAR_USER" | cut -d: -f6)"
 SRC_ROOT="${SRC_ROOT:-${STAR_HOME}/cocalc-ai/src}"
 STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
 STAR_DATA="${STAR_DATA:-${STAR_ROOT}/launchpad}"
-STAR_PROJECT_HOST_DATA="${STAR_PROJECT_HOST_DATA:-${STAR_ROOT}/project-host/0}"
+STAR_PROJECT_HOST_DATA="${STAR_PROJECT_HOST_DATA:-/mnt/cocalc/data}"
 STAR_HOST_ID="${STAR_HOST_ID:-11111111-1111-4111-8111-111111111111}"
 STAR_PROJECT_HOST_REGION="${STAR_PROJECT_HOST_REGION:-wnam}"
 STAR_BASE_PORT="${STAR_BASE_PORT:-9100}"
@@ -33,6 +33,8 @@ STAR_HARDEN_INSTALL_USER_SUDO="${STAR_HARDEN_INSTALL_USER_SUDO:-0}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-${STAR_HARDEN_INSTALL_USER_SUDO}}"
 STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
 STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
+STAR_AUTO_APT_STATE_DIR=""
+STAR_AUTO_APT_DISABLED=0
 
 log() {
   printf '[star] %s\n' "$*" >&2
@@ -48,6 +50,76 @@ run() {
   "$@"
 }
 
+wait_for_apt_locks() {
+  local timeout="${STAR_APT_LOCK_TIMEOUT:-900}"
+  local waited=0
+  local busy=0
+  while [ "$waited" -lt "$timeout" ]; do
+    busy=0
+    if command -v fuser >/dev/null 2>&1; then
+      for lock in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock; do
+        if [ -e "$lock" ] && fuser "$lock" >/dev/null 2>&1; then
+          busy=1
+        fi
+      done
+    fi
+    if pgrep -x apt-get >/dev/null 2>&1 ||
+      pgrep -x apt >/dev/null 2>&1 ||
+      pgrep -x dpkg >/dev/null 2>&1 ||
+      pgrep -x unattended-upgr >/dev/null 2>&1; then
+      busy=1
+    fi
+    [ "$busy" = "1" ] || return 0
+    if [ "$waited" = "0" ]; then
+      log "waiting for apt/dpkg lock held by another system process"
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  die "timed out after ${timeout}s waiting for apt/dpkg lock"
+}
+
+apt_get() {
+  local timeout="${STAR_APT_LOCK_TIMEOUT:-900}"
+  wait_for_apt_locks
+  run apt-get -o "DPkg::Lock::Timeout=${timeout}" "$@"
+}
+
+automatic_apt_units() {
+  printf '%s\n' apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service
+}
+
+disable_automatic_apt() {
+  STAR_AUTO_APT_DISABLED=1
+  STAR_AUTO_APT_STATE_DIR="$(mktemp -d)"
+  local unit
+  for unit in $(automatic_apt_units); do
+    systemctl is-enabled "$unit" >"${STAR_AUTO_APT_STATE_DIR}/${unit}.enabled" 2>/dev/null || true
+    systemctl is-active "$unit" >"${STAR_AUTO_APT_STATE_DIR}/${unit}.active" 2>/dev/null || true
+  done
+  log "temporarily disabling automatic apt services during install"
+  systemctl stop apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+  systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true
+  systemctl disable apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service >/dev/null 2>&1 || true
+}
+
+restore_automatic_apt() {
+  [ "$STAR_AUTO_APT_DISABLED" = "1" ] || return 0
+  [ -n "$STAR_AUTO_APT_STATE_DIR" ] && [ -d "$STAR_AUTO_APT_STATE_DIR" ] || return 0
+  local unit
+  log "restoring automatic apt service state"
+  for unit in $(automatic_apt_units); do
+    if grep -qx enabled "${STAR_AUTO_APT_STATE_DIR}/${unit}.enabled" 2>/dev/null; then
+      systemctl enable "$unit" >/dev/null 2>&1 || true
+    fi
+    if grep -qx active "${STAR_AUTO_APT_STATE_DIR}/${unit}.active" 2>/dev/null; then
+      systemctl start "$unit" >/dev/null 2>&1 || true
+    fi
+  done
+  rm -rf "$STAR_AUTO_APT_STATE_DIR"
+  STAR_AUTO_APT_DISABLED=0
+}
+
 as_star_user() {
   sudo -H -u "$STAR_USER" bash -lc "cd '$STAR_HOME' && $*"
 }
@@ -60,12 +132,24 @@ require_root() {
 
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
-  run apt-get update
-  run apt-get install -y \
+  apt_get update
+  apt_get install -y \
     bash ca-certificates curl git jq openssl build-essential python3 \
     podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs \
     caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev
   systemctl disable --now postgresql >/dev/null 2>&1 || true
+}
+
+configure_kernel_limits() {
+  local path="/etc/sysctl.d/90-cocalc-star.conf"
+  cat >"$path" <<'EOF'
+# CoCalc Star can run hundreds of rootless Podman project containers.
+# The distro default per-user key quota is commonly 200, which runc can hit
+# around 100 containers while creating container session keyrings.
+kernel.keys.maxkeys = 1000000
+kernel.keys.maxbytes = 25000000
+EOF
+  run sysctl --system >/dev/null
 }
 
 start_web_onboarding() {
@@ -85,14 +169,18 @@ $(star_web_onboarding_caddy_proxy_routes)
   }
 }
 EOF
+  caddy fmt --overwrite "$caddy_config" >/dev/null || true
   caddy adapt --config "$caddy_config" >/dev/null
   install -m 0644 -o root -g root "$caddy_config" /etc/caddy/Caddyfile
   rm -f "$caddy_config"
   systemctl enable caddy >/dev/null
   systemctl restart caddy
   star_web_onboarding_write_status "reachable" "This VM is publicly reachable over HTTPS. Installing CoCalc Star now." ""
-  star_web_onboarding_print >&2
-  star_web_onboarding_wait_for_open
+  if star_web_onboarding_require_open; then
+    star_web_onboarding_wait_for_open
+  else
+    star_web_onboarding_print >&2
+  fi
 }
 
 host_has_nvidia_gpu() {
@@ -180,12 +268,12 @@ install_gpu_support() {
   fi
   STAR_HAS_GPU=1
   log "NVIDIA GPU detected; configuring Podman CDI support"
-  run apt-get install -y ca-certificates gnupg
+  apt_get install -y ca-certificates gnupg
   rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
   run bash -lc "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
   run bash -lc "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
-  run apt-get update
-  run apt-get install -y --allow-change-held-packages nvidia-container-toolkit
+  apt_get update
+  apt_get install -y --allow-change-held-packages nvidia-container-toolkit
   ldconfig || true
   install_nvidia_cdi_normalizer
   mkdir -p /etc/cdi
@@ -222,6 +310,7 @@ EOF
 
 stop_existing_services() {
   systemctl stop cocalc-star-project-host.service >/dev/null 2>&1 || true
+  systemctl stop cocalc-star-rest-server.service >/dev/null 2>&1 || true
   systemctl stop cocalc-star-hub.service >/dev/null 2>&1 || true
 }
 
@@ -351,6 +440,13 @@ prepare_runtime_artifacts() {
 
 ensure_btrfs() {
   mkdir -p /var/lib/cocalc /mnt/cocalc
+  if mountpoint -q /mnt/cocalc; then
+    local fstype
+    fstype="$(findmnt -n -o FSTYPE --target /mnt/cocalc 2>/dev/null || true)"
+    if [ "$fstype" != "btrfs" ]; then
+      die "/mnt/cocalc is already mounted as ${fstype:-unknown}, but CoCalc Star project storage requires btrfs subvolume support. Use a fresh supported Ubuntu 24.04 VM, unmount /mnt/cocalc, or configure STAR_BTRFS_IMAGE/STAR_BTRFS_SIZE so the installer can mount a btrfs data image."
+    fi
+  fi
   if [ ! -f "$STAR_BTRFS_IMAGE" ]; then
     run truncate -s "$STAR_BTRFS_SIZE" "$STAR_BTRFS_IMAGE"
     run mkfs.btrfs -f "$STAR_BTRFS_IMAGE"
@@ -360,6 +456,9 @@ ensure_btrfs() {
   fi
   if ! mountpoint -q /mnt/cocalc; then
     run mount /mnt/cocalc
+  fi
+  if [ "$(findmnt -n -o FSTYPE --target /mnt/cocalc 2>/dev/null || true)" != "btrfs" ]; then
+    die "/mnt/cocalc is not mounted as btrfs after setup; CoCalc Star cannot safely start projects without btrfs subvolume support."
   fi
   mkdir -p /mnt/cocalc/data/tmp /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
   chmod 1777 /mnt/cocalc/data/tmp
@@ -444,7 +543,7 @@ configure_users_and_dirs() {
     -exec chown "$STAR_USER:$STAR_USER" {} +
   find "$STAR_PROJECT_HOST_DATA/cache/images" -maxdepth 1 -type f -name '.*.json' \
     -exec chown "$STAR_USER:$STAR_USER" {} +
-  chown -R "$STAR_USER:$STAR_USER" /mnt/cocalc/data
+  chown "$STAR_USER:$STAR_USER" /mnt/cocalc/data
 }
 
 build_default_rootfs_image() {
@@ -576,6 +675,8 @@ COCALC_LOCAL_POSTGRES_ADMIN_USER=smc
 COCALC_LOCAL_PG_SOCKET_DIR=${STAR_DATA}/postgres-socket
 COCALC_LOCAL_PG_ENV_FILE=${STAR_DATA}/local-postgres.env
 COCALC_BACKUP_ROOT=${STAR_ROOT}/backup
+COCALC_LAUNCHPAD_REST_PORT=9345
+COCALC_REST_PORT=9345
 PGHOST=${STAR_DATA}/postgres-socket
 PGUSER=smc
 PGDATABASE=smc
@@ -636,8 +737,9 @@ seed_database() {
 }
 
 install_systemd() {
-  local hub_unit project_host_unit caddy_config hub_workdir hub_exec hub_bundle_env project_host_workdir project_host_exec project_host_stop api_v2_routes_bundle caddy_site
+  local hub_unit rest_unit project_host_unit caddy_config hub_workdir hub_exec hub_bundle_env project_host_workdir project_host_exec project_host_stop api_v2_routes_bundle caddy_site
   hub_unit="$(mktemp)"
+  rest_unit="$(mktemp)"
   project_host_unit="$(mktemp)"
   caddy_config="$(mktemp)"
   if [ -f "$SRC_ROOT/packages/launchpad/build/bundle/bundle/index.js" ]; then
@@ -691,11 +793,32 @@ TimeoutStopSec=20
 WantedBy=multi-user.target
 EOF
 
+  cat >"$rest_unit" <<EOF
+[Unit]
+Description=CoCalc Star local rustic REST server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${STAR_USER}
+Group=${STAR_USER}
+EnvironmentFile=/etc/cocalc/star/hub.env
+ExecStartPre=/bin/bash -lc 'mkdir -p "\${COCALC_BACKUP_ROOT}/rustic"'
+ExecStart=/bin/bash -lc 'exec "\${COCALC_BIN_PATH}/rest-server" --path "\${COCALC_BACKUP_ROOT}/rustic" --listen "127.0.0.1:\${COCALC_LAUNCHPAD_REST_PORT:-9345}" --htpasswd-file "\${COCALC_DATA_DIR}/secrets/launchpad-rest/htpasswd"'
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
   cat >"$project_host_unit" <<EOF
 [Unit]
 Description=CoCalc Star local project host
-After=network-online.target cocalc-star-hub.service
-Wants=network-online.target cocalc-star-hub.service
+After=network-online.target cocalc-star-hub.service cocalc-star-rest-server.service
+Wants=network-online.target cocalc-star-hub.service cocalc-star-rest-server.service
 
 [Service]
 Type=simple
@@ -726,18 +849,22 @@ $(star_web_onboarding_caddy_routes)
   }
 }
 EOF
+  caddy fmt --overwrite "$caddy_config" >/dev/null || true
 
   grep -q '^ExecStart=' "$hub_unit" || die "generated hub systemd unit is invalid"
+  grep -q '^ExecStart=' "$rest_unit" || die "generated REST systemd unit is invalid"
   grep -q '^ExecStart=' "$project_host_unit" || die "generated project-host systemd unit is invalid"
   install -m 0644 -o root -g root "$hub_unit" /etc/systemd/system/cocalc-star-hub.service
+  install -m 0644 -o root -g root "$rest_unit" /etc/systemd/system/cocalc-star-rest-server.service
   install -m 0644 -o root -g root "$project_host_unit" /etc/systemd/system/cocalc-star-project-host.service
   install -m 0644 -o root -g root "$caddy_config" /etc/caddy/Caddyfile
   grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-hub.service || die "installed hub systemd unit is invalid"
+  grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-rest-server.service || die "installed REST systemd unit is invalid"
   grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-project-host.service || die "installed project-host systemd unit is invalid"
-  rm -f "$hub_unit" "$project_host_unit" "$caddy_config"
+  rm -f "$hub_unit" "$rest_unit" "$project_host_unit" "$caddy_config"
 
   systemctl daemon-reload
-  systemctl enable caddy cocalc-star-hub cocalc-star-project-host
+  systemctl enable caddy cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host
 }
 
 configure_sudoers() {
@@ -804,6 +931,7 @@ start_services() {
   systemctl restart caddy
   star_web_onboarding_stop_server
   systemctl restart cocalc-star-hub
+  systemctl restart cocalc-star-rest-server
   systemctl restart cocalc-star-project-host
   log "waiting for ${STAR_BASE_URL}/customize"
   for _ in $(seq 1 60); do
@@ -813,15 +941,20 @@ start_services() {
     sleep 2
   done
   sync
-  systemctl --no-pager --full status cocalc-star-hub cocalc-star-project-host || true
+  systemctl --no-pager --full status cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host || true
   local bootstrap_url=""
+  local invite_url=""
   if [ -f "$STAR_ROOT/bootstrap-result.json" ]; then
     bootstrap_url="$(star_web_onboarding_json_string_field "$STAR_ROOT/bootstrap-result.json" bootstrap_url 2>/dev/null || true)"
     if [ -n "$bootstrap_url" ] && [ -n "${STAR_PUBLIC_URL:-}" ]; then
       bootstrap_url="$(star_web_onboarding_url_with_base "$bootstrap_url" "$STAR_PUBLIC_URL")"
     fi
+    invite_url="$(star_web_onboarding_json_string_field "$STAR_ROOT/bootstrap-result.json" invite_url 2>/dev/null || true)"
+    if [ -n "$invite_url" ] && [ -n "${STAR_PUBLIC_URL:-}" ]; then
+      invite_url="$(star_web_onboarding_url_with_base "$invite_url" "$STAR_PUBLIC_URL")"
+    fi
   fi
-  star_web_onboarding_write_status "ready" "CoCalc Star is running. Create the first admin account to finish setup." "$bootstrap_url"
+  star_web_onboarding_write_status "ready" "CoCalc Star is running. Create the first admin account to finish setup." "$bootstrap_url" "$invite_url"
   cat "$STAR_ROOT/bootstrap-result.json"
 }
 
@@ -831,12 +964,15 @@ web_onboarding_exit_trap() {
     star_web_onboarding_write_status "failed" "The CoCalc Star install failed. Check the terminal output or SSH logs on the VM." "" || true
   fi
   star_web_onboarding_stop_server || true
+  restore_automatic_apt || true
   exit "$status"
 }
 
 require_root
-install_packages
 trap web_onboarding_exit_trap EXIT
+disable_automatic_apt
+install_packages
+configure_kernel_limits
 start_web_onboarding
 install_gpu_support
 star_web_onboarding_write_status "runtime" "Preparing Linux user, Node.js, and Star runtime packages." ""
@@ -844,7 +980,6 @@ ensure_subuids
 install_node
 build_source
 prepare_runtime_artifacts
-stop_existing_services
 ensure_btrfs
 install_wrappers
 configure_sudoers
@@ -856,6 +991,8 @@ ensure_default_rootfs_cache
 seed_database
 publish_default_rootfs
 star_web_onboarding_write_status "systemd" "Installing systemd services and final Caddy routing." ""
+stop_existing_services
 install_systemd
 start_services
+restore_automatic_apt
 trap - EXIT

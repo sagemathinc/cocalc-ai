@@ -51,6 +51,7 @@ import { hubApi } from "@cocalc/lite/hub/api";
 import { listProjects } from "./sqlite/projects";
 
 import {
+  __test__,
   pullRootfsCacheEntry,
   withManagedRootfsPullInFlight,
 } from "./rootfs-cache";
@@ -114,6 +115,14 @@ describe("rootfs-cache", () => {
       }),
     ).resolves.toBe(11);
     expect(calls).toBe(2);
+  });
+
+  it("treats btrfs ioctl failures on plain filesystems as non-btrfs", () => {
+    expect(
+      __test__.isNonBtrfsError(
+        "command 'sudo' (args=-n /usr/local/sbin/cocalc-runtime-storage btrfs subvolume create /var/lib/cocalc/star/project-host/0/cache/images/.managed-rootfs-rustic-restore-G1tOeq/rootfs) exited with nonzero code 1 -- stderr='ERROR: Could not create subvolume: Inappropriate ioctl for device '",
+      ),
+    ).toBe(true);
   });
 
   it("uses the local managed RootFS cache without calling the hub", async () => {

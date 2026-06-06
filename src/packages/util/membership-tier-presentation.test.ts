@@ -14,7 +14,7 @@ describe("buildMembershipTierPresentation", () => {
     expect(presentation.summaryBenefits).toEqual(
       expect.arrayContaining([
         "Shared public project-host pool access, tier 2.",
-        "Up to 10 simultaneous sponsored running projects.",
+        "Up to 1000 simultaneous sponsored running projects.",
       ]),
     );
     expect(presentation.benefits).toContain(

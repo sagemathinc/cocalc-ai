@@ -4,6 +4,7 @@
  */
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { totalmem } from "node:os";
 import centralLog from "@cocalc/database/postgres/central-log";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import getLogger from "@cocalc/backend/logger";
@@ -99,6 +100,10 @@ const DEFAULT_RUNTIME_SLOT_TTL_MS = 15 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 const HEARTBEAT_TTL_MS = 30 * 60 * 1000;
 const RUNTIME_SLOT_ADMISSION_LOCK_PREFIX = "project-runtime-slot-admission:";
+const STAR_GLOBAL_RUNTIME_SLOT_ADMISSION_LOCK_KEY = `${RUNTIME_SLOT_ADMISSION_LOCK_PREFIX}star-global`;
+const STAR_DEFAULT_MAX_RUNNING_PROJECTS = 100;
+const STAR_MIN_DERIVED_MAX_RUNNING_PROJECTS = 5;
+const STAR_RUNNING_PROJECTS_PER_RAM_GB = 2;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
 function logRuntimeSlotEvent(
@@ -114,10 +119,40 @@ function logRuntimeSlotEvent(
 }
 
 function normalizePositiveInteger(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+  const n =
+    typeof value === "string" && value.trim()
+      ? Number(value.trim())
+      : typeof value === "number"
+        ? value
+        : NaN;
+  if (!Number.isFinite(n) || n <= 0) {
     return undefined;
   }
-  return Math.floor(value);
+  return Math.floor(n);
+}
+
+function isStarSetupProfile(): boolean {
+  return `${process.env.COCALC_SETUP_PROFILE ?? ""}`.trim() === "star";
+}
+
+function getStarGlobalRunningProjectLimit(): number | undefined {
+  if (!isStarSetupProfile()) {
+    return undefined;
+  }
+  const configured = normalizePositiveInteger(
+    process.env.COCALC_STAR_MAX_RUNNING_PROJECTS,
+  );
+  if (configured != null) {
+    return configured;
+  }
+  const totalRamGb = totalmem() / 1024 ** 3;
+  return Math.min(
+    STAR_DEFAULT_MAX_RUNNING_PROJECTS,
+    Math.max(
+      STAR_MIN_DERIVED_MAX_RUNNING_PROJECTS,
+      Math.floor(totalRamGb * STAR_RUNNING_PROJECTS_PER_RAM_GB),
+    ),
+  );
 }
 
 function expirationDate(ttl_ms: number | undefined): Date {
@@ -130,6 +165,17 @@ async function lockRuntimeSponsorSlotAdmission(
 ): Promise<void> {
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
     `${RUNTIME_SLOT_ADMISSION_LOCK_PREFIX}${sponsor_account_id}`,
+  ]);
+}
+
+async function lockStarGlobalRuntimeSlotAdmissionIfNeeded(
+  client: Queryable,
+): Promise<void> {
+  if (getStarGlobalRunningProjectLimit() == null) {
+    return;
+  }
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    STAR_GLOBAL_RUNTIME_SLOT_ADMISSION_LOCK_KEY,
   ]);
 }
 
@@ -156,6 +202,41 @@ async function expireStaleRuntimeSlots(client: Queryable): Promise<void> {
     count: rows.length,
     sample: rows.slice(0, 20),
   });
+}
+
+async function assertStarGlobalRunningProjectCapacity(
+  client: Queryable,
+  project_id: string,
+): Promise<void> {
+  const limit = getStarGlobalRunningProjectLimit();
+  if (limit == null) {
+    return;
+  }
+  const { rows } = await client.query<{
+    count: number | string;
+    includes_project: boolean | null;
+  }>(
+    `
+      SELECT COUNT(DISTINCT project_id)::INT AS count,
+             COALESCE(BOOL_OR(project_id=$2), false) AS includes_project
+        FROM project_runtime_slots
+       WHERE state = ANY($1)
+    `,
+    [ACTIVE_SLOT_STATES, project_id],
+  );
+  const current = Number(rows[0]?.count ?? 0);
+  const includesProject = rows[0]?.includes_project === true;
+  if (includesProject || current < limit) {
+    return;
+  }
+  logRuntimeSlotEvent("star_global_runtime_slot_denied", {
+    project_id,
+    limit,
+    current,
+  });
+  throw new Error(
+    `CoCalc Star is already running ${current}/${limit} projects. Stop a running project or raise the Star running-project cap before starting another project.`,
+  );
 }
 
 async function assertRuntimeSponsorNotBanned(
@@ -231,6 +312,7 @@ export async function getProjectRuntimeSlotDenialLocal({
   const pool = client ?? getPool();
   await expireStaleRuntimeSlots(pool);
   await assertRuntimeSponsorNotBanned(pool, sponsor_account_id);
+  await assertStarGlobalRunningProjectCapacity(pool, project_id);
   const activeSlots = await loadActiveSlotsForSponsor(pool, sponsor_account_id);
   const membership = await resolveMembershipForAccount(sponsor_account_id);
   const limit = normalizePositiveInteger(
@@ -249,9 +331,11 @@ async function reserveProjectRuntimeSlotInTransaction(
   client: PoolClient,
   opts: ReserveProjectRuntimeSlotOptions,
 ): Promise<ReserveProjectRuntimeSlotResult> {
+  await lockStarGlobalRuntimeSlotAdmissionIfNeeded(client);
   await lockRuntimeSponsorSlotAdmission(client, opts.sponsor_account_id);
   await expireStaleRuntimeSlots(client);
   await assertRuntimeSponsorNotBanned(client, opts.sponsor_account_id);
+  await assertStarGlobalRunningProjectCapacity(client, opts.project_id);
   const activeSlots = await loadActiveSlotsForSponsor(
     client,
     opts.sponsor_account_id,

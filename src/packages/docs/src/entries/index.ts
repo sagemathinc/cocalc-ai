@@ -14,6 +14,7 @@ import { FILES_ENTRIES } from "./files";
 import { HOSTS_ENTRIES } from "./hosts";
 import { JUPYTER_ENTRIES } from "./jupyter";
 import { PROJECTS_ENTRIES } from "./projects";
+import { SELF_HOSTING_ENTRIES } from "./self-hosting";
 import { TEACHING_ENTRIES } from "./teaching";
 import { TERMINAL_ENTRIES } from "./terminal";
 import { TROUBLESHOOTING_ENTRIES } from "./troubleshooting";
@@ -29,6 +30,7 @@ const ENTRY_GROUPS: DocsEntry[] = [
   ...HOSTS_ENTRIES,
   ...JUPYTER_ENTRIES,
   ...PROJECTS_ENTRIES,
+  ...SELF_HOSTING_ENTRIES,
   ...TEACHING_ENTRIES,
   ...TERMINAL_ENTRIES,
   ...TROUBLESHOOTING_ENTRIES,
@@ -73,6 +75,7 @@ const DOCS_ENTRY_IDS = [
   "latex.build-papers",
   "editors.r-markdown",
   "projects.runtime-image",
+  "self-hosting.cocalc-star",
   "troubleshooting.memory",
   "troubleshooting.connectivity",
   "hosts.project-hosts",

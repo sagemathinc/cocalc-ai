@@ -10,7 +10,9 @@ A project host is compute capacity that can run CoCalc projects. On hosted
 CoCalc, project hosts are CoCalc-managed or cloud-backed capacity; users cannot
 attach an arbitrary local computer or VM as a host. Hosts have access to
 project-level credentials such as backup passwords, so direct user-controlled
-hosts are only appropriate in self-hosted Launchpad or Rocket deployments.
+hosts are only appropriate in self-hosted Star, Launchpad, or Rocket
+deployments. CoCalc Star includes one local project host by default; Launchpad
+and Rocket expose the broader operator workflows for managing hosts.
 
 Use project hosts for heavier workloads such as long-running research
 computations, courses, or agent sandboxes.
@@ -23,8 +25,9 @@ to place projects there.
 ## Create or choose a host
 
 1. Open the project host administration area.
-2. Configure a cloud provider. In self-hosted Launchpad or Rocket, configure a
-   cloud provider or self-hosted connector.
+2. Configure a cloud provider. In CoCalc Star this is normally already the
+   bundled local host; in self-hosted Launchpad or Rocket, configure a cloud
+   provider or self-hosted connector.
 3. Refresh the provider catalog if needed.
 4. Choose a machine type, region, disk size, and lifecycle policy.
 5. Start the host and wait for bootstrap to finish.
@@ -71,9 +74,10 @@ inside a process.
 
 When helping with project hosts:
 
-1. Determine whether the user is on hosted CoCalc, Launchpad, Rocket, or Lite.
-   Lite does not use project hosts. Hosted CoCalc does not allow arbitrary
-   local user machines as hosts.
+1. Determine whether the user is on hosted CoCalc, Star, Launchpad, Rocket, or
+   Lite. Lite does not use project hosts. Hosted CoCalc does not allow
+   arbitrary local user machines as hosts. Star normally has exactly one bundled
+   local project host.
 2. Open the hosts page with the \`hosts.open\` docs action when browser context
    is available.
 3. For CLI inspection, start with:

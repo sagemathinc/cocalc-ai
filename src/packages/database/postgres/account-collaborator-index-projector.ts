@@ -23,6 +23,7 @@ const RELEVANT_EVENT_TYPES: ProjectOutboxEventType[] = [
   "project.membership_changed",
   "project.deleted",
 ];
+const DEFAULT_DEADLOCK_RETRIES = 3;
 
 export interface DrainAccountCollaboratorIndexProjectionResult {
   bay_id: string;
@@ -118,6 +119,38 @@ function eventTimestampMs(value: unknown): number {
   return date != null && Number.isFinite(date.getTime())
     ? date.getTime()
     : Date.now();
+}
+
+function isPostgresDeadlock(err: unknown): boolean {
+  const code =
+    typeof err === "object" && err != null && "code" in err
+      ? `${(err as { code?: unknown }).code ?? ""}`
+      : "";
+  return code === "40P01" || `${err}`.includes("deadlock detected");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function retryAccountCollaboratorIndexDeadlock<T>(
+  fn: () => Promise<T>,
+  opts?: { retries?: number; base_delay_ms?: number },
+): Promise<T> {
+  const retries = opts?.retries ?? DEFAULT_DEADLOCK_RETRIES;
+  const baseDelayMs = opts?.base_delay_ms ?? 50;
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isPostgresDeadlock(err) || attempt >= retries) {
+        throw err;
+      }
+      attempt += 1;
+      await sleep(baseDelayMs * attempt + Math.floor(Math.random() * 25));
+    }
+  }
 }
 
 async function collaboratorRowsForAccount(
@@ -370,6 +403,16 @@ export async function getAccountCollaboratorIndexProjectionBacklogStatus(opts?: 
 }
 
 export async function drainAccountCollaboratorIndexProjection(opts?: {
+  bay_id?: string;
+  limit?: number;
+  dry_run?: boolean;
+}): Promise<DrainAccountCollaboratorIndexProjectionResult> {
+  return await retryAccountCollaboratorIndexDeadlock(
+    async () => await drainAccountCollaboratorIndexProjectionOnce(opts),
+  );
+}
+
+async function drainAccountCollaboratorIndexProjectionOnce(opts?: {
   bay_id?: string;
   limit?: number;
   dry_run?: boolean;

@@ -22,6 +22,10 @@ describe("public/docs", () => {
       slug: "projects/project-secrets",
       view: "docs-detail",
     });
+    expect(getDocsRouteFromPath("/docs/self-hosting/cocalc-star")).toEqual({
+      slug: "self-hosting/cocalc-star",
+      view: "docs-detail",
+    });
     expect(getDocsRouteFromPath("/docs/print")).toEqual({
       view: "docs-print",
     });
@@ -71,6 +75,11 @@ describe("public/docs", () => {
         (entry) => entry.id,
       )[0],
     ).toBe("api.http-api");
+    expect(
+      searchDocsEntries("cocalc star public vm https").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("self-hosting.cocalc-star");
     expect(
       searchDocsEntries("low memory oom kernel restart").map(
         (entry) => entry.id,
@@ -144,6 +153,15 @@ describe("public/docs", () => {
     expect(
       screen.getByText(/Create projects, choose runtime settings/),
     ).not.toBeNull();
+    expect(screen.getAllByText("Self Hosting").length).toBeGreaterThan(0);
+    expect(
+      screen
+        .getAllByRole("link", { name: /Install CoCalc Star/ })
+        .some(
+          (link) =>
+            link.getAttribute("href") === "/docs/self-hosting/cocalc-star",
+        ),
+    ).toBe(true);
     expect(
       screen.getAllByRole("link", { name: /Start chapter/ })[0],
     ).toHaveAttribute("href", "/docs/projects/create-project");
@@ -250,6 +268,26 @@ describe("public/docs", () => {
     expect(markdownCardBody).not.toBeNull();
     expect(markdownCard!).toHaveStyle({ fontSize: "inherit" });
     expect(markdownCardBody!).toHaveStyle({ fontSize: "inherit" });
+  });
+
+  it("renders the cocalc star self-hosting docs page", () => {
+    render(
+      <PublicDocsApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{
+          slug: "self-hosting/cocalc-star",
+          view: "docs-detail",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Install CoCalc Star" }),
+    ).not.toBeNull();
+    expect(screen.getByText(/single-VM CoCalc appliance/)).not.toBeNull();
+    expect(
+      screen.getByText(/github.com\/sagemathinc\/cocalc-ai/),
+    ).not.toBeNull();
   });
 
   it("renders a docs detail page with action metadata", () => {
