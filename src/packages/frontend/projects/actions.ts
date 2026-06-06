@@ -64,6 +64,7 @@ import {
   recordProjectionRepair,
   recordProjectionRepairFailure,
 } from "@cocalc/frontend/projection-diagnostics";
+import { writeAndWaitForProjection } from "@cocalc/frontend/projection-ack";
 
 import type {
   CourseInfo,
@@ -296,9 +297,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static REALTIME_FEED_BATCH_MS = 50;
   private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
   private static PROJECT_ROW_RECONCILE_DELAYS_MS = [1_000, 5_000] as const;
-  private static PROJECT_THEME_PROJECTION_WAIT_DELAYS_MS = [
-    0, 250, 1_000, 2_500,
-  ] as const;
   private static PROJECT_LIFECYCLE_RECONCILE_DELAYS_MS = [
     1_000, 5_000, 15_000, 30_000, 60_000, 120_000,
   ] as const;
@@ -1248,52 +1246,51 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } as ProjectsState);
   }
 
-  private async waitForProjectedProjectTheme(
-    project_id: string,
-    theme: ProjectTheme | null,
-  ): Promise<boolean> {
+  private async projectedProjectMetadataMatches({
+    project_id,
+    field,
+    value,
+  }: {
+    project_id: string;
+    field: "title" | "description" | "theme";
+    value: string | ProjectTheme | null;
+  }): Promise<boolean> {
     const account_id = this.getAccountId();
     if (!account_id || !project_id || !webapp_client.is_signed_in()) {
       return false;
     }
-    for (const delay of ProjectsActions.PROJECT_THEME_PROJECTION_WAIT_DELAYS_MS) {
-      if (delay > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-      let resp: any;
-      try {
-        resp = await webapp_client.async_query({
-          query: {
-            account_project_index: [
-              {
-                account_id,
-                project_id,
-                theme: null,
-              },
-            ],
-          },
-          options: [{ limit: 1 }],
-        });
-      } catch (err) {
-        console.warn("project theme projection check failed", {
-          project_id,
-          err,
-        });
-        continue;
-      }
-      const projectedTheme = normalizeProjectThemeForWrite(
-        resp?.query?.account_project_index?.[0]?.theme,
-      );
-      if (isEqual(projectedTheme, theme)) {
-        await this.repairProjectProjection({
-          kind: "project-ids",
-          project_ids: [project_id],
-          reason: "write-ack",
-        });
-        return true;
-      }
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          account_project_index: [
+            {
+              account_id,
+              project_id,
+              title: null,
+              description: null,
+              theme: null,
+            },
+          ],
+        },
+        options: [{ limit: 1 }],
+      });
+    } catch (err) {
+      console.warn("project metadata projection check failed", {
+        project_id,
+        field,
+        err,
+      });
+      return false;
     }
-    return false;
+    const row = resp?.query?.account_project_index?.[0];
+    if (field === "theme") {
+      return isEqual(
+        normalizeProjectThemeForWrite(row?.theme),
+        normalizeProjectThemeForWrite(value as ProjectTheme | null),
+      );
+    }
+    return row?.[field] === value;
   }
 
   private shouldPreserveLocalHostIdAfterMove({
@@ -2244,7 +2241,24 @@ export class ProjectsActions extends Actions<ProjectsState> {
   ): Promise<void> => {
     this.setProjectLocalScalarField(project_id, field, value);
     try {
-      await this.projects_query_set({ project_id, [field]: value });
+      await writeAndWaitForProjection({
+        consumer: "projects",
+        id: `project:${project_id}:${field}`,
+        name: `project.${field}`,
+        write: () => this.projects_query_set({ project_id, [field]: value }),
+        matchesProjection: () =>
+          this.projectedProjectMetadataMatches({
+            project_id,
+            field,
+            value,
+          }),
+        repair: () =>
+          this.repairProjectProjection({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "write-ack",
+          }),
+      });
     } catch (err) {
       this.setProjectLocalScalarField(project_id, field, before);
       throw err;
@@ -2499,17 +2513,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.setProjectLocalTheme(project_id, normalizedTheme);
     }
     try {
-      await this.projects_query_set({
-        project_id,
-        theme: normalizedTheme,
+      await writeAndWaitForProjection({
+        consumer: "projects",
+        id: `project:${project_id}:theme`,
+        name: "project.theme",
+        write: () =>
+          this.projects_query_set({
+            project_id,
+            theme: normalizedTheme,
+          }),
+        matchesProjection: () =>
+          this.projectedProjectMetadataMatches({
+            project_id,
+            field: "theme",
+            value: normalizedTheme,
+          }),
+        repair: () =>
+          this.repairProjectProjection({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "write-ack",
+          }),
       });
-      if (
-        !(await this.waitForProjectedProjectTheme(project_id, normalizedTheme))
-      ) {
-        console.warn("project theme projection did not converge", {
-          project_id,
-        });
-      }
     } catch (err) {
       if (localThemeChanged) {
         this.setProjectLocalTheme(project_id, beforeJS);

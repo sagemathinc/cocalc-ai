@@ -665,9 +665,12 @@ Convert user-facing writes to the projection ack helper.
 Priority:
 
 1. account settings
+   - implemented for `account.other_settings` via the shared write-ack helper
 2. project lifecycle
 3. project metadata
+   - implemented for project title, description, and theme via `account_project_index` ack checks and targeted row repair
 4. notification read state
+   - implemented for mention notification read/unread state via the shared write-ack helper
 5. collaborator membership changes
 
 ### Phase 6: Release Hardening
