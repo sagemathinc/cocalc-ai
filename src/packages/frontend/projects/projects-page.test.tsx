@@ -105,9 +105,10 @@ jest.mock("./projects-starred", () => ({
 }));
 
 jest.mock("./projects-table", () => ({
-  ProjectsTable: ({ visible_projects }: any) => (
+  ProjectsTable: ({ freezeOrder, visible_projects }: any) => (
     <div
       data-testid="projects-table"
+      data-freeze-order={String(!!freezeOrder)}
       data-visible-projects={JSON.stringify(visible_projects)}
     />
   ),
@@ -261,6 +262,7 @@ test("projects page ignores backend project window while hashtag filters are act
 });
 
 test("projects page shows explicit refresh for dirty backend window", () => {
+  mockVisibleProjects.push("local-project-1", "local-project-2");
   mockProjectListWindow = ImmutableMap({
     key: JSON.stringify({
       limit: 200,
@@ -269,7 +271,7 @@ test("projects page shows explicit refresh for dirty backend window", () => {
       search: "",
       sort: "last_edited",
     }),
-    project_ids: ["backend-project"],
+    project_ids: ["backend-project-1", "backend-project-2"],
     loading: false,
     dirty: true,
     dirty_count: 3,
@@ -278,6 +280,14 @@ test("projects page shows explicit refresh for dirty backend window", () => {
   render(<ProjectsPage />);
 
   expect(screen.getByText("Project list changed (3 updates)")).toBeVisible();
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-visible-projects",
+    JSON.stringify(["backend-project-1", "backend-project-2"]),
+  );
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-freeze-order",
+    "true",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(mockLoadProjectListWindow).toHaveBeenCalledWith({
     limit: 200,
@@ -286,4 +296,32 @@ test("projects page shows explicit refresh for dirty backend window", () => {
     search: "",
     sort: "last_edited",
   });
+});
+
+test("projects page keeps dirty backend window ids while the window is reloading", () => {
+  mockVisibleProjects.push("locally-resorted-project");
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["stable-backend-project"],
+    loading: true,
+    dirty: true,
+    dirty_count: 1,
+  });
+
+  render(<ProjectsPage />);
+
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-visible-projects",
+    JSON.stringify(["stable-backend-project"]),
+  );
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-freeze-order",
+    "true",
+  );
 });

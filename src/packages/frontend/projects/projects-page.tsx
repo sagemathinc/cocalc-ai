@@ -191,9 +191,11 @@ export const ProjectsPage: React.FC = () => {
     if (readMaybeImmutable(project_list_window, "key") !== backendWindowKey) {
       return undefined;
     }
+    const dirty = !!readMaybeImmutable(project_list_window, "dirty");
     if (
-      readMaybeImmutable(project_list_window, "loading") ||
-      readMaybeImmutable(project_list_window, "error")
+      !dirty &&
+      (readMaybeImmutable(project_list_window, "loading") ||
+        readMaybeImmutable(project_list_window, "error"))
     ) {
       return undefined;
     }
@@ -546,31 +548,41 @@ export const ProjectsPage: React.FC = () => {
                   </div>
                   {/* Bulk Operations (when filters active) */}
                   <div ref={operationsRef}>
-                    {backendWindowDirty && (
-                      <div
-                        style={{
-                          alignItems: "center",
-                          background: COLORS.GRAY_LLL,
-                          border: `1px solid ${COLORS.GRAY_L}`,
-                          borderRadius: "4px",
-                          display: "flex",
-                          gap: "8px",
-                          justifyContent: "space-between",
-                          margin: "8px 0",
-                          padding: "6px 8px",
-                        }}
+                    <div
+                      aria-hidden={!backendWindowDirty}
+                      style={{
+                        alignItems: "center",
+                        background: backendWindowDirty
+                          ? COLORS.GRAY_LLL
+                          : "transparent",
+                        border: `1px solid ${
+                          backendWindowDirty ? COLORS.GRAY_L : "transparent"
+                        }`,
+                        borderRadius: "4px",
+                        display: "flex",
+                        gap: "8px",
+                        justifyContent: "space-between",
+                        margin: "8px 0",
+                        minHeight: "34px",
+                        padding: "6px 8px",
+                        pointerEvents: backendWindowDirty ? "auto" : "none",
+                        visibility: backendWindowDirty ? "visible" : "hidden",
+                      }}
+                    >
+                      <span>
+                        Project list changed
+                        {backendWindowDirtyCount > 1
+                          ? ` (${backendWindowDirtyCount} updates)`
+                          : ""}
+                      </span>
+                      <Button
+                        disabled={!backendWindowDirty}
+                        size="small"
+                        onClick={refreshBackendWindow}
                       >
-                        <span>
-                          Project list changed
-                          {backendWindowDirtyCount > 1
-                            ? ` (${backendWindowDirtyCount} updates)`
-                            : ""}
-                        </span>
-                        <Button size="small" onClick={refreshBackendWindow}>
-                          Refresh
-                        </Button>
-                      </div>
-                    )}
+                        Refresh
+                      </Button>
+                    </div>
                     <ProjectsOperations
                       visible_projects={visible_projects}
                       selected_project_ids={selectedProjectIds}
@@ -596,6 +608,7 @@ export const ProjectsPage: React.FC = () => {
                         onFilteredCollaboratorsChange={setFilteredCollaborators}
                         selectedProjectIds={selectedProjectIds}
                         onSelectedProjectIdsChange={setSelectedProjectIds}
+                        freezeOrder={backendWindowDirty}
                       />
                     )}
                   </div>
