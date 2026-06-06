@@ -493,16 +493,10 @@ function ProductOptionsSection() {
       title: "CoCalc Star",
     },
     {
-      body: "Use the operator control-plane bundle for custom self-hosted deployment work.",
-      icon: "rocket",
-      tag: "Operator",
-      title: "Launchpad",
-    },
-    {
-      body: "Step up to production multi-bay deployments for organizations with more active users.",
+      body: "Use Launchpad or Rocket for operator-managed deployments, custom hosts, and production scale.",
       icon: "servers",
-      tag: "Enterprise",
-      title: "Rocket",
+      tag: "Operators",
+      title: "Launchpad + Rocket",
     },
   ] satisfies {
     body: string;

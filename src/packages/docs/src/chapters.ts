@@ -105,6 +105,13 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
     workflows: ["Host setup", "Lifecycle", "Storage"],
   },
   {
+    category: "Self Hosting",
+    startEntryId: "self-hosting.cocalc-star",
+    summary:
+      "Run CoCalc Star on a public VM with automatic HTTPS, local project hosting, and guided first-admin setup.",
+    workflows: ["CoCalc Star", "Public VM", "HTTPS"],
+  },
+  {
     category: "Collaboration",
     startEntryId: "collaboration.chat",
     summary:

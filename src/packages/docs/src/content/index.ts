@@ -13,6 +13,7 @@ export * from "./files";
 export * from "./hosts";
 export * from "./jupyter";
 export * from "./projects";
+export * from "./self-hosting";
 export * from "./teaching";
 export * from "./terminal";
 export * from "./troubleshooting";
