@@ -571,6 +571,58 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.get("visible-project")).toBeUndefined();
   });
 
+  it("does not reload a dirty matching backend project list window unless forced", async () => {
+    projectListWindow = ImmutableMap({
+      key: JSON.stringify({
+        limit: 200,
+        offset: 0,
+        hidden: false,
+        search: "",
+        sort: "last_edited",
+      }),
+      project_ids: ["stable-project"],
+      loading: false,
+      dirty: true,
+      dirty_count: 1,
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn(),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    await actions.loadProjectListWindowForCurrentAccount();
+
+    expect(
+      mockedWebappClient.conat_client.hub.projects.listAccountProjectWindow,
+    ).not.toHaveBeenCalled();
+
+    mockedWebappClient.conat_client.hub.projects.listAccountProjectWindow.mockResolvedValueOnce(
+      [],
+    );
+    await actions.loadProjectListWindowForCurrentAccount({ force: true });
+
+    expect(
+      mockedWebappClient.conat_client.hub.projects.listAccountProjectWindow,
+    ).toHaveBeenCalledWith({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: undefined,
+      sort: "last_edited",
+    });
+  });
+
   it("marks the backend project window dirty when feed upsert may change ordering", async () => {
     projectMap = ImmutableMap<string, any>([
       [

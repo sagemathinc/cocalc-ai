@@ -1133,12 +1133,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     hidden = false,
     search,
     sort = "last_edited",
+    force = false,
   }: {
     limit?: number;
     offset?: number;
     hidden?: boolean;
     search?: string;
     sort?: AccountProjectListWindowSort;
+    force?: boolean;
   } = {}): Promise<void> {
     const account_id = this.getAccountId();
     if (!account_id || !webapp_client.is_signed_in()) {
@@ -1153,6 +1155,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
       sort,
     });
     const previousWindow = store.get("project_list_window");
+    if (
+      !force &&
+      readMaybeImmutable(previousWindow, "key") === key &&
+      readMaybeImmutable(previousWindow, "dirty")
+    ) {
+      return;
+    }
     const previousProjectIds =
       readMaybeImmutable(previousWindow, "project_ids") ?? [];
     this.setState({

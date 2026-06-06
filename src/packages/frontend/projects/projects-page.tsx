@@ -275,7 +275,10 @@ export const ProjectsPage: React.FC = () => {
   function refreshBackendWindow() {
     void redux
       .getActions("projects")
-      ?.loadProjectListWindowForCurrentAccount?.(backendWindowQuery);
+      ?.loadProjectListWindowForCurrentAccount?.({
+        ...backendWindowQuery,
+        force: true,
+      });
   }
 
   useEffect(() => {
@@ -550,6 +553,9 @@ export const ProjectsPage: React.FC = () => {
                       visible_projects={visible_projects}
                       searchRef={searchRef}
                       filtersRef={filtersRef}
+                      projectListChanged={backendWindowDirty}
+                      projectListChangedCount={backendWindowDirtyCount}
+                      onRefreshProjectList={refreshBackendWindow}
                       tour={
                         <ProjectsPageTour
                           searchRef={searchRef}
@@ -563,27 +569,7 @@ export const ProjectsPage: React.FC = () => {
                     />
                   </div>
                   {/* Bulk Operations (when filters active) */}
-                  <div ref={operationsRef} style={{ position: "relative" }}>
-                    {backendWindowDirty && (
-                      <Button
-                        size="small"
-                        onClick={refreshBackendWindow}
-                        style={{
-                          background: COLORS.GRAY_LLL,
-                          borderRadius: "999px",
-                          position: "absolute",
-                          right: 0,
-                          top: "-4px",
-                          zIndex: 1,
-                        }}
-                      >
-                        Project list changed
-                        {backendWindowDirtyCount > 1
-                          ? ` (${backendWindowDirtyCount} updates)`
-                          : ""}{" "}
-                        - Refresh
-                      </Button>
-                    )}
+                  <div ref={operationsRef}>
                     <ProjectsOperations
                       visible_projects={visible_projects}
                       selected_project_ids={selectedProjectIds}

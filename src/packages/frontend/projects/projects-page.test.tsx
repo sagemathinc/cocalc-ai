@@ -119,7 +119,20 @@ jest.mock("./mobile-projects-list", () => ({
 }));
 
 jest.mock("./projects-table-controls", () => ({
-  ProjectsTableControls: () => <div data-testid="projects-table-controls" />,
+  ProjectsTableControls: ({
+    onRefreshProjectList,
+    projectListChanged,
+    projectListChangedCount,
+  }: any) => (
+    <div data-testid="projects-table-controls">
+      {projectListChanged && (
+        <button type="button" onClick={onRefreshProjectList}>
+          Refresh
+          {projectListChangedCount > 1 ? ` (${projectListChangedCount})` : ""}
+        </button>
+      )}
+    </div>
+  ),
 }));
 
 jest.mock("./project-drawer", () => ({
@@ -279,11 +292,7 @@ test("projects page shows explicit refresh for dirty backend window", () => {
 
   render(<ProjectsPage />);
 
-  expect(
-    screen.getByRole("button", {
-      name: /Project list changed \(3 updates\) - Refresh/,
-    }),
-  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Refresh (3)" })).toBeVisible();
   expect(screen.getByTestId("projects-table")).toHaveAttribute(
     "data-visible-projects",
     JSON.stringify(["backend-project-1", "backend-project-2"]),
@@ -292,17 +301,14 @@ test("projects page shows explicit refresh for dirty backend window", () => {
     "data-freeze-order",
     "true",
   );
-  fireEvent.click(
-    screen.getByRole("button", {
-      name: /Project list changed \(3 updates\) - Refresh/,
-    }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Refresh (3)" }));
   expect(mockLoadProjectListWindow).toHaveBeenCalledWith({
     limit: 200,
     offset: 0,
     hidden: false,
     search: "",
     sort: "last_edited",
+    force: true,
   });
 });
 

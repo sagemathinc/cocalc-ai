@@ -202,6 +202,7 @@ export function ProjectsTable({
 
   return (
     <Table<ProjectTableRecord>
+      key={freezeOrder ? "frozen-order" : "sortable-order"}
       virtual
       size="small"
       columns={columns}
