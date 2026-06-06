@@ -180,6 +180,24 @@ export const ProjectsPage: React.FC = () => {
   }, [visibleProjectionRepairKey]);
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      // This backend window is a convergence aid: it refreshes the same top
+      // slice the user is likely looking at without replacing the richer local
+      // search/filter semantics used for rendering.
+      void redux
+        .getActions("projects")
+        ?.loadProjectListWindowForCurrentAccount?.({
+          limit: VISIBLE_WINDOW_REPAIR_LIMIT,
+          offset: 0,
+          hidden,
+          search,
+          sort: "last_edited",
+        });
+    }, VISIBLE_WINDOW_REPAIR_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [hidden, search]);
+
+  useEffect(() => {
     const visible = new Set(visible_projects);
     const scheduled = new Set(scheduledDeleteProjectIds);
     setSelectedProjectIds((ids) =>
