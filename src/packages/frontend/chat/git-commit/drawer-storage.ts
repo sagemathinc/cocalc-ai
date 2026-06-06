@@ -11,6 +11,7 @@ const DRAWER_SIZE_STORAGE_KEY = "cocalc:chat:gitCommitDrawerSize";
 const DRAWER_SCROLL_STORAGE_KEY = "cocalc:chat:gitCommitDrawerScroll:v1";
 const ONLY_UNREVIEWED_STORAGE_KEY =
   "cocalc:chat:gitCommitDrawer:onlyUnreviewed";
+const COMMIT_SEARCH_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:commitSearch";
 const MAX_DRAWER_SCROLL_ENTRIES = 50;
 const DEFAULT_DRAWER_SIZE = 920;
 const MIN_DRAWER_SIZE = 520;
@@ -54,6 +55,22 @@ export function readGitReviewOnlyUnreviewedPreference(): boolean {
 export function persistGitReviewOnlyUnreviewedPreference(value: boolean): void {
   try {
     localStorage.setItem(ONLY_UNREVIEWED_STORAGE_KEY, value ? "true" : "false");
+  } catch {
+    // ignore
+  }
+}
+
+export function readGitReviewCommitSearchPreference(): string {
+  try {
+    return localStorage.getItem(COMMIT_SEARCH_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function persistGitReviewCommitSearchPreference(value: string): void {
+  try {
+    localStorage.setItem(COMMIT_SEARCH_STORAGE_KEY, value);
   } catch {
     // ignore
   }

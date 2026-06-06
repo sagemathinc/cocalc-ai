@@ -49,6 +49,8 @@ import {
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
+  readGitReviewCommitSearchPreference,
+  persistGitReviewCommitSearchPreference,
   readGitReviewOnlyUnreviewedPreference,
   persistGitReviewOnlyUnreviewedPreference,
   shouldDisplayGitCommitData,
@@ -1919,6 +1921,16 @@ describe("git commit drawer merge commit formatting", () => {
 
     persistGitReviewOnlyUnreviewedPreference(false);
     expect(readGitReviewOnlyUnreviewedPreference()).toBe(false);
+  });
+
+  it("persists the git review commit search preference globally", () => {
+    expect(readGitReviewCommitSearchPreference()).toBe("");
+
+    persistGitReviewCommitSearchPreference("quota");
+    expect(readGitReviewCommitSearchPreference()).toBe("quota");
+
+    persistGitReviewCommitSearchPreference("");
+    expect(readGitReviewCommitSearchPreference()).toBe("");
   });
 
   it("keeps the currently selected reviewed commit visible under the unreviewed filter", () => {

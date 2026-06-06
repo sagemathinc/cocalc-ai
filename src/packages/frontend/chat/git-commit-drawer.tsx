@@ -68,11 +68,13 @@ import {
 } from "./git-commit/diff-lines";
 import {
   clampDrawerSize,
+  persistGitReviewCommitSearchPreference,
   persistGitReviewOnlyUnreviewedPreference,
   persistDrawerScrollPosition,
   persistDrawerSize,
   readDrawerScrollPosition,
   readDrawerSize,
+  readGitReviewCommitSearchPreference,
   readGitReviewOnlyUnreviewedPreference,
 } from "./git-commit/drawer-storage";
 import {
@@ -159,6 +161,8 @@ export {
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
+  readGitReviewCommitSearchPreference,
+  persistGitReviewCommitSearchPreference,
   readGitReviewOnlyUnreviewedPreference,
   persistGitReviewOnlyUnreviewedPreference,
 };
@@ -470,7 +474,9 @@ export function GitCommitDrawer({
       incomingRequestToken: commitSelectionRequestToken,
       appliedRequestToken: appliedCommitSelectionRequestToken,
     });
-  const [commitSearch, setCommitSearch] = useState("");
+  const [commitSearch, setCommitSearch] = useState(
+    readGitReviewCommitSearchPreference,
+  );
   const [diffFindQuery, setDiffFindQuery] = useState("");
   const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
     useState<number>(-1);
@@ -612,7 +618,6 @@ export function GitCommitDrawer({
   ]);
 
   useEffect(() => {
-    setCommitSearch("");
     setDiffFindQuery("");
     setActiveDiffFindMatchIndex(-1);
     preserveCommitSearchOnAutoClearRef.current = false;
@@ -632,6 +637,7 @@ export function GitCommitDrawer({
       });
       preserveCommitSearchOnAutoClearRef.current =
         resolved.preserveSearchOnAutoClear;
+      persistGitReviewCommitSearchPreference(resolved.search);
       return resolved.search;
     });
   }, []);
