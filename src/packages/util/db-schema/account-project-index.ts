@@ -36,6 +36,7 @@ Table({
           last_activity_at: null,
           last_opened_at: null,
           is_hidden: false,
+          deletion_protection: false,
           sort_key: null,
           updated_at: null,
         },
@@ -98,6 +99,10 @@ Table({
     is_hidden: {
       type: "boolean",
       desc: "Whether this account has hidden the project in list views.",
+    },
+    deletion_protection: {
+      type: "boolean",
+      desc: "Projected project-level deletion protection, used by all browser sessions before attempting destructive project deletion.",
     },
     sort_key: {
       type: "timestamp",

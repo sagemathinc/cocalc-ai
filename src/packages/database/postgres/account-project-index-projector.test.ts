@@ -45,10 +45,10 @@ describe("account_project_index projector", () => {
     await getPool().query(
       `INSERT INTO projects
         (project_id, title, description, users, state, host_id, owning_bay_id,
-         created, last_edited, last_backup, last_active)
+         created, last_edited, last_backup, last_active, deletion_protection)
        VALUES
         ($1, 'Projected Project', 'from outbox',
-         $2::JSONB, $3::JSONB, $4, $5, $6, $7, $8, $9::JSONB)`,
+         $2::JSONB, $3::JSONB, $4, $5, $6, $7, $8, $9::JSONB, TRUE)`,
       [
         PROJECT_ID,
         JSON.stringify({
@@ -206,7 +206,7 @@ describe("account_project_index projector", () => {
 
     const firstRows = await getPool().query(
       `SELECT account_id, project_id, owning_bay_id, host_id, title, description,
-              is_hidden, last_opened_at, last_edited, last_backup
+              is_hidden, deletion_protection, last_opened_at, last_edited, last_backup
          FROM account_project_index
         ORDER BY account_id`,
       [],
@@ -220,6 +220,7 @@ describe("account_project_index projector", () => {
         title: "Projected Project",
         description: "from outbox",
         is_hidden: false,
+        deletion_protection: true,
         last_opened_at: null,
         last_edited: new Date("2026-04-03T23:10:00.000Z"),
         last_backup: new Date("2026-04-03T23:10:00.000Z"),
@@ -270,7 +271,7 @@ describe("account_project_index projector", () => {
     });
 
     const updatedRows = await getPool().query(
-      `SELECT account_id, last_opened_at, state_summary
+      `SELECT account_id, last_opened_at, state_summary, deletion_protection
          FROM account_project_index
         WHERE project_id = $1`,
       [PROJECT_ID],
@@ -280,6 +281,7 @@ describe("account_project_index projector", () => {
         account_id: ACCOUNT_LOCAL,
         last_opened_at: new Date("2026-04-03T23:45:00.000Z"),
         state_summary: { state: "stopped" },
+        deletion_protection: true,
       },
     ]);
 

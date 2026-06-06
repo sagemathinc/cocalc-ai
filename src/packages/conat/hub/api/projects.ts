@@ -599,6 +599,7 @@ export interface AccountProjectListWindowRow {
   host_id: string | null;
   owning_bay_id: string;
   is_hidden: boolean;
+  deletion_protection: boolean;
   state_summary: Record<string, any>;
   users_summary: Record<string, any>;
   last_activity_at: Date | string | null;

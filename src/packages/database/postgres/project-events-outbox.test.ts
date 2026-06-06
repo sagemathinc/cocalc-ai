@@ -41,10 +41,10 @@ describe("project events outbox", () => {
     await getPool().query(
       `INSERT INTO projects
         (project_id, title, description, users, state, host_id, owning_bay_id,
-         created, last_edited, last_active)
+         created, last_edited, last_active, deletion_protection)
        VALUES
         ($1, 'Phase 2 Project', 'seeded for projector',
-         $2::JSONB, $3::JSONB, $4, $5, NOW(), NOW(), $6::JSONB)`,
+         $2::JSONB, $3::JSONB, $4, $5, NOW(), NOW(), $6::JSONB, TRUE)`,
       [
         PROJECT_ID,
         JSON.stringify({
@@ -74,6 +74,7 @@ describe("project events outbox", () => {
         [ACCOUNT_ID]: { group: "owner" },
       },
       state_summary: { state: "running" },
+      deletion_protection: true,
       deleted: false,
     });
 
@@ -107,6 +108,7 @@ describe("project events outbox", () => {
             [ACCOUNT_ID]: { group: "owner" },
           },
           state_summary: { state: "running" },
+          deletion_protection: true,
           deleted: false,
         }),
         published_at: null,

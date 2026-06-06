@@ -31,6 +31,7 @@ export interface AccountProjectIndexProjectListRow {
   host_id: string | null;
   owning_bay_id: string;
   is_hidden: boolean;
+  deletion_protection: boolean;
   state_summary: Record<string, any>;
   users_summary: Record<string, any>;
   last_activity_at: Date | null;
@@ -175,6 +176,7 @@ export async function listProjectedProjectsForAccount(opts: {
        host_id,
        COALESCE(NULLIF(BTRIM(owning_bay_id), ''), 'bay-0') AS owning_bay_id,
        COALESCE(is_hidden, FALSE) AS is_hidden,
+       COALESCE(deletion_protection, FALSE) AS deletion_protection,
        COALESCE(state_summary, '{}'::JSONB) AS state_summary,
        COALESCE(users_summary, '{}'::JSONB) AS users_summary,
        last_activity_at,
@@ -336,6 +338,7 @@ export async function rebuildAccountProjectIndex(opts: {
           last_activity_at,
           last_opened_at,
           is_hidden,
+          deletion_protection,
           sort_key,
           updated_at
         )
@@ -357,6 +360,7 @@ export async function rebuildAccountProjectIndex(opts: {
             (users #>> ARRAY[$1::TEXT, 'hide']::TEXT[])::BOOLEAN,
             FALSE
           ) AS is_hidden,
+          COALESCE(deletion_protection, FALSE) AS deletion_protection,
           COALESCE(
             (last_active #>> ARRAY[$1::TEXT]::TEXT[])::TIMESTAMP,
             last_edited,

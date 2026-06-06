@@ -27,6 +27,7 @@ describe("project account list window API", () => {
         host_id: null,
         owning_bay_id: "bay-0",
         is_hidden: false,
+        deletion_protection: false,
         state_summary: {},
         users_summary: {},
         last_activity_at: null,
