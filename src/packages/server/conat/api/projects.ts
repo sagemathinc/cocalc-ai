@@ -119,6 +119,8 @@ import type {
   ImportPublicPathResult,
   PublicPathInspectionResult,
   AccountRuntimeSponsorStatus,
+  AccountProjectListWindowRow,
+  AccountProjectListWindowSort,
   ProjectActiveOperationSummary,
   ProjectCopyDestination,
   ProjectCopyRow,
@@ -144,6 +146,7 @@ import type {
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
+import { listProjectedProjectsForAccount } from "@cocalc/database/postgres/account-project-index";
 import { validateProjectEnv } from "@cocalc/util/project-secrets";
 import {
   copyProjectSecrets as copyProjectSecretsInDb,
@@ -216,6 +219,7 @@ import {
 // inherit the short default Conat request timeout.
 const PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 const PROJECT_MOVE_RUNTIME_SLOT_TTL_MS = 8 * 60 * 60 * 1000;
+const ACCOUNT_PROJECT_LIST_WINDOW_MAX_LIMIT = 500;
 
 async function enrichRuntimeSponsorDenial({
   denial,
@@ -1513,6 +1517,66 @@ export async function getAccountRuntimeSponsorStatus({
     can_upgrade: true,
     can_change_sponsor: false,
   };
+}
+
+function normalizeProjectListWindowLimit(limit?: number): number {
+  if (limit == null) {
+    return 50;
+  }
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw Error("limit must be a positive integer");
+  }
+  return Math.min(limit, ACCOUNT_PROJECT_LIST_WINDOW_MAX_LIMIT);
+}
+
+function normalizeProjectListWindowOffset(offset?: number): number {
+  if (offset == null) {
+    return 0;
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw Error("offset must be a nonnegative integer");
+  }
+  return offset;
+}
+
+function normalizeProjectListWindowSort(
+  sort?: AccountProjectListWindowSort,
+): AccountProjectListWindowSort {
+  switch (sort) {
+    case undefined:
+      return "last_edited";
+    case "last_edited":
+    case "title":
+    case "state":
+      return sort;
+    default:
+      throw Error(`unsupported project list sort '${sort}'`);
+  }
+}
+
+export async function listAccountProjectWindow({
+  account_id,
+  limit,
+  offset,
+  hidden,
+  search,
+  sort,
+}: {
+  account_id: string;
+  limit?: number;
+  offset?: number;
+  hidden?: boolean;
+  search?: string;
+  sort?: AccountProjectListWindowSort;
+}): Promise<AccountProjectListWindowRow[]> {
+  return await listProjectedProjectsForAccount({
+    account_id,
+    limit: normalizeProjectListWindowLimit(limit),
+    offset: normalizeProjectListWindowOffset(offset),
+    include_hidden: !!hidden,
+    search,
+    sort: normalizeProjectListWindowSort(sort),
+  });
 }
 
 export async function getCourseStudentAccess({

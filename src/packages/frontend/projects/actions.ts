@@ -29,6 +29,10 @@ import type {
   ProjectTheme,
   StudentProjectFunctionality,
 } from "@cocalc/util/db-schema/projects";
+import type {
+  AccountProjectListWindowRow,
+  AccountProjectListWindowSort,
+} from "@cocalc/conat/hub/api/projects";
 import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
 import { switch_to_project } from "./table";
@@ -133,23 +137,34 @@ export function buildProjectRecordFromFeedRow(
   return record;
 }
 
-type ProjectIndexBootstrapRow = {
+type ProjectIndexBootstrapRow = AccountProjectListWindowRow & {
   account_id?: string | null;
-  project_id: string;
-  owning_bay_id?: string | null;
-  host_id?: string | null;
-  title?: string | null;
-  description?: string | null;
-  theme?: Record<string, any> | null;
-  users_summary?: Record<string, any> | null;
-  state_summary?: Record<string, any> | null;
-  last_edited?: string | Date | null;
-  last_backup?: string | Date | null;
-  last_activity_at?: string | Date | null;
-  sort_key?: string | Date | null;
-  updated_at?: string | Date | null;
-  is_hidden?: boolean | null;
 };
+
+function buildProjectRecordFromProjectIndexRow({
+  row,
+  account_id,
+}: {
+  row: ProjectIndexBootstrapRow;
+  account_id: string;
+}): Map<string, any> {
+  return buildProjectRecordFromFeedRow({
+    project_id: row.project_id,
+    title: row.title ?? "",
+    description: row.description ?? "",
+    theme: row.theme ?? null,
+    host_id: row.host_id ?? null,
+    owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
+    users: row.users_summary ?? {},
+    state: row.state_summary ?? {},
+    last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
+    last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
+    last_active:
+      row.last_activity_at == null
+        ? {}
+        : { [account_id]: row.last_activity_at },
+  });
+}
 
 export type ProjectProjectionRepairReason =
   | "write-ack"
@@ -697,6 +712,89 @@ export class ProjectsActions extends Actions<ProjectsState> {
     );
   }
 
+  private mergeProjectedProjectIndexRow({
+    project_map,
+    row,
+    account_id,
+    markProjectionOnlyForNewRows,
+  }: {
+    project_map: Map<string, any>;
+    row: ProjectIndexBootstrapRow;
+    account_id: string;
+    markProjectionOnlyForNewRows: boolean;
+  }): Map<string, any> {
+    const hadProject = project_map.has(row.project_id);
+    const currentProject =
+      project_map.get(row.project_id) ?? Map<string, any>();
+    const currentHostId = currentProject.get("host_id");
+    const projectedRecord = buildProjectRecordFromProjectIndexRow({
+      row,
+      account_id,
+    });
+    let nextProject = currentProject.mergeDeep(projectedRecord);
+    if (
+      typeof currentHostId === "string" &&
+      currentHostId &&
+      this.shouldPreserveLocalHostIdAfterMove({
+        project_id: row.project_id,
+        current_host_id: currentHostId,
+        incoming_host_id:
+          typeof row.host_id === "string" && row.host_id
+            ? row.host_id
+            : undefined,
+        incoming_updated_at: row.updated_at ?? row.sort_key,
+      })
+    ) {
+      nextProject = nextProject.set("host_id", currentHostId);
+    }
+    if (
+      this.shouldPreserveNewerLocalState({
+        project_id: row.project_id,
+        currentProject,
+        incomingState: row.state_summary ?? undefined,
+      })
+    ) {
+      nextProject = nextProject.set("state", currentProject.get("state"));
+    }
+    if (
+      this.shouldPreserveNewerLocalLastEdited({
+        currentProject,
+        incomingLastEdited: row.last_edited ?? undefined,
+      })
+    ) {
+      nextProject = nextProject.set(
+        "last_edited",
+        currentProject.get("last_edited"),
+      );
+    }
+    if (
+      this.shouldPreserveNewerLocalLastBackup({
+        currentProject,
+        incomingLastBackup: row.last_backup ?? undefined,
+      })
+    ) {
+      nextProject = nextProject.set(
+        "last_backup",
+        currentProject.get("last_backup"),
+      );
+    }
+    nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
+    if (
+      currentProject.get(PROJECTION_ONLY_FIELD) === true ||
+      (markProjectionOnlyForNewRows && !hadProject)
+    ) {
+      nextProject = nextProject.set(PROJECTION_ONLY_FIELD, true);
+    } else {
+      nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
+    }
+    this.releaseRoutingIfCurrentAccountRegainedMembership({
+      project_id: row.project_id,
+      currentProject,
+      nextProject,
+    });
+    return project_map.set(row.project_id, nextProject);
+  }
+
   public async repairProjectProjection(
     request: ProjectProjectionRepairRequest,
   ): Promise<void> {
@@ -818,88 +916,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
           continue;
         }
         seenProjectedIds.add(row.project_id);
-        const hadProject = project_map.has(row.project_id);
-        const currentProject =
-          project_map.get(row.project_id) ?? Map<string, any>();
-        const currentHostId = currentProject.get("host_id");
-        const projectedRecord = buildProjectRecordFromFeedRow({
-          project_id: row.project_id,
-          title: row.title ?? "",
-          description: row.description ?? "",
-          theme: row.theme ?? null,
-          host_id: row.host_id ?? null,
-          owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
-          users: row.users_summary ?? {},
-          state: row.state_summary ?? {},
-          last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
-          last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
-          last_active:
-            row.last_activity_at == null
-              ? {}
-              : { [account_id]: row.last_activity_at },
+        project_map = this.mergeProjectedProjectIndexRow({
+          project_map,
+          row,
+          account_id,
+          markProjectionOnlyForNewRows: true,
         });
-        let nextProject = currentProject.mergeDeep(projectedRecord);
-        if (
-          typeof currentHostId === "string" &&
-          currentHostId &&
-          this.shouldPreserveLocalHostIdAfterMove({
-            project_id: row.project_id,
-            current_host_id: currentHostId,
-            incoming_host_id:
-              typeof row.host_id === "string" && row.host_id
-                ? row.host_id
-                : undefined,
-            incoming_updated_at: row.updated_at ?? row.sort_key,
-          })
-        ) {
-          nextProject = nextProject.set("host_id", currentHostId);
-        }
-        if (
-          this.shouldPreserveNewerLocalState({
-            project_id: row.project_id,
-            currentProject,
-            incomingState: row.state_summary ?? undefined,
-          })
-        ) {
-          nextProject = nextProject.set("state", currentProject.get("state"));
-        }
-        if (
-          this.shouldPreserveNewerLocalLastEdited({
-            currentProject,
-            incomingLastEdited: row.last_edited ?? undefined,
-          })
-        ) {
-          nextProject = nextProject.set(
-            "last_edited",
-            currentProject.get("last_edited"),
-          );
-        }
-        if (
-          this.shouldPreserveNewerLocalLastBackup({
-            currentProject,
-            incomingLastBackup: row.last_backup ?? undefined,
-          })
-        ) {
-          nextProject = nextProject.set(
-            "last_backup",
-            currentProject.get("last_backup"),
-          );
-        }
-        nextProject = this.mergeNewerLocalLastActive(
-          currentProject,
-          nextProject,
-        );
-        if (currentProject.get(PROJECTION_ONLY_FIELD) === true || !hadProject) {
-          nextProject = nextProject.set(PROJECTION_ONLY_FIELD, true);
-        } else {
-          nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
-        }
-        this.releaseRoutingIfCurrentAccountRegainedMembership({
-          project_id: row.project_id,
-          currentProject,
-          nextProject,
-        });
-        project_map = project_map.set(row.project_id, nextProject);
         changed = true;
       }
       for (const project_id of hiddenProjectedIds) {
@@ -1012,86 +1034,107 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
 
       let project_map = store.get("project_map") ?? Map<string, any>();
-      const currentProject = project_map.get(project_id) ?? Map<string, any>();
-      const currentHostId = currentProject.get("host_id");
-      const projectedRecord = buildProjectRecordFromFeedRow({
-        project_id: row.project_id,
-        title: row.title ?? "",
-        description: row.description ?? "",
-        theme: row.theme ?? null,
-        host_id: row.host_id ?? null,
-        owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
-        users: row.users_summary ?? {},
-        state: row.state_summary ?? {},
-        last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
-        last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
-        last_active:
-          row.last_activity_at == null
-            ? {}
-            : { [account_id]: row.last_activity_at },
+      project_map = this.mergeProjectedProjectIndexRow({
+        project_map,
+        row,
+        account_id,
+        markProjectionOnlyForNewRows: false,
       });
-      let nextProject = currentProject.mergeDeep(projectedRecord);
-      if (
-        typeof currentHostId === "string" &&
-        currentHostId &&
-        this.shouldPreserveLocalHostIdAfterMove({
-          project_id,
-          current_host_id: currentHostId,
-          incoming_host_id:
-            typeof row.host_id === "string" && row.host_id
-              ? row.host_id
-              : undefined,
-          incoming_updated_at: row.updated_at ?? row.sort_key,
-        })
-      ) {
-        nextProject = nextProject.set("host_id", currentHostId);
-      }
-      if (
-        this.shouldPreserveNewerLocalState({
-          project_id,
-          currentProject,
-          incomingState: row.state_summary ?? undefined,
-        })
-      ) {
-        nextProject = nextProject.set("state", currentProject.get("state"));
-      }
-      if (
-        this.shouldPreserveNewerLocalLastEdited({
-          currentProject,
-          incomingLastEdited: row.last_edited ?? undefined,
-        })
-      ) {
-        nextProject = nextProject.set(
-          "last_edited",
-          currentProject.get("last_edited"),
-        );
-      }
-      if (
-        this.shouldPreserveNewerLocalLastBackup({
-          currentProject,
-          incomingLastBackup: row.last_backup ?? undefined,
-        })
-      ) {
-        nextProject = nextProject.set(
-          "last_backup",
-          currentProject.get("last_backup"),
-        );
-      }
-      nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
-      if (currentProject.get(PROJECTION_ONLY_FIELD) === true) {
-        nextProject = nextProject.set(PROJECTION_ONLY_FIELD, true);
-      } else {
-        nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
-      }
-      this.releaseRoutingIfCurrentAccountRegainedMembership({
-        project_id,
-        currentProject,
-        nextProject,
-      });
-      project_map = project_map.set(project_id, nextProject);
       this.setState({ project_map } as ProjectsState);
     },
   );
+
+  public async loadProjectListWindowForCurrentAccount({
+    limit = 200,
+    offset = 0,
+    hidden = false,
+    search,
+    sort = "last_edited",
+  }: {
+    limit?: number;
+    offset?: number;
+    hidden?: boolean;
+    search?: string;
+    sort?: AccountProjectListWindowSort;
+  } = {}): Promise<void> {
+    const account_id = this.getAccountId();
+    if (!account_id || !webapp_client.is_signed_in()) {
+      return;
+    }
+    const normalizedSearch = `${search ?? ""}`.trim();
+    const key = JSON.stringify({
+      limit,
+      offset,
+      hidden,
+      search: normalizedSearch,
+      sort,
+    });
+    const previousWindow = store.get("project_list_window");
+    const previousProjectIds =
+      readMaybeImmutable(previousWindow, "project_ids") ?? [];
+    this.setState({
+      project_list_window: {
+        key,
+        project_ids: previousProjectIds,
+        loading: true,
+      },
+    } as ProjectsState);
+
+    let rows: AccountProjectListWindowRow[];
+    try {
+      rows =
+        await webapp_client.conat_client.hub.projects.listAccountProjectWindow({
+          limit,
+          offset,
+          hidden,
+          search: normalizedSearch || undefined,
+          sort,
+        });
+    } catch (err) {
+      this.setState({
+        project_list_window: {
+          key,
+          project_ids: previousProjectIds,
+          loading: false,
+          error: `${err}`,
+        },
+      } as ProjectsState);
+      recordProjectionRepairFailure({
+        consumer: "projects",
+        reason: "visible-window",
+        scope: {
+          table: "account_project_index",
+          window: { limit, offset, hidden, search: normalizedSearch, sort },
+        },
+        error: err,
+      });
+      return;
+    }
+
+    let project_map = store.get("project_map") ?? Map<string, any>();
+    const project_ids: string[] = [];
+    for (const row of rows as ProjectIndexBootstrapRow[]) {
+      if (!row?.project_id || row.is_hidden === true) {
+        continue;
+      }
+      project_ids.push(row.project_id);
+      project_map = this.mergeProjectedProjectIndexRow({
+        project_map,
+        row,
+        account_id,
+        markProjectionOnlyForNewRows: true,
+      });
+    }
+    this.setState({
+      project_map,
+      project_list_window: {
+        key,
+        project_ids,
+        loading: false,
+        loaded_at: new Date(),
+      },
+    } as ProjectsState);
+  }
 
   private async waitForProjectedProjectTheme(
     project_id: string,

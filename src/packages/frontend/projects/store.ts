@@ -67,6 +67,13 @@ export type ProjectMap = Map<string, Project>;
 export interface ProjectsState {
   project_map?: ProjectMap;
   open_projects: List<string>; // the opened projects in *tab* order
+  project_list_window?: {
+    key: string;
+    project_ids: string[];
+    loading: boolean;
+    loaded_at?: Date;
+    error?: string;
+  };
 
   search: string;
   hidden: boolean;

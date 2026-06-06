@@ -59,6 +59,11 @@ jest.mock("@cocalc/frontend/webapp-client", () => {
       releaseProjectHostRouting: jest.fn(),
       refreshProjectHostRouting: jest.fn(),
       reconnect: jest.fn(),
+      hub: {
+        projects: {
+          listAccountProjectWindow: jest.fn(async () => []),
+        },
+      },
     }),
   });
 
@@ -72,7 +77,13 @@ import { ProjectsActions } from "./actions";
 const mockedStore = store as jest.Mocked<typeof store>;
 const mockedWebappClient = webapp_client as unknown as EventEmitter & {
   is_signed_in: jest.Mock;
-  conat_client: EventEmitter;
+  conat_client: EventEmitter & {
+    hub: {
+      projects: {
+        listAccountProjectWindow: jest.Mock;
+      };
+    };
+  };
   async_query: jest.Mock;
 };
 const getSharedAccountDStreamMock = getSharedAccountDStream as jest.Mock;
@@ -395,6 +406,82 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-3", "title"])).toBe(
       "Stored Visible Project",
     );
+  });
+
+  it("loads a backend project list window and merges returned rows", async () => {
+    mockedWebappClient.conat_client.hub.projects.listAccountProjectWindow.mockResolvedValueOnce(
+      [
+        {
+          project_id: "project-window-1",
+          title: "Window Project",
+          description: "backend window",
+          theme: null,
+          host_id: "host-1",
+          owning_bay_id: "bay-0",
+          users_summary: {
+            "acct-1": { group: "owner" },
+          },
+          state_summary: { state: "running" },
+          last_activity_at: "2026-04-05T03:00:00.000Z",
+          last_edited: "2026-04-05T03:00:00.000Z",
+          last_backup: null,
+          sort_key: "2026-04-05T03:00:00.000Z",
+          updated_at: "2026-04-05T03:00:00.000Z",
+          is_hidden: false,
+        },
+      ],
+    );
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    await actions.loadProjectListWindowForCurrentAccount({
+      limit: 25,
+      offset: 50,
+      hidden: true,
+      search: "window",
+      sort: "title",
+    });
+
+    expect(
+      mockedWebappClient.conat_client.hub.projects.listAccountProjectWindow,
+    ).toHaveBeenCalledWith({
+      limit: 25,
+      offset: 50,
+      hidden: true,
+      search: "window",
+      sort: "title",
+    });
+    expect(projectMap.getIn(["project-window-1", "title"])).toBe(
+      "Window Project",
+    );
+    expect(projectMap.getIn(["project-window-1", "state", "state"])).toBe(
+      "running",
+    );
+    expect(redux._set_state.mock.lastCall?.[0]).toEqual({
+      projects: expect.objectContaining({
+        project_list_window: expect.objectContaining({
+          project_ids: ["project-window-1"],
+          loading: false,
+        }),
+      }),
+    });
   });
 
   it("replaces project users from realtime upserts instead of preserving removed members", async () => {
