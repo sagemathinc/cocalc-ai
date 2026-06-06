@@ -225,6 +225,7 @@ function projectRowForFeed(opts: {
     host_id: payload.host_id ?? null,
     owning_bay_id: normalizeBayId(payload.owning_bay_id),
     manage_users_owner_only: payload.manage_users_owner_only ?? null,
+    deletion_protection: payload.deletion_protection ?? null,
     users: payload.users_summary ?? {},
     state: payload.state_summary ?? {},
     last_active: payload.last_activity_by_account ?? {},
@@ -292,9 +293,9 @@ async function applyProjectEventToAccountProjectIndex(opts: {
       `INSERT INTO account_project_index
          (account_id, project_id, owning_bay_id, host_id, title, description,
           theme, users_summary, state_summary, last_edited, last_backup, last_activity_at,
-          last_opened_at, is_hidden, sort_key, updated_at)
+          last_opened_at, is_hidden, deletion_protection, sort_key, updated_at)
        VALUES
-         ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, $13, $14, $15, NOW())`,
+         ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, $13, $14, $15, $16, NOW())`,
       [
         account_id,
         payload.project_id,
@@ -310,6 +311,7 @@ async function applyProjectEventToAccountProjectIndex(opts: {
         last_activity_at,
         lastOpenedByAccount.get(account_id) ?? null,
         !!payload.users_summary?.[account_id]?.hide,
+        payload.deletion_protection === true,
         sortKeyForAccount(payload, account_id, event.created_at),
       ],
     );

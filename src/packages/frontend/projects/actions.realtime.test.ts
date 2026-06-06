@@ -174,6 +174,7 @@ describe("ProjectsActions realtime feed", () => {
           "acct-1": { group: "owner" },
         },
         state: { state: "running" },
+        deletion_protection: true,
         last_active: { "acct-1": "2026-04-05T03:00:00.000Z" },
         last_edited: "2026-04-05T03:00:00.000Z",
         deleted: false,
@@ -187,6 +188,7 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-1", "users", "acct-1", "group"])).toBe(
       "owner",
     );
+    expect(projectMap.getIn(["project-1", "deletion_protection"])).toBe(true);
     expect(projectMap.getIn(["project-1", "last_edited"])).toBeInstanceOf(Date);
   });
 
@@ -224,6 +226,7 @@ describe("ProjectsActions realtime feed", () => {
             last_backup: null,
             updated_at: "2026-04-05T03:00:00.000Z",
             is_hidden: false,
+            deletion_protection: true,
           },
         ],
       },
@@ -265,6 +268,7 @@ describe("ProjectsActions realtime feed", () => {
     });
     expect(projectMap.getIn(["project-1", "title"])).toBe("Targeted Project");
     expect(projectMap.getIn(["project-1", "state", "state"])).toBe("running");
+    expect(projectMap.getIn(["project-1", "deletion_protection"])).toBe(true);
   });
 
   it("repairs visible project window rows from explicit project ids", async () => {

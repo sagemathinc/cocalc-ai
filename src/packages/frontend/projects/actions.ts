@@ -123,6 +123,7 @@ export function buildProjectRecordFromFeedRow(
     manage_users_owner_only: row.manage_users_owner_only ?? null,
     users: row.users ?? {},
     state: row.state ?? {},
+    deletion_protection: row.deletion_protection === true,
   }) as Map<string, any>;
   record = record
     .set("last_edited", dateOrNull(row.last_edited))
@@ -149,6 +150,7 @@ type ProjectIndexBootstrapRow = {
   sort_key?: string | Date | null;
   updated_at?: string | Date | null;
   is_hidden?: boolean | null;
+  deletion_protection?: boolean | null;
 };
 
 export type ProjectProjectionRepairReason =
@@ -768,6 +770,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 sort_key: null,
                 updated_at: null,
                 is_hidden: null,
+                deletion_protection: null,
               },
             ],
           },
@@ -819,6 +822,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           state: row.state_summary ?? {},
           last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
           last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
+          deletion_protection: row.deletion_protection === true,
           last_active:
             row.last_activity_at == null
               ? {}
@@ -972,6 +976,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 sort_key: null,
                 updated_at: null,
                 is_hidden: null,
+                deletion_protection: null,
               },
             ],
           },
@@ -1011,6 +1016,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         state: row.state_summary ?? {},
         last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
         last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
+        deletion_protection: row.deletion_protection === true,
         last_active:
           row.last_activity_at == null
             ? {}

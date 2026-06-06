@@ -49,6 +49,7 @@ export interface AccountFeedProjectRow {
   host_id: string | null;
   owning_bay_id: string;
   manage_users_owner_only?: boolean | null;
+  deletion_protection?: boolean | null;
   users: Record<string, any>;
   state: Record<string, any>;
   last_active: Record<string, any>;

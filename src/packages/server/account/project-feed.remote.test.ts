@@ -50,6 +50,7 @@ describe("server/account/project-feed remote home-bay apply", () => {
         theme: null,
         host_id: HOST_ID,
         owning_bay_id: "bay-0",
+        deletion_protection: true,
         users: {
           [ACCOUNT_ID]: { group: "collaborator" },
         },
@@ -67,7 +68,8 @@ describe("server/account/project-feed remote home-bay apply", () => {
 
     await expect(
       getPool().query(
-        `SELECT project_id, owning_bay_id, host_id, title, description, is_hidden, last_edited, last_backup
+        `SELECT project_id, owning_bay_id, host_id, title, description,
+                is_hidden, deletion_protection, last_edited, last_backup
            FROM account_project_index
           WHERE account_id = $1`,
         [ACCOUNT_ID],
@@ -81,6 +83,7 @@ describe("server/account/project-feed remote home-bay apply", () => {
           title: "Shared Project",
           description: "available from another bay",
           is_hidden: false,
+          deletion_protection: true,
           last_edited: new Date("2026-04-08T23:20:00.000Z"),
           last_backup: new Date("2026-04-08T23:15:00.000Z"),
         },

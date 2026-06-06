@@ -79,6 +79,7 @@ function buildProjectFeedRow(opts: {
     host_id: payload.host_id ?? null,
     owning_bay_id: `${payload.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
     manage_users_owner_only: payload.manage_users_owner_only ?? null,
+    deletion_protection: payload.deletion_protection ?? null,
     users: payload.users_summary ?? {},
     state: payload.state_summary ?? {},
     last_active: payload.last_activity_by_account ?? {},
@@ -146,11 +147,11 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
     parseDate(event.project.last_active?.[event.account_id]) ?? null;
   await getPool().query(
     `INSERT INTO account_project_index
-       (account_id, project_id, owning_bay_id, host_id, title, description,
+      (account_id, project_id, owning_bay_id, host_id, title, description,
         theme, users_summary, state_summary, last_edited, last_backup, last_activity_at,
-        last_opened_at, is_hidden, sort_key, updated_at)
+        last_opened_at, is_hidden, deletion_protection, sort_key, updated_at)
      VALUES
-       ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, NULL, $13, $14, $15)
+       ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, NULL, $13, $14, $15, $16)
      ON CONFLICT (account_id, project_id)
      DO UPDATE SET
        owning_bay_id = EXCLUDED.owning_bay_id,
@@ -164,6 +165,7 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
        last_backup = EXCLUDED.last_backup,
        last_activity_at = EXCLUDED.last_activity_at,
        is_hidden = EXCLUDED.is_hidden,
+       deletion_protection = EXCLUDED.deletion_protection,
        sort_key = EXCLUDED.sort_key,
        updated_at = EXCLUDED.updated_at`,
     [
@@ -180,6 +182,7 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
       parseDate(event.project.last_backup) ?? null,
       last_activity_at,
       !!event.project.users?.[event.account_id]?.hide,
+      event.project.deletion_protection === true,
       sortKeyForFeedProject({
         project: event.project,
         account_id: event.account_id,
