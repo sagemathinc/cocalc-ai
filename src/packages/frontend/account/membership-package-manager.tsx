@@ -2396,10 +2396,6 @@ function SiteLicenseDashboard({
                         <Tag color="gold">{overviewRequests.length}</Tag>
                       </Space>
                     }
-                    style={{
-                      borderColor: COLORS.YELL_LL,
-                      background: COLORS.YELL_LLL,
-                    }}
                   >
                     <Space
                       orientation="vertical"
