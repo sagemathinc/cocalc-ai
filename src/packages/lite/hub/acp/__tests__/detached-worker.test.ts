@@ -200,6 +200,78 @@ describe("recoverDetachedWorkerStartupState", () => {
       )
       .run(Date.now() - 60_000, Date.now() - 60_000, queued.op_id);
 
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        generating: true,
+        history: [
+          {
+            author_id: "openai-codex-agent",
+            content: ":robot: Thinking...",
+            date: request.chat.message_date,
+          },
+        ],
+      },
+      {
+        event: "chat",
+        date: "2026-03-16T00:00:00.000Z",
+        sender_id: "user",
+        message_id: request.chat.parent_message_id,
+        thread_id: request.chat.thread_id,
+        history: [{ author_id: "user", content: "test", date: "now" }],
+      },
+      {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: "1970-01-01T00:00:00.000Z",
+        thread_id: request.chat.thread_id,
+        active_message_id: request.chat.message_id,
+        state: "running",
+      },
+    ];
+    const syncdb: any = {
+      isReady: () => true,
+      get: (where?: any) =>
+        where == null
+          ? rows
+          : rows.filter((row) =>
+              Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+            ),
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      delete: (where: any) => {
+        for (let i = rows.length - 1; i >= 0; i -= 1) {
+          if (Object.entries(where ?? {}).every(([k, v]) => rows[i][k] === v)) {
+            rows.splice(i, 1);
+          }
+        }
+      },
+      set: (val: any) => {
+        const idx = rows.findIndex((row) =>
+          row.message_id && val.message_id
+            ? row.message_id === val.message_id
+            : row.event === val.event &&
+              row.date === val.date &&
+              row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+
     await recoverDetachedWorkerStartupState({} as ConatClient, {
       restartReason: "worker restart",
     });
@@ -212,6 +284,20 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(after?.state).toBe("queued");
     expect(after?.worker_id ?? null).toBeNull();
     expect(after?.error).toBe("ACP worker stopped before turn startup");
+    const durableThreadState = syncdb.get_one({
+      event: "chat-thread-state",
+      thread_id: request.chat.thread_id,
+    });
+    expect(durableThreadState?.state).toBe("queued");
+    expect(durableThreadState?.active_message_id).toBe(
+      request.chat.parent_message_id,
+    );
+    expect(
+      syncdb.get_one({
+        event: "chat",
+        message_id: request.chat.parent_message_id,
+      })?.acp_state,
+    ).toBe("queued");
   });
 
   it("finalizes stale running jobs when the turn already ended", async () => {

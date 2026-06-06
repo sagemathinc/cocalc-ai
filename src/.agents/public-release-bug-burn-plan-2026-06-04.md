@@ -158,6 +158,8 @@ Estimate: `M`
 
 ### P0-C: Codex/ACP Failure State Durability
 
+Status: first recovery hardening slice fixed 2026-06-05.
+
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`
 
 Source items:
@@ -191,6 +193,19 @@ Exit criteria:
 
 - No released build can leave a dead turn in `Thinking...` indefinitely.
 - Activity log and main chat agree on final failure/interruption state.
+
+Implemented:
+
+- stale ACP jobs that were marked `running` but never created a live turn lease
+  are requeued on worker startup/recovery;
+- the same recovery now also updates the durable chat thread-state projection to
+  `queued` for the original user message, so the frontend does not keep showing
+  a stale durable `running` pointer for a dead worker-owned assistant turn;
+- focused detached-worker regression covers:
+  - a `running` backend job with no lease,
+  - a `Thinking...` assistant row,
+  - a durable `chat-thread-state` row still marked `running`,
+  - recovery rewriting the backend job and chat projection to queued.
 
 Estimate: `L`
 
