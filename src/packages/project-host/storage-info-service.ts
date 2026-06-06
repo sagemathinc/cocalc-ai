@@ -32,6 +32,7 @@ export const PROJECT_STORAGE_INFO_SUBJECT = "project.*.storage-info.-";
 export const PROJECT_STORAGE_HISTORY_STREAM_NAME = "project-storage-history";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 3 * 60_000;
+const PROJECT_STORAGE_STALE_CACHE_TTL_MS = 24 * 60 * 60_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
 const PROJECT_STORAGE_FORCE_SAMPLE_MIN_INTERVAL_MS = 60_000;
 const STORAGE_HISTORY_SAMPLE_INTERVAL_MS = 5 * 60_000;
@@ -44,6 +45,12 @@ const projectStorageOverviewCache = new TTL<string, ProjectStorageOverview>({
 });
 const projectStorageBreakdownCache = new TTL<string, ProjectStorageBreakdown>({
   ttl: PROJECT_STORAGE_CACHE_TTL_MS,
+});
+const projectStorageBreakdownStaleCache = new TTL<
+  string,
+  ProjectStorageBreakdown
+>({
+  ttl: PROJECT_STORAGE_STALE_CACHE_TTL_MS,
 });
 const projectStorageOverviewInflight = new Map<
   string,
@@ -202,6 +209,50 @@ function parseDuOutput(
         path: posix.relative(requestedPath, rowPath),
       })),
     collected_at: new Date().toISOString(),
+  };
+}
+
+function storageScanBudgetMessage(path: string): string {
+  return `Disk usage scan for '${path}' exceeded the quick-scan budget. Showing quota-based or cached usage so storage limits remain visible. Browse into a smaller folder for a detailed breakdown.`;
+}
+
+function isStorageScanBudgetError(err: unknown): boolean {
+  const message = `${err ?? ""}`.toLowerCase();
+  return (
+    message.includes("took too long") ||
+    message.includes("timed out") ||
+    message.includes("timeout")
+  );
+}
+
+function withScanFallbackMetadata(
+  breakdown: ProjectStorageBreakdown,
+  warning: string,
+): ProjectStorageBreakdown {
+  return {
+    ...breakdown,
+    estimated: true,
+    stale: true,
+    warning,
+  };
+}
+
+function estimatedStorageBreakdown({
+  path,
+  bytes,
+  warning,
+}: {
+  path: string;
+  bytes: number;
+  warning: string;
+}): ProjectStorageBreakdown {
+  return {
+    path,
+    bytes: Math.max(0, bytes),
+    children: [],
+    collected_at: new Date().toISOString(),
+    estimated: true,
+    warning,
   };
 }
 
@@ -473,11 +524,13 @@ async function getStorageBreakdownImpl({
   project_id,
   path,
   force_sample = false,
+  fallback_bytes,
 }: {
   client: Client;
   project_id: string;
   path: string;
   force_sample?: boolean;
+  fallback_bytes?: number;
 }): Promise<ProjectStorageBreakdown> {
   const normalizedPath = normalizeStoragePath(path);
   const cacheKey = storageBreakdownCacheKey({
@@ -491,30 +544,60 @@ async function getStorageBreakdownImpl({
   const inflight = projectStorageBreakdownInflight.get(cacheKey);
   if (inflight) return await inflight;
   const scan = (async () => {
-    const fs = localFs({ client, project_id });
-    const [hostPath, identityPath, output] = await Promise.all([
-      typeof fs.canonicalSyncFsPath === "function"
-        ? fs.canonicalSyncFsPath(normalizedPath).catch(() => normalizedPath)
-        : Promise.resolve(normalizedPath),
-      typeof fs.canonicalSyncIdentityPath === "function"
-        ? fs
-            .canonicalSyncIdentityPath(normalizedPath)
-            .catch(() => normalizedPath)
-        : Promise.resolve(normalizedPath),
-      fs.du(normalizedPath, {
-        // Use allocated bytes, not apparent/logical size. GNU du's
-        // --bytes/-b implies --apparent-size, which badly overstates sparse
-        // files such as PostgreSQL WAL archives.
-        options: ["-B", "1", "-x", "-d", "1"],
-        timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
-      }),
-    ]);
-    const breakdown = parseDuOutput(output, normalizedPath, [
-      identityPath,
-      hostPath,
-    ]);
-    projectStorageBreakdownCache.set(cacheKey, breakdown);
-    return breakdown;
+    try {
+      const fs = localFs({ client, project_id });
+      const [hostPath, identityPath, output] = await Promise.all([
+        typeof fs.canonicalSyncFsPath === "function"
+          ? fs.canonicalSyncFsPath(normalizedPath).catch(() => normalizedPath)
+          : Promise.resolve(normalizedPath),
+        typeof fs.canonicalSyncIdentityPath === "function"
+          ? fs
+              .canonicalSyncIdentityPath(normalizedPath)
+              .catch(() => normalizedPath)
+          : Promise.resolve(normalizedPath),
+        fs.du(normalizedPath, {
+          // Use allocated bytes, not apparent/logical size. GNU du's
+          // --bytes/-b implies --apparent-size, which badly overstates sparse
+          // files such as PostgreSQL WAL archives.
+          options: ["-B", "1", "-x", "-d", "1"],
+          timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
+        }),
+      ]);
+      const breakdown = parseDuOutput(output, normalizedPath, [
+        identityPath,
+        hostPath,
+      ]);
+      projectStorageBreakdownCache.set(cacheKey, breakdown);
+      projectStorageBreakdownStaleCache.set(cacheKey, breakdown);
+      return breakdown;
+    } catch (err) {
+      if (!isStorageScanBudgetError(err)) {
+        throw err;
+      }
+      const warning = storageScanBudgetMessage(normalizedPath);
+      const stale = projectStorageBreakdownStaleCache.get(cacheKey);
+      if (stale) {
+        logger.warn("getStorageBreakdown: using stale cached scan", {
+          project_id,
+          path: normalizedPath,
+          err,
+        });
+        return withScanFallbackMetadata(stale, warning);
+      }
+      if (fallback_bytes != null && Number.isFinite(fallback_bytes)) {
+        logger.warn("getStorageBreakdown: using quota-based scan estimate", {
+          project_id,
+          path: normalizedPath,
+          err,
+        });
+        return estimatedStorageBreakdown({
+          path: normalizedPath,
+          bytes: fallback_bytes,
+          warning,
+        });
+      }
+      throw err;
+    }
   })();
   projectStorageBreakdownInflight.set(cacheKey, scan);
   try {
@@ -586,35 +669,37 @@ async function getStorageOverviewImpl({
   const load = (async () => {
     const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
     const fileServer = fileServerClient(client);
-    const [quota, homeUsage, environmentUsage, sharedScratch] =
-      await Promise.all([
-        fileServer.getQuota({ project_id }),
-        getStorageBreakdownImpl({
-          client,
+    const [quota, sharedScratch] = await Promise.all([
+      fileServer.getQuota({ project_id }),
+      getSharedScratchSummary().catch((err) => {
+        logger.warn("getStorageOverview: unable to sample shared scratch", {
           project_id,
-          path: homePath,
-          force_sample: forced && forceAllowed,
-        }),
-        getStorageBreakdownImpl({
-          client,
-          project_id,
-          path: environmentPath,
-          force_sample: forced && forceAllowed,
-        }).catch((err) => {
-          const text = `${err ?? ""}`.toLowerCase();
-          if (text.includes("no such file") || text.includes("not found")) {
-            return null;
-          }
-          throw err;
-        }),
-        getSharedScratchSummary().catch((err) => {
-          logger.warn("getStorageOverview: unable to sample shared scratch", {
-            project_id,
-            err,
-          });
-          return undefined;
-        }),
-      ]);
+          err,
+        });
+        return undefined;
+      }),
+    ]);
+    const [homeUsage, environmentUsage] = await Promise.all([
+      getStorageBreakdownImpl({
+        client,
+        project_id,
+        path: homePath,
+        force_sample: forced && forceAllowed,
+        fallback_bytes: quota.used,
+      }),
+      getStorageBreakdownImpl({
+        client,
+        project_id,
+        path: environmentPath,
+        force_sample: forced && forceAllowed,
+      }).catch((err) => {
+        const text = `${err ?? ""}`.toLowerCase();
+        if (text.includes("no such file") || text.includes("not found")) {
+          return null;
+        }
+        throw err;
+      }),
+    ]);
 
     const environmentBytes = Math.max(0, environmentUsage?.bytes ?? 0);
     const liveBytes = Math.max(0, homeUsage.bytes);
@@ -627,6 +712,9 @@ async function getStorageOverviewImpl({
         path: homePath,
         summaryBytes: Math.max(0, liveBytes - environmentBytes),
         usage: homeUsage,
+        estimated: homeUsage.estimated,
+        stale: homeUsage.stale,
+        warning: homeUsage.warning,
       },
     ];
     if (environmentUsage != null) {
@@ -637,6 +725,9 @@ async function getStorageOverviewImpl({
         path: environmentPath,
         summaryBytes: environmentUsage.bytes,
         usage: environmentUsage,
+        estimated: environmentUsage.estimated,
+        stale: environmentUsage.stale,
+        warning: environmentUsage.warning,
       });
     }
 

@@ -453,6 +453,17 @@ Plan:
 
 Estimate: `M`
 
+Status: `implemented`
+
+- Project storage overview now keeps quota visibility available when a cold
+  live-file scan exceeds its quick-scan budget by falling back to quota-based
+  visible usage.
+- Successful live-file scans are retained as stale fallback data, so later
+  timeout/budget failures can still show the last detailed breakdown with an
+  explicit estimated/stale warning.
+- The storage UI surfaces estimated visible-storage buckets instead of showing a
+  blank/error-only overview.
+
 ### P1-C: Agents Panel Performance And State Retention
 
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`

@@ -12,6 +12,9 @@ export interface ProjectStorageBreakdown {
   bytes: number;
   children: { bytes: number; path: string }[];
   collected_at: string;
+  estimated?: boolean;
+  stale?: boolean;
+  warning?: string;
 }
 
 export interface ProjectStorageQuotaSummary {
@@ -31,6 +34,9 @@ export interface ProjectStorageVisibleSummary {
   path: string;
   summaryBytes: number;
   usage: ProjectStorageBreakdown;
+  estimated?: boolean;
+  stale?: boolean;
+  warning?: string;
 }
 
 export interface ProjectStorageLiveSummary {
