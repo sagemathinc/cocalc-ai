@@ -5,6 +5,7 @@ import {
   Divider,
   Drawer,
   InputNumber,
+  Modal,
   Popover,
   Popconfirm,
   Select,
@@ -1879,6 +1880,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     : "Deprovision this host?";
   const deleteOkText = deleteWithoutDeprovision ? "Delete" : "Deprovision";
   const deleteProtected = host.deletion_protection === true;
+  const deletionProtectionDescription =
+    "Deletion protection is enabled for this host. Turn it off in Host lifecycle settings before deleting or deprovisioning this host.";
+  const showDeletionProtectionModal = () => {
+    Modal.info({
+      title: "Deletion protection is enabled",
+      content: deletionProtectionDescription,
+      okText: "OK",
+    });
+  };
   const sharedScratchCard = (
     <Card size="small" title="Shared scratch disk">
       {hasSharedScratch ? (
@@ -2720,7 +2730,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   }
                 />
               </Space>
-              {deleteWithoutDeprovision ? (
+              {deleteProtected && deleteWithoutDeprovision ? (
+                <Popconfirm
+                  title="Deletion protection is enabled"
+                  description={deletionProtectionDescription}
+                  okText="OK"
+                  showCancel={false}
+                >
+                  <Button size="small" danger disabled={hostOpActive}>
+                    {deleteLabel}
+                  </Button>
+                </Popconfirm>
+              ) : deleteWithoutDeprovision ? (
                 <Popconfirm
                   title={deleteTitle}
                   okText={deleteOkText}
@@ -2731,7 +2752,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   <Button
                     size="small"
                     danger
-                    disabled={deleteProtected || hostOpActive || !onDelete}
+                    disabled={hostOpActive || !onDelete}
                   >
                     {deleteLabel}
                   </Button>
@@ -2740,14 +2761,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 <Button
                   size="small"
                   danger
-                  disabled={deleteProtected || hostOpActive || !onDelete}
-                  onClick={() =>
-                    onDelete &&
+                  disabled={hostOpActive || (!deleteProtected && !onDelete)}
+                  onClick={() => {
+                    if (deleteProtected) {
+                      showDeletionProtectionModal();
+                      return;
+                    }
+                    if (!onDelete) return;
                     confirmHostDeprovision({
                       host,
                       onConfirm: (opts) => onDelete(host.id, opts),
-                    })
-                  }
+                    });
+                  }}
                 >
                   {deleteLabel}
                 </Button>

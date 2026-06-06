@@ -1984,7 +1984,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
       | "allow_collaborator_starts_using_sponsor"
       | "allow_collaborator_destructive_storage_actions"
       | "autostart_enabled"
-      | "manage_users_owner_only",
+      | "manage_users_owner_only"
+      | "deletion_protection",
     value: boolean | undefined,
   ): void => {
     const project_map = store.get("project_map");
@@ -2259,6 +2260,44 @@ export class ProjectsActions extends Actions<ProjectsState> {
       project_id,
       autostart_enabled,
     });
+  };
+
+  set_project_deletion_protection = async (
+    project_id: string,
+    deletion_protection: boolean,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set deletion protection -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    const before = store.getIn([
+      "project_map",
+      project_id,
+      "deletion_protection",
+    ]) as boolean | undefined;
+    this.setProjectLocalBooleanField(
+      project_id,
+      "deletion_protection",
+      deletion_protection,
+    );
+    try {
+      await webapp_client.conat_client.hub.projects.setProjectDeletionProtection(
+        {
+          project_id,
+          enabled: deletion_protection,
+          browser_id: webapp_client.browser_id,
+        },
+      );
+    } catch (err) {
+      this.setProjectLocalBooleanField(
+        project_id,
+        "deletion_protection",
+        before,
+      );
+      throw err;
+    }
   };
 
   setProjectTheme = async (

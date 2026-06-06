@@ -66,13 +66,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
     setProtectionSaving(true);
     try {
       await runFreshAuthAction(async () => {
-        await webapp_client.conat_client.hub.projects.setProjectDeletionProtection(
-          {
-            project_id,
-            enabled,
-            browser_id: webapp_client.browser_id,
-          },
-        );
+        await actions.set_project_deletion_protection(project_id, enabled);
       });
     } catch (err) {
       setProtectionError(`${err}`);
