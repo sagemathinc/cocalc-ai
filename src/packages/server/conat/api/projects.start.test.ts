@@ -18,6 +18,7 @@ let interBayStartMock: jest.Mock;
 let interBayCheckStartAdmissionMock: jest.Mock;
 let projectControlBridgeMock: jest.Mock;
 let getNameMock: jest.Mock;
+let poolQueryMock: jest.Mock;
 
 async function flushBackgroundStartTask() {
   for (let i = 0; i < 6; i += 1) {
@@ -62,7 +63,9 @@ jest.mock("@cocalc/conat/files/file-server", () => ({
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: jest.fn() })),
+  default: jest.fn(() => ({
+    query: (...args: any[]) => poolQueryMock(...args),
+  })),
 }));
 
 jest.mock("@cocalc/database", () => ({
@@ -192,6 +195,7 @@ describe("projects.start", () => {
       source: "project-row",
     }));
     getNameMock = jest.fn(async () => "Runtime Sponsor");
+    poolQueryMock = jest.fn(async () => ({ rows: [{ "?column?": 1 }] }));
     interBayCheckStartAdmissionMock = jest.fn(async () => undefined);
     interBayStartMock = jest.fn(async () => undefined);
     projectControlBridgeMock = jest.fn(() => ({
@@ -290,6 +294,65 @@ describe("projects.start", () => {
 
     expect(interBayCheckStartAdmissionMock).not.toHaveBeenCalled();
     expect(createLroMock).not.toHaveBeenCalled();
+    expect(interBayStartMock).not.toHaveBeenCalled();
+  });
+
+  it("lets an assigned host start its project through the normal admission path", async () => {
+    const { startFromHost } = await import("./projects");
+
+    const response = await startFromHost({
+      host_id: "host-1",
+      account_id: "acct-1",
+      project_id: "proj-1",
+      autostart: true,
+      wait: false,
+    });
+
+    await flushBackgroundStartTask();
+
+    expect(response).toEqual({
+      op_id: "op-1",
+      scope_type: "project",
+      scope_id: "proj-1",
+      service: "persist-service",
+      stream_name: "stream:op-1",
+    });
+    expect(poolQueryMock).toHaveBeenCalledWith(
+      expect.stringContaining("projects.host_id=$2"),
+      ["proj-1", "host-1", "bay-0"],
+    );
+    expect(interBayCheckStartAdmissionMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      autostart: true,
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
+    expect(interBayStartMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      autostart: true,
+      lro_op_id: "op-1",
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
+  });
+
+  it("rejects host project starts when the project is not assigned to that host", async () => {
+    poolQueryMock = jest.fn(async () => ({ rows: [] }));
+    const { startFromHost } = await import("./projects");
+
+    await expect(
+      startFromHost({
+        host_id: "host-1",
+        account_id: "acct-1",
+        project_id: "proj-1",
+        wait: false,
+      }),
+    ).rejects.toThrow("project proj-1 is not assigned to host host-1");
+
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(interBayCheckStartAdmissionMock).not.toHaveBeenCalled();
     expect(interBayStartMock).not.toHaveBeenCalled();
   });
 

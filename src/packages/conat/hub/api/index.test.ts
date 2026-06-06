@@ -96,6 +96,36 @@ describe("hub API argument transforms", () => {
     ).rejects.toThrow("user must be signed in");
   });
 
+  it("allows host-authenticated project starts only through startFromHost", async () => {
+    const args = await transformArgs({
+      name: "projects.startFromHost",
+      args: [
+        {
+          account_id: "acct-1",
+          project_id: "project-1",
+          host_id: "spoofed-host",
+        },
+      ],
+      host_id: "host-1",
+    });
+
+    expect(args).toEqual([
+      {
+        account_id: "acct-1",
+        project_id: "project-1",
+        host_id: "host-1",
+      },
+    ]);
+
+    await expect(
+      transformArgs({
+        name: "projects.start",
+        args: [{ account_id: "acct-1", project_id: "project-1" }],
+        host_id: "host-1",
+      }),
+    ).rejects.toThrow("user must be signed in");
+  });
+
   it("requires account auth for name and local UI helpers without reshaping args", async () => {
     const cases = [
       {
