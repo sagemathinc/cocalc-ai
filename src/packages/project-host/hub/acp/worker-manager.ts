@@ -281,7 +281,7 @@ function workerControlStartupGraceExpired(
   return now - startedAt >= ACP_WORKER_CONTROL_STARTUP_GRACE_MS;
 }
 
-function workerDatabaseHeartbeatFresh(
+function workerDatabaseStateProtectsUnresponsiveWorker(
   worker: WorkerProcessInfo,
   now = Date.now(),
 ): boolean {
@@ -290,6 +290,7 @@ function workerDatabaseHeartbeatFresh(
   const row = getAcpWorker(worker_id);
   if (row == null || row.state === "stopped") return false;
   if (Number(row.pid ?? 0) !== worker.pid) return false;
+  if (Number(row.last_seen_running_jobs ?? 0) > 0) return true;
   const lastHeartbeatAt = Number(row.last_heartbeat_at ?? 0);
   return (
     Number.isFinite(lastHeartbeatAt) &&
@@ -604,7 +605,7 @@ async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
       status == null &&
       isExpectedWorkerProcess(worker, launch) &&
       workerControlStartupGraceExpired(worker) &&
-      !workerDatabaseHeartbeatFresh(worker)
+      !workerDatabaseStateProtectsUnresponsiveWorker(worker)
     ) {
       logger.warn("terminating unresponsive active project-host ACP worker", {
         pid: worker.pid,
@@ -893,6 +894,6 @@ export const __test__ = {
   projectHostAcpWorkerSpawnBackoffRemainingMs,
   noteProjectHostAcpWorkerSpawn,
   resetProjectHostAcpWorkerSpawnBackoff,
-  workerDatabaseHeartbeatFresh,
+  workerDatabaseStateProtectsUnresponsiveWorker,
   workerControlStartupGraceExpired,
 };
