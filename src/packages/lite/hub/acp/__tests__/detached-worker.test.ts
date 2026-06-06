@@ -2,6 +2,9 @@
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
 import {
+  ChatStreamWriter,
+  disposeAllChatWritersForTests,
+  recoverCurrentWorkerStuckAcpTurns,
   recoverDetachedWorkerStartupState,
   shouldStopDetachedWorkerForDrain,
   shouldStopDetachedWorkerForIdle,
@@ -131,6 +134,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+  jest.restoreAllMocks();
   (turns.startAcpTurnLease as any)?.mockReset?.();
   (turns.heartbeatAcpTurnLease as any)?.mockReset?.();
   (turns.finalizeAcpTurnLease as any)?.mockReset?.();
@@ -152,9 +156,47 @@ beforeEach(() => {
   (chatServer.releaseChatSyncDB as any)?.mockReset?.();
 });
 
+afterEach(async () => {
+  jest.restoreAllMocks();
+  await disposeAllChatWritersForTests();
+});
+
 afterAll(() => {
   closeAcpDatabase();
 });
+
+function makeSyncdb(rows: any[] = []) {
+  return {
+    isReady: () => true,
+    get: (where?: any) => {
+      if (where == null) return rows;
+      return rows.filter((row) =>
+        Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+      );
+    },
+    get_one: (where: any) =>
+      rows.find((row) =>
+        Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+      ),
+    set: (val: any) => {
+      const idx = rows.findIndex((row) =>
+        row.message_id && val.message_id
+          ? row.message_id === val.message_id
+          : row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+      );
+      if (idx >= 0) {
+        rows[idx] = { ...rows[idx], ...val };
+      } else {
+        rows.push({ ...val });
+      }
+    },
+    commit: jest.fn(),
+    save: jest.fn(async () => {}),
+    close: async () => {},
+  };
+}
 
 describe("recoverDetachedWorkerStartupState", () => {
   it("does not blanket-interrupt running local detached jobs", async () => {
@@ -995,6 +1037,139 @@ describe("recoverDetachedWorkerStartupState", () => {
         user_message_id: queued.user_message_id,
       })?.state,
     ).toBe("interrupted");
+  });
+});
+
+describe("recoverCurrentWorkerStuckAcpTurns", () => {
+  function makeRows(request = makeRequest()) {
+    return [
+      {
+        event: "chat",
+        date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        generating: true,
+        history: [
+          {
+            author_id: "openai-codex-agent",
+            content: "partial answer",
+            date: request.chat.message_date,
+          },
+        ],
+      },
+    ];
+  }
+
+  async function startWriterForRequest(request = makeRequest()) {
+    const rows = makeRows(request);
+    const syncdb = makeSyncdb(rows);
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    const writer = new ChatStreamWriter({
+      metadata: request.chat as any,
+      client: {} as ConatClient,
+      approverAccountId: request.account_id,
+      sessionKey: request.session_id,
+      syncdbOverride: syncdb,
+    });
+    await writer.waitUntilReady();
+    const leaseCall = (turns.startAcpTurnLease as jest.Mock).mock.calls.at(-1);
+    const owner_instance_id = leaseCall?.[0]?.owner_instance_id;
+    expect(owner_instance_id).toBeTruthy();
+    return { rows, syncdb, writer, owner_instance_id };
+  }
+
+  it("does not recover a current-worker turn while its writer is recently active", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-current",
+      worker_bundle_version: "bundle-a",
+    });
+    const { owner_instance_id } = await startWriterForRequest(request);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: request.project_id,
+        path: request.chat.path,
+        message_date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        session_id: request.session_id,
+        owner_instance_id,
+        started_at: Date.now() - 60_000,
+        heartbeat_at: Date.now() - 60_000,
+      },
+    ]);
+
+    const recovered = await recoverCurrentWorkerStuckAcpTurns(
+      {} as ConatClient,
+      {
+        graceMs: 0,
+        writerStaleMs: 60_000,
+      },
+    );
+
+    expect(recovered).toBe(0);
+    expect(turns.finalizeAcpTurnLease).not.toHaveBeenCalled();
+    expect(
+      getAcpJob({
+        project_id: queued.project_id,
+        path: queued.path,
+        user_message_id: queued.user_message_id,
+      })?.state,
+    ).toBe("running");
+  });
+
+  it("recovers a current-worker turn after its writer goes stale", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-current",
+      worker_bundle_version: "bundle-a",
+    });
+    const { owner_instance_id } = await startWriterForRequest(request);
+    const startedAt = Date.now();
+    jest.spyOn(Date, "now").mockReturnValue(startedAt + 120_000);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: request.project_id,
+        path: request.chat.path,
+        message_date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        session_id: request.session_id,
+        owner_instance_id,
+        started_at: startedAt - 120_000,
+        heartbeat_at: startedAt - 120_000,
+      },
+    ]);
+
+    const recovered = await recoverCurrentWorkerStuckAcpTurns(
+      {} as ConatClient,
+      {
+        recoveryReason: "backend lost live Codex turn",
+        graceMs: 0,
+        writerStaleMs: 60_000,
+      },
+    );
+
+    expect(recovered).toBe(1);
+    expect(
+      getAcpJob({
+        project_id: queued.project_id,
+        path: queued.path,
+        user_message_id: queued.user_message_id,
+      })?.state,
+    ).toBe("interrupted");
+    expect(turns.finalizeAcpTurnLease).toHaveBeenCalled();
   });
 });
 
