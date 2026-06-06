@@ -126,6 +126,9 @@ interface AccountNameInfo {
 }
 
 type AccountNames = Record<string, AccountNameInfo | undefined>;
+type SiteLicenseRecentAuditEvent = NonNullable<
+  SiteLicenseOverview["recent_audit_events"]
+>[number];
 
 function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
   const displayName = [user.first_name, user.last_name]
@@ -535,8 +538,63 @@ function formatSeatGivenOn(value?: Date | string | null): string {
   return date == null ? "-" : formatSiteLicenseDate(date);
 }
 
-function formatSiteLicenseAuditAction(action: string): string {
-  return action.replace(/-/g, " ");
+function siteLicenseAuditPoolLabel(
+  event: SiteLicenseRecentAuditEvent,
+  overview: SiteLicenseOverview,
+): string | undefined {
+  const pool = overview.pools.find((item) => item.id === event.package_id);
+  const poolName = `${pool?.pool_name ?? ""}`.trim();
+  return poolName ? `${poolName} pool` : undefined;
+}
+
+function formatSiteLicenseAuditAction({
+  event,
+  overview,
+}: {
+  event: SiteLicenseRecentAuditEvent;
+  overview: SiteLicenseOverview;
+}): string {
+  const pool = siteLicenseAuditPoolLabel(event, overview);
+  switch (event.action) {
+    case "pool-created":
+      return pool ? `${pool} created` : "Pool created";
+    case "pool-updated":
+      return pool ? `${pool} updated` : "Pool updated";
+    case "pool-archived":
+      return pool ? `${pool} archived` : "Pool archived";
+    case "pool-request-created":
+      return pool ? `${pool} request created` : "Seat request created";
+    case "pool-request-canceled":
+      return pool ? `${pool} request canceled` : "Seat request canceled";
+    case "pool-request-approved":
+      return pool ? `${pool} request approved` : "Seat request approved";
+    case "pool-request-rejected":
+      return pool ? `${pool} request rejected` : "Seat request rejected";
+    case "seat-released-by-user":
+      return pool ? `${pool} seat released` : "Seat released";
+    case "seat-released-for-upgrade":
+      return pool
+        ? `${pool} seat released for replacement`
+        : "Seat released for replacement";
+    case "seat-affiliation-reverified":
+      return pool ? `${pool} seat reverified` : "Seat reverified";
+    case "seat-released-after-reverification-grace":
+      return pool
+        ? `${pool} seat released after reverification grace`
+        : "Seat released after reverification grace";
+    case "manager-added":
+      return "Manager added";
+    case "manager-updated":
+      return "Manager updated";
+    case "manager-removed":
+      return "Manager removed";
+    case "site-license-updated":
+      return "Site license updated";
+    case "site-license-provisioned":
+      return "Site license created";
+    default:
+      return `${event.action}`;
+  }
 }
 
 function revokeSeatConfirmationTitle({
@@ -2677,7 +2735,7 @@ function SiteLicenseDashboard({
                       {overview.recent_audit_events.map((event) => (
                         <Text key={event.id} type="secondary">
                           {dateLabel(event.created)}:{" "}
-                          {formatSiteLicenseAuditAction(event.action)}
+                          {formatSiteLicenseAuditAction({ event, overview })}
                           {event.target_account_id ? (
                             <>
                               {" for "}

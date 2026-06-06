@@ -1113,6 +1113,7 @@ describe("membership package managers", () => {
             site_license_id: "license-1",
             action: "pool-request-approved",
             actor_account_id: "manager-1",
+            package_id: "site-1",
             target_account_id: "student-1",
             created: new Date("2026-05-02T00:00:00Z"),
           },
@@ -1151,7 +1152,7 @@ describe("membership package managers", () => {
     expect(
       screen.getByText("Research access for approved groups."),
     ).toBeTruthy();
-    expect(screen.getByText(/pool request approved/)).toBeTruthy();
+    expect(screen.getByText(/Students pool request approved/)).toBeTruthy();
     expect(screen.getAllByText(/Ada Student/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/student@example.edu/).length).toBeGreaterThan(
       0,
