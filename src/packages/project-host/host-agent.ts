@@ -413,6 +413,7 @@ async function reconcileProjectHostRollback({
     });
     restartProjectHost(index, {
       preserveManagedAuxiliaryDaemons: true,
+      preserveAcpWorkers: true,
     });
     return;
   }
@@ -567,6 +568,7 @@ async function reconcileProjectHostRollback({
     await activateInstalledProjectHostVersion(activePending.previous_version);
     restartProjectHost(index, {
       preserveManagedAuxiliaryDaemons: true,
+      preserveAcpWorkers: true,
     });
     recordAutomaticRollback(state, {
       target_version: activePending.target_version,

@@ -38,6 +38,10 @@ const ACP_WORKER_CONTROL_TIMEOUT_MS = Math.max(
   250,
   Number(process.env.COCALC_ACP_WORKER_CONTROL_TIMEOUT_MS ?? 1500),
 );
+const ACP_WORKER_CONTROL_STARTUP_GRACE_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_ACP_WORKER_CONTROL_STARTUP_GRACE_MS ?? 30_000),
+);
 
 let supervisorStarted = false;
 let workerEntryPoint: string | undefined;
@@ -251,6 +255,25 @@ function resolveProjectHostWorkerBundleVersion(bundlePath: string): string {
 
 function workerIdOf(worker: WorkerProcessInfo): string {
   return `${worker.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim();
+}
+
+function workerStartedAtMs(worker: WorkerProcessInfo): number {
+  const value = Number(worker.env.COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function workerControlStartupGraceExpired(
+  worker: WorkerProcessInfo,
+  now = Date.now(),
+): boolean {
+  const startedAt = workerStartedAtMs(worker);
+  if (startedAt <= 0) {
+    // Older workers did not record a spawn timestamp. If they are the current
+    // active worker candidate and are not answering control RPCs, treat them as
+    // past grace so the supervisor can recover.
+    return true;
+  }
+  return now - startedAt >= ACP_WORKER_CONTROL_STARTUP_GRACE_MS;
 }
 
 async function getWorkerStatus(
@@ -555,6 +578,21 @@ async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
     const status = workerStatuses.find(
       (entry) => entry.worker.pid === worker.pid,
     )?.status;
+    if (
+      status == null &&
+      isExpectedWorkerProcess(worker, launch) &&
+      workerControlStartupGraceExpired(worker)
+    ) {
+      logger.warn("terminating unresponsive active project-host ACP worker", {
+        pid: worker.pid,
+        worker_id: workerIdOf(worker) || null,
+        bundle_version: workerBundleVersionOf(worker, launch),
+        bundle_path: workerBundlePathOf(worker, launch),
+        control_startup_grace_ms: ACP_WORKER_CONTROL_STARTUP_GRACE_MS,
+      });
+      await terminateWorkerPid(worker.pid);
+      continue;
+    }
     if (status?.state === "stopped") {
       logger.warn("terminating stale stopped project-host ACP worker", {
         pid: worker.pid,
@@ -650,6 +688,7 @@ function spawnProjectHostAcpWorker({
     COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: ACP_WORKER_ROLLING_CAPABILITY,
     COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_VERSION: bundle_version,
     COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH: bundle_path,
+    COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT: String(now),
     COCALC_PROJECT_HOST_ACP_WORKER_STATE: "active",
     COCALC_ACP_INSTANCE_ID: worker_id,
     ...(restartReason
@@ -830,4 +869,5 @@ export const __test__ = {
   projectHostAcpWorkerSpawnBackoffRemainingMs,
   noteProjectHostAcpWorkerSpawn,
   resetProjectHostAcpWorkerSpawnBackoff,
+  workerControlStartupGraceExpired,
 };
