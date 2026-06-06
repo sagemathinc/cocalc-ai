@@ -745,6 +745,7 @@ export function ChatPanel({
     string | null
   >(null);
   const [automationSaving, setAutomationSaving] = useState(false);
+  const [automationActionBusy, setAutomationActionBusy] = useState<string>("");
   const [automationDraft, setAutomationDraft] = useState<AcpAutomationConfig>(
     () => buildAutomationDraft(),
   );
@@ -973,39 +974,87 @@ export function ChatPanel({
 
   const handleAutomationPause = useCallback(async () => {
     if (!selectedThreadId) return;
-    await pauseThreadAutomation({ actions, threadId: selectedThreadId });
+    setAutomationActionBusy("pause");
+    try {
+      await pauseThreadAutomation({ actions, threadId: selectedThreadId });
+    } finally {
+      setAutomationActionBusy((current) =>
+        current === "pause" ? "" : current,
+      );
+    }
   }, [actions, selectedThreadId]);
 
   const handleAutomationResume = useCallback(async () => {
     if (!selectedThreadId) return;
-    const response = await resumeThreadAutomation({
-      actions,
-      threadId: selectedThreadId,
-    });
-    showActiveAutomationLimitModal({
-      project_id: actions.store?.get("project_id") ?? "",
-      response,
-    });
+    setAutomationActionBusy("resume");
+    try {
+      const response = await resumeThreadAutomation({
+        actions,
+        threadId: selectedThreadId,
+      });
+      showActiveAutomationLimitModal({
+        project_id: actions.store?.get("project_id") ?? "",
+        response,
+      });
+    } finally {
+      setAutomationActionBusy((current) =>
+        current === "resume" ? "" : current,
+      );
+    }
   }, [actions, selectedThreadId]);
 
   const handleAutomationRunNow = useCallback(async () => {
     if (!selectedThreadId) return;
-    await runThreadAutomationNow({ actions, threadId: selectedThreadId });
+    setAutomationActionBusy("run_now");
+    try {
+      await runThreadAutomationNow({ actions, threadId: selectedThreadId });
+    } finally {
+      setAutomationActionBusy((current) =>
+        current === "run_now" ? "" : current,
+      );
+    }
   }, [actions, selectedThreadId]);
 
   const handleAutomationSkipNext = useCallback(async () => {
     if (!selectedThreadId) return;
-    await skipNextThreadAutomationRun({ actions, threadId: selectedThreadId });
+    setAutomationActionBusy("skip_next");
+    try {
+      await skipNextThreadAutomationRun({
+        actions,
+        threadId: selectedThreadId,
+      });
+    } finally {
+      setAutomationActionBusy((current) =>
+        current === "skip_next" ? "" : current,
+      );
+    }
   }, [actions, selectedThreadId]);
 
   const handleAutomationAcknowledge = useCallback(async () => {
     if (!selectedThreadId) return;
-    await acknowledgeThreadAutomation({ actions, threadId: selectedThreadId });
+    setAutomationActionBusy("acknowledge");
+    try {
+      await acknowledgeThreadAutomation({
+        actions,
+        threadId: selectedThreadId,
+      });
+    } finally {
+      setAutomationActionBusy((current) =>
+        current === "acknowledge" ? "" : current,
+      );
+    }
   }, [actions, selectedThreadId]);
 
   const handleAutomationDelete = useCallback(async () => {
     if (!selectedThreadId) return;
-    await deleteThreadAutomation({ actions, threadId: selectedThreadId });
+    setAutomationActionBusy("delete");
+    try {
+      await deleteThreadAutomation({ actions, threadId: selectedThreadId });
+    } finally {
+      setAutomationActionBusy((current) =>
+        current === "delete" ? "" : current,
+      );
+    }
   }, [actions, selectedThreadId]);
 
   const createThreadWithoutMessage = useCallback(async () => {
@@ -1890,6 +1939,7 @@ export function ChatPanel({
       next_run_at_ms: selectedThreadAutomationState.next_run_at_ms,
     });
   const automationIsRunning = automationStatus === "running";
+  const automationActionInFlight = automationActionBusy !== "";
   const automationTitle =
     selectedThreadAutomationConfig?.title?.trim() || "Automation";
   const automationHasUnacknowledgedRuns =
@@ -1926,6 +1976,8 @@ export function ChatPanel({
         <Tooltip title="Acknowledge these automation runs. This clears the unacknowledged count.">
           <Button
             size="small"
+            disabled={automationActionInFlight}
+            loading={automationActionBusy === "acknowledge"}
             onClick={() => void handleAutomationAcknowledge()}
             style={{
               borderColor: COLORS.BG_WARNING,
@@ -1944,7 +1996,8 @@ export function ChatPanel({
       <Tooltip title="Start a manual run now. This does not move the next scheduled run. If a run is already active, no extra run is queued.">
         <Button
           size="small"
-          disabled={automationIsRunning}
+          disabled={automationIsRunning || automationActionInFlight}
+          loading={automationActionBusy === "run_now"}
           onClick={() => void handleAutomationRunNow()}
         >
           Run now
@@ -1953,7 +2006,8 @@ export function ChatPanel({
       <Tooltip title="Skip only the next scheduled run and move this automation to the following scheduled time.">
         <Button
           size="small"
-          disabled={!automationHasNextRun}
+          disabled={!automationHasNextRun || automationActionInFlight}
+          loading={automationActionBusy === "skip_next"}
           onClick={() => void handleAutomationSkipNext()}
         >
           Skip next
@@ -1961,11 +2015,21 @@ export function ChatPanel({
       </Tooltip>
       {automationStatus === "paused" ||
       selectedThreadAutomationConfig?.enabled === false ? (
-        <Button size="small" onClick={() => void handleAutomationResume()}>
+        <Button
+          size="small"
+          disabled={automationActionInFlight}
+          loading={automationActionBusy === "resume"}
+          onClick={() => void handleAutomationResume()}
+        >
           Resume
         </Button>
       ) : (
-        <Button size="small" onClick={() => void handleAutomationPause()}>
+        <Button
+          size="small"
+          disabled={automationActionInFlight}
+          loading={automationActionBusy === "pause"}
+          onClick={() => void handleAutomationPause()}
+        >
           Pause
         </Button>
       )}
@@ -2027,6 +2091,7 @@ export function ChatPanel({
             {selectedThreadKey ? (
               <Button
                 size="small"
+                disabled={automationActionInFlight}
                 onClick={() => openAutomationModalForThread(selectedThreadKey)}
               >
                 Edit
@@ -2039,7 +2104,12 @@ export function ChatPanel({
               cancelText="Cancel"
               onConfirm={() => void handleAutomationDelete()}
             >
-              <Button danger size="small">
+              <Button
+                danger
+                size="small"
+                disabled={automationActionInFlight}
+                loading={automationActionBusy === "delete"}
+              >
                 Delete schedule
               </Button>
             </Popconfirm>

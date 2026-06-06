@@ -7,6 +7,7 @@ import type { AcpAutomationConfig } from "@cocalc/conat/ai/acp/types";
 
 export const AUTOMATION_ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const;
 export const AUTOMATION_DEFAULT_INTERVAL_MINUTES = 120;
+export const AUTOMATION_MIN_INTERVAL_MINUTES = 1;
 export const AUTOMATION_DEFAULT_WINDOW_START_LOCAL_TIME = "00:00";
 export const AUTOMATION_DEFAULT_WINDOW_END_LOCAL_TIME = "23:59";
 export const AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60_000;
@@ -134,11 +135,13 @@ export function normalizeAcpAutomationConfig(
   const prompt = `${config.prompt ?? ""}`.trim();
   const command = `${config.command ?? ""}`.trim();
   const command_cwd = `${config.command_cwd ?? ""}`.trim() || undefined;
+  const title = `${config.title ?? ""}`.trim();
   const timezone =
     normalizeAutomationTimezone(config.timezone ?? undefined) ??
     defaultTimezone ??
     Intl.DateTimeFormat().resolvedOptions().timeZone;
   if (!timezone) return undefined;
+  if (!title) return undefined;
   if (run_kind === "command") {
     if (!command) return undefined;
   } else if (!prompt) {
@@ -168,7 +171,7 @@ export function normalizeAcpAutomationConfig(
     return {
       enabled,
       automation_id: `${config.automation_id ?? ""}`.trim() || undefined,
-      title: `${config.title ?? ""}`.trim() || undefined,
+      title,
       run_kind,
       prompt: run_kind === "codex" ? prompt : undefined,
       command: run_kind === "command" ? command : undefined,
@@ -196,7 +199,7 @@ export function normalizeAcpAutomationConfig(
       interval_minutes: clampNumber(
         config.interval_minutes,
         AUTOMATION_DEFAULT_INTERVAL_MINUTES,
-        5,
+        AUTOMATION_MIN_INTERVAL_MINUTES,
         24 * 60,
       ),
       window_start_local_time,
@@ -218,7 +221,7 @@ export function normalizeAcpAutomationConfig(
   return {
     enabled,
     automation_id: `${config.automation_id ?? ""}`.trim() || undefined,
-    title: `${config.title ?? ""}`.trim() || undefined,
+    title,
     run_kind,
     prompt: run_kind === "codex" ? prompt : undefined,
     command: run_kind === "command" ? command : undefined,

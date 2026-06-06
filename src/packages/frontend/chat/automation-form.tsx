@@ -12,6 +12,7 @@ import { Tooltip } from "@cocalc/frontend/components/tip";
 
 const DEFAULT_LOCAL_TIME = "05:00";
 const DEFAULT_INTERVAL_MINUTES = 120;
+const MIN_INTERVAL_MINUTES = 1;
 const DEFAULT_WINDOW_START_LOCAL_TIME = "00:00";
 const DEFAULT_WINDOW_END_LOCAL_TIME = "23:59";
 const DEFAULT_RANGE_START_LOCAL_TIME = "06:00";
@@ -233,6 +234,7 @@ export function normalizeAutomationConfigForSave({
   const prompt = `${draft.prompt ?? ""}`.trim();
   const command = `${draft.command ?? ""}`.trim();
   const command_cwd = `${draft.command_cwd ?? ""}`.trim() || undefined;
+  const title = `${draft.title ?? ""}`.trim();
   const timezone = `${draft.timezone ?? ""}`.trim() || resolvedTimezone();
   const days_of_week = normalizeDaysOfWeek(draft.days_of_week);
   const pause_after_unacknowledged_runs = Number(
@@ -241,6 +243,9 @@ export function normalizeAutomationConfigForSave({
   const schedule_type =
     draft.schedule_type === "interval" ? "interval" : "daily";
   if (!timezone) {
+    return undefined;
+  }
+  if (!title) {
     return undefined;
   }
   if (run_kind === "command") {
@@ -264,7 +269,7 @@ export function normalizeAutomationConfigForSave({
     return {
       enabled: draft.enabled !== false,
       automation_id: automationId,
-      title: `${draft.title ?? ""}`.trim() || undefined,
+      title,
       run_kind,
       prompt: run_kind === "codex" ? prompt : undefined,
       command: run_kind === "command" ? command : undefined,
@@ -301,7 +306,7 @@ export function normalizeAutomationConfigForSave({
       schedule_type,
       days_of_week,
       interval_minutes: Math.max(
-        5,
+        MIN_INTERVAL_MINUTES,
         Math.min(
           24 * 60,
           Math.round(
@@ -322,7 +327,7 @@ export function normalizeAutomationConfigForSave({
   return {
     enabled: draft.enabled !== false,
     automation_id: automationId,
-    title: `${draft.title ?? ""}`.trim() || undefined,
+    title,
     run_kind,
     prompt: run_kind === "codex" ? prompt : undefined,
     command: run_kind === "command" ? command : undefined,
@@ -578,7 +583,7 @@ export function AutomationConfigFields({
         <>
           <label>Repeat every (minutes)</label>
           <InputNumber
-            min={5}
+            min={MIN_INTERVAL_MINUTES}
             max={24 * 60}
             disabled={disabled}
             style={{ width: "100%" }}

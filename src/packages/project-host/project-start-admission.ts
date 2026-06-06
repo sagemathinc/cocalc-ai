@@ -5,6 +5,7 @@
 
 import callHub from "@cocalc/conat/hub/call-hub";
 import { getMasterConatClient } from "./master-status";
+import { getLocalHostId } from "./sqlite/hosts";
 
 export async function startProjectWithAdmission({
   account_id,
@@ -27,10 +28,14 @@ export async function startProjectWithAdmission({
   if (!client) {
     throw new Error("master hub connection unavailable for project start");
   }
+  const host_id = getLocalHostId();
+  if (!host_id) {
+    throw new Error("host id is required to start a project");
+  }
   return await callHub({
     client,
-    account_id: actor,
-    name: "projects.start",
+    host_id,
+    name: "projects.startFromHost",
     args: [
       {
         account_id: actor,

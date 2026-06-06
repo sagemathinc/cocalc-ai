@@ -284,12 +284,17 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [scope, setScope] = useState<"mine" | "all">("mine");
   const [showArchived, setShowArchived] = useState(false);
+  const [showAutomations, setShowAutomations] = useState(
+    () => layout !== "flyout",
+  );
   const [workspaceOnly, setWorkspaceOnly] = useState<boolean>(() =>
     loadWorkspaceOnly(project_id),
   );
   const [error, setError] = useState<string>("");
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
+  const [automationControlBusyKey, setAutomationControlBusyKey] =
+    useState<string>("");
   const [openedSelection, setOpenedSelection] =
     useState<OpenedAgentSessionSelection | null>(() =>
       loadOpenedAgentSessionSelection(project_id, layout),
@@ -925,7 +930,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       allowCodexRunKind: automationModalAllowsCodex,
     });
     if (!config) {
-      antdMessage.error("Automation needs a prompt or command before saving.");
+      antdMessage.error(
+        "Automation needs a title and a prompt or command before saving.",
+      );
       return;
     }
     setAutomationSaving(true);
@@ -946,13 +953,23 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     record: AcpAutomationRecord,
     action: "run_now" | "pause" | "resume" | "acknowledge" | "delete",
   ): Promise<void> {
-    const response = await webapp_client.conat_client.automationAcp({
-      project_id,
-      path: record.path,
-      thread_id: record.thread_id,
-      action,
-    });
-    showActiveAutomationLimitModal({ project_id, response });
+    const busyKey = `${record.automation_id}:${action}`;
+    setAutomationControlBusyKey(busyKey);
+    try {
+      const response = await webapp_client.conat_client.automationAcp({
+        project_id,
+        path: record.path,
+        thread_id: record.thread_id,
+        action,
+      });
+      showActiveAutomationLimitModal({ project_id, response });
+    } catch (err) {
+      antdMessage.error(`${err}`);
+    } finally {
+      setAutomationControlBusyKey((current) =>
+        current === busyKey ? "" : current,
+      );
+    }
   }
 
   function recordMetaLine(record: AgentSessionRecord): string {
@@ -1560,6 +1577,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const status =
       record.status ?? (record.enabled === false ? "paused" : "active");
     const updatedAt = record.updated_at;
+    const busy = (action: string) =>
+      automationControlBusyKey === `${record.automation_id}:${action}`;
     return (
       <div key={`${record.path}::${record.thread_id}`}>
         <div
@@ -1653,12 +1672,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             <Button
               size="small"
               type="primary"
+              disabled={!!automationControlBusyKey}
               onClick={() => openAutomation(record)}
             >
               Open
             </Button>
             <Button
               size="small"
+              disabled={status === "running" || !!automationControlBusyKey}
+              loading={busy("run_now")}
               onClick={() => void controlAutomation(record, "run_now")}
             >
               Run now
@@ -1666,6 +1688,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             {status === "paused" || record.enabled === false ? (
               <Button
                 size="small"
+                disabled={!!automationControlBusyKey}
+                loading={busy("resume")}
                 onClick={() => void controlAutomation(record, "resume")}
               >
                 Resume
@@ -1673,6 +1697,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             ) : (
               <Button
                 size="small"
+                disabled={!!automationControlBusyKey}
+                loading={busy("pause")}
                 onClick={() => void controlAutomation(record, "pause")}
               >
                 Pause
@@ -1680,6 +1706,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             )}
             <Button
               size="small"
+              disabled={!!automationControlBusyKey}
+              loading={busy("acknowledge")}
               onClick={() => void controlAutomation(record, "acknowledge")}
             >
               Acknowledge
@@ -1691,7 +1719,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               cancelText="Cancel"
               onConfirm={() => void controlAutomation(record, "delete")}
             >
-              <Button danger size="small">
+              <Button
+                danger
+                size="small"
+                disabled={!!automationControlBusyKey}
+                loading={busy("delete")}
+              >
                 Delete schedule
               </Button>
             </Popconfirm>
@@ -1705,6 +1738,64 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     () => automations.filter((record) => !missingChatPaths.has(record.path)),
     [automations, missingChatPaths],
   );
+
+  const automationUnacknowledgedRuns = useMemo(
+    () =>
+      visibleAutomations.reduce(
+        (total, record) => total + Math.max(0, record.unacknowledged_runs ?? 0),
+        0,
+      ),
+    [visibleAutomations],
+  );
+
+  function renderAutomationsSection(): React.JSX.Element | null {
+    if (visibleAutomations.length === 0) return null;
+    const isOpen = showAutomations;
+    const countLabel = `${visibleAutomations.length}`;
+    return (
+      <div style={{ marginTop: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 6,
+          }}
+        >
+          <Typography.Text strong>
+            Automations{" "}
+            <Typography.Text type="secondary">({countLabel})</Typography.Text>
+            {automationUnacknowledgedRuns > 0 ? (
+              <Typography.Text type="secondary">
+                {" "}
+                · {automationUnacknowledgedRuns} unacknowledged
+              </Typography.Text>
+            ) : null}
+          </Typography.Text>
+          <Button
+            size="small"
+            onClick={() => setShowAutomations((value) => !value)}
+          >
+            {isOpen ? "Hide automations" : "Show automations"}
+          </Button>
+        </div>
+        {isOpen ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isFlyout
+                ? "1fr"
+                : "repeat(auto-fit, minmax(360px, 1fr))",
+              gap: isFlyout ? 8 : 12,
+            }}
+          >
+            {visibleAutomations.map((record) => renderAutomation(record))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   if (loading) {
     return <Loading theme="medium" />;
@@ -1959,24 +2050,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           style={{ marginBottom: 8 }}
         />
       ) : null}
-      {visibleAutomations.length > 0 ? (
-        <div style={{ marginBottom: 16 }}>
-          <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
-            Scheduled automations
-          </Typography.Text>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: isFlyout
-                ? "1fr"
-                : "repeat(auto-fit, minmax(360px, 1fr))",
-              gap: isFlyout ? 8 : 12,
-            }}
-          >
-            {visibleAutomations.map((record) => renderAutomation(record))}
-          </div>
-        </div>
-      ) : null}
       <div style={{ marginBottom: 12 }}>
         <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
           Recent agent sessions
@@ -2097,6 +2170,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           ) : null}
         </Space>
       )}
+      {renderAutomationsSection()}
     </div>
   );
 }

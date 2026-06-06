@@ -2526,6 +2526,35 @@ export async function start({
   });
 }
 
+export async function startFromHost({
+  host_id,
+  account_id,
+  project_id,
+  autostart,
+  wait = true,
+}: {
+  host_id?: string;
+  account_id: string;
+  project_id: string;
+  autostart?: boolean;
+  wait?: boolean;
+}): Promise<{
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  await assertProjectAssignedToHostForStart({ host_id, project_id });
+  return await runProjectStartLikeAction({
+    kind: "start",
+    account_id,
+    project_id,
+    autostart,
+    wait,
+  });
+}
+
 export async function restart({
   account_id,
   project_id,
@@ -2547,6 +2576,36 @@ export async function restart({
     project_id,
     wait,
   });
+}
+
+async function assertProjectAssignedToHostForStart({
+  host_id,
+  project_id,
+}: {
+  host_id?: string;
+  project_id: string;
+}): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id is required");
+  }
+  const { rows } = await getPool().query(
+    `
+      SELECT 1
+      FROM projects
+      JOIN project_hosts
+        ON project_hosts.id = projects.host_id
+       AND project_hosts.deleted IS NULL
+      WHERE projects.project_id=$1
+        AND projects.host_id=$2
+        AND projects.deleted IS NOT true
+        AND COALESCE(projects.owning_bay_id, $3) = COALESCE(project_hosts.bay_id, $3)
+      LIMIT 1
+    `,
+    [project_id, host_id, getConfiguredBayId()],
+  );
+  if (rows.length === 0) {
+    throw new Error(`project ${project_id} is not assigned to host ${host_id}`);
+  }
 }
 
 async function runProjectStartLikeAction({
