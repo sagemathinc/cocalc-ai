@@ -252,6 +252,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private render_done: Function[] = [];
   private ignoreData: number = 0;
   private writeBuffer: TerminalTransmit[] = [];
+  private ptyInputReady: boolean = false;
 
   private title?: string;
   private projectsStore?;
@@ -501,23 +502,38 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       });
       return;
     }
-    if (!this.pty || this.pty.socket.state != "ready") {
+    const pty = this.getWritablePty();
+    if (pty == null) {
       this.writeBuffer.push(message);
       return;
     }
-    this.pty.socket.write(message);
+    if (this.writeBuffer.length > 0) {
+      this.writeBuffer.push(message);
+      this.flushWriteBuffer();
+      return;
+    }
+    pty.socket.write(message);
     this.reconnectIfNotRunning();
+  };
+
+  private getWritablePty = (): TerminalClient | null => {
+    const pty = this.pty;
+    if (!this.ptyInputReady || pty == null || pty.socket.state !== "ready") {
+      return null;
+    }
+    return pty;
   };
 
   private flushWriteBuffer = (): void => {
     if (this.writeBuffer.length === 0) {
       return;
     }
-    if (!this.pty || this.pty.socket.state != "ready") {
+    const pty = this.getWritablePty();
+    if (pty == null) {
       return;
     }
     for (const message of this.writeBuffer) {
-      this.pty.socket.write(message);
+      pty.socket.write(message);
     }
     this.writeBuffer.length = 0;
   };
@@ -531,6 +547,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.clearProjectStartingRetry();
     this.pty?.close();
     this.pty = null;
+    this.ptyInputReady = false;
     this.set_connection_status("disconnected");
     this.state = "closed";
     this.account_store.removeListener("change", this.update_settings);
@@ -697,6 +714,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         this.pty.close();
         this.pty = null;
       }
+      this.ptyInputReady = false;
 
       if (!preserveVisibleContent) {
         this.terminal.reset();
@@ -724,6 +742,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         if (this.isClosed()) return;
         await this.handleDataFromProject(EXIT_MESSAGE);
         this.ptyExited = true;
+        this.ptyInputReady = false;
         pty?.close();
       });
 
@@ -750,6 +769,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       pty.on("update-cwd", this.setCwd);
 
       pty.socket.on("disconnected", async () => {
+        this.ptyInputReady = false;
         this.set_connection_status("disconnected");
         this.markTransientDisconnect();
         this.reconnectResource?.requestReconnect({
@@ -758,6 +778,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       });
 
       pty.socket.on("closed", async () => {
+        this.ptyInputReady = false;
         this.set_connection_status("disconnected");
         this.markTransientDisconnect();
         this.reconnectResource?.requestReconnect({
@@ -823,6 +844,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           await this.handleDataFromProject(history, { fromHistory: true });
         }
         this.setTransientReconnectStyle(false);
+        this.ptyInputReady = true;
         this.flushWriteBuffer();
         pty.once("ready", () => {
           this.flushWriteBuffer();
@@ -842,6 +864,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       // is not running or offline.
       //      console.log("error spawning pty", err);
       this.set_connection_status("disconnected");
+      this.ptyInputReady = false;
       this.markTransientDisconnect();
       this.reconnectResource?.requestReconnect({
         reason: "terminal_connect_failed",

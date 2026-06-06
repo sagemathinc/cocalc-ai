@@ -89,6 +89,7 @@ import {
   registerBayPresenceLocal,
   startBayRegistrationHeartbeat,
 } from "@cocalc/server/bay-registry";
+import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
 import { startManagedBayCloudflared } from "@cocalc/server/bay-cloudflared";
 import {
   applyAccountProjectFeedRemoveOnHomeBay,
@@ -353,9 +354,12 @@ import {
   getAcpAdmissionDenialReport,
   getBayBackups,
   getBayLoad,
+  getGlobalConfigPropagationStatus,
   getProjectRuntimeSlotReport,
   getRootfsQuotaReport,
   getServiceAdmissionDenialReport,
+  setSiteSettingsOnSeed,
+  syncSiteSettingsToBays,
 } from "@cocalc/server/conat/api/system";
 import {
   setLocalProjectManageUsersOwnerOnly,
@@ -459,6 +463,12 @@ async function startBayOpsService(): Promise<void> {
         bay_id,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
       }),
+    getDrainPreflight: async ({ unsafe_rehome }) =>
+      await runBayDrainPreflight({
+        source_bay_id: bay_id,
+        seed_bay_id: getConfiguredClusterSeedBayId(),
+        unsafe_rehome,
+      }),
     getRootfsCatalog: async ({ account_id }) =>
       await listVisibleRootfsImages(account_id, {
         includeSeedCatalog: false,
@@ -486,6 +496,14 @@ async function startBayOpsService(): Promise<void> {
     setServerSetting: async (opts) => {
       await callback2(db().set_server_setting, opts);
     },
+    setSiteSettings: async (opts) => await setSiteSettingsOnSeed(opts),
+    syncSiteSettings: async (opts) =>
+      await syncSiteSettingsToBays({ account_id: opts.account_id }),
+    getGlobalConfigPropagationStatus: async (opts) =>
+      await getGlobalConfigPropagationStatus({
+        account_id: opts.account_id,
+        scope: opts.scope,
+      }),
   };
   services.push(
     ...createInterBayBayOpsHandlers({

@@ -219,6 +219,49 @@ test("bay backups calls the hub bay-backups snapshot API", async () => {
   assert.equal(captured?.bay_id, "bay-0");
 });
 
+test("bay drain-preflight calls the hub preflight API", async () => {
+  let captured: any;
+  let callOpts: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            getBayDrainPreflight: async (opts: any) => {
+              callOpts = opts;
+              return {
+                source_bay_id: "bay-0",
+                seed_bay_id: "seed",
+                unsafe_rehome: true,
+                ok: false,
+                summary: { ok: 1, warn: 0, block: 1, tables: 2 },
+                findings: [],
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "drain-preflight",
+    "bay-0",
+    "--unsafe-rehome",
+  ]);
+
+  assert.deepEqual(callOpts, {
+    bay_id: "bay-0",
+    unsafe_rehome: true,
+  });
+  assert.equal(captured?.summary?.block, 1);
+});
+
 test("bay backup calls the hub run-bay-backup API", async () => {
   let captured: any;
   let callOpts: any;

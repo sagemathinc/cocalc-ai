@@ -152,6 +152,7 @@ const ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
 const FOREGROUND_WAKE_ACCOUNT_REPAIR_TIMEOUT_MS = 5_000;
+const FOREGROUND_WAKE_NOTIFICATION_REPAIR_TIMEOUT_MS = 5_000;
 const FOREGROUND_WAKE_PROJECTION_REPAIR_TIMEOUT_MS = 5_000;
 const STALE_HUB_FORCE_RECONNECT_GRACE_MS = 5_000;
 const FOREGROUND_WAKE_PROJECT_HOST_PROBE_CONCURRENCY = 4;
@@ -482,7 +483,9 @@ export class ConatClient extends EventEmitter {
       await this.probeRoutedHostsAfterForegroundWake(hiddenForMs);
       await Promise.all([
         this.repairAccountProjectionAfterForegroundWake(),
+        this.repairNotificationProjectionAfterForegroundWake(),
         this.repairOpenProjectProjectionsAfterForegroundWake(),
+        this.repairVisibleProjectWindowAfterForegroundWake(),
       ]);
       this.reconnectCoordinator.requestResourceReconnects({
         includeBackground: true,
@@ -520,6 +523,34 @@ export class ConatClient extends EventEmitter {
       );
     } catch (err) {
       console.warn("foreground wake account projection repair failed", err);
+    }
+  };
+
+  private repairNotificationProjectionAfterForegroundWake = async () => {
+    const actions = redux.getActions("mentions") as
+      | {
+          repairNotificationProjection?: (request: {
+            kind: "counts-and-inbox";
+            reason: "foreground-wake";
+          }) => Promise<void>;
+        }
+      | undefined;
+    if (actions?.repairNotificationProjection == null) {
+      return;
+    }
+    try {
+      await withTimeout(
+        actions.repairNotificationProjection({
+          kind: "counts-and-inbox",
+          reason: "foreground-wake",
+        }),
+        FOREGROUND_WAKE_NOTIFICATION_REPAIR_TIMEOUT_MS,
+      );
+    } catch (err) {
+      console.warn(
+        "foreground wake notification projection repair failed",
+        err,
+      );
     }
   };
 
@@ -562,6 +593,34 @@ export class ConatClient extends EventEmitter {
       );
     } catch (err) {
       console.warn("foreground wake project projection repair failed", err);
+    }
+  };
+
+  private repairVisibleProjectWindowAfterForegroundWake = async () => {
+    const actions = redux.getActions("projects") as
+      | {
+          repairProjectProjection?: (request: {
+            kind: "visible-window";
+            reason: "foreground-wake";
+          }) => Promise<void>;
+        }
+      | undefined;
+    if (actions?.repairProjectProjection == null) {
+      return;
+    }
+    try {
+      await withTimeout(
+        actions.repairProjectProjection({
+          kind: "visible-window",
+          reason: "foreground-wake",
+        }),
+        FOREGROUND_WAKE_PROJECTION_REPAIR_TIMEOUT_MS,
+      );
+    } catch (err) {
+      console.warn(
+        "foreground wake visible project window projection repair failed",
+        err,
+      );
     }
   };
 

@@ -39,6 +39,7 @@ import { startSiteLicenseAffiliationReleaseMaintenance } from "@cocalc/server/me
 import { configureHubServiceAdmissionDenialRecorder } from "./api/service-admission-denials";
 import { startConatAdmissionSettingsRefresh } from "./admission-settings";
 import { startHostAvailabilityMaintenance } from "@cocalc/server/hosts/availability";
+import { startGlobalConfigMirrorRepairMaintenance } from "@cocalc/server/global-config-mirror-maintenance";
 
 export { loadConatConfiguration };
 
@@ -109,6 +110,7 @@ export async function initConatApi() {
   startNotificationEmailOutboxMaintenance();
   startMembershipSideEffectsMaintenance();
   startSiteLicenseAffiliationReleaseMaintenance();
+  startGlobalConfigMirrorRepairMaintenance();
   startBayBackupMaintenance();
   startBayWalArchiveMaintenance();
   initInterBayServices().catch((err) => {

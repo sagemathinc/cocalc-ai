@@ -22,7 +22,13 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Gap, Icon, Loading, Paragraph } from "@cocalc/frontend/components";
+import {
+  Gap,
+  Icon,
+  Loading,
+  Paragraph,
+  TimeAgo,
+} from "@cocalc/frontend/components";
 import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -33,7 +39,10 @@ import { COLORS } from "@cocalc/util/theme";
 import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
-import type { CloudflareTunnelApplyResult } from "@cocalc/conat/hub/api/system";
+import type {
+  CloudflareTunnelApplyResult,
+  GlobalConfigPropagationStatus,
+} from "@cocalc/conat/hub/api/system";
 import GcpServiceAccountWizard from "./gcp-service-account-wizard";
 import NebiusCliWizard from "./nebius-cli-wizard";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
@@ -131,6 +140,12 @@ export default function SiteSettings({ close }) {
     useState<boolean>(false);
   const [settingsSyncResult, setSettingsSyncResult] = useState<any>(null);
   const [settingsSyncError, setSettingsSyncError] = useState<string>("");
+  const [settingsPropagationStatus, setSettingsPropagationStatus] =
+    useState<GlobalConfigPropagationStatus | null>(null);
+  const [settingsPropagationLoading, setSettingsPropagationLoading] =
+    useState<boolean>(false);
+  const [settingsPropagationError, setSettingsPropagationError] =
+    useState<string>("");
   const [cloudflareApplyLoading, setCloudflareApplyLoading] =
     useState<boolean>(false);
   const [cloudflareApplyResult, setCloudflareApplyResult] =
@@ -160,6 +175,7 @@ export default function SiteSettings({ close }) {
 
   useEffect(() => {
     load();
+    void loadSiteSettingsPropagationStatus();
   }, []);
 
   const prevExpandAllRef = useRef<boolean>(expandAll);
@@ -218,6 +234,24 @@ export default function SiteSettings({ close }) {
     clearSecretsRef.current = {};
     editedRef.current = deep_copy(data);
     savedRef.current = deep_copy(data);
+  }
+
+  async function loadSiteSettingsPropagationStatus(): Promise<void> {
+    setSettingsPropagationLoading(true);
+    setSettingsPropagationError("");
+    try {
+      const status =
+        await webapp_client.conat_client.hub.system.getGlobalConfigPropagationStatus(
+          { scope: "server_settings" },
+        );
+      setSettingsPropagationStatus(status);
+    } catch (err) {
+      setSettingsPropagationError(
+        err instanceof Error ? err.message : `${err}`,
+      );
+    } finally {
+      setSettingsPropagationLoading(false);
+    }
   }
 
   // returns true if the given settings key is a header
@@ -360,6 +394,7 @@ export default function SiteSettings({ close }) {
       browser_id: webapp_client.browser_id,
     });
     assertSettingsSyncSucceeded(result);
+    await loadSiteSettingsPropagationStatus();
   }
 
   function getModifiedSettings() {
@@ -554,6 +589,7 @@ export default function SiteSettings({ close }) {
         <CancelButton />
         <Gap />
         <SaveButton />
+        <SiteSettingsPropagationStatus />
         <SiteSettingsSync />
       </div>
     );
@@ -610,11 +646,113 @@ export default function SiteSettings({ close }) {
       const sync =
         await webapp_client.conat_client.hub.system.syncSiteSettingsToBays({});
       setSettingsSyncResult(sync);
+      await loadSiteSettingsPropagationStatus();
     } catch (err) {
       setSettingsSyncError(err instanceof Error ? err.message : `${err}`);
     } finally {
       setSettingsSyncLoading(false);
     }
+  }
+
+  function propagationTagColor(status: string): string | undefined {
+    switch (status) {
+      case "current":
+        return "green";
+      case "stale":
+      case "missing":
+        return "orange";
+      case "error":
+        return "red";
+      default:
+        return undefined;
+    }
+  }
+
+  function SiteSettingsPropagationStatus() {
+    const scope = settingsPropagationStatus?.scopes?.find(
+      ({ scope }) => scope === "server_settings",
+    );
+    const bays = scope?.bays ?? [];
+    const unhealthy = bays.filter(({ status }) => status !== "current");
+    return (
+      <div style={{ marginTop: "8px", maxWidth: "900px" }}>
+        <Button
+          size="small"
+          icon={<Icon name="refresh" />}
+          loading={settingsPropagationLoading}
+          onClick={loadSiteSettingsPropagationStatus}
+        >
+          Refresh Propagation Status
+        </Button>
+        {scope?.seed_version != null && (
+          <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
+            Seed version <code>{scope.seed_version}</code>
+            {scope.updated_at ? (
+              <>
+                {" "}
+                updated <TimeAgo date={scope.updated_at} />
+              </>
+            ) : null}
+          </span>
+        )}
+        {settingsPropagationError ? (
+          <Alert
+            showIcon
+            style={{ marginTop: "8px" }}
+            type="error"
+            message="Could not load site settings propagation status"
+            description={settingsPropagationError}
+          />
+        ) : settingsPropagationStatus == null ? null : (
+          <Alert
+            showIcon
+            style={{ marginTop: "8px" }}
+            type={unhealthy.length ? "warning" : "success"}
+            message={
+              unhealthy.length
+                ? "Some bays do not have the latest site settings"
+                : "All registered bays have the latest site settings"
+            }
+            description={
+              <div>
+                <div>
+                  Status read from seed{" "}
+                  <code>{settingsPropagationStatus.seed_bay_id}</code>
+                  {settingsPropagationStatus.checked_at ? (
+                    <>
+                      {" "}
+                      <TimeAgo date={settingsPropagationStatus.checked_at} />
+                    </>
+                  ) : null}
+                  .
+                </div>
+                <div style={{ marginTop: "6px" }}>
+                  {bays.map((bay) => (
+                    <AntdTag
+                      key={bay.bay_id}
+                      color={propagationTagColor(bay.status)}
+                      style={{ marginBottom: "4px" }}
+                    >
+                      {bay.bay_id}: {bay.status}
+                      {bay.applied_version != null
+                        ? ` v${bay.applied_version}`
+                        : ""}
+                    </AntdTag>
+                  ))}
+                </div>
+                {unhealthy.map((bay) =>
+                  bay.last_error ? (
+                    <div key={bay.bay_id}>
+                      <code>{bay.bay_id}</code>: {bay.last_error}
+                    </div>
+                  ) : null,
+                )}
+              </div>
+            }
+          />
+        )}
+      </div>
+    );
   }
 
   async function applyCloudflareTunnelSettings(): Promise<void> {

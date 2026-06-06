@@ -331,6 +331,72 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-2", "title"])).toBe("Visible Project");
   });
 
+  it("repairs the stored visible project window when project ids are omitted", async () => {
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: "project-3",
+            title: "Stored Visible Project",
+            description: "stored visible window repair",
+            theme: null,
+            host_id: "host-1",
+            owning_bay_id: "bay-0",
+            users_summary: {
+              "acct-1": { group: "owner" },
+            },
+            state_summary: { state: "running" },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            last_edited: "2026-04-05T03:00:00.000Z",
+            last_backup: null,
+            updated_at: "2026-04-05T03:00:00.000Z",
+            is_hidden: false,
+          },
+        ],
+      },
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions.setVisibleProjectWindowForRepair(["project-3", "project-3", ""]);
+    await actions.repairProjectProjection({
+      kind: "visible-window",
+      reason: "foreground-wake",
+    });
+
+    expect(mockedWebappClient.async_query).toHaveBeenCalledTimes(1);
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: "project-3",
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+    expect(projectMap.getIn(["project-3", "title"])).toBe(
+      "Stored Visible Project",
+    );
+  });
+
   it("replaces project users from realtime upserts instead of preserving removed members", async () => {
     projectMap = ImmutableMap<string, any>([
       [
@@ -2070,6 +2136,86 @@ describe("ProjectsActions realtime feed", () => {
           expect.objectContaining({
             account_id: "acct-1",
             project_id: "00000000-0000-4000-8000-000000000102",
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+  });
+
+  it("keeps history-gap repair bounded for a large warm project cache", async () => {
+    const openProjectId = "00000000-0000-4000-8000-000000002222";
+    const otherOpenProjectId = "00000000-0000-4000-8000-000000002223";
+    openProjects = List([openProjectId, otherOpenProjectId]);
+    projectMap = ImmutableMap<string, any>(
+      Array.from({ length: 2500 }, (_, index) => [
+        `large-project-${index}`,
+        ImmutableMap({
+          project_id: `large-project-${index}`,
+          title: `Large Project ${index}`,
+        }),
+      ]),
+    );
+    mockedWebappClient.async_query.mockResolvedValue({
+      query: { account_project_index: [] },
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn(),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+    mockedWebappClient.async_query.mockClear();
+    refreshProjectsTableMock.mockClear();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("history-gap", {
+      requested_start_seq: 100,
+      effective_start_seq: 150,
+      oldest_retained_seq: 150,
+      newest_retained_seq: 200,
+    });
+    await flush();
+
+    expect(refreshProjectsTableMock).not.toHaveBeenCalled();
+    expect(mockedWebappClient.async_query).toHaveBeenCalledTimes(2);
+    expect(
+      mockedWebappClient.async_query.mock.calls.some(([request]) => {
+        return (
+          request?.query?.account_project_index?.[0]?.project_id == null &&
+          request?.options?.[0]?.limit !== 1
+        );
+      }),
+    ).toBe(false);
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: openProjectId,
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: otherOpenProjectId,
           }),
         ],
       },

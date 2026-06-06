@@ -41,10 +41,13 @@ import type {
 import type {
   AcpAdmissionDenialReport,
   BayBackupsInfo,
+  BayDrainPreflightResult,
+  GlobalConfigPropagationStatus,
   BayLoadInfo,
   ProjectRuntimeSlotReport,
   RootfsQuotaReport,
   ServiceAdmissionDenialReport,
+  SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
 import type {
   ProjectActiveOperationSummary,
@@ -1297,6 +1300,11 @@ export interface BayOpsHealthRequest {
   account_id?: string;
 }
 
+export interface BayOpsDrainPreflightRequest {
+  account_id?: string;
+  unsafe_rehome?: boolean;
+}
+
 export interface BayOpsRootfsQuotaReportRequest {
   account_id?: string;
   window_minutes?: number;
@@ -1347,6 +1355,23 @@ export interface BayOpsSetServerSettingRequest {
   name: string;
   value: string;
   readonly?: boolean;
+}
+
+export interface BayOpsSetSiteSettingsRequest {
+  account_id?: string;
+  settings: { name: string; value: string }[];
+  source_bay_id?: string | null;
+}
+
+export interface BayOpsSyncSiteSettingsRequest {
+  account_id?: string;
+  source_bay_id?: string | null;
+}
+
+export interface BayOpsGlobalConfigPropagationStatusRequest {
+  account_id?: string;
+  scope?: string;
+  source_bay_id?: string | null;
 }
 
 export interface AuthTokenRequiresRequest {}
@@ -1814,12 +1839,16 @@ export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod =
   | "get-load"
   | "get-backups"
+  | "get-drain-preflight"
   | "get-rootfs-catalog"
   | "get-rootfs-quota-report"
   | "get-acp-admission-denial-report"
   | "get-service-admission-denial-report"
   | "get-project-runtime-slot-report"
-  | "set-server-setting";
+  | "set-server-setting"
+  | "set-site-settings"
+  | "sync-site-settings"
+  | "get-global-config-propagation-status";
 export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
@@ -2866,6 +2895,9 @@ export interface InterBayBayRegistryApi {
 export interface InterBayBayOpsApi {
   getLoad: (opts: BayOpsHealthRequest) => Promise<BayLoadInfo>;
   getBackups: (opts: BayOpsHealthRequest) => Promise<BayBackupsInfo>;
+  getDrainPreflight: (
+    opts: BayOpsDrainPreflightRequest,
+  ) => Promise<BayDrainPreflightResult>;
   getRootfsCatalog: (
     opts: BayOpsRootfsCatalogRequest,
   ) => Promise<RootfsImageManifest>;
@@ -2882,6 +2914,15 @@ export interface InterBayBayOpsApi {
     opts: BayOpsProjectRuntimeSlotReportRequest,
   ) => Promise<ProjectRuntimeSlotReport>;
   setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
+  setSiteSettings: (
+    opts: BayOpsSetSiteSettingsRequest,
+  ) => Promise<SiteSettingsSyncResult>;
+  syncSiteSettings: (
+    opts: BayOpsSyncSiteSettingsRequest,
+  ) => Promise<SiteSettingsSyncResult>;
+  getGlobalConfigPropagationStatus: (
+    opts: BayOpsGlobalConfigPropagationStatusRequest,
+  ) => Promise<GlobalConfigPropagationStatus>;
 }
 
 export interface InterBayAuthTokenApi {
@@ -6145,11 +6186,38 @@ export function createInterBayBayOpsClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "get-backups" }),
   });
+  const drainPreflightClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getDrainPreflight">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "get-drain-preflight" }),
+  });
   const setServerSettingClient = createServiceClient<
     Pick<InterBayBayOpsApi, "setServerSetting">
   >({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "set-server-setting" }),
+  });
+  const setSiteSettingsClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "setSiteSettings">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "set-site-settings" }),
+  });
+  const syncSiteSettingsClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "syncSiteSettings">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "sync-site-settings" }),
+  });
+  const globalConfigPropagationStatusClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getGlobalConfigPropagationStatus">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-global-config-propagation-status",
+    }),
   });
   const rootfsQuotaReportClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getRootfsQuotaReport">
@@ -6199,6 +6267,8 @@ export function createInterBayBayOpsClient({
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
+    getDrainPreflight: async (opts) =>
+      await drainPreflightClient.getDrainPreflight(opts),
     getRootfsCatalog: async (opts) =>
       await rootfsCatalogClient.getRootfsCatalog(opts),
     getRootfsQuotaReport: async (opts) =>
@@ -6213,6 +6283,14 @@ export function createInterBayBayOpsClient({
       await projectRuntimeSlotReportClient.getProjectRuntimeSlotReport(opts),
     setServerSetting: async (opts) =>
       await setServerSettingClient.setServerSetting(opts),
+    setSiteSettings: async (opts) =>
+      await setSiteSettingsClient.setSiteSettings(opts),
+    syncSiteSettings: async (opts) =>
+      await syncSiteSettingsClient.syncSiteSettings(opts),
+    getGlobalConfigPropagationStatus: async (opts) =>
+      await globalConfigPropagationStatusClient.getGlobalConfigPropagationStatus(
+        opts,
+      ),
   };
 }
 
@@ -6267,6 +6345,17 @@ export function createInterBayBayOpsHandlers({
         getBackups: async (opts) => await impl.getBackups(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getDrainPreflight">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-drain-preflight",
+      }),
+      impl: {
+        getDrainPreflight: async (opts) => await impl.getDrainPreflight(opts),
+      },
+    }),
     createServiceHandler<Pick<InterBayBayOpsApi, "setServerSetting">>({
       ...options,
       service: "inter-bay-bay-ops",
@@ -6276,6 +6365,42 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         setServerSetting: async (opts) => await impl.setServerSetting(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "setSiteSettings">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "set-site-settings",
+      }),
+      impl: {
+        setSiteSettings: async (opts) => await impl.setSiteSettings(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "syncSiteSettings">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "sync-site-settings",
+      }),
+      impl: {
+        syncSiteSettings: async (opts) => await impl.syncSiteSettings(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getGlobalConfigPropagationStatus">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-global-config-propagation-status",
+      }),
+      impl: {
+        getGlobalConfigPropagationStatus: async (opts) =>
+          await impl.getGlobalConfigPropagationStatus(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsCatalog">>({
