@@ -4,13 +4,17 @@
  */
 
 import { Alert } from "antd";
+import { lazy, Suspense } from "react";
 import { defineMessage } from "react-intl";
 
 import { Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import { SiteLicenseManager } from "../membership-package-manager";
 import { useMembershipTiers } from "../membership-tiers";
 import type { SettingsPageDefinition } from "../settings-page";
+
+const SiteLicenseManager = lazy(async () => ({
+  default: (await import("../membership-package-manager")).SiteLicenseManager,
+}));
 
 export const SITE_LICENSES_SETTINGS_PAGE = {
   component: SiteLicensesPage,
@@ -46,5 +50,9 @@ function SiteLicensesPage() {
     return <Loading />;
   }
 
-  return <SiteLicenseManager tiers={tiers} onChanged={refresh} />;
+  return (
+    <Suspense fallback={<Loading />}>
+      <SiteLicenseManager tiers={tiers} onChanged={refresh} />
+    </Suspense>
+  );
 }

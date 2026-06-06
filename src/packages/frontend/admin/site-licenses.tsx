@@ -4,12 +4,17 @@
  */
 
 import { Alert, Space, Typography } from "antd";
+import { lazy, Suspense } from "react";
 
-import { SiteLicenseAdminPanel } from "@cocalc/frontend/account/membership-package-manager";
 import { useMembershipTiers } from "@cocalc/frontend/account/membership-tiers";
 import { Loading } from "@cocalc/frontend/components";
 
 const { Paragraph, Title } = Typography;
+
+const SiteLicenseAdminPanel = lazy(async () => ({
+  default: (await import("@cocalc/frontend/account/membership-package-manager"))
+    .SiteLicenseAdminPanel,
+}));
 
 export function SiteLicensesAdmin() {
   const { error, loading, tiers } = useMembershipTiers();
@@ -25,7 +30,13 @@ export function SiteLicensesAdmin() {
         </Paragraph>
       </div>
       {error ? <Alert type="error" showIcon title={error} /> : null}
-      {loading ? <Loading /> : <SiteLicenseAdminPanel tiers={tiers} />}
+      {loading ? (
+        <Loading />
+      ) : (
+        <Suspense fallback={<Loading />}>
+          <SiteLicenseAdminPanel tiers={tiers} />
+        </Suspense>
+      )}
     </Space>
   );
 }

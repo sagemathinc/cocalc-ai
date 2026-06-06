@@ -138,7 +138,7 @@ describe("MembershipPage", () => {
     jest.clearAllMocks();
   });
 
-  it("shows the free effective membership without raw technical details", () => {
+  it("shows the free effective membership without raw technical details", async () => {
     useMembershipSettingsData.mockReturnValue(
       baseData({
         membership: { class: "free", source: "free" },
@@ -162,6 +162,7 @@ describe("MembershipPage", () => {
     );
 
     const { container } = render(<MembershipPage />);
+    await screen.findByText("Claim site license");
     const text = container.textContent ?? "";
 
     expect(screen.getByText("Free - CoCalc")).toBeTruthy();
@@ -181,7 +182,7 @@ describe("MembershipPage", () => {
     expect(text).not.toContain("SourceFree");
   });
 
-  it("shows personal annual membership pricing from subscription data", () => {
+  it("shows personal annual membership pricing from subscription data", async () => {
     useMembershipSettingsData.mockReturnValue(
       baseData({
         candidateRows: [
@@ -218,6 +219,7 @@ describe("MembershipPage", () => {
     );
 
     const { container } = render(<MembershipPage />);
+    await screen.findByText("Claim site license");
     const text = container.textContent ?? "";
 
     expect(
@@ -238,7 +240,7 @@ describe("MembershipPage", () => {
     );
   });
 
-  it("marks the claim panel only for site-license membership sources", () => {
+  it("marks the claim panel only for site-license membership sources", async () => {
     useMembershipSettingsData.mockReturnValue(
       baseData({
         candidateRows: [
@@ -279,6 +281,7 @@ describe("MembershipPage", () => {
     );
 
     render(<MembershipPage />);
+    await screen.findByText("Claim site license");
 
     expect(mockClaimableMembershipPackagesPanel.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ hasSiteLicenseMembership: true }),

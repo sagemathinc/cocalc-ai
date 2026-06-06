@@ -13,7 +13,7 @@ import {
   Table,
   Typography,
 } from "antd";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { defineMessage } from "react-intl";
 
 import {
@@ -39,16 +39,22 @@ import {
   type MembershipTier,
   useMembershipSettingsData,
 } from "./membership-settings-data";
-import {
-  ClaimableMembershipPackagesPanel,
-  SiteLicenseReverificationPanel,
-} from "./membership-package-manager";
 import MembershipPurchaseModal from "./membership-purchase-modal";
 import type { SettingsPageDefinition } from "./settings-page";
 import { openAccountSettings } from "./settings-routing";
 import { UseBalance } from "./balance-toward-subs";
 
 const { Paragraph, Text } = Typography;
+
+const ClaimableMembershipPackagesPanel = lazy(async () => ({
+  default: (await import("./membership-package-manager"))
+    .ClaimableMembershipPackagesPanel,
+}));
+
+const SiteLicenseReverificationPanel = lazy(async () => ({
+  default: (await import("./membership-package-manager"))
+    .SiteLicenseReverificationPanel,
+}));
 
 export const MEMBERSHIP_SETTINGS_PAGE = {
   component: MembershipPage,
@@ -225,15 +231,19 @@ function MembershipSettingsContent() {
                 refresh={refreshMembership}
               />
             ) : null}
-            <ClaimableMembershipPackagesPanel
-              compact
-              hasSiteLicenseMembership={hasSiteLicenseMembership}
-              onChanged={refreshMembership}
-              tiers={Object.values(tierById)}
-            />
+            <Suspense fallback={null}>
+              <ClaimableMembershipPackagesPanel
+                compact
+                hasSiteLicenseMembership={hasSiteLicenseMembership}
+                onChanged={refreshMembership}
+                tiers={Object.values(tierById)}
+              />
+            </Suspense>
           </Space>
           {isCommercial ? <UseBalance /> : null}
-          <SiteLicenseReverificationPanel onChanged={refreshMembership} />
+          <Suspense fallback={null}>
+            <SiteLicenseReverificationPanel onChanged={refreshMembership} />
+          </Suspense>
         </Space>
       </Card>
 
