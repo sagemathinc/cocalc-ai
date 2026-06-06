@@ -13,7 +13,6 @@ import {
   startOfDay,
   roundToMidnight,
 } from "@cocalc/util/stripe/timecalcs";
-import expect from "expect";
 import { unitAmount } from "./licenses/purchase/charge";
 import { COSTS } from "@cocalc/util/purchases/quota/consts";
 

@@ -760,9 +760,10 @@ describe("membership packages", () => {
   it("can include already claimed site-license pools for account settings", async () => {
     const owner_account_id = uuid();
     const site_user_account_id = uuid();
+    const site_user_email = `ada-${uuid().slice(0, 8)}@example.edu`;
     await createTestAccount(owner_account_id);
     await createTestAccount(site_user_account_id);
-    await markVerifiedEmail(site_user_account_id, "ada@example.edu");
+    await markVerifiedEmail(site_user_account_id, site_user_email);
 
     const package_id = await createTestMembershipPackage({
       owner_account_id,
@@ -799,7 +800,7 @@ describe("membership packages", () => {
         expect.objectContaining({
           assignment_id: claimed.id,
           available_seat_count: 1,
-          matched_email_address: "ada@example.edu",
+          matched_email_address: site_user_email,
           package_id,
           pool_name: "Students",
           seat_status: "claimed",

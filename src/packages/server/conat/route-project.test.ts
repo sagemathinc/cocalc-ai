@@ -50,14 +50,18 @@ describe("route-project bay-aware routing", () => {
   const HOST_ID = "22222222-2222-4222-8222-222222222222";
 
   beforeEach(() => {
-    jest.resetModules();
     jest.useRealTimers();
+    jest.resetModules();
     queryMock = jest.fn();
     warnMock = jest.fn();
     debugMock = jest.fn();
     resolveProjectBayAcrossClusterMock = jest.fn(async () => null);
     projectReferenceGetMock = jest.fn(async () => null);
     hostConnectionGetMock = jest.fn(async () => null);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it("routes a project through a host in the same bay and caches the target", async () => {
