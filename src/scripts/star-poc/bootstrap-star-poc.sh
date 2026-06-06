@@ -16,7 +16,7 @@ STAR_HOME="$(getent passwd "$STAR_USER" | cut -d: -f6)"
 SRC_ROOT="${SRC_ROOT:-${STAR_HOME}/cocalc-ai/src}"
 STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
 STAR_DATA="${STAR_DATA:-${STAR_ROOT}/launchpad}"
-STAR_PROJECT_HOST_DATA="${STAR_PROJECT_HOST_DATA:-${STAR_ROOT}/project-host/0}"
+STAR_PROJECT_HOST_DATA="${STAR_PROJECT_HOST_DATA:-/mnt/cocalc/data}"
 STAR_HOST_ID="${STAR_HOST_ID:-11111111-1111-4111-8111-111111111111}"
 STAR_PROJECT_HOST_REGION="${STAR_PROJECT_HOST_REGION:-wnam}"
 STAR_BASE_PORT="${STAR_BASE_PORT:-9100}"
@@ -310,6 +310,7 @@ EOF
 
 stop_existing_services() {
   systemctl stop cocalc-star-project-host.service >/dev/null 2>&1 || true
+  systemctl stop cocalc-star-rest-server.service >/dev/null 2>&1 || true
   systemctl stop cocalc-star-hub.service >/dev/null 2>&1 || true
 }
 
@@ -542,7 +543,7 @@ configure_users_and_dirs() {
     -exec chown "$STAR_USER:$STAR_USER" {} +
   find "$STAR_PROJECT_HOST_DATA/cache/images" -maxdepth 1 -type f -name '.*.json' \
     -exec chown "$STAR_USER:$STAR_USER" {} +
-  chown -R "$STAR_USER:$STAR_USER" /mnt/cocalc/data
+  chown "$STAR_USER:$STAR_USER" /mnt/cocalc/data
 }
 
 build_default_rootfs_image() {
@@ -674,6 +675,8 @@ COCALC_LOCAL_POSTGRES_ADMIN_USER=smc
 COCALC_LOCAL_PG_SOCKET_DIR=${STAR_DATA}/postgres-socket
 COCALC_LOCAL_PG_ENV_FILE=${STAR_DATA}/local-postgres.env
 COCALC_BACKUP_ROOT=${STAR_ROOT}/backup
+COCALC_LAUNCHPAD_REST_PORT=9345
+COCALC_REST_PORT=9345
 PGHOST=${STAR_DATA}/postgres-socket
 PGUSER=smc
 PGDATABASE=smc
@@ -734,8 +737,9 @@ seed_database() {
 }
 
 install_systemd() {
-  local hub_unit project_host_unit caddy_config hub_workdir hub_exec hub_bundle_env project_host_workdir project_host_exec project_host_stop api_v2_routes_bundle caddy_site
+  local hub_unit rest_unit project_host_unit caddy_config hub_workdir hub_exec hub_bundle_env project_host_workdir project_host_exec project_host_stop api_v2_routes_bundle caddy_site
   hub_unit="$(mktemp)"
+  rest_unit="$(mktemp)"
   project_host_unit="$(mktemp)"
   caddy_config="$(mktemp)"
   if [ -f "$SRC_ROOT/packages/launchpad/build/bundle/bundle/index.js" ]; then
@@ -789,11 +793,32 @@ TimeoutStopSec=20
 WantedBy=multi-user.target
 EOF
 
+  cat >"$rest_unit" <<EOF
+[Unit]
+Description=CoCalc Star local rustic REST server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${STAR_USER}
+Group=${STAR_USER}
+EnvironmentFile=/etc/cocalc/star/hub.env
+ExecStartPre=/bin/bash -lc 'mkdir -p "\${COCALC_BACKUP_ROOT}/rustic"'
+ExecStart=/bin/bash -lc 'exec "\${COCALC_BIN_PATH}/rest-server" --path "\${COCALC_BACKUP_ROOT}/rustic" --listen "127.0.0.1:\${COCALC_LAUNCHPAD_REST_PORT:-9345}" --htpasswd-file "\${COCALC_DATA_DIR}/secrets/launchpad-rest/htpasswd"'
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
   cat >"$project_host_unit" <<EOF
 [Unit]
 Description=CoCalc Star local project host
-After=network-online.target cocalc-star-hub.service
-Wants=network-online.target cocalc-star-hub.service
+After=network-online.target cocalc-star-hub.service cocalc-star-rest-server.service
+Wants=network-online.target cocalc-star-hub.service cocalc-star-rest-server.service
 
 [Service]
 Type=simple
@@ -827,16 +852,19 @@ EOF
   caddy fmt --overwrite "$caddy_config" >/dev/null || true
 
   grep -q '^ExecStart=' "$hub_unit" || die "generated hub systemd unit is invalid"
+  grep -q '^ExecStart=' "$rest_unit" || die "generated REST systemd unit is invalid"
   grep -q '^ExecStart=' "$project_host_unit" || die "generated project-host systemd unit is invalid"
   install -m 0644 -o root -g root "$hub_unit" /etc/systemd/system/cocalc-star-hub.service
+  install -m 0644 -o root -g root "$rest_unit" /etc/systemd/system/cocalc-star-rest-server.service
   install -m 0644 -o root -g root "$project_host_unit" /etc/systemd/system/cocalc-star-project-host.service
   install -m 0644 -o root -g root "$caddy_config" /etc/caddy/Caddyfile
   grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-hub.service || die "installed hub systemd unit is invalid"
+  grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-rest-server.service || die "installed REST systemd unit is invalid"
   grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-project-host.service || die "installed project-host systemd unit is invalid"
-  rm -f "$hub_unit" "$project_host_unit" "$caddy_config"
+  rm -f "$hub_unit" "$rest_unit" "$project_host_unit" "$caddy_config"
 
   systemctl daemon-reload
-  systemctl enable caddy cocalc-star-hub cocalc-star-project-host
+  systemctl enable caddy cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host
 }
 
 configure_sudoers() {
@@ -903,6 +931,7 @@ start_services() {
   systemctl restart caddy
   star_web_onboarding_stop_server
   systemctl restart cocalc-star-hub
+  systemctl restart cocalc-star-rest-server
   systemctl restart cocalc-star-project-host
   log "waiting for ${STAR_BASE_URL}/customize"
   for _ in $(seq 1 60); do
@@ -912,7 +941,7 @@ start_services() {
     sleep 2
   done
   sync
-  systemctl --no-pager --full status cocalc-star-hub cocalc-star-project-host || true
+  systemctl --no-pager --full status cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host || true
   local bootstrap_url=""
   local invite_url=""
   if [ -f "$STAR_ROOT/bootstrap-result.json" ]; then

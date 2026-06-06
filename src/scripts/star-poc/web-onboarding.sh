@@ -236,7 +236,7 @@ star_web_onboarding_write_index() {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      margin-top: 0.8rem;
+      margin: 0;
       padding: 0.85rem 1rem;
       border-radius: 0.75rem;
       color: white;
@@ -250,6 +250,15 @@ star_web_onboarding_write_index() {
     button.button:disabled {
       cursor: default;
       opacity: 0.68;
+    }
+    #start {
+      margin-top: 0.8rem;
+    }
+    #actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 0.85rem;
     }
     .progress-wrap {
       margin-top: 1.25rem;
@@ -272,6 +281,12 @@ star_web_onboarding_write_index() {
       border-top: 1px solid var(--line);
       padding-top: 1rem;
     }
+    .timing {
+      margin-top: 0.85rem;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9rem;
+    }
     code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       background: rgba(31, 111, 87, 0.08);
@@ -292,11 +307,12 @@ star_web_onboarding_write_index() {
       <li>Prepare the default Jupyter, terminal, and LaTeX project image.</li>
       <li>Start CoCalc and show the first-admin account link.</li>
     </ul>
-    <p class="estimate">Estimated time: about 5 minutes.</p>
+    <p class="estimate">Estimated time: about 10 minutes.</p>
     <button class="button" id="start">Start install</button>
     <section class="status" aria-live="polite">
       <div class="phase" id="phase">starting</div>
       <p class="message" id="message">Waiting for installer status...</p>
+      <div class="timing" id="timing">Install has not started yet.</div>
       <div id="actions"></div>
       <div class="progress-wrap" aria-label="Install progress">
         <div class="progress" id="progress"></div>
@@ -310,6 +326,7 @@ star_web_onboarding_write_index() {
     const actions = document.getElementById("actions");
     const progress = document.getElementById("progress");
     const start = document.getElementById("start");
+    const timing = document.getElementById("timing");
 
     const progressByPhase = {
       starting: 5,
@@ -341,6 +358,39 @@ star_web_onboarding_write_index() {
       progress.style.width = (progressByPhase[name] || 12) + "%";
     }
 
+    function parseDate(value) {
+      if (!value) return;
+      const date = new Date(value);
+      if (Number.isNaN(date.valueOf())) return;
+      return date;
+    }
+
+    function formatElapsed(ms) {
+      const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      if (minutes === 0) return seconds + "s";
+      return minutes + "m " + String(seconds).padStart(2, "0") + "s";
+    }
+
+    function setTiming(status) {
+      const started = parseDate(status.started_at);
+      if (!started) {
+        timing.textContent = "Install has not started yet.";
+        return;
+      }
+      const startedLabel = started.toLocaleString([], {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+      timing.textContent =
+        "Started at " +
+        startedLabel +
+        " · elapsed " +
+        formatElapsed(Date.now() - started.getTime());
+    }
+
     async function continueInstall() {
       start.disabled = true;
       start.textContent = "Starting install...";
@@ -363,6 +413,7 @@ star_web_onboarding_write_index() {
         const name = status.phase || "installing";
         phase.textContent = name;
         message.textContent = status.message || "Installing CoCalc Star...";
+        setTiming(status);
         setProgress(name);
         if (["runtime", "rootfs", "systemd", "starting-services", "ready"].includes(name)) {
           start.disabled = true;
@@ -372,6 +423,7 @@ star_web_onboarding_write_index() {
       } catch (err) {
         phase.textContent = "waiting";
         message.textContent = "Waiting for the installer to write status...";
+        setTiming({});
         setProgress("starting");
         setActions({});
       }
@@ -413,18 +465,31 @@ star_web_onboarding_write_status() {
     BOOTSTRAP_URL="$bootstrap_url" \
     INVITE_URL="$invite_url" \
     UPDATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    STATUS_PATH="$status" \
     python3 - "$tmp" <<'PY'
 import json
 import os
 import sys
 
 path = sys.argv[1]
+status_path = os.environ.get("STATUS_PATH", "")
+started_at = ""
+if status_path:
+    try:
+        with open(status_path, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        started_at = existing.get("started_at", "")
+    except Exception:
+        started_at = ""
+if not started_at:
+    started_at = os.environ.get("UPDATED_AT", "")
 payload = {
     "phase": os.environ.get("PHASE", "installing"),
     "message": os.environ.get("MESSAGE", ""),
     "public_url": os.environ.get("PUBLIC_URL", ""),
     "bootstrap_url": os.environ.get("BOOTSTRAP_URL", ""),
     "invite_url": os.environ.get("INVITE_URL", ""),
+    "started_at": started_at,
     "updated_at": os.environ.get("UPDATED_AT", ""),
 }
 with open(path, "w", encoding="utf-8") as f:
