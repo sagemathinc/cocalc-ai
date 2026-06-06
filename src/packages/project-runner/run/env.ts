@@ -142,10 +142,9 @@ export async function getEnvironment({
     HOME,
     DATA,
     COCALC_LOGS: DATA,
-    // Project debug logging is opt-in; verbose defaults can flood journald and
-    // make live project hosts flaky under real dogfood load.
-    DEBUG: process.env.COCALC_PROJECT_DEBUG ?? "",
-    DEBUG_CONSOLE: process.env.COCALC_PROJECT_DEBUG_CONSOLE ?? "no",
+    // DEBUG: so interesting stuff gets logged, but not too much unless we really need it.
+    DEBUG: process.env.COCALC_PROJECT_DEBUG ?? "cocalc:*,-cocalc:silly:*",
+    DEBUG_CONSOLE: process.env.COCALC_PROJECT_DEBUG_CONSOLE ?? "yes",
     // important to explicitly set the COCALC_ vars since server env has own in a project
     COCALC_PROJECT_ID: project_id,
     COCALC_RUNTIME_BOOTSTRAP: "1",
