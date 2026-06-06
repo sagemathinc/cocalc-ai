@@ -53,6 +53,46 @@ describe("TimeAgo", () => {
     expect(screen.getByText("1 minute ago")).toBeInTheDocument();
   });
 
+  it("updates future timestamps at the next visible text boundary", () => {
+    render(
+      <TimeAgo
+        date={new Date("2026-04-30T18:22:00.000Z")}
+        click_to_toggle={false}
+      />,
+    );
+
+    expect(screen.getByText("2 minutes from now")).toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(31 * 1000);
+    });
+
+    expect(screen.getByText("1 minute from now")).toBeInTheDocument();
+  });
+
+  it("continues updating as a future timestamp becomes past", () => {
+    render(
+      <TimeAgo
+        date={new Date("2026-04-30T18:20:02.000Z")}
+        click_to_toggle={false}
+      />,
+    );
+
+    expect(screen.getByText("less than a minute from now")).toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(2 * 1000);
+    });
+
+    expect(screen.getByText("now")).toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+
+    expect(screen.getByText("less than a minute ago")).toBeInTheDocument();
+  });
+
   it("does not recurse when many live timestamps mount together", () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
 

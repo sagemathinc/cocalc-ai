@@ -592,6 +592,14 @@ Plan:
 
 Estimate: `S-M`
 
+Status: `implemented`
+
+- Replaced next-update scheduling with a deterministic next-visible-text-change
+  calculation so past and future timestamps update without relying on unrelated
+  rerenders.
+- Added fake-timer coverage for future timestamps crossing minute boundaries and
+  for a future timestamp becoming past.
+
 ### P1-J: Disable Paged Block Markdown Editor By Default
 
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`
