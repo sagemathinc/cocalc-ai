@@ -8,6 +8,10 @@ import { useState, type ReactNode } from "react";
 import { defineMessage, FormattedMessage, useIntl } from "react-intl";
 
 import { redux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, SettingBox, type IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
@@ -47,9 +51,34 @@ export function HideDeleteBox(props: Readonly<Props>) {
   const project_id = project.get("project_id");
   const projectTitle = `${project.get("title") ?? ""}`.trim();
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [protectionSaving, setProtectionSaving] = useState(false);
+  const [protectionError, setProtectionError] = useState("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setProtectionError(`${err}`),
+  });
 
   function toggle_hide_project(): void {
     actions.toggle_hide_project(project_id);
+  }
+
+  async function setDeletionProtection(enabled: boolean): Promise<void> {
+    setProtectionError("");
+    setProtectionSaving(true);
+    try {
+      await runFreshAuthAction(async () => {
+        await webapp_client.conat_client.hub.projects.setProjectDeletionProtection(
+          {
+            project_id,
+            enabled,
+            browser_id: webapp_client.browser_id,
+          },
+        );
+      });
+    } catch (err) {
+      setProtectionError(`${err}`);
+    } finally {
+      setProtectionSaving(false);
+    }
   }
 
   function hide_message(): React.JSX.Element {
@@ -120,22 +149,51 @@ export function HideDeleteBox(props: Readonly<Props>) {
         />
         {extraRows}
         {isOwner ? (
-          <DangerActionRow
-            icon="trash"
-            title={`Delete ${projectLabel}`}
-            description={`Permanently delete this ${projectLabelLower} for everyone. This requires fresh authentication and cannot be undone.`}
-            action={
-              <Button
-                danger
-                icon={<Icon name="trash" />}
-                onClick={() => {
-                  setDeleteModalOpen(true);
-                }}
-              >
-                Delete...
-              </Button>
-            }
-          />
+          <>
+            <DangerActionRow
+              icon="lock"
+              title="Deletion Protection"
+              description={
+                <>
+                  Prevent permanent deletion of this {projectLabelLower}.
+                  Turning protection off requires fresh authentication.
+                  {protectionError ? (
+                    <div style={{ color: COLORS.ANTD_RED, marginTop: 4 }}>
+                      {protectionError}
+                    </div>
+                  ) : undefined}
+                </>
+              }
+              action={
+                <Switch
+                  checked={project.get("deletion_protection") === true}
+                  loading={protectionSaving}
+                  checkedChildren="On"
+                  unCheckedChildren="Off"
+                  onChange={(checked) => {
+                    void setDeletionProtection(checked);
+                  }}
+                />
+              }
+            />
+            <DangerActionRow
+              icon="trash"
+              title={`Delete ${projectLabel}`}
+              description={`Permanently delete this ${projectLabelLower} for everyone. This requires fresh authentication and cannot be undone.`}
+              action={
+                <Button
+                  danger
+                  icon={<Icon name="trash" />}
+                  disabled={project.get("deletion_protection") === true}
+                  onClick={() => {
+                    setDeleteModalOpen(true);
+                  }}
+                >
+                  Delete...
+                </Button>
+              }
+            />
+          </>
         ) : (
           <DangerActionRow
             icon="user-times"
@@ -160,6 +218,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
             redux.getActions("page").close_project_tab(project_id);
           }}
         />
+        <FreshAuthModal {...freshAuthModalProps} />
       </Space>
     );
   }

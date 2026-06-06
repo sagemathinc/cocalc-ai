@@ -4239,6 +4239,52 @@ Examples:
     );
 
   host
+    .command("deletion-protection <host> <state>")
+    .description("enable or disable host deletion protection")
+    .option(
+      "--browser-id <id>",
+      "browser session id for fresh-auth checks; defaults to COCALC_BROWSER_ID",
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        state: string,
+        opts: { browserId?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "host deletion-protection", async (ctx) => {
+          const h = await resolveHost(ctx, hostIdentifier);
+          const normalized = state.trim().toLowerCase();
+          const enabled =
+            normalized === "on" ||
+            normalized === "true" ||
+            normalized === "enable" ||
+            normalized === "enabled";
+          const disabled =
+            normalized === "off" ||
+            normalized === "false" ||
+            normalized === "disable" ||
+            normalized === "disabled";
+          if (!enabled && !disabled) {
+            throw new Error("state must be one of: on, off");
+          }
+          const browserId =
+            `${opts.browserId ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+          const updated = await ctx.hub.hosts.setHostDeletionProtection({
+            id: h.id,
+            enabled,
+            ...(browserId ? { browser_id: browserId } : undefined),
+          });
+          return {
+            host_id: updated.id,
+            name: updated.name ?? "",
+            deletion_protection: updated.deletion_protection === true,
+          };
+        });
+      },
+    );
+
+  host
     .command("resolve-connection <host>")
     .description("resolve host connection info")
     .action(async (hostIdentifier: string, command: Command) => {

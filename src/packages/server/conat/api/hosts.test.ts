@@ -2684,6 +2684,95 @@ describe("hosts browser fresh auth gating", () => {
     );
   });
 
+  it("rejects protected hosts before queueing host delete", async () => {
+    getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              status: "off",
+              deletion_protection: true,
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { deleteHost } = await import("./hosts");
+    await expect(
+      deleteHost({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: "host_deletion_protection_enabled",
+    });
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it("requires fresh auth before disabling host deletion protection", async () => {
+    getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              status: "off",
+              deletion_protection: true,
+              metadata: {
+                owner: ACCOUNT_ID,
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              status: "off",
+              deletion_protection: false,
+              metadata: {
+                owner: ACCOUNT_ID,
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { setHostDeletionProtection } = await import("./hosts");
+    const updated = await setHostDeletionProtection({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      id: HOST_ID,
+      enabled: false,
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "session-hash",
+    });
+    expect(updated.deletion_protection).toBe(false);
+  });
+
   it("requires fresh auth before queueing host stop or restart", async () => {
     requireFreshAuthForSessionHashMock = jest.fn(async () => {
       throw Object.assign(new Error("fresh auth is required"), {

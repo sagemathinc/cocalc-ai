@@ -1246,6 +1246,7 @@ export function parseRow(
     ),
     runtime_exception_summary: opts.runtime_exception_summary,
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
+    deletion_protection: row.deletion_protection === true,
     backup_status: opts.backup_status,
     bootstrap: normalizedBootstrap,
     bootstrap_lifecycle: normalizedBootstrapLifecycle,

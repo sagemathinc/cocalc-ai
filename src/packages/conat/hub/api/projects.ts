@@ -669,6 +669,7 @@ export const projects = {
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
   getProjectRunQuota: authFirstRequireAccount,
+  setProjectDeletionProtection: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   copyEmailProjectInviteLink: authFirstRequireAccount,
@@ -1405,6 +1406,13 @@ export interface Projects {
     service: string;
     stream_name: string;
   }>;
+  setProjectDeletionProtection: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    project_id: string;
+    enabled: boolean;
+  }) => Promise<{ project_id: string; deletion_protection: boolean }>;
   leaveOrDeleteProjects: (opts: {
     account_id?: string;
     browser_id?: string | null;

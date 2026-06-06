@@ -427,6 +427,14 @@ Exit criteria:
   paths.
 - Unprotect requires fresh auth.
 
+Status: `implemented`
+
+- Added project and project-host deletion protection flags, backend delete
+  admission checks, owner-only toggle RPCs, CLI toggles, and UI checkboxes in
+  project settings / host lifecycle settings.
+- Disabling protection requires fresh auth; enabling protection only requires
+  owner authorization.
+
 ### P1-B: Disk Usage Scan Budget
 
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`

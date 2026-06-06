@@ -462,6 +462,55 @@ export function registerProjectBasicCommands(
     );
 
   project
+    .command("deletion-protection <state>")
+    .description("enable or disable project deletion protection")
+    .requiredOption("-w, --project <project_id>", "project project_id (UUID)")
+    .option(
+      "--browser-id <id>",
+      "browser session id for fresh-auth checks; defaults to COCALC_BROWSER_ID",
+    )
+    .action(
+      async (
+        state: string,
+        opts: { project: string; browserId?: string },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "project deletion-protection",
+          async (ctx) => {
+            const projectId = `${opts.project ?? ""}`.trim();
+            if (!isValidUUID(projectId)) {
+              throw new Error("--project must be a project project_id UUID");
+            }
+            const normalized = state.trim().toLowerCase();
+            const enabled =
+              normalized === "on" ||
+              normalized === "true" ||
+              normalized === "enable" ||
+              normalized === "enabled";
+            const disabled =
+              normalized === "off" ||
+              normalized === "false" ||
+              normalized === "disable" ||
+              normalized === "disabled";
+            if (!enabled && !disabled) {
+              throw new Error("state must be one of: on, off");
+            }
+            const ws = await resolveProject(ctx, projectId);
+            const browserId =
+              `${opts.browserId ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+            return await ctx.hub.projects.setProjectDeletionProtection({
+              project_id: ws.project_id,
+              enabled,
+              ...(browserId ? { browser_id: browserId } : undefined),
+            });
+          },
+        );
+      },
+    );
+
+  project
     .command("start")
     .description("start a project (defaults to context)")
     .option("-w, --project <project>", "project id or name")

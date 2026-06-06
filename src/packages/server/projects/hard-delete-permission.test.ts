@@ -47,7 +47,10 @@ const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const OWNER_ID = "22222222-2222-4222-8222-222222222222";
 const COLLABORATOR_ID = "33333333-3333-4333-8333-333333333333";
 
-function projectRow(users: Record<string, { group: string }>) {
+function projectRow(
+  users: Record<string, { group: string }>,
+  opts: { deletion_protection?: boolean } = {},
+) {
   return {
     project_id: PROJECT_ID,
     name: "project",
@@ -59,6 +62,7 @@ function projectRow(users: Record<string, { group: string }>) {
     backup_repo_id: null,
     created: new Date(),
     last_edited: new Date(),
+    deletion_protection: opts.deletion_protection ?? false,
   };
 }
 
@@ -105,6 +109,29 @@ describe("hard-delete permission", () => {
     ).rejects.toMatchObject({
       code: "project_delete_not_owner",
       message: "must be a project owner to permanently delete a workspace",
+    });
+  });
+
+  it("rejects protected projects before hard delete", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        projectRow(
+          {
+            [OWNER_ID]: { group: "owner" },
+          },
+          { deletion_protection: true },
+        ),
+      ],
+    });
+
+    const { assertProjectDeletionProtectionDisabled } =
+      await import("./hard-delete");
+    await expect(
+      assertProjectDeletionProtectionDisabled({
+        project_id: PROJECT_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: "project_deletion_protection_enabled",
     });
   });
 });
