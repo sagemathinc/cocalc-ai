@@ -7696,6 +7696,14 @@ export async function deleteHost({
       });
   }
   const row = await loadOwnedHost(id, account_id);
+  if (row.deletion_protection === true) {
+    throw Object.assign(
+      new Error(
+        "deletion protection is enabled for this host; disable it in host settings before deleting or deprovisioning",
+      ),
+      { code: "host_deletion_protection_enabled" },
+    );
+  }
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   const managedCloud =
     machineCloud && machineCloud !== "self-host" && machineCloud !== "local";
@@ -7713,6 +7721,55 @@ export async function deleteHost({
     input: { id: row.id, account_id, skip_backups: !!skip_backups },
     dedupe_key: `${kind}:${row.id}`,
   });
+}
+
+export async function setHostDeletionProtection({
+  account_id,
+  browser_id,
+  session_hash,
+  id,
+  enabled,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  id: string;
+  enabled: boolean;
+}): Promise<Host> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .setHostDeletionProtection({
+        account_id,
+        ...(browser_id ? { browser_id } : {}),
+        session_hash,
+        id,
+        enabled,
+      });
+  }
+  await loadOwnedHost(id, account_id);
+  if (!enabled) {
+    await requireDangerousHostMutationAuth({
+      account_id,
+      browser_id,
+      session_hash,
+    });
+  }
+  const { rows } = await pool().query(
+    `
+      UPDATE project_hosts
+      SET deletion_protection=$2, updated=NOW()
+      WHERE id=$1 AND deleted IS NULL
+      RETURNING *
+    `,
+    [id, !!enabled],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("host not found");
+  }
+  return parseRow(row);
 }
 
 export async function deleteHostInternal({

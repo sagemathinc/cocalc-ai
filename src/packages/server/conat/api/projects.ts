@@ -2,7 +2,10 @@ import createProject from "@cocalc/server/projects/create";
 export { createProject };
 import execProject from "@cocalc/server/projects/exec";
 import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
-import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-delete";
+import {
+  assertHardDeleteProjectPermission,
+  assertProjectDeletionProtectionDisabled,
+} from "@cocalc/server/projects/hard-delete";
 import { assertProjectHardDeleteAdmission } from "@cocalc/server/projects/hard-delete-admission";
 import {
   assertProjectNotHardDeleting,
@@ -3097,6 +3100,7 @@ export async function hardDeleteProject({
     project_id,
     account_id,
   });
+  await assertProjectDeletionProtectionDisabled({ project_id });
   await assertProjectHardDeleteAdmission({
     project_id,
     account_id,
@@ -3181,6 +3185,117 @@ export async function hardDeleteProject({
     scope_id: account_id,
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
+  };
+}
+
+export async function setProjectDeletionProtection({
+  account_id,
+  browser_id,
+  session_hash,
+  project_id,
+  enabled,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  project_id: string;
+  enabled: boolean;
+}): Promise<{ project_id: string; deletion_protection: boolean }> {
+  const actor = requireAccountId(account_id);
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (typeof enabled !== "boolean") {
+    throw new Error("enabled must be a boolean");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .projectCollabInvite(ownership.bay_id)
+      .setDeletionProtection({
+        account_id: actor,
+        browser_id,
+        session_hash,
+        project_id,
+        enabled,
+      });
+  }
+  return await setLocalProjectDeletionProtection({
+    account_id: actor,
+    browser_id,
+    session_hash,
+    project_id,
+    enabled,
+  });
+}
+
+export async function setLocalProjectDeletionProtection({
+  account_id,
+  browser_id,
+  session_hash,
+  project_id,
+  enabled,
+}: {
+  account_id: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  project_id: string;
+  enabled: boolean;
+}): Promise<{ project_id: string; deletion_protection: boolean }> {
+  if (!isValidUUID(account_id) || !isValidUUID(project_id)) {
+    throw new Error("invalid account_id or project_id");
+  }
+  if (typeof enabled !== "boolean") {
+    throw new Error("enabled must be a boolean");
+  }
+  await assertHardDeleteProjectPermission({
+    project_id,
+    account_id,
+  });
+  if (!enabled) {
+    await requireDangerousProjectMutationAuth({
+      account_id,
+      browser_id,
+      session_hash,
+    });
+  }
+  const { rows } = await getPool().query<{
+    project_id: string;
+    deletion_protection: boolean | null;
+  }>(
+    `
+      UPDATE projects
+      SET deletion_protection=$2, last_edited=NOW()
+      WHERE project_id=$1
+      RETURNING project_id, deletion_protection
+    `,
+    [project_id, !!enabled],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("workspace not found");
+  }
+  await appendProjectOutboxEventForProject({
+    db: getPool(),
+    event_type: "project.summary_changed",
+    project_id,
+    default_bay_id: getConfiguredBayId(),
+  });
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id: getConfiguredBayId(),
+  }).catch((err) => {
+    log.warn(
+      "setProjectDeletionProtection: failed to publish project feed events",
+      {
+        project_id,
+        err: `${err}`,
+      },
+    );
+  });
+  return {
+    project_id: row.project_id,
+    deletion_protection: row.deletion_protection === true,
   };
 }
 

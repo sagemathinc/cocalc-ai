@@ -299,6 +299,7 @@ import {
   removeHostAccess,
   setHostOwnerSpendLimits,
   setHostAccess,
+  setHostDeletionProtection,
   setHostProjectRamLimit,
   setHostPoolAccess,
   setHostRuntimeDeployments,
@@ -362,6 +363,7 @@ import {
   syncSiteSettingsToBays,
 } from "@cocalc/server/conat/api/system";
 import {
+  setLocalProjectDeletionProtection,
   setLocalProjectManageUsersOwnerOnly,
   setLocalProjectsHidden,
 } from "@cocalc/server/conat/api/projects";
@@ -1475,6 +1477,8 @@ async function startProjectCollabInviteService(): Promise<void> {
       }),
     setManageUsersOwnerOnly: async (opts) =>
       await setLocalProjectManageUsersOwnerOnly(opts),
+    setDeletionProtection: async (opts) =>
+      await setLocalProjectDeletionProtection(opts),
     respond: async ({
       account_id,
       invite_id,
@@ -1529,6 +1533,8 @@ async function startHostConnectionService(): Promise<void> {
     setHostOwnerSpendLimits: async (opts) =>
       await setHostOwnerSpendLimits(opts),
     setHostPoolAccess: async (opts) => await setHostPoolAccess(opts),
+    setHostDeletionProtection: async (opts) =>
+      await setHostDeletionProtection(opts),
     getHostLog: async ({ account_id, id, limit }) =>
       await getHostLog({
         account_id,

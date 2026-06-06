@@ -101,6 +101,11 @@ type HubClient = {
       browser_id?: string;
       tier?: number | null;
     }) => Promise<Host>;
+    setHostDeletionProtection?: (opts: {
+      id: string;
+      browser_id?: string;
+      enabled: boolean;
+    }) => Promise<Host>;
     renameHost?: (opts: { id: string; name: string }) => Promise<unknown>;
     updateHostMachine?: (opts: {
       id: string;
@@ -620,6 +625,25 @@ export const useHostActions = ({
     }
   };
 
+  const setHostDeletionProtection = async (id: string, enabled: boolean) => {
+    if (!hub.hosts.setHostDeletionProtection) {
+      return;
+    }
+    try {
+      await hub.hosts.setHostDeletionProtection({ id, browser_id, enabled });
+      await refresh();
+    } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
+
   return {
     setStatus,
     restartHost,
@@ -636,6 +660,7 @@ export const useHostActions = ({
     setHostProjectRamLimit,
     setHostOwnerSpendLimits,
     setHostPoolAccess,
+    setHostDeletionProtection,
     stopHostProjects,
     restartHostProjects,
     backupHostProjects,

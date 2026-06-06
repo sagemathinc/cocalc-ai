@@ -786,6 +786,7 @@ export interface Host {
   observed_components?: HostManagedComponentStatus[];
   runtime_exception_summary?: HostRuntimeExceptionSummary;
   deleted?: string;
+  deletion_protection?: boolean;
   backup_status?: HostBackupStatus;
   bootstrap?: HostBootstrapStatus;
   bootstrap_lifecycle?: HostBootstrapLifecycle;
@@ -1228,6 +1229,7 @@ export const hosts = {
   removeSelfHostConnector: authFirstRequireAccount,
   renameHost: authFirstRequireAccount,
   updateHostMachine: authFirstRequireAccount,
+  setHostDeletionProtection: authFirstRequireAccount,
   deleteHost: authFirstRequireAccount,
   upgradeHostSoftware: authFirstRequireAccount,
   reconcileHostSoftware: authFirstRequireAccount,
@@ -1792,6 +1794,13 @@ export interface Hosts {
     pricing_model?: HostPricingModel;
     interruption_restore_policy?: HostInterruptionRestorePolicy;
     timeout?: number;
+  }) => Promise<Host>;
+  setHostDeletionProtection: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    id: string;
+    enabled: boolean;
   }) => Promise<Host>;
   upgradeHostSoftware: (opts: {
     account_id?: string;

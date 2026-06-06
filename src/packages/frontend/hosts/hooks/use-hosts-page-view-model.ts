@@ -383,6 +383,7 @@ export const useHostsPageViewModel = () => {
     setHostProjectRamLimit,
     setHostOwnerSpendLimits,
     setHostPoolAccess,
+    setHostDeletionProtection,
     stopHostProjects,
     restartHostProjects,
     backupHostProjects,
@@ -1796,6 +1797,11 @@ export const useHostsPageViewModel = () => {
     onClose: closeDetails,
     onEdit: openEdit,
     onDelete: deprovisionOrDeleteHost,
+    onSetDeletionProtection: async (id: string, enabled: boolean) => {
+      await runFreshAuthAction(async () => {
+        await setHostDeletionProtection(id, enabled);
+      });
+    },
     onDeleteSharedScratch: async (id: string) => {
       await runFreshAuthAction(async () => {
         await deleteSharedScratch(id);

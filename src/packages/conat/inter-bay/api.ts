@@ -1525,6 +1525,14 @@ export interface ProjectSetManageUsersOwnerOnlyRequest {
   manage_users_owner_only: boolean;
 }
 
+export interface ProjectSetDeletionProtectionRequest {
+  account_id: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  project_id: string;
+  enabled: boolean;
+}
+
 export interface ProjectCollabInviteEmailLinkWire {
   invite_id: string;
   invite_url: string;
@@ -1650,6 +1658,7 @@ export type HostConnectionMethod =
   | "set-host-project-ram-limit"
   | "set-host-owner-spend-limits"
   | "set-host-pool-access"
+  | "set-host-deletion-protection"
   | "get-host-log"
   | "get-host-availability"
   | "annotate-host-availability-event"
@@ -1865,6 +1874,7 @@ export type ProjectCollabInviteMethod =
   | "leave-or-delete-projects"
   | "set-projects-hidden"
   | "set-manage-users-owner-only"
+  | "set-deletion-protection"
   | "create"
   | "invite-without-account"
   | "copy-email-link"
@@ -2093,6 +2103,9 @@ export interface InterBayHostConnectionApi {
   setHostPoolAccess: (
     opts: Parameters<Hosts["setHostPoolAccess"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostPoolAccess"]>>>;
+  setHostDeletionProtection: (
+    opts: Parameters<Hosts["setHostDeletionProtection"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["setHostDeletionProtection"]>>>;
   getHostLog: (
     opts: Parameters<Hosts["getHostLog"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
@@ -2323,6 +2336,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
     method: "set-host-owner-spend-limits",
   },
   { name: "setHostPoolAccess", method: "set-host-pool-access" },
+  {
+    name: "setHostDeletionProtection",
+    method: "set-host-deletion-protection",
+  },
   { name: "getHostLog", method: "get-host-log" },
   { name: "getHostAvailability", method: "get-host-availability" },
   {
@@ -2979,6 +2996,9 @@ export interface InterBayProjectCollabInviteApi {
   setManageUsersOwnerOnly: (
     opts: ProjectSetManageUsersOwnerOnlyRequest,
   ) => Promise<void>;
+  setDeletionProtection: (
+    opts: ProjectSetDeletionProtectionRequest,
+  ) => Promise<{ project_id: string; deletion_protection: boolean }>;
   create: (
     opts: ProjectCollabInviteCreateRequest,
   ) => Promise<ProjectCollabInviteCreateResultWire>;
@@ -6740,6 +6760,15 @@ export function createInterBayProjectCollabInviteClient({
       method: "set-manage-users-owner-only",
     }),
   });
+  const setDeletionProtectionClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "setDeletionProtection">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "set-deletion-protection",
+    }),
+  });
   const respondClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "respond">
   >({
@@ -6761,6 +6790,8 @@ export function createInterBayProjectCollabInviteClient({
       await setProjectsHiddenClient.setProjectsHidden(opts),
     setManageUsersOwnerOnly: async (opts) =>
       await setManageUsersOwnerOnlyClient.setManageUsersOwnerOnly(opts),
+    setDeletionProtection: async (opts) =>
+      await setDeletionProtectionClient.setDeletionProtection(opts),
     create: async (opts) => await createClient.create(opts),
     inviteWithoutAccount: async (opts) =>
       await inviteWithoutAccountClient.inviteWithoutAccount(opts),
@@ -7089,6 +7120,20 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         setManageUsersOwnerOnly: async (opts) =>
           await impl.setManageUsersOwnerOnly(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayProjectCollabInviteApi, "setDeletionProtection">
+    >({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "set-deletion-protection",
+      }),
+      impl: {
+        setDeletionProtection: async (opts) =>
+          await impl.setDeletionProtection(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respond">>({

@@ -47,6 +47,7 @@ type ProjectRow = {
   backup_repo_id: string | null;
   created: Date | null;
   last_edited: Date | null;
+  deletion_protection?: boolean | null;
 };
 
 type ProjectAccess = {
@@ -223,7 +224,8 @@ async function loadProject(project_id: string): Promise<ProjectRow | null> {
         region,
         backup_repo_id,
         created,
-        last_edited
+        last_edited,
+        deletion_protection
       FROM projects
       WHERE project_id=$1
       LIMIT 1
@@ -281,6 +283,29 @@ export async function assertHardDeleteProjectPermission({
     throw new Error("workspace is already permanently deleted");
   }
   throw new Error("workspace not found");
+}
+
+export async function assertProjectDeletionProtectionDisabled({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<void> {
+  if (!isValidUUID(project_id)) {
+    throw new Error("project_id must be a valid uuid");
+  }
+  const project = await loadProject(project_id);
+  if (!project) {
+    if (await loadDeletedProject(project_id)) {
+      throw new Error("workspace is already permanently deleted");
+    }
+    throw new Error("workspace not found");
+  }
+  if (project.deletion_protection === true) {
+    throw new ConatError(
+      "deletion protection is enabled for this workspace; disable it in project settings before deleting",
+      { code: "project_deletion_protection_enabled" },
+    );
+  }
 }
 
 function extractSnapshotIds(payload: any): string[] {

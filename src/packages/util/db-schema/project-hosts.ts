@@ -82,5 +82,9 @@ Table({
       type: "timestamp",
       desc: "When this host was soft-deleted.",
     },
+    deletion_protection: {
+      type: "boolean",
+      desc: "If true, ordinary project-host delete/deprovision paths are blocked until the host owner disables deletion protection with fresh authentication.",
+    },
   },
 });

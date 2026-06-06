@@ -99,6 +99,7 @@ Table({
           allow_collaborator_starts_using_sponsor: null,
           allow_collaborator_destructive_storage_actions: null,
           autostart_enabled: null,
+          deletion_protection: null,
           state: null,
           last_edited: null,
           last_active: null,
@@ -363,6 +364,11 @@ Table({
       type: "boolean",
       desc: "If false, automatic project starts from SSH, HTTP/app access, Jupyter, terminals, and other wake-on-use paths are blocked. Manual starts remain allowed. Defaults to true when unset.",
       render: { type: "boolean", editable: true },
+    },
+    deletion_protection: {
+      type: "boolean",
+      desc: "If true, ordinary project delete paths are blocked until the project owner disables deletion protection with fresh authentication.",
+      render: { type: "boolean", editable: false },
     },
     invite: {
       type: "map",

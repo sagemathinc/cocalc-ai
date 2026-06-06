@@ -227,6 +227,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "host access mutation",
   },
+  "hosts.setHostDeletionProtection": {
+    decision: "fresh-auth-required",
+    reason: "can disable host deletion protection",
+  },
   "hosts.setHostOwnerSpendLimits": {
     decision: "fresh-auth-required",
     reason: "host spend cap mutation",
@@ -496,9 +500,17 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: "local account preference",
   },
+  "projects.setLocalProjectDeletionProtection": {
+    decision: "fresh-auth-required",
+    reason: "owning-bay project deletion protection mutation",
+  },
   "projects.setProjectSecret": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.setProjectDeletionProtection": {
+    decision: "fresh-auth-required",
+    reason: "can disable project deletion protection",
   },
   "projects.setProjectsHidden": {
     decision: "fresh-auth-not-required",

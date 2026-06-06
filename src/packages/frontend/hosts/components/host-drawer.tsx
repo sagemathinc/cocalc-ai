@@ -118,6 +118,10 @@ type HostDrawerViewModel = {
   onCreateSimilar?: (host: Host) => void;
   onEdit: (host: Host) => void;
   onDelete?: (id: string, opts?: HostDeleteOptions) => void | Promise<void>;
+  onSetDeletionProtection?: (
+    id: string,
+    enabled: boolean,
+  ) => void | Promise<void>;
   onDeleteSharedScratch?: (id: string) => void | Promise<void>;
   onUpgrade?: (host: Host) => void;
   onUpgradeAll?: (host: Host) => void;
@@ -1509,6 +1513,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onCreateSimilar,
     onEdit,
     onDelete,
+    onSetDeletionProtection,
     onDeleteSharedScratch,
     onUpgradeAll,
     onReconcile,
@@ -1873,6 +1878,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     ? "Delete this host?"
     : "Deprovision this host?";
   const deleteOkText = deleteWithoutDeprovision ? "Delete" : "Deprovision";
+  const deleteProtected = host.deletion_protection === true;
   const sharedScratchCard = (
     <Card size="small" title="Shared scratch disk">
       {hasSharedScratch ? (
@@ -2691,6 +2697,29 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 is available after deprovisioning, or before provisioning has
                 created any provider resources.
               </Typography.Text>
+              <Space
+                align="center"
+                style={{
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <div>
+                  <Typography.Text strong>Deletion protection</Typography.Text>
+                  <br />
+                  <Typography.Text type="secondary">
+                    When enabled, this host cannot be deleted or deprovisioned.
+                    Turning it off requires fresh authentication.
+                  </Typography.Text>
+                </div>
+                <Switch
+                  checked={host.deletion_protection === true}
+                  disabled={hostOpActive || !onSetDeletionProtection}
+                  onChange={(checked) =>
+                    onSetDeletionProtection?.(host.id, checked)
+                  }
+                />
+              </Space>
               {deleteWithoutDeprovision ? (
                 <Popconfirm
                   title={deleteTitle}
@@ -2702,7 +2731,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   <Button
                     size="small"
                     danger
-                    disabled={hostOpActive || !onDelete}
+                    disabled={deleteProtected || hostOpActive || !onDelete}
                   >
                     {deleteLabel}
                   </Button>
@@ -2711,7 +2740,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 <Button
                   size="small"
                   danger
-                  disabled={hostOpActive || !onDelete}
+                  disabled={deleteProtected || hostOpActive || !onDelete}
                   onClick={() =>
                     onDelete &&
                     confirmHostDeprovision({
