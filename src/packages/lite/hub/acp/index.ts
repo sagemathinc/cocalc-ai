@@ -4447,6 +4447,7 @@ function terminalAcpJobStateFromTurnLeaseState(
 
 export async function recoverOrphanedRunningAcpJobsWithoutLease(
   opts: {
+    client?: ConatClient;
     recoveryReason?: string;
     graceMs?: number;
   } = {},
@@ -4513,6 +4514,32 @@ export async function recoverOrphanedRunningAcpJobsWithoutLease(
       error: recoveryReason,
       worker_id: job.worker_id ?? undefined,
     });
+    const requeued = getAcpJob({
+      project_id: job.project_id,
+      path: job.path,
+      user_message_id: job.user_message_id,
+    });
+    if (requeued?.state === "queued" && opts.client) {
+      try {
+        await persistQueuedUserMessageProjection({
+          client: opts.client,
+          project_id: job.project_id,
+          path: job.path,
+          thread_id: job.thread_id,
+          user_message_id: job.user_message_id,
+          queued: true,
+        });
+      } catch (err) {
+        logger.warn("failed to persist requeued ACP job projection", {
+          op_id: job.op_id,
+          project_id: job.project_id,
+          path: job.path,
+          thread_id: job.thread_id,
+          user_message_id: job.user_message_id,
+          err,
+        });
+      }
+    }
     recovered += 1;
   }
   if (recovered > 0) {
@@ -4729,6 +4756,7 @@ export async function recoverDetachedWorkerStartupState(
     });
   }
   await recoverOrphanedRunningAcpJobsWithoutLease({
+    client,
     recoveryReason,
   });
   await recoverTerminalStaleAcpTurns(client, {
@@ -4942,6 +4970,7 @@ export async function runDetachedAcpQueueWorker(
           recoveryReason: "backend lost live Codex turn",
         });
         await recoverOrphanedRunningAcpJobsWithoutLease({
+          client,
           recoveryReason:
             workerContext != null
               ? "ACP worker stopped unexpectedly"
