@@ -2607,7 +2607,18 @@ export async function revokeSiteLicensePoolSeat({
         client: dbClient,
       });
     }
-    return await revokeMembershipPackageSeat(
+    const assignments =
+      targetAccountId == null
+        ? []
+        : await listMembershipPackageAssignments({
+            package_id: packageId,
+            include_revoked: false,
+            client: dbClient,
+          });
+    const assignment = assignments.find(
+      (row) => row.account_id === targetAccountId,
+    );
+    const revoked = await revokeMembershipPackageSeat(
       {
         package_id: packageId,
         account_id: targetAccountId,
@@ -2615,6 +2626,14 @@ export async function revokeSiteLicensePoolSeat({
       },
       dbClient,
     );
+    if (revoked && assignment != null && targetAccountId != null) {
+      await revokeSiteLicenseClaimIdentityForAssignment({
+        assignment,
+        account_id: targetAccountId,
+        client: dbClient,
+      });
+    }
+    return revoked;
   };
 
   if (client != null) {
@@ -2653,6 +2672,11 @@ export async function releaseSiteLicensePoolSeat({
       dbClient,
     );
     if (revoked) {
+      await revokeSiteLicenseClaimIdentityForAssignment({
+        assignment,
+        account_id: accountId,
+        client: dbClient,
+      });
       await recordSiteLicenseAuditEvent({
         site_license_id: siteLicense.id,
         action: "seat-released-by-user",
@@ -2672,6 +2696,34 @@ export async function releaseSiteLicensePoolSeat({
     return await releaseWithClient(client);
   }
   return await withLocalSiteLicenseTransaction(releaseWithClient);
+}
+
+async function revokeSiteLicenseClaimIdentityForAssignment({
+  assignment,
+  account_id,
+  client,
+}: {
+  assignment: MembershipPackageAssignment;
+  account_id: string;
+  client: PoolClient;
+}): Promise<void> {
+  const claim_scope_key =
+    `${assignment.metadata?.claim_scope_key ?? ""}`.trim() || undefined;
+  const claim_identity_key =
+    `${assignment.metadata?.claim_identity_key ?? ""}`.trim() || undefined;
+  const claim_reservation_id =
+    `${assignment.metadata?.claim_reservation_id ?? ""}`.trim() || undefined;
+  if (!claim_scope_key || !claim_identity_key) {
+    return;
+  }
+  await revokeMembershipClaimIdentity({
+    scope_key: claim_scope_key,
+    canonical_identity: claim_identity_key,
+    account_id,
+    assignment_id: assignment.id,
+    reservation_id: claim_reservation_id,
+    client,
+  }).catch(() => undefined);
 }
 
 export async function cancelSiteLicensePoolRequest({

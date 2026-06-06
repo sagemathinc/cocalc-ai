@@ -1899,12 +1899,30 @@ describe("site license seat pools", () => {
       account_id,
       package_id: studentPool.id,
     });
+    await runMembershipSideEffectsPass({ limit: 100 });
     await expect(
       releaseSiteLicensePoolSeat({
         account_id: other_account_id,
         package_id: studentPool.id,
       }),
     ).resolves.toBe(false);
+    await expect(
+      releaseSiteLicensePoolSeat({
+        account_id,
+        package_id: studentPool.id,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      claimMembershipPackageSeat({
+        account_id,
+        package_id: studentPool.id,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        account_id,
+        package_id: studentPool.id,
+      }),
+    );
     await expect(
       releaseSiteLicensePoolSeat({
         account_id,
