@@ -40,7 +40,8 @@ Commands:
   releases               List installed releases.
   upgrade <url|tarball>  Install a new release artifact.
   rollback [release-id]  Roll back to a release. Defaults to previous release.
-  restart [all|hub|host] Restart Star services. Default: all.
+  restart [all|hub|rest|host]
+                         Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
   access                 Print public/local access and bootstrap instructions.
   reconcile-runtime-state
@@ -69,6 +70,7 @@ replace_symlink() {
 service_name() {
   case "${1:-}" in
     hub) printf 'cocalc-star-hub' ;;
+    rest | rest-server) printf 'cocalc-star-rest-server' ;;
     host | project-host) printf 'cocalc-star-project-host' ;;
     *) return 1 ;;
   esac
@@ -143,8 +145,10 @@ doctor() {
   }
 
   check "hub service is active" systemctl is-active --quiet cocalc-star-hub
+  check "REST server service is active" systemctl is-active --quiet cocalc-star-rest-server
   check "project-host service is active" systemctl is-active --quiet cocalc-star-project-host
   check "hub systemd unit is installed" grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-hub.service
+  check "REST server systemd unit is installed" grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-rest-server.service
   check "project-host systemd unit is installed" grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-project-host.service
   check "customize endpoint is reachable" curl -fsS "${STAR_API}/customize"
   [ -n "$star_uid" ] && ok "Star runtime user exists" || fail "Star runtime user exists"
@@ -190,6 +194,8 @@ doctor() {
   check "user systemd manager is active" systemctl is-active --quiet "user@${star_uid}.service"
   check "standard podman runtime dir exists" test -d "/run/user/${star_uid}"
   check "btrfs data mount is active" mountpoint -q /mnt/cocalc
+  check "project-host data directory is on btrfs" bash -lc \
+    "test \"\$(findmnt -n -o FSTYPE --target '${COCALC_DATA:-${DATA:-/mnt/cocalc/data}}' 2>/dev/null)\" = btrfs"
   check "shared scratch mount is active" mountpoint -q /mnt/cocalc-scratch
   check "shared scratch shared directory exists" test -d /mnt/cocalc-scratch/shared
   check "shared scratch shared directory is writable" as_star_user bash -lc 'test -w /mnt/cocalc-scratch/shared'
@@ -197,7 +203,8 @@ doctor() {
   check "project-host rootctl wrapper is installed" test -x /usr/local/sbin/cocalc-project-host-rootctl
   check "project bundle exists" test -d "${SRC_ROOT}/packages/project/build"
 
-  local rootfs_cache_dir="${STAR_ROOT}/project-host/0/cache/images"
+  local project_host_data="${COCALC_DATA:-${DATA:-/mnt/cocalc/data}}"
+  local rootfs_cache_dir="${COCALC_IMAGE_CACHE:-${project_host_data}/cache/images}"
   local rootfs_path
   rootfs_path="$(find "$rootfs_cache_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | head -1 || true)"
   if [ -n "$rootfs_path" ]; then
@@ -234,6 +241,7 @@ status() {
   trap 'rm -f "$customize_json"' RETURN
 
   show_service cocalc-star-hub
+  show_service cocalc-star-rest-server
   show_service cocalc-star-project-host
 
   printf '\nAPI customize:\n'
@@ -397,7 +405,7 @@ rollback_release() {
   }
   replace_symlink "$release_dir/source" "$STAR_SOURCE_LINK"
   replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"
-  sudo systemctl restart cocalc-star-hub cocalc-star-project-host
+  sudo systemctl restart cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host
   wait_for_runtime_health
   printf 'rolled back to %s\n' "$release_id"
 }
@@ -424,9 +432,9 @@ restart() {
   local target="${1:-all}"
   case "$target" in
     all)
-      sudo systemctl restart cocalc-star-hub cocalc-star-project-host
+      sudo systemctl restart cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host
       ;;
-    hub | host | project-host)
+    hub | rest | rest-server | host | project-host)
       sudo systemctl restart "$(service_name "$target")"
       ;;
     *)
@@ -1024,10 +1032,12 @@ EOF
   log "stopping Star services"
   systemctl stop cocalc-star-project-host.service >/dev/null 2>&1 || true
   stop_star_project_containers
+  systemctl stop cocalc-star-rest-server.service >/dev/null 2>&1 || true
   systemctl stop cocalc-star-hub.service >/dev/null 2>&1 || true
 
   log "disabling Star services"
   systemctl disable cocalc-star-project-host.service >/dev/null 2>&1 || true
+  systemctl disable cocalc-star-rest-server.service >/dev/null 2>&1 || true
   systemctl disable cocalc-star-hub.service >/dev/null 2>&1 || true
 
   if is_generated_star_caddyfile /etc/caddy/Caddyfile; then
@@ -1038,6 +1048,7 @@ EOF
   log "removing Star service/config hooks"
   install -d -m 0700 "$backup_dir"
   backup_and_remove_file /etc/systemd/system/cocalc-star-hub.service "$backup_dir"
+  backup_and_remove_file /etc/systemd/system/cocalc-star-rest-server.service "$backup_dir"
   backup_and_remove_file /etc/systemd/system/cocalc-star-project-host.service "$backup_dir"
   backup_and_remove_file /etc/cocalc/star/hub.env "$backup_dir"
   backup_and_remove_file /etc/cocalc/star/config.env "$backup_dir"
