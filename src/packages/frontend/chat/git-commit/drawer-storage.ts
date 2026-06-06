@@ -9,6 +9,8 @@ import type { DrawerScrollState } from "./types";
 
 const DRAWER_SIZE_STORAGE_KEY = "cocalc:chat:gitCommitDrawerSize";
 const DRAWER_SCROLL_STORAGE_KEY = "cocalc:chat:gitCommitDrawerScroll:v1";
+const ONLY_UNREVIEWED_STORAGE_KEY =
+  "cocalc:chat:gitCommitDrawer:onlyUnreviewed";
 const MAX_DRAWER_SCROLL_ENTRIES = 50;
 const DEFAULT_DRAWER_SIZE = 920;
 const MIN_DRAWER_SIZE = 520;
@@ -36,6 +38,22 @@ export function persistDrawerSize(size: number): void {
       DRAWER_SIZE_STORAGE_KEY,
       String(clampDrawerSize(size)),
     );
+  } catch {
+    // ignore
+  }
+}
+
+export function readGitReviewOnlyUnreviewedPreference(): boolean {
+  try {
+    return localStorage.getItem(ONLY_UNREVIEWED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function persistGitReviewOnlyUnreviewedPreference(value: boolean): void {
+  try {
+    localStorage.setItem(ONLY_UNREVIEWED_STORAGE_KEY, value ? "true" : "false");
   } catch {
     // ignore
   }
