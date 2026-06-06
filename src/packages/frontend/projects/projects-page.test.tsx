@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { Map as ImmutableMap } from "immutable";
+import { Map as ImmutableMap, Set as ImmutableSet } from "immutable";
 
 import { ProjectsPage } from "./projects-page";
 
@@ -9,6 +9,10 @@ const useTypedReduxMock = jest.fn();
 const mockEmptyMap = ImmutableMap();
 const mockVisibleProjects: string[] = [];
 const mockScheduledDeleteProjectIds: string[] = [];
+let mockProjectListWindow: any;
+let mockHidden = false;
+let mockSearch = "";
+let mockSelectedHashtags: any = mockEmptyMap;
 
 jest.mock("./actions", () => ({}));
 
@@ -96,7 +100,12 @@ jest.mock("./projects-starred", () => ({
 }));
 
 jest.mock("./projects-table", () => ({
-  ProjectsTable: () => <div data-testid="projects-table" />,
+  ProjectsTable: ({ visible_projects }: any) => (
+    <div
+      data-testid="projects-table"
+      data-visible-projects={JSON.stringify(visible_projects)}
+    />
+  ),
 }));
 
 jest.mock("./mobile-projects-list", () => ({
@@ -141,6 +150,11 @@ jest.mock("./project-delete-queue", () => ({
 
 beforeEach(() => {
   window.localStorage.clear();
+  mockVisibleProjects.length = 0;
+  mockProjectListWindow = undefined;
+  mockHidden = false;
+  mockSearch = "";
+  mockSelectedHashtags = mockEmptyMap;
   (globalThis as any).ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -149,10 +163,12 @@ beforeEach(() => {
     if (store === "projects" && key === "project_map") return mockEmptyMap;
     if (store === "projects" && key === "host_info") return mockEmptyMap;
     if (store === "users" && key === "user_map") return mockEmptyMap;
-    if (store === "projects" && key === "hidden") return false;
-    if (store === "projects" && key === "search") return "";
+    if (store === "projects" && key === "hidden") return mockHidden;
+    if (store === "projects" && key === "search") return mockSearch;
     if (store === "projects" && key === "selected_hashtags")
-      return mockEmptyMap;
+      return mockSelectedHashtags;
+    if (store === "projects" && key === "project_list_window")
+      return mockProjectListWindow;
     return undefined;
   });
 });
@@ -177,5 +193,63 @@ test("project creation modal opens from the explicit create button", () => {
   expect(screen.getByTestId("new-project-creator")).toHaveAttribute(
     "data-open",
     "true",
+  );
+});
+
+test("projects page falls back to locally visible projects without a matching backend window", () => {
+  mockVisibleProjects.push("local-project");
+
+  render(<ProjectsPage />);
+
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-visible-projects",
+    JSON.stringify(["local-project"]),
+  );
+});
+
+test("projects page renders matching backend project window ids", () => {
+  mockVisibleProjects.push("local-project");
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["backend-project-1", "backend-project-2"],
+    loading: false,
+  });
+
+  render(<ProjectsPage />);
+
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-visible-projects",
+    JSON.stringify(["backend-project-1", "backend-project-2"]),
+  );
+});
+
+test("projects page ignores backend project window while hashtag filters are active", () => {
+  mockVisibleProjects.push("local-hashtag-project");
+  mockSelectedHashtags = ImmutableMap({
+    false: ImmutableSet(["release"]),
+  });
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["backend-project"],
+    loading: false,
+  });
+
+  render(<ProjectsPage />);
+
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-visible-projects",
+    JSON.stringify(["local-hashtag-project"]),
   );
 });

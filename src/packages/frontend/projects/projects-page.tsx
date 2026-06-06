@@ -55,6 +55,32 @@ const LOADING_STYLE: CSS = {
 const VISIBLE_WINDOW_REPAIR_LIMIT = 200;
 const VISIBLE_WINDOW_REPAIR_DELAY_MS = 500;
 
+function readMaybeImmutable(value: any, key: string): any {
+  return value?.get?.(key) ?? value?.[key];
+}
+
+function projectListWindowKey({
+  hidden,
+  search,
+}: {
+  hidden: boolean;
+  search: string;
+}): string {
+  return JSON.stringify({
+    limit: VISIBLE_WINDOW_REPAIR_LIMIT,
+    offset: 0,
+    hidden,
+    search: `${search ?? ""}`.trim(),
+    sort: "last_edited",
+  });
+}
+
+function projectIdsFromMaybeImmutable(value: any): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value?.toArray === "function") return value.toArray();
+  return [];
+}
+
 export const ProjectsPage: React.FC = () => {
   const intl = useIntl();
   const { bookmarkedProjects } = useBookmarkedProjects();
@@ -121,13 +147,14 @@ export const ProjectsPage: React.FC = () => {
     "projects",
     "selected_hashtags",
   );
+  const project_list_window = useTypedRedux("projects", "project_list_window");
 
   function openInvitations() {
     redux.getActions("mentions").set_filter("unread");
     redux.getActions("page").set_active_tab("notifications");
   }
 
-  const visible_projects: string[] = useMemo(() => {
+  const local_visible_projects: string[] = useMemo(() => {
     return getVisibleProjects(
       project_map,
       host_info,
@@ -146,6 +173,32 @@ export const ProjectsPage: React.FC = () => {
     selected_hashtags,
     search,
   ]);
+
+  const activeHashtags = selected_hashtags?.get(filter);
+  const backendWindowKey = useMemo(
+    () => projectListWindowKey({ hidden, search }),
+    [hidden, search],
+  );
+
+  const backend_visible_projects: string[] | undefined = useMemo(() => {
+    if ((activeHashtags?.size ?? 0) > 0) {
+      return undefined;
+    }
+    if (readMaybeImmutable(project_list_window, "key") !== backendWindowKey) {
+      return undefined;
+    }
+    if (
+      readMaybeImmutable(project_list_window, "loading") ||
+      readMaybeImmutable(project_list_window, "error")
+    ) {
+      return undefined;
+    }
+    return projectIdsFromMaybeImmutable(
+      readMaybeImmutable(project_list_window, "project_ids"),
+    );
+  }, [activeHashtags, backendWindowKey, project_list_window]);
+
+  const visible_projects = backend_visible_projects ?? local_visible_projects;
 
   const visibleProjectionRepairKey = useMemo(
     () => visible_projects.slice(0, VISIBLE_WINDOW_REPAIR_LIMIT).join("\n"),
@@ -190,7 +243,7 @@ export const ProjectsPage: React.FC = () => {
           limit: VISIBLE_WINDOW_REPAIR_LIMIT,
           offset: 0,
           hidden,
-          search,
+          search: `${search ?? ""}`.trim(),
           sort: "last_edited",
         });
     }, VISIBLE_WINDOW_REPAIR_DELAY_MS);
