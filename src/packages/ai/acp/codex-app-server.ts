@@ -1015,6 +1015,52 @@ function getCodexHomeHostPath(
   return undefined;
 }
 
+function clearPersistedCodexGoalsBeforeTurn({
+  spawned,
+  cwd,
+}: {
+  spawned: SpawnedCodexAppServer;
+  cwd: string;
+}): void {
+  const codexHome = getCodexHomeHostPath(spawned, cwd);
+  if (!codexHome) return;
+  const goalsDbPath = path.join(codexHome, "goals_1.sqlite");
+  if (!existsSync(goalsDbPath)) return;
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(goalsDbPath);
+    const table = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'thread_goals'",
+      )
+      .get() as { name?: string } | undefined;
+    if (!table?.name) return;
+    const result = db.prepare("DELETE FROM thread_goals").run();
+    const deleted = Number(result.changes ?? 0);
+    if (deleted > 0) {
+      try {
+        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      } catch (err) {
+        logger.debug("codex app-server: goal DB checkpoint failed", {
+          codexHome,
+          err: `${err}`,
+        });
+      }
+      logger.info("codex app-server: cleared persisted Codex goals", {
+        codexHome,
+        deleted,
+      });
+    }
+  } catch (err) {
+    logger.warn("codex app-server: failed to clear persisted Codex goals", {
+      codexHome,
+      err: `${err}`,
+    });
+  } finally {
+    db?.close();
+  }
+}
+
 function toUsageFromTokenCount(info: any): AcpStreamUsage | undefined {
   const usage = info?.last_token_usage ?? info?.lastTokenUsage;
   if (!usage || typeof usage !== "object") {
@@ -1518,6 +1564,9 @@ export class CodexAppServerAgent implements AcpAgent {
       spawned.proc,
       spawned.handleAppServerRequest,
     );
+    if (shouldClearActiveGoalBeforeTurn(request)) {
+      clearPersistedCodexGoalsBeforeTurn({ spawned, cwd });
+    }
     const errors: string[] = [];
     let lastErrorNotification: any | undefined;
     let lastFailedTurnCompletion: any | undefined;
@@ -1726,9 +1775,6 @@ export class CodexAppServerAgent implements AcpAgent {
         throw new Error(`app-server did not return a thread id`);
       }
       setRunningKey(actualThreadId);
-      if (shouldClearActiveGoalBeforeTurn(request)) {
-        await this.clearActiveGoalBeforeTurn(client, actualThreadId);
-      }
       const sessionEntry = { sessionId: actualThreadId, cwd };
       this.sessions.set(actualThreadId, sessionEntry);
       if (requestedSessionKey && requestedSessionKey !== actualThreadId) {
@@ -2453,30 +2499,6 @@ export class CodexAppServerAgent implements AcpAgent {
     if (!requested) return base;
     if (path.isAbsolute(requested)) return requested;
     return path.resolve(base, requested);
-  }
-
-  private async clearActiveGoalBeforeTurn(
-    client: AppServerClient,
-    threadId: string,
-  ): Promise<void> {
-    try {
-      const result = await client.request("thread/goal/get", { threadId });
-      const goal = result?.goal;
-      if (goal?.status !== "active") {
-        return;
-      }
-      await client.request("thread/goal/clear", { threadId });
-      logger.info("codex app-server: cleared active goal before chat turn", {
-        threadId,
-        objective:
-          typeof goal.objective === "string" ? goal.objective : undefined,
-      });
-    } catch (err) {
-      logger.debug("codex app-server: goal clear check failed", {
-        threadId,
-        err: `${err}`,
-      });
-    }
   }
 
   private async ensureSessionConfig(
