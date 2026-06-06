@@ -95,6 +95,7 @@ describe("project-host host-agent local rollback", () => {
     expect(activateInstalledProjectHostVersionMock).not.toHaveBeenCalled();
     expect(restartProjectHostMock).toHaveBeenCalledWith(0, {
       preserveManagedAuxiliaryDaemons: true,
+      preserveAcpWorkers: true,
     });
   });
 
@@ -174,6 +175,7 @@ describe("project-host host-agent local rollback", () => {
     );
     expect(restartProjectHostMock).toHaveBeenCalledWith(0, {
       preserveManagedAuxiliaryDaemons: true,
+      preserveAcpWorkers: true,
     });
     const state = JSON.parse(fs.readFileSync(statePath(dataDir), "utf8"));
     expect(state.project_host.last_known_good_version).toBe("ph-v1");

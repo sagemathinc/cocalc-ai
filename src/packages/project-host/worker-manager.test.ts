@@ -400,3 +400,32 @@ describe("ACP worker spawn backoff", () => {
     expect(__test__.projectHostAcpWorkerSpawnBackoffRemainingMs()).toBe(0);
   });
 });
+
+describe("ACP worker control startup grace", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("gives newly spawned workers time to register control RPCs", () => {
+    jest.spyOn(Date, "now").mockReturnValue(10_000);
+    expect(
+      __test__.workerControlStartupGraceExpired({
+        pid: 1001,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT: "9000",
+        },
+        cmdline: ["project-host:acp-worker"],
+      } as any),
+    ).toBe(false);
+  });
+
+  it("treats workers without spawn timestamps as past grace", () => {
+    expect(
+      __test__.workerControlStartupGraceExpired({
+        pid: 1002,
+        env: {},
+        cmdline: ["project-host:acp-worker"],
+      } as any),
+    ).toBe(true);
+  });
+});
