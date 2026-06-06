@@ -1,6 +1,7 @@
 import {
   authFirst,
   authFirstRequireAccount,
+  authFirstRequireHost,
   authFirstRequireProject,
 } from "./util";
 import {
@@ -724,6 +725,7 @@ export const projects = {
   getSnapshotFileText: authFirstRequireAccount,
 
   start: authFirstRequireAccount,
+  startFromHost: authFirstRequireHost,
   stop: authFirstRequireAccount,
   restart: authFirstRequireAccount,
   archiveProject: authFirstRequireAccount,
@@ -1371,6 +1373,19 @@ export interface Projects {
     autostart?: boolean;
     // When false, enqueue start and return immediately; callers can watch
     // LRO/changefeed for progress.
+    wait?: boolean;
+  }) => Promise<{
+    op_id: string;
+    scope_type: "project";
+    scope_id: string;
+    service: string;
+    stream_name: string;
+  }>;
+  startFromHost: (opts: {
+    host_id?: string;
+    account_id: string;
+    project_id: string;
+    autostart?: boolean;
     wait?: boolean;
   }) => Promise<{
     op_id: string;

@@ -718,6 +718,9 @@ function isHostServiceAllowed({
   if (subject === `project-host.${host_id}.backup.invalidate`) {
     return type === "sub";
   }
+  if (subject === `hub.host.${host_id}.api`) {
+    return type === "pub";
+  }
   return false;
 }
 

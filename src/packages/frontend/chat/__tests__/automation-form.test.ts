@@ -12,6 +12,7 @@ describe("automation form helpers", () => {
       normalizeAutomationConfigForSave({
         draft: {
           enabled: true,
+          title: "HN watcher",
           prompt: "Check Hacker News",
           schedule_type: "interval",
           days_of_week: [1, 2, 3, 4, 5],
@@ -26,7 +27,7 @@ describe("automation form helpers", () => {
     ).toEqual({
       enabled: true,
       automation_id: "auto-1",
-      title: undefined,
+      title: "HN watcher",
       run_kind: "codex",
       prompt: "Check Hacker News",
       command: undefined,
@@ -41,6 +42,37 @@ describe("automation form helpers", () => {
       timezone: "UTC",
       pause_after_unacknowledged_runs: 9,
     });
+  });
+
+  it("requires a title before saving", () => {
+    expect(
+      normalizeAutomationConfigForSave({
+        draft: {
+          enabled: true,
+          prompt: "Check status",
+          schedule_type: "daily",
+          local_time: "06:00",
+          timezone: "UTC",
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("allows one-minute interval schedules", () => {
+    const config = normalizeAutomationConfigForSave({
+      draft: {
+        enabled: true,
+        title: "Fast status",
+        prompt: "Check status",
+        schedule_type: "interval",
+        interval_minutes: 1,
+        window_start_local_time: "00:00",
+        window_end_local_time: "23:59",
+        timezone: "UTC",
+      },
+    });
+
+    expect(config?.interval_minutes).toBe(1);
   });
 
   it("describes interval schedules with day filters", () => {

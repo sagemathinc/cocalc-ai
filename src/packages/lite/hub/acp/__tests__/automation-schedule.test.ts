@@ -13,6 +13,7 @@ describe("ACP automation schedule helpers", () => {
   it("keeps daily schedules on the selected weekdays only", () => {
     const nextRunAt = computeNextAutomationRunAt(
       {
+        title: "Wednesday status",
         prompt: "Status update",
         schedule_type: "daily",
         days_of_week: [3],
@@ -33,6 +34,7 @@ describe("ACP automation schedule helpers", () => {
   it("finds the next interval slot inside the configured window", () => {
     const nextRunAt = computeNextAutomationRunAt(
       {
+        title: "HN watcher",
         prompt: "Check Hacker News",
         schedule_type: "interval",
         days_of_week: [2],
@@ -55,6 +57,7 @@ describe("ACP automation schedule helpers", () => {
   it("defaults interval schedules to all day", () => {
     const normalized = normalizeAcpAutomationConfig(
       {
+        title: "Progress loop",
         prompt: "Keep making progress",
         schedule_type: "interval",
         interval_minutes: 15,
@@ -80,6 +83,7 @@ describe("ACP automation schedule helpers", () => {
   it("skips the current next run and moves to the following slot", () => {
     const config = {
       prompt: "Keep making progress",
+      title: "Progress loop",
       schedule_type: "interval" as const,
       days_of_week: [2],
       interval_minutes: 120,
@@ -104,6 +108,7 @@ describe("ACP automation schedule helpers", () => {
       normalizeAcpAutomationConfig(
         {
           prompt: "Broken interval",
+          title: "Broken interval",
           schedule_type: "interval",
           interval_minutes: 30,
           window_start_local_time: "20:00",
@@ -122,6 +127,7 @@ describe("ACP automation schedule helpers", () => {
       normalizeAcpAutomationConfig(
         {
           run_kind: "command",
+          title: "Repo status",
           command: "git status --short",
           command_cwd: "/work/repo",
           schedule_type: "daily",
@@ -135,7 +141,7 @@ describe("ACP automation schedule helpers", () => {
     ).toEqual({
       enabled: true,
       automation_id: undefined,
-      title: undefined,
+      title: "Repo status",
       run_kind: "command",
       prompt: undefined,
       command: "git status --short",
@@ -148,5 +154,38 @@ describe("ACP automation schedule helpers", () => {
       timezone: "UTC",
       pause_after_unacknowledged_runs: 7,
     });
+  });
+
+  it("rejects automations without a title", () => {
+    expect(
+      normalizeAcpAutomationConfig(
+        {
+          prompt: "Check status",
+          schedule_type: "daily",
+          local_time: "06:00",
+          timezone: "UTC",
+        },
+        {
+          defaultPauseAfterRuns: 7,
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("allows one-minute interval schedules", () => {
+    const normalized = normalizeAcpAutomationConfig(
+      {
+        title: "Fast status",
+        prompt: "Check status",
+        schedule_type: "interval",
+        interval_minutes: 1,
+        timezone: "UTC",
+      },
+      {
+        defaultPauseAfterRuns: 7,
+      },
+    );
+
+    expect(normalized?.interval_minutes).toBe(1);
   });
 });

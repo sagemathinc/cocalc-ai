@@ -68,10 +68,12 @@ import {
 } from "./git-commit/diff-lines";
 import {
   clampDrawerSize,
+  persistGitReviewOnlyUnreviewedPreference,
   persistDrawerScrollPosition,
   persistDrawerSize,
   readDrawerScrollPosition,
   readDrawerSize,
+  readGitReviewOnlyUnreviewedPreference,
 } from "./git-commit/drawer-storage";
 import {
   buildGitReviewFileSectionId,
@@ -157,6 +159,8 @@ export {
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
+  readGitReviewOnlyUnreviewedPreference,
+  persistGitReviewOnlyUnreviewedPreference,
 };
 export { filterGitReviewLogEntries, resolveGitCommitSearchChange };
 export {
@@ -470,8 +474,9 @@ export function GitCommitDrawer({
   const [diffFindQuery, setDiffFindQuery] = useState("");
   const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
     useState<number>(-1);
-  const [showOnlyUnreviewedCommits, setShowOnlyUnreviewedCommits] =
-    useState(false);
+  const [showOnlyUnreviewedCommits, setShowOnlyUnreviewedCommits] = useState(
+    readGitReviewOnlyUnreviewedPreference,
+  );
   const commit = resolveEffectiveGitCommitSelection({
     open,
     selectedCommit,
@@ -629,6 +634,11 @@ export function GitCommitDrawer({
         resolved.preserveSearchOnAutoClear;
       return resolved.search;
     });
+  }, []);
+
+  const handleToggleShowOnlyUnreviewed = useCallback((value: boolean) => {
+    setShowOnlyUnreviewedCommits(value);
+    persistGitReviewOnlyUnreviewedPreference(value);
   }, []);
 
   useEffect(() => {
@@ -2767,7 +2777,7 @@ export function GitCommitDrawer({
           onCommitChange={handleCommitChange}
           onCommitSearch={handleCommitSearch}
           showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
-          onToggleShowOnlyUnreviewed={setShowOnlyUnreviewedCommits}
+          onToggleShowOnlyUnreviewed={handleToggleShowOnlyUnreviewed}
           diffFindInputRef={diffFindInputRef}
           diffFindQuery={diffFindQuery}
           onDiffFindQueryChange={setDiffFindQuery}

@@ -49,6 +49,8 @@ import {
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
+  readGitReviewOnlyUnreviewedPreference,
+  persistGitReviewOnlyUnreviewedPreference,
   shouldDisplayGitCommitData,
   shouldFinalizeGitFileOpenAction,
   shouldRefreshGitReviewStateOnReconnect,
@@ -66,6 +68,7 @@ const stableDiffLines = ["@@ -1 +1 @@", "-old", "+new"];
 const stableComments: any[] = [];
 
 beforeEach(() => {
+  localStorage.clear();
   mockCopyTextToClipboard.mockReset();
   mockCopyTextToClipboard.mockResolvedValue(true);
   mockNotificationSuccess.mockReset();
@@ -1906,6 +1909,16 @@ describe("git commit drawer merge commit formatting", () => {
       { hash: "bbb2222", subject: "Unreviewed commit" },
       { hash: "ccc3333", subject: "Unknown review state" },
     ]);
+  });
+
+  it("persists the git review unreviewed-only preference globally", () => {
+    expect(readGitReviewOnlyUnreviewedPreference()).toBe(false);
+
+    persistGitReviewOnlyUnreviewedPreference(true);
+    expect(readGitReviewOnlyUnreviewedPreference()).toBe(true);
+
+    persistGitReviewOnlyUnreviewedPreference(false);
+    expect(readGitReviewOnlyUnreviewedPreference()).toBe(false);
   });
 
   it("keeps the currently selected reviewed commit visible under the unreviewed filter", () => {
