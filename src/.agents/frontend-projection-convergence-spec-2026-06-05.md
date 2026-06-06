@@ -646,6 +646,7 @@ Deliverables:
 - frontend state for visible window IDs
   - started: projects store now records the last loaded backend window and the projects page prefetches/merges the current top window as a convergence aid
 - Projects table renders joined window IDs + `project_map`
+  - started: full projects page now renders from the matching backend window when no hashtag filter is active, and falls back to local filtering when the backend window is loading, stale, errored, or semantically unsafe
 - feed events mark visible window dirty or repair affected rows
 
 ### Phase 4: Move Detail Fields Out Of `project_map`
