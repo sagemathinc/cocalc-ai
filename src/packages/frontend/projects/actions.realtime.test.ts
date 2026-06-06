@@ -462,7 +462,7 @@ describe("ProjectsActions realtime feed", () => {
     await actions.loadProjectListWindowForCurrentAccount({
       limit: 25,
       offset: 50,
-      hidden: true,
+      hidden: false,
       search: "window",
       sort: "title",
     });
@@ -472,7 +472,7 @@ describe("ProjectsActions realtime feed", () => {
     ).toHaveBeenCalledWith({
       limit: 25,
       offset: 50,
-      hidden: true,
+      hidden: false,
       search: "window",
       sort: "title",
     });
@@ -490,6 +490,85 @@ describe("ProjectsActions realtime feed", () => {
         }),
       }),
     });
+  });
+
+  it("keeps hidden rows when loading a hidden backend project list window", async () => {
+    mockedWebappClient.conat_client.hub.projects.listAccountProjectWindow.mockResolvedValueOnce(
+      [
+        {
+          project_id: "hidden-project",
+          title: "Hidden Project",
+          description: "backend hidden window",
+          theme: null,
+          host_id: "host-1",
+          owning_bay_id: "bay-0",
+          users_summary: {
+            "acct-1": { group: "owner", hide: true },
+          },
+          state_summary: { state: "running" },
+          last_activity_at: "2026-04-05T03:00:00.000Z",
+          last_edited: "2026-04-05T03:00:00.000Z",
+          last_backup: null,
+          sort_key: "2026-04-05T03:00:00.000Z",
+          updated_at: "2026-04-05T03:00:00.000Z",
+          is_hidden: true,
+        },
+        {
+          project_id: "visible-project",
+          title: "Visible Project",
+          description: "wrong window row",
+          theme: null,
+          host_id: "host-1",
+          owning_bay_id: "bay-0",
+          users_summary: {
+            "acct-1": { group: "owner" },
+          },
+          state_summary: { state: "running" },
+          last_activity_at: "2026-04-05T03:00:00.000Z",
+          last_edited: "2026-04-05T03:00:00.000Z",
+          last_backup: null,
+          sort_key: "2026-04-05T03:00:00.000Z",
+          updated_at: "2026-04-05T03:00:00.000Z",
+          is_hidden: false,
+        },
+      ],
+    );
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    await actions.loadProjectListWindowForCurrentAccount({
+      hidden: true,
+    });
+
+    expect(redux._set_state.mock.lastCall?.[0]).toEqual({
+      projects: expect.objectContaining({
+        project_list_window: expect.objectContaining({
+          project_ids: ["hidden-project"],
+          loading: false,
+        }),
+      }),
+    });
+    expect(projectMap.getIn(["hidden-project", "title"])).toBe(
+      "Hidden Project",
+    );
+    expect(projectMap.get("visible-project")).toBeUndefined();
   });
 
   it("marks the backend project window dirty when feed upsert may change ordering", async () => {

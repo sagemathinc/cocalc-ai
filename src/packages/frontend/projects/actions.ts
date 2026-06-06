@@ -1222,7 +1222,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
     let project_map = store.get("project_map") ?? Map<string, any>();
     const project_ids: string[] = [];
     for (const row of rows as ProjectIndexBootstrapRow[]) {
-      if (!row?.project_id || row.is_hidden === true) {
+      if (
+        !row?.project_id ||
+        (hidden ? row.is_hidden !== true : row.is_hidden === true)
+      ) {
         continue;
       }
       project_ids.push(row.project_id);
