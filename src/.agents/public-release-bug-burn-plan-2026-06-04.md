@@ -458,6 +458,9 @@ Status: `implemented`
 - Project storage overview now keeps quota visibility available when a cold
   live-file scan exceeds its quick-scan budget by falling back to quota-based
   visible usage.
+- Disk usage scans use a short interactive wait but continue in the background
+  with a longer per-scan timeout, subject to an in-memory per-project hourly
+  scan runtime budget on the project host.
 - Successful live-file scans are retained as stale fallback data, so later
   timeout/budget failures can still show the last detailed breakdown with an
   explicit estimated/stale warning.

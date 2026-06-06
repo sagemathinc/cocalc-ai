@@ -14,6 +14,7 @@ export interface ProjectStorageBreakdown {
   collected_at: string;
   estimated?: boolean;
   stale?: boolean;
+  scan_status?: "running" | "budget_exhausted" | "failed";
   warning?: string;
 }
 
@@ -36,6 +37,7 @@ export interface ProjectStorageVisibleSummary {
   usage: ProjectStorageBreakdown;
   estimated?: boolean;
   stale?: boolean;
+  scan_status?: "running" | "budget_exhausted" | "failed";
   warning?: string;
 }
 
