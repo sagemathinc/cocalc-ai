@@ -205,6 +205,7 @@ function makeSitePackage(patch: Record<string, any> = {}) {
 }
 
 function makeSiteLicenseOverview({
+  account_details = {},
   managers = [
     {
       id: "manager-1",
@@ -215,11 +216,14 @@ function makeSiteLicenseOverview({
   ],
   pending_requests = [],
   pools,
+  recent_audit_events = [],
   site_license = {},
 }: {
+  account_details?: Record<string, any>;
   managers?: any[];
   pending_requests?: any[];
   pools?: any[];
+  recent_audit_events?: any[];
   site_license?: Record<string, any>;
 } = {}) {
   return {
@@ -236,7 +240,8 @@ function makeSiteLicenseOverview({
     pools: pools ?? [makeSitePackage()],
     managers,
     pending_requests,
-    recent_audit_events: [],
+    recent_audit_events,
+    account_details,
     viewer_role: "manager",
   };
 }
@@ -741,7 +746,7 @@ describe("membership package managers", () => {
               package_id: "site-1",
               account_id: "user-1",
               email_address: "grace@example.edu",
-              assigned_at: new Date("2026-05-01T00:00:00Z"),
+              assigned_at: new Date(2026, 4, 1),
             },
           ],
           metadata: {
@@ -787,10 +792,32 @@ describe("membership package managers", () => {
     fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
 
     await waitFor(() => {
-      expect(screen.getByText("Grace Hopper")).toBeTruthy();
+      expect(screen.getByText("Manage users")).toBeTruthy();
     });
+    expect(screen.queryByText("Grace Hopper")).toBeNull();
+
+    fireEvent.click(screen.getByText("Manage users"));
+
+    await screen.findByText("Students users");
+    expect(await screen.findByText("Grace Hopper")).toBeTruthy();
+    expect(screen.getByText("grace@example.edu")).toBeTruthy();
+    expect(screen.getByText("Seat given on")).toBeTruthy();
+    expect(screen.getByText("May 1, 2026")).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText("Search by name or email"), {
+      target: { value: "nobody" },
+    });
+    expect(await screen.findByText("No users match this search.")).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText("Search by name or email"), {
+      target: { value: "grace" },
+    });
+    expect(await screen.findByText("Grace Hopper")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Revoke"));
+    await screen.findByText(
+      "Revoke the Students seat for Grace Hopper (grace@example.edu)?",
+    );
+    fireEvent.click(screen.getByText("Revoke seat"));
 
     await waitFor(() => {
       expect(revokeMembershipPackageSeat).toHaveBeenCalledWith({
@@ -798,7 +825,7 @@ describe("membership package managers", () => {
         target_account_id: "user-1",
         target_email_address: undefined,
       });
-      expect(screen.getByText("No active seats.")).toBeTruthy();
+      expect(screen.getByText("No active users.")).toBeTruthy();
     });
   });
 
@@ -870,7 +897,7 @@ describe("membership package managers", () => {
       expect(archiveSiteLicensePool).toHaveBeenCalledWith({
         package_id: "site-1",
       });
-      expectTextNotVisible("Students");
+      expect(screen.queryByText("Manage users")).toBeNull();
     });
   });
 
@@ -934,7 +961,7 @@ describe("membership package managers", () => {
       expect(screen.getByText("Campus License")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByText("Campus License"));
+    fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
 
     await waitFor(() => {
       expect(screen.getByText("Edit pool")).toBeTruthy();
@@ -998,6 +1025,14 @@ describe("membership package managers", () => {
           metadata: {},
         },
         pools: [sitePackage],
+        account_details: {
+          "owner-1": {
+            account_id: "owner-1",
+            first_name: "Olivia",
+            last_name: "Owner",
+            email_address: "owner@example.edu",
+          },
+        },
         managers: [
           {
             id: "manager-1",
@@ -1024,16 +1059,35 @@ describe("membership package managers", () => {
     expect(screen.queryByText("Edit pool")).toBeNull();
     expect(screen.queryByText("Add pool")).toBeNull();
     expect(screen.queryByText("Add delegate")).toBeNull();
+    expect(screen.queryByText("Seat pools")).toBeNull();
+    expect(screen.getByText("Olivia Owner")).toBeTruthy();
+    expect(screen.getByText(/owner@example.edu/)).toBeTruthy();
+    expect(screen.queryByText(/License id/)).toBeNull();
+    expect(screen.queryByText(/seed bay/)).toBeNull();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Only CoCalc admins can change delegated site-license roles.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
   });
 
   it("renders customer-facing site-license header details", async () => {
     listSiteLicenseOverviews.mockResolvedValue([
       makeSiteLicenseOverview({
+        account_details: {
+          "manager-1": {
+            account_id: "manager-1",
+            first_name: "Manny",
+            last_name: "Manager",
+            email_address: "manager@example.edu",
+          },
+          "student-1": {
+            account_id: "student-1",
+            first_name: "Ada",
+            last_name: "Student",
+            email_address: "student@example.edu",
+          },
+        },
         pending_requests: [
           {
             id: "request-1",
@@ -1052,6 +1106,16 @@ describe("membership package managers", () => {
             pending_request_count: 1,
             pool_description: "Research access for approved groups.",
           }),
+        ],
+        recent_audit_events: [
+          {
+            id: "event-1",
+            site_license_id: "license-1",
+            action: "pool-request-approved",
+            actor_account_id: "manager-1",
+            target_account_id: "student-1",
+            created: new Date("2026-05-02T00:00:00Z"),
+          },
         ],
         site_license: {
           name: "CoCalc",
@@ -1087,6 +1151,15 @@ describe("membership package managers", () => {
     expect(
       screen.getByText("Research access for approved groups."),
     ).toBeTruthy();
+    expect(screen.getByText(/pool request approved/)).toBeTruthy();
+    expect(screen.getAllByText(/Ada Student/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/student@example.edu/).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getAllByText(/Manny Manager/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/manager@example.edu/).length).toBeGreaterThan(
+      0,
+    );
     expect(screen.queryByText("Pro seats")).toBeNull();
   });
 

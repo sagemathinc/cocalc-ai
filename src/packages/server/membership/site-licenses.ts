@@ -16,6 +16,7 @@ import type {
   MembershipPackageAssignment,
   MembershipPackageDetails,
   MembershipPackageRecord,
+  SiteLicenseAccountDetails,
   SiteLicenseAffiliationReverificationUserSeat,
   SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseAffiliationReverificationSeat,
@@ -1701,6 +1702,58 @@ function addSiteLicenseViewerRole({
   return { ...overview, viewer_role };
 }
 
+function collectSiteLicenseOverviewAccountIds(
+  overview: SiteLicenseOverview,
+): string[] {
+  const accountIds = new Set<string>();
+  const add = (account_id?: string | null) => {
+    const normalized = `${account_id ?? ""}`.trim();
+    if (isValidUUID(normalized)) {
+      accountIds.add(normalized);
+    }
+  };
+  add(overview.site_license.owner_account_id);
+  for (const manager of overview.managers) {
+    add(manager.account_id);
+    add(manager.created_by_account_id);
+  }
+  for (const request of overview.pending_requests) {
+    add(request.account_id);
+    add(request.reviewer_account_id);
+  }
+  for (const pool of overview.pools) {
+    for (const assignment of pool.assignments) {
+      add(assignment.account_id);
+      add(assignment.assigned_by_account_id);
+    }
+  }
+  for (const event of overview.recent_audit_events ?? []) {
+    add(event.actor_account_id);
+    add(event.target_account_id);
+  }
+  return [...accountIds];
+}
+
+async function addSiteLicenseAccountDetails(
+  overview: SiteLicenseOverview,
+): Promise<SiteLicenseOverview> {
+  const accountIds = collectSiteLicenseOverviewAccountIds(overview);
+  if (accountIds.length === 0) {
+    return overview;
+  }
+  const entries = await getClusterAccountsByIdsDirect(accountIds);
+  const account_details: Record<string, SiteLicenseAccountDetails> = {};
+  for (const entry of entries) {
+    account_details[entry.account_id] = {
+      account_id: entry.account_id,
+      email_address: entry.email_address,
+      first_name: entry.first_name,
+      last_name: entry.last_name,
+    };
+  }
+  return { ...overview, account_details };
+}
+
 async function assertSiteLicenseManager({
   account_id,
   site_license_id,
@@ -2711,13 +2764,13 @@ async function getSiteLicenseOverviewWithoutAuthorization({
         client,
       }),
     ]);
-  return {
+  return await addSiteLicenseAccountDetails({
     site_license: siteLicense,
     pools,
     managers,
     pending_requests,
     recent_audit_events,
-  };
+  });
 }
 
 export async function adminProvisionSiteLicense({

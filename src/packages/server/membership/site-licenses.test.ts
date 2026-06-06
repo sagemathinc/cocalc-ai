@@ -447,6 +447,22 @@ describe("site license seat pools", () => {
         }),
       ]),
     );
+    expect(overview.account_details?.[owner_account_id]).toEqual(
+      expect.objectContaining({
+        account_id: owner_account_id,
+        email_address: expect.stringMatching(/@test\.com$/),
+        first_name: "Test",
+        last_name: "User",
+      }),
+    );
+    expect(overview.account_details?.[admin_account_id]).toEqual(
+      expect.objectContaining({
+        account_id: admin_account_id,
+        email_address: expect.stringMatching(/@test\.com$/),
+        first_name: "Test",
+        last_name: "User",
+      }),
+    );
     expect(overview.recent_audit_events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

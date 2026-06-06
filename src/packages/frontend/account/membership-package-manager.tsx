@@ -12,6 +12,7 @@ import {
   DatePicker,
   Descriptions,
   Divider,
+  Drawer,
   Input,
   InputNumber,
   Modal,
@@ -116,6 +117,15 @@ interface PackageUserSearchResult {
   last_name?: string;
   email_address?: string;
 }
+
+interface AccountNameInfo {
+  first_name?: string;
+  last_name?: string;
+  email_address?: string;
+  profile?: { color?: string; image?: string };
+}
+
+type AccountNames = Record<string, AccountNameInfo | undefined>;
 
 function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
   const displayName = [user.first_name, user.last_name]
@@ -418,10 +428,7 @@ function siteLicensePoolConfigFromPackage(
 
 function getAccountDisplayName(
   assignment: MembershipPackageAssignment,
-  names: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >,
+  names: AccountNames,
 ): string {
   if (!assignment.account_id) {
     return assignment.email_address ?? "Pending email claim";
@@ -433,28 +440,65 @@ function getAccountDisplayName(
 
 function getAccountSecondaryLabel(
   assignment: MembershipPackageAssignment,
-  names: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >,
+  names: AccountNames,
 ): string | undefined {
   if (!assignment.account_id) {
     return "Reserved by email";
   }
   const name = names[assignment.account_id];
   const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
+  const email =
+    `${assignment.email_address ?? ""}`.trim() ||
+    `${name?.email_address ?? ""}`.trim();
+  if (email) return email;
   if (!fullName) return;
   return assignment.account_id;
+}
+
+function getAccountIdentity(
+  accountId: string | null | undefined,
+  names: AccountNames,
+): {
+  email?: string;
+  name: string;
+  secondary?: string;
+} {
+  const normalizedAccountId = `${accountId ?? ""}`.trim();
+  if (!normalizedAccountId) {
+    return { name: "Unknown account" };
+  }
+  const info = names[normalizedAccountId];
+  const fullName = `${info?.first_name ?? ""} ${info?.last_name ?? ""}`.trim();
+  const email = `${info?.email_address ?? ""}`.trim() || undefined;
+  return {
+    email,
+    name: fullName || email || normalizedAccountId,
+    secondary: email || (fullName ? normalizedAccountId : undefined),
+  };
+}
+
+function accountIdentityText(
+  accountId: string | null | undefined,
+  names: AccountNames,
+): string {
+  const identity = getAccountIdentity(accountId, names);
+  return identity.secondary
+    ? `${identity.name} (${identity.secondary})`
+    : identity.name;
+}
+
+function getAssignmentEmail(
+  assignment: MembershipPackageAssignment,
+): string | undefined {
+  const email = `${assignment.email_address ?? ""}`.trim();
+  return email || undefined;
 }
 
 function getRequestAccountDisplay({
   names,
   request,
 }: {
-  names: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >;
+  names: AccountNames;
   request: SiteLicensePoolRequest;
 }): {
   email?: string;
@@ -467,6 +511,47 @@ function getRequestAccountDisplay({
     email: fullName && email ? email : undefined,
     name: fullName || email || request.account_id,
   };
+}
+
+function assignmentSearchText({
+  assignment,
+  names,
+}: {
+  assignment: MembershipPackageAssignment;
+  names: AccountNames;
+}): string {
+  return [
+    getAccountDisplayName(assignment, names),
+    getAssignmentEmail(assignment),
+    assignment.account_id,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function formatSeatGivenOn(value?: Date | string | null): string {
+  const date = siteLicenseDate(value);
+  return date == null ? "-" : formatSiteLicenseDate(date);
+}
+
+function formatSiteLicenseAuditAction(action: string): string {
+  return action.replace(/-/g, " ");
+}
+
+function revokeSeatConfirmationTitle({
+  assignment,
+  names,
+  pool,
+}: {
+  assignment: MembershipPackageAssignment;
+  names: AccountNames;
+  pool: SiteLicenseOverview["pools"][number];
+}): string {
+  return `Revoke the ${pool.pool_name} seat for ${getAccountDisplayName(
+    assignment,
+    names,
+  )} (${getAssignmentEmail(assignment) ?? "email not recorded"})?`;
 }
 
 async function revokeSeatOrThrow({
@@ -1276,9 +1361,7 @@ export function TeamPackageManager({
   >(undefined);
   const [assignmentTarget, setAssignmentTarget] =
     useState<MembershipPackageDetails | null>(null);
-  const [accountNames, setAccountNames] = useState<
-    Record<string, { first_name?: string; last_name?: string } | undefined>
-  >({});
+  const [accountNames, setAccountNames] = useState<AccountNames>({});
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
   });
@@ -1452,9 +1535,7 @@ export function SiteLicenseManager({
     useState<boolean>(true);
   const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
     useState<string>("");
-  const [accountNames, setAccountNames] = useState<
-    Record<string, { first_name?: string; last_name?: string } | undefined>
-  >({});
+  const [accountNames, setAccountNames] = useState<AccountNames>({});
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
   });
@@ -1493,6 +1574,11 @@ export function SiteLicenseManager({
                 .map((assignment) => assignment.account_id),
             ),
             ...overview.pending_requests.map((request) => request.account_id),
+            ...overview.managers.map((manager) => manager.account_id),
+            ...(overview.recent_audit_events ?? []).flatMap((event) => [
+              event.actor_account_id,
+              event.target_account_id,
+            ]),
           ])
           .filter((value): value is string => !!value),
       ),
@@ -1651,9 +1737,7 @@ export function SiteLicenseAdminPanel({
   const [editTarget, setEditTarget] = useState<MembershipPackageDetails | null>(
     null,
   );
-  const [accountNames, setAccountNames] = useState<
-    Record<string, { first_name?: string; last_name?: string } | undefined>
-  >({});
+  const [accountNames, setAccountNames] = useState<AccountNames>({});
   const [reviewingRequestId, setReviewingRequestId] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
@@ -1694,6 +1778,11 @@ export function SiteLicenseAdminPanel({
                   .map((assignment) => assignment.account_id),
               ),
               ...overview.pending_requests.map((request) => request.account_id),
+              ...overview.managers.map((manager) => manager.account_id),
+              ...(overview.recent_audit_events ?? []).flatMap((event) => [
+                event.actor_account_id,
+                event.target_account_id,
+              ]),
             ])
             .filter((value): value is string => !!value),
         ),
@@ -2061,10 +2150,7 @@ function SiteLicenseDashboard({
   loading: boolean;
   error: string;
   tiers: MembershipTierLike[];
-  accountNames: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >;
+  accountNames: AccountNames;
   isAdmin: boolean;
   reviewingRequestId: string;
   onEditPool?: (pool: SiteLicenseOverview["pools"][number]) => void;
@@ -2117,6 +2203,8 @@ function SiteLicenseDashboard({
   } | null>(null);
   const [addingPoolSubmitting, setAddingPoolSubmitting] = useState(false);
   const [addingPoolError, setAddingPoolError] = useState("");
+  const [rosterPoolId, setRosterPoolId] = useState("");
+  const [rosterSearch, setRosterSearch] = useState("");
   const siteLicenseTierOptions = useMemo(
     () => getSiteLicenseProvisioningTiers(tiers),
     [tiers],
@@ -2134,6 +2222,15 @@ function SiteLicenseDashboard({
         dateSortValue(left.request.requested_at) -
         dateSortValue(right.request.requested_at),
     );
+  const selectedRoster = useMemo(() => {
+    if (!rosterPoolId) return;
+    for (const overview of overviews) {
+      const pool = overview.pools.find((pool) => pool.id === rosterPoolId);
+      if (pool != null) {
+        return { overview, pool };
+      }
+    }
+  }, [overviews, rosterPoolId]);
   if (loading) {
     return (
       <Card size="small">
@@ -2157,6 +2254,10 @@ function SiteLicenseDashboard({
   return (
     <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       {overviews.map((overview) => {
+        const overviewAccountNames: AccountNames = {
+          ...accountNames,
+          ...(overview.account_details ?? {}),
+        };
         const overviewRequests = requests.filter(
           ({ overview: requestOverview, request }) =>
             requestOverview.site_license.id === overview.site_license.id &&
@@ -2279,7 +2380,7 @@ function SiteLicenseDashboard({
               </Space>
             </div>
 
-            <div style={{ padding: 22 }}>
+            <div style={{ background: COLORS.YELL_LLL, padding: 22 }}>
               <Space
                 orientation="vertical"
                 size="large"
@@ -2307,7 +2408,7 @@ function SiteLicenseDashboard({
                     >
                       {overviewRequests.map(({ request, pool }) => {
                         const accountDisplay = getRequestAccountDisplay({
-                          names: accountNames,
+                          names: overviewAccountNames,
                           request,
                         });
                         return (
@@ -2374,19 +2475,14 @@ function SiteLicenseDashboard({
                 ) : null}
 
                 <div>
-                  <Space
-                    wrap
-                    align="baseline"
-                    style={{
-                      justifyContent: "space-between",
-                      marginBottom: 12,
-                      width: "100%",
-                    }}
-                  >
-                    <Title level={5} style={{ margin: 0 }}>
-                      Seat pools
-                    </Title>
-                    {onAddPool ? (
+                  {onAddPool ? (
+                    <Space
+                      style={{
+                        justifyContent: "flex-end",
+                        marginBottom: 12,
+                        width: "100%",
+                      }}
+                    >
                       <Button
                         onClick={() =>
                           setAddingPool({
@@ -2400,8 +2496,8 @@ function SiteLicenseDashboard({
                       >
                         <Icon name="plus-circle" /> Add pool
                       </Button>
-                    ) : null}
-                  </Space>
+                    </Space>
+                  ) : null}
                   <div
                     style={{
                       display: "grid",
@@ -2477,6 +2573,26 @@ function SiteLicenseDashboard({
                                 }
                               />
                             </div>
+                            <Tooltip
+                              title={
+                                activeSeats === 0
+                                  ? "No active users"
+                                  : undefined
+                              }
+                            >
+                              <span>
+                                <Button
+                                  size="small"
+                                  disabled={activeSeats === 0}
+                                  onClick={() => {
+                                    setRosterPoolId(pool.id);
+                                    setRosterSearch("");
+                                  }}
+                                >
+                                  <Icon name="users" /> Manage users
+                                </Button>
+                              </span>
+                            </Tooltip>
                             {description ? (
                               <Text type="secondary">{description}</Text>
                             ) : null}
@@ -2520,72 +2636,6 @@ function SiteLicenseDashboard({
                                 ) : null}
                               </Space>
                             ) : null}
-
-                            {pool.assignments.filter(isActiveAssignment)
-                              .length === 0 ? (
-                              <Text type="secondary">No active seats.</Text>
-                            ) : (
-                              <Space
-                                orientation="vertical"
-                                size="small"
-                                style={{ width: "100%" }}
-                              >
-                                {pool.assignments
-                                  .filter(isActiveAssignment)
-                                  .map((assignment) => {
-                                    const key = `${pool.id}-${assignment.id}`;
-                                    return (
-                                      <div
-                                        key={key}
-                                        style={{
-                                          alignItems: "center",
-                                          borderTop: `1px solid ${COLORS.GRAY_LLL}`,
-                                          display: "flex",
-                                          gap: 12,
-                                          justifyContent: "space-between",
-                                          paddingTop: 8,
-                                        }}
-                                      >
-                                        <Space orientation="vertical" size={0}>
-                                          <Text>
-                                            {getAccountDisplayName(
-                                              assignment,
-                                              accountNames,
-                                            )}
-                                          </Text>
-                                          <Text type="secondary">
-                                            {assignment.email_address ||
-                                              assignment.account_id ||
-                                              "unknown account"}{" "}
-                                            assigned{" "}
-                                            {dateLabel(assignment.assigned_at)}
-                                          </Text>
-                                        </Space>
-                                        {canManageLicense ? (
-                                          <Button
-                                            size="small"
-                                            danger
-                                            loading={revokingSeat === key}
-                                            onClick={async () => {
-                                              setRevokingSeat(key);
-                                              try {
-                                                await onRevokeSeat(
-                                                  pool,
-                                                  assignment,
-                                                );
-                                              } finally {
-                                                setRevokingSeat("");
-                                              }
-                                            }}
-                                          >
-                                            Revoke
-                                          </Button>
-                                        ) : null}
-                                      </div>
-                                    );
-                                  })}
-                              </Space>
-                            )}
                           </Space>
                         </Card>
                       );
@@ -2604,6 +2654,7 @@ function SiteLicenseDashboard({
                   style={{ borderRadius: 14 }}
                 >
                   <SiteLicenseManagersEditor
+                    accountNames={overviewAccountNames}
                     overview={overview}
                     canEdit={canEditManagers}
                     onSetManager={onSetManager}
@@ -2629,32 +2680,80 @@ function SiteLicenseDashboard({
                     >
                       {overview.recent_audit_events.map((event) => (
                         <Text key={event.id} type="secondary">
-                          {dateLabel(event.created)}: {event.action}
-                          {event.target_account_id
-                            ? ` for ${event.target_account_id}`
-                            : ""}
+                          {dateLabel(event.created)}:{" "}
+                          {formatSiteLicenseAuditAction(event.action)}
+                          {event.target_account_id ? (
+                            <>
+                              {" for "}
+                              <Text strong>
+                                {accountIdentityText(
+                                  event.target_account_id,
+                                  overviewAccountNames,
+                                )}
+                              </Text>
+                            </>
+                          ) : null}
+                          {event.actor_account_id ? (
+                            <>
+                              {" by "}
+                              <Text strong>
+                                {accountIdentityText(
+                                  event.actor_account_id,
+                                  overviewAccountNames,
+                                )}
+                              </Text>
+                            </>
+                          ) : null}
                         </Text>
                       ))}
                     </Space>
                   </Card>
                 ) : null}
 
-                <Space wrap>
-                  <Text type="secondary">
-                    License id {overview.site_license.id}; seed bay{" "}
-                    {overview.site_license.bay_id}
-                  </Text>
-                  {overview.site_license.owner_account_id ? (
+                {isAdmin ? (
+                  <Space wrap>
                     <Text type="secondary">
-                      owner account {overview.site_license.owner_account_id}
+                      License id {overview.site_license.id}; seed bay{" "}
+                      {overview.site_license.bay_id}
                     </Text>
-                  ) : null}
-                </Space>
+                    {overview.site_license.owner_account_id ? (
+                      <Text type="secondary">
+                        owner account {overview.site_license.owner_account_id}
+                      </Text>
+                    ) : null}
+                  </Space>
+                ) : null}
               </Space>
             </div>
           </Card>
         );
       })}
+      <PoolUsersDrawer
+        accountNames={
+          selectedRoster == null
+            ? accountNames
+            : {
+                ...accountNames,
+                ...(selectedRoster.overview.account_details ?? {}),
+              }
+        }
+        canManageLicense={
+          selectedRoster
+            ? canManageSiteLicenseOverview({
+                isAdmin,
+                overview: selectedRoster.overview,
+              })
+            : false
+        }
+        onClose={() => setRosterPoolId("")}
+        onRevokeSeat={onRevokeSeat}
+        open={selectedRoster != null}
+        pool={selectedRoster?.pool}
+        revokingSeat={revokingSeat}
+        search={rosterSearch}
+        setRevokingSeat={setRevokingSeat}
+        setSearch={setRosterSearch}
+      />
       <EditSiteLicenseSettingsModal
         overview={editingLicense}
         onClose={() => setEditingLicense(null)}
@@ -2701,6 +2800,171 @@ function SiteLicenseDashboard({
         }}
       />
     </Space>
+  );
+}
+
+function PoolUsersDrawer({
+  accountNames,
+  canManageLicense,
+  onClose,
+  onRevokeSeat,
+  open,
+  pool,
+  revokingSeat,
+  search,
+  setRevokingSeat,
+  setSearch,
+}: {
+  accountNames: AccountNames;
+  canManageLicense: boolean;
+  onClose: () => void;
+  onRevokeSeat: (
+    pool: SiteLicenseOverview["pools"][number],
+    assignment: MembershipPackageAssignment,
+  ) => Promise<void>;
+  open: boolean;
+  pool?: SiteLicenseOverview["pools"][number];
+  revokingSeat: string;
+  search: string;
+  setRevokingSeat: (value: string) => void;
+  setSearch: (value: string) => void;
+}) {
+  const activeAssignments = useMemo(
+    () => pool?.assignments.filter(isActiveAssignment) ?? [],
+    [pool],
+  );
+  const filteredAssignments = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return activeAssignments;
+    return activeAssignments.filter((assignment) =>
+      assignmentSearchText({ assignment, names: accountNames }).includes(
+        needle,
+      ),
+    );
+  }, [accountNames, activeAssignments, search]);
+  const tableWidth = canManageLicense ? 690 : 570;
+
+  return (
+    <Drawer
+      destroyOnHidden
+      onClose={onClose}
+      open={open}
+      title={
+        <Space>
+          <Icon name="users" />
+          <span>{pool ? `${pool.pool_name} users` : "Users"}</span>
+        </Space>
+      }
+      size={760}
+      styles={{ body: { padding: 16 } }}
+    >
+      {pool ? (
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <Input.Search
+            allowClear
+            placeholder="Search by name or email"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <Table<MembershipPackageAssignment>
+            dataSource={filteredAssignments}
+            locale={{
+              emptyText:
+                activeAssignments.length === 0
+                  ? "No active users."
+                  : search.trim()
+                    ? "No users match this search."
+                    : "No active users.",
+            }}
+            pagination={false}
+            rowKey={(assignment) => assignment.id}
+            scroll={{ x: tableWidth, y: "calc(100vh - 240px)" }}
+            size="small"
+            tableLayout="fixed"
+          >
+            <Table.Column<MembershipPackageAssignment>
+              title="User"
+              width={220}
+              render={(_, assignment) => {
+                const name = getAccountDisplayName(assignment, accountNames);
+                return (
+                  <Tooltip title={name}>
+                    <Text ellipsis style={{ display: "block", maxWidth: 200 }}>
+                      {name}
+                    </Text>
+                  </Tooltip>
+                );
+              }}
+            />
+            <Table.Column<MembershipPackageAssignment>
+              title="Email"
+              width={240}
+              render={(_, assignment) => {
+                const email = getAssignmentEmail(assignment);
+                if (!email) {
+                  return <Text type="secondary">-</Text>;
+                }
+                return (
+                  <Tooltip title={email}>
+                    <Text ellipsis style={{ display: "block", maxWidth: 220 }}>
+                      {email}
+                    </Text>
+                  </Tooltip>
+                );
+              }}
+            />
+            <Table.Column<MembershipPackageAssignment>
+              title="Seat given on"
+              width={140}
+              render={(_, assignment) =>
+                formatSeatGivenOn(assignment.assigned_at)
+              }
+            />
+            {canManageLicense ? (
+              <Table.Column<MembershipPackageAssignment>
+                align="right"
+                title=""
+                width={90}
+                render={(_, assignment) => {
+                  const key = `${pool.id}-${assignment.id}`;
+                  return (
+                    <Popconfirm
+                      title={revokeSeatConfirmationTitle({
+                        assignment,
+                        names: accountNames,
+                        pool,
+                      })}
+                      description="This removes the active seat from this pool."
+                      okButtonProps={{
+                        danger: true,
+                        loading: revokingSeat === key,
+                      }}
+                      okText="Revoke seat"
+                      onConfirm={async () => {
+                        setRevokingSeat(key);
+                        try {
+                          await onRevokeSeat(pool, assignment);
+                        } finally {
+                          setRevokingSeat("");
+                        }
+                      }}
+                    >
+                      <Button
+                        danger
+                        size="small"
+                        loading={revokingSeat === key}
+                      >
+                        Revoke
+                      </Button>
+                    </Popconfirm>
+                  );
+                }}
+              />
+            ) : null}
+          </Table>
+        </Space>
+      ) : null}
+    </Drawer>
   );
 }
 
@@ -2877,11 +3141,13 @@ function EditSiteLicenseSettingsModal({
 }
 
 function SiteLicenseManagersEditor({
+  accountNames,
   overview,
   canEdit,
   onSetManager,
   onRemoveManager,
 }: {
+  accountNames: AccountNames;
   overview: SiteLicenseOverview;
   canEdit: boolean;
   onSetManager: (
@@ -2978,52 +3244,61 @@ function SiteLicenseManagersEditor({
       {error ? <Alert type="error" showIcon title={error} /> : null}
       {overview.managers.length ? (
         <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-          {overview.managers.map((manager) => (
-            <div
-              key={manager.id}
-              style={{
-                alignItems: "center",
-                display: "flex",
-                gap: 10,
-                justifyContent: "space-between",
-              }}
-            >
-              <Space wrap>
-                <Text code>{manager.account_id}</Text>
-                <Tag>{manager.role}</Tag>
-              </Space>
-              <Space>
-                {canEdit ? (
-                  <>
-                    <Select
-                      size="small"
-                      value={manager.role}
-                      style={{ width: 110 }}
-                      options={[
-                        { label: "Manager", value: "manager" },
-                        { label: "Viewer", value: "viewer" },
-                      ]}
-                      onChange={(nextRole) =>
-                        void onSetManager(
-                          overview.site_license.id,
-                          manager.account_id,
-                          nextRole,
-                        )
-                      }
-                    />
-                    <Button
-                      size="small"
-                      danger
-                      loading={working === `remove-${manager.account_id}`}
-                      onClick={() => void removeManager(manager.account_id)}
-                    >
-                      Remove
-                    </Button>
-                  </>
-                ) : null}
-              </Space>
-            </div>
-          ))}
+          {overview.managers.map((manager) => {
+            const identity = getAccountIdentity(
+              manager.account_id,
+              accountNames,
+            );
+            return (
+              <div
+                key={manager.id}
+                style={{
+                  alignItems: "center",
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "space-between",
+                }}
+              >
+                <Space align="center" wrap>
+                  <Text>{identity.name}</Text>
+                  {identity.secondary ? (
+                    <Text type="secondary">({identity.secondary})</Text>
+                  ) : null}
+                  <Tag>{manager.role}</Tag>
+                </Space>
+                <Space>
+                  {canEdit ? (
+                    <>
+                      <Select
+                        size="small"
+                        value={manager.role}
+                        style={{ width: 110 }}
+                        options={[
+                          { label: "Manager", value: "manager" },
+                          { label: "Viewer", value: "viewer" },
+                        ]}
+                        onChange={(nextRole) =>
+                          void onSetManager(
+                            overview.site_license.id,
+                            manager.account_id,
+                            nextRole,
+                          )
+                        }
+                      />
+                      <Button
+                        size="small"
+                        danger
+                        loading={working === `remove-${manager.account_id}`}
+                        onClick={() => void removeManager(manager.account_id)}
+                      >
+                        Remove
+                      </Button>
+                    </>
+                  ) : null}
+                </Space>
+              </div>
+            );
+          })}
         </Space>
       ) : (
         <Text type="secondary">No delegated managers listed.</Text>
@@ -3075,11 +3350,7 @@ function SiteLicenseManagersEditor({
             </Button>
           </Space>
         </>
-      ) : (
-        <Text type="secondary">
-          Only CoCalc admins can change delegated site-license roles.
-        </Text>
-      )}
+      ) : null}
     </Space>
   );
 }
@@ -3100,10 +3371,7 @@ function PackageGroup({
   emptyDescription: string;
   membershipPackages: MembershipPackageDetails[];
   tiers: MembershipTierLike[];
-  accountNames: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >;
+  accountNames: AccountNames;
   onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
@@ -3157,10 +3425,7 @@ function MembershipPackageCard({
 }: {
   membershipPackage: MembershipPackageDetails;
   tierLabel: string;
-  accountNames: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >;
+  accountNames: AccountNames;
   onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (

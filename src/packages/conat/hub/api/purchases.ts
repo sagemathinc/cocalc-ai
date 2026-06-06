@@ -421,6 +421,13 @@ export interface SiteLicenseAuditEvent {
   created?: Date;
 }
 
+export interface SiteLicenseAccountDetails {
+  account_id: string;
+  first_name?: string;
+  last_name?: string;
+  email_address?: string;
+}
+
 export interface SiteLicenseOverview {
   site_license: SiteLicenseRecord;
   pools: SiteLicensePoolSummary[];
@@ -428,6 +435,7 @@ export interface SiteLicenseOverview {
   pending_requests: SiteLicensePoolRequest[];
   viewer_role?: SiteLicenseViewerRole;
   recent_audit_events?: SiteLicenseAuditEvent[];
+  account_details?: Record<string, SiteLicenseAccountDetails>;
 }
 
 export type SiteLicenseAffiliationReverificationState =
