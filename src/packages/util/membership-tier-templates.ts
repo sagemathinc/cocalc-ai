@@ -24,6 +24,8 @@ const STORE_MARKETING = {
     store_description:
       "Start using CoCalc with just enough resources to explore the platform and do basic work.",
     store_highlights: [],
+    site_license_pool_description:
+      "Basic CoCalc access for evaluation and occasional use.",
   },
   basic: {
     store_description: "For occasional light use.",
@@ -32,6 +34,7 @@ const STORE_MARKETING = {
       "Access better shared hosts",
       "Modest included AI usage",
     ],
+    site_license_pool_description: "Light CoCalc access for occasional work.",
   },
   student: {
     store_description:
@@ -41,6 +44,7 @@ const STORE_MARKETING = {
       "Resources for class projects",
       "Access throughout the academic term",
     ],
+    site_license_pool_description: "Course-focused CoCalc access for students.",
   },
   standard: {
     store_description: "A solid choice for everyday work.",
@@ -49,6 +53,7 @@ const STORE_MARKETING = {
       "Dedicated project host access, including GPU",
       "Larger included AI allowance",
     ],
+    site_license_pool_description: "Everyday CoCalc access for regular work.",
   },
   instructor: {
     store_description:
@@ -58,6 +63,8 @@ const STORE_MARKETING = {
       "Course-scale invitation limits",
       "More room for teaching workflows",
     ],
+    site_license_pool_description:
+      "Teaching-focused CoCalc access for instructors and course staff.",
   },
   researcher: {
     store_description:
@@ -67,6 +74,8 @@ const STORE_MARKETING = {
       "Larger custom RootFS image allowance",
       "Advanced OCI RootFS image import",
     ],
+    site_license_pool_description:
+      "Research-focused CoCalc access for larger project workloads.",
   },
   pro: {
     store_description:
@@ -76,6 +85,8 @@ const STORE_MARKETING = {
       "Run CoCalc Launchpad wherever you want to stay in full control",
       "Postpaid billing for dedicated hosts",
     ],
+    site_license_pool_description:
+      "Advanced CoCalc access for demanding projects.",
   },
 } as const;
 
@@ -692,6 +703,7 @@ type TierTemplateFields = {
   store_visible?: boolean;
   store_description?: string;
   store_highlights?: readonly string[];
+  site_license_pool_description?: string;
   course_store_visible?: boolean;
   course_price?: number;
   course_duration_days?: number;
@@ -743,6 +755,9 @@ export function applyMembershipTierTemplateFallbacks<
       (templateFields.store_highlights == null
         ? undefined
         : [...templateFields.store_highlights]),
+    site_license_pool_description:
+      tier.site_license_pool_description ??
+      templateFields.site_license_pool_description,
     course_store_visible:
       tier.course_store_visible ?? template.course_store_visible,
     course_price: tier.course_price ?? template.course_price,

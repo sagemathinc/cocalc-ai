@@ -815,7 +815,7 @@ export function registerMembershipCommand(
     )
     .requiredOption(
       "--pools-json <json>",
-      'JSON array of pool configs, e.g. [{"pool_name":"Students","membership_class":"student","seat_count":5000,"requires_approval":false,"verification_policy":"email-domain"}]',
+      'JSON array of pool configs, e.g. [{"pool_name":"Student","membership_class":"student","seat_count":5000,"requires_approval":false,"verification_policy":"email-domain"}]',
     )
     .option("--custom-terms-url <url>", "custom negotiated terms URL")
     .option("--custom-policy-url <url>", "custom organization policy URL")

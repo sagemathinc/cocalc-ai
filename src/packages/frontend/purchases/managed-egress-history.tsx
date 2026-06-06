@@ -762,7 +762,7 @@ export function ManagedEgressRateSummary({
   }
   if (compact) {
     return (
-      <Space direction="vertical" size={0}>
+      <Space vertical size={0}>
         <div>
           <Text type="secondary">Last 5 min: </Text>
           <Text>{humanSize(recent.last5MinutesBytes)}</Text>
@@ -822,7 +822,7 @@ export function ManagedEgressSparkline({
   const recent = summarizeManagedEgressRecentUsage(history);
 
   return (
-    <Space direction="vertical" size={2} style={{ width: "100%" }}>
+    <Space vertical size={2} style={{ width: "100%" }}>
       <svg
         aria-label="Recent managed egress"
         height={height}
@@ -909,7 +909,7 @@ export function ManagedEgressTopProjectsSummary({
     : history.top_projects;
   if (compact && renderCompactItems) {
     return renderCompactTopProjects(
-      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+      <Space vertical size={4} style={{ width: "100%" }}>
         {projects.map((project, i) => (
           <div key={`${project.project_id ?? "none"}-${i}`}>
             <Text>
@@ -925,7 +925,7 @@ export function ManagedEgressTopProjectsSummary({
   }
 
   return (
-    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+    <Space vertical size={4} style={{ width: "100%" }}>
       {projects.map((project, i) => (
         <div key={`${project.project_id ?? "none"}-${i}`}>
           <Text>
@@ -949,7 +949,7 @@ function AdminTopAccounts({
   accounts: ManagedEgressAccountSummary[];
 }) {
   return (
-    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+    <Space vertical size={6} style={{ width: "100%" }}>
       {accounts.map((account) => (
         <div key={account.account_id}>
           <Text>
@@ -974,7 +974,7 @@ function AdminTopProjects({
   projects: ManagedEgressAdminProjectSummary[];
 }) {
   return (
-    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+    <Space vertical size={6} style={{ width: "100%" }}>
       {projects.map((project) => (
         <div key={`${project.account_id}:${project.project_id ?? "none"}`}>
           <Text>
@@ -1190,7 +1190,7 @@ export function ManagedEgressHistoryModal({
             <div style={{ marginBottom: "16px" }}>
               <Text strong>Top projects in this window</Text>
               <div style={{ marginTop: "6px" }}>
-                <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Space vertical size={6} style={{ width: "100%" }}>
                   {history.top_projects.map((project, i) => (
                     <div key={`${project.project_id ?? "none"}-${i}`}>
                       <Text>

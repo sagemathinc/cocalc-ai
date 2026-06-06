@@ -188,6 +188,8 @@ export interface MembershipResolution {
   effective_limits?: MembershipEffectiveLimits;
   subscription_id?: number;
   subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
+  subscription_cost?: number;
+  subscription_interval?: "month" | "year";
   grant_id?: string;
   grant_source?: string;
   grant_package_id?: string;
@@ -203,6 +205,8 @@ export interface MembershipCandidate {
   effective_limits?: MembershipEffectiveLimits;
   subscription_id?: number;
   subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
+  subscription_cost?: number;
+  subscription_interval?: "month" | "year";
   grant_id?: string;
   grant_source?: string;
   grant_package_id?: string;
@@ -264,10 +268,12 @@ export interface ClaimableMembershipPackage {
   requires_approval?: boolean;
   site_license_id?: string;
   pool_name?: string;
+  pool_description?: string;
   verification_policy?: SiteLicenseVerificationPolicy;
   exclusive_group?: string;
   pending_request_id?: string;
   pending_request_state?: SiteLicensePoolRequestState;
+  seat_status?: "claimable" | "claimed" | "pending";
   custom_terms_url?: string | null;
   custom_policy_url?: string | null;
   terms_version_label?: string | null;
@@ -309,6 +315,7 @@ export type SiteLicensePoolRequestState =
 
 export interface SiteLicensePoolConfig {
   pool_name: string;
+  pool_description?: string | null;
   membership_class: MembershipClass;
   seat_count: number;
   requires_approval: boolean;
@@ -351,8 +358,11 @@ export interface SiteLicenseManager {
   updated?: Date;
 }
 
+export type SiteLicenseViewerRole = "admin" | "manager" | "viewer";
+
 export interface SiteLicensePoolSummary extends MembershipPackageDetails {
   pool_name: string;
+  pool_description?: string | null;
   requires_approval: boolean;
   verification_policy: SiteLicenseVerificationPolicy;
   exclusive_group: string;
@@ -389,9 +399,12 @@ export type SiteLicenseAuditAction =
   | "site-license-updated"
   | "pool-created"
   | "pool-updated"
+  | "pool-archived"
   | "pool-request-created"
+  | "pool-request-canceled"
   | "pool-request-approved"
   | "pool-request-rejected"
+  | "seat-released-by-user"
   | "seat-released-for-upgrade"
   | "seat-affiliation-reverified"
   | "seat-released-after-reverification-grace";
@@ -408,12 +421,21 @@ export interface SiteLicenseAuditEvent {
   created?: Date;
 }
 
+export interface SiteLicenseAccountDetails {
+  account_id: string;
+  first_name?: string;
+  last_name?: string;
+  email_address?: string;
+}
+
 export interface SiteLicenseOverview {
   site_license: SiteLicenseRecord;
   pools: SiteLicensePoolSummary[];
   managers: SiteLicenseManager[];
   pending_requests: SiteLicensePoolRequest[];
+  viewer_role?: SiteLicenseViewerRole;
   recent_audit_events?: SiteLicenseAuditEvent[];
+  account_details?: Record<string, SiteLicenseAccountDetails>;
 }
 
 export type SiteLicenseAffiliationReverificationState =
@@ -935,7 +957,12 @@ export interface Purchases {
     package_id?: string;
     owner_account_id?: string;
     site_license_id?: string;
+    pool_name?: string;
     seat_count?: number;
+    pool_description?: string | null;
+    requires_approval?: boolean;
+    affiliation_reverification_days?: number | null;
+    affiliation_reverification_grace_days?: number | null;
     expires_at?: Date | string | null;
     allowed_domains?: string[];
   }) => Promise<MembershipPackageDetails>;
@@ -962,6 +989,7 @@ export interface Purchases {
   }) => Promise<{ revoked: boolean }>;
   getClaimableMembershipPackages: (opts?: {
     account_id?: string;
+    include_claimed_site_license_pools?: boolean;
   }) => Promise<ClaimableMembershipPackage[]>;
   claimMembershipPackageSeat: (opts?: {
     account_id?: string;
@@ -1018,6 +1046,12 @@ export interface Purchases {
     site_license_id?: string;
     pool?: SiteLicensePoolConfig;
   }) => Promise<SiteLicenseOverview>;
+  archiveSiteLicensePool: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    package_id?: string;
+  }) => Promise<SiteLicenseOverview>;
   setSiteLicenseManager: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1040,6 +1074,14 @@ export interface Purchases {
     requester_note?: string | null;
     accepted_terms?: boolean;
   }) => Promise<SiteLicensePoolRequest>;
+  cancelSiteLicensePoolRequest: (opts?: {
+    account_id?: string;
+    request_id?: string;
+  }) => Promise<SiteLicensePoolRequest>;
+  releaseSiteLicensePoolSeat: (opts?: {
+    account_id?: string;
+    package_id?: string;
+  }) => Promise<{ revoked: boolean }>;
   reviewSiteLicensePoolRequest: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1108,9 +1150,12 @@ export const purchases = {
   getSiteLicenseOverview: authFirst,
   updateSiteLicense: authFirst,
   addSiteLicensePool: authFirst,
+  archiveSiteLicensePool: authFirst,
   setSiteLicenseManager: authFirst,
   removeSiteLicenseManager: authFirst,
   requestSiteLicensePool: authFirst,
+  cancelSiteLicensePoolRequest: authFirst,
+  releaseSiteLicensePoolSeat: authFirst,
   reviewSiteLicensePoolRequest: authFirst,
   getSiteLicenseAffiliationReverificationStatus: authFirst,
   refreshSiteLicenseAffiliationVerification: authFirst,

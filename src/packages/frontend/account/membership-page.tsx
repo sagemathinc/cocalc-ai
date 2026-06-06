@@ -7,20 +7,20 @@ import {
   Alert,
   Button,
   Card,
-  Descriptions,
   Popconfirm,
   Space,
   Tag,
   Table,
   Typography,
 } from "antd";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { defineMessage } from "react-intl";
 
 import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { labels } from "@cocalc/frontend/i18n";
@@ -28,24 +28,33 @@ import {
   cancelSubscription,
   resumeSubscription,
 } from "@cocalc/frontend/purchases/api";
-import type { MembershipCandidate } from "@cocalc/conat/hub/api/purchases";
-import { capitalize } from "@cocalc/util/misc";
-import { useMembershipSettingsData } from "./membership-settings-data";
+import type {
+  MembershipCandidate,
+  MembershipResolution,
+} from "@cocalc/conat/hub/api/purchases";
+import { capitalize, currency } from "@cocalc/util/misc";
+import { buildMembershipTierPresentation } from "@cocalc/util/membership-tier-presentation";
 import {
-  formatFeatureTag,
-  normalizeRecord,
-} from "./membership-settings-format";
-import {
-  ClaimableMembershipPackagesPanel,
-  SiteLicenseReverificationPanel,
-} from "./membership-package-manager";
+  type MembershipCandidateRow,
+  type MembershipTier,
+  useMembershipSettingsData,
+} from "./membership-settings-data";
 import MembershipPurchaseModal from "./membership-purchase-modal";
-import { MembershipTierBenefits } from "./membership-tier-benefits";
 import type { SettingsPageDefinition } from "./settings-page";
 import { openAccountSettings } from "./settings-routing";
 import { UseBalance } from "./balance-toward-subs";
 
 const { Paragraph, Text } = Typography;
+
+const ClaimableMembershipPackagesPanel = lazy(async () => ({
+  default: (await import("./membership-package-manager"))
+    .ClaimableMembershipPackagesPanel,
+}));
+
+const SiteLicenseReverificationPanel = lazy(async () => ({
+  default: (await import("./membership-package-manager"))
+    .SiteLicenseReverificationPanel,
+}));
 
 export const MEMBERSHIP_SETTINGS_PAGE = {
   component: MembershipPage,
@@ -89,37 +98,27 @@ function MembershipSettingsContent() {
     refresh,
     tierById,
   } = useMembershipSettingsData();
+  const isCommercial = !!useTypedRedux("customize", "is_commercial");
   const [purchaseOpen, setPurchaseOpen] = useState<boolean>(false);
   const [purchaseCurrentClass, setPurchaseCurrentClass] = useState<
     string | undefined
   >(undefined);
 
   if (!account_id) return null;
-  if (loading) return <Loading />;
+  if (loading && !membership) return <Loading />;
   if (error) return <Alert type="error" title={error} />;
   if (!membership) return null;
 
   const tier = tierById[membership.class];
-  const tierLabel =
-    tier?.label ?? (membership ? capitalize(membership.class) : "");
-  const membershipSourceLabel =
-    membership.source === "subscription"
-      ? "Personal membership"
-      : membership.source === "grant"
-        ? "Granted"
-        : membership.source === "admin"
-          ? "Admin assigned"
-          : "Free";
-  const expiresLabel = "Expires";
-  const entitlements = normalizeRecord(membership.entitlements);
-  const features = normalizeRecord(entitlements.features);
-  const featureTags = Object.entries(features)
-    .map(([key, value]) => formatFeatureTag(key, value))
-    .filter((value): value is string => !!value);
   const selectedSourceRow = candidateRows.find((row) => row.selected);
   const personalMembership = details?.candidates.find(
     (candidate) => candidate.source === "subscription",
   );
+  const hasSiteLicenseMembership =
+    membership.grant_source === "site-license" ||
+    details?.candidates.some(
+      (candidate) => candidate.grant_source === "site-license",
+    ) === true;
   const refreshMembership = () => {
     window.dispatchEvent(new Event("cocalc:membership-changed"));
     refresh();
@@ -130,9 +129,49 @@ function MembershipSettingsContent() {
   };
 
   return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+    <Space vertical size="middle" style={{ width: "100%" }}>
+      <Card size="small" title="Effective membership">
+        <Space vertical style={{ width: "100%" }}>
+          <Text strong>
+            {effectiveMembershipSummary({
+              membership,
+              selectedSourceRow,
+              tier,
+            })}
+          </Text>
+          {tier != null ? <EffectiveTierDescription tier={tier} /> : null}
+          {details?.admin_override ? (
+            <Alert
+              type="info"
+              showIcon
+              message="Support override active"
+              description={
+                <>
+                  {details.admin_override.effects?.length ? (
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {details.admin_override.effects.map((effect) => (
+                        <li key={effect}>{effect}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    "Account-specific support limits are reflected in the values below."
+                  )}
+                  {details.admin_override.expires_at ? (
+                    <>
+                      {" "}
+                      This override expires{" "}
+                      <TimeAgo date={details.admin_override.expires_at} />.
+                    </>
+                  ) : null}
+                </>
+              }
+            />
+          ) : null}
+        </Space>
+      </Card>
+
       <Card size="small" title="Membership sources">
-        <Space orientation="vertical" style={{ width: "100%" }}>
+        <Space vertical style={{ width: "100%" }}>
           {candidateRows.length === 0 ? (
             <Text type="secondary">No active membership sources.</Text>
           ) : (
@@ -156,7 +195,7 @@ function MembershipSettingsContent() {
                   title: "Source",
                   dataIndex: "source",
                   render: (value, row) => (
-                    <Space orientation="vertical" size={0}>
+                    <Space vertical size={0}>
                       <Text>{value}</Text>
                       <Text type="secondary">{row.sourceDetail}</Text>
                     </Space>
@@ -192,79 +231,19 @@ function MembershipSettingsContent() {
                 refresh={refreshMembership}
               />
             ) : null}
-            <ClaimableMembershipPackagesPanel
-              compact
-              onChanged={refreshMembership}
-            />
+            <Suspense fallback={null}>
+              <ClaimableMembershipPackagesPanel
+                compact
+                hasSiteLicenseMembership={hasSiteLicenseMembership}
+                onChanged={refreshMembership}
+                tiers={Object.values(tierById)}
+              />
+            </Suspense>
           </Space>
-          {personalMembership &&
-          personalMembership.subscription_status !== "canceled" ? (
-            <UseBalance minimal />
-          ) : null}
-          <SiteLicenseReverificationPanel onChanged={refreshMembership} />
-        </Space>
-      </Card>
-
-      <Card size="small" title="Effective membership">
-        <Space orientation="vertical" style={{ width: "100%" }}>
-          <Descriptions size="small" column={1}>
-            <Descriptions.Item label="Tier">
-              <Space>
-                <Tag color={membership.class === "free" ? "default" : "blue"}>
-                  {tierLabel || membership.class}
-                </Tag>
-                <Text type="secondary">{membership.class}</Text>
-              </Space>
-            </Descriptions.Item>
-            <Descriptions.Item label="Source">
-              {selectedSourceRow?.source ?? membershipSourceLabel}
-            </Descriptions.Item>
-            {membership.expires && membership.source !== "subscription" && (
-              <Descriptions.Item label={expiresLabel}>
-                <MembershipDate date={membership.expires} />
-              </Descriptions.Item>
-            )}
-          </Descriptions>
-          {tier != null ? <MembershipTierBenefits compact tier={tier} /> : null}
-          {featureTags.length > 0 ? (
-            <div>
-              <Text strong>Features</Text>
-              <div style={{ marginTop: "6px" }}>
-                <Space wrap>
-                  {featureTags.map((tag) => (
-                    <Tag key={tag}>{tag}</Tag>
-                  ))}
-                </Space>
-              </div>
-            </div>
-          ) : null}
-          {details?.admin_override ? (
-            <Alert
-              type="info"
-              showIcon
-              message="Support override active"
-              description={
-                <>
-                  {details.admin_override.effects?.length ? (
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {details.admin_override.effects.map((effect) => (
-                        <li key={effect}>{effect}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    "Account-specific support limits are reflected in the values below."
-                  )}
-                  {details.admin_override.expires_at ? (
-                    <>
-                      {" "}
-                      This override expires{" "}
-                      <TimeAgo date={details.admin_override.expires_at} />.
-                    </>
-                  ) : null}
-                </>
-              }
-            />
-          ) : null}
+          {isCommercial ? <UseBalance /> : null}
+          <Suspense fallback={null}>
+            <SiteLicenseReverificationPanel onChanged={refreshMembership} />
+          </Suspense>
         </Space>
       </Card>
 
@@ -281,6 +260,117 @@ function MembershipSettingsContent() {
   );
 }
 
+function EffectiveTierDescription({ tier }: { tier: MembershipTier }) {
+  const presentation = buildMembershipTierPresentation(tier);
+  const description = tier.store_description?.trim() || presentation.tagline;
+  const highlights = effectiveTierHighlights(tier, presentation);
+
+  return (
+    <Space vertical size="small" style={{ width: "100%" }}>
+      {description ? <Text type="secondary">{description}</Text> : null}
+      {highlights.length > 0 ? (
+        <ul style={{ margin: 0, paddingLeft: 20 }}>
+          {highlights.map((highlight) => (
+            <li key={highlight}>{highlight}</li>
+          ))}
+        </ul>
+      ) : null}
+    </Space>
+  );
+}
+
+function effectiveTierHighlights(
+  tier: MembershipTier,
+  presentation: ReturnType<typeof buildMembershipTierPresentation>,
+): string[] {
+  if (tier.store_highlights != null) {
+    return tier.store_highlights
+      .map((highlight) => highlight.trim())
+      .filter((highlight) => highlight.length > 0);
+  }
+  return presentation.summaryBenefits;
+}
+
+function effectiveMembershipSummary({
+  membership,
+  selectedSourceRow,
+  tier,
+}: {
+  membership: MembershipResolution;
+  selectedSourceRow?: MembershipCandidateRow;
+  tier?: MembershipTier;
+}): string {
+  const tierLabel = tier?.label ?? capitalize(membership.class);
+  const price = personalMembershipPriceLabel(membership);
+  const source = effectiveMembershipSourceLabel(membership, selectedSourceRow);
+  return `${tierLabel}${price ? ` (${price})` : ""} - ${source}`;
+}
+
+function effectiveMembershipSourceLabel(
+  membership: MembershipResolution,
+  selectedSourceRow?: MembershipCandidateRow,
+): string {
+  if (membership.source === "free") {
+    return "CoCalc";
+  }
+  if (selectedSourceRow?.source) {
+    return selectedSourceRow.source;
+  }
+  if (membership.source === "subscription") {
+    return "Personal membership";
+  }
+  if (membership.source === "admin") {
+    return "Admin assigned";
+  }
+  if (membership.grant_source === "team-seat") {
+    return "Team license";
+  }
+  if (membership.grant_source === "site-license") {
+    return "Site license";
+  }
+  if (membership.grant_source?.includes("course")) {
+    return "Course membership";
+  }
+  return "Granted";
+}
+
+function personalMembershipPriceLabel(
+  membership: MembershipResolution,
+): string | undefined {
+  if (membership.source !== "subscription") {
+    return;
+  }
+  const cost = numberValue(membership.subscription_cost);
+  if (cost == null || cost <= 0) {
+    return;
+  }
+  if (membership.subscription_interval === "month") {
+    return `${formatMonthlyPrice(cost)}/month`;
+  }
+  if (membership.subscription_interval === "year") {
+    return `${formatMonthlyPrice(cost / 12)}/month, billed annually`;
+  }
+}
+
+function formatMonthlyPrice(value: number): string {
+  const rounded = Math.round(value);
+  if (Math.abs(value - rounded) < 0.005) {
+    return currency(rounded, 0);
+  }
+  return currency(value);
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : undefined;
+  }
+  return undefined;
+}
+
 function membershipStatusColor({
   selected,
   subscriptionStatus,
@@ -294,17 +384,6 @@ function membershipStatusColor({
     return "red";
   }
   return undefined;
-}
-
-function MembershipDate({ date }: { date: Date | string }) {
-  return (
-    <Space wrap size="small">
-      <Text>{new Date(date).toLocaleString()}</Text>
-      <Text type="secondary">
-        <TimeAgo date={date} />
-      </Text>
-    </Space>
-  );
 }
 
 function PersonalSubscriptionActions({

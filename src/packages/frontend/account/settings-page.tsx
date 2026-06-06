@@ -22,6 +22,7 @@ export type SettingsPageDefinition = {
   icon: SettingsPageIcon;
   key: SettingsPageType;
   label: MessageDescriptor;
+  title?: MessageDescriptor;
 };
 
 export function renderSettingsPageIcon(

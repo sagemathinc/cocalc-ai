@@ -56,7 +56,7 @@ async function buildMembershipCandidates(
   const pool = getPool("medium");
   const [subResult, adminResult, adminGroupResult, grants] = await Promise.all([
     pool.query(
-      `SELECT id, metadata, current_period_end, status
+      `SELECT id, metadata, cost, interval, current_period_end, status
        FROM subscriptions
        WHERE account_id=$1
          AND metadata->>'type'='membership'
@@ -98,6 +98,8 @@ async function buildMembershipCandidates(
       effective_limits: normalizeMembershipEffectiveLimits(tier?.usage_limits),
       subscription_id: sub.id,
       subscription_status: sub.status,
+      subscription_cost: normalizeSubscriptionCost(sub.cost),
+      subscription_interval: sub.interval,
       expires: sub.current_period_end,
     });
   }
@@ -220,6 +222,17 @@ function dedupeEquivalentAdminCandidates(
   });
 }
 
+function normalizeSubscriptionCost(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
 function pickBestMembership(
   candidates: MembershipCandidate[],
   tiers: Record<string, MembershipTierRecord>,
@@ -265,6 +278,8 @@ function pickBestMembership(
       effective_limits: best.effective_limits,
       subscription_id: best.subscription_id,
       subscription_status: best.subscription_status,
+      subscription_cost: best.subscription_cost,
+      subscription_interval: best.subscription_interval,
       grant_id: best.grant_id,
       grant_source: best.grant_source,
       grant_package_id: best.grant_package_id,

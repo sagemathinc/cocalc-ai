@@ -529,6 +529,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "ordinary endpoint authorization is intended; admin/internal-only managed egress overrides are gated in the implementation",
   },
+  "projects.startFromHost": {
+    decision: "fresh-auth-not-required",
+    reason: "host-assigned project start path; host assignment is checked",
+  },
   "projects.stop": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -549,9 +553,17 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "site-license commercial terms and domain entitlement mutation",
   },
+  "purchases.archiveSiteLicensePool": {
+    decision: "fresh-auth-required",
+    reason: "site-license commercial terms and domain entitlement mutation",
+  },
   "purchases.assignMembershipPackageSeat": {
     decision: "fresh-auth-required",
     reason: "paid membership seat assignment",
+  },
+  "purchases.cancelSiteLicensePoolRequest": {
+    decision: "fresh-auth-not-required",
+    reason: "user cancels their own pending site-license pool request",
   },
   "purchases.claimMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
@@ -570,6 +582,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason:
       "user request is gated by verified email/domain and manager approval policy",
+  },
+  "purchases.releaseSiteLicensePoolSeat": {
+    decision: "fresh-auth-not-required",
+    reason: "user releases their own claimed site-license pool seat",
   },
   "purchases.removeSiteLicenseManager": {
     decision: "fresh-auth-required",

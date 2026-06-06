@@ -47,7 +47,7 @@ function Section({
   title: string;
 }) {
   return (
-    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+    <Space vertical size={4} style={{ width: "100%" }}>
       <Text strong>{title}</Text>
       <BulletList items={items} limit={limit} />
     </Space>
@@ -94,7 +94,7 @@ export function MembershipTierBenefits({
         ? presentation.summaryLimits
         : presentation.limits;
     return (
-      <Space direction="vertical" size={6} style={{ width: "100%" }}>
+      <Space vertical size={6} style={{ width: "100%" }}>
         <Text type="secondary">{presentation.tagline}</Text>
         <BulletList items={benefits} limit={4} />
         {limits.length > 0 && (
@@ -110,7 +110,7 @@ export function MembershipTierBenefits({
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space vertical size="middle" style={{ width: "100%" }}>
       <Text type="secondary">{presentation.tagline}</Text>
       <Row gutter={[12, 12]}>
         <Col xs={24} md={showBilling ? 8 : 12}>

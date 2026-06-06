@@ -47,10 +47,13 @@ import {
 import {
   addSiteLicensePool as addSiteLicensePool0,
   adminProvisionSiteLicense as adminProvisionSiteLicense0,
+  archiveSiteLicensePool as archiveSiteLicensePool0,
+  cancelSiteLicensePoolRequest as cancelSiteLicensePoolRequest0,
   getVerifiedEmailAddressesForAccount,
   listSiteLicenseOverviews as listSiteLicenseOverviews0,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview as getSiteLicenseOverview0,
+  releaseSiteLicensePoolSeat as releaseSiteLicensePoolSeat0,
   requestSiteLicensePool as requestSiteLicensePool0,
   refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
   removeSiteLicenseManager as removeSiteLicenseManager0,
@@ -482,7 +485,12 @@ export async function updateMembershipPackage({
   package_id,
   owner_account_id,
   site_license_id,
+  pool_name,
   seat_count,
+  pool_description,
+  requires_approval,
+  affiliation_reverification_days,
+  affiliation_reverification_grace_days,
   expires_at,
   allowed_domains,
 }: {
@@ -492,7 +500,12 @@ export async function updateMembershipPackage({
   package_id?: string;
   owner_account_id?: string;
   site_license_id?: string;
+  pool_name?: string;
   seat_count?: number;
+  pool_description?: string | null;
+  requires_approval?: boolean;
+  affiliation_reverification_days?: number | null;
+  affiliation_reverification_grace_days?: number | null;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 } = {}): Promise<MembershipPackageDetails> {
@@ -513,7 +526,12 @@ export async function updateMembershipPackage({
       return await getSeedSiteLicenseClient().updateMembershipPackage({
         package_id,
         actor_account_id: actorId,
+        pool_name,
         seat_count,
+        pool_description,
+        requires_approval,
+        affiliation_reverification_days,
+        affiliation_reverification_grace_days,
         expires_at,
         allowed_domains:
           allowed_domains === undefined
@@ -524,7 +542,12 @@ export async function updateMembershipPackage({
     return await updateSiteLicensePool0({
       actor_account_id: actorId,
       package_id,
+      pool_name,
       seat_count,
+      pool_description,
+      requires_approval,
+      affiliation_reverification_days,
+      affiliation_reverification_grace_days,
       expires_at,
       allowed_domains:
         allowed_domains === undefined
@@ -557,7 +580,12 @@ export async function updateMembershipPackage({
     }).updateMembershipPackage({
       package_id,
       actor_account_id: actorId,
+      pool_name,
       seat_count,
+      pool_description,
+      requires_approval,
+      affiliation_reverification_days,
+      affiliation_reverification_grace_days,
       expires_at,
       allowed_domains: normalizedAllowedDomains,
     });
@@ -579,7 +607,12 @@ export async function updateMembershipPackage({
     return await updateSiteLicensePool0({
       actor_account_id: actorId,
       package_id,
+      pool_name,
       seat_count,
+      pool_description,
+      requires_approval,
+      affiliation_reverification_days,
+      affiliation_reverification_grace_days,
       expires_at,
       allowed_domains:
         allowed_domains === undefined
@@ -737,8 +770,10 @@ export async function revokeMembershipPackageSeat({
 
 export async function getClaimableMembershipPackages({
   account_id,
+  include_claimed_site_license_pools,
 }: {
   account_id?: string;
+  include_claimed_site_license_pools?: boolean;
 }) {
   const actorId = requireAccount(account_id);
   const home_bay_id = await resolveTargetAccountHomeBay({
@@ -751,10 +786,16 @@ export async function getClaimableMembershipPackages({
       dest_bay: home_bay_id,
     }).getClaimableMembershipPackagesForAccount({
       account_id: actorId,
+      ...(include_claimed_site_license_pools
+        ? { include_claimed_site_license_pools }
+        : {}),
     });
   }
   return await listClaimableMembershipPackagesForAccount({
     account_id: actorId,
+    ...(include_claimed_site_license_pools
+      ? { include_claimed_site_license_pools }
+      : {}),
   });
 }
 
@@ -1023,6 +1064,41 @@ export async function addSiteLicensePool({
   return await addSiteLicensePool0(opts);
 }
 
+export async function archiveSiteLicensePool({
+  account_id,
+  browser_id,
+  session_hash,
+  package_id,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  package_id?: string;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const packageId = `${package_id ?? ""}`.trim();
+  if (!packageId) {
+    throw Error("package_id required");
+  }
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    package_id: packageId,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().archiveSiteLicensePool(opts);
+  }
+  return await archiveSiteLicensePool0(opts);
+}
+
 export async function setSiteLicenseManager({
   account_id,
   browser_id,
@@ -1143,6 +1219,90 @@ export async function requestSiteLicensePool({
     requester_note,
     accepted_terms,
   });
+}
+
+export async function cancelSiteLicensePoolRequest({
+  account_id,
+  request_id,
+}: {
+  account_id?: string;
+  request_id?: string;
+} = {}): Promise<SiteLicensePoolRequest> {
+  const actorId = requireAccount(account_id);
+  const requestId = `${request_id ?? ""}`.trim();
+  if (!requestId) {
+    throw Error("request_id required");
+  }
+  const actorHomeBayId = await resolveTargetAccountHomeBay({
+    account_id: actorId,
+    user_account_id: actorId,
+  });
+  if (actorHomeBayId !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: actorHomeBayId,
+    }).cancelSiteLicensePoolRequest({
+      account_id: actorId,
+      request_id: requestId,
+    });
+  }
+  await assertAccountTrustedForProductAccess(
+    actorId,
+    "cancel site-license pool request",
+  );
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().cancelSiteLicensePoolRequest({
+      account_id: actorId,
+      request_id: requestId,
+    });
+  }
+  return await cancelSiteLicensePoolRequest0({
+    account_id: actorId,
+    request_id: requestId,
+  });
+}
+
+export async function releaseSiteLicensePoolSeat({
+  account_id,
+  package_id,
+}: {
+  account_id?: string;
+  package_id?: string;
+} = {}): Promise<{ revoked: boolean }> {
+  const actorId = requireAccount(account_id);
+  const packageId = `${package_id ?? ""}`.trim();
+  if (!packageId) {
+    throw Error("package_id required");
+  }
+  const actorHomeBayId = await resolveTargetAccountHomeBay({
+    account_id: actorId,
+    user_account_id: actorId,
+  });
+  if (actorHomeBayId !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: actorHomeBayId,
+    }).releaseSiteLicensePoolSeat({
+      account_id: actorId,
+      package_id: packageId,
+    });
+  }
+  await assertAccountTrustedForProductAccess(
+    actorId,
+    "release site-license pool seat",
+  );
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().releaseSiteLicensePoolSeat({
+      account_id: actorId,
+      package_id: packageId,
+    });
+  }
+  return {
+    revoked: await releaseSiteLicensePoolSeat0({
+      account_id: actorId,
+      package_id: packageId,
+    }),
+  };
 }
 
 export async function reviewSiteLicensePoolRequest({

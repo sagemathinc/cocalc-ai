@@ -337,7 +337,7 @@ export const AccountStorageWarning: React.FC<{
         ]}
         width={760}
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space vertical size="middle" style={{ width: "100%" }}>
           <Text>
             Total account storage is the sum of current quota-used bytes across
             your owned provisioned projects. This includes retained

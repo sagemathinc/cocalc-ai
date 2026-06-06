@@ -49,7 +49,7 @@ export function ManagedEgressRecentEventsList({
     return null;
   }
   return (
-    <Space direction="vertical" size={12} style={{ width: "100%" }}>
+    <Space vertical size={12} style={{ width: "100%" }}>
       {events.map((event, i) => {
         const requestPath = getManagedEgressRequestPath(event);
         return (

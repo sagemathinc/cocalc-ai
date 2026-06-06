@@ -23,11 +23,13 @@ export interface ProjectHostRouteTarget {
 const projectCache = new LRU<string, ProjectHostRouteTarget>({
   max: 10_000,
   ttl: 5 * 60_000, // 5 minutes
+  ttlResolution: 0,
 });
 
 const hostCache = new LRU<string, ProjectHostRouteTarget>({
   max: 10_000,
   ttl: 5 * 60_000, // 5 minutes
+  ttlResolution: 0,
 });
 
 const inflight: Partial<Record<string, Promise<void>>> = {};

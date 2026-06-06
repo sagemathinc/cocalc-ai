@@ -757,6 +757,58 @@ describe("membership packages", () => {
     expect(localGrantCount.rows[0]?.count).toBe(0);
   });
 
+  it("can include already claimed site-license pools for account settings", async () => {
+    const owner_account_id = uuid();
+    const site_user_account_id = uuid();
+    const site_user_email = `ada-${uuid().slice(0, 8)}@example.edu`;
+    await createTestAccount(owner_account_id);
+    await createTestAccount(site_user_account_id);
+    await markVerifiedEmail(site_user_account_id, site_user_email);
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 2,
+      metadata: {
+        allowed_domains: ["example.edu"],
+        pool_name: "Students",
+      },
+    });
+
+    const claimed = await claimMembershipPackageSeat({
+      package_id,
+      account_id: site_user_account_id,
+    });
+
+    const defaultClaimables = await listClaimableMembershipPackagesForAccount({
+      account_id: site_user_account_id,
+    });
+    expect(
+      defaultClaimables.some(
+        (claimable) => claimable.package_id === package_id,
+      ),
+    ).toBe(false);
+
+    const claimablesWithClaimed =
+      await listClaimableMembershipPackagesForAccount({
+        account_id: site_user_account_id,
+        include_claimed_site_license_pools: true,
+      });
+    expect(claimablesWithClaimed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          assignment_id: claimed.id,
+          available_seat_count: 1,
+          matched_email_address: site_user_email,
+          package_id,
+          pool_name: "Students",
+          seat_status: "claimed",
+        }),
+      ]),
+    );
+  });
+
   it("updates site-license domains for future claims without revoking existing seats", async () => {
     const owner_account_id = uuid();
     const first_account_id = uuid();

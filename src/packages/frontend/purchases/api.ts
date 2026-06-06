@@ -421,7 +421,12 @@ export async function updateMembershipPackage(opts: {
   package_id: string;
   owner_account_id?: string;
   site_license_id?: string;
+  pool_name?: string;
   seat_count?: number;
+  pool_description?: string | null;
+  requires_approval?: boolean;
+  affiliation_reverification_days?: number | null;
+  affiliation_reverification_grace_days?: number | null;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 }): Promise<MembershipPackageDetails> {
@@ -474,10 +479,12 @@ export async function revokeMembershipPackageSeat(opts: {
   });
 }
 
-export async function getClaimableMembershipPackages(): Promise<
-  ClaimableMembershipPackage[]
-> {
-  return await (await getPurchasesHubRpc()).getClaimableMembershipPackages({});
+export async function getClaimableMembershipPackages(opts?: {
+  include_claimed_site_license_pools?: boolean;
+}): Promise<ClaimableMembershipPackage[]> {
+  return await (
+    await getPurchasesHubRpc()
+  ).getClaimableMembershipPackages(opts ?? {});
 }
 
 export async function claimMembershipPackageSeat(opts: {
@@ -529,6 +536,18 @@ export async function addSiteLicensePool(opts: {
   });
 }
 
+export async function archiveSiteLicensePool(opts: {
+  package_id: string;
+}): Promise<SiteLicenseOverview> {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).archiveSiteLicensePool({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
+}
+
 export async function setSiteLicenseManager(opts: {
   site_license_id: string;
   target_account_id: string;
@@ -563,6 +582,18 @@ export async function requestSiteLicensePool(opts: {
   accepted_terms?: boolean;
 }): Promise<SiteLicensePoolRequest> {
   return await (await getPurchasesHubRpc()).requestSiteLicensePool(opts);
+}
+
+export async function cancelSiteLicensePoolRequest(opts: {
+  request_id: string;
+}): Promise<SiteLicensePoolRequest> {
+  return await (await getPurchasesHubRpc()).cancelSiteLicensePoolRequest(opts);
+}
+
+export async function releaseSiteLicensePoolSeat(opts: {
+  package_id: string;
+}): Promise<{ revoked: boolean }> {
+  return await (await getPurchasesHubRpc()).releaseSiteLicensePoolSeat(opts);
 }
 
 export async function reviewSiteLicensePoolRequest(opts: {

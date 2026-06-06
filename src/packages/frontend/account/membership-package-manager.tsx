@@ -12,9 +12,11 @@ import {
   DatePicker,
   Descriptions,
   Divider,
+  Drawer,
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Progress,
   Radio,
   Select,
@@ -43,16 +45,16 @@ import {
 import { Icon, Loading, Tooltip } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
-import {
-  MembershipTierBenefits,
-  type MembershipTierWithPresentation,
-} from "./membership-tier-benefits";
+import { MembershipTierBenefits } from "./membership-tier-benefits";
+import type { MembershipTierLike } from "./membership-tiers";
 import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
 import Payments from "@cocalc/frontend/purchases/payments";
 import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
+  archiveSiteLicensePool,
   assignMembershipPackageSeat,
+  cancelSiteLicensePoolRequest,
   claimMembershipPackageSeat,
   getSiteLicenseAffiliationReverificationStatus,
   getClaimableMembershipPackages,
@@ -62,6 +64,7 @@ import {
   listSiteLicenseOverviews,
   processPaymentIntents,
   purchaseMembershipPackage,
+  releaseSiteLicensePoolSeat,
   refreshSiteLicenseAffiliationVerification,
   removeSiteLicenseManager,
   requestSiteLicensePool,
@@ -102,18 +105,7 @@ import { openAccountSettings } from "./settings-routing";
 
 const { Paragraph, Text, Title } = Typography;
 
-export interface MembershipTierLike extends MembershipTierWithPresentation {
-  id: string;
-  label?: string;
-  price_monthly?: number;
-  price_yearly?: number;
-  priority?: number;
-  store_visible?: boolean;
-  disabled?: boolean;
-}
-
 interface Props {
-  mode?: "all" | "site" | "team";
   tiers: MembershipTierLike[];
   onChanged?: () => void;
   user_account_id?: string;
@@ -125,6 +117,18 @@ interface PackageUserSearchResult {
   last_name?: string;
   email_address?: string;
 }
+
+interface AccountNameInfo {
+  first_name?: string;
+  last_name?: string;
+  email_address?: string;
+  profile?: { color?: string; image?: string };
+}
+
+type AccountNames = Record<string, AccountNameInfo | undefined>;
+type SiteLicenseRecentAuditEvent = NonNullable<
+  SiteLicenseOverview["recent_audit_events"]
+>[number];
 
 function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
   const displayName = [user.first_name, user.last_name]
@@ -143,7 +147,9 @@ function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
 
 interface ClaimableMembershipPackagesPanelProps {
   compact?: boolean;
+  hasSiteLicenseMembership?: boolean;
   onChanged?: () => void;
+  tiers?: MembershipTierLike[];
 }
 
 function CompactField({
@@ -296,15 +302,40 @@ function makeDefaultSiteLicensePool({
   tiers: MembershipTierLike[];
   index: number;
 }): SiteLicensePoolConfig {
+  const tier = tiers[0];
   return {
     pool_name: `Pool ${index + 1}`,
-    membership_class: (tiers[0]?.id ?? "standard") as MembershipClass,
+    pool_description: getTierSiteLicensePoolDescription(tier),
+    membership_class: (tier?.id ?? "standard") as MembershipClass,
     seat_count: 25,
     requires_approval: true,
     verification_policy: "email-domain",
     exclusive_group: `group-${index + 1}`,
     affiliation_reverification_days: 365,
     affiliation_reverification_grace_days: 30,
+  };
+}
+
+function getTierSiteLicensePoolDescription(tier?: MembershipTierLike): string {
+  return `${tier?.site_license_pool_description ?? ""}`.trim();
+}
+
+function getPoolDescriptionPatchForTierChange({
+  currentPool,
+  currentTier,
+  nextTier,
+}: {
+  currentPool: SiteLicensePoolConfig;
+  currentTier?: MembershipTierLike;
+  nextTier?: MembershipTierLike;
+}): Pick<SiteLicensePoolConfig, "pool_description"> | undefined {
+  const currentDescription = `${currentPool.pool_description ?? ""}`.trim();
+  const currentTierDescription = getTierSiteLicensePoolDescription(currentTier);
+  if (currentDescription && currentDescription !== currentTierDescription) {
+    return;
+  }
+  return {
+    pool_description: getTierSiteLicensePoolDescription(nextTier) || null,
   };
 }
 
@@ -338,12 +369,69 @@ function normalizeDomainList(values: string[]): string[] {
   ).sort();
 }
 
+const SITE_LICENSE_VERIFICATION_OPTIONS: {
+  label: string;
+  value: SiteLicenseVerificationPolicy;
+}[] = [
+  { label: "Email domain", value: "email-domain" },
+  { label: "Manager approval", value: "manager-approval" },
+  { label: "SSO affiliation", value: "sso-affiliation" },
+];
+
+function normalizeSiteLicenseVerificationPolicy(
+  value: unknown,
+): SiteLicenseVerificationPolicy {
+  const policy = `${value ?? ""}`.trim();
+  if (
+    policy === "email-domain" ||
+    policy === "manager-approval" ||
+    policy === "sso-affiliation"
+  ) {
+    return policy;
+  }
+  return "email-domain";
+}
+
+function normalizeOptionalPositiveInteger(value: unknown): number | null {
+  if (value == null) return null;
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized <= 0) {
+    return null;
+  }
+  return normalized;
+}
+
+function siteLicensePoolConfigFromPackage(
+  membershipPackage: MembershipPackageDetails,
+): SiteLicensePoolConfig {
+  const metadata = membershipPackage.metadata ?? {};
+  return {
+    pool_name:
+      `${metadata.pool_name ?? ""}`.trim() ||
+      capitalize(membershipPackage.membership_class),
+    pool_description: `${metadata.pool_description ?? ""}`.trim() || null,
+    membership_class: membershipPackage.membership_class,
+    seat_count: membershipPackage.seat_count,
+    requires_approval: metadata.requires_approval === true,
+    verification_policy: normalizeSiteLicenseVerificationPolicy(
+      metadata.verification_policy,
+    ),
+    exclusive_group:
+      `${metadata.exclusive_group ?? ""}`.trim() ||
+      membershipPackage.membership_class,
+    affiliation_reverification_days: normalizeOptionalPositiveInteger(
+      metadata.affiliation_reverification_days,
+    ),
+    affiliation_reverification_grace_days: normalizeOptionalPositiveInteger(
+      metadata.affiliation_reverification_grace_days,
+    ),
+    allowed_domains: normalizeDomainList(getPackageDomains(membershipPackage)),
+  };
+}
+
 function getAccountDisplayName(
   assignment: MembershipPackageAssignment,
-  names: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >,
+  names: AccountNames,
 ): string {
   if (!assignment.account_id) {
     return assignment.email_address ?? "Pending email claim";
@@ -355,30 +443,214 @@ function getAccountDisplayName(
 
 function getAccountSecondaryLabel(
   assignment: MembershipPackageAssignment,
-  names: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >,
+  names: AccountNames,
 ): string | undefined {
   if (!assignment.account_id) {
     return "Reserved by email";
   }
   const name = names[assignment.account_id];
   const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
+  const email =
+    `${assignment.email_address ?? ""}`.trim() ||
+    `${name?.email_address ?? ""}`.trim();
+  if (email) return email;
   if (!fullName) return;
   return assignment.account_id;
 }
 
-function getClaimReasonLabel(
-  claimablePackage: ClaimableMembershipPackage,
-): string {
-  if (claimablePackage.reason === "email-assignment") {
-    return `Assigned to verified email ${claimablePackage.matched_email_address}`;
+function getAccountIdentity(
+  accountId: string | null | undefined,
+  names: AccountNames,
+): {
+  email?: string;
+  name: string;
+  secondary?: string;
+} {
+  const normalizedAccountId = `${accountId ?? ""}`.trim();
+  if (!normalizedAccountId) {
+    return { name: "Unknown account" };
   }
-  const poolName = claimablePackage.pool_name
-    ? `${claimablePackage.pool_name} pool`
-    : "site-license pool";
-  return `Verified domain match for ${poolName} via ${claimablePackage.matched_email_address}`;
+  const info = names[normalizedAccountId];
+  const fullName = `${info?.first_name ?? ""} ${info?.last_name ?? ""}`.trim();
+  const email = `${info?.email_address ?? ""}`.trim() || undefined;
+  return {
+    email,
+    name: fullName || email || normalizedAccountId,
+    secondary: email || (fullName ? normalizedAccountId : undefined),
+  };
+}
+
+function accountIdentityText(
+  accountId: string | null | undefined,
+  names: AccountNames,
+): string {
+  const identity = getAccountIdentity(accountId, names);
+  return identity.secondary
+    ? `${identity.name} (${identity.secondary})`
+    : identity.name;
+}
+
+function getAssignmentEmail(
+  assignment: MembershipPackageAssignment,
+): string | undefined {
+  const email = `${assignment.email_address ?? ""}`.trim();
+  return email || undefined;
+}
+
+function getRequestAccountDisplay({
+  names,
+  request,
+}: {
+  names: AccountNames;
+  request: SiteLicensePoolRequest;
+}): {
+  email?: string;
+  name: string;
+} {
+  const name = names[request.account_id];
+  const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
+  const email = `${request.matched_email_address ?? ""}`.trim();
+  return {
+    email: fullName && email ? email : undefined,
+    name: fullName || email || request.account_id,
+  };
+}
+
+function assignmentSearchText({
+  assignment,
+  names,
+}: {
+  assignment: MembershipPackageAssignment;
+  names: AccountNames;
+}): string {
+  return [
+    getAccountDisplayName(assignment, names),
+    getAssignmentEmail(assignment),
+    assignment.account_id,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function formatSeatGivenOn(value?: Date | string | null): string {
+  const date = siteLicenseDate(value);
+  return date == null ? "-" : formatSiteLicenseDate(date);
+}
+
+function siteLicenseAuditPoolLabel(
+  event: SiteLicenseRecentAuditEvent,
+  overview: SiteLicenseOverview,
+): string | undefined {
+  const pool = overview.pools.find((item) => item.id === event.package_id);
+  const poolName = `${pool?.pool_name ?? ""}`.trim();
+  return poolName ? `${poolName} pool` : undefined;
+}
+
+function formatSiteLicenseAuditAction({
+  event,
+  overview,
+}: {
+  event: SiteLicenseRecentAuditEvent;
+  overview: SiteLicenseOverview;
+}): string {
+  const pool = siteLicenseAuditPoolLabel(event, overview);
+  switch (event.action) {
+    case "pool-created":
+      return pool ? `${pool} created` : "Pool created";
+    case "pool-updated":
+      return pool ? `${pool} updated` : "Pool updated";
+    case "pool-archived":
+      return pool ? `${pool} archived` : "Pool archived";
+    case "pool-request-created":
+      return pool ? `${pool} request created` : "Seat request created";
+    case "pool-request-canceled":
+      return pool ? `${pool} request canceled` : "Seat request canceled";
+    case "pool-request-approved":
+      return pool ? `${pool} request approved` : "Seat request approved";
+    case "pool-request-rejected":
+      return pool ? `${pool} request rejected` : "Seat request rejected";
+    case "seat-released-by-user":
+      return pool ? `${pool} seat released` : "Seat released";
+    case "seat-released-for-upgrade":
+      return pool
+        ? `${pool} seat released for replacement`
+        : "Seat released for replacement";
+    case "seat-affiliation-reverified":
+      return pool ? `${pool} seat reverified` : "Seat reverified";
+    case "seat-released-after-reverification-grace":
+      return pool
+        ? `${pool} seat released after reverification grace`
+        : "Seat released after reverification grace";
+    case "manager-added":
+      return "Manager added";
+    case "manager-updated":
+      return "Manager updated";
+    case "manager-removed":
+      return "Manager removed";
+    case "site-license-updated":
+      return "Site license updated";
+    case "site-license-provisioned":
+      return "Site license created";
+    default:
+      return `${event.action}`;
+  }
+}
+
+function revokeSeatConfirmationTitle({
+  assignment,
+  names,
+  pool,
+}: {
+  assignment: MembershipPackageAssignment;
+  names: AccountNames;
+  pool: SiteLicenseOverview["pools"][number];
+}): string {
+  return `Revoke the ${pool.pool_name} seat for ${getAccountDisplayName(
+    assignment,
+    names,
+  )} (${getAssignmentEmail(assignment) ?? "email not recorded"})?`;
+}
+
+async function revokeSeatOrThrow({
+  package_id,
+  assignment,
+}: {
+  package_id: string;
+  assignment: MembershipPackageAssignment;
+}): Promise<void> {
+  const targetAccountId = assignment.account_id ?? undefined;
+  const result = await revokeMembershipPackageSeat({
+    package_id,
+    target_account_id: targetAccountId,
+    target_email_address: targetAccountId
+      ? undefined
+      : (assignment.email_address ?? undefined),
+  });
+  if (!result.revoked) {
+    throw Error("Seat was not revoked. Refresh the page and try again.");
+  }
+}
+
+function ClaimablePoolSummary({
+  claimablePackage,
+}: {
+  claimablePackage: ClaimableMembershipPackage;
+}) {
+  const description = `${claimablePackage.pool_description ?? ""}`.trim();
+  if (!description) {
+    return null;
+  }
+  return <Text type="secondary">{description}</Text>;
+}
+
+function getClaimableSeatStatus(
+  claimablePackage: ClaimableMembershipPackage,
+): NonNullable<ClaimableMembershipPackage["seat_status"]> {
+  return (
+    claimablePackage.seat_status ??
+    (claimablePackage.pending_request_id ? "pending" : "claimable")
+  );
 }
 
 function dateLabel(value?: Date | string | null): string {
@@ -386,6 +658,67 @@ function dateLabel(value?: Date | string | null): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return `${value}`;
   return date.toISOString().slice(0, 10);
+}
+
+function dateSortValue(value?: Date | string | null): number {
+  if (!value) return Number.MAX_SAFE_INTEGER;
+  const date = value instanceof Date ? value : new Date(value);
+  const time = date.getTime();
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
+}
+
+function getSiteLicenseDisplayTitle(
+  siteLicense: SiteLicenseOverview["site_license"],
+): string {
+  const name = `${siteLicense.name ?? ""}`.trim();
+  const organizationName = `${siteLicense.organization_name ?? ""}`.trim();
+  const normalizedName = name.toLowerCase();
+  const normalizedOrganizationName = organizationName.toLowerCase();
+  if (
+    name &&
+    organizationName &&
+    normalizedName !== normalizedOrganizationName
+  ) {
+    return `${name} - ${organizationName}`;
+  }
+  return name || organizationName || "Site license";
+}
+
+function siteLicenseDate(value?: Date | string | null): Dayjs | undefined {
+  if (!value) return undefined;
+  const date = dayjs(value);
+  return date.isValid() ? date : undefined;
+}
+
+function formatSiteLicenseDate(value: Dayjs): string {
+  return value.format("MMMM D, YYYY");
+}
+
+function getSiteLicenseLifecycleInfo(
+  siteLicense: SiteLicenseOverview["site_license"],
+): {
+  expired: boolean;
+  expires?: string;
+  starts?: string;
+} {
+  const today = dayjs().startOf("day");
+  const startsAt = siteLicenseDate(siteLicense.starts_at);
+  const expiresAt = siteLicenseDate(siteLicense.expires_at);
+  const starts =
+    startsAt != null && startsAt.startOf("day").isAfter(today)
+      ? `Starts on ${formatSiteLicenseDate(startsAt)}`
+      : undefined;
+  if (expiresAt == null) {
+    return { expired: false, starts };
+  }
+  const expired = expiresAt.startOf("day").isBefore(today);
+  return {
+    expired,
+    expires: `${expired ? "Expired on" : "Valid until"} ${formatSiteLicenseDate(
+      expiresAt,
+    )}`,
+    starts,
+  };
 }
 
 function countPendingRequests(overview: SiteLicenseOverview): number {
@@ -436,17 +769,6 @@ function getOverviewSeatTotals(overview: SiteLicenseOverview): {
   };
 }
 
-function getPolicyColor(policy: SiteLicenseVerificationPolicy): string {
-  switch (policy) {
-    case "email-domain":
-      return "green";
-    case "manager-approval":
-      return "gold";
-    case "sso-affiliation":
-      return "blue";
-  }
-}
-
 function getSiteLicensePeriodLabel(overview: SiteLicenseOverview): string {
   const starts = dateLabel(overview.site_license.starts_at);
   const expires = dateLabel(overview.site_license.expires_at);
@@ -476,8 +798,23 @@ function getSiteLicenseSearchText(overview: SiteLicenseOverview): string {
     .toLowerCase();
 }
 
+function canManageSiteLicenseOverview({
+  isAdmin,
+  overview,
+}: {
+  isAdmin: boolean;
+  overview: SiteLicenseOverview;
+}): boolean {
+  return (
+    isAdmin ||
+    overview.viewer_role === "admin" ||
+    overview.viewer_role === "manager"
+  );
+}
+
 export function ClaimableMembershipPackagesPanel({
   compact,
+  hasSiteLicenseMembership = false,
   onChanged,
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
@@ -490,6 +827,12 @@ export function ClaimableMembershipPackagesPanel({
   const [error, setError] = useState<string>("");
   const [claimingPackageId, setClaimingPackageId] = useState<string>("");
   const [requestingPackageId, setRequestingPackageId] = useState<string>("");
+  const [releasingPackageId, setReleasingPackageId] = useState<string>("");
+  const [cancelingRequestId, setCancelingRequestId] = useState<string>("");
+  const [replacementClaimTarget, setReplacementClaimTarget] = useState<{
+    claimablePackage: ClaimableMembershipPackage;
+    accepted_terms: boolean;
+  } | null>(null);
   const [termsTarget, setTermsTarget] =
     useState<ClaimableMembershipPackage | null>(null);
   const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
@@ -497,7 +840,6 @@ export function ClaimableMembershipPackagesPanel({
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
-
   async function refreshClaimables() {
     if (!account_id) {
       setClaimables([]);
@@ -508,7 +850,11 @@ export function ClaimableMembershipPackagesPanel({
     setLoading(true);
     setError("");
     try {
-      setClaimables(await getClaimableMembershipPackages());
+      setClaimables(
+        await getClaimableMembershipPackages({
+          include_claimed_site_license_pools: true,
+        }),
+      );
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -563,6 +909,82 @@ export function ClaimableMembershipPackagesPanel({
     }
   }
 
+  async function releaseSeat(claimablePackage: ClaimableMembershipPackage) {
+    setReleasingPackageId(claimablePackage.package_id);
+    setError("");
+    try {
+      const result = await releaseSiteLicensePoolSeat({
+        package_id: claimablePackage.package_id,
+      });
+      if (!result.revoked) {
+        throw Error("Seat was not released. Refresh the page and try again.");
+      }
+      await refreshClaimables();
+      onChanged?.();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setReleasingPackageId("");
+    }
+  }
+
+  async function cancelRequest(claimablePackage: ClaimableMembershipPackage) {
+    const requestId = `${claimablePackage.pending_request_id ?? ""}`.trim();
+    if (!requestId) {
+      setError("Request was not canceled. Refresh the page and try again.");
+      return;
+    }
+    setCancelingRequestId(requestId);
+    setError("");
+    try {
+      await cancelSiteLicensePoolRequest({ request_id: requestId });
+      await refreshClaimables();
+      onChanged?.();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setCancelingRequestId("");
+    }
+  }
+
+  function isSameSiteLicense(
+    left: ClaimableMembershipPackage,
+    right: ClaimableMembershipPackage,
+  ): boolean {
+    const leftSiteLicenseId = `${left.site_license_id ?? ""}`.trim();
+    const rightSiteLicenseId = `${right.site_license_id ?? ""}`.trim();
+    return (
+      leftSiteLicenseId !== "" &&
+      rightSiteLicenseId !== "" &&
+      leftSiteLicenseId === rightSiteLicenseId
+    );
+  }
+
+  function claimWouldReleaseActiveSeat(
+    claimablePackage: ClaimableMembershipPackage,
+  ): boolean {
+    return claimables.some(
+      (otherPackage) =>
+        otherPackage.package_id !== claimablePackage.package_id &&
+        getClaimableSeatStatus(otherPackage) === "claimed" &&
+        isSameSiteLicense(otherPackage, claimablePackage),
+    );
+  }
+
+  async function claimOrConfirmReplacement(
+    claimablePackage: ClaimableMembershipPackage,
+    accepted_terms = false,
+  ) {
+    if (claimWouldReleaseActiveSeat(claimablePackage)) {
+      setReplacementClaimTarget({
+        claimablePackage,
+        accepted_terms,
+      });
+      return;
+    }
+    await claimPackage(claimablePackage, accepted_terms);
+  }
+
   function handlePrimaryAction(claimablePackage: ClaimableMembershipPackage) {
     if (claimablePackage.requires_terms_acceptance) {
       setTermsTarget(claimablePackage);
@@ -572,7 +994,7 @@ export function ClaimableMembershipPackagesPanel({
     if (claimablePackage.requires_approval) {
       void requestPool(claimablePackage);
     } else {
-      void claimPackage(claimablePackage);
+      void claimOrConfirmReplacement(claimablePackage);
     }
   }
 
@@ -581,79 +1003,101 @@ export function ClaimableMembershipPackagesPanel({
   }
   const emailVerified =
     !!email_address && !!email_address_verified?.get?.(email_address);
+  const compactButtonPrimary =
+    !hasSiteLicenseMembership &&
+    claimables.some(
+      (claimablePackage) =>
+        getClaimableSeatStatus(claimablePackage) === "claimable",
+    );
 
   function renderClaimablePackages() {
     return (
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        {claimables.map((claimablePackage) => (
-          <Card
-            key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
-            size="small"
-            title={
-              <Space wrap>
-                <span>{getPackageKindLabel(claimablePackage.kind)}</span>
-                <Tag color="blue">
-                  {capitalize(claimablePackage.membership_class)}
-                </Tag>
-              </Space>
-            }
-            extra={
-              claimablePackage.requires_approval ? (
-                <Button
-                  type="primary"
-                  loading={requestingPackageId === claimablePackage.package_id}
-                  disabled={claimablePackage.pending_request_id != null}
-                  onClick={() => handlePrimaryAction(claimablePackage)}
-                >
-                  {claimablePackage.pending_request_id
-                    ? "Request pending"
-                    : "Request access"}
-                </Button>
-              ) : (
-                <Button
-                  type="primary"
-                  loading={claimingPackageId === claimablePackage.package_id}
-                  onClick={() => handlePrimaryAction(claimablePackage)}
-                >
-                  Claim seat
-                </Button>
-              )
-            }
-          >
-            <Descriptions size="small" column={1}>
-              <Descriptions.Item label="Eligibility">
-                {getClaimReasonLabel(claimablePackage)}
-              </Descriptions.Item>
-              {claimablePackage.pool_name ? (
-                <Descriptions.Item label="Pool">
-                  {claimablePackage.pool_name}
-                </Descriptions.Item>
-              ) : null}
-              {claimablePackage.requires_approval ? (
-                <Descriptions.Item label="Approval">
-                  {claimablePackage.pending_request_id ? (
-                    <Tag color="gold">Pending manager review</Tag>
+      <Space vertical size="middle" style={{ width: "100%" }}>
+        {claimables.map((claimablePackage) => {
+          const seatStatus = getClaimableSeatStatus(claimablePackage);
+          const title =
+            `${claimablePackage.pool_name ?? ""}`.trim() ||
+            "Site license membership";
+          return (
+            <Card
+              key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
+              size="small"
+              title={<Text strong>{title}</Text>}
+            >
+              <Space vertical size="small" style={{ width: "100%" }}>
+                <ClaimablePoolSummary claimablePackage={claimablePackage} />
+                {claimablePackage.requires_terms_acceptance ? (
+                  <Text type="secondary">
+                    Review institution terms before claiming this membership.
+                  </Text>
+                ) : null}
+                {claimablePackage.expires_at ? (
+                  <Text type="secondary">
+                    Expires <TimeAgo date={claimablePackage.expires_at} />.
+                  </Text>
+                ) : null}
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  {seatStatus === "claimed" ? (
+                    <Popconfirm
+                      title="Release this seat?"
+                      description="This will remove this site-license membership from your account."
+                      okText="Release seat"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => void releaseSeat(claimablePackage)}
+                    >
+                      <Button
+                        danger
+                        loading={
+                          releasingPackageId === claimablePackage.package_id
+                        }
+                      >
+                        Release seat
+                      </Button>
+                    </Popconfirm>
+                  ) : claimablePackage.requires_approval ? (
+                    seatStatus === "pending" ? (
+                      <Popconfirm
+                        title="Withdraw this request?"
+                        description="This will remove your pending request for this site-license membership."
+                        okText="Withdraw request"
+                        okButtonProps={{ danger: true }}
+                        onConfirm={() => void cancelRequest(claimablePackage)}
+                      >
+                        <Button
+                          danger
+                          loading={
+                            cancelingRequestId ===
+                            claimablePackage.pending_request_id
+                          }
+                        >
+                          Cancel request
+                        </Button>
+                      </Popconfirm>
+                    ) : (
+                      <Button
+                        loading={
+                          requestingPackageId === claimablePackage.package_id
+                        }
+                        onClick={() => handlePrimaryAction(claimablePackage)}
+                      >
+                        Request access
+                      </Button>
+                    )
                   ) : (
-                    <Tag color="blue">Manager approval required</Tag>
+                    <Button
+                      loading={
+                        claimingPackageId === claimablePackage.package_id
+                      }
+                      onClick={() => handlePrimaryAction(claimablePackage)}
+                    >
+                      Claim seat
+                    </Button>
                   )}
-                </Descriptions.Item>
-              ) : null}
-              {claimablePackage.requires_terms_acceptance ? (
-                <Descriptions.Item label="Terms">
-                  <Tag color="purple">Review required</Tag>
-                </Descriptions.Item>
-              ) : null}
-              <Descriptions.Item label="Available seats">
-                {claimablePackage.available_seat_count}
-              </Descriptions.Item>
-              {claimablePackage.expires_at ? (
-                <Descriptions.Item label="Expires">
-                  <TimeAgo date={claimablePackage.expires_at} />
-                </Descriptions.Item>
-              ) : null}
-            </Descriptions>
-          </Card>
-        ))}
+                </div>
+              </Space>
+            </Card>
+          );
+        })}
       </Space>
     );
   }
@@ -676,7 +1120,7 @@ export function ClaimableMembershipPackagesPanel({
         if (target.requires_approval) {
           await requestPool(target, true);
         } else {
-          await claimPackage(target, true);
+          await claimOrConfirmReplacement(target, true);
         }
       }}
       destroyOnHidden
@@ -721,6 +1165,30 @@ export function ClaimableMembershipPackagesPanel({
       </Space>
     </Modal>
   );
+  const replacementClaimModal = (
+    <Modal
+      open={replacementClaimTarget != null}
+      title="Replace current site-license seat?"
+      okText="Claim seat"
+      okButtonProps={{
+        loading:
+          replacementClaimTarget != null &&
+          claimingPackageId ===
+            replacementClaimTarget.claimablePackage.package_id,
+      }}
+      onCancel={() => setReplacementClaimTarget(null)}
+      onOk={async () => {
+        const target = replacementClaimTarget;
+        if (!target) return;
+        setReplacementClaimTarget(null);
+        await claimPackage(target.claimablePackage, target.accepted_terms);
+      }}
+      destroyOnHidden
+    >
+      Claiming this seat will release your current site-license membership and
+      cancel any pending requests for this site license.
+    </Modal>
+  );
 
   if (compact) {
     const disabledReason =
@@ -737,6 +1205,7 @@ export function ClaimableMembershipPackagesPanel({
               disabled={!loading && claimables.length === 0}
               loading={loading}
               onClick={() => setCompactModalOpen(true)}
+              type={compactButtonPrimary ? "primary" : undefined}
             >
               Claim site license membership
             </Button>
@@ -753,6 +1222,7 @@ export function ClaimableMembershipPackagesPanel({
           {renderClaimablePackages()}
         </Modal>
         {termsModal}
+        {replacementClaimModal}
       </>
     );
   }
@@ -801,6 +1271,7 @@ export function ClaimableMembershipPackagesPanel({
       ) : null}
       {!loading && claimables.length > 0 ? renderClaimablePackages() : null}
       {termsModal}
+      {replacementClaimModal}
     </div>
   );
 }
@@ -930,14 +1401,12 @@ export function SiteLicenseReverificationPanel({
   );
 }
 
-export function MembershipPackageManager({
-  mode = "all",
+export function TeamPackageManager({
   tiers,
   onChanged,
   user_account_id,
 }: Props) {
   const account_id = useTypedRedux("account", "account_id");
-  const zendesk = !!useTypedRedux("customize", "zendesk");
   const ownerAccountId = user_account_id ?? account_id;
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -950,34 +1419,12 @@ export function MembershipPackageManager({
   >(undefined);
   const [assignmentTarget, setAssignmentTarget] =
     useState<MembershipPackageDetails | null>(null);
-  const [editTarget, setEditTarget] = useState<MembershipPackageDetails | null>(
-    null,
-  );
-  const [accountNames, setAccountNames] = useState<
-    Record<string, { first_name?: string; last_name?: string } | undefined>
-  >({});
-  const [siteLicenseOverviews, setSiteLicenseOverviews] = useState<
-    SiteLicenseOverview[]
-  >([]);
-  const [siteLicenseReviewLoadingId, setSiteLicenseReviewLoadingId] =
-    useState<string>("");
-  const [siteLicenseOverviewLoading, setSiteLicenseOverviewLoading] =
-    useState<boolean>(mode === "site");
-  const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
-    useState<string>("");
+  const [accountNames, setAccountNames] = useState<AccountNames>({});
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
   });
-  const showTeamPackages = mode === "all" || mode === "team";
-  const showSiteLicenses = mode === "all" || mode === "site";
 
   const refreshPackages = async () => {
-    if (!showTeamPackages) {
-      setMembershipPackages([]);
-      setError("");
-      setLoading(false);
-      return;
-    }
     setLoading(true);
     setError("");
     try {
@@ -992,25 +1439,6 @@ export function MembershipPackageManager({
     }
   };
 
-  const refreshSiteLicenseOverviews = async () => {
-    if (!showSiteLicenses || !account_id || user_account_id) {
-      setSiteLicenseOverviews([]);
-      setSiteLicenseOverviewError("");
-      setSiteLicenseOverviewLoading(false);
-      return;
-    }
-    setSiteLicenseOverviewLoading(true);
-    setSiteLicenseOverviewError("");
-    try {
-      setSiteLicenseOverviews(await listSiteLicenseOverviews());
-    } catch (err) {
-      setSiteLicenseOverviews([]);
-      setSiteLicenseOverviewError(`${err}`);
-    } finally {
-      setSiteLicenseOverviewLoading(false);
-    }
-  };
-
   useEffect(() => {
     if (!ownerAccountId) {
       setMembershipPackages([]);
@@ -1020,7 +1448,7 @@ export function MembershipPackageManager({
       return;
     }
     void refreshPackages();
-  }, [ownerAccountId, refreshToken, showTeamPackages, user_account_id]);
+  }, [ownerAccountId, refreshToken, user_account_id]);
 
   const assignedAccountIds = useMemo(() => {
     return Array.from(
@@ -1031,17 +1459,10 @@ export function MembershipPackageManager({
               .filter(isActiveAssignment)
               .map((assignment) => assignment.account_id),
           ),
-          ...siteLicenseOverviews.flatMap((overview) =>
-            overview.pools.flatMap((pool) =>
-              pool.assignments
-                .filter(isActiveAssignment)
-                .map((assignment) => assignment.account_id),
-            ),
-          ),
         ].filter((value): value is string => !!value),
       ),
     );
-  }, [membershipPackages, siteLicenseOverviews]);
+  }, [membershipPackages]);
 
   useEffect(() => {
     let canceled = false;
@@ -1076,42 +1497,8 @@ export function MembershipPackageManager({
     [membershipPackages],
   );
 
-  useEffect(() => {
-    let canceled = false;
-    async function loadSiteLicenseOverviews() {
-      if (!showSiteLicenses || !account_id || user_account_id) {
-        setSiteLicenseOverviews([]);
-        setSiteLicenseOverviewError("");
-        setSiteLicenseOverviewLoading(false);
-        return;
-      }
-      setSiteLicenseOverviewLoading(true);
-      setSiteLicenseOverviewError("");
-      try {
-        const overviews = await listSiteLicenseOverviews();
-        if (!canceled) {
-          setSiteLicenseOverviews(overviews);
-        }
-      } catch (err) {
-        if (!canceled) {
-          setSiteLicenseOverviews([]);
-          setSiteLicenseOverviewError(`${err}`);
-        }
-      } finally {
-        if (!canceled) {
-          setSiteLicenseOverviewLoading(false);
-        }
-      }
-    }
-    void loadSiteLicenseOverviews();
-    return () => {
-      canceled = true;
-    };
-  }, [account_id, refreshToken, showSiteLicenses, user_account_id]);
-
   const handleChanged = async () => {
     await refreshPackages();
-    await refreshSiteLicenseOverviews();
     onChanged?.();
   };
 
@@ -1121,25 +1508,13 @@ export function MembershipPackageManager({
 
   return (
     <div>
-      {mode === "all" ? (
-        <>
-          <Text strong>Team and site licenses</Text>
-          <Paragraph type="secondary" style={{ marginTop: "6px" }}>
-            Team packages let you buy seats and grant memberships to specific
-            accounts. Site licenses are provisioned by support or admins, then
-            managed here.
-          </Paragraph>
-        </>
-      ) : null}
       {error && (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
       )}
       <Space wrap style={{ marginBottom: 12 }}>
-        {showTeamPackages ? (
-          <Button type="primary" onClick={() => setPurchaseTarget(null)}>
-            <Icon name="shopping-cart" /> Buy team seats
-          </Button>
-        ) : null}
+        <Button type="primary" onClick={() => setPurchaseTarget(null)}>
+          <Icon name="shopping-cart" /> Buy team seats
+        </Button>
         <Button onClick={() => setRefreshToken((value) => value + 1)}>
           <Icon name="refresh" /> Refresh
         </Button>
@@ -1148,127 +1523,34 @@ export function MembershipPackageManager({
         <Loading />
       ) : (
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          {showTeamPackages ? (
-            <PackageGroup
-              title="Team packages"
-              emptyTitle="No team packages yet"
-              emptyDescription="Buy team seats here, then assign them to the accounts that should receive membership access."
-              membershipPackages={teamPackages}
-              tiers={tiers}
-              accountNames={accountNames}
-              onAddSeats={(membershipPackage) =>
-                setPurchaseTarget(membershipPackage)
-              }
-              onAssignSeat={(membershipPackage) =>
-                setAssignmentTarget(membershipPackage)
-              }
-              onRevokeSeat={async (membershipPackage, assignment) => {
+          <PackageGroup
+            title="Team packages"
+            emptyTitle="No team packages yet"
+            emptyDescription="Buy team seats here, then assign them to the accounts that should receive membership access."
+            membershipPackages={teamPackages}
+            tiers={tiers}
+            accountNames={accountNames}
+            onAddSeats={(membershipPackage) =>
+              setPurchaseTarget(membershipPackage)
+            }
+            onAssignSeat={(membershipPackage) =>
+              setAssignmentTarget(membershipPackage)
+            }
+            onRevokeSeat={async (membershipPackage, assignment) => {
+              setError("");
+              try {
                 await runFreshAuthAction(async () => {
-                  await revokeMembershipPackageSeat({
+                  await revokeSeatOrThrow({
                     package_id: membershipPackage.id,
-                    target_account_id: assignment.account_id ?? undefined,
-                    target_email_address: assignment.email_address ?? undefined,
+                    assignment,
                   });
                   await handleChanged();
                 });
-              }}
-            />
-          ) : null}
-          {showSiteLicenses &&
-          mode === "site" &&
-          !siteLicenseOverviewLoading &&
-          !siteLicenseOverviewError &&
-          siteLicenseOverviews.length === 0 ? (
-            <Alert
-              type="info"
-              showIcon
-              title="No site licenses to manage"
-              description={
-                <Space orientation="vertical">
-                  <Text>
-                    Site-license owners and managers see their license
-                    dashboards here after an admin attaches them.
-                  </Text>
-                  {zendesk ? (
-                    <Button
-                      type="primary"
-                      onClick={() =>
-                        openSupportTab({
-                          body: "I would like to discuss setting up or managing a CoCalc site license.",
-                          subject: "Site license request",
-                          type: "purchase",
-                        })
-                      }
-                    >
-                      File a support ticket
-                    </Button>
-                  ) : null}
-                </Space>
+              } catch (err) {
+                setError(`${err}`);
               }
-            />
-          ) : null}
-          {showSiteLicenses ? (
-            <SiteLicenseDashboard
-              overviews={siteLicenseOverviews}
-              loading={siteLicenseOverviewLoading}
-              error={siteLicenseOverviewError}
-              tiers={tiers}
-              accountNames={accountNames}
-              accountId={account_id}
-              isAdmin={false}
-              reviewingRequestId={siteLicenseReviewLoadingId}
-              onReview={async (_overview, request, action) => {
-                setSiteLicenseReviewLoadingId(request.id);
-                setError("");
-                try {
-                  await runFreshAuthAction(async () => {
-                    await reviewSiteLicensePoolRequest({
-                      request_id: request.id,
-                      action,
-                    });
-                    await handleChanged();
-                  });
-                } catch (err) {
-                  setError(`${err}`);
-                } finally {
-                  setSiteLicenseReviewLoadingId("");
-                }
-              }}
-              onRevokeSeat={async (pool, assignment) => {
-                await runFreshAuthAction(async () => {
-                  await revokeMembershipPackageSeat({
-                    package_id: pool.id,
-                    target_account_id: assignment.account_id ?? undefined,
-                    target_email_address: assignment.email_address ?? undefined,
-                  });
-                  await handleChanged();
-                });
-              }}
-              onSetManager={async (
-                site_license_id,
-                target_account_id,
-                role,
-              ) => {
-                await runFreshAuthAction(async () => {
-                  await setSiteLicenseManager({
-                    site_license_id,
-                    target_account_id,
-                    role,
-                  });
-                  await handleChanged();
-                });
-              }}
-              onRemoveManager={async (site_license_id, target_account_id) => {
-                await runFreshAuthAction(async () => {
-                  await removeSiteLicenseManager({
-                    site_license_id,
-                    target_account_id,
-                  });
-                  await handleChanged();
-                });
-              }}
-            />
-          ) : null}
+            }}
+          />
         </Space>
       )}
       <TeamPackagePurchaseModal
@@ -1278,15 +1560,6 @@ export function MembershipPackageManager({
         onClose={() => setPurchaseTarget(undefined)}
         onPurchased={handleChanged}
       />
-      <EditSiteLicenseModal
-        open={editTarget != null}
-        membershipPackage={editTarget}
-        onClose={() => setEditTarget(null)}
-        onUpdated={async () => {
-          setEditTarget(null);
-          await handleChanged();
-        }}
-      />
       <AssignMembershipSeatModal
         open={assignmentTarget != null}
         membershipPackage={assignmentTarget}
@@ -1294,6 +1567,209 @@ export function MembershipPackageManager({
         onAssigned={async () => {
           setAssignmentTarget(null);
           await handleChanged();
+        }}
+      />
+      <FreshAuthModal {...freshAuthModalProps} />
+    </div>
+  );
+}
+
+export function SiteLicenseManager({
+  tiers,
+  onChanged,
+}: {
+  tiers: MembershipTierLike[];
+  onChanged?: () => void;
+}) {
+  const account_id = useTypedRedux("account", "account_id");
+  const zendesk = !!useTypedRedux("customize", "zendesk");
+  const [error, setError] = useState<string>("");
+  const [siteLicenseOverviews, setSiteLicenseOverviews] = useState<
+    SiteLicenseOverview[]
+  >([]);
+  const [siteLicenseReviewLoadingId, setSiteLicenseReviewLoadingId] =
+    useState<string>("");
+  const [siteLicenseOverviewLoading, setSiteLicenseOverviewLoading] =
+    useState<boolean>(true);
+  const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
+    useState<string>("");
+  const [accountNames, setAccountNames] = useState<AccountNames>({});
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
+
+  const refreshSiteLicenseOverviews = async () => {
+    if (!account_id) {
+      setSiteLicenseOverviews([]);
+      setSiteLicenseOverviewError("");
+      setSiteLicenseOverviewLoading(false);
+      return;
+    }
+    setSiteLicenseOverviewLoading(true);
+    setSiteLicenseOverviewError("");
+    try {
+      setSiteLicenseOverviews(await listSiteLicenseOverviews());
+    } catch (err) {
+      setSiteLicenseOverviews([]);
+      setSiteLicenseOverviewError(`${err}`);
+    } finally {
+      setSiteLicenseOverviewLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshSiteLicenseOverviews();
+  }, [account_id]);
+
+  const dashboardAccountIds = useMemo(() => {
+    return Array.from(
+      new Set(
+        siteLicenseOverviews
+          .flatMap((overview) => [
+            ...overview.pools.flatMap((pool) =>
+              pool.assignments
+                .filter(isActiveAssignment)
+                .map((assignment) => assignment.account_id),
+            ),
+            ...overview.pending_requests.map((request) => request.account_id),
+            ...overview.managers.map((manager) => manager.account_id),
+            ...(overview.recent_audit_events ?? []).flatMap((event) => [
+              event.actor_account_id,
+              event.target_account_id,
+            ]),
+          ])
+          .filter((value): value is string => !!value),
+      ),
+    );
+  }, [siteLicenseOverviews]);
+
+  useEffect(() => {
+    let canceled = false;
+    async function loadNames() {
+      if (dashboardAccountIds.length === 0) {
+        setAccountNames({});
+        return;
+      }
+      try {
+        const next =
+          await webapp_client.users_client.getNames(dashboardAccountIds);
+        if (!canceled) {
+          setAccountNames(next ?? {});
+        }
+      } catch (_err) {
+        if (!canceled) {
+          setAccountNames({});
+        }
+      }
+    }
+    void loadNames();
+    return () => {
+      canceled = true;
+    };
+  }, [dashboardAccountIds]);
+
+  const handleChanged = async () => {
+    await refreshSiteLicenseOverviews();
+    onChanged?.();
+  };
+
+  if (!account_id) {
+    return null;
+  }
+
+  return (
+    <div>
+      {error && (
+        <Alert type="error" title={error} style={{ marginBottom: 12 }} />
+      )}
+      {!siteLicenseOverviewLoading &&
+      !siteLicenseOverviewError &&
+      siteLicenseOverviews.length === 0 ? (
+        <Alert
+          type="info"
+          showIcon
+          title="No site licenses to manage"
+          description={
+            <Space orientation="vertical">
+              <Text>
+                Site-license owners and managers see their license dashboards
+                here after an admin attaches them.
+              </Text>
+              {zendesk ? (
+                <Button
+                  type="primary"
+                  onClick={() =>
+                    openSupportTab({
+                      body: "I would like to discuss setting up or managing a CoCalc site license.",
+                      subject: "Site license request",
+                      type: "purchase",
+                    })
+                  }
+                >
+                  File a support ticket
+                </Button>
+              ) : null}
+            </Space>
+          }
+        />
+      ) : null}
+      <SiteLicenseDashboard
+        overviews={siteLicenseOverviews}
+        loading={siteLicenseOverviewLoading}
+        error={siteLicenseOverviewError}
+        tiers={tiers}
+        accountNames={accountNames}
+        isAdmin={false}
+        reviewingRequestId={siteLicenseReviewLoadingId}
+        onReview={async (_overview, request, action) => {
+          setSiteLicenseReviewLoadingId(request.id);
+          setError("");
+          try {
+            await runFreshAuthAction(async () => {
+              await reviewSiteLicensePoolRequest({
+                request_id: request.id,
+                action,
+              });
+              await handleChanged();
+            });
+          } catch (err) {
+            setError(`${err}`);
+          } finally {
+            setSiteLicenseReviewLoadingId("");
+          }
+        }}
+        onRevokeSeat={async (pool, assignment) => {
+          setError("");
+          try {
+            await runFreshAuthAction(async () => {
+              await revokeSeatOrThrow({
+                package_id: pool.id,
+                assignment,
+              });
+              await handleChanged();
+            });
+          } catch (err) {
+            setError(`${err}`);
+          }
+        }}
+        onSetManager={async (site_license_id, target_account_id, role) => {
+          await runFreshAuthAction(async () => {
+            await setSiteLicenseManager({
+              site_license_id,
+              target_account_id,
+              role,
+            });
+            await handleChanged();
+          });
+        }}
+        onRemoveManager={async (site_license_id, target_account_id) => {
+          await runFreshAuthAction(async () => {
+            await removeSiteLicenseManager({
+              site_license_id,
+              target_account_id,
+            });
+            await handleChanged();
+          });
         }}
       />
       <FreshAuthModal {...freshAuthModalProps} />
@@ -1319,9 +1795,7 @@ export function SiteLicenseAdminPanel({
   const [editTarget, setEditTarget] = useState<MembershipPackageDetails | null>(
     null,
   );
-  const [accountNames, setAccountNames] = useState<
-    Record<string, { first_name?: string; last_name?: string } | undefined>
-  >({});
+  const [accountNames, setAccountNames] = useState<AccountNames>({});
   const [reviewingRequestId, setReviewingRequestId] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
@@ -1350,18 +1824,24 @@ export function SiteLicenseAdminPanel({
     void refreshOverviews();
   }, [account_id, refreshToken]);
 
-  const assignedAccountIds = useMemo(
+  const dashboardAccountIds = useMemo(
     () =>
       Array.from(
         new Set(
           overviews
-            .flatMap((overview) =>
-              overview.pools.flatMap((pool) =>
+            .flatMap((overview) => [
+              ...overview.pools.flatMap((pool) =>
                 pool.assignments
                   .filter(isActiveAssignment)
                   .map((assignment) => assignment.account_id),
               ),
-            )
+              ...overview.pending_requests.map((request) => request.account_id),
+              ...overview.managers.map((manager) => manager.account_id),
+              ...(overview.recent_audit_events ?? []).flatMap((event) => [
+                event.actor_account_id,
+                event.target_account_id,
+              ]),
+            ])
             .filter((value): value is string => !!value),
         ),
       ),
@@ -1371,13 +1851,13 @@ export function SiteLicenseAdminPanel({
   useEffect(() => {
     let canceled = false;
     async function loadNames() {
-      if (assignedAccountIds.length === 0) {
+      if (dashboardAccountIds.length === 0) {
         setAccountNames({});
         return;
       }
       try {
         const next =
-          await webapp_client.users_client.getNames(assignedAccountIds);
+          await webapp_client.users_client.getNames(dashboardAccountIds);
         if (!canceled) {
           setAccountNames(next ?? {});
         }
@@ -1391,7 +1871,7 @@ export function SiteLicenseAdminPanel({
     return () => {
       canceled = true;
     };
-  }, [assignedAccountIds]);
+  }, [dashboardAccountIds]);
 
   async function handleChanged() {
     await refreshOverviews();
@@ -1432,16 +1912,25 @@ export function SiteLicenseAdminPanel({
       error=""
       tiers={tiers}
       accountNames={accountNames}
-      accountId={account_id}
       isAdmin={true}
       reviewingRequestId={reviewingRequestId}
-      showIntro={false}
       onEditPool={(pool) => setEditTarget(pool)}
       onAddPool={async (site_license_id, pool) => {
         await runFreshAuthAction(async () => {
           await addSiteLicensePool({ site_license_id, pool });
           await handleChanged();
         });
+      }}
+      onArchivePool={async (pool) => {
+        setError("");
+        try {
+          await runFreshAuthAction(async () => {
+            await archiveSiteLicensePool({ package_id: pool.id });
+            await handleChanged();
+          });
+        } catch (err) {
+          setError(`${err}`);
+        }
       }}
       onReview={async (_overview, request, action) => {
         setReviewingRequestId(request.id);
@@ -1461,14 +1950,18 @@ export function SiteLicenseAdminPanel({
         }
       }}
       onRevokeSeat={async (pool, assignment) => {
-        await runFreshAuthAction(async () => {
-          await revokeMembershipPackageSeat({
-            package_id: pool.id,
-            target_account_id: assignment.account_id ?? undefined,
-            target_email_address: assignment.email_address ?? undefined,
+        setError("");
+        try {
+          await runFreshAuthAction(async () => {
+            await revokeSeatOrThrow({
+              package_id: pool.id,
+              assignment,
+            });
+            await handleChanged();
           });
-          await handleChanged();
-        });
+        } catch (err) {
+          setError(`${err}`);
+        }
       }}
       onUpdateLicense={async (site_license_id, updates) => {
         await runFreshAuthAction(async () => {
@@ -1558,6 +2051,7 @@ export function SiteLicenseAdminPanel({
       <EditSiteLicenseModal
         open={editTarget != null}
         membershipPackage={editTarget}
+        tiers={tiers}
         onClose={() => setEditTarget(null)}
         onUpdated={async () => {
           setEditTarget(null);
@@ -1566,42 +2060,6 @@ export function SiteLicenseAdminPanel({
       />
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>
-  );
-}
-
-function SiteLicenseMetricCard({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: number | string;
-  tone?: "blue" | "green" | "gold" | "neutral";
-}) {
-  const toneStyle =
-    tone === "blue"
-      ? { background: COLORS.ANTD_BG_BLUE_L, color: COLORS.BLUE_DD }
-      : tone === "green"
-        ? { background: COLORS.BS_GREEN_LL, color: COLORS.ANTD_GREEN_D }
-        : tone === "gold"
-          ? { background: COLORS.YELL_LLL, color: COLORS.BRWN }
-          : { background: COLORS.GRAY_LLL, color: COLORS.GRAY_D };
-
-  return (
-    <div
-      style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
-        borderRadius: 14,
-        minWidth: 142,
-        padding: "12px 14px",
-        ...toneStyle,
-      }}
-    >
-      <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.8 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.15 }}>
-        {value}
-      </div>
-    </div>
   );
 }
 
@@ -1735,27 +2193,22 @@ function SiteLicenseDashboard({
   error,
   tiers,
   accountNames,
-  accountId,
   isAdmin,
   reviewingRequestId,
   onEditPool,
   onAddPool,
+  onArchivePool,
   onReview,
   onRevokeSeat,
   onUpdateLicense,
   onSetManager,
   onRemoveManager,
-  showIntro = true,
 }: {
   overviews: SiteLicenseOverview[];
   loading: boolean;
   error: string;
   tiers: MembershipTierLike[];
-  accountNames: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >;
-  accountId?: string;
+  accountNames: AccountNames;
   isAdmin: boolean;
   reviewingRequestId: string;
   onEditPool?: (pool: SiteLicenseOverview["pools"][number]) => void;
@@ -1763,6 +2216,7 @@ function SiteLicenseDashboard({
     site_license_id: string,
     pool: SiteLicensePoolConfig,
   ) => Promise<void>;
+  onArchivePool?: (pool: SiteLicenseOverview["pools"][number]) => Promise<void>;
   onReview: (
     overview: SiteLicenseOverview,
     request: SiteLicensePoolRequest,
@@ -1796,9 +2250,9 @@ function SiteLicenseDashboard({
     site_license_id: string,
     target_account_id: string,
   ) => Promise<void>;
-  showIntro?: boolean;
 }) {
   const [revokingSeat, setRevokingSeat] = useState<string>("");
+  const [archivingPoolId, setArchivingPoolId] = useState<string>("");
   const [editingLicense, setEditingLicense] =
     useState<SiteLicenseOverview | null>(null);
   const [addingPool, setAddingPool] = useState<{
@@ -1807,17 +2261,34 @@ function SiteLicenseDashboard({
   } | null>(null);
   const [addingPoolSubmitting, setAddingPoolSubmitting] = useState(false);
   const [addingPoolError, setAddingPoolError] = useState("");
+  const [rosterPoolId, setRosterPoolId] = useState("");
+  const [rosterSearch, setRosterSearch] = useState("");
   const siteLicenseTierOptions = useMemo(
     () => getSiteLicenseProvisioningTiers(tiers),
     [tiers],
   );
-  const requests = overviews.flatMap((overview) =>
-    overview.pending_requests.map((request) => ({
-      overview,
-      request,
-      pool: overview.pools.find((pool) => pool.id === request.package_id),
-    })),
-  );
+  const requests = overviews
+    .flatMap((overview) =>
+      overview.pending_requests.map((request) => ({
+        overview,
+        request,
+        pool: overview.pools.find((pool) => pool.id === request.package_id),
+      })),
+    )
+    .sort(
+      (left, right) =>
+        dateSortValue(left.request.requested_at) -
+        dateSortValue(right.request.requested_at),
+    );
+  const selectedRoster = useMemo(() => {
+    if (!rosterPoolId) return;
+    for (const overview of overviews) {
+      const pool = overview.pools.find((pool) => pool.id === rosterPoolId);
+      if (pool != null) {
+        return { overview, pool };
+      }
+    }
+  }, [overviews, rosterPoolId]);
   if (loading) {
     return (
       <Card size="small">
@@ -1840,31 +2311,33 @@ function SiteLicenseDashboard({
   }
   return (
     <Space orientation="vertical" size="large" style={{ width: "100%" }}>
-      {showIntro ? (
-        <Space orientation="vertical" size={2}>
-          <Title level={4} style={{ margin: 0 }}>
-            Site-license manager dashboard
-          </Title>
-          <Text type="secondary">
-            Review access requests, monitor seat usage, and manage active seats
-            for each institutional license.
-          </Text>
-        </Space>
-      ) : null}
       {overviews.map((overview) => {
-        const totals = getOverviewSeatTotals(overview);
+        const overviewAccountNames: AccountNames = {
+          ...accountNames,
+          ...(overview.account_details ?? {}),
+        };
         const overviewRequests = requests.filter(
           ({ overview: requestOverview, request }) =>
             requestOverview.site_license.id === overview.site_license.id &&
             request.state === "pending",
         );
         const canEditManagers = isAdmin;
-        const canManageLicense =
-          isAdmin ||
-          overview.managers.some(
-            (manager) =>
-              manager.account_id === accountId && manager.role === "manager",
-          );
+        const canManageLicense = canManageSiteLicenseOverview({
+          isAdmin,
+          overview,
+        });
+        const lifecycleInfo = getSiteLicenseLifecycleInfo(
+          overview.site_license,
+        );
+        const lifecycleItems = [
+          lifecycleInfo.starts,
+          lifecycleInfo.expired ? undefined : lifecycleInfo.expires,
+        ].filter((item): item is string => !!item);
+        const domains = overview.site_license.allowed_domains ?? [];
+        const hasDocuments =
+          !!overview.site_license.terms_version_label ||
+          !!overview.site_license.custom_terms_url ||
+          !!overview.site_license.custom_policy_url;
         return (
           <Card
             key={overview.site_license.id}
@@ -1893,78 +2366,69 @@ function SiteLicenseDashboard({
                   size={8}
                   style={{ maxWidth: 720 }}
                 >
+                  <Title level={3} style={{ color: "white", margin: 0 }}>
+                    {getSiteLicenseDisplayTitle(overview.site_license)}
+                  </Title>
+                  {lifecycleInfo.expired && lifecycleInfo.expires ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      title={lifecycleInfo.expires}
+                      style={{ maxWidth: 520 }}
+                    />
+                  ) : lifecycleItems.length > 0 ? (
+                    <Paragraph style={{ color: "white", marginBottom: 0 }}>
+                      {lifecycleItems.join(" · ")}
+                    </Paragraph>
+                  ) : null}
                   <Space wrap>
-                    <Tag color="blue">Site license</Tag>
-                    <Tag>{overview.site_license.organization_name}</Tag>
-                    {totals.pendingRequests ? (
-                      <Tag color="gold">
-                        {totals.pendingRequests} pending requests
-                      </Tag>
+                    <Text strong style={{ color: "white" }}>
+                      Covered domains:
+                    </Text>
+                    {domains.length > 0 ? (
+                      domains.map((domain) => <Tag key={domain}>{domain}</Tag>)
                     ) : (
-                      <Tag color="green">No pending requests</Tag>
+                      <Text style={{ color: "white" }}>none configured</Text>
                     )}
                   </Space>
-                  <Title level={3} style={{ color: "white", margin: 0 }}>
-                    {overview.site_license.name}
-                  </Title>
-                  <Paragraph style={{ color: "white", marginBottom: 0 }}>
-                    {dateLabel(overview.site_license.starts_at)} to{" "}
-                    {dateLabel(overview.site_license.expires_at)}
-                    {" · "}
-                    renewal {overview.site_license.renewal_policy ?? "none"}
-                    {" · "}
-                    overage {overview.site_license.overage_policy ?? "none"}
-                  </Paragraph>
-                  <Space wrap>
-                    {overview.site_license.allowed_domains.map((domain) => (
-                      <Tag key={domain}>{domain}</Tag>
-                    ))}
-                    {overview.site_license.terms_version_label ? (
-                      <Tag>{overview.site_license.terms_version_label}</Tag>
-                    ) : null}
-                    {overview.site_license.custom_terms_url ? (
-                      <a
-                        href={overview.site_license.custom_terms_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ color: "white", textDecoration: "underline" }}
-                      >
-                        terms
-                      </a>
-                    ) : null}
-                    {overview.site_license.custom_policy_url ? (
-                      <a
-                        href={overview.site_license.custom_policy_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ color: "white", textDecoration: "underline" }}
-                      >
-                        policy
-                      </a>
-                    ) : null}
-                  </Space>
+                  {hasDocuments ? (
+                    <Space wrap>
+                      <Text strong style={{ color: "white" }}>
+                        Documents:
+                      </Text>
+                      {overview.site_license.terms_version_label ? (
+                        <Tag>{overview.site_license.terms_version_label}</Tag>
+                      ) : null}
+                      {overview.site_license.custom_terms_url ? (
+                        <a
+                          href={overview.site_license.custom_terms_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            color: "white",
+                            textDecoration: "underline",
+                          }}
+                        >
+                          terms
+                        </a>
+                      ) : null}
+                      {overview.site_license.custom_policy_url ? (
+                        <a
+                          href={overview.site_license.custom_policy_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            color: "white",
+                            textDecoration: "underline",
+                          }}
+                        >
+                          policy
+                        </a>
+                      ) : null}
+                    </Space>
+                  ) : null}
                 </Space>
                 <Space wrap>
-                  <SiteLicenseMetricCard
-                    label="Total seats"
-                    value={totals.totalSeats}
-                    tone="blue"
-                  />
-                  <SiteLicenseMetricCard
-                    label="Active"
-                    value={totals.activeSeats}
-                    tone="green"
-                  />
-                  <SiteLicenseMetricCard
-                    label="Available"
-                    value={totals.availableSeats}
-                    tone="neutral"
-                  />
-                  <SiteLicenseMetricCard
-                    label="Pending"
-                    value={totals.pendingRequests}
-                    tone={totals.pendingRequests ? "gold" : "neutral"}
-                  />
                   {onUpdateLicense ? (
                     <Button ghost onClick={() => setEditingLicense(overview)}>
                       <Icon name="edit" /> Edit license
@@ -1974,7 +2438,7 @@ function SiteLicenseDashboard({
               </Space>
             </div>
 
-            <div style={{ padding: 22 }}>
+            <div style={{ background: COLORS.YELL_LLL, padding: 22 }}>
               <Space
                 orientation="vertical"
                 size="large"
@@ -1990,96 +2454,89 @@ function SiteLicenseDashboard({
                         <Tag color="gold">{overviewRequests.length}</Tag>
                       </Space>
                     }
-                    style={{
-                      borderColor: COLORS.YELL_LL,
-                      background: COLORS.YELL_LLL,
-                    }}
                   >
                     <Space
                       orientation="vertical"
                       size="small"
                       style={{ width: "100%" }}
                     >
-                      {overviewRequests.map(({ request, pool }) => (
-                        <div
-                          key={request.id}
-                          style={{
-                            alignItems: "flex-start",
-                            background: "white",
-                            border: `1px solid ${COLORS.GRAY_LL}`,
-                            borderRadius: 12,
-                            display: "flex",
-                            gap: 16,
-                            justifyContent: "space-between",
-                            padding: 12,
-                          }}
-                        >
-                          <Space orientation="vertical" size={2}>
-                            <Space wrap>
-                              <Text strong>
-                                {request.matched_email_address}
+                      {overviewRequests.map(({ request, pool }) => {
+                        const accountDisplay = getRequestAccountDisplay({
+                          names: overviewAccountNames,
+                          request,
+                        });
+                        return (
+                          <div
+                            key={request.id}
+                            style={{
+                              alignItems: "flex-start",
+                              background: "white",
+                              border: `1px solid ${COLORS.GRAY_LL}`,
+                              borderRadius: 12,
+                              display: "flex",
+                              gap: 16,
+                              justifyContent: "space-between",
+                              padding: 12,
+                            }}
+                          >
+                            <Space orientation="vertical" size={2}>
+                              <Text>
+                                <Text strong>{accountDisplay.name}</Text>
+                                {accountDisplay.email ? (
+                                  <Text type="secondary">
+                                    {" "}
+                                    ({accountDisplay.email})
+                                  </Text>
+                                ) : null}
+                                {" requested "}
+                                <Text strong>
+                                  {pool?.pool_name ?? "site-license"}
+                                </Text>
+                                {" seat "}
+                                <TimeAgo date={request.requested_at} />
                               </Text>
-                              <Tag color="blue">
-                                {capitalize(request.requested_membership_class)}
-                              </Tag>
-                              {pool?.pool_name ? (
-                                <Tag>{pool.pool_name}</Tag>
+                              {request.requester_note ? (
+                                <Text>{request.requester_note}</Text>
                               ) : null}
                             </Space>
-                            <Text type="secondary">
-                              account {request.account_id}; requested{" "}
-                              <TimeAgo date={request.requested_at} />
-                            </Text>
-                            {request.requester_note ? (
-                              <Text>{request.requester_note}</Text>
+                            {canManageLicense ? (
+                              <Space>
+                                <Button
+                                  type="primary"
+                                  loading={reviewingRequestId === request.id}
+                                  onClick={() =>
+                                    void onReview(overview, request, "approve")
+                                  }
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  danger
+                                  loading={reviewingRequestId === request.id}
+                                  onClick={() =>
+                                    void onReview(overview, request, "reject")
+                                  }
+                                >
+                                  Reject
+                                </Button>
+                              </Space>
                             ) : null}
-                          </Space>
-                          {canManageLicense ? (
-                            <Space>
-                              <Button
-                                type="primary"
-                                loading={reviewingRequestId === request.id}
-                                onClick={() =>
-                                  void onReview(overview, request, "approve")
-                                }
-                              >
-                                Approve
-                              </Button>
-                              <Button
-                                danger
-                                loading={reviewingRequestId === request.id}
-                                onClick={() =>
-                                  void onReview(overview, request, "reject")
-                                }
-                              >
-                                Reject
-                              </Button>
-                            </Space>
-                          ) : null}
-                        </div>
-                      ))}
+                          </div>
+                        );
+                      })}
                     </Space>
                   </Card>
                 ) : null}
 
                 <div>
-                  <Space
-                    wrap
-                    align="baseline"
-                    style={{
-                      justifyContent: "space-between",
-                      marginBottom: 12,
-                      width: "100%",
-                    }}
-                  >
-                    <Title level={5} style={{ margin: 0 }}>
-                      Seat pools
-                    </Title>
-                    <Text type="secondary">
-                      Pools can have distinct policies for students,
-                      instructors, researchers, or other campus groups.
-                    </Text>
-                    {onAddPool ? (
+                  {onAddPool ? (
+                    <Space
+                      style={{
+                        justifyContent: "flex-end",
+                        marginBottom: 12,
+                        width: "100%",
+                      }}
+                    >
                       <Button
                         onClick={() =>
                           setAddingPool({
@@ -2093,8 +2550,8 @@ function SiteLicenseDashboard({
                       >
                         <Icon name="plus-circle" /> Add pool
                       </Button>
-                    ) : null}
-                  </Space>
+                    </Space>
+                  ) : null}
                   <div
                     style={{
                       display: "grid",
@@ -2105,9 +2562,14 @@ function SiteLicenseDashboard({
                   >
                     {overview.pools.map((pool) => {
                       const activeSeats = getPoolActiveSeats(pool);
-                      const availableSeats = getPoolAvailableSeats(pool);
+                      const description =
+                        `${pool.pool_description ?? ""}`.trim();
                       const utilizationPercent =
                         getPoolUtilizationPercent(pool);
+                      const canArchivePool =
+                        onArchivePool != null &&
+                        activeSeats === 0 &&
+                        pool.pending_request_count === 0;
                       return (
                         <Card
                           size="small"
@@ -2131,19 +2593,14 @@ function SiteLicenseDashboard({
                                 width: "100%",
                               }}
                             >
-                              <Space orientation="vertical" size={2}>
-                                <Text strong style={{ fontSize: 16 }}>
-                                  {pool.pool_name}
-                                </Text>
-                                <Text type="secondary">
-                                  {capitalize(pool.membership_class)} seats
-                                </Text>
-                              </Space>
-                              <Tag
-                                color={getPolicyColor(pool.verification_policy)}
-                              >
-                                {pool.verification_policy}
-                              </Tag>
+                              <Text strong style={{ fontSize: 16 }}>
+                                {pool.pool_name}
+                              </Text>
+                              {pool.requires_approval ? (
+                                <Tag color="gold">Approval required</Tag>
+                              ) : (
+                                <Tag color="green">Self claim</Tag>
+                              )}
                             </Space>
 
                             <div>
@@ -2170,104 +2627,69 @@ function SiteLicenseDashboard({
                                 }
                               />
                             </div>
-
-                            <Space wrap>
-                              <Tag color="green">{activeSeats} active</Tag>
-                              <Tag color="blue">{availableSeats} free</Tag>
-                              <Tag color="gold">
-                                {pool.pending_request_count} pending
-                              </Tag>
-                              {pool.requires_approval ? (
-                                <Tag color="gold">approval required</Tag>
-                              ) : (
-                                <Tag color="green">self claim</Tag>
-                              )}
-                              <Tag>group: {pool.exclusive_group}</Tag>
-                              <Tag>
-                                reverify:{" "}
-                                {pool.affiliation_reverification_days ?? "off"}d
-                              </Tag>
-                              <Tag>
-                                grace:{" "}
-                                {pool.affiliation_reverification_grace_days ??
-                                  "off"}
-                                d
-                              </Tag>
-                              {onEditPool ? (
+                            <Tooltip
+                              title={
+                                activeSeats === 0
+                                  ? "No active users"
+                                  : undefined
+                              }
+                            >
+                              <span>
                                 <Button
                                   size="small"
-                                  onClick={() => onEditPool(pool)}
+                                  disabled={activeSeats === 0}
+                                  onClick={() => {
+                                    setRosterPoolId(pool.id);
+                                    setRosterSearch("");
+                                  }}
                                 >
-                                  <Icon name="edit" /> Edit pool
+                                  <Icon name="users" /> Manage users
                                 </Button>
-                              ) : null}
-                            </Space>
+                              </span>
+                            </Tooltip>
+                            {description ? (
+                              <Text type="secondary">{description}</Text>
+                            ) : null}
 
-                            {pool.assignments.filter(isActiveAssignment)
-                              .length === 0 ? (
-                              <Text type="secondary">No active seats.</Text>
-                            ) : (
-                              <Space
-                                orientation="vertical"
-                                size="small"
-                                style={{ width: "100%" }}
-                              >
-                                {pool.assignments
-                                  .filter(isActiveAssignment)
-                                  .map((assignment) => {
-                                    const key = `${pool.id}-${assignment.id}`;
-                                    return (
-                                      <div
-                                        key={key}
-                                        style={{
-                                          alignItems: "center",
-                                          borderTop: `1px solid ${COLORS.GRAY_LLL}`,
-                                          display: "flex",
-                                          gap: 12,
-                                          justifyContent: "space-between",
-                                          paddingTop: 8,
-                                        }}
-                                      >
-                                        <Space orientation="vertical" size={0}>
-                                          <Text>
-                                            {getAccountDisplayName(
-                                              assignment,
-                                              accountNames,
-                                            )}
-                                          </Text>
-                                          <Text type="secondary">
-                                            {assignment.email_address ||
-                                              assignment.account_id ||
-                                              "unknown account"}{" "}
-                                            assigned{" "}
-                                            {dateLabel(assignment.assigned_at)}
-                                          </Text>
-                                        </Space>
-                                        {canManageLicense ? (
-                                          <Button
-                                            size="small"
-                                            danger
-                                            loading={revokingSeat === key}
-                                            onClick={async () => {
-                                              setRevokingSeat(key);
-                                              try {
-                                                await onRevokeSeat(
-                                                  pool,
-                                                  assignment,
-                                                );
-                                              } finally {
-                                                setRevokingSeat("");
-                                              }
-                                            }}
-                                          >
-                                            Revoke
-                                          </Button>
-                                        ) : null}
-                                      </div>
-                                    );
-                                  })}
+                            {onEditPool || canArchivePool ? (
+                              <Space wrap>
+                                {onEditPool ? (
+                                  <Button
+                                    size="small"
+                                    onClick={() => onEditPool(pool)}
+                                  >
+                                    <Icon name="edit" /> Edit pool
+                                  </Button>
+                                ) : null}
+                                {canArchivePool ? (
+                                  <Popconfirm
+                                    title="Archive this pool?"
+                                    description="The pool will be hidden, but its audit history and past seat records will be preserved."
+                                    okButtonProps={{
+                                      danger: true,
+                                      loading: archivingPoolId === pool.id,
+                                    }}
+                                    okText="Archive"
+                                    onConfirm={async () => {
+                                      setArchivingPoolId(pool.id);
+                                      try {
+                                        await onArchivePool?.(pool);
+                                      } finally {
+                                        setArchivingPoolId("");
+                                      }
+                                    }}
+                                  >
+                                    <Button
+                                      danger
+                                      size="small"
+                                      loading={archivingPoolId === pool.id}
+                                    >
+                                      <Icon name="trash" /> Archive pool
+                                    </Button>
+                                  </Popconfirm>
+                                ) : null}
                               </Space>
-                            )}
+                            ) : null}
                           </Space>
                         </Card>
                       );
@@ -2286,6 +2708,7 @@ function SiteLicenseDashboard({
                   style={{ borderRadius: 14 }}
                 >
                   <SiteLicenseManagersEditor
+                    accountNames={overviewAccountNames}
                     overview={overview}
                     canEdit={canEditManagers}
                     onSetManager={onSetManager}
@@ -2311,32 +2734,80 @@ function SiteLicenseDashboard({
                     >
                       {overview.recent_audit_events.map((event) => (
                         <Text key={event.id} type="secondary">
-                          {dateLabel(event.created)}: {event.action}
-                          {event.target_account_id
-                            ? ` for ${event.target_account_id}`
-                            : ""}
+                          {dateLabel(event.created)}:{" "}
+                          {formatSiteLicenseAuditAction({ event, overview })}
+                          {event.target_account_id ? (
+                            <>
+                              {" for "}
+                              <Text strong>
+                                {accountIdentityText(
+                                  event.target_account_id,
+                                  overviewAccountNames,
+                                )}
+                              </Text>
+                            </>
+                          ) : null}
+                          {event.actor_account_id ? (
+                            <>
+                              {" by "}
+                              <Text strong>
+                                {accountIdentityText(
+                                  event.actor_account_id,
+                                  overviewAccountNames,
+                                )}
+                              </Text>
+                            </>
+                          ) : null}
                         </Text>
                       ))}
                     </Space>
                   </Card>
                 ) : null}
 
-                <Space wrap>
-                  <Text type="secondary">
-                    License id {overview.site_license.id}; seed bay{" "}
-                    {overview.site_license.bay_id}
-                  </Text>
-                  {overview.site_license.owner_account_id ? (
+                {isAdmin ? (
+                  <Space wrap>
                     <Text type="secondary">
-                      owner account {overview.site_license.owner_account_id}
+                      License id {overview.site_license.id}; seed bay{" "}
+                      {overview.site_license.bay_id}
                     </Text>
-                  ) : null}
-                </Space>
+                    {overview.site_license.owner_account_id ? (
+                      <Text type="secondary">
+                        owner account {overview.site_license.owner_account_id}
+                      </Text>
+                    ) : null}
+                  </Space>
+                ) : null}
               </Space>
             </div>
           </Card>
         );
       })}
+      <PoolUsersDrawer
+        accountNames={
+          selectedRoster == null
+            ? accountNames
+            : {
+                ...accountNames,
+                ...(selectedRoster.overview.account_details ?? {}),
+              }
+        }
+        canManageLicense={
+          selectedRoster
+            ? canManageSiteLicenseOverview({
+                isAdmin,
+                overview: selectedRoster.overview,
+              })
+            : false
+        }
+        onClose={() => setRosterPoolId("")}
+        onRevokeSeat={onRevokeSeat}
+        open={selectedRoster != null}
+        pool={selectedRoster?.pool}
+        revokingSeat={revokingSeat}
+        search={rosterSearch}
+        setRevokingSeat={setRevokingSeat}
+        setSearch={setRosterSearch}
+      />
       <EditSiteLicenseSettingsModal
         overview={editingLicense}
         onClose={() => setEditingLicense(null)}
@@ -2383,6 +2854,171 @@ function SiteLicenseDashboard({
         }}
       />
     </Space>
+  );
+}
+
+function PoolUsersDrawer({
+  accountNames,
+  canManageLicense,
+  onClose,
+  onRevokeSeat,
+  open,
+  pool,
+  revokingSeat,
+  search,
+  setRevokingSeat,
+  setSearch,
+}: {
+  accountNames: AccountNames;
+  canManageLicense: boolean;
+  onClose: () => void;
+  onRevokeSeat: (
+    pool: SiteLicenseOverview["pools"][number],
+    assignment: MembershipPackageAssignment,
+  ) => Promise<void>;
+  open: boolean;
+  pool?: SiteLicenseOverview["pools"][number];
+  revokingSeat: string;
+  search: string;
+  setRevokingSeat: (value: string) => void;
+  setSearch: (value: string) => void;
+}) {
+  const activeAssignments = useMemo(
+    () => pool?.assignments.filter(isActiveAssignment) ?? [],
+    [pool],
+  );
+  const filteredAssignments = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return activeAssignments;
+    return activeAssignments.filter((assignment) =>
+      assignmentSearchText({ assignment, names: accountNames }).includes(
+        needle,
+      ),
+    );
+  }, [accountNames, activeAssignments, search]);
+  const tableWidth = canManageLicense ? 690 : 570;
+
+  return (
+    <Drawer
+      destroyOnHidden
+      onClose={onClose}
+      open={open}
+      title={
+        <Space>
+          <Icon name="users" />
+          <span>{pool ? `${pool.pool_name} users` : "Users"}</span>
+        </Space>
+      }
+      size={760}
+      styles={{ body: { padding: 16 } }}
+    >
+      {pool ? (
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <Input.Search
+            allowClear
+            placeholder="Search by name or email"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <Table<MembershipPackageAssignment>
+            dataSource={filteredAssignments}
+            locale={{
+              emptyText:
+                activeAssignments.length === 0
+                  ? "No active users."
+                  : search.trim()
+                    ? "No users match this search."
+                    : "No active users.",
+            }}
+            pagination={false}
+            rowKey={(assignment) => assignment.id}
+            scroll={{ x: tableWidth, y: "calc(100vh - 240px)" }}
+            size="small"
+            tableLayout="fixed"
+          >
+            <Table.Column<MembershipPackageAssignment>
+              title="User"
+              width={220}
+              render={(_, assignment) => {
+                const name = getAccountDisplayName(assignment, accountNames);
+                return (
+                  <Tooltip title={name}>
+                    <Text ellipsis style={{ display: "block", maxWidth: 200 }}>
+                      {name}
+                    </Text>
+                  </Tooltip>
+                );
+              }}
+            />
+            <Table.Column<MembershipPackageAssignment>
+              title="Email"
+              width={240}
+              render={(_, assignment) => {
+                const email = getAssignmentEmail(assignment);
+                if (!email) {
+                  return <Text type="secondary">-</Text>;
+                }
+                return (
+                  <Tooltip title={email}>
+                    <Text ellipsis style={{ display: "block", maxWidth: 220 }}>
+                      {email}
+                    </Text>
+                  </Tooltip>
+                );
+              }}
+            />
+            <Table.Column<MembershipPackageAssignment>
+              title="Seat given on"
+              width={140}
+              render={(_, assignment) =>
+                formatSeatGivenOn(assignment.assigned_at)
+              }
+            />
+            {canManageLicense ? (
+              <Table.Column<MembershipPackageAssignment>
+                align="right"
+                title=""
+                width={90}
+                render={(_, assignment) => {
+                  const key = `${pool.id}-${assignment.id}`;
+                  return (
+                    <Popconfirm
+                      title={revokeSeatConfirmationTitle({
+                        assignment,
+                        names: accountNames,
+                        pool,
+                      })}
+                      description="This removes the active seat from this pool."
+                      okButtonProps={{
+                        danger: true,
+                        loading: revokingSeat === key,
+                      }}
+                      okText="Revoke seat"
+                      onConfirm={async () => {
+                        setRevokingSeat(key);
+                        try {
+                          await onRevokeSeat(pool, assignment);
+                        } finally {
+                          setRevokingSeat("");
+                        }
+                      }}
+                    >
+                      <Button
+                        danger
+                        size="small"
+                        loading={revokingSeat === key}
+                      >
+                        Revoke
+                      </Button>
+                    </Popconfirm>
+                  );
+                }}
+              />
+            ) : null}
+          </Table>
+        </Space>
+      ) : null}
+    </Drawer>
   );
 }
 
@@ -2559,11 +3195,13 @@ function EditSiteLicenseSettingsModal({
 }
 
 function SiteLicenseManagersEditor({
+  accountNames,
   overview,
   canEdit,
   onSetManager,
   onRemoveManager,
 }: {
+  accountNames: AccountNames;
   overview: SiteLicenseOverview;
   canEdit: boolean;
   onSetManager: (
@@ -2660,52 +3298,61 @@ function SiteLicenseManagersEditor({
       {error ? <Alert type="error" showIcon title={error} /> : null}
       {overview.managers.length ? (
         <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-          {overview.managers.map((manager) => (
-            <div
-              key={manager.id}
-              style={{
-                alignItems: "center",
-                display: "flex",
-                gap: 10,
-                justifyContent: "space-between",
-              }}
-            >
-              <Space wrap>
-                <Text code>{manager.account_id}</Text>
-                <Tag>{manager.role}</Tag>
-              </Space>
-              <Space>
-                {canEdit ? (
-                  <>
-                    <Select
-                      size="small"
-                      value={manager.role}
-                      style={{ width: 110 }}
-                      options={[
-                        { label: "Manager", value: "manager" },
-                        { label: "Viewer", value: "viewer" },
-                      ]}
-                      onChange={(nextRole) =>
-                        void onSetManager(
-                          overview.site_license.id,
-                          manager.account_id,
-                          nextRole,
-                        )
-                      }
-                    />
-                    <Button
-                      size="small"
-                      danger
-                      loading={working === `remove-${manager.account_id}`}
-                      onClick={() => void removeManager(manager.account_id)}
-                    >
-                      Remove
-                    </Button>
-                  </>
-                ) : null}
-              </Space>
-            </div>
-          ))}
+          {overview.managers.map((manager) => {
+            const identity = getAccountIdentity(
+              manager.account_id,
+              accountNames,
+            );
+            return (
+              <div
+                key={manager.id}
+                style={{
+                  alignItems: "center",
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "space-between",
+                }}
+              >
+                <Space align="center" wrap>
+                  <Text>{identity.name}</Text>
+                  {identity.secondary ? (
+                    <Text type="secondary">({identity.secondary})</Text>
+                  ) : null}
+                  <Tag>{manager.role}</Tag>
+                </Space>
+                <Space>
+                  {canEdit ? (
+                    <>
+                      <Select
+                        size="small"
+                        value={manager.role}
+                        style={{ width: 110 }}
+                        options={[
+                          { label: "Manager", value: "manager" },
+                          { label: "Viewer", value: "viewer" },
+                        ]}
+                        onChange={(nextRole) =>
+                          void onSetManager(
+                            overview.site_license.id,
+                            manager.account_id,
+                            nextRole,
+                          )
+                        }
+                      />
+                      <Button
+                        size="small"
+                        danger
+                        loading={working === `remove-${manager.account_id}`}
+                        onClick={() => void removeManager(manager.account_id)}
+                      >
+                        Remove
+                      </Button>
+                    </>
+                  ) : null}
+                </Space>
+              </div>
+            );
+          })}
         </Space>
       ) : (
         <Text type="secondary">No delegated managers listed.</Text>
@@ -2757,11 +3404,7 @@ function SiteLicenseManagersEditor({
             </Button>
           </Space>
         </>
-      ) : (
-        <Text type="secondary">
-          Only CoCalc admins can change delegated site-license roles.
-        </Text>
-      )}
+      ) : null}
     </Space>
   );
 }
@@ -2782,10 +3425,7 @@ function PackageGroup({
   emptyDescription: string;
   membershipPackages: MembershipPackageDetails[];
   tiers: MembershipTierLike[];
-  accountNames: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >;
+  accountNames: AccountNames;
   onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
@@ -2839,10 +3479,7 @@ function MembershipPackageCard({
 }: {
   membershipPackage: MembershipPackageDetails;
   tierLabel: string;
-  accountNames: Record<
-    string,
-    { first_name?: string; last_name?: string } | undefined
-  >;
+  accountNames: AccountNames;
   onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
@@ -3058,7 +3695,8 @@ function ProvisionSiteLicenseModal({
     const defaultPools: SiteLicensePoolConfig[] = [];
     if (studentTier) {
       defaultPools.push({
-        pool_name: "Students",
+        pool_name: "Student",
+        pool_description: getTierSiteLicensePoolDescription(studentTier),
         membership_class: studentTier.id as MembershipClass,
         seat_count: 5000,
         requires_approval: false,
@@ -3070,7 +3708,8 @@ function ProvisionSiteLicenseModal({
     }
     if (instructorTier) {
       defaultPools.push({
-        pool_name: "Instructors",
+        pool_name: "Instructor",
+        pool_description: getTierSiteLicensePoolDescription(instructorTier),
         membership_class: instructorTier.id as MembershipClass,
         seat_count: 200,
         requires_approval: true,
@@ -3082,7 +3721,8 @@ function ProvisionSiteLicenseModal({
     }
     if (researcherTier) {
       defaultPools.push({
-        pool_name: "Researchers",
+        pool_name: "Researcher",
+        pool_description: getTierSiteLicensePoolDescription(researcherTier),
         membership_class: researcherTier.id as MembershipClass,
         seat_count: 500,
         requires_approval: true,
@@ -3132,29 +3772,34 @@ function ProvisionSiteLicenseModal({
       if (allowed_domains.length === 0) {
         throw Error("Enter at least one allowed email domain.");
       }
-      const cleanPools = pools.map((pool) => ({
-        ...pool,
-        pool_name: `${pool.pool_name ?? ""}`.trim(),
-        exclusive_group: `${pool.exclusive_group ?? ""}`.trim() || null,
-        seat_count: Math.max(1, Math.trunc(Number(pool.seat_count) || 1)),
-        allowed_domains,
-        affiliation_reverification_days:
-          pool.affiliation_reverification_days == null
-            ? null
-            : Math.max(
-                1,
-                Math.trunc(Number(pool.affiliation_reverification_days) || 1),
-              ),
-        affiliation_reverification_grace_days:
-          pool.affiliation_reverification_grace_days == null
-            ? null
-            : Math.max(
-                1,
-                Math.trunc(
-                  Number(pool.affiliation_reverification_grace_days) || 1,
+      const cleanPools = pools.map((pool) => {
+        const poolDomains = normalizeDomainList(pool.allowed_domains ?? []);
+        return {
+          ...pool,
+          pool_name: `${pool.pool_name ?? ""}`.trim(),
+          pool_description: `${pool.pool_description ?? ""}`.trim() || null,
+          exclusive_group: `${pool.exclusive_group ?? ""}`.trim() || null,
+          seat_count: Math.max(1, Math.trunc(Number(pool.seat_count) || 1)),
+          allowed_domains:
+            poolDomains.length > 0 ? poolDomains : allowed_domains,
+          affiliation_reverification_days:
+            pool.affiliation_reverification_days == null
+              ? null
+              : Math.max(
+                  1,
+                  Math.trunc(Number(pool.affiliation_reverification_days) || 1),
                 ),
-              ),
-      }));
+          affiliation_reverification_grace_days:
+            pool.affiliation_reverification_grace_days == null
+              ? null
+              : Math.max(
+                  1,
+                  Math.trunc(
+                    Number(pool.affiliation_reverification_grace_days) || 1,
+                  ),
+                ),
+        };
+      });
       if (cleanPools.length === 0) {
         throw Error("Add at least one pool.");
       }
@@ -3577,6 +4222,10 @@ function ProvisionPoolEditModal({
   onChange,
   onClose,
   mode = "edit",
+  activeSeatCount = 0,
+  domainsRequired = false,
+  expiresAt,
+  onExpiresAtChange,
   error,
   submitting,
   onSubmit,
@@ -3587,16 +4236,36 @@ function ProvisionPoolEditModal({
   siteLicenseTierOptions: MembershipTierLike[];
   onChange: (patch: Partial<SiteLicensePoolConfig>) => void;
   onClose: () => void;
-  mode?: "edit" | "add";
+  mode?: "edit" | "add" | "persisted";
+  activeSeatCount?: number;
+  domainsRequired?: boolean;
+  expiresAt?: Dayjs | null;
+  onExpiresAtChange?: (value: Dayjs | null) => void;
   error?: string;
   submitting?: boolean;
   onSubmit?: () => Promise<void>;
 }) {
+  const [domainSearch, setDomainSearch] = useState<string>("");
+  useEffect(() => {
+    if (open) {
+      setDomainSearch("");
+    }
+  }, [open, pool?.pool_name]);
   if (pool == null) return null;
   const theme = getProvisionPoolTheme(pool, poolIndex);
   const selectedTier = siteLicenseTierOptions.find(
     (tier) => tier.id === pool.membership_class,
   );
+  const isAdd = mode === "add";
+  const isPersisted = mode === "persisted";
+  const seatMin = Math.max(1, activeSeatCount);
+  const setDomains = (values: string[]) => {
+    const next = normalizeDomainList(values);
+    onChange({
+      allowed_domains: domainsRequired || next.length > 0 ? next : undefined,
+    });
+    setDomainSearch("");
+  };
 
   return (
     <Modal
@@ -3604,14 +4273,14 @@ function ProvisionPoolEditModal({
       onCancel={onClose}
       onOk={onSubmit ?? onClose}
       okButtonProps={{ loading: submitting }}
-      okText={mode === "add" ? "Add pool" : "Done"}
+      okText={isAdd ? "Add pool" : isPersisted ? "Save pool" : "Done"}
       width={760}
+      destroyOnHidden
       title={
         <Space>
           <Icon name={theme.icon} style={{ color: theme.accent }} />
           <span>
-            {mode === "add" ? "Add" : "Edit"}{" "}
-            {pool.pool_name || `Pool ${poolIndex + 1}`}
+            {isAdd ? "Add" : "Edit"} {pool.pool_name || `Pool ${poolIndex + 1}`}
           </span>
         </Space>
       }
@@ -3623,9 +4292,11 @@ function ProvisionPoolEditModal({
           showIcon
           title={theme.description}
           description={
-            mode === "add"
+            isAdd
               ? "This creates a new seed/global site-license pool after fresh auth. Existing pools and assignments are unchanged."
-              : "Changes are applied immediately to the provisioning draft. They are not saved until you provision the site license."
+              : isPersisted
+                ? "Pool name, description, seats, access mode, domains, expiration, and reverification timing can be updated. Internal tier, verification policy, and exclusive group are read-only after creation."
+                : "Changes are applied immediately to the provisioning draft. They are not saved until you provision the site license."
           }
         />
         <div
@@ -3642,12 +4313,30 @@ function ProvisionPoolEditModal({
               style={{ width: "100%" }}
             />
           </CompactField>
-          <CompactField label="Tier">
+          <CompactField
+            label="Tier"
+            help={
+              isPersisted
+                ? "Internal entitlement tier; create a new pool to change it."
+                : undefined
+            }
+          >
             <Select
+              disabled={isPersisted}
               value={pool.membership_class}
-              onChange={(value) =>
-                onChange({ membership_class: value as MembershipClass })
-              }
+              onChange={(value) => {
+                const nextTier = siteLicenseTierOptions.find(
+                  (tier) => tier.id === value,
+                );
+                onChange({
+                  membership_class: value as MembershipClass,
+                  ...getPoolDescriptionPatchForTierChange({
+                    currentPool: pool,
+                    currentTier: selectedTier,
+                    nextTier,
+                  }),
+                });
+              }}
               options={siteLicenseTierOptions.map((tier) => ({
                 label: tier.label ?? capitalize(tier.id),
                 value: tier.id,
@@ -3665,6 +4354,39 @@ function ProvisionPoolEditModal({
             ) : null}
           </CompactField>
         </div>
+        <CompactField
+          label="Description"
+          help="Plain-language text shown to eligible users before they claim or request this pool."
+        >
+          <Input.TextArea
+            rows={3}
+            value={pool.pool_description ?? ""}
+            onChange={(event) =>
+              onChange({ pool_description: event.target.value })
+            }
+          />
+        </CompactField>
+        <CompactField
+          label="Allowed email domains"
+          help={
+            domainsRequired
+              ? "Add or remove domains for future verified-domain claims. Existing claimed seats stay assigned unless you revoke them explicitly."
+              : "Leave empty to use the site-license domains."
+          }
+        >
+          <Select
+            mode="tags"
+            tokenSeparators={[",", " ", "\n", ";"]}
+            value={pool.allowed_domains ?? []}
+            onSearch={setDomainSearch}
+            onChange={(values) => setDomains(values)}
+            onBlur={() =>
+              setDomains([...(pool.allowed_domains ?? []), domainSearch])
+            }
+            placeholder="example.edu, department.example.edu"
+            style={{ width: "100%" }}
+          />
+        </CompactField>
         <div
           style={{
             display: "grid",
@@ -3674,19 +4396,29 @@ function ProvisionPoolEditModal({
         >
           <CompactField label="Seats">
             <InputNumber
-              min={1}
+              min={seatMin}
               precision={0}
               value={pool.seat_count}
-              onChange={(value) => onChange({ seat_count: Number(value ?? 1) })}
+              onChange={(value) =>
+                onChange({ seat_count: Number(value ?? seatMin) })
+              }
               style={{ width: "100%" }}
             />
+            {isPersisted ? (
+              <Text type="secondary">
+                Must be at least the current active assignment count (
+                {activeSeatCount}).
+              </Text>
+            ) : null}
           </CompactField>
           <CompactField
             label="Access mode"
             help={
-              pool.requires_approval
-                ? "Users submit a request and a site-license manager approves it."
-                : "Eligible users with a verified matching email can claim directly."
+              isPersisted
+                ? "Changing this affects future claims and requests only."
+                : pool.requires_approval
+                  ? "Users submit a request and a site-license manager approves it."
+                  : "Eligible users with a verified matching email can claim directly."
             }
           >
             <Radio.Group
@@ -3709,12 +4441,26 @@ function ProvisionPoolEditModal({
             </Radio.Group>
           </CompactField>
         </div>
+        {onExpiresAtChange ? (
+          <CompactField
+            label="Expires at"
+            help="Changing this updates active membership grants for assigned or claimed seats."
+          >
+            <DatePicker
+              allowClear
+              value={expiresAt}
+              onChange={onExpiresAtChange}
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+        ) : null}
         <Divider style={{ margin: "0" }} />
         <Space orientation="vertical" size={2}>
           <Text strong>Advanced policy</Text>
           <Text type="secondary">
-            Exclusive groups avoid double-counting seats. Pools in the same
-            group replace each other; pools in different groups can coexist.
+            {isPersisted
+              ? "Verification and exclusive-group policy are fixed for existing pools. Reverification timing remains editable."
+              : "Exclusive groups avoid double-counting seats. Pools in the same group replace each other; pools in different groups can coexist."}
           </Text>
         </Space>
         <div
@@ -3730,17 +4476,14 @@ function ProvisionPoolEditModal({
             help="Proof required for this pool."
           >
             <Select
+              disabled={isPersisted}
               value={pool.verification_policy}
               onChange={(value) =>
                 onChange({
                   verification_policy: value as SiteLicenseVerificationPolicy,
                 })
               }
-              options={[
-                { label: "Email domain", value: "email-domain" },
-                { label: "Manager approval", value: "manager-approval" },
-                { label: "SSO affiliation", value: "sso-affiliation" },
-              ]}
+              options={SITE_LICENSE_VERIFICATION_OPTIONS}
               style={{ width: "100%" }}
             />
           </CompactField>
@@ -3749,6 +4492,7 @@ function ProvisionPoolEditModal({
             help="Same group seats replace each other."
           >
             <Input
+              disabled={isPersisted}
               value={`${pool.exclusive_group ?? ""}`}
               onChange={(event) =>
                 onChange({ exclusive_group: event.target.value })
@@ -3796,26 +4540,44 @@ function ProvisionPoolEditModal({
 function EditSiteLicenseModal({
   open,
   membershipPackage,
+  tiers,
   onClose,
   onUpdated,
 }: {
   open: boolean;
   membershipPackage: MembershipPackageDetails | null;
+  tiers: MembershipTierLike[];
   onClose: () => void;
   onUpdated: () => Promise<void>;
 }) {
-  const [seatCount, setSeatCount] = useState<number>(1);
-  const [domains, setDomains] = useState<string[]>([]);
-  const [domainSearch, setDomainSearch] = useState<string>("");
+  const [pool, setPool] = useState<SiteLicensePoolConfig | undefined>();
   const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const siteLicenseTierOptions = useMemo(() => {
+    const options = getSiteLicenseProvisioningTiers(tiers);
+    const membershipClass = membershipPackage?.membership_class;
+    if (
+      membershipClass == null ||
+      options.some((tier) => tier.id === membershipClass)
+    ) {
+      return options;
+    }
+    return [
+      {
+        id: membershipClass,
+        label: capitalize(membershipClass),
+      },
+      ...options,
+    ];
+  }, [membershipPackage?.membership_class, tiers]);
 
   useEffect(() => {
-    if (!open || !membershipPackage) return;
-    setSeatCount(membershipPackage.seat_count);
-    setDomains(normalizeDomainList(getPackageDomains(membershipPackage)));
-    setDomainSearch("");
+    if (!open || !membershipPackage) {
+      setPool(undefined);
+      return;
+    }
+    setPool(siteLicensePoolConfigFromPackage(membershipPackage));
     setExpiresAt(
       membershipPackage.expires_at ? dayjs(membershipPackage.expires_at) : null,
     );
@@ -3828,7 +4590,8 @@ function EditSiteLicenseModal({
     setSubmitting(true);
     setError("");
     try {
-      const allowed_domains = normalizeDomainList([...domains, domainSearch]);
+      if (pool == null) return;
+      const allowed_domains = normalizeDomainList(pool.allowed_domains ?? []);
       if (allowed_domains.length === 0) {
         throw Error("Enter at least one allowed email domain.");
       }
@@ -3838,7 +4601,14 @@ function EditSiteLicenseModal({
         package_id: membershipPackage.id,
         owner_account_id: membershipPackage.owner_account_id,
         ...(siteLicenseId ? { site_license_id: siteLicenseId } : {}),
-        seat_count: seatCount,
+        pool_name: pool.pool_name.trim(),
+        seat_count: pool.seat_count,
+        pool_description: `${pool.pool_description ?? ""}`.trim() || null,
+        requires_approval: pool.requires_approval === true,
+        affiliation_reverification_days:
+          pool.affiliation_reverification_days ?? null,
+        affiliation_reverification_grace_days:
+          pool.affiliation_reverification_grace_days ?? null,
         allowed_domains,
         expires_at: expiresAt?.endOf("day").toDate() ?? null,
       });
@@ -3852,78 +4622,24 @@ function EditSiteLicenseModal({
 
   const activeSeats = membershipPackage?.active_assignment_count ?? 0;
   return (
-    <Modal
+    <ProvisionPoolEditModal
       open={open}
-      onCancel={onClose}
-      onOk={save}
-      okButtonProps={{ loading: submitting }}
-      okText="Save pool"
-      destroyOnHidden
-      title="Edit seat pool"
-    >
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        {error ? (
-          <Alert
-            type="error"
-            title={error}
-            closable
-            onClose={() => setError("")}
-          />
-        ) : null}
-        <Alert
-          type="info"
-          showIcon
-          title="Changing the expiration date updates active membership grants for assigned or claimed seats. Changing domains only affects future site-license claims; it does not revoke existing claimed seats."
-        />
-        <div>
-          <Text strong>Seats</Text>
-          <InputNumber
-            min={Math.max(1, activeSeats)}
-            precision={0}
-            value={seatCount}
-            onChange={(value) => setSeatCount(Number(value ?? 1))}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-          <Text type="secondary">
-            Must be at least the current active assignment count ({activeSeats}
-            ).
-          </Text>
-        </div>
-        <div>
-          <Text strong>Allowed email domains</Text>
-          <Select
-            mode="tags"
-            tokenSeparators={[",", " ", "\n", ";"]}
-            value={domains}
-            onSearch={setDomainSearch}
-            onChange={(values) => {
-              setDomains(normalizeDomainList(values));
-              setDomainSearch("");
-            }}
-            onBlur={() => {
-              const next = normalizeDomainList([...domains, domainSearch]);
-              setDomains(next);
-              setDomainSearch("");
-            }}
-            placeholder="example.edu, department.example.edu"
-            style={{ width: "100%", marginTop: 6 }}
-          />
-          <Text type="secondary">
-            Add or remove domains for future verified-domain claims. Existing
-            claimed seats stay assigned unless you revoke them explicitly.
-          </Text>
-        </div>
-        <div>
-          <Text strong>Expires at</Text>
-          <DatePicker
-            allowClear
-            value={expiresAt}
-            onChange={setExpiresAt}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-        </div>
-      </Space>
-    </Modal>
+      pool={pool}
+      poolIndex={0}
+      siteLicenseTierOptions={siteLicenseTierOptions}
+      onChange={(patch) =>
+        setPool((current) => (current ? { ...current, ...patch } : current))
+      }
+      onClose={onClose}
+      mode="persisted"
+      activeSeatCount={activeSeats}
+      domainsRequired
+      expiresAt={expiresAt}
+      onExpiresAtChange={setExpiresAt}
+      error={error}
+      submitting={submitting}
+      onSubmit={save}
+    />
   );
 }
 
@@ -4538,4 +5254,4 @@ function AssignMembershipSeatModal({
   );
 }
 
-export default MembershipPackageManager;
+export default TeamPackageManager;

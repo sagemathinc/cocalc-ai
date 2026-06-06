@@ -112,7 +112,6 @@
     "@types/node": "^22.10.10",
     "@types/node-zendesk": "^2.0.15",
     "@types/nodemailer": "^7.0.11",
-    "@types/passport": "^1.0.9",
-    "expect": "^26.6.2"
+    "@types/passport": "^1.0.9"
   }
 }

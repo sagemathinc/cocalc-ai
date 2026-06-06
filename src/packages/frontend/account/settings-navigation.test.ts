@@ -5,6 +5,7 @@ import {
   getVisibleSettingsNavigation,
   type SettingsNavigationContext,
 } from "./settings-navigation";
+import { getRegisteredSettingsPageDefinition } from "./settings-page-registry";
 
 const visibleContext: SettingsNavigationContext = {
   isAdmin: false,
@@ -14,6 +15,12 @@ const visibleContext: SettingsNavigationContext = {
 };
 
 describe("settings-navigation", () => {
+  it("keeps site-license page title separate from the menu label", () => {
+    const definition = getRegisteredSettingsPageDefinition("site-licenses");
+    expect(definition?.label.defaultMessage).toBe("Site");
+    expect(definition?.title?.defaultMessage).toBe("Site License");
+  });
+
   it("keeps menu grouping separate from page identity", () => {
     expect(getSettingsNavigationGroupKey("vouchers")).toBe("billing");
     expect(getSettingsNavigationGroupKey("team-licenses")).toBe("licenses");

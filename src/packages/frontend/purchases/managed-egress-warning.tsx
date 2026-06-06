@@ -347,7 +347,7 @@ export const ManagedEgressWarning: React.FC<{
         ]}
         width={760}
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space vertical size="middle" style={{ width: "100%" }}>
           <Text>
             Metered shared-host traffic includes downloads, app traffic,
             interactive sessions, SSH, and outbound project network traffic.

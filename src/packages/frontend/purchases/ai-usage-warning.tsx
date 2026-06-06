@@ -263,7 +263,7 @@ export const AIUsageWarning: React.FC<{
         ]}
         width={720}
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space vertical size="middle" style={{ width: "100%" }}>
           <Text>
             AI API usage is limited by both a 5-hour window and a 7-day window.
             When a limit is hit, AI features stop until usage rolls out of the
