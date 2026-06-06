@@ -130,6 +130,7 @@ interface Tier {
   store_visible?: boolean;
   store_description?: string;
   store_highlights?: readonly string[];
+  site_license_pool_description?: string;
   course_store_visible?: boolean;
   priority?: number;
   price_monthly?: number;
@@ -579,6 +580,9 @@ function buildMembershipTierPayload(values): Tier {
       pricing_model: normalizePricingModel(values.pricing_model),
       store_description: normalizedOptionalString(values.store_description),
       store_highlights: parseStoreHighlightsText(values.store_highlights_text),
+      site_license_pool_description: normalizedOptionalString(
+        values.site_license_pool_description,
+      ),
       disabled: !values.active,
     },
     [
@@ -587,6 +591,7 @@ function buildMembershipTierPayload(values): Tier {
       "store_visible",
       "store_description",
       "store_highlights",
+      "site_license_pool_description",
       "course_store_visible",
       "priority",
       "price_monthly",
@@ -1552,6 +1557,15 @@ export function MembershipTiers() {
                       name="store_highlights_text"
                       label="Public highlights"
                       extra="One public bullet point per line."
+                    >
+                      <Input.TextArea rows={3} />
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item
+                      name="site_license_pool_description"
+                      label="Site-license pool description"
+                      extra="Default plain-language description copied into new site-license pools using this tier."
                     >
                       <Input.TextArea rows={3} />
                     </Form.Item>

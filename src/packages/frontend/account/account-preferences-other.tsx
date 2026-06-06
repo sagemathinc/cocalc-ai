@@ -29,7 +29,7 @@ export function AccountPreferencesOther() {
   const stripe_customer = useTypedRedux("account", "stripe_customer");
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+    <Space vertical size={16} style={{ width: "100%" }}>
       <OtherSettings
         other_settings={other_settings}
         is_stripe_customer={

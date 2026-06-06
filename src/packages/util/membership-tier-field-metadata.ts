@@ -148,6 +148,17 @@ export const MEMBERSHIP_TIER_FIELDS = [
     public: true,
   }),
   field({
+    id: "site_license_pool_description",
+    path: ["site_license_pool_description"],
+    card: "product",
+    label: "Site-license pool description",
+    help: "Default user-facing pool description copied into new site-license pools using this tier.",
+    input: "textarea",
+    valueType: "string",
+    risks: ["storefront"],
+    public: true,
+  }),
+  field({
     id: "priority",
     path: ["priority"],
     card: "product",

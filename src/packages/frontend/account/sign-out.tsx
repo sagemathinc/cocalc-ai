@@ -88,7 +88,7 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
 
   function render_content(): React.JSX.Element {
     return (
-      <Space direction="vertical">
+      <Space vertical>
         {signOutError && <Alert type="error" message={signOutError} />}
         {!everywhere && (
           <Checkbox

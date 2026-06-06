@@ -314,7 +314,7 @@ export const AccountCpuWarning: React.FC<{
         ]}
         width={760}
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space vertical size="middle" style={{ width: "100%" }}>
           <Text>
             Your account has used most or all of its managed CPU allocation for
             the current {getWindowLabel(warning.meter)} window. Existing

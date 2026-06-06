@@ -13,6 +13,7 @@ export interface MembershipTierPresentationInput {
   trial_days?: unknown;
   store_description?: string;
   store_highlights?: readonly string[];
+  site_license_pool_description?: string;
   course_price?: unknown;
   course_duration_days?: unknown;
   course_grace_days?: unknown;

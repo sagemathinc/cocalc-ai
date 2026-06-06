@@ -152,10 +152,13 @@ import {
 import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
+  archiveSiteLicensePool,
+  cancelSiteLicensePoolRequest,
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
   listSiteLicenseOverviews,
+  releaseSiteLicensePoolSeat,
   requestSiteLicensePoolWithVerifiedEmailsOnLocalBay,
   refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
   removeSiteLicenseManager,
@@ -867,6 +870,12 @@ async function startAccountLocalService(): Promise<void> {
             revoked: await revokeSiteLicensePoolSeat(opts),
           }
         : await getSeedSiteLicenseClient().revokeSiteLicensePoolSeat(opts),
+    releaseSiteLicensePoolSeat: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? {
+            revoked: await releaseSiteLicensePoolSeat(opts),
+          }
+        : await getSeedSiteLicenseClient().releaseSiteLicensePoolSeat(opts),
     listSoftwareLicenseTiers: async ({ actor_account_id, include_disabled }) =>
       isSeedSiteLicenseBay()
         ? await listLicenseTiersOnSeed({ include_disabled })
@@ -908,7 +917,12 @@ async function startAccountLocalService(): Promise<void> {
     updateMembershipPackage: async ({
       package_id,
       actor_account_id,
+      pool_name,
       seat_count,
+      pool_description,
+      requires_approval,
+      affiliation_reverification_days,
+      affiliation_reverification_grace_days,
       expires_at,
       allowed_domains,
     }) => {
@@ -917,7 +931,12 @@ async function startAccountLocalService(): Promise<void> {
         return await updateSiteLicensePool({
           actor_account_id,
           package_id,
+          pool_name,
           seat_count,
+          pool_description,
+          requires_approval,
+          affiliation_reverification_days,
+          affiliation_reverification_grace_days,
           expires_at,
           allowed_domains,
         });
@@ -937,6 +956,10 @@ async function startAccountLocalService(): Promise<void> {
       isSeedSiteLicenseBay()
         ? await addSiteLicensePool(opts)
         : await getSeedSiteLicenseClient().addSiteLicensePool(opts),
+    archiveSiteLicensePool: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await archiveSiteLicensePool(opts)
+        : await getSeedSiteLicenseClient().archiveSiteLicensePool(opts),
     setSiteLicenseManager: async (opts) =>
       isSeedSiteLicenseBay()
         ? await setSiteLicenseManager(opts)
@@ -947,19 +970,25 @@ async function startAccountLocalService(): Promise<void> {
         : await getSeedSiteLicenseClient().removeSiteLicenseManager(opts),
     getClaimableMembershipPackages: async ({
       account_id,
+      include_claimed_site_license_pools,
       verified_email_addresses,
     }) => {
       const rows = await listLocalClaimableMembershipPackagesForVerifiedEmails({
         account_id,
+        include_claimed_site_license_pools,
         verified_email_addresses,
       });
       return isSeedSiteLicenseBay()
         ? rows
         : rows.filter((row) => row.kind !== "site");
     },
-    getClaimableMembershipPackagesForAccount: async ({ account_id }) =>
+    getClaimableMembershipPackagesForAccount: async ({
+      account_id,
+      include_claimed_site_license_pools,
+    }) =>
       await listClaimableMembershipPackagesForAccount({
         account_id,
+        include_claimed_site_license_pools,
       }),
     claimMembershipPackageSeat: async ({
       package_id,
@@ -1017,6 +1046,10 @@ async function startAccountLocalService(): Promise<void> {
             requester_note,
             accepted_terms,
           }),
+    cancelSiteLicensePoolRequest: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await cancelSiteLicensePoolRequest(opts)
+        : await getSeedSiteLicenseClient().cancelSiteLicensePoolRequest(opts),
     requestSiteLicensePoolForAccount: async ({
       account_id,
       package_id,

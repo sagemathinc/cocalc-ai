@@ -91,7 +91,7 @@ export function ProfileImageSelector({
       >
         {avatarPreview}
       </UploadProfileImage>
-      <Space direction="vertical">
+      <Space vertical>
         <Typography.Text>
           Avatar shown to collaborators and in account menus.
         </Typography.Text>

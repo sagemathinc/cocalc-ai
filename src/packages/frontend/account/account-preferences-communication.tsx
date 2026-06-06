@@ -165,7 +165,7 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
       (category) => notificationPreferences.email[category.key] !== "off",
     );
     return (
-      <Space direction="vertical" style={{ width: "100%" }}>
+      <Space vertical style={{ width: "100%" }}>
         <div>
           <Text strong>Notification email</Text>
           <Paragraph type="secondary" style={{ marginBottom: 8 }}>
@@ -236,7 +236,7 @@ function NotificationPreferenceRow({
 }) {
   return (
     <>
-      <Space direction="vertical" size={0}>
+      <Space vertical size={0}>
         <Text>{category.label}</Text>
         {category.requiredEmailMode && (
           <Tag color="blue">Required immediate email</Tag>

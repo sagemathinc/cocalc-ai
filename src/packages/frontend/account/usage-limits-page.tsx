@@ -314,12 +314,12 @@ function getUsageWindowDisplay(row: UsageWindowRow): {
 
 function renderUsageWindowRows(rows: UsageWindowRow[]): ReactElement {
   return (
-    <Space direction="vertical" size="small" style={{ width: "100%" }}>
+    <Space vertical size="small" style={{ width: "100%" }}>
       {rows.map((row) => {
         const display = getUsageWindowDisplay(row);
         return (
           <div key={row.key} title={display.title}>
-            <Space direction="vertical" size={0} style={{ width: "100%" }}>
+            <Space vertical size={0} style={{ width: "100%" }}>
               <div>
                 <Text type="secondary">{row.label}: </Text>
                 {display.danger ? (
@@ -431,7 +431,7 @@ function UsagePressureCard({
   }
   return (
     <Card size="small" title={label} style={{ height: "100%" }}>
-      <Space direction="vertical" size="small" style={{ width: "100%" }}>
+      <Space vertical size="small" style={{ width: "100%" }}>
         <Progress
           percent={Math.min(100, Math.max(0, pressure.percent))}
           status={severityProgressStatus(pressure.severity)}
@@ -570,7 +570,7 @@ function renderInfoItems({
     <Descriptions colon size="small" column={1} layout={layout}>
       {items.map((item) => (
         <Descriptions.Item key={item.key} label={item.label}>
-          <Space direction="vertical" size={0} style={{ width: "100%" }}>
+          <Space vertical size={0} style={{ width: "100%" }}>
             {item.danger ? <Text type="danger">{item.value}</Text> : item.value}
             {item.progress ? (
               <>
@@ -612,7 +612,7 @@ function renderInfoSection({
     );
   }
   return (
-    <Space direction="vertical" size={0} style={{ width: "100%" }}>
+    <Space vertical size={0} style={{ width: "100%" }}>
       {renderSectionLabel(label)}
       {renderInfoItems({ items })}
     </Space>
@@ -640,7 +640,7 @@ function AdvancedProjectStorageDetailsButton({
         footer={null}
         width={720}
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space vertical size="middle" style={{ width: "100%" }}>
           {renderInfoSection({
             emptyValue: "Unavailable",
             items: usageItems,
@@ -796,7 +796,7 @@ function UsageLimitsSettingsContent(): ReactElement | null {
       key: "projects-storage",
       title: "Projects and storage",
       content: (
-        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+        <Space vertical size="small" style={{ width: "100%" }}>
           {renderInfoSection({
             emptyValue: "Unavailable",
             items: projectAndStorageStatusItems,
@@ -827,7 +827,7 @@ function UsageLimitsSettingsContent(): ReactElement | null {
       key: "data-transfer",
       title: "Network transfer",
       content: (
-        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+        <Space vertical size="small" style={{ width: "100%" }}>
           {renderInfoSection({
             emptyValue: "Unavailable",
             items: dataTransferStatusItems,
@@ -881,7 +881,7 @@ function UsageLimitsSettingsContent(): ReactElement | null {
           showIcon
           message="Some usage measurements are incomplete"
           description={
-            <Space direction="vertical" size={0}>
+            <Space vertical size={0}>
               {overview.measurement_warnings.map((warning) => (
                 <Text key={warning}>{warning}</Text>
               ))}
