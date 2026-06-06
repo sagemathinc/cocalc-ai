@@ -80,6 +80,69 @@ class FakeCodexAppServerProc extends EventEmitter {
   }
 }
 
+function createCodexGoalsDb(codexHome: string): string {
+  mkdirSync(codexHome, { recursive: true });
+  const dbPath = path.join(codexHome, "goals_1.sqlite");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE thread_goals (
+      thread_id TEXT PRIMARY KEY NOT NULL,
+      goal_id TEXT NOT NULL,
+      objective TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN (
+        'active',
+        'paused',
+        'blocked',
+        'usage_limited',
+        'budget_limited',
+        'complete'
+      )),
+      token_budget INTEGER,
+      tokens_used INTEGER NOT NULL DEFAULT 0,
+      time_used_seconds INTEGER NOT NULL DEFAULT 0,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    )
+  `);
+  db.prepare(
+    `INSERT INTO thread_goals(
+      thread_id,
+      goal_id,
+      objective,
+      status,
+      token_budget,
+      tokens_used,
+      time_used_seconds,
+      created_at_ms,
+      updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "thr-old-goal",
+    "goal-1",
+    "Old hidden objective",
+    "active",
+    null,
+    10,
+    5,
+    1,
+    2,
+  );
+  db.close();
+  return dbPath;
+}
+
+function countCodexGoals(dbPath: string): number {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db
+      .prepare("SELECT COUNT(*) AS count FROM thread_goals")
+      .get() as { count?: number };
+    return Number(row?.count ?? 0);
+  } finally {
+    db.close();
+  }
+}
+
 describe("CodexAppServerAgent", () => {
   const originalCompactRetryLimit =
     process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES;
@@ -384,7 +447,10 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
-  it("clears active app-server goals before normal chat turns", async () => {
+  it("clears persisted Codex goals before normal chat turns", async () => {
+    const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-root-"));
+    const codexHome = path.join(rootHostPath, ".codex");
+    const goalsDbPath = createCodexGoalsDb(codexHome);
     const appServerCalls: Array<{ method: string; params: any }> = [];
     const proc = new FakeCodexAppServerProc((fake, message) => {
       appServerCalls.push({ method: message.method, params: message.params });
@@ -396,23 +462,6 @@ describe("CodexAppServerAgent", () => {
           fake.sendResponse(message.id, {
             thread: { id: "thr-goal-1" },
           });
-          break;
-        case "thread/goal/get":
-          fake.sendResponse(message.id, {
-            goal: {
-              threadId: "thr-goal-1",
-              objective: "Old hidden objective",
-              status: "active",
-              tokenBudget: null,
-              tokensUsed: 10,
-              timeUsedSeconds: 5,
-              createdAt: 1,
-              updatedAt: 2,
-            },
-          });
-          break;
-        case "thread/goal/clear":
-          fake.sendResponse(message.id, { cleared: true });
           break;
         case "turn/start":
           fake.sendResponse(message.id, { turn: { id: "turn-goal-1" } });
@@ -444,46 +493,53 @@ describe("CodexAppServerAgent", () => {
         cmd: "fake-codex",
         args: ["app-server"],
         cwd: "/tmp/project",
+        containerPathMap: {
+          rootHostPath,
+        },
       }),
     });
 
-    const agent = new CodexAppServerAgent();
-    await agent.evaluate({
-      project_id: "00000000-0000-4000-8000-000000000000",
-      account_id: "00000000-0000-4000-8000-000000000001",
-      session_id: "chat-thread-goal",
-      prompt: "hi",
-      stream: async () => {},
-      config: {
-        workingDirectory: "/tmp/project",
-      } as any,
-      chat: {
+    try {
+      const agent = new CodexAppServerAgent();
+      await agent.evaluate({
         project_id: "00000000-0000-4000-8000-000000000000",
-        path: "/tmp/project/test.chat",
-        message_date: "2026-06-06T00:00:01.000Z",
-        sender_id: "openai-codex-agent",
-        thread_id: "thread-goal-1",
-        message_id: "assistant-goal-1",
-        parent_message_id: "user-goal-1",
-      },
-    });
+        account_id: "00000000-0000-4000-8000-000000000001",
+        session_id: "chat-thread-goal",
+        prompt: "hi",
+        stream: async () => {},
+        config: {
+          workingDirectory: "/tmp/project",
+        } as any,
+        chat: {
+          project_id: "00000000-0000-4000-8000-000000000000",
+          path: "/tmp/project/test.chat",
+          message_date: "2026-06-06T00:00:01.000Z",
+          sender_id: "openai-codex-agent",
+          thread_id: "thread-goal-1",
+          message_id: "assistant-goal-1",
+          parent_message_id: "user-goal-1",
+        },
+      });
 
-    expect(appServerCalls.map((call) => call.method)).toEqual(
-      expect.arrayContaining([
-        "thread/resume",
+      expect(countCodexGoals(goalsDbPath)).toBe(0);
+      expect(appServerCalls.map((call) => call.method)).toEqual(
+        expect.arrayContaining(["thread/resume", "turn/start"]),
+      );
+      expect(appServerCalls.map((call) => call.method)).not.toContain(
         "thread/goal/get",
+      );
+      expect(appServerCalls.map((call) => call.method)).not.toContain(
         "thread/goal/clear",
-        "turn/start",
-      ]),
-    );
-    expect(
-      appServerCalls.findIndex((call) => call.method === "thread/goal/clear"),
-    ).toBeLessThan(
-      appServerCalls.findIndex((call) => call.method === "turn/start"),
-    );
+      );
+    } finally {
+      rmSync(rootHostPath, { recursive: true, force: true });
+    }
   });
 
-  it("clears active app-server goals before automation turns", async () => {
+  it("clears persisted Codex goals before automation turns", async () => {
+    const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-root-"));
+    const codexHome = path.join(rootHostPath, ".codex");
+    const goalsDbPath = createCodexGoalsDb(codexHome);
     const appServerCalls: Array<{ method: string; params: any }> = [];
     const proc = new FakeCodexAppServerProc((fake, message) => {
       appServerCalls.push({ method: message.method, params: message.params });
@@ -495,23 +551,6 @@ describe("CodexAppServerAgent", () => {
           fake.sendResponse(message.id, {
             thread: { id: "thr-automation-goal-1" },
           });
-          break;
-        case "thread/goal/get":
-          fake.sendResponse(message.id, {
-            goal: {
-              threadId: "thr-automation-goal-1",
-              objective: "Old hidden automation objective",
-              status: "active",
-              tokenBudget: null,
-              tokensUsed: 10,
-              timeUsedSeconds: 5,
-              createdAt: 1,
-              updatedAt: 2,
-            },
-          });
-          break;
-        case "thread/goal/clear":
-          fake.sendResponse(message.id, { cleared: true });
           break;
         case "turn/start":
           fake.sendResponse(message.id, {
@@ -539,37 +578,45 @@ describe("CodexAppServerAgent", () => {
         cmd: "fake-codex",
         args: ["app-server"],
         cwd: "/tmp/project",
+        containerPathMap: {
+          rootHostPath,
+        },
       }),
     });
 
-    const agent = new CodexAppServerAgent();
-    await agent.evaluate({
-      project_id: "00000000-0000-4000-8000-000000000000",
-      account_id: "00000000-0000-4000-8000-000000000001",
-      session_id: "automation-thread-goal",
-      prompt: "continue automation",
-      stream: async () => {},
-      config: {
-        workingDirectory: "/tmp/project",
-      } as any,
-      chat: {
+    try {
+      const agent = new CodexAppServerAgent();
+      await agent.evaluate({
         project_id: "00000000-0000-4000-8000-000000000000",
-        path: "/tmp/project/test.chat",
-        message_date: "2026-06-06T00:00:01.000Z",
-        sender_id: "openai-codex-agent",
-        thread_id: "thread-goal-1",
-        message_id: "assistant-goal-1",
-        parent_message_id: "user-goal-1",
-        automation_id: "automation-goal-1",
-      },
-    });
+        account_id: "00000000-0000-4000-8000-000000000001",
+        session_id: "automation-thread-goal",
+        prompt: "continue automation",
+        stream: async () => {},
+        config: {
+          workingDirectory: "/tmp/project",
+        } as any,
+        chat: {
+          project_id: "00000000-0000-4000-8000-000000000000",
+          path: "/tmp/project/test.chat",
+          message_date: "2026-06-06T00:00:01.000Z",
+          sender_id: "openai-codex-agent",
+          thread_id: "thread-goal-1",
+          message_id: "assistant-goal-1",
+          parent_message_id: "user-goal-1",
+          automation_id: "automation-goal-1",
+        },
+      });
 
-    expect(appServerCalls.map((call) => call.method)).toContain(
-      "thread/goal/get",
-    );
-    expect(appServerCalls.map((call) => call.method)).toContain(
-      "thread/goal/clear",
-    );
+      expect(countCodexGoals(goalsDbPath)).toBe(0);
+      expect(appServerCalls.map((call) => call.method)).not.toContain(
+        "thread/goal/get",
+      );
+      expect(appServerCalls.map((call) => call.method)).not.toContain(
+        "thread/goal/clear",
+      );
+    } finally {
+      rmSync(rootHostPath, { recursive: true, force: true });
+    }
   });
 
   it("passes explicit Codex Fast mode service tier to app-server", async () => {
