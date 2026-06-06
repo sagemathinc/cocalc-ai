@@ -59,26 +59,26 @@ function readMaybeImmutable(value: any, key: string): any {
   return value?.get?.(key) ?? value?.[key];
 }
 
-function projectListWindowKey({
+function projectIdsFromMaybeImmutable(value: any): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value?.toArray === "function") return value.toArray();
+  return [];
+}
+
+function projectListWindowQuery({
   hidden,
   search,
 }: {
   hidden: boolean;
   search: string;
-}): string {
-  return JSON.stringify({
+}) {
+  return {
     limit: VISIBLE_WINDOW_REPAIR_LIMIT,
     offset: 0,
     hidden,
     search: `${search ?? ""}`.trim(),
-    sort: "last_edited",
-  });
-}
-
-function projectIdsFromMaybeImmutable(value: any): string[] {
-  if (Array.isArray(value)) return value;
-  if (typeof value?.toArray === "function") return value.toArray();
-  return [];
+    sort: "last_edited" as const,
+  };
 }
 
 export const ProjectsPage: React.FC = () => {
@@ -175,9 +175,13 @@ export const ProjectsPage: React.FC = () => {
   ]);
 
   const activeHashtags = selected_hashtags?.get(filter);
-  const backendWindowKey = useMemo(
-    () => projectListWindowKey({ hidden, search }),
+  const backendWindowQuery = useMemo(
+    () => projectListWindowQuery({ hidden, search }),
     [hidden, search],
+  );
+  const backendWindowKey = useMemo(
+    () => JSON.stringify(backendWindowQuery),
+    [backendWindowQuery],
   );
 
   const backend_visible_projects: string[] | undefined = useMemo(() => {
@@ -199,6 +203,12 @@ export const ProjectsPage: React.FC = () => {
   }, [activeHashtags, backendWindowKey, project_list_window]);
 
   const visible_projects = backend_visible_projects ?? local_visible_projects;
+  const showingBackendWindow = backend_visible_projects != null;
+  const backendWindowDirty =
+    showingBackendWindow && !!readMaybeImmutable(project_list_window, "dirty");
+  const backendWindowDirtyCount = Number(
+    readMaybeImmutable(project_list_window, "dirty_count") ?? 0,
+  );
 
   const visibleProjectionRepairKey = useMemo(
     () => visible_projects.slice(0, VISIBLE_WINDOW_REPAIR_LIMIT).join("\n"),
@@ -239,16 +249,16 @@ export const ProjectsPage: React.FC = () => {
       // search/filter semantics used for rendering.
       void redux
         .getActions("projects")
-        ?.loadProjectListWindowForCurrentAccount?.({
-          limit: VISIBLE_WINDOW_REPAIR_LIMIT,
-          offset: 0,
-          hidden,
-          search: `${search ?? ""}`.trim(),
-          sort: "last_edited",
-        });
+        ?.loadProjectListWindowForCurrentAccount?.(backendWindowQuery);
     }, VISIBLE_WINDOW_REPAIR_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [hidden, search]);
+  }, [backendWindowQuery]);
+
+  function refreshBackendWindow() {
+    void redux
+      .getActions("projects")
+      ?.loadProjectListWindowForCurrentAccount?.(backendWindowQuery);
+  }
 
   useEffect(() => {
     const visible = new Set(visible_projects);
@@ -536,6 +546,31 @@ export const ProjectsPage: React.FC = () => {
                   </div>
                   {/* Bulk Operations (when filters active) */}
                   <div ref={operationsRef}>
+                    {backendWindowDirty && (
+                      <div
+                        style={{
+                          alignItems: "center",
+                          background: COLORS.GRAY_LLL,
+                          border: `1px solid ${COLORS.GRAY_L}`,
+                          borderRadius: "4px",
+                          display: "flex",
+                          gap: "8px",
+                          justifyContent: "space-between",
+                          margin: "8px 0",
+                          padding: "6px 8px",
+                        }}
+                      >
+                        <span>
+                          Project list changed
+                          {backendWindowDirtyCount > 1
+                            ? ` (${backendWindowDirtyCount} updates)`
+                            : ""}
+                        </span>
+                        <Button size="small" onClick={refreshBackendWindow}>
+                          Refresh
+                        </Button>
+                      </div>
+                    )}
                     <ProjectsOperations
                       visible_projects={visible_projects}
                       selected_project_ids={selectedProjectIds}

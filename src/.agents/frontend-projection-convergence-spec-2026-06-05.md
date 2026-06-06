@@ -648,6 +648,7 @@ Deliverables:
 - Projects table renders joined window IDs + `project_map`
   - started: full projects page now renders from the matching backend window when no hashtag filter is active, and falls back to local filtering when the backend window is loading, stale, errored, or semantically unsafe
 - feed events mark visible window dirty or repair affected rows
+  - implemented: feed upsert/remove/history-gap marks the active backend window dirty, updates row data in place, and shows an explicit refresh control instead of silently reordering the project list
 
 ### Phase 4: Move Detail Fields Out Of `project_map`
 

@@ -13,6 +13,7 @@ let mockProjectListWindow: any;
 let mockHidden = false;
 let mockSearch = "";
 let mockSelectedHashtags: any = mockEmptyMap;
+const mockLoadProjectListWindow = jest.fn();
 
 jest.mock("./actions", () => ({}));
 
@@ -52,7 +53,11 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     React,
     redux: {
       getActions: (name: string) => {
-        if (name === "projects") return { ensure_host_info: jest.fn() };
+        if (name === "projects")
+          return {
+            ensure_host_info: jest.fn(),
+            loadProjectListWindowForCurrentAccount: mockLoadProjectListWindow,
+          };
         if (name === "mentions") return { set_filter: jest.fn() };
         if (name === "page") return { set_active_tab: jest.fn() };
         return {};
@@ -155,6 +160,7 @@ beforeEach(() => {
   mockHidden = false;
   mockSearch = "";
   mockSelectedHashtags = mockEmptyMap;
+  mockLoadProjectListWindow.mockClear();
   (globalThis as any).ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -252,4 +258,32 @@ test("projects page ignores backend project window while hashtag filters are act
     "data-visible-projects",
     JSON.stringify(["local-hashtag-project"]),
   );
+});
+
+test("projects page shows explicit refresh for dirty backend window", () => {
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["backend-project"],
+    loading: false,
+    dirty: true,
+    dirty_count: 3,
+  });
+
+  render(<ProjectsPage />);
+
+  expect(screen.getByText("Project list changed (3 updates)")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(mockLoadProjectListWindow).toHaveBeenCalledWith({
+    limit: 200,
+    offset: 0,
+    hidden: false,
+    search: "",
+    sort: "last_edited",
+  });
 });

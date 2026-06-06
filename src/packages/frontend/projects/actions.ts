@@ -75,6 +75,10 @@ export type { Datastore, EnvVars, EnvVarsRecord };
 
 const PROJECTION_ONLY_FIELD = "__projection_only";
 const PROJECTED_PROJECT_BOOTSTRAP_LIMIT = 2000;
+type ProjectListWindowDirtyReason =
+  | "feed-upsert"
+  | "feed-remove"
+  | "history-gap";
 
 function dateOrNull(value: unknown): Date | null {
   if (value == null) return null;
@@ -209,6 +213,12 @@ function readMaybeImmutableIn(value: any, path: string[]): any {
     if (current == null) return current;
   }
   return current;
+}
+
+function arrayFromMaybeImmutable(value: any): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value?.toArray === "function") return value.toArray();
+  return [];
 }
 
 function stateTimeMs(state: any): number | undefined {
@@ -471,6 +481,76 @@ export class ProjectsActions extends Actions<ProjectsState> {
     this.realtimeFeedAccountId = undefined;
   }
 
+  private getProjectListWindowState(): any {
+    return store.get("project_list_window");
+  }
+
+  private markProjectListWindowDirty(
+    reason: ProjectListWindowDirtyReason,
+  ): void {
+    const current = this.getProjectListWindowState();
+    const key = readMaybeImmutable(current, "key");
+    if (typeof key !== "string" || !key) {
+      return;
+    }
+    const project_ids = arrayFromMaybeImmutable(
+      readMaybeImmutable(current, "project_ids"),
+    );
+    const dirty_count = Number(readMaybeImmutable(current, "dirty_count") ?? 0);
+    this.setState({
+      project_list_window: {
+        key,
+        project_ids,
+        loading: !!readMaybeImmutable(current, "loading"),
+        ...(readMaybeImmutable(current, "loaded_at")
+          ? { loaded_at: readMaybeImmutable(current, "loaded_at") }
+          : {}),
+        ...(readMaybeImmutable(current, "error")
+          ? { error: readMaybeImmutable(current, "error") }
+          : {}),
+        dirty: true,
+        dirty_reason: reason,
+        dirty_count: Number.isFinite(dirty_count) ? dirty_count + 1 : 1,
+        dirty_at: new Date(),
+      },
+    } as ProjectsState);
+  }
+
+  private shouldDirtyProjectListWindowForUpsert({
+    row,
+    currentProject,
+  }: {
+    row: AccountFeedProjectRow;
+    currentProject: Map<string, any>;
+  }): boolean {
+    const current = this.getProjectListWindowState();
+    const key = readMaybeImmutable(current, "key");
+    if (typeof key !== "string" || !key) {
+      return false;
+    }
+    const project_ids = arrayFromMaybeImmutable(
+      readMaybeImmutable(current, "project_ids"),
+    );
+    if (!project_ids.includes(row.project_id) || currentProject.size === 0) {
+      return true;
+    }
+    try {
+      const parsed = JSON.parse(key);
+      if (`${parsed?.search ?? ""}`.trim()) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+    const currentLastEdited = dateValueMs(currentProject.get("last_edited"));
+    const incomingLastEdited = dateValueMs(row.last_edited);
+    return (
+      currentLastEdited != null &&
+      incomingLastEdited != null &&
+      currentLastEdited !== incomingLastEdited
+    );
+  }
+
   private handleRealtimeFeedChange = (
     event?: AccountFeedEvent,
     seq?: number,
@@ -513,6 +593,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       info,
     });
     this.flushPendingProjectFeedChanges();
+    this.markProjectListWindowDirty("history-gap");
     void this.refreshProjectsProjectionAfterHistoryGap();
   };
 
@@ -1081,6 +1162,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
         key,
         project_ids: previousProjectIds,
         loading: true,
+        dirty: !!readMaybeImmutable(previousWindow, "dirty"),
+        ...(readMaybeImmutable(previousWindow, "dirty_reason")
+          ? { dirty_reason: readMaybeImmutable(previousWindow, "dirty_reason") }
+          : {}),
+        ...(readMaybeImmutable(previousWindow, "dirty_count") != null
+          ? { dirty_count: readMaybeImmutable(previousWindow, "dirty_count") }
+          : {}),
+        ...(readMaybeImmutable(previousWindow, "dirty_at")
+          ? { dirty_at: readMaybeImmutable(previousWindow, "dirty_at") }
+          : {}),
       },
     } as ProjectsState);
 
@@ -1101,6 +1192,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
           project_ids: previousProjectIds,
           loading: false,
           error: `${err}`,
+          dirty: !!readMaybeImmutable(previousWindow, "dirty"),
+          ...(readMaybeImmutable(previousWindow, "dirty_reason")
+            ? {
+                dirty_reason: readMaybeImmutable(
+                  previousWindow,
+                  "dirty_reason",
+                ),
+              }
+            : {}),
+          ...(readMaybeImmutable(previousWindow, "dirty_count") != null
+            ? { dirty_count: readMaybeImmutable(previousWindow, "dirty_count") }
+            : {}),
+          ...(readMaybeImmutable(previousWindow, "dirty_at")
+            ? { dirty_at: readMaybeImmutable(previousWindow, "dirty_at") }
+            : {}),
         },
       } as ProjectsState);
       recordProjectionRepairFailure({
@@ -1135,6 +1241,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
         key,
         project_ids,
         loading: false,
+        dirty: false,
+        dirty_count: 0,
         loaded_at: new Date(),
       },
     } as ProjectsState);
@@ -1508,6 +1616,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
           : undefined;
       const currentProject =
         project_map.get(row.project_id) ?? Map<string, any>();
+      if (
+        this.shouldDirtyProjectListWindowForUpsert({
+          row,
+          currentProject,
+        })
+      ) {
+        this.markProjectListWindowDirty("feed-upsert");
+      }
       let nextProject = this.mergeProjectFeedRow(currentProject, row);
       if (
         typeof source_host_id === "string" &&
@@ -1569,6 +1685,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
 
     for (const project_id of pendingRemovals) {
+      this.markProjectListWindowDirty("feed-remove");
       if (!project_map.has(project_id)) {
         continue;
       }
