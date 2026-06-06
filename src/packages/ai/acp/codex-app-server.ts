@@ -68,6 +68,10 @@ function normalizeDiffLines(text: string): string[] {
   return lines;
 }
 
+function shouldClearActiveGoalBeforeTurn(request: AcpEvaluateRequest): boolean {
+  return !!request.chat;
+}
+
 function formatDiffGutter(
   left: number | undefined,
   right: number | undefined,
@@ -1722,6 +1726,9 @@ export class CodexAppServerAgent implements AcpAgent {
         throw new Error(`app-server did not return a thread id`);
       }
       setRunningKey(actualThreadId);
+      if (shouldClearActiveGoalBeforeTurn(request)) {
+        await this.clearActiveGoalBeforeTurn(client, actualThreadId);
+      }
       const sessionEntry = { sessionId: actualThreadId, cwd };
       this.sessions.set(actualThreadId, sessionEntry);
       if (requestedSessionKey && requestedSessionKey !== actualThreadId) {
@@ -2446,6 +2453,30 @@ export class CodexAppServerAgent implements AcpAgent {
     if (!requested) return base;
     if (path.isAbsolute(requested)) return requested;
     return path.resolve(base, requested);
+  }
+
+  private async clearActiveGoalBeforeTurn(
+    client: AppServerClient,
+    threadId: string,
+  ): Promise<void> {
+    try {
+      const result = await client.request("thread/goal/get", { threadId });
+      const goal = result?.goal;
+      if (goal?.status !== "active") {
+        return;
+      }
+      await client.request("thread/goal/clear", { threadId });
+      logger.info("codex app-server: cleared active goal before chat turn", {
+        threadId,
+        objective:
+          typeof goal.objective === "string" ? goal.objective : undefined,
+      });
+    } catch (err) {
+      logger.debug("codex app-server: goal clear check failed", {
+        threadId,
+        err: `${err}`,
+      });
+    }
   }
 
   private async ensureSessionConfig(

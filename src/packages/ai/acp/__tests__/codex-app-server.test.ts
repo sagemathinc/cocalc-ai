@@ -384,6 +384,194 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
+  it("clears active app-server goals before normal chat turns", async () => {
+    const appServerCalls: Array<{ method: string; params: any }> = [];
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      appServerCalls.push({ method: message.method, params: message.params });
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/resume":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-goal-1" },
+          });
+          break;
+        case "thread/goal/get":
+          fake.sendResponse(message.id, {
+            goal: {
+              threadId: "thr-goal-1",
+              objective: "Old hidden objective",
+              status: "active",
+              tokenBudget: null,
+              tokensUsed: 10,
+              timeUsedSeconds: 5,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          });
+          break;
+        case "thread/goal/clear":
+          fake.sendResponse(message.id, { cleared: true });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-goal-1" } });
+          setImmediate(() => {
+            fake.sendNotification("item/agentMessage/delta", {
+              threadId: "thr-goal-1",
+              turnId: "turn-goal-1",
+              itemId: "msg-goal-1",
+              delta: "Fresh response",
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-goal-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      session_id: "chat-thread-goal",
+      prompt: "hi",
+      stream: async () => {},
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+      chat: {
+        project_id: "00000000-0000-4000-8000-000000000000",
+        path: "/tmp/project/test.chat",
+        message_date: "2026-06-06T00:00:01.000Z",
+        sender_id: "openai-codex-agent",
+        thread_id: "thread-goal-1",
+        message_id: "assistant-goal-1",
+        parent_message_id: "user-goal-1",
+      },
+    });
+
+    expect(appServerCalls.map((call) => call.method)).toEqual(
+      expect.arrayContaining([
+        "thread/resume",
+        "thread/goal/get",
+        "thread/goal/clear",
+        "turn/start",
+      ]),
+    );
+    expect(
+      appServerCalls.findIndex((call) => call.method === "thread/goal/clear"),
+    ).toBeLessThan(
+      appServerCalls.findIndex((call) => call.method === "turn/start"),
+    );
+  });
+
+  it("clears active app-server goals before automation turns", async () => {
+    const appServerCalls: Array<{ method: string; params: any }> = [];
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      appServerCalls.push({ method: message.method, params: message.params });
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/resume":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-automation-goal-1" },
+          });
+          break;
+        case "thread/goal/get":
+          fake.sendResponse(message.id, {
+            goal: {
+              threadId: "thr-automation-goal-1",
+              objective: "Old hidden automation objective",
+              status: "active",
+              tokenBudget: null,
+              tokensUsed: 10,
+              timeUsedSeconds: 5,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          });
+          break;
+        case "thread/goal/clear":
+          fake.sendResponse(message.id, { cleared: true });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-automation-goal-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-automation-goal-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      session_id: "automation-thread-goal",
+      prompt: "continue automation",
+      stream: async () => {},
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+      chat: {
+        project_id: "00000000-0000-4000-8000-000000000000",
+        path: "/tmp/project/test.chat",
+        message_date: "2026-06-06T00:00:01.000Z",
+        sender_id: "openai-codex-agent",
+        thread_id: "thread-goal-1",
+        message_id: "assistant-goal-1",
+        parent_message_id: "user-goal-1",
+        automation_id: "automation-goal-1",
+      },
+    });
+
+    expect(appServerCalls.map((call) => call.method)).toContain(
+      "thread/goal/get",
+    );
+    expect(appServerCalls.map((call) => call.method)).toContain(
+      "thread/goal/clear",
+    );
+  });
+
   it("passes explicit Codex Fast mode service tier to app-server", async () => {
     const threadStartRequests: any[] = [];
     const turnStartRequests: any[] = [];
