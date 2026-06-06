@@ -1068,8 +1068,8 @@ export async function buildBootstrapScripts(
     `COCALC_PROJECT_HOST_HTTPS=${tlsEnabled ? "1" : "0"}`,
     `HOST=${bindHost}`,
     `PORT=${port}`,
-    `DEBUG=`,
-    `DEBUG_CONSOLE=no`,
+    `DEBUG=cocalc:*`,
+    `DEBUG_CONSOLE=yes`,
     `COCALC_SSH_SERVER=0.0.0.0:${sshPort}`,
   ];
   if (!isLoopbackBindHost) {

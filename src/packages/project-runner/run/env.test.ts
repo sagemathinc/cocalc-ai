@@ -55,7 +55,7 @@ describe("project container environment", () => {
     expect(env.LOGS).toBeUndefined();
   });
 
-  it("keeps project debug logging disabled by default", async () => {
+  it("enables project debug logging by default", async () => {
     const { getEnvironment } = await import("./env");
     const env = await getEnvironment({
       HOME: "/home/user",
@@ -63,8 +63,8 @@ describe("project container environment", () => {
       image: "test-image",
     });
 
-    expect(env.DEBUG).toBe("");
-    expect(env.DEBUG_CONSOLE).toBe("no");
+    expect(env.DEBUG).toBe("cocalc:*,-cocalc:silly:*");
+    expect(env.DEBUG_CONSOLE).toBe("yes");
   });
 
   it("allows project debug logging to be explicitly enabled by the host", async () => {
