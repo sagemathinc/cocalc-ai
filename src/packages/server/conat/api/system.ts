@@ -269,6 +269,8 @@ import type {
   RootfsQuotaUsageRow,
   ServiceAdmissionDenialReport,
   ServiceAdmissionDenialSummary,
+  GlobalConfigPropagationBayState,
+  GlobalConfigPropagationStatus,
   ProjectBackupShardAdminStatus,
   SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
@@ -670,7 +672,7 @@ export async function getBayDrainPreflight({
 }
 
 type SiteSettingUpdate = { name: string; value: string };
-const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
+export const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
 
 const SITE_SETTING_NAMES = new Set<string>([
   ...Object.keys(site_settings_conf),
@@ -993,7 +995,7 @@ export async function setSiteSettingsOnSeed({
   });
 }
 
-async function syncSiteSettingsToBaysOnSeed(): Promise<SiteSettingsSyncResult> {
+export async function syncSiteSettingsToBaysOnSeed(): Promise<SiteSettingsSyncResult> {
   const localBayId = getConfiguredBayId();
   const seedBayId = getConfiguredClusterSeedBayId();
   if (localBayId !== seedBayId) {
@@ -1008,6 +1010,166 @@ async function syncSiteSettingsToBaysOnSeed(): Promise<SiteSettingsSyncResult> {
       version: await getGlobalConfigVersion(SERVER_SETTINGS_CONFIG_SCOPE),
     },
   );
+}
+
+function toIsoString(value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  return `${value}`;
+}
+
+function classifyGlobalConfigBayState({
+  seedVersion,
+  appliedVersion,
+  lastError,
+}: {
+  seedVersion?: number;
+  appliedVersion?: number;
+  lastError?: string | null;
+}): GlobalConfigPropagationBayState {
+  if (lastError) {
+    return "error";
+  }
+  if (seedVersion == null || appliedVersion == null) {
+    return "missing";
+  }
+  return appliedVersion >= seedVersion ? "current" : "stale";
+}
+
+export async function getGlobalConfigPropagationStatusOnSeed({
+  scope,
+}: {
+  scope?: string;
+} = {}): Promise<GlobalConfigPropagationStatus> {
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const normalizedScope = `${scope ?? ""}`.trim();
+  if (currentBayId !== seedBayId) {
+    throw Error(
+      `getGlobalConfigPropagationStatusOnSeed must run on seed bay '${seedBayId}', not '${currentBayId}'`,
+    );
+  }
+
+  const [versionResult, registry] = await Promise.all([
+    normalizedScope
+      ? getPool().query(
+          `
+          SELECT scope, version, updated_at, updated_by, metadata
+          FROM global_config_versions
+          WHERE scope=$1
+          `,
+          [normalizedScope],
+        )
+      : getPool().query(
+          `
+          SELECT scope, version, updated_at, updated_by, metadata
+          FROM global_config_versions
+          ORDER BY scope
+          `,
+        ),
+    listClusterBayRegistry(),
+  ]);
+  const versionRows = [...versionResult.rows];
+  if (
+    normalizedScope &&
+    !versionRows.some((row) => row.scope === normalizedScope)
+  ) {
+    versionRows.push({
+      scope: normalizedScope,
+      version: null,
+      updated_at: null,
+      updated_by: null,
+      metadata: null,
+    });
+  }
+  const scopes = versionRows.map((row) => `${row.scope}`);
+  const stateResult = scopes.length
+    ? await getPool().query(
+        `
+        SELECT bay_id, scope, applied_version, applied_at, last_error
+        FROM global_config_bay_state
+        WHERE scope=ANY($1)
+        `,
+        [scopes],
+      )
+    : { rows: [] };
+  const states = new Map<string, any>();
+  for (const row of stateResult.rows) {
+    states.set(`${row.scope}\0${row.bay_id}`, row);
+  }
+  const bayIds = [
+    ...new Set([
+      seedBayId,
+      currentBayId,
+      ...registry.map(({ bay_id }) => bay_id).filter(Boolean),
+    ]),
+  ].sort();
+
+  return {
+    current_bay_id: currentBayId,
+    seed_bay_id: seedBayId,
+    checked_at: new Date().toISOString(),
+    scopes: versionRows
+      .sort((a, b) => `${a.scope}`.localeCompare(`${b.scope}`))
+      .map((row) => {
+        const seedVersion = parseConfigVersion(row.version);
+        const version = seedVersion > 0 ? seedVersion : undefined;
+        return {
+          scope: `${row.scope}`,
+          seed_version: version,
+          updated_at: toIsoString(row.updated_at),
+          updated_by: row.updated_by ?? null,
+          metadata: row.metadata ?? null,
+          bays: bayIds.map((bay_id) => {
+            const state = states.get(`${row.scope}\0${bay_id}`);
+            const appliedVersion = parseConfigVersion(state?.applied_version);
+            const applied_version =
+              appliedVersion > 0 ? appliedVersion : undefined;
+            const last_error = state?.last_error ?? null;
+            return {
+              bay_id,
+              status: classifyGlobalConfigBayState({
+                seedVersion: version,
+                appliedVersion: applied_version,
+                lastError: last_error,
+              }),
+              applied_version,
+              applied_at: toIsoString(state?.applied_at),
+              last_error,
+            };
+          }),
+        };
+      }),
+  };
+}
+
+export async function getGlobalConfigPropagationStatus({
+  account_id,
+  scope,
+}: {
+  account_id?: string;
+  scope?: string;
+} = {}): Promise<GlobalConfigPropagationStatus> {
+  await assertAdmin(account_id);
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const normalizedScope = `${scope ?? ""}`.trim();
+  if (currentBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 15_000 })
+      .getGlobalConfigPropagationStatus({
+        account_id,
+        scope: normalizedScope || undefined,
+        source_bay_id: currentBayId,
+      });
+  }
+  return await getGlobalConfigPropagationStatusOnSeed({
+    scope: normalizedScope || undefined,
+  });
 }
 
 export async function setSiteSettings({

@@ -42,6 +42,7 @@ import type {
   AcpAdmissionDenialReport,
   BayBackupsInfo,
   BayDrainPreflightResult,
+  GlobalConfigPropagationStatus,
   BayLoadInfo,
   ProjectRuntimeSlotReport,
   RootfsQuotaReport,
@@ -1367,6 +1368,12 @@ export interface BayOpsSyncSiteSettingsRequest {
   source_bay_id?: string | null;
 }
 
+export interface BayOpsGlobalConfigPropagationStatusRequest {
+  account_id?: string;
+  scope?: string;
+  source_bay_id?: string | null;
+}
+
 export interface AuthTokenRequiresRequest {}
 
 export interface AuthTokenRedeemRequest {
@@ -1840,7 +1847,8 @@ export type BayOpsMethod =
   | "get-project-runtime-slot-report"
   | "set-server-setting"
   | "set-site-settings"
-  | "sync-site-settings";
+  | "sync-site-settings"
+  | "get-global-config-propagation-status";
 export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
@@ -2912,6 +2920,9 @@ export interface InterBayBayOpsApi {
   syncSiteSettings: (
     opts: BayOpsSyncSiteSettingsRequest,
   ) => Promise<SiteSettingsSyncResult>;
+  getGlobalConfigPropagationStatus: (
+    opts: BayOpsGlobalConfigPropagationStatusRequest,
+  ) => Promise<GlobalConfigPropagationStatus>;
 }
 
 export interface InterBayAuthTokenApi {
@@ -6199,6 +6210,15 @@ export function createInterBayBayOpsClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "sync-site-settings" }),
   });
+  const globalConfigPropagationStatusClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getGlobalConfigPropagationStatus">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-global-config-propagation-status",
+    }),
+  });
   const rootfsQuotaReportClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getRootfsQuotaReport">
   >({
@@ -6267,6 +6287,10 @@ export function createInterBayBayOpsClient({
       await setSiteSettingsClient.setSiteSettings(opts),
     syncSiteSettings: async (opts) =>
       await syncSiteSettingsClient.syncSiteSettings(opts),
+    getGlobalConfigPropagationStatus: async (opts) =>
+      await globalConfigPropagationStatusClient.getGlobalConfigPropagationStatus(
+        opts,
+      ),
   };
 }
 
@@ -6363,6 +6387,20 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         syncSiteSettings: async (opts) => await impl.syncSiteSettings(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getGlobalConfigPropagationStatus">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-global-config-propagation-status",
+      }),
+      impl: {
+        getGlobalConfigPropagationStatus: async (opts) =>
+          await impl.getGlobalConfigPropagationStatus(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsCatalog">>({

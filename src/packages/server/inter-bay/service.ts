@@ -354,6 +354,7 @@ import {
   getAcpAdmissionDenialReport,
   getBayBackups,
   getBayLoad,
+  getGlobalConfigPropagationStatus,
   getProjectRuntimeSlotReport,
   getRootfsQuotaReport,
   getServiceAdmissionDenialReport,
@@ -498,6 +499,11 @@ async function startBayOpsService(): Promise<void> {
     setSiteSettings: async (opts) => await setSiteSettingsOnSeed(opts),
     syncSiteSettings: async (opts) =>
       await syncSiteSettingsToBays({ account_id: opts.account_id }),
+    getGlobalConfigPropagationStatus: async (opts) =>
+      await getGlobalConfigPropagationStatus({
+        account_id: opts.account_id,
+        scope: opts.scope,
+      }),
   };
   services.push(
     ...createInterBayBayOpsHandlers({

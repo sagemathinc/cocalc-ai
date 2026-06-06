@@ -900,8 +900,9 @@ Tasks:
 - implement seed-routed `setSiteSettings`; (done)
 - add `server_settings` versioning; (first pass done)
 - add attached-bay mirror apply path; (first pass done)
-- add periodic repair/sync worker;
-- add admin propagation status UI;
+- add admin propagation status API; (first pass done)
+- add periodic repair/sync worker; (first pass done for `server_settings`)
+- add admin propagation status UI; (first pass done for Site Settings)
 - then bring `membership_tiers`, global buckets/repos, and catalog config under
   the same framework where appropriate.
 
@@ -923,12 +924,19 @@ Implemented:
 - seed fan-out records declared `global_config_bay_state` rows for the seed and
   each attached bay, preserving the previous applied version when a bay fails;
 - `SiteSettingsSyncResult` now returns additive `scope` and `version` fields so
-  callers can display or inspect the exact seed version involved.
+  callers can display or inspect the exact seed version involved;
+- `system.getGlobalConfigPropagationStatus` reports seed version, per-bay
+  applied version, stale/missing/error state, and forwards attached-bay calls to
+  the seed for authoritative reads;
+- seed/standalone Conat startup runs global config mirror repair maintenance for
+  `scope='server_settings'`, which checks propagation state and only calls the
+  seed sync path when a bay is stale, missing, or errored;
+- the admin Site Settings page shows seed version and per-bay propagation state
+  for `scope='server_settings'`, with manual refresh and automatic refresh after
+  saves or explicit syncs.
 
 Still needed:
 
-- add a periodic seed-to-bay repair worker;
-- expose propagation status in admin UI;
 - eventually make attached-bay mirror apply require a seed/internal authority
   token distinct from generic Bay Ops trust.
 

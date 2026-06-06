@@ -51,6 +51,7 @@ export const system = {
   getBayOpsOverview: authFirstRequireAccount,
   getBayOpsDetail: authFirstRequireAccount,
   getBayDrainPreflight: authFirstRequireAccount,
+  getGlobalConfigPropagationStatus: authFirstRequireAccount,
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
   getBayBackups: authFirst,
@@ -862,6 +863,36 @@ export interface SiteSettingsSyncResult {
   bays: SiteSettingsSyncBayResult[];
 }
 
+export type GlobalConfigPropagationBayState =
+  | "current"
+  | "stale"
+  | "missing"
+  | "error";
+
+export interface GlobalConfigPropagationBayStatus {
+  bay_id: string;
+  status: GlobalConfigPropagationBayState;
+  applied_version?: number;
+  applied_at?: string | null;
+  last_error?: string | null;
+}
+
+export interface GlobalConfigPropagationScopeStatus {
+  scope: string;
+  seed_version?: number;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  metadata?: Record<string, any> | null;
+  bays: GlobalConfigPropagationBayStatus[];
+}
+
+export interface GlobalConfigPropagationStatus {
+  current_bay_id: string;
+  seed_bay_id: string;
+  checked_at: string;
+  scopes: GlobalConfigPropagationScopeStatus[];
+}
+
 export type SiteSetupStepState =
   | "done"
   | "blocked"
@@ -1528,6 +1559,11 @@ export interface System {
     bay_id?: string;
     unsafe_rehome?: boolean;
   }) => Promise<BayDrainPreflightResult>;
+
+  getGlobalConfigPropagationStatus: (opts?: {
+    account_id?: string;
+    scope?: string;
+  }) => Promise<GlobalConfigPropagationStatus>;
 
   setBayProjectOwnershipAdmission: (opts: {
     account_id?: string;
