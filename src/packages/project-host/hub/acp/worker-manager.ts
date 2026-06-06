@@ -17,6 +17,7 @@ import {
   acpDaemonControlClient,
   type AcpDaemonStatus,
 } from "@cocalc/conat/ai/acp/daemon-control";
+import { getAcpWorker } from "@cocalc/lite/hub/sqlite/acp-workers";
 import { getSoftwareVersions } from "../../software";
 import { getProjectHostConatClient } from "../../runtime-client";
 import { getProjectHostProcessTitle } from "../../process-role";
@@ -41,6 +42,10 @@ const ACP_WORKER_CONTROL_TIMEOUT_MS = Math.max(
 const ACP_WORKER_CONTROL_STARTUP_GRACE_MS = Math.max(
   5_000,
   Number(process.env.COCALC_ACP_WORKER_CONTROL_STARTUP_GRACE_MS ?? 30_000),
+);
+const ACP_WORKER_DB_HEARTBEAT_STALE_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_ACP_WORKER_DB_HEARTBEAT_STALE_MS ?? 15_000),
 );
 
 let supervisorStarted = false;
@@ -274,6 +279,23 @@ function workerControlStartupGraceExpired(
     return true;
   }
   return now - startedAt >= ACP_WORKER_CONTROL_STARTUP_GRACE_MS;
+}
+
+function workerDatabaseHeartbeatFresh(
+  worker: WorkerProcessInfo,
+  now = Date.now(),
+): boolean {
+  const worker_id = workerIdOf(worker);
+  if (!worker_id) return false;
+  const row = getAcpWorker(worker_id);
+  if (row == null || row.state === "stopped") return false;
+  if (Number(row.pid ?? 0) !== worker.pid) return false;
+  const lastHeartbeatAt = Number(row.last_heartbeat_at ?? 0);
+  return (
+    Number.isFinite(lastHeartbeatAt) &&
+    lastHeartbeatAt > 0 &&
+    now - lastHeartbeatAt <= ACP_WORKER_DB_HEARTBEAT_STALE_MS
+  );
 }
 
 async function getWorkerStatus(
@@ -581,7 +603,8 @@ async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
     if (
       status == null &&
       isExpectedWorkerProcess(worker, launch) &&
-      workerControlStartupGraceExpired(worker)
+      workerControlStartupGraceExpired(worker) &&
+      !workerDatabaseHeartbeatFresh(worker)
     ) {
       logger.warn("terminating unresponsive active project-host ACP worker", {
         pid: worker.pid,
@@ -589,6 +612,7 @@ async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
         bundle_version: workerBundleVersionOf(worker, launch),
         bundle_path: workerBundlePathOf(worker, launch),
         control_startup_grace_ms: ACP_WORKER_CONTROL_STARTUP_GRACE_MS,
+        db_heartbeat_stale_ms: ACP_WORKER_DB_HEARTBEAT_STALE_MS,
       });
       await terminateWorkerPid(worker.pid);
       continue;
@@ -869,5 +893,6 @@ export const __test__ = {
   projectHostAcpWorkerSpawnBackoffRemainingMs,
   noteProjectHostAcpWorkerSpawn,
   resetProjectHostAcpWorkerSpawnBackoff,
+  workerDatabaseHeartbeatFresh,
   workerControlStartupGraceExpired,
 };
