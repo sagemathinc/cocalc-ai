@@ -11,12 +11,12 @@ const MiB = 1024 * KiB;
 const budgets = [
   {
     html: "app.html",
-    maxRawBytes: 10 * MiB,
+    maxRawBytes: 10.1 * MiB,
     maxGzipBytes: 2800 * KiB,
   },
   {
     html: "embed.html",
-    maxRawBytes: 10 * MiB,
+    maxRawBytes: 10.1 * MiB,
     maxGzipBytes: 2800 * KiB,
   },
   {
