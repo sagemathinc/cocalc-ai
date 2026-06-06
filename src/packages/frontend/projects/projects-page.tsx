@@ -245,6 +245,17 @@ export const ProjectsPage: React.FC = () => {
   }, [visibleProjectionRepairKey]);
 
   useEffect(() => {
+    if (backendWindowDirty) {
+      return;
+    }
+    const currentWindowKey = readMaybeImmutable(project_list_window, "key");
+    if (
+      currentWindowKey === backendWindowKey &&
+      (readMaybeImmutable(project_list_window, "loading") ||
+        readMaybeImmutable(project_list_window, "loaded_at"))
+    ) {
+      return;
+    }
     const timer = setTimeout(() => {
       // This backend window is a convergence aid: it refreshes the same top
       // slice the user is likely looking at without replacing the richer local
@@ -254,7 +265,12 @@ export const ProjectsPage: React.FC = () => {
         ?.loadProjectListWindowForCurrentAccount?.(backendWindowQuery);
     }, VISIBLE_WINDOW_REPAIR_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [backendWindowQuery]);
+  }, [
+    backendWindowDirty,
+    backendWindowKey,
+    backendWindowQuery,
+    project_list_window,
+  ]);
 
   function refreshBackendWindow() {
     void redux
@@ -547,42 +563,27 @@ export const ProjectsPage: React.FC = () => {
                     />
                   </div>
                   {/* Bulk Operations (when filters active) */}
-                  <div ref={operationsRef}>
-                    <div
-                      aria-hidden={!backendWindowDirty}
-                      style={{
-                        alignItems: "center",
-                        background: backendWindowDirty
-                          ? COLORS.GRAY_LLL
-                          : "transparent",
-                        border: `1px solid ${
-                          backendWindowDirty ? COLORS.GRAY_L : "transparent"
-                        }`,
-                        borderRadius: "4px",
-                        display: "flex",
-                        gap: "8px",
-                        justifyContent: "space-between",
-                        margin: "8px 0",
-                        minHeight: "34px",
-                        padding: "6px 8px",
-                        pointerEvents: backendWindowDirty ? "auto" : "none",
-                        visibility: backendWindowDirty ? "visible" : "hidden",
-                      }}
-                    >
-                      <span>
+                  <div ref={operationsRef} style={{ position: "relative" }}>
+                    {backendWindowDirty && (
+                      <Button
+                        size="small"
+                        onClick={refreshBackendWindow}
+                        style={{
+                          background: COLORS.GRAY_LLL,
+                          borderRadius: "999px",
+                          position: "absolute",
+                          right: 0,
+                          top: "-4px",
+                          zIndex: 1,
+                        }}
+                      >
                         Project list changed
                         {backendWindowDirtyCount > 1
                           ? ` (${backendWindowDirtyCount} updates)`
-                          : ""}
-                      </span>
-                      <Button
-                        disabled={!backendWindowDirty}
-                        size="small"
-                        onClick={refreshBackendWindow}
-                      >
-                        Refresh
+                          : ""}{" "}
+                        - Refresh
                       </Button>
-                    </div>
+                    )}
                     <ProjectsOperations
                       visible_projects={visible_projects}
                       selected_project_ids={selectedProjectIds}
