@@ -38,6 +38,7 @@ import {
   shouldFinalizeGitRepoBootstrapAction,
   buildGitLogArgs,
   buildGitShowArgs,
+  parseGitLogOutput,
   formatMergeCommitBodyMarkdown,
   hasExpandedTextSelectionWithin,
   isMergeCommitSummary,
@@ -52,6 +53,11 @@ import {
   persistGitReviewCommitSearchPreference,
   readGitReviewOnlyUnreviewedPreference,
   persistGitReviewOnlyUnreviewedPreference,
+  readGitReviewFetchCountPreference,
+  persistGitReviewFetchCountPreference,
+  readGitReviewRecentCutoffPreference,
+  persistGitReviewRecentCutoffPreference,
+  clampGitReviewFetchCount,
   shouldDisplayGitCommitData,
   shouldFinalizeGitFileOpenAction,
   shouldRefreshGitReviewStateOnReconnect,
@@ -187,6 +193,26 @@ describe("git commit drawer merge commit formatting", () => {
 
   it("excludes merge commits from the git review log", () => {
     expect(buildGitLogArgs()).toContain("--no-merges");
+  });
+
+  it("builds timestamped git log output with configurable fetch count", () => {
+    expect(buildGitLogArgs(123)).toEqual([
+      "log",
+      "--no-merges",
+      "-n123",
+      "--format=%H%x09%ct%x09%s",
+      "--date-order",
+    ]);
+  });
+
+  it("parses git log timestamps for recent review cutoffs", () => {
+    expect(parseGitLogOutput("aaa1111\t1717000000\tFix quota\n").at(0)).toEqual(
+      {
+        hash: "aaa1111",
+        committedAt: 1717000000000,
+        subject: "Fix quota",
+      },
+    );
   });
 
   it("keeps undo and redo local for git review note/comment editors", () => {
@@ -1930,6 +1956,21 @@ describe("git commit drawer merge commit formatting", () => {
 
     persistGitReviewCommitSearchPreference("");
     expect(readGitReviewCommitSearchPreference()).toBe("");
+  });
+
+  it("persists git review recent scope settings globally", () => {
+    expect(readGitReviewFetchCountPreference()).toBe(500);
+    expect(clampGitReviewFetchCount(10)).toBe(50);
+    expect(clampGitReviewFetchCount(6000)).toBe(5000);
+
+    persistGitReviewFetchCountPreference(1250);
+    expect(readGitReviewFetchCountPreference()).toBe(1250);
+
+    expect(readGitReviewRecentCutoffPreference()).toBeUndefined();
+    persistGitReviewRecentCutoffPreference(1717000000000);
+    expect(readGitReviewRecentCutoffPreference()).toBe(1717000000000);
+    persistGitReviewRecentCutoffPreference(undefined);
+    expect(readGitReviewRecentCutoffPreference()).toBeUndefined();
   });
 
   it("keeps the currently selected reviewed commit visible under the unreviewed filter", () => {

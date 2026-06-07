@@ -14,7 +14,7 @@ import type {
 } from "./types";
 
 export const MAX_GIT_SHOW_LINES = 20_000;
-const GIT_LOG_FETCH_COUNT = 750;
+export const DEFAULT_GIT_LOG_FETCH_COUNT = 500;
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 
 export function buildGitShowArgs({
@@ -49,12 +49,13 @@ export function buildGitShowArgs({
   ];
 }
 
-export function buildGitLogArgs(): string[] {
+export function buildGitLogArgs(count = DEFAULT_GIT_LOG_FETCH_COUNT): string[] {
+  const fetchCount = Math.max(1, Math.min(5000, Math.floor(count)));
   return [
     "log",
     "--no-merges",
-    `-n${GIT_LOG_FETCH_COUNT}`,
-    "--format=%H%x09%s",
+    `-n${fetchCount}`,
+    "--format=%H%x09%ct%x09%s",
     "--date-order",
   ];
 }
@@ -175,12 +176,20 @@ export function parseGitLogOutput(stdout: string): GitLogEntry[] {
     .filter((line) => line.trim().length);
   const entries: GitLogEntry[] = [];
   for (const line of lines) {
-    const [hash, ...subjectParts] = line.split("\t");
+    const [hash, secondColumn, ...remainingParts] = line.split("\t");
     const normalizedHash = `${hash ?? ""}`.trim().toLowerCase();
     if (!COMMIT_HASH_RE.test(normalizedHash)) continue;
+    const committedAtSeconds = Number(secondColumn);
+    const hasTimestamp = Number.isFinite(committedAtSeconds);
     entries.push({
       hash: normalizedHash,
-      subject: subjectParts.join("\t").trim(),
+      committedAt: hasTimestamp ? committedAtSeconds * 1000 : undefined,
+      subject: (hasTimestamp
+        ? remainingParts
+        : [secondColumn, ...remainingParts]
+      )
+        .join("\t")
+        .trim(),
     });
   }
   return entries;

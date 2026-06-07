@@ -25,6 +25,7 @@ import {
   formatManagedProjectCpuPolicyBlockMessage,
   getManagedProjectCpuPolicy,
 } from "@cocalc/server/membership/managed-cpu-policy";
+import { countsTowardManagedCpuBudgetForHost } from "@cocalc/server/membership/managed-cpu-scope";
 import { cancelStaleProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { getLro } from "@cocalc/server/lro/lro-db";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -850,10 +851,17 @@ export async function startProjectOnHost(
     }
     let cpuPolicyBlockMessage: string | undefined;
     try {
-      const policy = await getManagedProjectCpuPolicy({ project_id });
-      if (!policy.allowed) {
-        cpuPolicyBlockMessage =
-          formatManagedProjectCpuPolicyBlockMessage(policy);
+      if (
+        await countsTowardManagedCpuBudgetForHost({
+          host_id: placement.host_id,
+          project_id,
+        })
+      ) {
+        const policy = await getManagedProjectCpuPolicy({ project_id });
+        if (!policy.allowed) {
+          cpuPolicyBlockMessage =
+            formatManagedProjectCpuPolicyBlockMessage(policy);
+        }
       }
     } catch (err) {
       log.warn("startProjectOnHost unable to evaluate CPU start policy", {

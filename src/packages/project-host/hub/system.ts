@@ -71,6 +71,7 @@ export function wireSystemApi(): void {
 
   hubApi.system.recordManagedProjectCpuUsage = async (opts: {
     account_id?: string;
+    host_id?: string;
     project_id?: string;
     cpu_seconds: number;
     sample_started_at?: Date;

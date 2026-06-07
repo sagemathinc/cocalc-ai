@@ -650,6 +650,21 @@ export interface ManagedCpuEventSummary {
   sample_started_at?: string | null;
   sample_ended_at: string;
   source?: string | null;
+  cpu_accounting_scope?:
+    | "shared_managed"
+    | "site_funded_dedicated"
+    | "account_funded_dedicated"
+    | "local_or_self_host"
+    | "unknown"
+    | null;
+  counts_toward_managed_cpu_budget?: boolean | null;
+  host_funding_mode_snapshot?:
+    | "account-prepaid"
+    | "account-postpaid"
+    | "site-funded"
+    | null;
+  host_tier_snapshot?: number | null;
+  host_kind_snapshot?: string | null;
   metadata?: Record<string, unknown> | null;
 }
 
