@@ -144,6 +144,10 @@ memory: "${LIMA_MEMORY}"
 disk: "${LIMA_DISK}"
 mounts: []
 
+containerd:
+  system: false
+  user: false
+
 portForwards:
 - guestPort: ${LIMA_GUEST_PORT}
   hostPort: ${LIMA_HOST_PORT}
