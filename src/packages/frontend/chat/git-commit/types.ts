@@ -43,6 +43,7 @@ export type GitDiffFindMatch = {
 export type GitLogEntry = {
   hash: string;
   subject: string;
+  committedAt?: number;
 };
 
 export type HeadStatusEntry = {
