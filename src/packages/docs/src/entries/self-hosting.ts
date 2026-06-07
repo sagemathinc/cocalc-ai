@@ -22,6 +22,7 @@ export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
       "A CoCalc Star server running projects on a public VM",
     ),
     lastReviewed: "2026-06-05",
+    searchKeywords: "public VM HTTPS cloud sslip.io Let's Encrypt",
     slug: "self-hosting/cocalc-star",
     status: "ready",
     summary:
