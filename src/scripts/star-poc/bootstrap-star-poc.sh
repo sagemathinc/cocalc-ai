@@ -23,7 +23,6 @@ STAR_BASE_PORT="${STAR_BASE_PORT:-9100}"
 STAR_BASE_URL="${STAR_BASE_URL:-http://127.0.0.1:${STAR_BASE_PORT}}"
 STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
 STAR_ACCESS_URL="${STAR_ACCESS_URL:-}"
-STAR_BROWSER_PROJECT_HOST_URL="${STAR_BROWSER_PROJECT_HOST_URL:-}"
 STAR_WEB_ONBOARDING="${STAR_WEB_ONBOARDING:-auto}"
 STAR_BTRFS_IMAGE="${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}"
 STAR_BTRFS_SIZE="${STAR_BTRFS_SIZE:-100G}"
@@ -659,7 +658,6 @@ write_env_files() {
     printf 'STAR_API=%q\n' "$STAR_BASE_URL"
     printf 'STAR_PUBLIC_URL=%q\n' "$STAR_PUBLIC_URL"
     printf 'STAR_ACCESS_URL=%q\n' "$STAR_ACCESS_URL"
-    printf 'STAR_BROWSER_PROJECT_HOST_URL=%q\n' "$STAR_BROWSER_PROJECT_HOST_URL"
     printf 'STAR_PROJECT_HOST_REGION=%q\n' "$STAR_PROJECT_HOST_REGION"
     printf 'STAR_INSTALL_ROOT=%q\n' "${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
     printf 'STAR_DEFAULT_ROOTFS_IMAGE=%q\n' "$STAR_DEFAULT_ROOTFS_IMAGE"
@@ -737,7 +735,7 @@ seed_database() {
   if [ -f "$SRC_ROOT/scripts/star-poc/build/seed-star-poc/index.cjs" ]; then
     script="scripts/star-poc/build/seed-star-poc/index.cjs"
   fi
-  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_BROWSER_PROJECT_HOST_URL='$STAR_BROWSER_PROJECT_HOST_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' STAR_HAS_GPU='${STAR_HAS_GPU:-0}' node '$script'"
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' STAR_HAS_GPU='${STAR_HAS_GPU:-0}' node '$script'"
 }
 
 install_systemd() {

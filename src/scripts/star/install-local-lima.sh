@@ -14,7 +14,6 @@ LIMA_TEMPLATE="${COCALC_STAR_LIMA_TEMPLATE:-template:ubuntu-24.04}"
 RELEASE_BASE_URL="${COCALC_STAR_RELEASE_BASE_URL:-$DEFAULT_RELEASE_BASE_URL}"
 INSTALLER_URL="${COCALC_STAR_INSTALLER_URL:-${RELEASE_BASE_URL%/}/install-cocalc-star.sh}"
 ACCESS_URL="${COCALC_STAR_ACCESS_URL:-http://localhost:${LIMA_HOST_PORT}}"
-PROJECT_HOST_ACCESS_URL="${COCALC_STAR_PROJECT_HOST_ACCESS_URL:-http://localhost:${LIMA_PROJECT_HOST_PORT}}"
 OPEN_BROWSER="${COCALC_STAR_LIMA_OPEN_BROWSER:-1}"
 
 log() {
@@ -46,9 +45,6 @@ Environment:
   COCALC_STAR_LIMA_TEMPLATE      Lima template. Default: template:ubuntu-24.04
   COCALC_STAR_RELEASE_BASE_URL   Release base URL. Default: GitHub latest
   COCALC_STAR_RELEASE_URL        Explicit runtime asset URL passed to the guest
-  COCALC_STAR_PROJECT_HOST_ACCESS_URL
-                                  Browser-facing project-host URL. Default:
-                                  http://localhost:<project-host port>
   COCALC_STAR_LIMA_OPEN_BROWSER  Open browser after install. Default: 1
 
 Install Lima first:
@@ -179,11 +175,10 @@ start_instance() {
 }
 
 install_star_in_guest() {
-  local installer_url release_base_url access_url project_host_access_url release_url_env release_url_value
+  local installer_url release_base_url access_url release_url_env release_url_value
   installer_url="$(shell_quote "$INSTALLER_URL")"
   release_base_url="$(shell_quote "$RELEASE_BASE_URL")"
   access_url="$(shell_quote "$ACCESS_URL")"
-  project_host_access_url="$(shell_quote "$PROJECT_HOST_ACCESS_URL")"
   release_url_env=""
   if [ -n "${COCALC_STAR_RELEASE_URL:-}" ]; then
     release_url_value="$(shell_quote "$COCALC_STAR_RELEASE_URL")"
@@ -206,7 +201,6 @@ curl -fsSL ${installer_url} | sudo env \\
   STAR_WEB_ONBOARDING=0 \\
   STAR_WEB_ONBOARDING_REQUIRE_OPEN=0 \\
   STAR_ACCESS_URL=${access_url} \\
-  STAR_BROWSER_PROJECT_HOST_URL=${project_host_access_url} \\
   COCALC_STAR_RELEASE_BASE_URL=${release_base_url} \\
   ${release_url_env} \\
   bash

@@ -92,7 +92,6 @@ async function main() {
   const hostName = process.env.STAR_PROJECT_HOST_NAME ?? "star-local";
   const hostRegion = process.env.STAR_PROJECT_HOST_REGION ?? "wnam";
   const baseUrl = process.env.STAR_BASE_URL ?? "http://127.0.0.1:9100";
-  const browserProjectHostUrl = process.env.STAR_BROWSER_PROJECT_HOST_URL;
   const defaultRootfsImage = process.env.STAR_DEFAULT_ROOTFS_IMAGE;
   const hasGpu = process.env.STAR_HAS_GPU === "1";
   const masterTokenPath =
@@ -184,9 +183,6 @@ async function main() {
       self_host: {
         http_tunnel_port: 9002,
         ssh_tunnel_port: 2222,
-        ...(browserProjectHostUrl
-          ? { browser_connect_url: browserProjectHostUrl }
-          : {}),
       },
     },
   });
