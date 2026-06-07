@@ -325,10 +325,10 @@ Add project-host forwarding tests:
 - Should `site_funded_dedicated` count toward user membership CPU budgets, or
   should it be a separate site/operator budget? The conservative release choice
   is "counts", because site-funded capacity is still operator-paid shared
-  capacity.
+  capacity.  (ANS: counts)
 - Should `local_or_self_host` CPU be recorded at all in hosted admin views? The
   likely answer is no for hosted production, but yes in local development if it
-  helps exercise the pipeline.
+  helps exercise the pipeline.  (ans: we will not support `local_or_self_host` in hosted production, because of our security model, which is users do NOT have access to hosts directly, outside of podman containers.  it's good to record it for local deployments.)
 - Should account-funded dedicated CPU appear in customer-facing dedicated-host
   dashboards later? It is useful, but should be separate from shared CPU budget
-  UI.
+  UI.  (ans: not a priority; can defer -- one advantage is that it makes it clear that it is NOT included in their normal cpu usage gauge.)

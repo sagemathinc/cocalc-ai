@@ -22,6 +22,7 @@ let getCurrentProjectRootfsBindingMock: jest.Mock;
 let assertCanRestoreProvisionedProjectStorageMock: jest.Mock;
 let cancelStaleProjectStartLrosMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
+let countsTowardManagedCpuBudgetForHostMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let interBayHostListMock: jest.Mock;
 let interBayHostControlCreateProjectMock: jest.Mock;
@@ -152,6 +153,12 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
     resolveMembershipForAccountMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/managed-cpu-scope", () => ({
+  __esModule: true,
+  countsTowardManagedCpuBudgetForHost: (...args: any[]) =>
+    countsTowardManagedCpuBudgetForHostMock(...args),
+}));
+
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
   default: (...args: any[]) => isAdminMock(...args),
@@ -183,6 +190,7 @@ describe("startProjectOnHost placement", () => {
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: { features: { project_host_tier: 0 } },
     }));
+    countsTowardManagedCpuBudgetForHostMock = jest.fn(async () => true);
     isAdminMock = jest.fn(async () => false);
     interBayHostControlCreateProjectMock = jest.fn(async () => ({
       project_id: "proj-1",
