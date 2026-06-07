@@ -53,14 +53,17 @@ const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
 type GitCommitDrawerTitleProps = {
   nonRepoError: string;
   commit?: string;
-  commitSearch: string;
+  commitFilter: string;
   logOptions: Array<{
     value: string;
     label: ReactNode;
+    plainLabel?: ReactNode;
     search?: string;
   }>;
   onCommitChange: (value: string) => void;
-  onCommitSearch: (value: string) => void;
+  onCommitFilterChange: (value: string) => void;
+  filteredCommitCount: number;
+  recentCommitCount: number;
   showOnlyUnreviewedCommits: boolean;
   onToggleShowOnlyUnreviewed: (value: boolean) => void;
   diffFindInputRef: any;
@@ -88,10 +91,12 @@ type GitCommitDrawerTitleProps = {
 export function GitCommitDrawerTitle({
   nonRepoError,
   commit,
-  commitSearch,
+  commitFilter,
   logOptions,
   onCommitChange,
-  onCommitSearch,
+  onCommitFilterChange,
+  filteredCommitCount,
+  recentCommitCount,
   showOnlyUnreviewedCommits,
   onToggleShowOnlyUnreviewed,
   diffFindInputRef,
@@ -132,31 +137,45 @@ export function GitCommitDrawerTitle({
               display: "flex",
               alignItems: "center",
               gap: 8,
-              flex: "1 1 460px",
+              flex: "1 1 760px",
               minWidth: 360,
-              maxWidth: 760,
+              maxWidth: 980,
             }}
           >
             <Select
-              showSearch
               size="small"
               value={commit}
-              searchValue={commitSearch}
               options={logOptions}
               onChange={onCommitChange}
-              onSearch={onCommitSearch}
               placeholder="git log"
               style={{ minWidth: 0, flex: "1 1 auto" }}
-              optionFilterProp="search"
+              optionLabelProp="plainLabel"
+            />
+          </div>
+          <Space size="small" wrap>
+            <Input
+              size="small"
+              allowClear
+              value={commitFilter}
+              placeholder="Filter commits"
+              style={{ width: 240 }}
+              onChange={(evt) => onCommitFilterChange(evt.target.value)}
             />
             <Checkbox
               checked={showOnlyUnreviewedCommits}
               onChange={(evt) => onToggleShowOnlyUnreviewed(evt.target.checked)}
-              style={{ whiteSpace: "nowrap", flex: "0 0 auto" }}
+              style={{ whiteSpace: "nowrap" }}
             >
               Only unreviewed
             </Checkbox>
-          </div>
+            <Typography.Text
+              type="secondary"
+              style={{ fontSize: 12, whiteSpace: "nowrap" }}
+            >
+              {filteredCommitCount.toLocaleString()} /{" "}
+              {recentCommitCount.toLocaleString()} recent commits
+            </Typography.Text>
+          </Space>
           <Space.Compact size="small">
             <Input
               ref={diffFindInputRef}
