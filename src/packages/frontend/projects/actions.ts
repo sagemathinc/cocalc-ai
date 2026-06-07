@@ -1305,6 +1305,63 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return row?.[field] === value;
   }
 
+  private async projectedProjectUserMatches({
+    project_id,
+    target_account_id,
+    expected,
+  }: {
+    project_id: string;
+    target_account_id: string;
+    expected: {
+      group: "collaborator" | "viewer";
+      read_policy?: ProjectViewerReadPolicy | null;
+    } | null;
+  }): Promise<boolean> {
+    const account_id = this.getAccountId();
+    if (!account_id || !project_id || !webapp_client.is_signed_in()) {
+      return false;
+    }
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          account_project_index: [
+            {
+              account_id,
+              project_id,
+              users_summary: null,
+            },
+          ],
+        },
+        options: [{ limit: 1 }],
+      });
+    } catch (err) {
+      console.warn("project user projection check failed", {
+        project_id,
+        target_account_id,
+        err,
+      });
+      return false;
+    }
+    const projectedUser =
+      resp?.query?.account_project_index?.[0]?.users_summary?.[
+        target_account_id
+      ];
+    if (expected == null) {
+      return projectedUser == null;
+    }
+    if (projectedUser?.group !== expected.group) {
+      return false;
+    }
+    if (expected.group !== "viewer") {
+      return true;
+    }
+    return isEqual(
+      projectedUser?.read_policy ?? DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+      expected.read_policy ?? DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+    );
+  }
+
   private shouldPreserveLocalHostIdAfterMove({
     project_id,
     current_host_id,
@@ -3019,9 +3076,27 @@ export class ProjectsActions extends Actions<ProjectsState> {
         // Self-removal can close the project while the local project log stream
         // is still being acquired. Logging should not block the actual removal.
       }
-      await webapp_client.project_collaborators.remove({
-        project_id,
-        account_id,
+      await writeAndWaitForProjection({
+        consumer: "projects",
+        id: `project:${project_id}:user:${account_id}:remove`,
+        name: "project.users.remove",
+        write: () =>
+          webapp_client.project_collaborators.remove({
+            project_id,
+            account_id,
+          }),
+        matchesProjection: () =>
+          this.projectedProjectUserMatches({
+            project_id,
+            target_account_id: account_id,
+            expected: null,
+          }),
+        repair: () =>
+          this.repairProjectProjection({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "write-ack",
+          }),
       });
     } catch (err) {
       const message = `Error removing ${removed_name} from project ${project_id} -- ${err}`;
@@ -3036,11 +3111,29 @@ export class ProjectsActions extends Actions<ProjectsState> {
     read_policy?: ProjectViewerReadPolicy | null,
   ): Promise<void> {
     try {
-      await webapp_client.project_collaborators.set_role({
-        project_id,
-        target_account_id,
-        role,
-        read_policy,
+      await writeAndWaitForProjection({
+        consumer: "projects",
+        id: `project:${project_id}:user:${target_account_id}:role`,
+        name: "project.users.role",
+        write: () =>
+          webapp_client.project_collaborators.set_role({
+            project_id,
+            target_account_id,
+            role,
+            read_policy,
+          }),
+        matchesProjection: () =>
+          this.projectedProjectUserMatches({
+            project_id,
+            target_account_id,
+            expected: { group: role, read_policy },
+          }),
+        repair: () =>
+          this.repairProjectProjection({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "write-ack",
+          }),
       });
       const project_map = store.get("project_map");
       if (project_map?.has(project_id)) {
