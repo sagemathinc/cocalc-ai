@@ -1362,6 +1362,44 @@ export class ProjectsActions extends Actions<ProjectsState> {
     );
   }
 
+  private async projectedProjectStateMatches({
+    project_id,
+    state,
+  }: {
+    project_id: string;
+    state: string;
+  }): Promise<boolean> {
+    const account_id = this.getAccountId();
+    if (!account_id || !project_id || !webapp_client.is_signed_in()) {
+      return false;
+    }
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          account_project_index: [
+            {
+              account_id,
+              project_id,
+              state_summary: null,
+            },
+          ],
+        },
+        options: [{ limit: 1 }],
+      });
+    } catch (err) {
+      console.warn("project state projection check failed", {
+        project_id,
+        state,
+        err,
+      });
+      return false;
+    }
+    return (
+      resp?.query?.account_project_index?.[0]?.state_summary?.state === state
+    );
+  }
+
   private shouldPreserveLocalHostIdAfterMove({
     project_id,
     current_host_id,
@@ -4032,9 +4070,26 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
       await this.ensureArchiveBackupFresh(project_id, actions);
       actions?.setState?.({ control_status: "Archiving project..." });
-      await webapp_client.conat_client.hub.projects.archiveProject({
-        project_id,
-        timeout: ProjectsActions.ARCHIVE_RPC_TIMEOUT_MS,
+      await writeAndWaitForProjection({
+        consumer: "projects",
+        id: `project:${project_id}:archive`,
+        name: "project.archive",
+        write: () =>
+          webapp_client.conat_client.hub.projects.archiveProject({
+            project_id,
+            timeout: ProjectsActions.ARCHIVE_RPC_TIMEOUT_MS,
+          }),
+        matchesProjection: () =>
+          this.projectedProjectStateMatches({
+            project_id,
+            state: "archived",
+          }),
+        repair: () =>
+          this.repairProjectProjection({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "project-archive",
+          }),
       });
     } catch (err) {
       actions?.setState({
