@@ -667,6 +667,12 @@ Priority:
 1. account settings
    - implemented for `account.other_settings` via the shared write-ack helper
 2. project lifecycle
+   - implemented for `start_project`: start RPC waits for
+     `account_project_index.state_summary.state` to become `starting` or
+     `running`, with targeted project-row repair on lag
+   - implemented for `stop_project`: stop RPC waits for
+     `account_project_index.state_summary.state === "opened"`, with targeted
+     project-row repair on lag
    - implemented for `archive_project`: the archive RPC waits for
      `account_project_index.state_summary.state === "archived"` and uses
      targeted project-row repair if the feed/projection lags

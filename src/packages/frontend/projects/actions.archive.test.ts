@@ -198,6 +198,20 @@ describe("ProjectsActions archive flow", () => {
     jest.restoreAllMocks();
   });
 
+  function projectedState(state: string) {
+    return {
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            state_summary: { state },
+          },
+        ],
+      },
+    } as any;
+  }
+
   it("still removes a collaborator when best-effort project logging races with project close", async () => {
     const { actions, async_log } = makeActions();
     async_log.mockRejectedValueOnce(new Error("project closed"));
@@ -247,6 +261,9 @@ describe("ProjectsActions archive flow", () => {
         summary: {},
       },
     ] as any);
+    mockedWebappClient.async_query
+      .mockResolvedValueOnce(projectedState("opened"))
+      .mockResolvedValue(projectedState("archived"));
     const {
       actions,
       setState,
@@ -264,6 +281,18 @@ describe("ProjectsActions archive flow", () => {
     expect(
       mockedWebappClient.conat_client.hub.projects.stop,
     ).toHaveBeenCalledWith({ project_id });
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            state_summary: null,
+          },
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
     expect(
       mockedWebappClient.conat_client.hub.projects.createBackup,
     ).toHaveBeenCalledWith({ project_id });
@@ -517,6 +546,9 @@ describe("ProjectsActions archive flow", () => {
     jest
       .spyOn(actions as any, "project_log")
       .mockImplementation(async () => {});
+    mockedWebappClient.async_query.mockResolvedValue(
+      projectedState("starting"),
+    );
 
     const started = await actions.start_project(project_id);
 
@@ -558,6 +590,9 @@ describe("ProjectsActions archive flow", () => {
       const reconcile = jest
         .spyOn(actions as any, "loadProjectedProjectForCurrentAccount")
         .mockResolvedValue(undefined);
+      mockedWebappClient.async_query.mockResolvedValue(
+        projectedState("starting"),
+      );
 
       const started = await actions.start_project(project_id);
 
