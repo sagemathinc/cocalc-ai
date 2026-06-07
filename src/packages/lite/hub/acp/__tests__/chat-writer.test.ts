@@ -26,6 +26,7 @@ import * as queue from "../../sqlite/acp-queue";
 import * as turns from "../../sqlite/acp-turns";
 import * as chatServer from "@cocalc/chat/server";
 import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
+import { akv } from "@cocalc/conat/sync/akv";
 
 // Mock ACP pieces that pull in ESM deps we don't need for this unit.
 jest.mock("@cocalc/ai/acp", () => ({
@@ -96,6 +97,11 @@ jest.mock("@cocalc/chat/server", () => ({
 }));
 jest.mock("@cocalc/backend/chat-store/sqlite-offload", () => ({
   rotateChatStore: jest.fn(async () => ({ rotated: false })),
+}));
+jest.mock("@cocalc/conat/sync/akv", () => ({
+  akv: jest.fn(() => ({
+    set: jest.fn(async () => {}),
+  })),
 }));
 
 type RecordedSet = {
@@ -228,6 +234,10 @@ beforeEach(() => {
   (chatServer.releaseChatSyncDB as any)?.mockResolvedValue?.(undefined);
   (rotateChatStore as any)?.mockReset?.();
   (rotateChatStore as any)?.mockResolvedValue?.({ rotated: false });
+  (akv as any)?.mockReset?.();
+  (akv as any)?.mockImplementation?.(() => ({
+    set: jest.fn(async () => {}),
+  }));
 });
 
 afterEach(async () => {
@@ -2618,6 +2628,72 @@ describe("recoverOrphanedAcpTurns", () => {
 });
 
 describe("repairInterruptedAcpTurn", () => {
+  it("persists queued stream payloads as the activity log before clearing them", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    const logSet = jest.fn(async () => {});
+    const queuedPayloads: AcpStreamMessage[] = [
+      {
+        type: "event",
+        event: {
+          type: "message",
+          text: "I found the problem before the restart.",
+        } as any,
+        seq: 0,
+        time: 1000,
+      },
+    ];
+    setCurrent({
+      event: "chat",
+      date: "2026-03-19T20:00:00.000Z",
+      sender_id: "codex-agent",
+      message_id: "msg-interrupt-activity",
+      thread_id: "thread-interrupt-activity",
+      generating: true,
+      history: [
+        {
+          author_id: "codex-agent",
+          content: ":robot: Thinking...",
+          date: "2026-03-19T20:00:00.000Z",
+        },
+      ],
+    });
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (queue.listAcpPayloads as any).mockReturnValue(queuedPayloads);
+    (akv as any).mockReturnValue({ set: logSet });
+
+    const repaired = await repairInterruptedAcpTurn({
+      client: makeFakeClient() as any,
+      turn: {
+        project_id: "p",
+        path: "chat",
+        message_date: "2026-03-19T20:00:00.000Z",
+        sender_id: "codex-agent",
+        message_id: "msg-interrupt-activity",
+        thread_id: "thread-interrupt-activity",
+        account_id: "account-1",
+      },
+      interruptedNotice: "Conversation interrupted.",
+      interruptedReasonId: "interrupt",
+      recoveryReason: "Conversation interrupted.",
+    });
+
+    const finalChat = syncdb.get_one({
+      event: "chat",
+      message_id: "msg-interrupt-activity",
+    });
+    expect(repaired).toBe(true);
+    expect(logSet).toHaveBeenCalledWith(
+      "thread-interrupt-activity:msg-interrupt-activity",
+      queuedPayloads,
+    );
+    expect(queue.clearAcpPayloads).toHaveBeenCalled();
+    expect(finalChat?.acp_log_store).toBe("acp-log/chat");
+    expect(finalChat?.acp_log_key).toBe(
+      "thread-interrupt-activity:msg-interrupt-activity",
+    );
+    expect(finalChat?.acp_account_id).toBe("account-1");
+  });
+
   it("repairs a stale running chat thread with no live backend turn", async () => {
     const { syncdb, setCurrent } = makeFakeSyncDB();
     setCurrent({

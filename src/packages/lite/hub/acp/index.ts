@@ -3908,6 +3908,88 @@ function runningTurnMatchesTarget(
   return false;
 }
 
+type InterruptedAcpTurnTarget = {
+  project_id: string;
+  path: string;
+  message_date?: string | null;
+  sender_id?: string | null;
+  message_id?: string | null;
+  thread_id?: string | null;
+  account_id?: string | null;
+  owner_instance_id?: string | null;
+};
+
+async function persistQueuedAcpPayloadsAsActivityLog({
+  client,
+  turn,
+}: {
+  client: ConatClient;
+  turn: InterruptedAcpTurnTarget;
+}): Promise<AcpStreamMessage[]> {
+  const project_id = `${turn.project_id ?? ""}`.trim();
+  const path = `${turn.path ?? ""}`.trim();
+  const message_date = `${turn.message_date ?? ""}`.trim();
+  const thread_id = `${turn.thread_id ?? ""}`.trim();
+  const message_id = `${turn.message_id ?? ""}`.trim();
+  if (!project_id || !path || !message_date || !thread_id || !message_id) {
+    return [];
+  }
+  let payloads: AcpStreamMessage[] = [];
+  try {
+    payloads = listAcpPayloads({
+      project_id,
+      path,
+      message_date,
+      sender_id: `${turn.sender_id ?? "openai-codex-agent"}`.trim(),
+      message_id,
+      thread_id,
+    } as any);
+  } catch (err) {
+    logger.debug("failed listing queued acp payloads during repair", {
+      project_id,
+      path,
+      message_date,
+      message_id,
+      thread_id,
+      err,
+    });
+    return [];
+  }
+  if (payloads.length === 0) return [];
+  try {
+    const refs = deriveAcpLogRefs({
+      project_id,
+      path,
+      thread_id,
+      message_id,
+    });
+    await akv<AcpStreamMessage[]>({
+      project_id,
+      name: refs.store,
+      client,
+    }).set(refs.key, payloads);
+    logger.warn("persisted queued acp payloads as interrupted activity log", {
+      project_id,
+      path,
+      message_date,
+      message_id,
+      thread_id,
+      events: payloads.length,
+    });
+  } catch (err) {
+    logger.warn("failed to persist queued acp activity during repair", {
+      project_id,
+      path,
+      message_date,
+      message_id,
+      thread_id,
+      events: payloads.length,
+      err,
+    });
+  }
+  return payloads;
+}
+
 export async function repairInterruptedAcpTurn({
   client,
   turn,
@@ -3923,6 +4005,7 @@ export async function repairInterruptedAcpTurn({
     sender_id?: string | null;
     message_id?: string | null;
     thread_id?: string | null;
+    account_id?: string | null;
     owner_instance_id?: string | null;
   };
   interruptedNotice?: string;
@@ -3936,6 +4019,18 @@ export async function repairInterruptedAcpTurn({
   const sender_id = `${turn.sender_id ?? "openai-codex-agent"}`.trim();
   const message_id = `${turn.message_id ?? ""}`.trim();
   const thread_id = `${turn.thread_id ?? ""}`.trim();
+  const queuedPayloads = await persistQueuedAcpPayloadsAsActivityLog({
+    client,
+    turn: {
+      ...turn,
+      project_id,
+      path,
+      message_date,
+      sender_id,
+      message_id,
+      thread_id,
+    },
+  });
 
   if (message_date) {
     try {
@@ -4042,6 +4137,18 @@ export async function repairInterruptedAcpTurn({
         if (currentThreadId) {
           update.thread_id = currentThreadId;
         }
+        const logMessageId = currentMessageId || message_id;
+        if (currentThreadId && logMessageId) {
+          const refs = deriveAcpLogRefs({
+            project_id,
+            path,
+            thread_id: currentThreadId,
+            message_id: logMessageId,
+          });
+          update.acp_log_store = refs.store;
+          update.acp_log_key = refs.key;
+          update.acp_log_subject = refs.subject;
+        }
         const parentMessageId = syncdbField<string>(
           current,
           "parent_message_id",
@@ -4049,8 +4156,32 @@ export async function repairInterruptedAcpTurn({
         if (parentMessageId) {
           update.parent_message_id = parentMessageId;
         }
+        const acpAccountId =
+          syncdbField<string>(current, "acp_account_id") ??
+          (`${turn.account_id ?? ""}`.trim() || undefined);
+        if (acpAccountId) {
+          update.acp_account_id = acpAccountId;
+        }
+        const startedAtMs = syncdbField<number>(current, "acp_started_at_ms");
+        if (Number.isFinite(startedAtMs)) {
+          update.acp_started_at_ms = startedAtMs;
+        }
         if (patchedHistory.length > 0) {
           update.history = patchedHistory;
+        } else if (queuedPayloads.length > 0) {
+          const recoveredContent = getInterruptedResponseMarkdown(
+            queuedPayloads,
+            interruptedNotice,
+          );
+          if (recoveredContent) {
+            update.history = [
+              {
+                author_id: rowSender,
+                content: recoveredContent,
+                date: rowDate,
+              },
+            ];
+          }
         }
         syncdb.set(update);
         touched = true;
@@ -4264,7 +4395,11 @@ export async function recoverOrphanedAcpTurns(
       if (
         await repairInterruptedAcpTurn({
           client,
-          turn,
+          turn: {
+            ...turn,
+            account_id:
+              recoverySourceJob?.account_id ?? (turn as any).account_id,
+          },
           interruptedNotice,
           interruptedReasonId,
           recoveryReason,
