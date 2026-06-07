@@ -18,6 +18,10 @@ import {
   type AcpDaemonStatus,
 } from "@cocalc/conat/ai/acp/daemon-control";
 import { getAcpWorker } from "@cocalc/lite/hub/sqlite/acp-workers";
+import {
+  listQueuedAcpJobs,
+  listRunningAcpJobs,
+} from "@cocalc/lite/hub/sqlite/acp-jobs";
 import { getSoftwareVersions } from "../../software";
 import { getProjectHostConatClient } from "../../runtime-client";
 import { getProjectHostProcessTitle } from "../../process-role";
@@ -290,6 +294,7 @@ function workerDatabaseStateProtectsUnresponsiveWorker(
   const row = getAcpWorker(worker_id);
   if (row == null || row.state === "stopped") return false;
   if (Number(row.pid ?? 0) !== worker.pid) return false;
+  if (hasAcpBacklog()) return true;
   if (Number(row.last_seen_running_jobs ?? 0) > 0) return true;
   const lastHeartbeatAt = Number(row.last_heartbeat_at ?? 0);
   return (
@@ -297,6 +302,10 @@ function workerDatabaseStateProtectsUnresponsiveWorker(
     lastHeartbeatAt > 0 &&
     now - lastHeartbeatAt <= ACP_WORKER_DB_HEARTBEAT_STALE_MS
   );
+}
+
+function hasAcpBacklog(): boolean {
+  return listQueuedAcpJobs().length > 0 || listRunningAcpJobs().length > 0;
 }
 
 async function getWorkerStatus(
