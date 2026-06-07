@@ -739,6 +739,45 @@ seed_database() {
   as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' STAR_HAS_GPU='${STAR_HAS_GPU:-0}' node '$script'"
 }
 
+ensure_rest_server_auth() {
+  local auth_dir auth_path htpasswd_path password sha
+  auth_dir="${STAR_DATA}/secrets/launchpad-rest"
+  auth_path="${auth_dir}/auth.json"
+  htpasswd_path="${auth_dir}/htpasswd"
+  install -d -o "$STAR_USER" -g "$STAR_USER" -m 0700 "$auth_dir"
+  if [ -f "$auth_path" ]; then
+    password="$(python3 - "$auth_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    data = json.load(f)
+print(data.get("password", ""))
+PY
+)"
+  else
+    password=""
+  fi
+  if [ -z "$password" ]; then
+    password="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+    python3 - "$auth_path" "$password" <<'PY'
+import json
+import os
+import sys
+
+path, password = sys.argv[1], sys.argv[2]
+with open(path, "w", encoding="utf-8") as f:
+    json.dump({"user": "cocalc", "password": password}, f, indent=2)
+    f.write("\n")
+os.chmod(path, 0o600)
+PY
+  fi
+  sha="$(printf '%s' "$password" | openssl dgst -binary -sha1 | openssl base64 -A)"
+  printf 'cocalc:{SHA}%s\n' "$sha" >"$htpasswd_path"
+  chown "$STAR_USER:$STAR_USER" "$auth_path" "$htpasswd_path"
+  chmod 600 "$auth_path" "$htpasswd_path"
+}
+
 install_systemd() {
   local hub_unit rest_unit project_host_unit caddy_config hub_workdir hub_exec hub_bundle_env project_host_workdir project_host_exec project_host_stop api_v2_routes_bundle caddy_site
   hub_unit="$(mktemp)"
@@ -1007,6 +1046,7 @@ ensure_default_rootfs_cache
 seed_database
 star_web_onboarding_write_status "systemd" "Installing systemd services and final Caddy routing." ""
 stop_existing_services
+ensure_rest_server_auth
 install_systemd
 start_rest_server_for_rootfs_publish
 publish_default_rootfs
