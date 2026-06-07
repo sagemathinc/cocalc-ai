@@ -494,6 +494,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const project_ids = arrayFromMaybeImmutable(
       readMaybeImmutable(current, "project_ids"),
     );
+    if (reason === "feed-upsert" && project_ids.length === 0) {
+      try {
+        void this.loadProjectListWindowForCurrentAccount({
+          ...JSON.parse(key),
+          force: true,
+        });
+        return;
+      } catch {
+        // Fall through to the normal dirty state if an old/corrupt key cannot
+        // be parsed. The user still gets an explicit refresh affordance.
+      }
+    }
     const dirty_count = Number(readMaybeImmutable(current, "dirty_count") ?? 0);
     this.setState({
       project_list_window: {
