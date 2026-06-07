@@ -20,6 +20,7 @@ STAR_INSTALL_ROOT="${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
 STAR_RELEASES_DIR="${STAR_RELEASES_DIR:-${STAR_INSTALL_ROOT}/releases}"
 STAR_SOURCE_LINK="${STAR_SOURCE_LINK:-${STAR_INSTALL_ROOT}/source}"
 STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
+STAR_ACCESS_URL="${STAR_ACCESS_URL:-}"
 if [ -z "${SRC_ROOT:-}" ]; then
   if [ -d "${STAR_SOURCE_LINK}/src" ]; then
     SRC_ROOT="${STAR_SOURCE_LINK}/src"
@@ -586,12 +587,23 @@ print_access_instructions() {
   local bootstrap_url="$1"
   local local_port="${2:-9100}"
   local ssh_target="${STAR_SSH_TARGET:-}"
+  local access_url="${STAR_ACCESS_URL:-}"
   local localhost_url public_url=""
 
   [ -n "$bootstrap_url" ] || return 0
   localhost_url="$(local_bootstrap_url "$bootstrap_url" "$local_port")"
   if [ -n "${STAR_PUBLIC_URL:-}" ]; then
     public_url="$(url_with_base "$bootstrap_url" "$STAR_PUBLIC_URL")"
+  fi
+
+  if [ -n "$access_url" ]; then
+    cat <<EOF
+
+Open this URL to create the first admin account:
+  $(url_with_base "$bootstrap_url" "$access_url")
+
+EOF
+    return 0
   fi
 
   cat <<EOF
@@ -652,9 +664,13 @@ EOF
 
 print_invite_instructions() {
   local invite_url="$1"
+  local access_url="${STAR_ACCESS_URL:-}"
   local public_url=""
 
   [ -n "$invite_url" ] || return 0
+  if [ -n "$access_url" ]; then
+    public_url="$(url_with_base "$invite_url" "$access_url")"
+  fi
   if [ -n "${STAR_PUBLIC_URL:-}" ]; then
     public_url="$(url_with_base "$invite_url" "$STAR_PUBLIC_URL")"
   fi
@@ -668,12 +684,18 @@ EOF
 
 print_access_summary() {
   local public="${STAR_PUBLIC_URL:-}"
+  local access="${STAR_ACCESS_URL:-}"
   printf 'local control plane: %s\n' "$STAR_API"
+  if [ -n "$access" ]; then
+    printf 'browser access URL: %s\n' "$access"
+  fi
   if [ -n "$public" ]; then
     printf 'public HTTPS URL:   %s\n' "$public"
   else
     printf 'public HTTPS URL:   not configured\n'
-    printf 'configure HTTPS:    sudo %s https --domain <dns-name> [--email <email>]\n' "$0"
+    if [ -z "$access" ]; then
+      printf 'configure HTTPS:    sudo %s https --domain <dns-name> [--email <email>]\n' "$0"
+    fi
   fi
   if systemctl is-active --quiet caddy 2>/dev/null; then
     printf 'caddy service:      active\n'

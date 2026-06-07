@@ -91,9 +91,29 @@ own hardware, a local VM is a good fit. It is especially useful when you want:
 This setup runs CoCalc inside an Ubuntu virtual machine on your computer. You
 open CoCalc from your normal browser on the host computer.
 
-## Recommended setup
+## Recommended setup: Lima
 
-The best local setup is:
+For a personal computer, the recommended CoCalc Star local VM path is Lima. Lima
+runs headless Linux VMs, is scriptable, supports localhost forwarding, and does
+not push you toward a graphical desktop VM.
+
+Install Lima first:
+
+~~~sh
+brew install lima
+~~~
+
+Then install CoCalc Star:
+
+~~~sh
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh | bash
+~~~
+
+This creates or starts a Lima VM named \`cocalc-star\`, installs Ubuntu 24.04,
+forwards CoCalc to \`http://localhost:8170/\`, installs CoCalc Star inside the
+VM, and prints the local setup URL.
+
+The general local setup is:
 
 1. Install a VM app that can run Ubuntu 24.04.
 2. Create an Ubuntu VM with enough disk and memory for your projects.
@@ -106,14 +126,15 @@ bookmark and remember.
 
 ## Which VM app should I use?
 
-Use the VM app that fits your computer and comfort level.
+Use the VM app that fits your computer and comfort level. If you do not already
+have a preference, start with Lima.
 
-- **Mac, easiest paid option**: Parallels Desktop. Good general VM support and a
+- **Recommended headless option**: Lima. Good for CoCalc Star because it is a
+  scriptable Linux VM runtime with localhost forwarding.
+- **Mac, easiest paid desktop option**: Parallels Desktop. Good general VM support and a
   polished interface.
 - **Mac, good free option**: UTM. Works well on Apple Silicon and Intel Macs,
   but networking setup can be a little more manual.
-- **Mac, developer-friendly option**: Lima. Good if you are comfortable with
-  terminal-based setup and want automatic localhost forwarding.
 - **Windows**: VMware Workstation, VirtualBox, or Hyper-V are reasonable choices.
   WSL2 is useful for many Linux tasks, but CoCalc Star should run in a real
   Ubuntu VM.
@@ -122,9 +143,24 @@ Use the VM app that fits your computer and comfort level.
 - **Ubuntu-focused convenience**: Multipass is easy for starting Ubuntu VMs, but
   it is not the best first choice if you need simple port forwarding.
 
-If you do not already have a preference, start with Parallels on Mac, VirtualBox
-on Windows, and KVM/QEMU on Linux. On Mac, choose UTM if you want a free desktop
-VM app.
+If Lima does not fit your platform or workflow, use Parallels on Mac, VirtualBox
+on Windows, and KVM/QEMU on Linux as practical manual alternatives. On Mac,
+choose UTM if you want a free desktop VM app.
+
+## Customizing the Lima VM
+
+The Lima installer accepts environment variables passed to \`bash\` at the end
+of the install pipeline.
+
+For example, to use 16 GiB RAM, 8 CPUs, and a 200 GiB disk:
+
+~~~sh
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
+  | COCALC_STAR_LIMA_MEMORY=16GiB COCALC_STAR_LIMA_CPUS=8 COCALC_STAR_LIMA_DISK=200GiB bash
+~~~
+
+The default memory is host-aware. On a typical laptop it uses a reasonable
+fraction of system RAM instead of Lima's small default.
 
 ## Networking choice
 

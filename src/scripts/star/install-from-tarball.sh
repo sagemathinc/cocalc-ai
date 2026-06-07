@@ -270,6 +270,7 @@ export STAR_RELEASES_DIR
 export STAR_RELEASE_ID
 export STAR_USER
 export STAR_SSH_TARGET="${STAR_SSH_TARGET:-}"
+export STAR_ACCESS_URL="${STAR_ACCESS_URL:-}"
 "$INSTALLER"
 
 replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"

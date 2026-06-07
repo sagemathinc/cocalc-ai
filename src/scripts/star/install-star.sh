@@ -30,6 +30,7 @@ Important defaults:
   STAR_ROOT=/var/lib/cocalc/star
   STAR_BASE_URL=http://127.0.0.1:9100
   STAR_PUBLIC_URL=              optional public https://... URL
+  STAR_ACCESS_URL=              optional browser-facing URL, e.g. http://localhost:8170
   STAR_WEB_ONBOARDING=auto      serve /star-install/<nonce>/ when public URL is set
   STAR_WEB_ONBOARDING_REQUIRE_OPEN=auto
                                 require opening the HTTPS page for interactive installs
