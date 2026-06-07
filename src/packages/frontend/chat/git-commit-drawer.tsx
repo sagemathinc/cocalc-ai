@@ -51,7 +51,6 @@ import {
   filterGitReviewLogEntries,
   isHeadCommit,
   parseCommitHash,
-  resolveGitCommitSearchChange,
 } from "./git-commit/commit-selection";
 import {
   buildGitDiffFindMatches,
@@ -166,7 +165,7 @@ export {
   readGitReviewOnlyUnreviewedPreference,
   persistGitReviewOnlyUnreviewedPreference,
 };
-export { filterGitReviewLogEntries, resolveGitCommitSearchChange };
+export { filterGitReviewLogEntries };
 export {
   applySubmittedGitReviewComments,
   resolveGitReviewLoadFailure,
@@ -474,7 +473,7 @@ export function GitCommitDrawer({
       incomingRequestToken: commitSelectionRequestToken,
       appliedRequestToken: appliedCommitSelectionRequestToken,
     });
-  const [commitSearch, setCommitSearch] = useState(
+  const [commitFilter, setCommitFilter] = useState(
     readGitReviewCommitSearchPreference,
   );
   const [diffFindQuery, setDiffFindQuery] = useState("");
@@ -530,7 +529,6 @@ export function GitCommitDrawer({
   const repoBootstrapActionScopeRef = useRef<string | undefined>(undefined);
   const reviewNoteDraftRef = useRef(reviewNoteDraft);
   const reviewedRef = useRef(reviewed);
-  const preserveCommitSearchOnAutoClearRef = useRef(false);
   const reviewImportInputRef = useRef<HTMLInputElement | null>(null);
   const diffFindInputRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -620,26 +618,15 @@ export function GitCommitDrawer({
   useEffect(() => {
     setDiffFindQuery("");
     setActiveDiffFindMatchIndex(-1);
-    preserveCommitSearchOnAutoClearRef.current = false;
   }, [open]);
 
   const handleCommitChange = useCallback((value: string) => {
-    preserveCommitSearchOnAutoClearRef.current = true;
     setSelectedCommit(value);
   }, []);
 
-  const handleCommitSearch = useCallback((nextSearch: string) => {
-    setCommitSearch((currentSearch) => {
-      const resolved = resolveGitCommitSearchChange({
-        currentSearch,
-        nextSearch,
-        preserveSearchOnAutoClear: preserveCommitSearchOnAutoClearRef.current,
-      });
-      preserveCommitSearchOnAutoClearRef.current =
-        resolved.preserveSearchOnAutoClear;
-      persistGitReviewCommitSearchPreference(resolved.search);
-      return resolved.search;
-    });
+  const handleCommitFilterChange = useCallback((nextFilter: string) => {
+    setCommitFilter(nextFilter);
+    persistGitReviewCommitSearchPreference(nextFilter);
   }, []);
 
   const handleToggleShowOnlyUnreviewed = useCallback((value: boolean) => {
@@ -899,10 +886,23 @@ export function GitCommitDrawer({
         entries: gitLog,
         reviewedByCommit,
         onlyUnreviewed: showOnlyUnreviewedCommits,
+        filterText: commitFilter,
         selectedCommit: commit,
       }),
-    [gitLog, reviewedByCommit, showOnlyUnreviewedCommits, commit],
+    [gitLog, reviewedByCommit, showOnlyUnreviewedCommits, commitFilter, commit],
   );
+  const filteredRecentCommitCount = useMemo(
+    () =>
+      filterGitReviewLogEntries({
+        entries: gitLog,
+        reviewedByCommit,
+        onlyUnreviewed: showOnlyUnreviewedCommits,
+        filterText: commitFilter,
+        selectedCommit: undefined,
+      }).length,
+    [gitLog, reviewedByCommit, showOnlyUnreviewedCommits, commitFilter],
+  );
+  const recentCommitCount = gitLog.length;
 
   const commitIndex = useMemo(() => {
     if (!commit) return -1;
@@ -1028,6 +1028,19 @@ export function GitCommitDrawer({
         </div>
       );
     };
+    const makePlainLabel = (entry: GitLogEntry, fallback = false) => (
+      <span>
+        <span style={{ fontFamily: "monospace" }}>
+          {entry.hash === HEAD_REF ? HEAD_REF : entry.hash.slice(0, 10)}
+        </span>
+        {entry.subject ? (
+          <span style={{ color: fallback ? COLORS.GRAY_D : undefined }}>
+            {" "}
+            {entry.subject}
+          </span>
+        ) : null}
+      </span>
+    );
     const options = [
       {
         value: HEAD_REF,
@@ -1035,11 +1048,16 @@ export function GitCommitDrawer({
           hash: HEAD_REF,
           subject: "Uncommitted changes (git diff HEAD)",
         }),
+        plainLabel: makePlainLabel({
+          hash: HEAD_REF,
+          subject: "Uncommitted changes",
+        }),
         search: "HEAD uncommitted changes git diff",
       },
       ...visibleLogEntries.map((entry) => ({
         value: entry.hash,
         label: makeOptionLabel(entry),
+        plainLabel: makePlainLabel(entry),
         search: `${entry.hash} ${entry.subject}`.trim(),
       })),
     ];
@@ -1051,6 +1069,7 @@ export function GitCommitDrawer({
       options.unshift({
         value: commit,
         label: makeOptionLabel(fallback, true),
+        plainLabel: makePlainLabel(fallback, true),
         search: `${commit} selected commit`,
       });
     }
@@ -2778,10 +2797,12 @@ export function GitCommitDrawer({
         <GitCommitDrawerTitle
           nonRepoError={nonRepoError}
           commit={commit}
-          commitSearch={commitSearch}
+          commitFilter={commitFilter}
           logOptions={logOptions}
           onCommitChange={handleCommitChange}
-          onCommitSearch={handleCommitSearch}
+          onCommitFilterChange={handleCommitFilterChange}
+          filteredCommitCount={filteredRecentCommitCount}
+          recentCommitCount={recentCommitCount}
           showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
           onToggleShowOnlyUnreviewed={handleToggleShowOnlyUnreviewed}
           diffFindInputRef={diffFindInputRef}
