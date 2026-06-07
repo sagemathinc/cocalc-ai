@@ -185,7 +185,7 @@ export function GitCommitDrawerTitle({
     </Space>
   );
   const shortcutsPopover = (
-    <Space direction="vertical" size={4}>
+    <Space direction="vertical" size={4} style={{ minWidth: 220 }}>
       {[
         ["Space", "Scroll down"],
         ["Shift+Space", "Scroll up"],
@@ -199,12 +199,17 @@ export function GitCommitDrawerTitle({
           key={key}
           style={{
             display: "grid",
-            gridTemplateColumns: "90px 1fr",
+            gridTemplateColumns: "96px 1fr",
             gap: 10,
             fontSize: 12,
           }}
         >
-          <Typography.Text code>{key}</Typography.Text>
+          <Typography.Text
+            code
+            style={{ display: "inline-block", whiteSpace: "nowrap" }}
+          >
+            {key}
+          </Typography.Text>
           <Typography.Text>{description}</Typography.Text>
         </div>
       ))}
