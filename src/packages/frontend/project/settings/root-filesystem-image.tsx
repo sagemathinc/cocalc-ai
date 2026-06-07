@@ -26,6 +26,10 @@ import {
 } from "antd";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import ActionAssist from "@cocalc/frontend/components/action-assist";
 import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
@@ -158,6 +162,9 @@ export default function RootFilesystemImage({
     official: false,
     prepull: false,
     hidden: false,
+  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
   });
 
   const siteDefaultRootfs = useTypedRedux(
@@ -626,68 +633,72 @@ export default function RootFilesystemImage({
 
   async function saveCatalogEntry() {
     try {
-      setPublishing(true);
-      if (!project) {
-        throw new Error("project is not available");
-      }
-      const tags = publishDraft.tags
-        .split(",")
-        .map((tag) => tag.trim())
-        .filter(Boolean);
-      if (publishMode === "copy" && publishCopyMode === "project") {
-        setOpen(false);
-        setPublishOpen(false);
-        const op = await publishProjectRootfsImage({
-          project_id: project.get("project_id"),
-          label: publishDraft.label,
-          family: publishDraft.family.trim() || undefined,
-          version: publishDraft.version.trim() || undefined,
-          channel: publishDraft.channel.trim() || undefined,
-          supersedes_image_id:
-            publishDraft.supersedes_image_id.trim() || undefined,
-          description: publishDraft.description,
-          visibility: publishDraft.visibility,
-          tags,
-          theme: rootfsThemeFromPublishDraft(publishDraft),
-          official: isAdmin ? publishDraft.official : undefined,
-          prepull: isAdmin ? publishDraft.prepull : undefined,
-          hidden: isAdmin ? publishDraft.hidden : undefined,
-        });
-        actions?.trackRootfsPublishOp?.(op);
-      } else {
-        const entry = await saveRootfsCatalogEntry({
-          image_id:
-            publishMode === "manage" && publishSourceEntry?.can_manage
-              ? publishSourceEntry.id
-              : undefined,
-          image: publishDraft.image,
-          label: publishDraft.label,
-          family: publishDraft.family.trim() || undefined,
-          version: publishDraft.version.trim() || undefined,
-          channel: publishDraft.channel.trim() || undefined,
-          supersedes_image_id:
-            publishDraft.supersedes_image_id.trim() || undefined,
-          description: publishDraft.description,
-          visibility: publishDraft.visibility,
-          tags,
-          theme: rootfsThemeFromPublishDraft(publishDraft),
-          official: isAdmin ? publishDraft.official : undefined,
-          prepull: isAdmin ? publishDraft.prepull : undefined,
-          hidden: isAdmin ? publishDraft.hidden : undefined,
-        });
-        setPublishOpen(false);
-        setCatalogRefresh(Date.now());
-        if (entry.image === value) {
-          setImageId(entry.id);
+      await runFreshAuthAction(async () => {
+        setPublishing(true);
+        try {
+          if (!project) {
+            throw new Error("project is not available");
+          }
+          const tags = publishDraft.tags
+            .split(",")
+            .map((tag) => tag.trim())
+            .filter(Boolean);
+          if (publishMode === "copy" && publishCopyMode === "project") {
+            setOpen(false);
+            setPublishOpen(false);
+            const op = await publishProjectRootfsImage({
+              project_id: project.get("project_id"),
+              label: publishDraft.label,
+              family: publishDraft.family.trim() || undefined,
+              version: publishDraft.version.trim() || undefined,
+              channel: publishDraft.channel.trim() || undefined,
+              supersedes_image_id:
+                publishDraft.supersedes_image_id.trim() || undefined,
+              description: publishDraft.description,
+              visibility: publishDraft.visibility,
+              tags,
+              theme: rootfsThemeFromPublishDraft(publishDraft),
+              official: isAdmin ? publishDraft.official : undefined,
+              prepull: isAdmin ? publishDraft.prepull : undefined,
+              hidden: isAdmin ? publishDraft.hidden : undefined,
+            });
+            actions?.trackRootfsPublishOp?.(op);
+          } else {
+            const entry = await saveRootfsCatalogEntry({
+              image_id:
+                publishMode === "manage" && publishSourceEntry?.can_manage
+                  ? publishSourceEntry.id
+                  : undefined,
+              image: publishDraft.image,
+              label: publishDraft.label,
+              family: publishDraft.family.trim() || undefined,
+              version: publishDraft.version.trim() || undefined,
+              channel: publishDraft.channel.trim() || undefined,
+              supersedes_image_id:
+                publishDraft.supersedes_image_id.trim() || undefined,
+              description: publishDraft.description,
+              visibility: publishDraft.visibility,
+              tags,
+              theme: rootfsThemeFromPublishDraft(publishDraft),
+              official: isAdmin ? publishDraft.official : undefined,
+              prepull: isAdmin ? publishDraft.prepull : undefined,
+              hidden: isAdmin ? publishDraft.hidden : undefined,
+            });
+            setPublishOpen(false);
+            setCatalogRefresh(Date.now());
+            if (entry.image === value) {
+              setImageId(entry.id);
+            }
+            if (entry.image === rootfsDraft) {
+              setRootfsDraftId(entry.id);
+            }
+          }
+        } finally {
+          setPublishing(false);
         }
-        if (entry.image === rootfsDraft) {
-          setRootfsDraftId(entry.id);
-        }
-      }
+      });
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setPublishing(false);
     }
   }
 
@@ -842,6 +853,7 @@ export default function RootFilesystemImage({
     <div
       style={isModal ? undefined : { marginTop: "-4px", marginLeft: "-10px" }}
     >
+      <FreshAuthModal {...freshAuthModalProps} />
       <div style={isModal ? undefined : { marginLeft: "15px" }}>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <div

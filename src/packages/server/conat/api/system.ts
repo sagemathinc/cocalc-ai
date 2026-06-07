@@ -3755,7 +3755,9 @@ const ROOTFS_ADMIN_CATALOG_FIELDS = [
   "blocked_reason",
 ] as const;
 
-function hasRootfsAdminCatalogField(body: RootfsCatalogSaveBody): boolean {
+function hasRootfsAdminCatalogField(
+  body: Partial<Record<(typeof ROOTFS_ADMIN_CATALOG_FIELDS)[number], unknown>>,
+): boolean {
   return ROOTFS_ADMIN_CATALOG_FIELDS.some((field) => {
     return (
       Object.prototype.hasOwnProperty.call(body, field) &&
@@ -3975,12 +3977,23 @@ async function publishQueuedLroSafe({ op }: { op: LroSummary }) {
 }
 
 export async function publishProjectRootfsImage(
-  opts: PublishProjectRootfsBody & { account_id?: string },
+  opts: PublishProjectRootfsBody & {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+  },
 ): Promise<ProjectRootfsPublishLroRef> {
-  const { account_id, project_id, ...body } = opts;
+  const { account_id, browser_id, session_hash, project_id, ...body } = opts;
   if (!account_id) {
     throw Error("user must be signed in");
   }
+  const admin = await isAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: admin && hasRootfsAdminCatalogField(body),
+  });
   await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
   await assertCanCreateOrUpdateRootfs({
     account_id,
