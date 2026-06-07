@@ -756,6 +756,9 @@ export default function DiskUsage({
     visible.reduce((sum, bucket) => sum + bucket.summaryBytes, 0),
     1,
   );
+  const visibleWarnings = visible.filter(
+    (bucket) => bucket.warning || bucket.estimated || bucket.stale,
+  );
   const historyMetricOptions = useMemo(
     () =>
       (
@@ -1468,6 +1471,23 @@ export default function DiskUsage({
                       files, but the quota model above is the authoritative
                       limit.
                     </div>
+                  )}
+                  {visibleWarnings.length > 0 && (
+                    <Alert
+                      style={{ marginBottom: "12px" }}
+                      showIcon
+                      type="warning"
+                      message="Visible storage breakdown is estimated"
+                      description={visibleWarnings
+                        .map(
+                          (bucket) =>
+                            `${relativeLabel(bucket)}: ${
+                              bucket.warning ??
+                              "showing cached or estimated usage"
+                            }`,
+                        )
+                        .join(" ")}
+                    />
                   )}
                   {visible.map((bucket) => (
                     <div

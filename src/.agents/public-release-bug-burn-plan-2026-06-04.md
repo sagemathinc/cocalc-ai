@@ -453,6 +453,20 @@ Plan:
 
 Estimate: `M`
 
+Status: `implemented`
+
+- Project storage overview now keeps quota visibility available when a cold
+  live-file scan exceeds its quick-scan budget by falling back to quota-based
+  visible usage.
+- Disk usage scans use a short interactive wait but continue in the background
+  with a longer per-scan timeout, subject to an in-memory per-project hourly
+  scan runtime budget on the project host.
+- Successful live-file scans are retained as stale fallback data, so later
+  timeout/budget failures can still show the last detailed breakdown with an
+  explicit estimated/stale warning.
+- The storage UI surfaces estimated visible-storage buckets instead of showing a
+  blank/error-only overview.
+
 ### P1-C: Agents Panel Performance And State Retention
 
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`
@@ -577,6 +591,14 @@ Plan:
   fake-timer test.
 
 Estimate: `S-M`
+
+Status: `implemented`
+
+- Replaced next-update scheduling with a deterministic next-visible-text-change
+  calculation so past and future timestamps update without relying on unrelated
+  rerenders.
+- Added fake-timer coverage for future timestamps crossing minute boundaries and
+  for a future timestamp becoming past.
 
 ### P1-J: Disable Paged Block Markdown Editor By Default
 

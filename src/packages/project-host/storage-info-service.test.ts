@@ -5,6 +5,8 @@ const getSharedScratchMountpointMock = jest.fn();
 const fsClientMock = jest.fn();
 const dstreamMock = jest.fn();
 const statfsMock = jest.fn();
+const ORIGINAL_BREAKDOWN_WAIT_MS =
+  process.env.COCALC_PROJECT_STORAGE_BREAKDOWN_WAIT_MS;
 
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
@@ -62,7 +64,22 @@ describe("project storage info service", () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+    if (ORIGINAL_BREAKDOWN_WAIT_MS == null) {
+      delete process.env.COCALC_PROJECT_STORAGE_BREAKDOWN_WAIT_MS;
+    } else {
+      process.env.COCALC_PROJECT_STORAGE_BREAKDOWN_WAIT_MS =
+        ORIGINAL_BREAKDOWN_WAIT_MS;
+    }
     getSharedScratchMountpointMock.mockReturnValue(undefined);
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_BREAKDOWN_WAIT_MS == null) {
+      delete process.env.COCALC_PROJECT_STORAGE_BREAKDOWN_WAIT_MS;
+    } else {
+      process.env.COCALC_PROJECT_STORAGE_BREAKDOWN_WAIT_MS =
+        ORIGINAL_BREAKDOWN_WAIT_MS;
+    }
   });
 
   it("builds overview data and records a local history sample", async () => {
@@ -108,8 +125,197 @@ describe("project storage info service", () => {
     );
     expect(duMock).toHaveBeenCalledWith("/root", {
       options: ["-B", "1", "-x", "-d", "1"],
-      timeout: 10_000,
+      timeout: 120_000,
     });
+  });
+
+  it("keeps overview usable with a quota-based estimate when live scan times out cold", async () => {
+    const stream = makeStream();
+    const duMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.from("timeout"),
+        code: 124,
+        truncated: true,
+      })
+      .mockRejectedValueOnce(new Error("not found"));
+    dstreamMock.mockResolvedValue(stream);
+    fileServerClientMock.mockReturnValue({
+      getQuota: jest.fn(async () => ({
+        used: 5_000,
+        size: 10_000,
+        qgroupid: "0/2",
+        scope: "subvolume",
+      })),
+    });
+    fsClientMock.mockReturnValue({
+      du: duMock,
+    });
+
+    const { handleProjectStorageOverviewRequest } =
+      await import("./storage-info-service");
+    const overview = await handleProjectStorageOverviewRequest.call(
+      {
+        subject: "project.11111111-1111-4111-8111-111111111111.storage-info.-",
+      },
+      { home: "/root" },
+      {} as any,
+    );
+
+    expect(overview.quotas[0].used).toBe(5_000);
+    expect(overview.live.bytes).toBe(5_000);
+    expect(overview.visible[0]).toEqual(
+      expect.objectContaining({
+        key: "home",
+        summaryBytes: 5_000,
+        estimated: true,
+        scan_status: "failed",
+        warning: expect.stringContaining("did not finish"),
+      }),
+    );
+    expect(overview.visible[0].usage).toEqual(
+      expect.objectContaining({
+        path: "/root",
+        bytes: 5_000,
+        children: [],
+        estimated: true,
+        scan_status: "failed",
+      }),
+    );
+    expect(stream.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an estimate while a long scan continues in the background", async () => {
+    process.env.COCALC_PROJECT_STORAGE_BREAKDOWN_WAIT_MS = "5";
+    let resolveDu!: (value: any) => void;
+    const longDu = new Promise((resolve) => {
+      resolveDu = resolve;
+    });
+    const stream = makeStream();
+    const duMock = jest
+      .fn()
+      .mockReturnValueOnce(longDu)
+      .mockRejectedValueOnce(new Error("not found"))
+      .mockRejectedValueOnce(new Error("not found"));
+    dstreamMock.mockResolvedValue(stream);
+    fileServerClientMock.mockReturnValue({
+      getQuota: jest.fn(async () => ({
+        used: 5_000,
+        size: 10_000,
+        qgroupid: "0/2",
+        scope: "subvolume",
+      })),
+    });
+    fsClientMock.mockReturnValue({
+      du: duMock,
+    });
+
+    const { handleProjectStorageOverviewRequest } =
+      await import("./storage-info-service");
+    const subject =
+      "project.11111111-1111-4111-8111-111111111111.storage-info.-";
+    const request = handleProjectStorageOverviewRequest.call(
+      { subject },
+      { home: "/root" },
+      {} as any,
+    );
+
+    const fallback = await request;
+
+    expect(fallback.live.bytes).toBe(5_000);
+    expect(fallback.visible[0]).toEqual(
+      expect.objectContaining({
+        estimated: true,
+        scan_status: "running",
+        warning: expect.stringContaining("may still finish in the background"),
+      }),
+    );
+    expect(duMock).toHaveBeenCalledWith("/root", {
+      options: ["-B", "1", "-x", "-d", "1"],
+      timeout: 120_000,
+    });
+
+    resolveDu({
+      stdout: Buffer.from("20 /root/cache\n120 /root\n"),
+      stderr: Buffer.alloc(0),
+      code: 0,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const completed = await handleProjectStorageOverviewRequest.call(
+      { subject },
+      { home: "/root" },
+      {} as any,
+    );
+
+    expect(completed.live.bytes).toBe(120);
+    expect(completed.visible[0].estimated).toBeUndefined();
+    expect(completed.visible[0].usage.children).toEqual([
+      { bytes: 20, path: "cache" },
+    ]);
+  });
+
+  it("uses stale cached breakdowns when a forced overview rescan times out", async () => {
+    const stream = makeStream();
+    const duMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: Buffer.from("20 /root/cache\n120 /root\n"),
+        stderr: Buffer.alloc(0),
+        code: 0,
+      })
+      .mockRejectedValueOnce(new Error("not found"))
+      .mockResolvedValueOnce({
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.from("timeout"),
+        code: 124,
+        truncated: true,
+      })
+      .mockRejectedValueOnce(new Error("not found"));
+    dstreamMock.mockResolvedValue(stream);
+    fileServerClientMock.mockReturnValue({
+      getQuota: jest.fn(async () => ({
+        used: 500,
+        size: 1_000,
+        qgroupid: "0/2",
+        scope: "subvolume",
+      })),
+    });
+    fsClientMock.mockReturnValue({
+      du: duMock,
+    });
+
+    const { handleProjectStorageOverviewRequest } =
+      await import("./storage-info-service");
+    const subject =
+      "project.11111111-1111-4111-8111-111111111111.storage-info.-";
+    const first = await handleProjectStorageOverviewRequest.call(
+      { subject },
+      { home: "/root" },
+      {} as any,
+    );
+    const stale = await handleProjectStorageOverviewRequest.call(
+      { subject },
+      { home: "/root", force_sample: true },
+      {} as any,
+    );
+
+    expect(first.live.bytes).toBe(120);
+    expect(stale.live.bytes).toBe(120);
+    expect(stale.visible[0]).toEqual(
+      expect.objectContaining({
+        estimated: true,
+        stale: true,
+        scan_status: "failed",
+        warning: expect.stringContaining("did not finish"),
+      }),
+    );
+    expect(stale.visible[0].usage.children).toEqual([
+      { bytes: 20, path: "cache" },
+    ]);
+    expect(stale.refresh?.status).toBe("sampled");
   });
 
   it("includes host-level shared scratch capacity when mounted", async () => {

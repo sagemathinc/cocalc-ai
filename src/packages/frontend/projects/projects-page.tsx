@@ -59,26 +59,26 @@ function readMaybeImmutable(value: any, key: string): any {
   return value?.get?.(key) ?? value?.[key];
 }
 
-function projectListWindowKey({
+function projectIdsFromMaybeImmutable(value: any): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value?.toArray === "function") return value.toArray();
+  return [];
+}
+
+function projectListWindowQuery({
   hidden,
   search,
 }: {
   hidden: boolean;
   search: string;
-}): string {
-  return JSON.stringify({
+}) {
+  return {
     limit: VISIBLE_WINDOW_REPAIR_LIMIT,
     offset: 0,
     hidden,
     search: `${search ?? ""}`.trim(),
-    sort: "last_edited",
-  });
-}
-
-function projectIdsFromMaybeImmutable(value: any): string[] {
-  if (Array.isArray(value)) return value;
-  if (typeof value?.toArray === "function") return value.toArray();
-  return [];
+    sort: "last_edited" as const,
+  };
 }
 
 export const ProjectsPage: React.FC = () => {
@@ -175,9 +175,13 @@ export const ProjectsPage: React.FC = () => {
   ]);
 
   const activeHashtags = selected_hashtags?.get(filter);
-  const backendWindowKey = useMemo(
-    () => projectListWindowKey({ hidden, search }),
+  const backendWindowQuery = useMemo(
+    () => projectListWindowQuery({ hidden, search }),
     [hidden, search],
+  );
+  const backendWindowKey = useMemo(
+    () => JSON.stringify(backendWindowQuery),
+    [backendWindowQuery],
   );
 
   const backend_visible_projects: string[] | undefined = useMemo(() => {
@@ -187,9 +191,11 @@ export const ProjectsPage: React.FC = () => {
     if (readMaybeImmutable(project_list_window, "key") !== backendWindowKey) {
       return undefined;
     }
+    const dirty = !!readMaybeImmutable(project_list_window, "dirty");
     if (
-      readMaybeImmutable(project_list_window, "loading") ||
-      readMaybeImmutable(project_list_window, "error")
+      !dirty &&
+      (readMaybeImmutable(project_list_window, "loading") ||
+        readMaybeImmutable(project_list_window, "error"))
     ) {
       return undefined;
     }
@@ -199,6 +205,12 @@ export const ProjectsPage: React.FC = () => {
   }, [activeHashtags, backendWindowKey, project_list_window]);
 
   const visible_projects = backend_visible_projects ?? local_visible_projects;
+  const showingBackendWindow = backend_visible_projects != null;
+  const backendWindowDirty =
+    showingBackendWindow && !!readMaybeImmutable(project_list_window, "dirty");
+  const backendWindowDirtyCount = Number(
+    readMaybeImmutable(project_list_window, "dirty_count") ?? 0,
+  );
 
   const visibleProjectionRepairKey = useMemo(
     () => visible_projects.slice(0, VISIBLE_WINDOW_REPAIR_LIMIT).join("\n"),
@@ -233,22 +245,41 @@ export const ProjectsPage: React.FC = () => {
   }, [visibleProjectionRepairKey]);
 
   useEffect(() => {
+    if (backendWindowDirty) {
+      return;
+    }
+    const currentWindowKey = readMaybeImmutable(project_list_window, "key");
+    if (
+      currentWindowKey === backendWindowKey &&
+      (readMaybeImmutable(project_list_window, "loading") ||
+        readMaybeImmutable(project_list_window, "loaded_at"))
+    ) {
+      return;
+    }
     const timer = setTimeout(() => {
       // This backend window is a convergence aid: it refreshes the same top
       // slice the user is likely looking at without replacing the richer local
       // search/filter semantics used for rendering.
       void redux
         .getActions("projects")
-        ?.loadProjectListWindowForCurrentAccount?.({
-          limit: VISIBLE_WINDOW_REPAIR_LIMIT,
-          offset: 0,
-          hidden,
-          search: `${search ?? ""}`.trim(),
-          sort: "last_edited",
-        });
+        ?.loadProjectListWindowForCurrentAccount?.(backendWindowQuery);
     }, VISIBLE_WINDOW_REPAIR_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [hidden, search]);
+  }, [
+    backendWindowDirty,
+    backendWindowKey,
+    backendWindowQuery,
+    project_list_window,
+  ]);
+
+  function refreshBackendWindow() {
+    void redux
+      .getActions("projects")
+      ?.loadProjectListWindowForCurrentAccount?.({
+        ...backendWindowQuery,
+        force: true,
+      });
+  }
 
   useEffect(() => {
     const visible = new Set(visible_projects);
@@ -522,6 +553,9 @@ export const ProjectsPage: React.FC = () => {
                       visible_projects={visible_projects}
                       searchRef={searchRef}
                       filtersRef={filtersRef}
+                      projectListChanged={backendWindowDirty}
+                      projectListChangedCount={backendWindowDirtyCount}
+                      onRefreshProjectList={refreshBackendWindow}
                       tour={
                         <ProjectsPageTour
                           searchRef={searchRef}
@@ -561,6 +595,7 @@ export const ProjectsPage: React.FC = () => {
                         onFilteredCollaboratorsChange={setFilteredCollaborators}
                         selectedProjectIds={selectedProjectIds}
                         onSelectedProjectIdsChange={setSelectedProjectIds}
+                        freezeOrder={backendWindowDirty}
                       />
                     )}
                   </div>

@@ -71,6 +71,10 @@ export interface ProjectsState {
     key: string;
     project_ids: string[];
     loading: boolean;
+    dirty?: boolean;
+    dirty_reason?: string;
+    dirty_count?: number;
+    dirty_at?: Date;
     loaded_at?: Date;
     error?: string;
   };

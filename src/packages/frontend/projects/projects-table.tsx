@@ -42,6 +42,7 @@ interface Props {
   onFilteredCollaboratorsChange: (collaborators: string[] | null) => void;
   selectedProjectIds: string[];
   onSelectedProjectIdsChange: (project_ids: string[]) => void;
+  freezeOrder?: boolean;
 }
 
 const PROJECTS_TABLE_SORT_KEY = "projects-table-sort";
@@ -54,6 +55,7 @@ export function ProjectsTable({
   onFilteredCollaboratorsChange,
   selectedProjectIds,
   onSelectedProjectIdsChange,
+  freezeOrder = false,
 }: Props) {
   const intl = useIntl();
   const actions = useActions("projects");
@@ -158,7 +160,13 @@ export function ProjectsTable({
     narrow,
     filteredCollaborators,
     intl,
-  );
+  ).map((column) => {
+    if (!freezeOrder) {
+      return column;
+    }
+    const { sorter: _sorter, sortOrder: _sortOrder, ...rest } = column;
+    return rest;
+  });
 
   function handleOpenProject(record: ProjectTableRecord, e?: React.MouseEvent) {
     if (record.deletionBlocked) {
@@ -194,6 +202,7 @@ export function ProjectsTable({
 
   return (
     <Table<ProjectTableRecord>
+      key={freezeOrder ? "frozen-order" : "sortable-order"}
       virtual
       size="small"
       columns={columns}

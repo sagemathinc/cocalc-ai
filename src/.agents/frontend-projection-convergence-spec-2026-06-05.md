@@ -648,6 +648,7 @@ Deliverables:
 - Projects table renders joined window IDs + `project_map`
   - started: full projects page now renders from the matching backend window when no hashtag filter is active, and falls back to local filtering when the backend window is loading, stale, errored, or semantically unsafe
 - feed events mark visible window dirty or repair affected rows
+  - implemented: feed upsert/remove/history-gap marks the active backend window dirty, updates row data in place, and shows an explicit refresh control instead of silently reordering the project list
 
 ### Phase 4: Move Detail Fields Out Of `project_map`
 
@@ -664,9 +665,12 @@ Convert user-facing writes to the projection ack helper.
 Priority:
 
 1. account settings
+   - implemented for `account.other_settings` via the shared write-ack helper
 2. project lifecycle
 3. project metadata
+   - implemented for project title, description, and theme via `account_project_index` ack checks and targeted row repair
 4. notification read state
+   - implemented for mention notification read/unread state via the shared write-ack helper
 5. collaborator membership changes
 
 ### Phase 6: Release Hardening

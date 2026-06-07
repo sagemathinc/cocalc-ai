@@ -32,11 +32,7 @@ import {
   refreshAccountSnapshot,
   type AccountProjectionRepairReason,
 } from "./table";
-import {
-  recordProjectionAckConverged,
-  recordProjectionAckFailed,
-  recordProjectionAckStart,
-} from "@cocalc/frontend/projection-diagnostics";
+import { writeAndWaitForProjection } from "@cocalc/frontend/projection-ack";
 
 export type AccountProjectionRepairRequest = {
   fields?: string[];
@@ -279,57 +275,19 @@ export class AccountActions extends Actions<AccountState> {
     name: string,
     value: any,
   ): Promise<void> {
-    const ackId = `other_settings:${name}:${Date.now()}:${Math.random()}`;
-    const ackName = `account.other_settings.${name}`;
-    recordProjectionAckStart({
-      consumer: "account",
-      id: ackId,
-      name: ackName,
-    });
     const current =
       this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
-    try {
-      await this.redux
-        .getTable("account")
-        .set({ other_settings: { ...current, [name]: value } }, "shallow");
-      if (await this.waitForOtherSettingProjection(name, value)) {
-        recordProjectionAckConverged({
-          consumer: "account",
-          id: ackId,
-          name: ackName,
-        });
-        return;
-      }
-      await refreshAccountSnapshot("write-ack");
-      if (await this.waitForOtherSettingProjection(name, value)) {
-        recordProjectionAckConverged({
-          consumer: "account",
-          id: ackId,
-          name: ackName,
-        });
-        return;
-      }
-      const err = new Error(
-        "account other_settings projection did not converge",
-      );
-      recordProjectionAckFailed({
-        consumer: "account",
-        id: ackId,
-        name: ackName,
-        error: err,
-      });
-      console.warn("account other_settings projection did not converge", {
-        name,
-      });
-    } catch (err) {
-      recordProjectionAckFailed({
-        consumer: "account",
-        id: ackId,
-        name: ackName,
-        error: err,
-      });
-      throw err;
-    }
+    await writeAndWaitForProjection({
+      consumer: "account",
+      name: `account.other_settings.${name}`,
+      write: () =>
+        this.redux
+          .getTable("account")
+          .set({ other_settings: { ...current, [name]: value } }, "shallow"),
+      matchesProjection: () => this.otherSettingProjectionMatches(name, value),
+      repair: () => refreshAccountSnapshot("write-ack"),
+      timeout_ms: 2_500,
+    });
   }
 
   set_editor_settings = (name: string, value) => {
@@ -346,40 +304,6 @@ export class AccountActions extends Actions<AccountState> {
 
   private otherSettingProjectionMatches(name: string, value: any): boolean {
     return isEqual(this.getOtherSettingValue(name), value);
-  }
-
-  private waitForOtherSettingProjection(
-    name: string,
-    value: any,
-    timeoutMs = 2_500,
-  ): Promise<boolean> {
-    if (this.otherSettingProjectionMatches(name, value)) {
-      return Promise.resolve(true);
-    }
-    const accountStore = this.redux.getStore("account");
-    if (accountStore?.on == null) {
-      return Promise.resolve(false);
-    }
-    return new Promise((resolve) => {
-      let done = false;
-      const finish = (result: boolean) => {
-        if (done) {
-          return;
-        }
-        done = true;
-        clearTimeout(timer);
-        accountStore.removeListener?.("change", onChange);
-        resolve(result);
-      };
-      const onChange = () => {
-        if (this.otherSettingProjectionMatches(name, value)) {
-          finish(true);
-        }
-      };
-      const timer = setTimeout(() => finish(false), timeoutMs);
-      accountStore.on("change", onChange);
-      onChange();
-    });
   }
 
   public set_show_purchase_form(show: boolean) {
