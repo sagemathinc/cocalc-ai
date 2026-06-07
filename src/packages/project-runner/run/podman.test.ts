@@ -99,6 +99,7 @@ import { mountArg } from "@cocalc/backend/podman";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import {
   cleanupProjectSecretsHostPath,
+  cleanupStaleProjectContainers,
   cleanupStaleProjectSecretsHostPaths,
   getAll,
   projectSecretsHostPath,
@@ -559,6 +560,66 @@ describe("project-runner podman orphan fallback", () => {
       stat(`${PROJECT_SECRETS_HOST_ROOT}/.tmp-stale`),
     ).rejects.toThrow();
     await cleanupProjectSecretsHostPath(project1);
+  });
+
+  it("removes non-running project containers with runtime-only secret mounts on startup cleanup", async () => {
+    mockPodman
+      .mockResolvedValueOnce({
+        stdout: [
+          `project-${project1}|created`,
+          `project-${project2}|running`,
+        ].join("\n"),
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          {
+            Source: `${PROJECT_SECRETS_HOST_ROOT}/${project1}`,
+            Destination: "/run/secrets/cocalc",
+          },
+        ]),
+      })
+      .mockResolvedValueOnce(undefined);
+
+    await cleanupStaleProjectContainers();
+
+    expect(mockPodman).toHaveBeenNthCalledWith(1, [
+      "ps",
+      "-a",
+      "--filter",
+      "label=role=project",
+      "--format",
+      "{{.Names}}|{{.State}}",
+    ]);
+    expect(mockPodman).toHaveBeenNthCalledWith(2, [
+      "inspect",
+      "--format",
+      "{{json .Mounts}}",
+      `project-${project1}`,
+    ]);
+    expect(mockPodman).toHaveBeenNthCalledWith(
+      3,
+      ["rm", "-f", "-t", "0", `project-${project1}`],
+      { timeout: 10 },
+    );
+  });
+
+  it("does not remove non-running containers without project secret mounts", async () => {
+    mockPodman
+      .mockResolvedValueOnce({
+        stdout: `project-${project1}|exited\n`,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          {
+            Source: `/mnt/cocalc/project-${project1}`,
+            Destination: "/home/user",
+          },
+        ]),
+      });
+
+    await cleanupStaleProjectContainers();
+
+    expect(mockPodman).toHaveBeenCalledTimes(2);
   });
 
   it("redacts runtime secrets before logging project start config", () => {
