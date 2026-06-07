@@ -43,7 +43,6 @@ describe("admin maintenance dangerous-session auth", () => {
   const SUBJECT_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 
   beforeEach(() => {
-    jest.resetModules();
     isAdminMock = jest.fn(async () => true);
     requireDangerousSessionAuthMock = jest.fn(async () => {
       throw Object.assign(new Error("fresh auth is required"), {

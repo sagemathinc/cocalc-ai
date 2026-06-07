@@ -667,11 +667,15 @@ Priority:
 1. account settings
    - implemented for `account.other_settings` via the shared write-ack helper
 2. project lifecycle
+   - implemented for `archive_project`: the archive RPC waits for
+     `account_project_index.state_summary.state === "archived"` and uses
+     targeted project-row repair if the feed/projection lags
 3. project metadata
    - implemented for project title, description, and theme via `account_project_index` ack checks and targeted row repair
 4. notification read state
    - implemented for mention notification read/unread state via the shared write-ack helper
 5. collaborator membership changes
+   - implemented for collaborator removal and role changes via `users_summary` ack checks and targeted row repair
 
 ### Phase 6: Release Hardening
 

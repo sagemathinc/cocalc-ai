@@ -44,7 +44,6 @@ import {
   shouldDisableGitReviewSubmission,
   shouldApplyGitFileOpenScopedResult,
   matchGitDrawerScrollCommand,
-  resolveGitCommitSearchChange,
   resolveEffectiveGitCommitSelection,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
@@ -1973,39 +1972,53 @@ describe("git commit drawer merge commit formatting", () => {
     ]);
   });
 
-  it("preserves the current commit search across antd auto-clear after selection", () => {
+  it("filters recent commits by hash or subject text", () => {
     expect(
-      resolveGitCommitSearchChange({
-        currentSearch: "slate",
-        nextSearch: "",
-        preserveSearchOnAutoClear: true,
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111", subject: "Fix storage quota" },
+          { hash: "bbb2222", subject: "Refactor chat scroll" },
+          { hash: "ccc3333", subject: "Improve billing" },
+        ],
+        reviewedByCommit: {},
+        onlyUnreviewed: false,
+        filterText: "quota",
+        selectedCommit: undefined,
       }),
-    ).toEqual({
-      search: "slate",
-      preserveSearchOnAutoClear: false,
-    });
+    ).toEqual([{ hash: "aaa1111", subject: "Fix storage quota" }]);
 
     expect(
-      resolveGitCommitSearchChange({
-        currentSearch: "slate",
-        nextSearch: "",
-        preserveSearchOnAutoClear: false,
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111", subject: "Fix storage quota" },
+          { hash: "bbb2222", subject: "Refactor chat scroll" },
+        ],
+        reviewedByCommit: {},
+        onlyUnreviewed: false,
+        filterText: "bbb",
+        selectedCommit: undefined,
       }),
-    ).toEqual({
-      search: "",
-      preserveSearchOnAutoClear: false,
-    });
+    ).toEqual([{ hash: "bbb2222", subject: "Refactor chat scroll" }]);
+  });
 
+  it("keeps the selected commit visible even when it misses the review text filter", () => {
     expect(
-      resolveGitCommitSearchChange({
-        currentSearch: "slate",
-        nextSearch: "codex",
-        preserveSearchOnAutoClear: true,
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111", subject: "Fix storage quota" },
+          { hash: "bbb2222", subject: "Refactor chat scroll" },
+        ],
+        reviewedByCommit: {
+          bbb2222: true,
+        },
+        onlyUnreviewed: true,
+        filterText: "quota",
+        selectedCommit: "bbb2222",
       }),
-    ).toEqual({
-      search: "codex",
-      preserveSearchOnAutoClear: false,
-    });
+    ).toEqual([
+      { hash: "aaa1111", subject: "Fix storage quota" },
+      { hash: "bbb2222", subject: "Refactor chat scroll" },
+    ]);
   });
 
   it("matches git review scroll keys without modifiers", () => {

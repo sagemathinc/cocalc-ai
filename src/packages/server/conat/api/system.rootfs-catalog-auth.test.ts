@@ -47,7 +47,6 @@ describe("RootFS catalog dangerous-session auth", () => {
   const OTHER_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 
   beforeEach(() => {
-    jest.resetModules();
     isAdminMock = jest.fn(async () => false);
     queryMock = jest.fn(async () => ({
       rows: [{ owner_id: ACCOUNT_ID }],

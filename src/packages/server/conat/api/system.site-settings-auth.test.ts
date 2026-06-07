@@ -68,7 +68,6 @@ describe("site settings dangerous-session auth", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
   beforeEach(() => {
-    jest.resetModules();
     const settings = new Map<string, string | undefined>([
       ["signup_email_domain_policy_mode", "deny_list"],
       ["signup_email_domain_allow_list", ""],

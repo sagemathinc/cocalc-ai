@@ -137,7 +137,6 @@ jest.mock("./util", () => ({
 
 describe("projects.copyPathBetweenProjects", () => {
   beforeEach(() => {
-    jest.resetModules();
     assertCollabMock = jest.fn(async () => undefined);
     createLroMock = jest.fn(async () => ({
       op_id: "op-1",

@@ -177,6 +177,18 @@ describe("ProjectsActions archive flow", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedWebappClient.async_query.mockResolvedValue({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            state_summary: { state: "archived" },
+            users_summary: {},
+          },
+        ],
+      },
+    } as any);
     mockedWebappClient.project_collaborators.remove.mockResolvedValue(
       undefined as any,
     );
@@ -195,6 +207,17 @@ describe("ProjectsActions archive flow", () => {
       }
       return {} as any;
     });
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            users_summary: {},
+          },
+        ],
+      },
+    } as any);
 
     await actions.remove_collaborator(project_id, "account-1");
 
@@ -320,6 +343,65 @@ describe("ProjectsActions archive flow", () => {
     });
     expect(setState).toHaveBeenCalledWith({
       control_status: "Archiving project...",
+    });
+  });
+
+  it("waits for the projected archived state after archive RPC succeeds", async () => {
+    configureProject({
+      state: "opened",
+      lastEdited: new Date("2026-04-25T15:00:00.000Z"),
+    });
+    getBackupsMock.mockResolvedValue([
+      {
+        id: "backup-1",
+        time: new Date("2026-04-25T15:10:00.000Z"),
+        summary: {},
+      },
+    ] as any);
+    mockedWebappClient.async_query
+      .mockResolvedValueOnce({
+        query: {
+          account_project_index: [
+            {
+              account_id: "acct-1",
+              project_id,
+              state_summary: { state: "opened" },
+            },
+          ],
+        },
+      } as any)
+      .mockResolvedValue({
+        query: {
+          account_project_index: [
+            {
+              account_id: "acct-1",
+              project_id,
+              state_summary: { state: "archived" },
+            },
+          ],
+        },
+      } as any);
+    const { actions } = makeActions();
+
+    await actions.archive_project(project_id);
+
+    expect(
+      mockedWebappClient.conat_client.hub.projects.archiveProject,
+    ).toHaveBeenCalledWith({
+      project_id,
+      timeout: 30000,
+    });
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            state_summary: null,
+          },
+        ],
+      },
+      options: [{ limit: 1 }],
     });
   });
 
