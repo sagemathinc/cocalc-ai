@@ -429,6 +429,10 @@ async function writeSshAuthorizedKeys({
   if (proxyKeys) {
     const proxyAuthPath = join(home, SSHD_CONFIG, "authorized_keys");
     await write(proxyAuthPath, proxyKeys);
+    await syncSshProxyKeyForDropbear({
+      path: join(home, ".ssh", "authorized_keys"),
+      key: proxyKeys,
+    });
   }
 
   const masterKeys = formatKeys(authorizedKeys);
@@ -439,6 +443,63 @@ async function writeSshAuthorizedKeys({
     // routing ssh to the project.
     await write(managedAuthPath, masterKeys);
   }
+}
+
+const SSH_PROXY_KEY_MARKER = "# Added by CoCalc project-host SSH proxy";
+
+function normalizeAuthorizedKeyLine(line: string): string {
+  return line.trim().replace(/\s+/g, " ");
+}
+
+async function syncSshProxyKeyForDropbear({
+  path,
+  key,
+}: {
+  path: string;
+  key: string;
+}) {
+  const desired = normalizeAuthorizedKeyLine(key);
+  if (!desired) return;
+  let text = "";
+  try {
+    text = await readFile(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw err;
+    }
+  }
+
+  const lines = text.length > 0 ? text.split(/\r?\n/) : [];
+  const next: string[] = [];
+  let hasDesired = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (normalizeAuthorizedKeyLine(line) === SSH_PROXY_KEY_MARKER) {
+      i += 1;
+      continue;
+    }
+    if (normalizeAuthorizedKeyLine(line) === desired) {
+      hasDesired = true;
+    }
+    next.push(line);
+  }
+
+  if (!hasDesired) {
+    if (
+      next.length > 0 &&
+      normalizeAuthorizedKeyLine(next[next.length - 1]) !== ""
+    ) {
+      next.push("");
+    }
+    next.push(SSH_PROXY_KEY_MARKER, desired);
+  }
+
+  let output = next.join("\n");
+  if (!output.endsWith("\n")) {
+    output += "\n";
+  }
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFile(path, output, { mode: 0o600 });
 }
 
 function projectContainerName(project_id) {
