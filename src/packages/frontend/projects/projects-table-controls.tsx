@@ -19,8 +19,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
 import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-//import { COLORS } from "@cocalc/util/theme";
+import { COLORS } from "@cocalc/util/theme";
 
 import { get_visible_hashtags } from "./util";
 
@@ -181,8 +182,20 @@ export function ProjectsTableControls({
             })}
           />
           {projectListChanged && (
-            <Button size="small" onClick={onRefreshProjectList}>
-              Refresh
+            <Button
+              size="small"
+              type="text"
+              icon={<Icon name="sync-alt" />}
+              onClick={onRefreshProjectList}
+              title="Refresh project list"
+              style={{
+                background: COLORS.YELL_LLL,
+                color: "black",
+                borderRadius: 4,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Refresh project list
               {projectListChangedCount > 1
                 ? ` (${projectListChangedCount})`
                 : ""}
