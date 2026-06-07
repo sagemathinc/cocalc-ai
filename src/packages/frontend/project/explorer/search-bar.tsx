@@ -146,8 +146,7 @@ export const SearchBar = memo(
         })
       : intl.formatMessage({
           id: "project.explorer.search-bar.placeholder",
-          defaultMessage:
-            'Filter files or "@", "!" or "/" for Agent / Terminal...',
+          defaultMessage: 'Filter files or "!" / "/" for Terminal...',
         });
 
     // edit → run → edit

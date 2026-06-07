@@ -58,6 +58,34 @@ interface Props {
 }
 
 const { Text } = Typography;
+const BULK_STOP_PROJECT_CONCURRENCY = 5;
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), items.length) },
+    async () => {
+      for (;;) {
+        const index = nextIndex++;
+        if (index >= items.length) return;
+        results[index] = await fn(items[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+function shouldSendProjectStop(project: any): boolean {
+  const state = `${project?.getIn?.(["state", "state"]) ?? ""}`;
+  const hostId = `${project?.get?.("host_id") ?? ""}`.trim();
+  return !!hostId && ["pending", "running", "starting"].includes(state);
+}
 
 export function ProjectsOperations({
   visible_projects,
@@ -257,15 +285,21 @@ export function ProjectsOperations({
   }
 
   async function stopSelectedProjects(projectIds: string[]) {
-    const results = await Promise.all(
-      projectIds.map(async (project_id) => {
+    const results = await mapWithConcurrency(
+      projectIds,
+      BULK_STOP_PROJECT_CONCURRENCY,
+      async (project_id) => {
+        const project = project_map?.get(project_id);
+        if (!shouldSendProjectStop(project)) {
+          return { project_id, ok: true as const, skipped: true as const };
+        }
         try {
           await actions.stop_project(project_id);
           return { project_id, ok: true as const };
         } catch (err) {
           return { project_id, ok: false as const, error: `${err}` };
         }
-      }),
+      },
     );
     const succeeded = results
       .filter((result) => result.ok)

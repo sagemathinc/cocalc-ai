@@ -16,6 +16,10 @@ import CheckedFiles from "./checked-files";
 
 const MAX_FILENAME_LENGTH = 4095;
 
+function normalizeCheckedPath(path: string, currentPath: string): string {
+  return path.startsWith("/") ? path : path_to_file(currentPath || "/", path);
+}
+
 interface Props {
   duplicate?: boolean;
   clear: () => void;
@@ -67,15 +71,17 @@ export default function RenameFile({
     if (store == null) {
       return;
     }
-    const src = checked_files?.first();
-    if (src == null) {
+    const srcRaw = checked_files?.first();
+    if (srcRaw == null) {
       return;
     }
+    const currentPath = `${store.get?.("current_path") ?? ""}`;
+    const src = normalizeCheckedPath(`${srcRaw}`, currentPath);
     const renameDir = path_split(src).head || "/";
     try {
       setLoading(true);
       const opts = {
-        src: checked_files.first(),
+        src,
         dest: path_to_file(renameDir, target),
       };
       onUserFilesystemChange?.();

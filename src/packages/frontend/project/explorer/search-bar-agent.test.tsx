@@ -73,12 +73,8 @@ jest.mock("@cocalc/frontend/project/explorer/file-listing/utils", () => ({
   isTerminalMode: (value: string) =>
     typeof value === "string" &&
     (value.startsWith("/") || value.startsWith("!")),
-  isAgentMode: (value: string) =>
-    typeof value === "string" && value.startsWith("@"),
-  extractAgentPrompt: (value: string) =>
-    typeof value === "string" && value.startsWith("@")
-      ? value.slice(1).trim()
-      : "",
+  isAgentMode: () => false,
+  extractAgentPrompt: () => "",
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -102,7 +98,7 @@ jest.mock("@cocalc/frontend/project/new/navigator-intents", () => ({
 
 const { SearchBar } = require("./search-bar");
 
-describe("SearchBar agent miniterm prefix", () => {
+describe("SearchBar file filter prefixes", () => {
   beforeEach(() => {
     mockSubmitNavigatorPromptInWorkspaceChat.mockReset();
     mockSubmitNavigatorPromptInWorkspaceChat.mockResolvedValue(true);
@@ -111,7 +107,7 @@ describe("SearchBar agent miniterm prefix", () => {
     mockSetFileSearch.mockReset();
   });
 
-  it("routes @-prefixed input to the navigator agent instead of terminal exec", async () => {
+  it("treats @-prefixed input as an ordinary file filter", async () => {
     const actions = {
       set_file_search: (...args: any[]) => mockSetFileSearch(...args),
       clear_selected_file_index: jest.fn(),
@@ -131,21 +127,14 @@ describe("SearchBar agent miniterm prefix", () => {
         create_folder={jest.fn()}
       />,
     );
+    mockSetFileSearch.mockReset();
 
     fireEvent.click(screen.getByRole("button", { name: "submit" }));
 
-    await waitFor(() =>
-      expect(mockSubmitNavigatorPromptInWorkspaceChat).toHaveBeenCalledWith({
-        project_id: "project-1",
-        prompt: "fix this directory",
-        visiblePrompt: "fix this directory",
-        path: "/work",
-        tag: "intent:miniterm-agent",
-        waitForAgent: false,
-      }),
-    );
+    await waitFor(() => expect(mockExec).not.toHaveBeenCalled());
+    expect(mockSubmitNavigatorPromptInWorkspaceChat).not.toHaveBeenCalled();
     expect(mockExec).not.toHaveBeenCalled();
-    expect(mockAddHistoryEntry).toHaveBeenCalledWith("@fix this directory");
-    expect(mockSetFileSearch).toHaveBeenLastCalledWith("");
+    expect(mockAddHistoryEntry).not.toHaveBeenCalled();
+    expect(mockSetFileSearch).not.toHaveBeenCalledWith("");
   });
 });

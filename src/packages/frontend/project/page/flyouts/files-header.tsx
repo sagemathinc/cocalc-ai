@@ -781,7 +781,7 @@ export function FilesHeader({
           <div style={{ flex: "1", position: "relative" }}>
             <Input
               ref={refInput}
-              placeholder='Filter or "@", "!" / "/" for Agent / Terminal...'
+              placeholder='Filter or "!" / "/" for Terminal...'
               size="small"
               value={file_search}
               onKeyDown={filterKeyHandler}

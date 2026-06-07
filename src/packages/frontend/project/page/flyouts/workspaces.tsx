@@ -4,6 +4,7 @@
  */
 
 import {
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -1323,6 +1324,18 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           <div style={{ padding: "24px 0", textAlign: "center" }}>
             <Spin tip="Loading workspaces..." />
           </div>
+        ) : workspaces.error ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Failed to load workspaces"
+            description={workspaces.error}
+            action={
+              <Button size="small" onClick={workspaces.refresh}>
+                Refresh
+              </Button>
+            }
+          />
         ) : workspaces.records.length === 0 ? (
           <Empty
             description="No workspaces yet"
