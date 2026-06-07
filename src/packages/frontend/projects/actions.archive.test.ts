@@ -340,6 +340,51 @@ describe("ProjectsActions archive flow", () => {
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
   });
 
+  it("repairs a dropped projected stop update before resolving stop", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "running",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      let projectedStateValue = "running";
+      mockedWebappClient.async_query.mockImplementation(async () =>
+        projectedState(projectedStateValue),
+      );
+      const { actions, setState } = makeActions();
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      const repair = jest
+        .spyOn(actions, "repairProjectProjection")
+        .mockImplementation(async (request) => {
+          expect(request).toEqual({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "project-stop",
+          });
+          projectedStateValue = "opened";
+        });
+
+      const stopped = actions.stop_project(project_id);
+      await Promise.resolve();
+
+      expect(
+        mockedWebappClient.conat_client.hub.projects.stop,
+      ).toHaveBeenCalledWith({ project_id });
+      expect(repair).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(5_000);
+      await expect(stopped).resolves.toBe(true);
+
+      expect(repair).toHaveBeenCalledTimes(1);
+      expect(setState).toHaveBeenCalledWith({ control_error: "" });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("reuses a fresh backup and skips the extra backup LRO", async () => {
     configureProject({
       state: "opened",
