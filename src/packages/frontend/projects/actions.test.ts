@@ -34,6 +34,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     project_client: {
       create: jest.fn(async () => "project-created"),
     },
+    project_collaborators: {
+      set_role: jest.fn(async () => undefined),
+    },
     async_query: jest.fn(async () => undefined),
   },
 }));
@@ -49,6 +52,9 @@ describe("ProjectsActions project metadata updates", () => {
       ImmutableMap({
         title: "Old title",
         description: "Old description",
+        users: ImmutableMap({
+          "viewer-1": ImmutableMap({ group: "viewer" }),
+        }),
       }),
     ],
   ]);
@@ -79,6 +85,20 @@ describe("ProjectsActions project metadata updates", () => {
             description: "Old description",
             theme: null,
             ...row,
+          },
+        ],
+      },
+    });
+  }
+
+  function mockProjectedProjectUsers(users_summary: Record<string, any>) {
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            users_summary,
           },
         ],
       },
@@ -269,6 +289,49 @@ describe("ProjectsActions project metadata updates", () => {
     expect(mockedWebappClient.async_query).not.toHaveBeenCalled();
     expect(async_log).not.toHaveBeenCalled();
     expect(redux._set_state).not.toHaveBeenCalled();
+  });
+
+  it("waits for collaborator role changes to appear in account_project_index", async () => {
+    const { actions, redux } = makeActions();
+    mockProjectedProjectUsers({
+      "viewer-1": { group: "collaborator" },
+    });
+
+    await expect(
+      actions.set_project_user_role(project_id, "viewer-1", "collaborator"),
+    ).resolves.toBeUndefined();
+
+    expect(
+      mockedWebappClient.project_collaborators.set_role,
+    ).toHaveBeenCalledWith({
+      project_id,
+      target_account_id: "viewer-1",
+      role: "collaborator",
+      read_policy: undefined,
+    });
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            users_summary: null,
+          },
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+    expect(redux._set_state).toHaveBeenCalledWith(
+      {
+        projects: {
+          project_map: baseProjectMap.setIn(
+            [project_id, "users", "viewer-1"],
+            ImmutableMap({ group: "collaborator" }),
+          ),
+        },
+      },
+      "projects",
+    );
   });
 
   it("does not reject metadata saves when best-effort logging fails", async () => {

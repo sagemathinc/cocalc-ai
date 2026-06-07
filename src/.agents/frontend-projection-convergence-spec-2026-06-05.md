@@ -672,6 +672,7 @@ Priority:
 4. notification read state
    - implemented for mention notification read/unread state via the shared write-ack helper
 5. collaborator membership changes
+   - implemented for collaborator removal and role changes via `users_summary` ack checks and targeted row repair
 
 ### Phase 6: Release Hardening
 
