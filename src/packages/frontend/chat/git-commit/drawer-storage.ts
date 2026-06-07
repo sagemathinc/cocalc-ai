@@ -12,10 +12,15 @@ const DRAWER_SCROLL_STORAGE_KEY = "cocalc:chat:gitCommitDrawerScroll:v1";
 const ONLY_UNREVIEWED_STORAGE_KEY =
   "cocalc:chat:gitCommitDrawer:onlyUnreviewed";
 const COMMIT_SEARCH_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:commitSearch";
+const RECENT_CUTOFF_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:recentCutoff";
+const FETCH_COUNT_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:fetchCount";
 const MAX_DRAWER_SCROLL_ENTRIES = 50;
 const DEFAULT_DRAWER_SIZE = 920;
 const MIN_DRAWER_SIZE = 520;
 const MAX_DRAWER_SIZE = 1800;
+export const DEFAULT_GIT_REVIEW_FETCH_COUNT = 500;
+const MIN_GIT_REVIEW_FETCH_COUNT = 50;
+const MAX_GIT_REVIEW_FETCH_COUNT = 5000;
 
 export function clampDrawerSize(size: number): number {
   if (!Number.isFinite(size)) return DEFAULT_DRAWER_SIZE;
@@ -71,6 +76,60 @@ export function readGitReviewCommitSearchPreference(): string {
 export function persistGitReviewCommitSearchPreference(value: string): void {
   try {
     localStorage.setItem(COMMIT_SEARCH_STORAGE_KEY, value);
+  } catch {
+    // ignore
+  }
+}
+
+export function clampGitReviewFetchCount(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_GIT_REVIEW_FETCH_COUNT;
+  return Math.max(
+    MIN_GIT_REVIEW_FETCH_COUNT,
+    Math.min(MAX_GIT_REVIEW_FETCH_COUNT, Math.round(value)),
+  );
+}
+
+export function readGitReviewFetchCountPreference(): number {
+  try {
+    const raw = localStorage.getItem(FETCH_COUNT_STORAGE_KEY);
+    if (!raw) return DEFAULT_GIT_REVIEW_FETCH_COUNT;
+    return clampGitReviewFetchCount(Number(raw));
+  } catch {
+    return DEFAULT_GIT_REVIEW_FETCH_COUNT;
+  }
+}
+
+export function persistGitReviewFetchCountPreference(value: number): void {
+  try {
+    localStorage.setItem(
+      FETCH_COUNT_STORAGE_KEY,
+      String(clampGitReviewFetchCount(value)),
+    );
+  } catch {
+    // ignore
+  }
+}
+
+export function readGitReviewRecentCutoffPreference(): number | undefined {
+  try {
+    const raw = localStorage.getItem(RECENT_CUTOFF_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function persistGitReviewRecentCutoffPreference(
+  value: number | undefined,
+): void {
+  try {
+    if (value == null || !Number.isFinite(value) || value <= 0) {
+      localStorage.removeItem(RECENT_CUTOFF_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(RECENT_CUTOFF_STORAGE_KEY, String(Math.round(value)));
   } catch {
     // ignore
   }
