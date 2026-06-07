@@ -20,6 +20,28 @@ export function computeSshFingerprintFromBase64(base64: string): string {
   return computeSshFingerprintFromRawKey(Buffer.from(base64, "base64"));
 }
 
+export function sshPublicKeyCandidateFingerprints(
+  publicKey: Uint8Array,
+): string[] {
+  const fingerprints = new Set<string>();
+  fingerprints.add(computeSshFingerprintFromRawKey(publicKey));
+
+  const text = Buffer.from(publicKey).toString("utf8").trim();
+  if (text) {
+    const entry = extractAuthorizedKeyBase64(text);
+    if (entry) {
+      try {
+        fingerprints.add(computeSshFingerprintFromBase64(entry.base64));
+      } catch {
+        // Ignore malformed text; the raw SSH key blob fingerprint above is
+        // still the canonical sshpiperd format.
+      }
+    }
+  }
+
+  return Array.from(fingerprints);
+}
+
 export function extractAuthorizedKeyBase64(
   line: string,
 ): { key_type: string; base64: string } | undefined {
@@ -62,4 +84,27 @@ export function authorizedKeysContainFingerprint(
     }
   }
   return false;
+}
+
+export function authorizedKeysContainAnyFingerprint(
+  text: string,
+  fingerprints: readonly string[],
+): boolean {
+  return matchingAuthorizedKeyFingerprint(text, fingerprints) != null;
+}
+
+export function matchingAuthorizedKeyFingerprint(
+  text: string,
+  fingerprints: readonly string[],
+): string | undefined {
+  const normalized = new Set(
+    fingerprints.map((fingerprint) => fingerprint.trim().toLowerCase()),
+  );
+  normalized.delete("");
+  if (normalized.size === 0) return;
+  for (const candidate of listAuthorizedKeyFingerprints(text)) {
+    if (normalized.has(candidate.toLowerCase())) {
+      return candidate;
+    }
+  }
 }

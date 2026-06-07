@@ -75,8 +75,9 @@ import {
 } from "@cocalc/util/rootfs-images";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import {
-  authorizedKeysContainFingerprint,
-  computeSshFingerprintFromRawKey,
+  authorizedKeysContainAnyFingerprint,
+  matchingAuthorizedKeyFingerprint,
+  sshPublicKeyCandidateFingerprints,
 } from "@cocalc/project-proxy/ssh-keys";
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
@@ -4096,24 +4097,24 @@ export async function initFileServer({
         throw new Error(`project ${project_id} is not available`);
       }
       const ssh_user = await getSshUser();
-      const fingerprint = computeSshFingerprintFromRawKey(public_key);
+      const fingerprints = sshPublicKeyCandidateFingerprints(public_key);
       const managedKeys = `${row.authorized_keys ?? ""}`.trim();
-      if (
-        managedKeys &&
-        authorizedKeysContainFingerprint(managedKeys, fingerprint)
-      ) {
+      const managedFingerprint = managedKeys
+        ? matchingAuthorizedKeyFingerprint(managedKeys, fingerprints)
+        : undefined;
+      if (managedFingerprint) {
         let account_id: string;
         try {
           account_id = await requireManagedSshKeyAccount({
             project_id,
-            fingerprint,
+            fingerprint: managedFingerprint,
             resolveAccount: hubApi.system.resolveManagedProjectSshKeyAccount,
           });
         } catch (err) {
           logger.warn("failed to resolve managed ssh key account", {
             project_id,
             remote_addr,
-            fingerprint,
+            fingerprints,
             err: `${err}`,
           });
           throw err;
@@ -4158,7 +4159,7 @@ export async function initFileServer({
       }
       if (
         userAuthorizedKeys &&
-        authorizedKeysContainFingerprint(userAuthorizedKeys, fingerprint)
+        authorizedKeysContainAnyFingerprint(userAuthorizedKeys, fingerprints)
       ) {
         const allowed = await checkManagedSshAllowed({ project_id });
         if (!allowed.allowed) {
@@ -4177,6 +4178,14 @@ export async function initFileServer({
         };
       }
 
+      logger.warn("ssh public key is not authorized for project", {
+        project_id,
+        remote_addr,
+        fingerprints,
+        public_key_bytes: public_key.length,
+        managed_keys_bytes: managedKeys.length,
+        user_authorized_keys_bytes: userAuthorizedKeys.length,
+      });
       throw new Error("ssh public key is not authorized for this project");
     };
 

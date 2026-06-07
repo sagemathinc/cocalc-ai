@@ -594,6 +594,23 @@ function detachedWorkerCanClaimQueuedJobs(): boolean {
   return currentDetachedWorkerContext?.state !== "draining";
 }
 
+function acpThreadHasRunningJob({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): boolean {
+  return listRunningAcpJobs().some(
+    (row) =>
+      row.project_id === project_id &&
+      row.path === path &&
+      row.thread_id === thread_id,
+  );
+}
+
 function liveWorkerOwnerIds(host_id: string): Set<string> {
   const live = new Set(
     listLiveAcpWorkers({
@@ -5009,12 +5026,10 @@ export async function runDetachedAcpQueueWorker(
       if (!workerContext || workerStatus?.state === "active") {
         kickAllQueuedAcpJobs();
       }
-      const queuedJobs = listQueuedAcpJobs();
       const currentWorkerRunningJobs = workerContext
         ? countRunningAcpJobsForWorker(workerContext.worker_id)
         : 0;
       if (
-        queuedJobs.length === 0 &&
         currentWorkerRunningJobs === 0 &&
         Date.now() - lastRecoveryAt >= ACP_ORPHAN_RECOVERY_POLL_MS
       ) {
@@ -5024,6 +5039,7 @@ export async function runDetachedAcpQueueWorker(
             liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
             interruptedNotice: WORKER_INTERRUPTED_NOTICE,
             recoveryReason: "ACP worker stopped unexpectedly",
+            autoResume: true,
           });
         }
         await recoverCurrentWorkerStuckAcpTurns(client, {
@@ -7099,7 +7115,12 @@ function kickQueuedAcpJobsForThread({
           project_id,
           path,
           thread_id,
-        }).length > 0
+        }).length > 0 &&
+        !acpThreadHasRunningJob({
+          project_id,
+          path,
+          thread_id,
+        })
       ) {
         kickQueuedAcpJobsForThread({ project_id, path, thread_id });
       }

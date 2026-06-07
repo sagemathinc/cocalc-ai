@@ -5,14 +5,36 @@ import {
   planProjectHostAcpWorkerRollout,
 } from "./hub/acp/worker-manager";
 import { getAcpWorker } from "@cocalc/lite/hub/sqlite/acp-workers";
+import {
+  listQueuedAcpJobs,
+  listRunningAcpJobs,
+} from "@cocalc/lite/hub/sqlite/acp-jobs";
 
 jest.mock("@cocalc/lite/hub/sqlite/acp-workers", () => ({
   getAcpWorker: jest.fn(),
+}));
+jest.mock("@cocalc/lite/hub/sqlite/acp-jobs", () => ({
+  listQueuedAcpJobs: jest.fn(() => []),
+  listRunningAcpJobs: jest.fn(() => []),
 }));
 
 const mockGetAcpWorker = getAcpWorker as jest.MockedFunction<
   typeof getAcpWorker
 >;
+const mockListQueuedAcpJobs = listQueuedAcpJobs as jest.MockedFunction<
+  typeof listQueuedAcpJobs
+>;
+const mockListRunningAcpJobs = listRunningAcpJobs as jest.MockedFunction<
+  typeof listRunningAcpJobs
+>;
+
+beforeEach(() => {
+  mockGetAcpWorker.mockReset();
+  mockListQueuedAcpJobs.mockReset();
+  mockListQueuedAcpJobs.mockReturnValue([]);
+  mockListRunningAcpJobs.mockReset();
+  mockListRunningAcpJobs.mockReturnValue([]);
+});
 
 describe("planProjectHostAcpWorkerRollout", () => {
   const launch = {
@@ -506,6 +528,32 @@ describe("ACP worker control startup grace", () => {
     expect(
       __test__.workerDatabaseStateProtectsUnresponsiveWorker({
         pid: 1005,
+        env: {
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+        },
+        cmdline: ["project-host:acp-worker"],
+      } as any),
+    ).toBe(true);
+  });
+
+  it("protects an unresponsive worker while ACP backlog exists", () => {
+    jest.spyOn(Date, "now").mockReturnValue(100_000);
+    mockGetAcpWorker.mockReturnValue({
+      worker_id: "worker-current",
+      host_id: "host-1",
+      bundle_version: "current",
+      bundle_path: "/opt/cocalc/project-host/bundles/current",
+      pid: 1006,
+      state: "active",
+      started_at: 1_000,
+      last_heartbeat_at: 70_000,
+      last_seen_running_jobs: 0,
+    });
+    mockListQueuedAcpJobs.mockReturnValue([{} as any]);
+
+    expect(
+      __test__.workerDatabaseStateProtectsUnresponsiveWorker({
+        pid: 1006,
         env: {
           COCALC_ACP_INSTANCE_ID: "worker-current",
         },
