@@ -961,6 +961,19 @@ start_services() {
   cat "$STAR_ROOT/bootstrap-result.json"
 }
 
+start_rest_server_for_rootfs_publish() {
+  systemctl restart cocalc-star-rest-server
+  log "waiting for local rustic REST server on 127.0.0.1:9345"
+  for _ in $(seq 1 30); do
+    if ss -ltn | grep -q '127[.]0[.]0[.]1:9345'; then
+      return
+    fi
+    sleep 1
+  done
+  systemctl --no-pager --full status cocalc-star-rest-server || true
+  die "local rustic REST server did not start"
+}
+
 web_onboarding_exit_trap() {
   local status=$?
   if [ "$status" -ne 0 ]; then
@@ -992,10 +1005,11 @@ build_default_rootfs_image
 write_env_files
 ensure_default_rootfs_cache
 seed_database
-publish_default_rootfs
 star_web_onboarding_write_status "systemd" "Installing systemd services and final Caddy routing." ""
 stop_existing_services
 install_systemd
+start_rest_server_for_rootfs_publish
+publish_default_rootfs
 start_services
 restore_automatic_apt
 trap - EXIT
