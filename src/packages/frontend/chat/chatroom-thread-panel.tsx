@@ -326,6 +326,7 @@ interface ChatRoomThreadPanelProps {
   activityJumpDate?: string;
   activityJumpToken?: number;
   shortcutEnabled?: boolean;
+  isVisible?: boolean;
   notifyOnTurnFinish?: boolean;
   onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   hideTopControls?: boolean;
@@ -370,6 +371,7 @@ export function ChatRoomThreadPanel({
   activityJumpDate,
   activityJumpToken,
   shortcutEnabled = true,
+  isVisible = true,
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
   hideTopControls = false,
@@ -2359,6 +2361,7 @@ export function ChatRoomThreadPanel({
           acpState={acpState}
           scrollToBottomRef={scrollToBottomRef}
           scrollCacheId={scrollCacheId}
+          isVisible={isVisible}
           mode={variant === "compact" ? "sidechat" : "standalone"}
           fontSize={fontSize}
           selectedThread={selectedThreadForLog}

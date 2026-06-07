@@ -133,6 +133,58 @@ describe("ChatLog sidechat search jumps", () => {
     );
   });
 
+  it("restores a saved anchor only after a hidden mounted chat becomes visible", async () => {
+    saveChatViewportAnchor("hidden-chat", {
+      atBottom: false,
+      date: "2000",
+      offsetPx: 0,
+      savedAt: Date.now(),
+    });
+
+    const props = {
+      messages: new Map([
+        [
+          "1000",
+          {
+            date: 1000,
+            sender_id: "acct-1",
+            history: [{ content: "first message" }],
+          },
+        ],
+        [
+          "2000",
+          {
+            date: 2000,
+            sender_id: "acct-1",
+            history: [{ content: "second message" }],
+          },
+        ],
+      ]) as any,
+      account_id: "acct-1",
+      user_map: undefined,
+      mode: "standalone" as const,
+      sortedDates: ["1000", "2000"],
+      scrollCacheId: "hidden-chat",
+    };
+
+    const { rerender } = render(<MessageList {...props} isVisible={false} />);
+
+    await waitFor(() => expect(latestVirtuosoProps).toBeDefined());
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
+
+    act(() => {
+      rerender(<MessageList {...props} isVisible={true} />);
+    });
+
+    await waitFor(() =>
+      expect(mockScrollToIndex).toHaveBeenCalledWith({
+        index: 1,
+        align: "start",
+        behavior: "auto",
+      }),
+    );
+  });
+
   it("scrolls to a search match in sidechat even when it is not the active editor tab", async () => {
     render(
       <ChatLog

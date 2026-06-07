@@ -334,6 +334,7 @@ interface Props {
   scrollToDate?: null | undefined | string;
   selectedDate?: string;
   scrollCacheId?: string;
+  isVisible?: boolean;
   acpState?;
   searchJumpDate?: string;
   searchJumpToken?: number;
@@ -367,6 +368,7 @@ export function ChatLog({
   scrollToDate,
   selectedDate,
   scrollCacheId,
+  isVisible = true,
   acpState,
   searchJumpDate,
   searchJumpToken,
@@ -398,7 +400,9 @@ export function ChatLog({
   const isForegroundChatTab =
     activeTopTab === project_id && activeProjectTab === `editor-${path}`;
   const canAutoScroll =
-    !anyOverlayOpen && (mode === "sidechat" || isForegroundChatTab);
+    isVisible &&
+    !anyOverlayOpen &&
+    (mode === "sidechat" || isForegroundChatTab);
   const canAutoScrollRef = useRef(canAutoScroll);
   canAutoScrollRef.current = canAutoScroll;
   const keepBottomAnchoredRef = useRef(false);
@@ -568,6 +572,7 @@ export function ChatLog({
           numChildren,
           singleThreadView,
           scrollCacheId,
+          isVisible,
           scrollToDate,
           scrollToBottomRef,
           scrollToIndex,
@@ -771,6 +776,7 @@ export function MessageList({
   numChildren,
   singleThreadView,
   scrollCacheId,
+  isVisible = true,
   scrollToDate,
   scrollToBottomRef,
   scrollToIndex,
@@ -809,6 +815,7 @@ export function MessageList({
   numChildren?: NumChildren;
   singleThreadView?: boolean;
   scrollCacheId?: string;
+  isVisible?: boolean;
   scrollToDate?: null | string;
   scrollToBottomRef?: MutableRefObject<(force?: boolean) => void>;
   scrollToIndex?: null | number;
@@ -879,10 +886,16 @@ export function MessageList({
   const anchorCaptureFrameRef = useRef<number | undefined>(undefined);
   const anchorRestoreTokenRef = useRef(0);
   const anchorRestoreTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const visibilityRestoreTokenRef = useRef(0);
+  const visibilityRestoreTimersRef = useRef<ReturnType<typeof setTimeout>[]>(
+    [],
+  );
   const suppressAnchorCaptureUntilRef = useRef(0);
   const suppressAnchorRestoreUntilRef = useRef(0);
+  const isVisibleRef = useRef(isVisible);
 
   sortedDatesRef.current = sortedDates;
+  isVisibleRef.current = isVisible;
 
   const clearAnchorRestoreTimers = () => {
     anchorRestoreTokenRef.current += 1;
@@ -895,6 +908,7 @@ export function MessageList({
   const scheduleAnchorCapture = useCallback(
     (forceAtBottom?: boolean) => {
       if (!USE_VIRTUOSO) return;
+      if (!isVisibleRef.current) return;
       if (!forceAtBottom && Date.now() < suppressAnchorCaptureUntilRef.current)
         return;
       if (anchorCaptureFrameRef.current != null) return;
@@ -905,6 +919,7 @@ export function MessageList({
           Date.now() < suppressAnchorCaptureUntilRef.current
         )
           return;
+        if (!isVisibleRef.current) return;
         const anchor = captureChatViewportAnchor({
           forceAtBottom,
           scroller: scrollerRef.current,
@@ -959,6 +974,10 @@ export function MessageList({
         }
       }
       clearAnchorRestoreTimers();
+      for (const timer of visibilityRestoreTimersRef.current) {
+        clearTimeout(timer);
+      }
+      visibilityRestoreTimersRef.current = [];
     };
   }, []);
 
@@ -1072,6 +1091,7 @@ export function MessageList({
   const restoreSavedAnchor = useCallback(
     (anchor = loadChatViewportAnchor(cacheId)) => {
       if (!USE_VIRTUOSO || !anchor) return;
+      if (!isVisibleRef.current) return;
       if (Date.now() < suppressAnchorRestoreUntilRef.current) return;
       if (scrollToDate != null || scrollToIndex != null) return;
       if (activityJumpDate != null || activityJumpToken != null) return;
@@ -1168,14 +1188,33 @@ export function MessageList({
 
   useEffect(() => {
     if (!USE_VIRTUOSO) return;
+    if (!isVisible) return;
     if (!sortedDates.length) return;
     restoreSavedAnchor();
-  }, [cacheId, restoreSavedAnchor, sortedDates.length]);
+  }, [cacheId, isVisible, restoreSavedAnchor, sortedDates.length]);
+
+  useEffect(() => {
+    if (!USE_VIRTUOSO) return;
+    if (!isVisible) return;
+    for (const timer of visibilityRestoreTimersRef.current) {
+      clearTimeout(timer);
+    }
+    visibilityRestoreTimersRef.current = [];
+    const token = ++visibilityRestoreTokenRef.current;
+    for (const delayMs of [0, 16, 75, 250]) {
+      const timer = setTimeout(() => {
+        if (visibilityRestoreTokenRef.current !== token) return;
+        restoreSavedAnchor();
+      }, delayMs);
+      visibilityRestoreTimersRef.current.push(timer);
+    }
+  }, [isVisible, restoreSavedAnchor]);
 
   useEffect(() => {
     if (!USE_VIRTUOSO) return;
     const restoreIfVisible = () => {
       if (document.visibilityState === "hidden") return;
+      if (!isVisibleRef.current) return;
       restoreSavedAnchor();
     };
     document.addEventListener("visibilitychange", restoreIfVisible);
@@ -1375,6 +1414,7 @@ export function MessageList({
     let frameId: number | undefined;
     const scheduleLayoutRestore = () => {
       const anchor = loadChatViewportAnchor(cacheId);
+      if (!isVisibleRef.current) return;
       if (anchor && !anchor.atBottom) {
         restoreSavedAnchor(anchor);
         return;
@@ -1551,7 +1591,7 @@ export function MessageList({
         }
         atTopStateChange={onAtTopStateChange}
         onScroll={() => scheduleAnchorCapture()}
-        followOutput={!manualScroll && atBottom && !anyOverlayOpen}
+        followOutput={isVisible && !manualScroll && atBottom && !anyOverlayOpen}
       />
       {showNewestMessagesButton ? (
         <Button
