@@ -30,6 +30,7 @@ STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-docker.io/buildpack-deps:26.04}"
+STAR_LIMA_HOST_SHARE_MOUNT="${STAR_LIMA_HOST_SHARE_MOUNT:-/mnt/cocalc-star-host-share}"
 STAR_HARDEN_INSTALL_USER_SUDO="${STAR_HARDEN_INSTALL_USER_SUDO:-0}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-${STAR_HARDEN_INSTALL_USER_SUDO}}"
 STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
@@ -440,6 +441,8 @@ prepare_runtime_artifacts() {
 }
 
 ensure_btrfs() {
+  local shared_scratch_host_mount
+  shared_scratch_host_mount="$(shared_scratch_host_mount)"
   mkdir -p /var/lib/cocalc /mnt/cocalc
   if mountpoint -q /mnt/cocalc; then
     local fstype
@@ -471,7 +474,21 @@ ensure_btrfs() {
   fi
   chown root:root /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
   chmod 0755 /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
-  install -d -o "$STAR_USER" -g "$STAR_USER" -m 0775 /mnt/cocalc/shared-scratch/shared
+  if [ "$shared_scratch_host_mount" = "$STAR_LIMA_HOST_SHARE_MOUNT" ]; then
+    mkdir -p "$shared_scratch_host_mount/shared"
+    chown "$STAR_USER:$STAR_USER" "$shared_scratch_host_mount" "$shared_scratch_host_mount/shared" || true
+    chmod 0775 "$shared_scratch_host_mount" "$shared_scratch_host_mount/shared" || true
+  else
+    install -d -o "$STAR_USER" -g "$STAR_USER" -m 0775 /mnt/cocalc/shared-scratch/shared
+  fi
+}
+
+shared_scratch_host_mount() {
+  if mountpoint -q "$STAR_LIMA_HOST_SHARE_MOUNT"; then
+    printf '%s\n' "$STAR_LIMA_HOST_SHARE_MOUNT"
+  else
+    printf '%s\n' /mnt/cocalc-scratch
+  fi
 }
 
 install_wrappers() {
@@ -583,12 +600,29 @@ RUN apt-get update \\
     texlive-latex-recommended \\
     wget \\
   && python3 -m venv /opt/cocalc-jupyter \\
-  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir --upgrade pip wheel \\
-  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir ipykernel jupyterlab notebook \\
+  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \\
+  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir \\
+    ipykernel \\
+    ipywidgets \\
+    jupyterlab \\
+    matplotlib \\
+    notebook \\
+    numpy \\
+    pandas \\
+    scipy \\
+    scikit-learn \\
+    sympy \\
+    uv \\
   && /opt/cocalc-jupyter/bin/python -m ipykernel install --prefix=/usr/local --name python3 \\
+  && ln -s /opt/cocalc-jupyter/bin/python /usr/local/bin/python \\
+  && ln -s /opt/cocalc-jupyter/bin/python /usr/local/bin/python3 \\
+  && ln -s /opt/cocalc-jupyter/bin/pip /usr/local/bin/pip \\
+  && ln -s /opt/cocalc-jupyter/bin/pip /usr/local/bin/pip3 \\
+  && ln -s /opt/cocalc-jupyter/bin/uv /usr/local/bin/uv \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter /usr/local/bin/jupyter \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-lab /usr/local/bin/jupyter-lab \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-notebook /usr/local/bin/jupyter-notebook \\
+  && chown -R 2001:2001 /opt/cocalc-jupyter \\
   && mkdir -p \\
     /home/user \\
     /scratch \\
@@ -679,6 +713,7 @@ COCALC_LOCAL_PG_ENV_FILE=${STAR_DATA}/local-postgres.env
 COCALC_BACKUP_ROOT=${STAR_ROOT}/backup
 COCALC_LAUNCHPAD_REST_PORT=9345
 COCALC_REST_PORT=9345
+COCALC_LAUNCHPAD_MANAGE_REST_SERVER=0
 PGHOST=${STAR_DATA}/postgres-socket
 PGUSER=smc
 PGDATABASE=smc
@@ -712,7 +747,7 @@ TMPDIR=${STAR_PROJECT_HOST_DATA}/tmp
 COCALC_RUSTIC=${STAR_PROJECT_HOST_DATA}/rustic
 COCALC_FILE_SERVER_MOUNTPOINT=/mnt/cocalc
 COCALC_SHARED_SCRATCH_ENABLED=1
-COCALC_SHARED_SCRATCH_HOST_MOUNT=/mnt/cocalc-scratch
+COCALC_SHARED_SCRATCH_HOST_MOUNT=$(shared_scratch_host_mount)
 COCALC_PROJECT_HOST_CPU_USAGE_MODE=observe
 COCALC_PROJECT_TOOLS=$([ -d "${SRC_ROOT}/packages/project/build/tools/current" ] && printf '%s' "${SRC_ROOT}/packages/project/build/tools/current" || printf '%s' "${SRC_ROOT}/packages/backend/node_modules/.bin")
 COCALC_PROJECT_BUNDLES=${SRC_ROOT}/packages/project/build
@@ -736,6 +771,45 @@ seed_database() {
     script="scripts/star-poc/build/seed-star-poc/index.cjs"
   fi
   as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' STAR_HAS_GPU='${STAR_HAS_GPU:-0}' node '$script'"
+}
+
+ensure_rest_server_auth() {
+  local auth_dir auth_path htpasswd_path password sha
+  auth_dir="${STAR_DATA}/secrets/launchpad-rest"
+  auth_path="${auth_dir}/auth.json"
+  htpasswd_path="${auth_dir}/htpasswd"
+  install -d -o "$STAR_USER" -g "$STAR_USER" -m 0700 "$auth_dir"
+  if [ -f "$auth_path" ]; then
+    password="$(python3 - "$auth_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    data = json.load(f)
+print(data.get("password", ""))
+PY
+)"
+  else
+    password=""
+  fi
+  if [ -z "$password" ]; then
+    password="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+    python3 - "$auth_path" "$password" <<'PY'
+import json
+import os
+import sys
+
+path, password = sys.argv[1], sys.argv[2]
+with open(path, "w", encoding="utf-8") as f:
+    json.dump({"user": "cocalc", "password": password}, f, indent=2)
+    f.write("\n")
+os.chmod(path, 0o600)
+PY
+  fi
+  sha="$(printf '%s' "$password" | openssl dgst -binary -sha1 | openssl base64 -A)"
+  printf 'cocalc:{SHA}%s\n' "$sha" >"$htpasswd_path"
+  chown "$STAR_USER:$STAR_USER" "$auth_path" "$htpasswd_path"
+  chmod 600 "$auth_path" "$htpasswd_path"
 }
 
 install_systemd() {
@@ -960,6 +1034,19 @@ start_services() {
   cat "$STAR_ROOT/bootstrap-result.json"
 }
 
+start_rest_server_for_rootfs_publish() {
+  systemctl restart cocalc-star-rest-server
+  log "waiting for local rustic REST server on 127.0.0.1:9345"
+  for _ in $(seq 1 30); do
+    if ss -ltn | grep -q '127[.]0[.]0[.]1:9345'; then
+      return
+    fi
+    sleep 1
+  done
+  systemctl --no-pager --full status cocalc-star-rest-server || true
+  die "local rustic REST server did not start"
+}
+
 web_onboarding_exit_trap() {
   local status=$?
   if [ "$status" -ne 0 ]; then
@@ -991,10 +1078,12 @@ build_default_rootfs_image
 write_env_files
 ensure_default_rootfs_cache
 seed_database
-publish_default_rootfs
 star_web_onboarding_write_status "systemd" "Installing systemd services and final Caddy routing." ""
 stop_existing_services
+ensure_rest_server_auth
 install_systemd
+start_rest_server_for_rootfs_publish
+publish_default_rootfs
 start_services
 restore_automatic_apt
 trap - EXIT

@@ -620,6 +620,10 @@ export async function registerSelfHostTunnelKey(opts: {
 }
 
 async function startRestServer(): Promise<RestServerState | null> {
+  if (process.env.COCALC_LAUNCHPAD_MANAGE_REST_SERVER === "0") {
+    logger.info("rest-server management disabled");
+    return null;
+  }
   if (!(await hasLaunchpadReverseTunnelHosts())) {
     return null;
   }

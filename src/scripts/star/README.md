@@ -75,21 +75,28 @@ For a local laptop or desktop VM using Lima, publish the same release assets and
 run this on the host computer, not inside the VM:
 
 ```sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh | bash
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
+  | COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
 ```
 
 The Lima installer creates or starts a `cocalc-star` Ubuntu VM, forwards
-`http://localhost:8170` on the host to port `80` in the guest, forwards the
-project-host HTTP port `9002` on localhost for direct project connections,
-disables the public `sslip.io` onboarding path, and installs Star in the VM
-with `STAR_ACCESS_URL=http://localhost:8170`.
+`http://localhost:8170` on the host to port `80` in the guest, disables the
+public `sslip.io` onboarding path, and installs Star in the VM with
+`STAR_ACCESS_URL=http://localhost:8170`. Project sessions are routed through
+the same localhost origin, so no separate project-host port forward is needed.
+The optional `COCALC_STAR_LIMA_SHARED_DIR` host directory appears inside
+projects as `/scratch`; edit or remove it before the first install.
 
 Customize the local VM with environment variables passed to `bash`:
 
 ```sh
 curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
-  | COCALC_STAR_LIMA_MEMORY=16GiB COCALC_STAR_LIMA_CPUS=8 COCALC_STAR_LIMA_DISK=200GiB bash
+  | COCALC_STAR_LIMA_MEMORY=16GiB COCALC_STAR_LIMA_CPUS=8 COCALC_STAR_LIMA_DISK=200GiB COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
 ```
+
+The shared directory is initial-install only because it is written into the
+Lima VM configuration when the instance is created. To change it later, delete
+or rename the Lima instance and reinstall with a different path.
 
 By default this installs source under a versioned release directory and points
 `/opt/cocalc-star/source` at the active release. It uses the sudo caller as the

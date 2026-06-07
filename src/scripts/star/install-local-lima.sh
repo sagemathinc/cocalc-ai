@@ -6,10 +6,10 @@ DEFAULT_RELEASE_BASE_URL="https://github.com/sagemathinc/cocalc-ai/releases/late
 LIMA_INSTANCE="${COCALC_STAR_LIMA_INSTANCE:-cocalc-star}"
 LIMA_HOST_PORT="${COCALC_STAR_LIMA_HOST_PORT:-8170}"
 LIMA_GUEST_PORT="${COCALC_STAR_LIMA_GUEST_PORT:-80}"
-LIMA_PROJECT_HOST_PORT="${COCALC_STAR_LIMA_PROJECT_HOST_PORT:-9002}"
 LIMA_CPUS="${COCALC_STAR_LIMA_CPUS:-}"
 LIMA_MEMORY="${COCALC_STAR_LIMA_MEMORY:-}"
 LIMA_DISK="${COCALC_STAR_LIMA_DISK:-100GiB}"
+LIMA_SHARED_DIR="${COCALC_STAR_LIMA_SHARED_DIR:-}"
 LIMA_TEMPLATE="${COCALC_STAR_LIMA_TEMPLATE:-template:ubuntu-24.04}"
 RELEASE_BASE_URL="${COCALC_STAR_RELEASE_BASE_URL:-$DEFAULT_RELEASE_BASE_URL}"
 INSTALLER_URL="${COCALC_STAR_INSTALLER_URL:-${RELEASE_BASE_URL%/}/install-cocalc-star.sh}"
@@ -36,12 +36,11 @@ site on a localhost URL such as http://localhost:8170/.
 Environment:
   COCALC_STAR_LIMA_INSTANCE      Lima instance name. Default: cocalc-star
   COCALC_STAR_LIMA_HOST_PORT     Host localhost port. Default: 8170
-  COCALC_STAR_LIMA_PROJECT_HOST_PORT
-                                  Host and guest localhost project-host port.
-                                  Default: 9002
   COCALC_STAR_LIMA_CPUS          VM CPUs. Default: Lima default
   COCALC_STAR_LIMA_MEMORY        VM memory, e.g. 16GiB. Default: host-aware
   COCALC_STAR_LIMA_DISK          VM disk size. Default: 100GiB
+  COCALC_STAR_LIMA_SHARED_DIR    Initial-install-only host directory mounted
+                                  into projects at /scratch. Default: unset
   COCALC_STAR_LIMA_TEMPLATE      Lima template. Default: template:ubuntu-24.04
   COCALC_STAR_RELEASE_BASE_URL   Release base URL. Default: GitHub latest
   COCALC_STAR_RELEASE_URL        Explicit runtime asset URL passed to the guest
@@ -55,6 +54,10 @@ EOF
 
 shell_quote() {
   printf '%q' "$1"
+}
+
+yaml_quote() {
+  printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 }
 
 host_memory_gib() {
@@ -101,20 +104,20 @@ instance_exists() {
 warn_existing_project_host_forward() {
   local config="${HOME}/.lima/${LIMA_INSTANCE}/lima.yaml"
   [ -f "$config" ] || return 0
-  if grep -Eq "hostPort:[[:space:]]*${LIMA_PROJECT_HOST_PORT}\\b" "$config"; then
-    return 0
-  fi
+  grep -Eq "hostPort:[[:space:]]*9002\\b" "$config" || return 0
   cat >&2 <<EOF
-[star-lima] WARNING: existing Lima instance ${LIMA_INSTANCE} may not forward
-[star-lima]          the project-host port ${LIMA_PROJECT_HOST_PORT}.
+[star-lima] WARNING: existing Lima instance ${LIMA_INSTANCE} forwards
+[star-lima]          the project-host port 9002.
 [star-lima]
-[star-lima]          If project pages, terminals, or chat flicker/reconnect,
-[star-lima]          stop the instance, add this port forward to:
+[star-lima]          Current CoCalc Star routes project traffic through
+[star-lima]          http://localhost:${LIMA_HOST_PORT}/<project-id> so the hub
+[star-lima]          can inject project-host authentication. A direct 9002
+[star-lima]          forward is no longer needed and can keep stale browser tabs
+[star-lima]          trying the wrong route.
+[star-lima]
+[star-lima]          To remove it, stop the instance, delete the guestPort 9002
+[star-lima]          block from:
 [star-lima]            ${config}
-[star-lima]
-[star-lima]          - guestPort: ${LIMA_PROJECT_HOST_PORT}
-[star-lima]            hostPort: ${LIMA_PROJECT_HOST_PORT}
-[star-lima]            hostIP: "127.0.0.1"
 [star-lima]
 [star-lima]          Then run:
 [star-lima]            limactl stop ${LIMA_INSTANCE}
@@ -135,6 +138,13 @@ open_browser() {
 
 write_lima_config() {
   local path="$1"
+  local mounts_yaml="mounts: []"
+  if [ -n "$LIMA_SHARED_DIR" ]; then
+    mounts_yaml="mounts:
+- location: $(yaml_quote "$LIMA_SHARED_DIR")
+  mountPoint: \"/mnt/cocalc-star-host-share\"
+  writable: true"
+  fi
   cat >"$path" <<EOF
 base:
 - ${LIMA_TEMPLATE}
@@ -142,14 +152,15 @@ base:
 cpus: ${LIMA_CPUS:-null}
 memory: "${LIMA_MEMORY}"
 disk: "${LIMA_DISK}"
-mounts: []
+${mounts_yaml}
+
+containerd:
+  system: false
+  user: false
 
 portForwards:
 - guestPort: ${LIMA_GUEST_PORT}
   hostPort: ${LIMA_HOST_PORT}
-  hostIP: "127.0.0.1"
-- guestPort: ${LIMA_PROJECT_HOST_PORT}
-  hostPort: ${LIMA_PROJECT_HOST_PORT}
   hostIP: "127.0.0.1"
 EOF
 }
@@ -157,16 +168,26 @@ EOF
 start_instance() {
   if instance_exists; then
     warn_existing_project_host_forward
+    if [ -n "$LIMA_SHARED_DIR" ]; then
+      log "WARNING: COCALC_STAR_LIMA_SHARED_DIR only applies when creating a new Lima instance"
+      log "         existing instance ${LIMA_INSTANCE} config was not changed"
+    fi
     log "starting existing Lima instance ${LIMA_INSTANCE}"
     limactl start "$LIMA_INSTANCE"
     return
   fi
 
   local config
+  if [ -n "$LIMA_SHARED_DIR" ]; then
+    mkdir -p "$LIMA_SHARED_DIR"
+  fi
   config="$(mktemp -t cocalc-star-lima.XXXXXX.yaml)"
   write_lima_config "$config"
   log "creating Lima instance ${LIMA_INSTANCE}"
   log "memory=${LIMA_MEMORY} disk=${LIMA_DISK} localhost=${ACCESS_URL}"
+  if [ -n "$LIMA_SHARED_DIR" ]; then
+    log "shared directory=${LIMA_SHARED_DIR} -> /scratch"
+  fi
   if ! limactl start --tty=false --name="$LIMA_INSTANCE" "$config"; then
     rm -f "$config"
     return 1
@@ -238,10 +259,12 @@ esac
 case "$LIMA_GUEST_PORT" in
   '' | *[!0-9]*) die "invalid COCALC_STAR_LIMA_GUEST_PORT=$LIMA_GUEST_PORT" ;;
 esac
-case "$LIMA_PROJECT_HOST_PORT" in
-  '' | *[!0-9]*) die "invalid COCALC_STAR_LIMA_PROJECT_HOST_PORT=$LIMA_PROJECT_HOST_PORT" ;;
-esac
-
+if [ -n "$LIMA_SHARED_DIR" ]; then
+  case "$LIMA_SHARED_DIR" in
+    /*) ;;
+    *) die "COCALC_STAR_LIMA_SHARED_DIR must be an absolute host path" ;;
+  esac
+fi
 if [ -z "$LIMA_MEMORY" ]; then
   LIMA_MEMORY="$(default_memory)"
 fi
