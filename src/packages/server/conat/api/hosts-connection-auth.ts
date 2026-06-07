@@ -343,7 +343,14 @@ export async function resolveHostConnectionLocalHelper({
   const lastSeenIso = row.last_seen
     ? new Date(row.last_seen).toISOString()
     : undefined;
-  if (isLocalSelfHost) {
+  const browserConnectUrl =
+    typeof metadata?.self_host?.browser_connect_url === "string"
+      ? metadata.self_host.browser_connect_url.trim()
+      : "";
+  if (isLocalSelfHost && browserConnectUrl) {
+    connect_url = browserConnectUrl;
+    ready = true;
+  } else if (isLocalSelfHost) {
     local_proxy = true;
     ready = !!metadata?.self_host?.http_tunnel_port;
     const sshPort = metadata?.self_host?.ssh_tunnel_port;

@@ -253,6 +253,39 @@ In the CoCalc project, open **Project Settings**, use the SSH setup command, and
 run it on your computer. The command configures your local SSH client so your
 computer can SSH into the CoCalc project.
 
+Next, make sure the CoCalc project has an SSH key that your computer will trust.
+In a CoCalc project terminal, check for an existing public key:
+
+~~~sh
+ls ~/.ssh/*.pub
+~~~
+
+If there is no key, create one:
+
+~~~sh
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+~~~
+
+Copy the public key from the project:
+
+~~~sh
+cat ~/.ssh/id_ed25519.pub
+~~~
+
+On your computer, append that public key to the account that the project should
+be allowed to access:
+
+~~~sh
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+echo '<project-public-key>' >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+~~~
+
+Use the account name on your computer when you later connect back from the
+project. For example, if your laptop username is \`alice\`, the project will
+connect as \`alice@127.0.0.1\`.
+
 Then make sure your computer has an SSH server running locally.
 
 On Linux, this is usually OpenSSH server:
