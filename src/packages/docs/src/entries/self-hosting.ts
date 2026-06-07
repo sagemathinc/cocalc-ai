@@ -37,7 +37,7 @@ export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
     slug: "self-hosting/cocalc-star-local-vm",
     status: "ready",
     summary:
-      "Run CoCalc Star on a local laptop VM using localhost port forwarding instead of public DNS.",
+      "Install CoCalc Star inside a local Ubuntu VM for private, fast, offline-friendly work on your own computer.",
     title: "CoCalc Star on a local VM",
   },
 ];

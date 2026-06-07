@@ -77,96 +77,97 @@ When helping someone install Star:
 `;
 
 export const COCALC_STAR_LOCAL_VM_BODY = String.raw`
-## Local VM goal
+## Why run CoCalc Star on your own computer?
 
-The public CoCalc Star appliance is designed for a public VM with automatic
-HTTPS. A local laptop VM is a different product path: it is normally for one
-operator on their own machine, does not need public DNS, and should not require
-SSH port forwarding.
+If you tried CoCalc and want the same kind of browser-based workspace on your
+own hardware, a local VM is a good fit. It is especially useful when you want:
 
-The best local user experience is:
+- a very private CoCalc instance that stays on your laptop or desktop server,
+- very low latency because the server is physically near you,
+- to use a powerful laptop, workstation, or home server you already own,
+- to keep working while flying or away from reliable internet, or
+- to experiment with CoCalc Star without renting a cloud VM.
 
-1. Create an Ubuntu VM on the laptop.
-2. Expose the VM's web server to the host browser as
-   \`http://localhost:<port>/\`.
-3. Install CoCalc Star in local mode.
-4. Open the local URL, create the first account, and start a project.
+This setup runs CoCalc inside an Ubuntu virtual machine on your computer. You
+open CoCalc from your normal browser on the host computer.
 
-This keeps the browser URL on \`localhost\`, which browsers treat much better
-than plain HTTP on a private VM IP address.
+## Recommended setup
 
-## What people use in practice
+The best local setup is:
 
-Local virtualization in 2026 is fragmented. There is no single Docker-like
-\`-P\` standard for full VMs.
+1. Install a VM app that can run Ubuntu 24.04.
+2. Create an Ubuntu VM with enough disk and memory for your projects.
+3. Forward a local port on your computer to port 80 inside the VM.
+4. Open CoCalc at a localhost URL such as \`http://localhost:8170/\`.
 
-- On macOS, common choices are Parallels Desktop, VMware Fusion, UTM, Multipass,
-  Lima, Colima, and OrbStack. Parallels and VMware are general desktop VM tools.
-  UTM is popular because it is free/open and works on Apple Silicon. Lima,
-  Colima, and OrbStack are common for developer Linux/container workflows.
-- On Windows, many developers use WSL2 for Linux development, but Star needs a
-  full Ubuntu VM rather than a WSL distribution. Practical VM choices are
-  Hyper-V, VirtualBox, VMware Workstation, and Multipass.
-- On Linux, KVM/QEMU through libvirt, virt-manager, or GNOME Boxes is the normal
-  native path.
-- Multipass is convenient for Ubuntu VMs and cloud-init, but it is not the best
-  default for Star local mode because its built-in networking story is mostly
-  direct VM IP or driver-specific configuration. Port forwarding is documented
-  through the VirtualBox driver, not as a universal Multipass feature.
+Using \`localhost\` is better than opening the VM's private IP address directly.
+Browsers treat \`localhost\` as a trusted local address, and it is easier to
+bookmark and remember.
 
-## Recommended local networking
+## Which VM app should I use?
 
-Use these options in order:
+Use the VM app that fits your computer and comfort level.
 
-1. **Localhost port forward**: host browser opens \`http://localhost:8170/\`,
-   and the VM tool forwards host port \`8170\` to guest port \`80\`. This is the
-   preferred local appliance experience.
-2. **Private VM IP over HTTP**: host browser opens \`http://<vm-private-ip>/\`.
-   This is simple and often works, but it is not a browser secure context.
-3. **Self-signed or private CA HTTPS**: technically possible, but it adds trust
-   setup and certificate-management friction. Do not make this the default
-   first-run path.
+- **Mac, easiest paid option**: Parallels Desktop. Good general VM support and a
+  polished interface.
+- **Mac, good free option**: UTM. Works well on Apple Silicon and Intel Macs,
+  but networking setup can be a little more manual.
+- **Mac, developer-friendly option**: Lima. Good if you are comfortable with
+  terminal-based setup and want automatic localhost forwarding.
+- **Windows**: VMware Workstation, VirtualBox, or Hyper-V are reasonable choices.
+  WSL2 is useful for many Linux tasks, but CoCalc Star should run in a real
+  Ubuntu VM.
+- **Linux**: KVM/QEMU through virt-manager, libvirt, or GNOME Boxes is usually
+  the natural choice.
+- **Ubuntu-focused convenience**: Multipass is easy for starting Ubuntu VMs, but
+  it is not the best first choice if you need simple port forwarding.
 
-Do not use the public \`sslip.io\` + Let's Encrypt flow for a VM that is only
-reachable from the laptop or LAN. Let's Encrypt needs public domain validation,
-and a local VM should not require exposing data to the public internet.
+If you do not already have a preference, start with Parallels on Mac, VirtualBox
+on Windows, and KVM/QEMU on Linux. On Mac, choose UTM if you want a free desktop
+VM app.
 
-## Port forwarding by VM platform
+## Networking choice
 
-- **Lima**: best target for an automated local helper. Lima supports automatic
-  localhost forwarding for Linux guests and is already optimized for developer
-  VM workflows.
-- **VirtualBox**: supports NAT port-forwarding rules through the GUI and
-  \`VBoxManage\`. This is a practical manual path and an automatable host-helper
-  target.
-- **Parallels Desktop**: supports port forwarding for VMs using Shared Network,
-  but the feature is in Pro/Business-oriented editions. This is a good manual
-  path for Mac users who already pay for Parallels.
-- **UTM**: supports port forwarding for QEMU backend VMs using Emulated VLAN
-  networking. It is a good free Mac option, but a helper must detect the network
-  mode before assuming forwarding is available.
-- **Multipass**: convenient Ubuntu launcher, but not the cleanest default for
-  Star local networking. Use direct VM IP, bridged networking, or Multipass with
-  the VirtualBox driver when localhost forwarding is required.
-- **Hyper-V, VMware Workstation/Fusion, libvirt/KVM**: viable for advanced users,
-  but the first public local-mode docs should not make them the only easy path.
+Pick one of these access patterns:
 
-## Product direction
+1. **Best**: \`http://localhost:8170/\`
 
-The public release should document manual forwarding for VirtualBox, Parallels,
-UTM, and Multipass-with-VirtualBox.
+   Configure your VM app to forward host port \`8170\` to guest port \`80\`.
+   This gives you a local browser URL and avoids public internet exposure.
 
-A later host-side helper could provide the premium path:
+2. **Simple fallback**: \`http://<vm-private-ip>/\`
 
-~~~sh
-cocalc-star-local create --vm virtualbox --name cocalc-star --host-port 8170
-~~~
+   Many VM apps show a private VM IP address, such as \`192.168.x.y\` or
+   \`10.x.y.z\`. You can often open that directly from your host browser. This
+   is simple, but it is less polished than a localhost URL.
 
-That helper would run on the host, not inside the guest. It would detect the VM
-tool, configure \`127.0.0.1:8170 -> guest:80\`, pass the correct local URL into
-the Star installer, and open the browser when the server is ready.
+3. **Avoid for local-only VMs**: public HTTPS with \`sslip.io\`
 
-The guest installer cannot reliably configure host port forwarding by itself.
-Docker can offer \`-P\` because Docker owns the host networking layer; a generic
-Ubuntu VM does not.
+   The public CoCalc Star installer can set up automatic HTTPS for a public VM.
+   That is the right path for cloud servers, not for a VM that only exists on
+   your laptop.
+
+## What to expect
+
+A local VM install is private to your machine unless you deliberately expose it
+to your network. You can use it without depending on CoCalc's hosted service.
+If you are offline, local project tools keep working, but internet-dependent
+features still need internet access.
+
+You are responsible for the VM's disk, backups, operating-system updates, and
+any data you store there. If the VM is important, back it up like any other
+important local computer.
+
+## Practical notes
+
+- Give the VM enough disk. Start with at least 80 GB if you will use notebooks,
+  LaTeX, packages, or large datasets.
+- Give the VM enough memory. 8 GB is a small test VM; 16 GB or more is more
+  comfortable.
+- Use Ubuntu 24.04 unless the Star release notes say a newer Ubuntu version is
+  supported.
+- Prefer a localhost port forward over SSH port forwarding. SSH forwarding works
+  for experts, but it is not the cleanest everyday setup.
+- Do not expose the VM to your LAN or the public internet unless you understand
+  the security implications.
 `;
