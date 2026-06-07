@@ -36,6 +36,12 @@ jest.mock("@cocalc/project/conat/runtime-client", () => ({
   getProjectConatClient: jest.fn(() => ({})),
 }));
 
+jest.mock("@cocalc/util/project-apps", () => ({
+  PROJECT_APP_PUBLIC_EXPOSURE_ENABLED: true,
+  PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE:
+    "Public project app exposure is disabled for this release.",
+}));
+
 import {
   appLogs,
   auditAppPublicReadiness,

@@ -85,6 +85,7 @@ function Probe() {
   return (
     <>
       <div data-testid="loading">{state.loading ? "yes" : "no"}</div>
+      <div data-testid="error">{state.error}</div>
       <div data-testid="count">{`${state.records.length}`}</div>
     </>
   );
@@ -136,6 +137,7 @@ describe("useProjectWorkspaces loading", () => {
 
     expect(openProjectWorkspaceStore).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("loading").textContent).toBe("no");
+    expect(screen.getByTestId("error").textContent).toBe("");
     expect(screen.getByTestId("count").textContent).toBe("1");
   });
 
@@ -158,6 +160,9 @@ describe("useProjectWorkspaces loading", () => {
     await flush();
 
     expect(screen.getByTestId("loading").textContent).toBe("no");
+    expect(screen.getByTestId("error").textContent).toContain(
+      "Failed to load workspaces",
+    );
 
     const callsAtTimeout = openProjectWorkspaceStore.mock.calls.length;
     await act(async () => {

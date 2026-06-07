@@ -211,6 +211,7 @@ export const emptyProjectContext = {
   status: INIT_PROJECT_STATE,
   workspaces: {
     loading: false,
+    error: "",
     records: [],
     selection: { kind: "all" },
     current: null,
@@ -225,6 +226,7 @@ export const emptyProjectContext = {
     reorderWorkspaces: () => {},
     deleteWorkspace: () => {},
     touchWorkspace: () => {},
+    refresh: () => {},
   },
 } as ProjectContextState;
 
