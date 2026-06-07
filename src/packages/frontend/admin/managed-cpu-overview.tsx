@@ -481,6 +481,7 @@ function MembershipUsageWindowReset({
             {
               window: windowTarget,
               reason: trimmedReason,
+              browser_id: webapp_client.browser_id,
             },
           );
           setReason("");
