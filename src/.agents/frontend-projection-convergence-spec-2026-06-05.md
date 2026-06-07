@@ -676,6 +676,10 @@ Priority:
    - implemented for `archive_project`: the archive RPC waits for
      `account_project_index.state_summary.state === "archived"` and uses
      targeted project-row repair if the feed/projection lags
+   - implemented for project move LRO success with an explicit destination
+     host: after local success handling, the projection ack verifies
+     `account_project_index.host_id` matches the destination host and repairs
+     the project row if needed
 3. project metadata
    - implemented for project title, description, and theme via `account_project_index` ack checks and targeted row repair
 4. notification read state

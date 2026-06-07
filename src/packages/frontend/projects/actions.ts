@@ -1400,6 +1400,68 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return states.includes(projectedState);
   }
 
+  private async projectedProjectHostMatches({
+    project_id,
+    host_id,
+  }: {
+    project_id: string;
+    host_id: string;
+  }): Promise<boolean> {
+    const account_id = this.getAccountId();
+    if (!account_id || !project_id || !webapp_client.is_signed_in()) {
+      return false;
+    }
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          account_project_index: [
+            {
+              account_id,
+              project_id,
+              host_id: null,
+            },
+          ],
+        },
+        options: [{ limit: 1 }],
+      });
+    } catch (err) {
+      console.warn("project host projection check failed", {
+        project_id,
+        host_id,
+        err,
+      });
+      return false;
+    }
+    return resp?.query?.account_project_index?.[0]?.host_id === host_id;
+  }
+
+  private async ackProjectedProjectHostAfterMove({
+    project_id,
+    host_id,
+  }: {
+    project_id: string;
+    host_id: string;
+  }): Promise<void> {
+    await writeAndWaitForProjection({
+      consumer: "projects",
+      id: `project:${project_id}:move:${host_id}`,
+      name: "project.move",
+      write: async () => undefined,
+      matchesProjection: () =>
+        this.projectedProjectHostMatches({
+          project_id,
+          host_id,
+        }),
+      repair: () =>
+        this.repairProjectProjection({
+          kind: "project-ids",
+          project_ids: [project_id],
+          reason: "project-move",
+        }),
+    });
+  }
+
   private shouldPreserveLocalHostIdAfterMove({
     project_id,
     current_host_id,
@@ -3681,6 +3743,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
         logInfo.project_id,
         "project-move",
       );
+      if (logInfo.dest_host_id) {
+        void this.ackProjectedProjectHostAfterMove({
+          project_id: logInfo.project_id,
+          host_id: logInfo.dest_host_id,
+        }).catch((err) => {
+          console.warn("project move projection did not converge", {
+            project_id: logInfo.project_id,
+            host_id: logInfo.dest_host_id,
+            err,
+          });
+        });
+      }
     };
     void webapp_client.conat_client
       .lroWait({

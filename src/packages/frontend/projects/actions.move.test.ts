@@ -23,6 +23,7 @@ jest.mock("./table", () => ({
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     account_id: "acct-1",
+    is_signed_in: jest.fn(() => true),
     conat_client: {
       lroWait: jest.fn(async () => ({
         status: "succeeded",
@@ -82,6 +83,17 @@ describe("ProjectsActions move flow", () => {
       }
       return projectMap.getIn(path.slice(1) as any);
     });
+    mockedWebappClient.async_query.mockResolvedValue({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            host_id: "host-new",
+          },
+        ],
+      },
+    } as any);
     mockedRefreshProjectsTable.mockResolvedValue(undefined);
   });
 
@@ -97,7 +109,9 @@ describe("ProjectsActions move flow", () => {
       trackMoveOp: jest.fn(),
     };
     const redux = {
-      getStore: jest.fn(() => ({})),
+      getStore: jest.fn((name: string) =>
+        name === "account" ? { get: jest.fn(() => "acct-1") } : {},
+      ),
       _set_state: jest.fn((state) => {
         projectMap = state.projects.project_map;
       }),
@@ -158,5 +172,17 @@ describe("ProjectsActions move flow", () => {
       project_id,
       "project-move",
     );
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            host_id: null,
+          },
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
   });
 });
