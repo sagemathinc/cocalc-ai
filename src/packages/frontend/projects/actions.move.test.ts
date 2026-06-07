@@ -29,6 +29,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         status: "succeeded",
       })),
       hub: {
+        projects: {
+          assignProjectHost: jest.fn(async () => undefined),
+        },
         lro: {
           get: jest.fn(async () => ({
             status: "succeeded",
@@ -184,5 +187,61 @@ describe("ProjectsActions move flow", () => {
       },
       options: [{ limit: 1 }],
     });
+  });
+
+  it("waits for projected host after assigning a host to an unassigned project", async () => {
+    projectMap = ImmutableMap<string, any>([
+      [
+        project_id,
+        ImmutableMap({
+          region: "us-central1",
+        }),
+      ],
+    ]);
+    const projectActions = {
+      setState: jest.fn(),
+    };
+    const redux = {
+      getStore: jest.fn((name: string) =>
+        name === "account" ? { get: jest.fn(() => "acct-1") } : {},
+      ),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getProjectActions: jest.fn(() => projectActions),
+    } as any;
+    jest
+      .spyOn(appRedux, "getProjectActions")
+      .mockReturnValue(projectActions as any);
+    const actions = new ProjectsActions("projects", redux);
+    jest
+      .spyOn(actions as any, "ensure_host_info")
+      .mockResolvedValue(undefined as any);
+
+    await actions.assign_project_to_host(project_id, "host-new");
+
+    expect(
+      mockedWebappClient.conat_client.hub.projects.assignProjectHost,
+    ).toHaveBeenCalledWith({
+      project_id,
+      dest_host_id: "host-new",
+    });
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            host_id: null,
+          },
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+    expect(projectActions.setState).toHaveBeenCalledWith({
+      control_error: "",
+    });
+    expect(projectMap.getIn([project_id, "host_id"])).toBe("host-new");
   });
 });

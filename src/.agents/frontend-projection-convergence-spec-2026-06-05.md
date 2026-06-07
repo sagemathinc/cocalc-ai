@@ -670,6 +670,9 @@ Priority:
    - implemented for `start_project`: start RPC waits for
      `account_project_index.state_summary.state` to become `starting` or
      `running`, with targeted project-row repair on lag
+   - implemented for `restart_project`: restart RPC waits for
+     `account_project_index.state_summary.state` to become `starting` or
+     `running`, with targeted project-row repair on lag
    - implemented for `stop_project`: stop RPC waits for
      `account_project_index.state_summary.state === "opened"`, with targeted
      project-row repair on lag
@@ -680,6 +683,9 @@ Priority:
      host: after local success handling, the projection ack verifies
      `account_project_index.host_id` matches the destination host and repairs
      the project row if needed
+   - implemented for `assign_project_to_host`: host assignment RPC waits for
+     `account_project_index.host_id` to match the assigned host, with targeted
+     project-row repair on lag
 3. project metadata
    - implemented for project title, description, and theme via `account_project_index` ack checks and targeted row repair
 4. notification read state

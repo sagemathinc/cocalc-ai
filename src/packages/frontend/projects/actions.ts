@@ -4304,9 +4304,26 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       const actions = redux.getProjectActions(project_id);
       try {
-        await webapp_client.conat_client.hub.projects.assignProjectHost({
-          project_id,
-          dest_host_id,
+        await writeAndWaitForProjection({
+          consumer: "projects",
+          id: `project:${project_id}:assign-host:${dest_host_id}`,
+          name: "project.assign_host",
+          write: () =>
+            webapp_client.conat_client.hub.projects.assignProjectHost({
+              project_id,
+              dest_host_id,
+            }),
+          matchesProjection: () =>
+            this.projectedProjectHostMatches({
+              project_id,
+              host_id: dest_host_id,
+            }),
+          repair: () =>
+            this.repairProjectProjection({
+              kind: "project-ids",
+              project_ids: [project_id],
+              reason: "project-move",
+            }),
         });
         actions?.setState({ control_error: "" });
         const project_map = store.get("project_map");
@@ -4343,9 +4360,26 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
       const actions = redux.getProjectActions(project_id);
       try {
-        const resp = await webapp_client.conat_client.hub.projects.restart({
-          project_id,
-          wait: false,
+        const resp = await writeAndWaitForProjection({
+          consumer: "projects",
+          id: `project:${project_id}:restart`,
+          name: "project.restart",
+          write: () =>
+            webapp_client.conat_client.hub.projects.restart({
+              project_id,
+              wait: false,
+            }),
+          matchesProjection: () =>
+            this.projectedProjectStateMatches({
+              project_id,
+              states: ["starting", "running"],
+            }),
+          repair: () =>
+            this.repairProjectProjection({
+              kind: "project-ids",
+              project_ids: [project_id],
+              reason: "project-start",
+            }),
         });
         actions.trackStartOp(resp);
       } catch (err) {
