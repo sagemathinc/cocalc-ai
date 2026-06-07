@@ -57,16 +57,23 @@ describe("hub project-host proxy auth injection", () => {
     mockProxyWeb.mockReset();
     mockProxyWs.mockReset();
     mockProxyOn.mockReset();
+    const hostRow = {
+      host_id,
+      internal_url: "http://project-host.internal:9911",
+      public_url: null,
+      metadata: {},
+    };
     mockGetPool.mockReset().mockReturnValue({
-      query: jest.fn().mockResolvedValue({
-        rows: [
-          {
-            host_id,
-            internal_url: "http://project-host.internal:9911",
-            public_url: null,
-            metadata: {},
-          },
-        ],
+      query: jest.fn().mockImplementation(async (sql, params) => {
+        const text = `${sql}`;
+        const id = params?.[0];
+        if (text.includes("FROM project_hosts") && id === host_id) {
+          return { rows: [hostRow] };
+        }
+        if (text.includes("FROM projects") && id === project_id) {
+          return { rows: [hostRow] };
+        }
+        return { rows: [] };
       }),
     });
     mockParseReq.mockReset().mockReturnValue({
@@ -131,6 +138,73 @@ describe("hub project-host proxy auth injection", () => {
 
     expect(req.url).toBe("/.cocalc/project-host/session");
     expect(mockProxyWeb).toHaveBeenCalledWith(req, res, {
+      target: "http://project-host.internal:9911",
+      prependPath: false,
+    });
+  });
+
+  it("injects account-scoped project-host auth for proxied project conat requests", async () => {
+    mockParseReq.mockReturnValue({
+      type: "conat",
+      project_id,
+    });
+
+    const { createProjectHostProxyHandlers, setProjectHostProxyAccountId } =
+      await import("./project-host");
+    const handlers = await createProjectHostProxyHandlers();
+    const req: any = {
+      url: `/${project_id}/conat/?EIO=4&transport=polling`,
+      headers: {},
+    };
+    const res: any = {};
+    setProjectHostProxyAccountId(req, account_id);
+
+    await handlers.handleRequest(req, res);
+
+    expect(mockIssueProjectHostAuthToken).toHaveBeenCalledWith({
+      host_id,
+      actor: "account",
+      account_id,
+      ttl_seconds: 5 * 60,
+      private_key: "private",
+    });
+    expect(req.headers.authorization).toBe("Bearer project-host-token");
+    expect(req.url).toBe("/conat/?EIO=4&transport=polling");
+    expect(mockProxyWeb).toHaveBeenCalledWith(req, res, {
+      target: "http://project-host.internal:9911",
+      prependPath: false,
+    });
+  });
+
+  it("injects account-scoped project-host auth for proxied project conat websocket upgrades", async () => {
+    mockParseReq.mockReturnValue({
+      type: "conat",
+      project_id,
+    });
+
+    const { createProjectHostProxyHandlers, setProjectHostProxyAccountId } =
+      await import("./project-host");
+    const handlers = await createProjectHostProxyHandlers();
+    const req: any = {
+      url: `/${project_id}/conat/?EIO=4&transport=websocket`,
+      headers: {},
+    };
+    const socket: any = {};
+    const head: any = Buffer.alloc(0);
+    setProjectHostProxyAccountId(req, account_id);
+
+    await handlers.handleUpgrade(req, socket, head);
+
+    expect(mockIssueProjectHostAuthToken).toHaveBeenCalledWith({
+      host_id,
+      actor: "account",
+      account_id,
+      ttl_seconds: 5 * 60,
+      private_key: "private",
+    });
+    expect(req.headers.authorization).toBe("Bearer project-host-token");
+    expect(req.url).toBe("/conat/?EIO=4&transport=websocket");
+    expect(mockProxyWs).toHaveBeenCalledWith(req, socket, head, {
       target: "http://project-host.internal:9911",
       prependPath: false,
     });

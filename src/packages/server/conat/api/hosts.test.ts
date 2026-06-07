@@ -5070,6 +5070,60 @@ describe("hosts.resolveHostConnection", () => {
     });
   });
 
+  it("keeps local proxy routing for local self-hosts", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "local-star-host",
+              bay_id: "bay-0",
+              name: "Local Star",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: null,
+              status: "active",
+              last_seen: new Date("2026-06-07T00:00:00.000Z"),
+              region: "local",
+              metadata: {
+                owner: ACCOUNT_ID,
+                provider: "star",
+                self_host: {
+                  http_tunnel_port: 9002,
+                  ssh_tunnel_port: 2222,
+                },
+                machine: {
+                  cloud: "self-host",
+                  metadata: { self_host_mode: "local" },
+                },
+              },
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { resolveHostConnection } = await import("./hosts");
+    await expect(
+      resolveHostConnection({
+        account_id: ACCOUNT_ID,
+        host_id: "local-star-host",
+      }),
+    ).resolves.toMatchObject({
+      host_id: "local-star-host",
+      connect_url: null,
+      local_proxy: true,
+      ready: true,
+      ssh_server: expect.stringContaining(":2222"),
+    });
+  });
+
   it("routes project start metadata lookup to the owning bay when the local host bay misses", async () => {
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-7",

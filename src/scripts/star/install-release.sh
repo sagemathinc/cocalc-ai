@@ -52,6 +52,8 @@ Environment:
                             interactive local script runs.
   STAR_PUBLIC_URL           Public https:// URL. Defaults to
                             https://<detected-public-ip>.sslip.io when possible.
+  STAR_ACCESS_URL           Browser-facing URL to print and configure, e.g.
+                            http://localhost:8170 for local VM forwarding.
   STAR_PUBLIC_URL_AUTO=0    Disable automatic sslip.io public URL detection.
   STAR_INSTALL_ROOT         Passed through to the release installer.
   STAR_USER                 Passed through to the release installer.
@@ -212,5 +214,6 @@ log "running release installer"
 cd "$release_dir"
 export STAR_ASSUME_YES
 export STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
+export STAR_ACCESS_URL="${STAR_ACCESS_URL:-}"
 export STAR_WEB_ONBOARDING_REQUIRE_OPEN="${STAR_WEB_ONBOARDING_REQUIRE_OPEN:-}"
 exec ./install.sh

@@ -13,6 +13,7 @@ import { init as initFilesystem, localPath, sshServers } from "./filesystem";
 import getLogger from "@cocalc/backend/logger";
 import { initConatClient } from "./conat-client";
 import {
+  cleanupStaleProjectContainers,
   cleanupStaleProjectSecretsHostPaths,
   start,
   stop,
@@ -32,6 +33,7 @@ export async function init(opts: { id?: string; client?: ConatClient } = {}) {
   client = opts.client ?? conat();
   initConatClient(client);
   initFilesystem({ client });
+  await cleanupStaleProjectContainers();
   await cleanupStaleProjectSecretsHostPaths();
   return await projectRunnerServer({
     id,
