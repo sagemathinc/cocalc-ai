@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Map as ImmutableMap, Set as ImmutableSet } from "immutable";
 
 import { ProjectsPage } from "./projects-page";
@@ -13,6 +13,7 @@ let mockProjectListWindow: any;
 let mockHidden = false;
 let mockSearch = "";
 let mockSelectedHashtags: any = mockEmptyMap;
+const mockLoadProjectListWindow = jest.fn();
 
 jest.mock("./actions", () => ({}));
 
@@ -52,7 +53,11 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     React,
     redux: {
       getActions: (name: string) => {
-        if (name === "projects") return { ensure_host_info: jest.fn() };
+        if (name === "projects")
+          return {
+            ensure_host_info: jest.fn(),
+            loadProjectListWindowForCurrentAccount: mockLoadProjectListWindow,
+          };
         if (name === "mentions") return { set_filter: jest.fn() };
         if (name === "page") return { set_active_tab: jest.fn() };
         return {};
@@ -100,9 +105,10 @@ jest.mock("./projects-starred", () => ({
 }));
 
 jest.mock("./projects-table", () => ({
-  ProjectsTable: ({ visible_projects }: any) => (
+  ProjectsTable: ({ freezeOrder, visible_projects }: any) => (
     <div
       data-testid="projects-table"
+      data-freeze-order={String(!!freezeOrder)}
       data-visible-projects={JSON.stringify(visible_projects)}
     />
   ),
@@ -113,7 +119,20 @@ jest.mock("./mobile-projects-list", () => ({
 }));
 
 jest.mock("./projects-table-controls", () => ({
-  ProjectsTableControls: () => <div data-testid="projects-table-controls" />,
+  ProjectsTableControls: ({
+    onRefreshProjectList,
+    projectListChanged,
+    projectListChangedCount,
+  }: any) => (
+    <div data-testid="projects-table-controls">
+      {projectListChanged && (
+        <button type="button" onClick={onRefreshProjectList}>
+          Refresh
+          {projectListChangedCount > 1 ? ` (${projectListChangedCount})` : ""}
+        </button>
+      )}
+    </div>
+  ),
 }));
 
 jest.mock("./project-drawer", () => ({
@@ -155,6 +174,7 @@ beforeEach(() => {
   mockHidden = false;
   mockSearch = "";
   mockSelectedHashtags = mockEmptyMap;
+  mockLoadProjectListWindow.mockClear();
   (globalThis as any).ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -252,4 +272,99 @@ test("projects page ignores backend project window while hashtag filters are act
     "data-visible-projects",
     JSON.stringify(["local-hashtag-project"]),
   );
+});
+
+test("projects page shows explicit refresh for dirty backend window", () => {
+  mockVisibleProjects.push("local-project-1", "local-project-2");
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["backend-project-1", "backend-project-2"],
+    loading: false,
+    dirty: true,
+    dirty_count: 3,
+  });
+
+  render(<ProjectsPage />);
+
+  expect(screen.getByRole("button", { name: "Refresh (3)" })).toBeVisible();
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-visible-projects",
+    JSON.stringify(["backend-project-1", "backend-project-2"]),
+  );
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-freeze-order",
+    "true",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Refresh (3)" }));
+  expect(mockLoadProjectListWindow).toHaveBeenCalledWith({
+    limit: 200,
+    offset: 0,
+    hidden: false,
+    search: "",
+    sort: "last_edited",
+    force: true,
+  });
+});
+
+test("projects page keeps dirty backend window ids while the window is reloading", () => {
+  mockVisibleProjects.push("locally-resorted-project");
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["stable-backend-project"],
+    loading: true,
+    dirty: true,
+    dirty_count: 1,
+  });
+
+  render(<ProjectsPage />);
+
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-visible-projects",
+    JSON.stringify(["stable-backend-project"]),
+  );
+  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+    "data-freeze-order",
+    "true",
+  );
+});
+
+test("projects page cancels pending automatic window refresh when the window becomes dirty", () => {
+  jest.useFakeTimers();
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["stable-backend-project"],
+    loading: false,
+  });
+
+  const { rerender } = render(<ProjectsPage />);
+
+  mockProjectListWindow = mockProjectListWindow
+    .set("dirty", true)
+    .set("dirty_count", 1);
+  rerender(<ProjectsPage />);
+
+  act(() => {
+    jest.advanceTimersByTime(600);
+  });
+
+  expect(mockLoadProjectListWindow).not.toHaveBeenCalled();
+  jest.useRealTimers();
 });

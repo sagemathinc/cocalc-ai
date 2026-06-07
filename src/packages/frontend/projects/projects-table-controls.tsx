@@ -13,7 +13,7 @@
 import type { SelectProps } from "antd";
 import type { ChangeEvent, ReactNode } from "react";
 
-import { Input, Select, Space, Switch, Typography } from "antd";
+import { Button, Input, Select, Space, Switch, Typography } from "antd";
 import { Set } from "immutable";
 import { useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
@@ -41,6 +41,9 @@ interface Props {
   tour: ReactNode;
   searchRef: React.RefObject<any>;
   filtersRef: React.RefObject<any>;
+  projectListChanged?: boolean;
+  projectListChangedCount?: number;
+  onRefreshProjectList?: () => void;
 }
 
 export function ProjectsTableControls({
@@ -48,6 +51,9 @@ export function ProjectsTableControls({
   tour,
   searchRef,
   filtersRef,
+  projectListChanged = false,
+  projectListChangedCount = 0,
+  onRefreshProjectList,
 }: Props) {
   const intl = useIntl();
   const actions = useActions("projects");
@@ -174,6 +180,14 @@ export function ProjectsTableControls({
               defaultMessage: "Hidden",
             })}
           />
+          {projectListChanged && (
+            <Button size="small" onClick={onRefreshProjectList}>
+              Refresh
+              {projectListChangedCount > 1
+                ? ` (${projectListChangedCount})`
+                : ""}
+            </Button>
+          )}
         </Space>
       </Space>
 

@@ -64,6 +64,7 @@ import {
   recordProjectionRepair,
   recordProjectionRepairFailure,
 } from "@cocalc/frontend/projection-diagnostics";
+import { writeAndWaitForProjection } from "@cocalc/frontend/projection-ack";
 
 import type {
   CourseInfo,
@@ -75,6 +76,10 @@ export type { Datastore, EnvVars, EnvVarsRecord };
 
 const PROJECTION_ONLY_FIELD = "__projection_only";
 const PROJECTED_PROJECT_BOOTSTRAP_LIMIT = 2000;
+type ProjectListWindowDirtyReason =
+  | "feed-upsert"
+  | "feed-remove"
+  | "history-gap";
 
 function dateOrNull(value: unknown): Date | null {
   if (value == null) return null;
@@ -211,6 +216,12 @@ function readMaybeImmutableIn(value: any, path: string[]): any {
   return current;
 }
 
+function arrayFromMaybeImmutable(value: any): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value?.toArray === "function") return value.toArray();
+  return [];
+}
+
 function stateTimeMs(state: any): number | undefined {
   const time = readMaybeImmutable(state, "time");
   const ms =
@@ -286,9 +297,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static REALTIME_FEED_BATCH_MS = 50;
   private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
   private static PROJECT_ROW_RECONCILE_DELAYS_MS = [1_000, 5_000] as const;
-  private static PROJECT_THEME_PROJECTION_WAIT_DELAYS_MS = [
-    0, 250, 1_000, 2_500,
-  ] as const;
   private static PROJECT_LIFECYCLE_RECONCILE_DELAYS_MS = [
     1_000, 5_000, 15_000, 30_000, 60_000, 120_000,
   ] as const;
@@ -471,6 +479,76 @@ export class ProjectsActions extends Actions<ProjectsState> {
     this.realtimeFeedAccountId = undefined;
   }
 
+  private getProjectListWindowState(): any {
+    return store.get("project_list_window");
+  }
+
+  private markProjectListWindowDirty(
+    reason: ProjectListWindowDirtyReason,
+  ): void {
+    const current = this.getProjectListWindowState();
+    const key = readMaybeImmutable(current, "key");
+    if (typeof key !== "string" || !key) {
+      return;
+    }
+    const project_ids = arrayFromMaybeImmutable(
+      readMaybeImmutable(current, "project_ids"),
+    );
+    const dirty_count = Number(readMaybeImmutable(current, "dirty_count") ?? 0);
+    this.setState({
+      project_list_window: {
+        key,
+        project_ids,
+        loading: !!readMaybeImmutable(current, "loading"),
+        ...(readMaybeImmutable(current, "loaded_at")
+          ? { loaded_at: readMaybeImmutable(current, "loaded_at") }
+          : {}),
+        ...(readMaybeImmutable(current, "error")
+          ? { error: readMaybeImmutable(current, "error") }
+          : {}),
+        dirty: true,
+        dirty_reason: reason,
+        dirty_count: Number.isFinite(dirty_count) ? dirty_count + 1 : 1,
+        dirty_at: new Date(),
+      },
+    } as ProjectsState);
+  }
+
+  private shouldDirtyProjectListWindowForUpsert({
+    row,
+    currentProject,
+  }: {
+    row: AccountFeedProjectRow;
+    currentProject: Map<string, any>;
+  }): boolean {
+    const current = this.getProjectListWindowState();
+    const key = readMaybeImmutable(current, "key");
+    if (typeof key !== "string" || !key) {
+      return false;
+    }
+    const project_ids = arrayFromMaybeImmutable(
+      readMaybeImmutable(current, "project_ids"),
+    );
+    if (!project_ids.includes(row.project_id) || currentProject.size === 0) {
+      return true;
+    }
+    try {
+      const parsed = JSON.parse(key);
+      if (`${parsed?.search ?? ""}`.trim()) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+    const currentLastEdited = dateValueMs(currentProject.get("last_edited"));
+    const incomingLastEdited = dateValueMs(row.last_edited);
+    return (
+      currentLastEdited != null &&
+      incomingLastEdited != null &&
+      currentLastEdited !== incomingLastEdited
+    );
+  }
+
   private handleRealtimeFeedChange = (
     event?: AccountFeedEvent,
     seq?: number,
@@ -513,6 +591,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       info,
     });
     this.flushPendingProjectFeedChanges();
+    this.markProjectListWindowDirty("history-gap");
     void this.refreshProjectsProjectionAfterHistoryGap();
   };
 
@@ -1054,12 +1133,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     hidden = false,
     search,
     sort = "last_edited",
+    force = false,
   }: {
     limit?: number;
     offset?: number;
     hidden?: boolean;
     search?: string;
     sort?: AccountProjectListWindowSort;
+    force?: boolean;
   } = {}): Promise<void> {
     const account_id = this.getAccountId();
     if (!account_id || !webapp_client.is_signed_in()) {
@@ -1074,6 +1155,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
       sort,
     });
     const previousWindow = store.get("project_list_window");
+    if (
+      !force &&
+      readMaybeImmutable(previousWindow, "key") === key &&
+      readMaybeImmutable(previousWindow, "dirty")
+    ) {
+      return;
+    }
     const previousProjectIds =
       readMaybeImmutable(previousWindow, "project_ids") ?? [];
     this.setState({
@@ -1081,6 +1169,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
         key,
         project_ids: previousProjectIds,
         loading: true,
+        dirty: !!readMaybeImmutable(previousWindow, "dirty"),
+        ...(readMaybeImmutable(previousWindow, "dirty_reason")
+          ? { dirty_reason: readMaybeImmutable(previousWindow, "dirty_reason") }
+          : {}),
+        ...(readMaybeImmutable(previousWindow, "dirty_count") != null
+          ? { dirty_count: readMaybeImmutable(previousWindow, "dirty_count") }
+          : {}),
+        ...(readMaybeImmutable(previousWindow, "dirty_at")
+          ? { dirty_at: readMaybeImmutable(previousWindow, "dirty_at") }
+          : {}),
       },
     } as ProjectsState);
 
@@ -1101,6 +1199,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
           project_ids: previousProjectIds,
           loading: false,
           error: `${err}`,
+          dirty: !!readMaybeImmutable(previousWindow, "dirty"),
+          ...(readMaybeImmutable(previousWindow, "dirty_reason")
+            ? {
+                dirty_reason: readMaybeImmutable(
+                  previousWindow,
+                  "dirty_reason",
+                ),
+              }
+            : {}),
+          ...(readMaybeImmutable(previousWindow, "dirty_count") != null
+            ? { dirty_count: readMaybeImmutable(previousWindow, "dirty_count") }
+            : {}),
+          ...(readMaybeImmutable(previousWindow, "dirty_at")
+            ? { dirty_at: readMaybeImmutable(previousWindow, "dirty_at") }
+            : {}),
         },
       } as ProjectsState);
       recordProjectionRepairFailure({
@@ -1118,7 +1231,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
     let project_map = store.get("project_map") ?? Map<string, any>();
     const project_ids: string[] = [];
     for (const row of rows as ProjectIndexBootstrapRow[]) {
-      if (!row?.project_id || row.is_hidden === true) {
+      if (
+        !row?.project_id ||
+        (hidden ? row.is_hidden !== true : row.is_hidden === true)
+      ) {
         continue;
       }
       project_ids.push(row.project_id);
@@ -1135,57 +1251,58 @@ export class ProjectsActions extends Actions<ProjectsState> {
         key,
         project_ids,
         loading: false,
+        dirty: false,
+        dirty_count: 0,
         loaded_at: new Date(),
       },
     } as ProjectsState);
   }
 
-  private async waitForProjectedProjectTheme(
-    project_id: string,
-    theme: ProjectTheme | null,
-  ): Promise<boolean> {
+  private async projectedProjectMetadataMatches({
+    project_id,
+    field,
+    value,
+  }: {
+    project_id: string;
+    field: "title" | "description" | "theme";
+    value: string | ProjectTheme | null;
+  }): Promise<boolean> {
     const account_id = this.getAccountId();
     if (!account_id || !project_id || !webapp_client.is_signed_in()) {
       return false;
     }
-    for (const delay of ProjectsActions.PROJECT_THEME_PROJECTION_WAIT_DELAYS_MS) {
-      if (delay > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-      let resp: any;
-      try {
-        resp = await webapp_client.async_query({
-          query: {
-            account_project_index: [
-              {
-                account_id,
-                project_id,
-                theme: null,
-              },
-            ],
-          },
-          options: [{ limit: 1 }],
-        });
-      } catch (err) {
-        console.warn("project theme projection check failed", {
-          project_id,
-          err,
-        });
-        continue;
-      }
-      const projectedTheme = normalizeProjectThemeForWrite(
-        resp?.query?.account_project_index?.[0]?.theme,
-      );
-      if (isEqual(projectedTheme, theme)) {
-        await this.repairProjectProjection({
-          kind: "project-ids",
-          project_ids: [project_id],
-          reason: "write-ack",
-        });
-        return true;
-      }
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          account_project_index: [
+            {
+              account_id,
+              project_id,
+              title: null,
+              description: null,
+              theme: null,
+            },
+          ],
+        },
+        options: [{ limit: 1 }],
+      });
+    } catch (err) {
+      console.warn("project metadata projection check failed", {
+        project_id,
+        field,
+        err,
+      });
+      return false;
     }
-    return false;
+    const row = resp?.query?.account_project_index?.[0];
+    if (field === "theme") {
+      return isEqual(
+        normalizeProjectThemeForWrite(row?.theme),
+        normalizeProjectThemeForWrite(value as ProjectTheme | null),
+      );
+    }
+    return row?.[field] === value;
   }
 
   private shouldPreserveLocalHostIdAfterMove({
@@ -1508,6 +1625,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
           : undefined;
       const currentProject =
         project_map.get(row.project_id) ?? Map<string, any>();
+      if (
+        this.shouldDirtyProjectListWindowForUpsert({
+          row,
+          currentProject,
+        })
+      ) {
+        this.markProjectListWindowDirty("feed-upsert");
+      }
       let nextProject = this.mergeProjectFeedRow(currentProject, row);
       if (
         typeof source_host_id === "string" &&
@@ -1569,6 +1694,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
 
     for (const project_id of pendingRemovals) {
+      this.markProjectListWindowDirty("feed-remove");
       if (!project_map.has(project_id)) {
         continue;
       }
@@ -2127,7 +2253,24 @@ export class ProjectsActions extends Actions<ProjectsState> {
   ): Promise<void> => {
     this.setProjectLocalScalarField(project_id, field, value);
     try {
-      await this.projects_query_set({ project_id, [field]: value });
+      await writeAndWaitForProjection({
+        consumer: "projects",
+        id: `project:${project_id}:${field}`,
+        name: `project.${field}`,
+        write: () => this.projects_query_set({ project_id, [field]: value }),
+        matchesProjection: () =>
+          this.projectedProjectMetadataMatches({
+            project_id,
+            field,
+            value,
+          }),
+        repair: () =>
+          this.repairProjectProjection({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "write-ack",
+          }),
+      });
     } catch (err) {
       this.setProjectLocalScalarField(project_id, field, before);
       throw err;
@@ -2382,17 +2525,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.setProjectLocalTheme(project_id, normalizedTheme);
     }
     try {
-      await this.projects_query_set({
-        project_id,
-        theme: normalizedTheme,
+      await writeAndWaitForProjection({
+        consumer: "projects",
+        id: `project:${project_id}:theme`,
+        name: "project.theme",
+        write: () =>
+          this.projects_query_set({
+            project_id,
+            theme: normalizedTheme,
+          }),
+        matchesProjection: () =>
+          this.projectedProjectMetadataMatches({
+            project_id,
+            field: "theme",
+            value: normalizedTheme,
+          }),
+        repair: () =>
+          this.repairProjectProjection({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "write-ack",
+          }),
       });
-      if (
-        !(await this.waitForProjectedProjectTheme(project_id, normalizedTheme))
-      ) {
-        console.warn("project theme projection did not converge", {
-          project_id,
-        });
-      }
     } catch (err) {
       if (localThemeChanged) {
         this.setProjectLocalTheme(project_id, beforeJS);

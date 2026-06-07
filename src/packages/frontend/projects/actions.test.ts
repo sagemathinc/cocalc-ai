@@ -68,7 +68,26 @@ describe("ProjectsActions project metadata updates", () => {
     return { actions, async_log, redux };
   }
 
+  function mockProjectedProjectMetadata(row: Record<string, any>) {
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            title: "Old title",
+            description: "Old description",
+            theme: null,
+            ...row,
+          },
+        ],
+      },
+    });
+  }
+
   beforeEach(() => {
+    mockedWebappClient.async_query.mockReset();
+    mockedWebappClient.async_query.mockResolvedValue(undefined);
     mockedStore.get.mockImplementation((key) =>
       key === "project_map" ? baseProjectMap : undefined,
     );
@@ -98,6 +117,7 @@ describe("ProjectsActions project metadata updates", () => {
         );
       });
       actions.projects_query_set = jest.fn(async () => undefined);
+      mockProjectedProjectMetadata({ [field]: value });
 
       await expect(actions[method](project_id, value)).resolves.toBeUndefined();
 
@@ -175,40 +195,7 @@ describe("ProjectsActions project metadata updates", () => {
       icon: "rocket",
       image_blob: "theme-blob",
     };
-    mockedWebappClient.async_query
-      .mockResolvedValueOnce({
-        query: {
-          account_project_index: [
-            {
-              project_id,
-              theme,
-            },
-          ],
-        },
-      })
-      .mockResolvedValueOnce({
-        query: {
-          account_project_index: [
-            {
-              account_id: "acct-1",
-              project_id,
-              owning_bay_id: "bay-0",
-              host_id: null,
-              title: "Old title",
-              description: "Old description",
-              theme,
-              users_summary: {},
-              state_summary: {},
-              last_edited: null,
-              last_backup: null,
-              last_activity_at: null,
-              sort_key: null,
-              updated_at: null,
-              is_hidden: false,
-            },
-          ],
-        },
-      });
+    mockProjectedProjectMetadata({ theme });
 
     await expect(
       actions.setProjectTheme(project_id, theme),
@@ -253,40 +240,7 @@ describe("ProjectsActions project metadata updates", () => {
 
     const { actions } = makeActions();
     actions.projects_query_set = jest.fn(async () => undefined);
-    mockedWebappClient.async_query
-      .mockResolvedValueOnce({
-        query: {
-          account_project_index: [
-            {
-              project_id,
-              theme,
-            },
-          ],
-        },
-      })
-      .mockResolvedValueOnce({
-        query: {
-          account_project_index: [
-            {
-              account_id: "acct-1",
-              project_id,
-              owning_bay_id: "bay-0",
-              host_id: null,
-              title: "Old title",
-              description: "Old description",
-              theme,
-              users_summary: {},
-              state_summary: {},
-              last_edited: null,
-              last_backup: null,
-              last_activity_at: null,
-              sort_key: null,
-              updated_at: null,
-              is_hidden: false,
-            },
-          ],
-        },
-      });
+    mockProjectedProjectMetadata({ theme });
 
     await expect(
       actions.setProjectTheme(project_id, theme),
@@ -328,6 +282,7 @@ describe("ProjectsActions project metadata updates", () => {
       .mockImplementation(() => undefined);
     redux.getProjectActions.mockReturnValue({ async_log });
     actions.projects_query_set = jest.fn(async () => undefined);
+    mockProjectedProjectMetadata({ title: "New title" });
 
     await expect(
       actions.set_project_title(project_id, "New title"),

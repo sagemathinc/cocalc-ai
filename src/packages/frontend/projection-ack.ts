@@ -18,7 +18,7 @@ export type ProjectionAckOptions<T> = {
   id?: string;
   name: string;
   write: () => Promise<T>;
-  matchesProjection: () => boolean;
+  matchesProjection: () => boolean | Promise<boolean>;
   repair: () => Promise<void>;
   timeout_ms?: number;
   repair_timeout_ms?: number;
@@ -67,18 +67,18 @@ async function waitForProjectionMatch({
   timeout_ms,
   poll_ms,
 }: {
-  matchesProjection: () => boolean;
+  matchesProjection: () => boolean | Promise<boolean>;
   timeout_ms: number;
   poll_ms: number;
 }): Promise<boolean> {
   const deadline = Date.now() + timeout_ms;
   while (Date.now() < deadline) {
-    if (matchesProjection()) {
+    if (await matchesProjection()) {
       return true;
     }
     await sleep(Math.min(poll_ms, Math.max(1, deadline - Date.now())));
   }
-  return matchesProjection();
+  return await matchesProjection();
 }
 
 export async function writeAndWaitForProjection<T>({
