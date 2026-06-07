@@ -12,6 +12,14 @@ describe("app expose launchpad reservation", () => {
   const originalProduct = process.env.COCALC_PRODUCT;
   const testHome = mkdtempSync(join(tmpdir(), "cocalc-app-expose-launchpad-"));
 
+  function mockPublicExposureEnabled() {
+    jest.doMock("@cocalc/util/project-apps", () => ({
+      PROJECT_APP_PUBLIC_EXPOSURE_ENABLED: true,
+      PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE:
+        "Public project app exposure is disabled for this release.",
+    }));
+  }
+
   afterAll(() => {
     if (originalHome == null) {
       delete process.env.HOME;
@@ -47,6 +55,7 @@ describe("app expose launchpad reservation", () => {
     }));
 
     jest.resetModules();
+    mockPublicExposureEnabled();
     jest.doMock("@cocalc/conat/client", () => ({
       conat: jest.fn(() => ({})),
       getClient: jest.fn(() => ({
@@ -123,6 +132,7 @@ describe("app expose launchpad reservation", () => {
     const reserve = jest.fn();
 
     jest.resetModules();
+    mockPublicExposureEnabled();
     jest.doMock("@cocalc/conat/client", () => ({
       conat: jest.fn(() => ({})),
       getClient: jest.fn(() => ({
@@ -174,6 +184,60 @@ describe("app expose launchpad reservation", () => {
     await expect(statusApp(id)).resolves.toEqual(
       expect.objectContaining({ exposure: undefined }),
     );
+
+    await deleteApp(id);
+  });
+
+  test("blocks public exposure by default for the first release", async () => {
+    process.env.HOME = testHome;
+    delete process.env.COCALC_PRODUCT;
+
+    jest.resetModules();
+    jest.dontMock("@cocalc/util/project-apps");
+    jest.doMock("@cocalc/conat/client", () => ({
+      conat: jest.fn(() => ({})),
+      getClient: jest.fn(() => ({
+        conat: jest.fn(() => ({})),
+      })),
+    }));
+    jest.doMock("@cocalc/project/conat/hub", () => ({
+      hubApi: jest.fn(() => ({
+        system: {
+          assertProjectPublicSharingAllowed: jest.fn(),
+          getProjectAppPublicPolicy: jest.fn(),
+          reserveProjectAppPublicSubdomain: jest.fn(),
+          releaseProjectAppPublicSubdomain: jest.fn(async () => ({
+            released: true,
+          })),
+        },
+      })),
+    }));
+
+    const { exposeApp, upsertAppSpec, deleteApp } = await import("./control");
+
+    const id = `release-disabled-${Date.now()}`;
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "service",
+      title: "Release disabled public exposure test",
+      command: {
+        exec: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+      },
+      network: { listen_host: "127.0.0.1", port: 6125, protocol: "http" },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: false, keep_warm_s: 1, startup_timeout_s: 15 },
+    });
+
+    await expect(
+      exposeApp({
+        id,
+        ttl_s: 600,
+        auth_front: "none",
+        random_subdomain: true,
+      }),
+    ).rejects.toThrow("Public project app exposure is disabled");
 
     await deleteApp(id);
   });

@@ -16,6 +16,10 @@ import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { getLogger } from "@cocalc/project/logger";
 import type { AppTemplateCatalogEntry } from "@cocalc/conat/project/api/apps";
 import {
+  PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE,
+  PROJECT_APP_PUBLIC_EXPOSURE_ENABLED,
+} from "@cocalc/util/project-apps";
+import {
   type AppStaticSpec,
   type AppServiceLifecycleMode,
   type AppServiceSpec,
@@ -1415,6 +1419,9 @@ export async function exposeApp({
   random_subdomain?: boolean;
   subdomain_label?: string;
 }): Promise<AppStatus> {
+  if (!PROJECT_APP_PUBLIC_EXPOSURE_ENABLED) {
+    throw new Error(PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE);
+  }
   const spec = await getAppSpec(id);
   const warnings: string[] = [];
   const publicRestart =
