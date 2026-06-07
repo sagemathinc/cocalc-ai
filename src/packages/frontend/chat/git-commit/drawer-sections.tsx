@@ -127,25 +127,36 @@ export function GitCommitDrawerTitle({
     >
       {!nonRepoError ? (
         <>
-          <Select
-            showSearch
-            size="small"
-            value={commit}
-            searchValue={commitSearch}
-            options={logOptions}
-            onChange={onCommitChange}
-            onSearch={onCommitSearch}
-            placeholder="git log"
-            style={{ minWidth: 280, flex: "1 1 360px", maxWidth: 620 }}
-            optionFilterProp="search"
-          />
-          <Checkbox
-            checked={showOnlyUnreviewedCommits}
-            onChange={(evt) => onToggleShowOnlyUnreviewed(evt.target.checked)}
-            style={{ whiteSpace: "nowrap" }}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flex: "1 1 460px",
+              minWidth: 360,
+              maxWidth: 760,
+            }}
           >
-            Only unreviewed
-          </Checkbox>
+            <Select
+              showSearch
+              size="small"
+              value={commit}
+              searchValue={commitSearch}
+              options={logOptions}
+              onChange={onCommitChange}
+              onSearch={onCommitSearch}
+              placeholder="git log"
+              style={{ minWidth: 0, flex: "1 1 auto" }}
+              optionFilterProp="search"
+            />
+            <Checkbox
+              checked={showOnlyUnreviewedCommits}
+              onChange={(evt) => onToggleShowOnlyUnreviewed(evt.target.checked)}
+              style={{ whiteSpace: "nowrap", flex: "0 0 auto" }}
+            >
+              Only unreviewed
+            </Checkbox>
+          </div>
           <Space.Compact size="small">
             <Input
               ref={diffFindInputRef}

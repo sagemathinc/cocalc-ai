@@ -31,8 +31,27 @@ const logger = getLogger("project-host:storage-info");
 export const PROJECT_STORAGE_INFO_SUBJECT = "project.*.storage-info.-";
 export const PROJECT_STORAGE_HISTORY_STREAM_NAME = "project-storage-history";
 
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
 const PROJECT_STORAGE_CACHE_TTL_MS = 3 * 60_000;
-const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
+const PROJECT_STORAGE_STALE_CACHE_TTL_MS = 24 * 60 * 60_000;
+const PROJECT_STORAGE_BREAKDOWN_WAIT_MS = positiveIntegerEnv(
+  "COCALC_PROJECT_STORAGE_BREAKDOWN_WAIT_MS",
+  10_000,
+);
+const PROJECT_STORAGE_BREAKDOWN_SCAN_TIMEOUT_MS = positiveIntegerEnv(
+  "COCALC_PROJECT_STORAGE_BREAKDOWN_SCAN_TIMEOUT_MS",
+  120_000,
+);
+const PROJECT_STORAGE_SCAN_BUDGET_WINDOW_MS = 60 * 60_000;
+const PROJECT_STORAGE_SCAN_BUDGET_MS = 5 * 60_000;
+const PROJECT_STORAGE_MIN_SCAN_BUDGET_MS = 1_000;
 const PROJECT_STORAGE_FORCE_SAMPLE_MIN_INTERVAL_MS = 60_000;
 const STORAGE_HISTORY_SAMPLE_INTERVAL_MS = 5 * 60_000;
 const STORAGE_HISTORY_TTL_MS = 35 * 24 * 60 * 60 * 1000;
@@ -45,6 +64,12 @@ const projectStorageOverviewCache = new TTL<string, ProjectStorageOverview>({
 const projectStorageBreakdownCache = new TTL<string, ProjectStorageBreakdown>({
   ttl: PROJECT_STORAGE_CACHE_TTL_MS,
 });
+const projectStorageBreakdownStaleCache = new TTL<
+  string,
+  ProjectStorageBreakdown
+>({
+  ttl: PROJECT_STORAGE_STALE_CACHE_TTL_MS,
+});
 const projectStorageOverviewInflight = new Map<
   string,
   Promise<ProjectStorageOverview>
@@ -53,6 +78,16 @@ const projectStorageBreakdownInflight = new Map<
   string,
   Promise<ProjectStorageBreakdown>
 >();
+const projectStorageScanBudgets = new TTL<
+  string,
+  {
+    window_start: number;
+    used_ms: number;
+    reserved_ms: number;
+  }
+>({
+  ttl: 2 * PROJECT_STORAGE_SCAN_BUDGET_WINDOW_MS,
+});
 const projectStorageForceSampleAt = new Map<string, number>();
 const historyStreams = new TTL<string, DStream<ProjectStorageHistoryPoint>>({
   ttl: 30 * 60_000,
@@ -205,6 +240,159 @@ function parseDuOutput(
   };
 }
 
+function storageScanBudgetMessage(path: string): string {
+  return `Disk usage scan for '${path}' exceeded the quick-scan wait. Showing quota-based or cached usage so storage limits remain visible. A detailed scan may still finish in the background. Browse into a smaller folder for an immediate detailed breakdown.`;
+}
+
+function storageScanBudgetExhaustedMessage(): string {
+  return `Disk usage scan budget for this project is exhausted. Showing quota-based or cached usage so storage limits remain visible. Try again later or browse into a smaller folder for a cheaper scan.`;
+}
+
+function storageScanFailedMessage(path: string): string {
+  return `Disk usage scan for '${path}' did not finish within the project scan budget. Showing quota-based or cached usage so storage limits remain visible. Browse into a smaller folder for a detailed breakdown.`;
+}
+
+function isStorageScanBudgetError(err: unknown): boolean {
+  const message = `${err ?? ""}`.toLowerCase();
+  return (
+    message.includes("took too long") ||
+    message.includes("timed out") ||
+    message.includes("timeout")
+  );
+}
+
+function isTimeoutError(err: unknown): boolean {
+  return `${err ?? ""}`.toLowerCase().includes("timeout");
+}
+
+function withScanFallbackMetadata(
+  breakdown: ProjectStorageBreakdown,
+  warning: string,
+  scan_status: ProjectStorageBreakdown["scan_status"],
+): ProjectStorageBreakdown {
+  return {
+    ...breakdown,
+    estimated: true,
+    stale: true,
+    scan_status,
+    warning,
+  };
+}
+
+function estimatedStorageBreakdown({
+  path,
+  bytes,
+  warning,
+  scan_status,
+}: {
+  path: string;
+  bytes: number;
+  warning: string;
+  scan_status: ProjectStorageBreakdown["scan_status"];
+}): ProjectStorageBreakdown {
+  return {
+    path,
+    bytes: Math.max(0, bytes),
+    children: [],
+    collected_at: new Date().toISOString(),
+    estimated: true,
+    scan_status,
+    warning,
+  };
+}
+
+function fallbackStorageBreakdown({
+  cacheKey,
+  normalizedPath,
+  fallback_bytes,
+  warning,
+  scan_status,
+}: {
+  cacheKey: string;
+  normalizedPath: string;
+  fallback_bytes?: number;
+  warning: string;
+  scan_status: ProjectStorageBreakdown["scan_status"];
+}): ProjectStorageBreakdown {
+  const stale = projectStorageBreakdownStaleCache.get(cacheKey);
+  if (stale) {
+    return withScanFallbackMetadata(stale, warning, scan_status);
+  }
+  if (fallback_bytes != null && Number.isFinite(fallback_bytes)) {
+    return estimatedStorageBreakdown({
+      path: normalizedPath,
+      bytes: fallback_bytes,
+      warning,
+      scan_status,
+    });
+  }
+  throw new Error(warning);
+}
+
+function waitForStorageScan<T>({
+  promise,
+  timeout_ms,
+}: {
+  promise: Promise<T>;
+  timeout_ms: number;
+}): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("timeout")), timeout_ms);
+    }),
+  ]).finally(() => {
+    if (timer != null) {
+      clearTimeout(timer);
+    }
+  });
+}
+
+function claimProjectScanBudget(project_id: string):
+  | {
+      timeout_ms: number;
+      finish: () => void;
+    }
+  | undefined {
+  const now = Date.now();
+  let budget = projectStorageScanBudgets.get(project_id);
+  if (
+    !budget ||
+    now - budget.window_start >= PROJECT_STORAGE_SCAN_BUDGET_WINDOW_MS
+  ) {
+    budget = { window_start: now, used_ms: 0, reserved_ms: 0 };
+  }
+  const remaining =
+    PROJECT_STORAGE_SCAN_BUDGET_MS - budget.used_ms - budget.reserved_ms;
+  if (remaining < PROJECT_STORAGE_MIN_SCAN_BUDGET_MS) {
+    projectStorageScanBudgets.set(project_id, budget);
+    return undefined;
+  }
+  const reserved_ms = Math.min(
+    PROJECT_STORAGE_BREAKDOWN_SCAN_TIMEOUT_MS,
+    remaining,
+  );
+  budget.reserved_ms += reserved_ms;
+  projectStorageScanBudgets.set(project_id, budget);
+  const started = Date.now();
+  let finished = false;
+  return {
+    timeout_ms: reserved_ms,
+    finish: () => {
+      if (finished) return;
+      finished = true;
+      const latest = projectStorageScanBudgets.get(project_id) ?? budget!;
+      latest.reserved_ms = Math.max(0, latest.reserved_ms - reserved_ms);
+      latest.used_ms += Math.min(
+        reserved_ms,
+        Math.max(0, Date.now() - started),
+      );
+      projectStorageScanBudgets.set(project_id, latest);
+    },
+  };
+}
+
 function isIgnorableDuFailure(errText: string): boolean {
   const lines = errText
     .split(/\r?\n/)
@@ -354,6 +542,16 @@ function overviewToHistoryPoint(
   };
 }
 
+function overviewHasRunningStorageScan(
+  overview: ProjectStorageOverview,
+): boolean {
+  return overview.visible.some(
+    (bucket) =>
+      bucket.scan_status === "running" ||
+      bucket.usage.scan_status === "running",
+  );
+}
+
 async function getHistoryStream({
   client,
   project_id,
@@ -473,11 +671,13 @@ async function getStorageBreakdownImpl({
   project_id,
   path,
   force_sample = false,
+  fallback_bytes,
 }: {
   client: Client;
   project_id: string;
   path: string;
   force_sample?: boolean;
+  fallback_bytes?: number;
 }): Promise<ProjectStorageBreakdown> {
   const normalizedPath = normalizeStoragePath(path);
   const cacheKey = storageBreakdownCacheKey({
@@ -488,41 +688,99 @@ async function getStorageBreakdownImpl({
     ? undefined
     : projectStorageBreakdownCache.get(cacheKey);
   if (cached) return cached;
-  const inflight = projectStorageBreakdownInflight.get(cacheKey);
-  if (inflight) return await inflight;
-  const scan = (async () => {
-    const fs = localFs({ client, project_id });
-    const [hostPath, identityPath, output] = await Promise.all([
-      typeof fs.canonicalSyncFsPath === "function"
-        ? fs.canonicalSyncFsPath(normalizedPath).catch(() => normalizedPath)
-        : Promise.resolve(normalizedPath),
-      typeof fs.canonicalSyncIdentityPath === "function"
-        ? fs
-            .canonicalSyncIdentityPath(normalizedPath)
-            .catch(() => normalizedPath)
-        : Promise.resolve(normalizedPath),
-      fs.du(normalizedPath, {
-        // Use allocated bytes, not apparent/logical size. GNU du's
-        // --bytes/-b implies --apparent-size, which badly overstates sparse
-        // files such as PostgreSQL WAL archives.
-        options: ["-B", "1", "-x", "-d", "1"],
-        timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
-      }),
-    ]);
-    const breakdown = parseDuOutput(output, normalizedPath, [
-      identityPath,
-      hostPath,
-    ]);
-    projectStorageBreakdownCache.set(cacheKey, breakdown);
-    return breakdown;
-  })();
-  projectStorageBreakdownInflight.set(cacheKey, scan);
-  try {
-    return await scan;
-  } finally {
-    if (projectStorageBreakdownInflight.get(cacheKey) === scan) {
-      projectStorageBreakdownInflight.delete(cacheKey);
+  let scan = projectStorageBreakdownInflight.get(cacheKey);
+  if (!scan) {
+    const budget = claimProjectScanBudget(project_id);
+    if (!budget) {
+      logger.warn("getStorageBreakdown: project scan budget exhausted", {
+        project_id,
+        path: normalizedPath,
+      });
+      return fallbackStorageBreakdown({
+        cacheKey,
+        normalizedPath,
+        fallback_bytes,
+        warning: storageScanBudgetExhaustedMessage(),
+        scan_status: "budget_exhausted",
+      });
     }
+    scan = (async () => {
+      try {
+        const fs = localFs({ client, project_id });
+        const [hostPath, identityPath, output] = await Promise.all([
+          typeof fs.canonicalSyncFsPath === "function"
+            ? fs.canonicalSyncFsPath(normalizedPath).catch(() => normalizedPath)
+            : Promise.resolve(normalizedPath),
+          typeof fs.canonicalSyncIdentityPath === "function"
+            ? fs
+                .canonicalSyncIdentityPath(normalizedPath)
+                .catch(() => normalizedPath)
+            : Promise.resolve(normalizedPath),
+          fs.du(normalizedPath, {
+            // Use allocated bytes, not apparent/logical size. GNU du's
+            // --bytes/-b implies --apparent-size, which badly overstates sparse
+            // files such as PostgreSQL WAL archives.
+            options: ["-B", "1", "-x", "-d", "1"],
+            timeout: budget.timeout_ms,
+          }),
+        ]);
+        const breakdown = parseDuOutput(output, normalizedPath, [
+          identityPath,
+          hostPath,
+        ]);
+        projectStorageBreakdownCache.set(cacheKey, breakdown);
+        projectStorageBreakdownStaleCache.set(cacheKey, breakdown);
+        return breakdown;
+      } finally {
+        budget.finish();
+        if (projectStorageBreakdownInflight.get(cacheKey) === scan) {
+          projectStorageBreakdownInflight.delete(cacheKey);
+        }
+      }
+    })();
+    projectStorageBreakdownInflight.set(cacheKey, scan);
+    scan.catch((err) => {
+      logger.warn("getStorageBreakdown: background scan failed", {
+        project_id,
+        path: normalizedPath,
+        err,
+      });
+    });
+  }
+  try {
+    return await waitForStorageScan({
+      promise: scan,
+      timeout_ms: PROJECT_STORAGE_BREAKDOWN_WAIT_MS,
+    });
+  } catch (err) {
+    if (isTimeoutError(err)) {
+      logger.warn("getStorageBreakdown: returning fallback while scan runs", {
+        project_id,
+        path: normalizedPath,
+      });
+      return fallbackStorageBreakdown({
+        cacheKey,
+        normalizedPath,
+        fallback_bytes,
+        warning: storageScanBudgetMessage(normalizedPath),
+        scan_status: "running",
+      });
+    }
+    if (!isStorageScanBudgetError(err)) {
+      throw err;
+    }
+    logger.warn("getStorageBreakdown: using fallback after scan failure", {
+      project_id,
+      path: normalizedPath,
+      err,
+    });
+    return fallbackStorageBreakdown({
+      cacheKey,
+      normalizedPath,
+      fallback_bytes,
+      warning: storageScanFailedMessage(normalizedPath),
+      scan_status: "failed",
+    });
   }
 }
 
@@ -586,35 +844,37 @@ async function getStorageOverviewImpl({
   const load = (async () => {
     const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
     const fileServer = fileServerClient(client);
-    const [quota, homeUsage, environmentUsage, sharedScratch] =
-      await Promise.all([
-        fileServer.getQuota({ project_id }),
-        getStorageBreakdownImpl({
-          client,
+    const [quota, sharedScratch] = await Promise.all([
+      fileServer.getQuota({ project_id }),
+      getSharedScratchSummary().catch((err) => {
+        logger.warn("getStorageOverview: unable to sample shared scratch", {
           project_id,
-          path: homePath,
-          force_sample: forced && forceAllowed,
-        }),
-        getStorageBreakdownImpl({
-          client,
-          project_id,
-          path: environmentPath,
-          force_sample: forced && forceAllowed,
-        }).catch((err) => {
-          const text = `${err ?? ""}`.toLowerCase();
-          if (text.includes("no such file") || text.includes("not found")) {
-            return null;
-          }
-          throw err;
-        }),
-        getSharedScratchSummary().catch((err) => {
-          logger.warn("getStorageOverview: unable to sample shared scratch", {
-            project_id,
-            err,
-          });
-          return undefined;
-        }),
-      ]);
+          err,
+        });
+        return undefined;
+      }),
+    ]);
+    const [homeUsage, environmentUsage] = await Promise.all([
+      getStorageBreakdownImpl({
+        client,
+        project_id,
+        path: homePath,
+        force_sample: forced && forceAllowed,
+        fallback_bytes: quota.used,
+      }),
+      getStorageBreakdownImpl({
+        client,
+        project_id,
+        path: environmentPath,
+        force_sample: forced && forceAllowed,
+      }).catch((err) => {
+        const text = `${err ?? ""}`.toLowerCase();
+        if (text.includes("no such file") || text.includes("not found")) {
+          return null;
+        }
+        throw err;
+      }),
+    ]);
 
     const environmentBytes = Math.max(0, environmentUsage?.bytes ?? 0);
     const liveBytes = Math.max(0, homeUsage.bytes);
@@ -627,6 +887,10 @@ async function getStorageOverviewImpl({
         path: homePath,
         summaryBytes: Math.max(0, liveBytes - environmentBytes),
         usage: homeUsage,
+        estimated: homeUsage.estimated,
+        stale: homeUsage.stale,
+        scan_status: homeUsage.scan_status,
+        warning: homeUsage.warning,
       },
     ];
     if (environmentUsage != null) {
@@ -637,6 +901,10 @@ async function getStorageOverviewImpl({
         path: environmentPath,
         summaryBytes: environmentUsage.bytes,
         usage: environmentUsage,
+        estimated: environmentUsage.estimated,
+        stale: environmentUsage.stale,
+        scan_status: environmentUsage.scan_status,
+        warning: environmentUsage.warning,
       });
     }
 
@@ -693,7 +961,9 @@ async function getStorageOverviewImpl({
     if (forced && forceAllowed) {
       projectStorageForceSampleAt.set(cacheKey, Date.now());
     }
-    projectStorageOverviewCache.set(cacheKey, overview);
+    if (!overviewHasRunningStorageScan(overview)) {
+      projectStorageOverviewCache.set(cacheKey, overview);
+    }
     return overview;
   })();
   projectStorageOverviewInflight.set(cacheKey, load);

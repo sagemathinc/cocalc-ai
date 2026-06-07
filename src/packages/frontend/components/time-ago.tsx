@@ -183,79 +183,81 @@ function relativeTimeParts(
   refreshMs?: number;
   text: string;
 } {
+  const text = relativeTimeText(epochMs, nowMs);
+  return {
+    refreshMs: msUntilRelativeTimeTextChange(epochMs, nowMs, text),
+    text,
+  };
+}
+
+function relativeTimeText(epochMs: number, nowMs: number): string {
   const elapsedSeconds = Math.abs(nowMs - epochMs) / 1000;
   const seconds = Math.round(elapsedSeconds);
   const suffix = epochMs < nowMs ? "ago" : "from now";
   let unit = "year";
   let value = Math.round(seconds / (365 * 24 * 60 * 60));
-  let refreshMs: number | undefined = msUntilDisplayChange(
-    elapsedSeconds,
-    (value + 0.5) * YEAR,
-  );
   if (seconds < 60) {
     unit = "second";
     value = Math.round(seconds);
-    refreshMs =
-      value === 0
-        ? 1000
-        : (msUntilDisplayChange(elapsedSeconds, MINUTE) ?? 1000);
   } else if (seconds < 60 * 60) {
     unit = "minute";
     value = Math.round(seconds / 60);
-    refreshMs = msUntilDisplayChange(
-      elapsedSeconds,
-      Math.min(HOUR, (value + 0.5) * MINUTE),
-    );
   } else if (seconds < 24 * 60 * 60) {
     unit = "hour";
     value = Math.round(seconds / (60 * 60));
-    refreshMs = msUntilDisplayChange(
-      elapsedSeconds,
-      Math.min(DAY, (value + 0.5) * HOUR),
-    );
   } else if (seconds < 7 * 24 * 60 * 60) {
     unit = "day";
     value = Math.round(seconds / (24 * 60 * 60));
-    refreshMs = msUntilDisplayChange(
-      elapsedSeconds,
-      Math.min(WEEK, (value + 0.5) * DAY),
-    );
   } else if (seconds < 30 * 24 * 60 * 60) {
     unit = "week";
     value = Math.round(seconds / (7 * 24 * 60 * 60));
-    refreshMs = msUntilDisplayChange(
-      elapsedSeconds,
-      Math.min(MONTH, (value + 0.5) * WEEK),
-    );
   } else if (seconds < 365 * 24 * 60 * 60) {
     unit = "month";
     value = Math.round(seconds / (30 * 24 * 60 * 60));
-    refreshMs = msUntilDisplayChange(
-      elapsedSeconds,
-      Math.min(YEAR, (value + 0.5) * MONTH),
-    );
   }
-  return {
-    refreshMs,
-    text: timeago_formatter(value, unit, suffix, epochMs),
-  };
+  return timeago_formatter(value, unit, suffix, epochMs);
 }
 
 const MINUTE = 60;
 const HOUR = MINUTE * 60;
 const DAY = HOUR * 24;
-const WEEK = DAY * 7;
-const MONTH = DAY * 30;
-const YEAR = DAY * 365;
+const MAX_RELATIVE_TIME_REFRESH_MS = DAY * 1000;
 
-function msUntilDisplayChange(
-  elapsedSeconds: number,
-  nextChangeSeconds: number,
-): number | undefined {
-  if (nextChangeSeconds <= elapsedSeconds) {
+function msUntilRelativeTimeTextChange(
+  epochMs: number,
+  nowMs: number,
+  currentText: string,
+): number {
+  if (currentText === "now") {
     return 1000;
   }
-  return Math.max(1000, Math.ceil((nextChangeSeconds - elapsedSeconds) * 1000));
+
+  let high = 1000;
+  while (
+    high < MAX_RELATIVE_TIME_REFRESH_MS &&
+    relativeTimeText(epochMs, nowMs + high) === currentText
+  ) {
+    high *= 2;
+  }
+  if (
+    high >= MAX_RELATIVE_TIME_REFRESH_MS &&
+    relativeTimeText(epochMs, nowMs + MAX_RELATIVE_TIME_REFRESH_MS) ===
+      currentText
+  ) {
+    return MAX_RELATIVE_TIME_REFRESH_MS;
+  }
+
+  let low = Math.floor(high / 2);
+  high = Math.min(high, MAX_RELATIVE_TIME_REFRESH_MS);
+  while (high - low > 100) {
+    const mid = Math.floor((low + high) / 2);
+    if (relativeTimeText(epochMs, nowMs + mid) === currentText) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return Math.max(1000, high);
 }
 
 function RelativeTimeText({
