@@ -5,7 +5,11 @@
 
 import type { DocsEntry } from "../types";
 import { docsIcon } from "../helpers";
-import { COCALC_STAR_BODY, COCALC_STAR_LOCAL_VM_BODY } from "../content";
+import {
+  COCALC_STAR_BODY,
+  COCALC_STAR_LOCAL_VM_BODY,
+  REVERSE_SSH_ACCESS_BODY,
+} from "../content";
 
 export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
   {
@@ -39,5 +43,21 @@ export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
     summary:
       "Install CoCalc Star inside a local Ubuntu VM for private, fast, offline-friendly work on your own computer.",
     title: "CoCalc Star on a local VM",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: REVERSE_SSH_ACCESS_BODY.trim(),
+    category: "Self Hosting",
+    id: "self-hosting.reverse-ssh-access",
+    image: docsIcon(
+      "/public/docs/project-hosts-684faa4c.webp",
+      "A temporary reverse SSH tunnel from a CoCalc project to a local computer",
+    ),
+    lastReviewed: "2026-06-07",
+    slug: "self-hosting/reverse-ssh-access",
+    status: "ready",
+    summary:
+      "Temporarily let a trusted CoCalc project SSH back to your computer through a reverse SSH tunnel.",
+    title: "Temporary SSH access to your computer",
   },
 ];

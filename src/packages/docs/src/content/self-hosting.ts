@@ -210,3 +210,135 @@ important local computer.
 - Do not expose the VM to your LAN or the public internet unless you understand
   the security implications.
 `;
+
+export const REVERSE_SSH_ACCESS_BODY = String.raw`
+## What this is
+
+Sometimes a CoCalc project needs temporary access to a computer that is not
+publicly reachable. For example, you might want a trusted collaborator or agent
+inside a CoCalc project to debug something on your laptop, workstation, or local
+VM.
+
+A reverse SSH tunnel makes this possible. Your computer opens an SSH connection
+out to the CoCalc project, and that connection exposes a local SSH server back
+inside the project. The project can then SSH to \`127.0.0.1\` on a temporary
+port and reach your computer.
+
+This is useful for short debugging sessions. It is not a general replacement for
+careful deployment, VPNs, or normal remote administration.
+
+## Security warning
+
+This is powerful and dangerous. If you expose SSH from your computer to a
+project, anyone with shell access to that project and the right SSH credentials
+can potentially access your computer through the tunnel.
+
+Before using this:
+
+- only use a project and collaborators you trust,
+- prefer a temporary or low-privilege local account,
+- do not expose your main laptop account unless you understand the risk,
+- keep the tunnel open only while actively using it,
+- close the tunnel when the debugging session is done, and
+- do not expose other LAN services through the tunnel.
+
+If you are unsure, do not use this workflow.
+
+## Manual setup
+
+This manual workflow assumes you already have SSH access from your computer to a
+specific CoCalc project.
+
+In the CoCalc project, open **Project Settings**, use the SSH setup command, and
+run it on your computer. The command configures your local SSH client so your
+computer can SSH into the CoCalc project.
+
+Then make sure your computer has an SSH server running locally.
+
+On Linux, this is usually OpenSSH server:
+
+~~~sh
+sudo systemctl status ssh
+~~~
+
+If it is not installed or running, install and start it using your distribution's
+normal package manager.
+
+On macOS, enable **Remote Login** in System Settings, or start SSH using the
+standard macOS sharing controls.
+
+Verify from your computer that local SSH works:
+
+~~~sh
+ssh 127.0.0.1
+~~~
+
+Use the local username you want the CoCalc project to access.
+
+## Start the reverse tunnel
+
+Run this on your computer:
+
+~~~sh
+ssh -N -R 22222:127.0.0.1:22 <cocalc-project-ssh-alias>
+~~~
+
+Replace \`<cocalc-project-ssh-alias>\` with the SSH alias configured by the
+CoCalc project SSH setup command.
+
+This keeps a terminal open. While it is running, port \`22222\` inside the
+CoCalc project forwards to port \`22\` on your computer.
+
+If port \`22222\` is already in use, choose another high port such as \`30022\`.
+
+## Connect from the CoCalc project
+
+In a CoCalc project terminal, connect back to your computer:
+
+~~~sh
+ssh -p 22222 <local-username>@127.0.0.1
+~~~
+
+Replace \`<local-username>\` with your username on your computer.
+
+To stop access, press \`Ctrl-C\` in the terminal where the reverse tunnel is
+running. When that SSH command exits, the project can no longer reach your
+computer through this tunnel.
+
+## Troubleshooting
+
+If the project says \`Connection refused\`, the SSH server on your computer is
+not running, the local SSH port is different, or the reverse tunnel is not
+running.
+
+If the project says \`Permission denied\`, the tunnel is working but SSH
+authentication to your computer failed. Check the local username and SSH keys.
+
+If the tunnel command says remote port forwarding failed, the chosen project
+port is already in use or remote forwarding is not allowed. Try a different high
+port.
+
+You can test the forwarded port from the project with:
+
+~~~sh
+nc -vz 127.0.0.1 22222
+~~~
+
+## Safer future CLI workflow
+
+The safest version of this workflow would be a dedicated \`cocalc-cli\` command
+that creates a short-lived reverse SSH session instead of exposing your normal
+SSH server by hand.
+
+Such a command could:
+
+- create a temporary SSH key,
+- start a temporary local \`sshd\` bound only to localhost,
+- open the reverse tunnel through the existing CoCalc project SSH connection,
+- print the exact command to run from the CoCalc project,
+- set a timeout, and
+- clean up keys, ports, and processes automatically.
+
+That would make temporary debugging much easier while keeping the dangerous part
+visible, explicit, and time-limited.
+`;
