@@ -213,7 +213,10 @@ export async function saveRootfsCatalogEntry(
   body: RootfsCatalogSaveBody,
 ): Promise<RootfsImageEntry> {
   const entry =
-    await webapp_client.conat_client.hub.system.saveRootfsCatalogEntry(body);
+    await webapp_client.conat_client.hub.system.saveRootfsCatalogEntry({
+      ...body,
+      browser_id: body.browser_id ?? webapp_client.browser_id,
+    });
   invalidateRootfsImageCache();
   return entry;
 }
@@ -221,9 +224,10 @@ export async function saveRootfsCatalogEntry(
 export async function publishProjectRootfsImage(
   body: PublishProjectRootfsBody,
 ): Promise<ProjectRootfsPublishLroRef> {
-  return await webapp_client.conat_client.hub.system.publishProjectRootfsImage(
-    body,
-  );
+  return await webapp_client.conat_client.hub.system.publishProjectRootfsImage({
+    ...body,
+    browser_id: body.browser_id ?? webapp_client.browser_id,
+  });
 }
 
 export async function getProjectRootfsStates(

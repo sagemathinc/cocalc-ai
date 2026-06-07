@@ -257,6 +257,8 @@ export type RootfsCatalogSaveBody = {
   hidden?: boolean;
   blocked?: boolean;
   blocked_reason?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
 };
 
 export type PublishProjectRootfsBody = {
@@ -274,6 +276,8 @@ export type PublishProjectRootfsBody = {
   prepull?: boolean;
   hidden?: boolean;
   source_mode?: RootfsPublishSourceMode;
+  browser_id?: string | null;
+  session_hash?: string | null;
 };
 
 export type PublishProjectRootfsArtifact = {

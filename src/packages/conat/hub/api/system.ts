@@ -2231,7 +2231,11 @@ export interface System {
   }) => Promise<RootfsReleaseScanReport>;
 
   publishProjectRootfsImage: (
-    opts: PublishProjectRootfsBody & { account_id?: string },
+    opts: PublishProjectRootfsBody & {
+      account_id?: string;
+      browser_id?: string | null;
+      session_hash?: string | null;
+    },
   ) => Promise<ProjectRootfsPublishLroRef>;
 
   getProjectRootfsStates: (opts: {
