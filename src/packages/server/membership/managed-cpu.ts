@@ -20,6 +20,11 @@ import {
   ensureAccountUsageWindowsForEvent,
   getActiveAccountUsageWindows,
 } from "./usage-windows";
+import {
+  getManagedCpuAccountingClassificationForHost,
+  type ManagedCpuAccountingScope,
+  type ManagedCpuHostFundingMode,
+} from "./managed-cpu-scope";
 
 const TABLE = "account_cpu_usage_events";
 const DEFAULT_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -56,8 +61,21 @@ async function ensureSchema(): Promise<void> {
           sample_started_at TIMESTAMPTZ,
           sample_ended_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           source TEXT NOT NULL DEFAULT 'project-host-cgroup',
+          cpu_accounting_scope TEXT NOT NULL DEFAULT 'shared_managed',
+          counts_toward_managed_cpu_budget BOOLEAN NOT NULL DEFAULT TRUE,
+          host_funding_mode_snapshot TEXT,
+          host_tier_snapshot INTEGER,
+          host_kind_snapshot TEXT,
           metadata JSONB
         )
+      `);
+      await getPool().query(`
+        ALTER TABLE ${TABLE}
+          ADD COLUMN IF NOT EXISTS cpu_accounting_scope TEXT NOT NULL DEFAULT 'shared_managed',
+          ADD COLUMN IF NOT EXISTS counts_toward_managed_cpu_budget BOOLEAN NOT NULL DEFAULT TRUE,
+          ADD COLUMN IF NOT EXISTS host_funding_mode_snapshot TEXT,
+          ADD COLUMN IF NOT EXISTS host_tier_snapshot INTEGER,
+          ADD COLUMN IF NOT EXISTS host_kind_snapshot TEXT
       `);
       await getPool().query(
         `CREATE INDEX IF NOT EXISTS ${TABLE}_account_time_idx ON ${TABLE}(account_id, sample_ended_at DESC)`,
@@ -71,6 +89,54 @@ async function ensureSchema(): Promise<void> {
       await getPool().query(
         `CREATE INDEX IF NOT EXISTS ${TABLE}_account_project_time_idx ON ${TABLE}(account_id, project_id, sample_ended_at DESC)`,
       );
+      await getPool().query(
+        `CREATE INDEX IF NOT EXISTS ${TABLE}_budget_account_time_idx ON ${TABLE}(account_id, sample_ended_at DESC) WHERE counts_toward_managed_cpu_budget = TRUE`,
+      );
+      await getPool().query(
+        `CREATE INDEX IF NOT EXISTS ${TABLE}_scope_time_idx ON ${TABLE}(cpu_accounting_scope, sample_ended_at DESC)`,
+      );
+      await getPool().query(`
+        UPDATE ${TABLE} AS events
+        SET
+          host_funding_mode_snapshot =
+            project_hosts.metadata #>> '{billing,funding_mode}',
+          host_tier_snapshot = project_hosts.tier,
+          cpu_accounting_scope = CASE
+            WHEN project_hosts.metadata #>> '{billing,funding_mode}'
+              IN ('account-prepaid', 'account-postpaid')
+              THEN 'account_funded_dedicated'
+            WHEN project_hosts.metadata #>> '{billing,funding_mode}' = 'site-funded'
+              THEN 'site_funded_dedicated'
+            WHEN project_hosts.tier IS NOT NULL
+              THEN 'shared_managed'
+            ELSE events.cpu_accounting_scope
+          END,
+          counts_toward_managed_cpu_budget = CASE
+            WHEN project_hosts.metadata #>> '{billing,funding_mode}'
+              IN ('account-prepaid', 'account-postpaid')
+              THEN FALSE
+            ELSE events.counts_toward_managed_cpu_budget
+          END,
+          host_kind_snapshot = CASE
+            WHEN project_hosts.metadata #>> '{billing,funding_mode}'
+              IN ('account-prepaid', 'account-postpaid')
+              THEN 'account-funded-dedicated'
+            WHEN project_hosts.metadata #>> '{billing,funding_mode}' = 'site-funded'
+              THEN 'site-funded-dedicated'
+            WHEN project_hosts.tier IS NOT NULL
+              THEN 'shared-tiered-host'
+            ELSE events.host_kind_snapshot
+          END
+        FROM project_hosts
+        WHERE events.host_id = project_hosts.id
+          AND events.cpu_accounting_scope = 'shared_managed'
+          AND (
+            events.host_funding_mode_snapshot IS NULL
+            OR events.host_kind_snapshot IS NULL
+            OR project_hosts.metadata #>> '{billing,funding_mode}'
+              IN ('account-prepaid', 'account-postpaid', 'site-funded')
+          )
+      `);
     })();
   }
   await ensuredSchema;
@@ -103,10 +169,17 @@ export async function recordManagedProjectCpuUsage(opts: {
   if (!account_id) {
     return { recorded: false };
   }
-  await ensureAccountUsageWindowsForEvent({
-    account_id,
-    occurred_at: opts.sample_ended_at,
+  const host_id = `${opts.host_id ?? ""}`.trim() || undefined;
+  const classification = await getManagedCpuAccountingClassificationForHost({
+    host_id,
+    project_id,
   });
+  if (classification.counts_toward_managed_cpu_budget) {
+    await ensureAccountUsageWindowsForEvent({
+      account_id,
+      occurred_at: opts.sample_ended_at,
+    });
+  }
   await getPool("medium").query(
     `
       INSERT INTO ${TABLE}
@@ -119,6 +192,11 @@ export async function recordManagedProjectCpuUsage(opts: {
           sample_started_at,
           sample_ended_at,
           source,
+          cpu_accounting_scope,
+          counts_toward_managed_cpu_budget,
+          host_funding_mode_snapshot,
+          host_tier_snapshot,
+          host_kind_snapshot,
           metadata
         )
       VALUES
@@ -131,17 +209,27 @@ export async function recordManagedProjectCpuUsage(opts: {
           $5,
           COALESCE($6, now()),
           COALESCE($7, 'project-host-cgroup'),
-          $8::jsonb
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13::jsonb
         )
     `,
     [
       account_id,
       project_id ?? null,
-      `${opts.host_id ?? ""}`.trim() || null,
+      host_id ?? null,
       cpuSeconds,
       opts.sample_started_at ?? null,
       opts.sample_ended_at ?? null,
       `${opts.source ?? ""}`.trim() || "project-host-cgroup",
+      classification.scope,
+      classification.counts_toward_managed_cpu_budget,
+      classification.host_funding_mode_snapshot ?? null,
+      classification.host_tier_snapshot ?? null,
+      classification.host_kind_snapshot ?? null,
       opts.metadata ?? null,
     ],
   );
@@ -152,6 +240,7 @@ export async function getManagedCpuUsageForAccount(opts: {
   account_id: string;
   limit5h?: number;
   limit7d?: number;
+  budget_only?: boolean;
 }): Promise<ManagedCpuUsage> {
   await ensureSchema();
   const windows = await getActiveAccountUsageWindows({
@@ -187,8 +276,13 @@ export async function getManagedCpuUsageForAccount(opts: {
           ),
           0
         ) AS seconds_7d
-      FROM ${TABLE}
-      WHERE account_id = $1
+      FROM ${TABLE} AS events
+      WHERE events.account_id = $1
+        ${
+          opts.budget_only === false
+            ? ""
+            : "AND events.counts_toward_managed_cpu_budget = TRUE"
+        }
         AND (
           ($2::timestamptz IS NOT NULL AND sample_ended_at >= $2::timestamptz AND sample_ended_at < $3::timestamptz)
           OR ($4::timestamptz IS NOT NULL AND sample_ended_at >= $4::timestamptz AND sample_ended_at < $5::timestamptz)
@@ -271,7 +365,10 @@ export async function getRecentManagedCpuEventsForAccount(opts: {
       ? Math.max(1, Math.min(50, Math.floor(opts.limit)))
       : 20;
   const params: Array<string | number> = [opts.account_id];
-  const where: string[] = ["events.account_id = $1"];
+  const where: string[] = [
+    "events.account_id = $1",
+    "events.counts_toward_managed_cpu_budget = TRUE",
+  ];
   if (`${opts.project_id ?? ""}`.trim()) {
     params.push(`${opts.project_id}`.trim());
     where.push(`events.project_id = $${params.length}`);
@@ -288,6 +385,11 @@ export async function getRecentManagedCpuEventsForAccount(opts: {
         events.sample_started_at,
         events.sample_ended_at,
         events.source,
+        events.cpu_accounting_scope,
+        events.counts_toward_managed_cpu_budget,
+        events.host_funding_mode_snapshot,
+        events.host_tier_snapshot,
+        events.host_kind_snapshot,
         events.metadata
       FROM ${TABLE} AS events
       LEFT JOIN projects ON projects.project_id = events.project_id
@@ -406,6 +508,11 @@ export async function getManagedCpuAdminOverview(
             events.sample_started_at,
             events.sample_ended_at,
             events.source,
+            events.cpu_accounting_scope,
+            events.counts_toward_managed_cpu_budget,
+            events.host_funding_mode_snapshot,
+            events.host_tier_snapshot,
+            events.host_kind_snapshot,
             events.metadata
           FROM ${TABLE} AS events
           LEFT JOIN projects ON projects.project_id = events.project_id
@@ -596,6 +703,11 @@ export async function getManagedCpuAdminHistory(opts: {
           events.sample_started_at,
           events.sample_ended_at,
           events.source,
+          events.cpu_accounting_scope,
+          events.counts_toward_managed_cpu_budget,
+          events.host_funding_mode_snapshot,
+          events.host_tier_snapshot,
+          events.host_kind_snapshot,
           events.metadata
         FROM ${TABLE} AS events
         LEFT JOIN projects ON projects.project_id = events.project_id
@@ -720,25 +832,50 @@ type RawManagedCpuEventRow = {
   sample_started_at?: string | Date | null;
   sample_ended_at: string | Date;
   source?: string | null;
+  cpu_accounting_scope?: ManagedCpuAccountingScope | null;
+  counts_toward_managed_cpu_budget?: boolean | null;
+  host_funding_mode_snapshot?: ManagedCpuHostFundingMode | null;
+  host_tier_snapshot?: number | string | null;
+  host_kind_snapshot?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
 function mapManagedCpuEventRows(
   rows: RawManagedCpuEventRow[],
 ): ManagedCpuEventSummary[] {
-  return rows.map((row) => ({
-    account_id: row.account_id,
-    project_id: row.project_id ?? null,
-    project_title: row.project_title ?? null,
-    host_id: row.host_id ?? null,
-    cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
-    sample_started_at: row.sample_started_at
-      ? new Date(row.sample_started_at).toISOString()
-      : null,
-    sample_ended_at: new Date(row.sample_ended_at).toISOString(),
-    source: row.source ?? null,
-    metadata: row.metadata ?? null,
-  }));
+  return rows.map((row) => {
+    const event: ManagedCpuEventSummary = {
+      account_id: row.account_id,
+      project_id: row.project_id ?? null,
+      project_title: row.project_title ?? null,
+      host_id: row.host_id ?? null,
+      cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
+      sample_started_at: row.sample_started_at
+        ? new Date(row.sample_started_at).toISOString()
+        : null,
+      sample_ended_at: new Date(row.sample_ended_at).toISOString(),
+      source: row.source ?? null,
+      metadata: row.metadata ?? null,
+    };
+    if ("cpu_accounting_scope" in row) {
+      event.cpu_accounting_scope = row.cpu_accounting_scope ?? null;
+    }
+    if ("counts_toward_managed_cpu_budget" in row) {
+      event.counts_toward_managed_cpu_budget =
+        row.counts_toward_managed_cpu_budget ?? null;
+    }
+    if ("host_funding_mode_snapshot" in row) {
+      event.host_funding_mode_snapshot = row.host_funding_mode_snapshot ?? null;
+    }
+    if ("host_tier_snapshot" in row) {
+      event.host_tier_snapshot =
+        row.host_tier_snapshot == null ? null : Number(row.host_tier_snapshot);
+    }
+    if ("host_kind_snapshot" in row) {
+      event.host_kind_snapshot = row.host_kind_snapshot ?? null;
+    }
+    return event;
+  });
 }
 
 function parseOptionalTimestamp(value?: string | Date): Date | undefined {

@@ -110,6 +110,7 @@ jest.mock("@cocalc/frontend/admin/abuse-annotation-controls", () => ({
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    browser_id: "browser-1",
     conat_client: {
       hub: {
         purchases: {
@@ -363,6 +364,7 @@ describe("ManagedCpuAdminOverview", () => {
       expect(adminResetMembershipUsageWindows).toHaveBeenCalledWith({
         window: "5h",
         reason: "Bad tier configuration fixed.",
+        browser_id: "browser-1",
       });
       expect(messageSuccess).toHaveBeenCalledWith(
         "Membership usage windows reset.",

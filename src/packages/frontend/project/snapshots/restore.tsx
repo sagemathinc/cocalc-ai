@@ -14,6 +14,10 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import ShowError from "@cocalc/frontend/components/error";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
@@ -75,6 +79,9 @@ export default function RestoreSnapshot() {
   const [snapshot, setSnapshot] = useState<string>("");
   const [mode, setMode] = useState<SnapshotRestoreMode>("both");
   const [safetySnapshotName, setSafetySnapshotName] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -150,15 +157,19 @@ export default function RestoreSnapshot() {
       }
       setLoading(true);
       setError("");
-      const op = await webapp_client.conat_client.hub.projects.restoreSnapshot({
-        project_id,
-        snapshot,
-        mode,
-        safety_snapshot_name: trimmedSafetyName,
+      await runFreshAuthAction(async () => {
+        const op =
+          await webapp_client.conat_client.hub.projects.restoreSnapshot({
+            project_id,
+            snapshot,
+            mode,
+            safety_snapshot_name: trimmedSafetyName,
+            browser_id: webapp_client.browser_id,
+          });
+        actions?.trackRestoreOp?.(op);
+        message.success("Snapshot restore started");
+        setOpen(false);
       });
-      actions?.trackRestoreOp?.(op);
-      message.success("Snapshot restore started");
-      setOpen(false);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -168,6 +179,7 @@ export default function RestoreSnapshot() {
 
   return (
     <>
+      <FreshAuthModal {...freshAuthModalProps} />
       <Button disabled={open} onClick={() => setOpen(true)}>
         <Icon name="undo" /> Restore Snapshot
       </Button>

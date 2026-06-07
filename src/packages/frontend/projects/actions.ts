@@ -1364,10 +1364,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private async projectedProjectStateMatches({
     project_id,
-    state,
+    states,
   }: {
     project_id: string;
-    state: string;
+    states: string[];
   }): Promise<boolean> {
     const account_id = this.getAccountId();
     if (!account_id || !project_id || !webapp_client.is_signed_in()) {
@@ -1390,14 +1390,76 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } catch (err) {
       console.warn("project state projection check failed", {
         project_id,
-        state,
+        states,
         err,
       });
       return false;
     }
-    return (
-      resp?.query?.account_project_index?.[0]?.state_summary?.state === state
-    );
+    const projectedState =
+      resp?.query?.account_project_index?.[0]?.state_summary?.state;
+    return states.includes(projectedState);
+  }
+
+  private async projectedProjectHostMatches({
+    project_id,
+    host_id,
+  }: {
+    project_id: string;
+    host_id: string;
+  }): Promise<boolean> {
+    const account_id = this.getAccountId();
+    if (!account_id || !project_id || !webapp_client.is_signed_in()) {
+      return false;
+    }
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          account_project_index: [
+            {
+              account_id,
+              project_id,
+              host_id: null,
+            },
+          ],
+        },
+        options: [{ limit: 1 }],
+      });
+    } catch (err) {
+      console.warn("project host projection check failed", {
+        project_id,
+        host_id,
+        err,
+      });
+      return false;
+    }
+    return resp?.query?.account_project_index?.[0]?.host_id === host_id;
+  }
+
+  private async ackProjectedProjectHostAfterMove({
+    project_id,
+    host_id,
+  }: {
+    project_id: string;
+    host_id: string;
+  }): Promise<void> {
+    await writeAndWaitForProjection({
+      consumer: "projects",
+      id: `project:${project_id}:move:${host_id}`,
+      name: "project.move",
+      write: async () => undefined,
+      matchesProjection: () =>
+        this.projectedProjectHostMatches({
+          project_id,
+          host_id,
+        }),
+      repair: () =>
+        this.repairProjectProjection({
+          kind: "project-ids",
+          project_ids: [project_id],
+          reason: "project-move",
+        }),
+    });
   }
 
   private shouldPreserveLocalHostIdAfterMove({
@@ -3397,10 +3459,27 @@ export class ProjectsActions extends Actions<ProjectsState> {
       const actions = redux.getProjectActions(project_id);
       try {
         this.optimisticProjectStateUpdate(project_id, "starting");
-        const resp = await webapp_client.conat_client.hub.projects.start({
-          project_id,
-          ...(opts.autostart ? { autostart: true } : {}),
-          wait: false,
+        const resp = await writeAndWaitForProjection({
+          consumer: "projects",
+          id: `project:${project_id}:start`,
+          name: "project.start",
+          write: () =>
+            webapp_client.conat_client.hub.projects.start({
+              project_id,
+              ...(opts.autostart ? { autostart: true } : {}),
+              wait: false,
+            }),
+          matchesProjection: () =>
+            this.projectedProjectStateMatches({
+              project_id,
+              states: ["starting", "running"],
+            }),
+          repair: () =>
+            this.repairProjectProjection({
+              kind: "project-ids",
+              project_ids: [project_id],
+              reason: "project-start",
+            }),
         });
         actions.trackStartOp(resp);
         opts.onStartOp?.(resp);
@@ -3664,6 +3743,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
         logInfo.project_id,
         "project-move",
       );
+      if (logInfo.dest_host_id) {
+        void this.ackProjectedProjectHostAfterMove({
+          project_id: logInfo.project_id,
+          host_id: logInfo.dest_host_id,
+        }).catch((err) => {
+          console.warn("project move projection did not converge", {
+            project_id: logInfo.project_id,
+            host_id: logInfo.dest_host_id,
+            err,
+          });
+        });
+      }
     };
     void webapp_client.conat_client
       .lroWait({
@@ -3862,7 +3953,24 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
       const actions = redux.getProjectActions(project_id);
       try {
-        await webapp_client.conat_client.hub.projects.stop({ project_id });
+        await writeAndWaitForProjection({
+          consumer: "projects",
+          id: `project:${project_id}:stop`,
+          name: "project.stop",
+          write: () =>
+            webapp_client.conat_client.hub.projects.stop({ project_id }),
+          matchesProjection: () =>
+            this.projectedProjectStateMatches({
+              project_id,
+              states: ["opened"],
+            }),
+          repair: () =>
+            this.repairProjectProjection({
+              kind: "project-ids",
+              project_ids: [project_id],
+              reason: "project-stop",
+            }),
+        });
       } catch (err) {
         actions.setState({ control_error: `Error stopping project -- ${err}` });
         throw err;
@@ -4082,7 +4190,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         matchesProjection: () =>
           this.projectedProjectStateMatches({
             project_id,
-            state: "archived",
+            states: ["archived"],
           }),
         repair: () =>
           this.repairProjectProjection({
@@ -4196,9 +4304,26 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       const actions = redux.getProjectActions(project_id);
       try {
-        await webapp_client.conat_client.hub.projects.assignProjectHost({
-          project_id,
-          dest_host_id,
+        await writeAndWaitForProjection({
+          consumer: "projects",
+          id: `project:${project_id}:assign-host:${dest_host_id}`,
+          name: "project.assign_host",
+          write: () =>
+            webapp_client.conat_client.hub.projects.assignProjectHost({
+              project_id,
+              dest_host_id,
+            }),
+          matchesProjection: () =>
+            this.projectedProjectHostMatches({
+              project_id,
+              host_id: dest_host_id,
+            }),
+          repair: () =>
+            this.repairProjectProjection({
+              kind: "project-ids",
+              project_ids: [project_id],
+              reason: "project-move",
+            }),
         });
         actions?.setState({ control_error: "" });
         const project_map = store.get("project_map");
@@ -4235,9 +4360,26 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
       const actions = redux.getProjectActions(project_id);
       try {
-        const resp = await webapp_client.conat_client.hub.projects.restart({
-          project_id,
-          wait: false,
+        const resp = await writeAndWaitForProjection({
+          consumer: "projects",
+          id: `project:${project_id}:restart`,
+          name: "project.restart",
+          write: () =>
+            webapp_client.conat_client.hub.projects.restart({
+              project_id,
+              wait: false,
+            }),
+          matchesProjection: () =>
+            this.projectedProjectStateMatches({
+              project_id,
+              states: ["starting", "running"],
+            }),
+          repair: () =>
+            this.repairProjectProjection({
+              kind: "project-ids",
+              project_ids: [project_id],
+              reason: "project-start",
+            }),
         });
         actions.trackStartOp(resp);
       } catch (err) {

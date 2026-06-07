@@ -108,8 +108,8 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
     category: "Self Hosting",
     startEntryId: "self-hosting.cocalc-star",
     summary:
-      "Run CoCalc Star on a public VM with automatic HTTPS, local project hosting, and guided first-admin setup.",
-    workflows: ["CoCalc Star", "Public VM", "HTTPS"],
+      "Run CoCalc Star on a public VM, install it in a local VM, or use temporary reverse SSH for trusted debugging.",
+    workflows: ["CoCalc Star", "Local VM", "Reverse SSH"],
   },
   {
     category: "Collaboration",

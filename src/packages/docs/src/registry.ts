@@ -147,6 +147,7 @@ export function searchDocsEntries(
         fieldScore(entry.summary, 4, 4) +
         fieldScore(actionsText, 3) +
         fieldScore(entry.category, 2) +
+        fieldScore(entry.searchKeywords, 2) +
         fieldScore(entry.audiences.join(" "), 1) +
         fieldScore(entry.body, 1);
       return { ...entry, score };

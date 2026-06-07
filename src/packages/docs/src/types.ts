@@ -118,6 +118,7 @@ export interface DocsEntry {
   image?: DocsEntryImage;
   lastReviewed: string;
   noActionReason?: string;
+  searchKeywords?: string;
   slug: string;
   status: DocsEntryStatus;
   summary: string;

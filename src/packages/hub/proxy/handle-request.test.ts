@@ -153,4 +153,45 @@ describe("hub proxy file downloads", () => {
     );
     expect(proxyHandlers.handleRequest).toHaveBeenCalledWith(req, res);
   });
+
+  it("preserves authenticated account identity for project conat proxy requests", async () => {
+    mockParseReq.mockReturnValue({
+      type: "conat",
+      project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
+      route: { access: "write" },
+    });
+
+    const init = (await import("./handle-request")).default;
+    const proxyHandlers = { handleRequest: jest.fn() };
+    const handler = init({
+      isPersonal: false,
+      projectProxyHandlersPromise: Promise.resolve(proxyHandlers),
+    });
+
+    const req: any = {
+      url: "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/conat/?EIO=4&transport=polling",
+      method: "GET",
+      headers: {
+        cookie: "remember_me=secret",
+      },
+    };
+    const res: any = {
+      statusCode: undefined,
+      setHeader: jest.fn(),
+      end: jest.fn(),
+    };
+
+    await handler(req, res);
+
+    expect(mockResolveAuthenticatedAccountId).toHaveBeenCalledWith({
+      remember_me: "remember",
+      api_key: undefined,
+    });
+    expect(mockSetProjectHostProxyAccountId).toHaveBeenCalledWith(
+      req,
+      "account-1",
+    );
+    expect(mockGetProjectHostRedirectUrl).not.toHaveBeenCalled();
+    expect(proxyHandlers.handleRequest).toHaveBeenCalledWith(req, res);
+  });
 });

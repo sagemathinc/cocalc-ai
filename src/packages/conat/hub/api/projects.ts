@@ -1300,6 +1300,7 @@ export interface Projects {
 
   restoreSnapshot: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     project_id: string;
     snapshot: string;

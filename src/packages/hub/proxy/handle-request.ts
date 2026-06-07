@@ -93,13 +93,12 @@ export default function init({
     const parsed = parseReq(url, remember_me, api_key);
     // TODO: parseReq is called again in getTarget so need to refactor...
     const { type, project_id, route } = parsed;
-    const authenticatedAccountId =
-      allowAnonymousProxyBypass || type === "conat"
-        ? undefined
-        : await resolveAuthenticatedAccountId({
-            remember_me,
-            api_key,
-          });
+    const authenticatedAccountId = allowAnonymousProxyBypass
+      ? undefined
+      : await resolveAuthenticatedAccountId({
+          remember_me,
+          api_key,
+        });
     setProjectHostProxyAccountId(req, authenticatedAccountId);
 
     if (!allowAnonymousProxyBypass) {

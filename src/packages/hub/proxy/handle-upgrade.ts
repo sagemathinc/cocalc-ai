@@ -86,13 +86,12 @@ export default function initUpgrade(
 
     const parsed = parseReq(stripBasePath(req.url), remember_me, api_key);
     const accessType = parsed.type === "files" ? "read" : "write";
-    const authenticatedAccountId =
-      allowPublicSubdomainBypass || parsed.type === "conat"
-        ? undefined
-        : await resolveAuthenticatedAccountId({
-            remember_me,
-            api_key,
-          });
+    const authenticatedAccountId = allowPublicSubdomainBypass
+      ? undefined
+      : await resolveAuthenticatedAccountId({
+          remember_me,
+          api_key,
+        });
     setProjectHostProxyAccountId(req, authenticatedAccountId);
     if (!allowPublicSubdomainBypass) {
       if (

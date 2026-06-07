@@ -290,6 +290,18 @@ export async function createProjectHostProxyHandlers() {
     return await targetForProject(routeId);
   }
 
+  async function getHostForParsedRoute(
+    parsed: ReturnType<typeof parseReq>,
+  ): Promise<HostRow | undefined> {
+    if (parsed.type !== "conat" && parsed.type !== "project-host-session") {
+      return await getHost(parsed.project_id);
+    }
+    return (
+      (await getHostById(parsed.project_id).catch(() => undefined)) ??
+      (await getHost(parsed.project_id))
+    );
+  }
+
   const handleRequest = async (req, res) => {
     try {
       const parsed = parseReq(req.url ?? "/");
@@ -298,16 +310,13 @@ export async function createProjectHostProxyHandlers() {
       } else if (parsed.type === "project-host-session") {
         rewriteProjectHostSessionPath(req, parsed.project_id);
       }
-      const host =
-        parsed.type === "conat" || parsed.type === "project-host-session"
-          ? await getHostById(parsed.project_id).catch(() => undefined)
-          : await getHost(parsed.project_id);
+      const host = await getHostForParsedRoute(parsed);
       if (isPublicAppSubdomainRequest(req) && req.headers.host) {
         req.headers[PUBLIC_APP_HOST_HEADER] = req.headers.host;
         if (host?.host_id) {
           req.headers.authorization = `Bearer ${getPublicAppHubAuthToken(host.host_id)}`;
         }
-      } else if (parsed.type !== "conat") {
+      } else {
         setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
       }
       const target =
@@ -338,16 +347,13 @@ export async function createProjectHostProxyHandlers() {
       } else if (parsed.type === "project-host-session") {
         rewriteProjectHostSessionPath(req, parsed.project_id);
       }
-      const host =
-        parsed.type === "conat" || parsed.type === "project-host-session"
-          ? await getHostById(parsed.project_id).catch(() => undefined)
-          : await getHost(parsed.project_id);
+      const host = await getHostForParsedRoute(parsed);
       if (isPublicAppSubdomainRequest(req) && req.headers.host) {
         req.headers[PUBLIC_APP_HOST_HEADER] = req.headers.host;
         if (host?.host_id) {
           req.headers.authorization = `Bearer ${getPublicAppHubAuthToken(host.host_id)}`;
         }
-      } else if (parsed.type !== "conat") {
+      } else {
         setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
       }
       const target =

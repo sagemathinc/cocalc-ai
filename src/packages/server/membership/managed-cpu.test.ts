@@ -8,6 +8,7 @@ const getProjectUsageAccountIdMock = jest.fn();
 const listActiveAbuseReviewAnnotationsMock = jest.fn();
 const ensureAccountUsageWindowsForEventMock = jest.fn();
 const getActiveAccountUsageWindowsMock = jest.fn();
+const getManagedCpuAccountingClassificationForHostMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -33,10 +34,17 @@ jest.mock("./usage-windows", () => ({
     getActiveAccountUsageWindowsMock(...args),
 }));
 
+jest.mock("./managed-cpu-scope", () => ({
+  getManagedCpuAccountingClassificationForHost: (...args: any[]) =>
+    getManagedCpuAccountingClassificationForHostMock(...args),
+}));
+
 function mockSchemaQueries() {
   queryMock.mockImplementation(async (sql: string) => {
     if (
       sql.includes("CREATE TABLE IF NOT EXISTS account_cpu_usage_events") ||
+      sql.includes("ALTER TABLE account_cpu_usage_events") ||
+      sql.includes("UPDATE account_cpu_usage_events") ||
       sql.includes("CREATE INDEX IF NOT EXISTS account_cpu_usage_events_")
     ) {
       return { rows: [] };
@@ -53,8 +61,15 @@ describe("managed CPU usage accounting", () => {
     listActiveAbuseReviewAnnotationsMock.mockReset();
     ensureAccountUsageWindowsForEventMock.mockReset();
     getActiveAccountUsageWindowsMock.mockReset();
+    getManagedCpuAccountingClassificationForHostMock.mockReset();
     listActiveAbuseReviewAnnotationsMock.mockResolvedValue([]);
     ensureAccountUsageWindowsForEventMock.mockResolvedValue({});
+    getManagedCpuAccountingClassificationForHostMock.mockResolvedValue({
+      scope: "shared_managed",
+      counts_toward_managed_cpu_budget: true,
+      host_tier_snapshot: 1,
+      host_kind_snapshot: "shared-tiered-host",
+    });
     getActiveAccountUsageWindowsMock.mockResolvedValue({
       "5h": {
         starts_at: new Date("2026-05-30T08:00:00.000Z"),
@@ -73,6 +88,8 @@ describe("managed CPU usage accounting", () => {
     queryMock.mockImplementation(async (sql: string, params?: any[]) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_cpu_usage_events") ||
+        sql.includes("ALTER TABLE account_cpu_usage_events") ||
+        sql.includes("UPDATE account_cpu_usage_events") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_cpu_usage_events_")
       ) {
         return { rows: [] };
@@ -86,6 +103,11 @@ describe("managed CPU usage accounting", () => {
           new Date("2026-05-30T10:00:00.000Z"),
           new Date("2026-05-30T10:01:00.000Z"),
           "project-host-cgroup",
+          "shared_managed",
+          true,
+          null,
+          1,
+          "shared-tiered-host",
           { runtime_key: "runtime-1" },
         ]);
         return { rows: [] };
@@ -110,6 +132,54 @@ describe("managed CPU usage accounting", () => {
     });
   });
 
+  it("records account-funded dedicated CPU without creating shared budget windows", async () => {
+    getManagedCpuAccountingClassificationForHostMock.mockResolvedValue({
+      scope: "account_funded_dedicated",
+      counts_toward_managed_cpu_budget: false,
+      host_funding_mode_snapshot: "account-prepaid",
+      host_kind_snapshot: "account-funded-dedicated",
+    });
+    queryMock.mockImplementation(async (sql: string, params?: any[]) => {
+      if (
+        sql.includes("CREATE TABLE IF NOT EXISTS account_cpu_usage_events") ||
+        sql.includes("ALTER TABLE account_cpu_usage_events") ||
+        sql.includes("UPDATE account_cpu_usage_events") ||
+        sql.includes("CREATE INDEX IF NOT EXISTS account_cpu_usage_events_")
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO account_cpu_usage_events")) {
+        expect(params).toEqual([
+          "account-1",
+          null,
+          "11111111-1111-4111-8111-111111111111",
+          30,
+          null,
+          null,
+          "project-host-cgroup",
+          "account_funded_dedicated",
+          false,
+          "account-prepaid",
+          null,
+          "account-funded-dedicated",
+          null,
+        ]);
+        return { rows: [] };
+      }
+      throw new Error(`unhandled query: ${sql}`);
+    });
+
+    const { recordManagedProjectCpuUsage } = await import("./managed-cpu");
+    await expect(
+      recordManagedProjectCpuUsage({
+        account_id: "account-1",
+        host_id: "11111111-1111-4111-8111-111111111111",
+        cpu_seconds: 30,
+      }),
+    ).resolves.toEqual({ recorded: true, account_id: "account-1" });
+    expect(ensureAccountUsageWindowsForEventMock).not.toHaveBeenCalled();
+  });
+
   it("ignores invalid CPU deltas", async () => {
     const { recordManagedProjectCpuUsage } = await import("./managed-cpu");
     await expect(
@@ -125,11 +195,14 @@ describe("managed CPU usage accounting", () => {
     queryMock.mockImplementation(async (sql: string, params?: any[]) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_cpu_usage_events") ||
+        sql.includes("ALTER TABLE account_cpu_usage_events") ||
+        sql.includes("UPDATE account_cpu_usage_events") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_cpu_usage_events_")
       ) {
         return { rows: [] };
       }
       if (sql.includes("AS seconds_5h")) {
+        expect(sql).toContain("events.counts_toward_managed_cpu_budget = TRUE");
         expect(params).toEqual([
           "account-1",
           new Date("2026-05-30T08:00:00.000Z"),
@@ -171,6 +244,8 @@ describe("managed CPU usage accounting", () => {
     queryMock.mockImplementation(async (sql: string) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_cpu_usage_events") ||
+        sql.includes("ALTER TABLE account_cpu_usage_events") ||
+        sql.includes("UPDATE account_cpu_usage_events") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_cpu_usage_events_")
       ) {
         return { rows: [] };
@@ -284,6 +359,8 @@ describe("managed CPU usage accounting", () => {
     queryMock.mockImplementation(async (sql: string) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_cpu_usage_events") ||
+        sql.includes("ALTER TABLE account_cpu_usage_events") ||
+        sql.includes("UPDATE account_cpu_usage_events") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_cpu_usage_events_")
       ) {
         return { rows: [] };

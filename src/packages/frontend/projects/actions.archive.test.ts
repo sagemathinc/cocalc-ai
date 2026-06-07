@@ -198,6 +198,20 @@ describe("ProjectsActions archive flow", () => {
     jest.restoreAllMocks();
   });
 
+  function projectedState(state: string) {
+    return {
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            state_summary: { state },
+          },
+        ],
+      },
+    } as any;
+  }
+
   it("still removes a collaborator when best-effort project logging races with project close", async () => {
     const { actions, async_log } = makeActions();
     async_log.mockRejectedValueOnce(new Error("project closed"));
@@ -247,6 +261,9 @@ describe("ProjectsActions archive flow", () => {
         summary: {},
       },
     ] as any);
+    mockedWebappClient.async_query
+      .mockResolvedValueOnce(projectedState("opened"))
+      .mockResolvedValue(projectedState("archived"));
     const {
       actions,
       setState,
@@ -264,6 +281,18 @@ describe("ProjectsActions archive flow", () => {
     expect(
       mockedWebappClient.conat_client.hub.projects.stop,
     ).toHaveBeenCalledWith({ project_id });
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            state_summary: null,
+          },
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
     expect(
       mockedWebappClient.conat_client.hub.projects.createBackup,
     ).toHaveBeenCalledWith({ project_id });
@@ -309,6 +338,51 @@ describe("ProjectsActions archive flow", () => {
       dest_host_id: "host-1",
     });
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
+  });
+
+  it("repairs a dropped projected stop update before resolving stop", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "running",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      let projectedStateValue = "running";
+      mockedWebappClient.async_query.mockImplementation(async () =>
+        projectedState(projectedStateValue),
+      );
+      const { actions, setState } = makeActions();
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      const repair = jest
+        .spyOn(actions, "repairProjectProjection")
+        .mockImplementation(async (request) => {
+          expect(request).toEqual({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "project-stop",
+          });
+          projectedStateValue = "opened";
+        });
+
+      const stopped = actions.stop_project(project_id);
+      await Promise.resolve();
+
+      expect(
+        mockedWebappClient.conat_client.hub.projects.stop,
+      ).toHaveBeenCalledWith({ project_id });
+      expect(repair).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(5_000);
+      await expect(stopped).resolves.toBe(true);
+
+      expect(repair).toHaveBeenCalledTimes(1);
+      expect(setState).toHaveBeenCalledWith({ control_error: "" });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("reuses a fresh backup and skips the extra backup LRO", async () => {
@@ -517,6 +591,9 @@ describe("ProjectsActions archive flow", () => {
     jest
       .spyOn(actions as any, "project_log")
       .mockImplementation(async () => {});
+    mockedWebappClient.async_query.mockResolvedValue(
+      projectedState("starting"),
+    );
 
     const started = await actions.start_project(project_id);
 
@@ -558,6 +635,9 @@ describe("ProjectsActions archive flow", () => {
       const reconcile = jest
         .spyOn(actions as any, "loadProjectedProjectForCurrentAccount")
         .mockResolvedValue(undefined);
+      mockedWebappClient.async_query.mockResolvedValue(
+        projectedState("starting"),
+      );
 
       const started = await actions.start_project(project_id);
 

@@ -2231,7 +2231,11 @@ export interface System {
   }) => Promise<RootfsReleaseScanReport>;
 
   publishProjectRootfsImage: (
-    opts: PublishProjectRootfsBody & { account_id?: string },
+    opts: PublishProjectRootfsBody & {
+      account_id?: string;
+      browser_id?: string | null;
+      session_hash?: string | null;
+    },
   ) => Promise<ProjectRootfsPublishLroRef>;
 
   getProjectRootfsStates: (opts: {
@@ -2434,6 +2438,7 @@ export interface System {
 
   recordManagedProjectCpuUsage: (opts: {
     account_id?: string;
+    host_id?: string;
     project_id?: string;
     cpu_seconds: number;
     sample_started_at?: Date;

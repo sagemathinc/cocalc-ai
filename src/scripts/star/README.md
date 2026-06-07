@@ -50,6 +50,7 @@ curl -fsSL https://example.com/install-release.sh \
 For the public GitHub release path, publish:
 
 - `install-cocalc-star.sh`
+- `install-cocalc-star-local-lima.sh`
 - `cocalc-star-runtime-linux-x64.tar.gz`
 - optionally `cocalc-star-runtime-linux-arm64.tar.gz`
 
@@ -69,6 +70,26 @@ curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/ins
 The installer auto-detects `x86_64` vs `aarch64` and downloads the matching
 `cocalc-star-runtime-linux-<arch>.tar.gz` asset from the latest GitHub release.
 Set `COCALC_STAR_RELEASE_URL` to test a specific artifact URL.
+
+For a local laptop or desktop VM using Lima, publish the same release assets and
+run this on the host computer, not inside the VM:
+
+```sh
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh | bash
+```
+
+The Lima installer creates or starts a `cocalc-star` Ubuntu VM, forwards
+`http://localhost:8170` on the host to port `80` in the guest, forwards the
+project-host HTTP port `9002` on localhost for direct project connections,
+disables the public `sslip.io` onboarding path, and installs Star in the VM
+with `STAR_ACCESS_URL=http://localhost:8170`.
+
+Customize the local VM with environment variables passed to `bash`:
+
+```sh
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
+  | COCALC_STAR_LIMA_MEMORY=16GiB COCALC_STAR_LIMA_CPUS=8 COCALC_STAR_LIMA_DISK=200GiB bash
+```
 
 By default this installs source under a versioned release directory and points
 `/opt/cocalc-star/source` at the active release. It uses the sudo caller as the

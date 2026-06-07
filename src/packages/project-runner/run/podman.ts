@@ -179,6 +179,94 @@ export async function cleanupStaleProjectSecretsHostPaths(): Promise<void> {
   }
 }
 
+type PodmanProjectContainer = {
+  name: string;
+  state: string;
+};
+
+type PodmanMount = {
+  Source?: string;
+  Destination?: string;
+};
+
+function parseProjectContainerRows(stdout?: string): PodmanProjectContainer[] {
+  const containers: PodmanProjectContainer[] = [];
+  for (const line of `${stdout ?? ""}`.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const [name, state = ""] = trimmed.split("|", 2);
+    const projectMatch = name?.match(/^project-([0-9a-fA-F-]{36})$/);
+    if (!projectMatch) continue;
+    containers.push({ name, state: state.toLowerCase() });
+  }
+  return containers;
+}
+
+function hasRuntimeProjectSecretsMount(mounts: PodmanMount[]): boolean {
+  const root = `${PROJECT_SECRETS_HOST_ROOT}/`;
+  return mounts.some((mount) => {
+    const source = mount.Source;
+    return (
+      typeof source === "string" &&
+      source.startsWith(root) &&
+      mount.Destination === PROJECT_SECRETS_MOUNT_PATH
+    );
+  });
+}
+
+export async function cleanupStaleProjectContainers(): Promise<void> {
+  let stdout = "";
+  try {
+    ({ stdout } = await podman([
+      "ps",
+      "-a",
+      "--filter",
+      "label=role=project",
+      "--format",
+      "{{.Names}}|{{.State}}",
+    ]));
+  } catch (err) {
+    logger.warn("project container startup cleanup skipped", { err: `${err}` });
+    return;
+  }
+
+  for (const { name, state } of parseProjectContainerRows(stdout)) {
+    if (state === "running") continue;
+    let mounts: PodmanMount[];
+    try {
+      const inspected = await podman([
+        "inspect",
+        "--format",
+        "{{json .Mounts}}",
+        name,
+      ]);
+      mounts = JSON.parse(`${inspected.stdout ?? "[]"}`);
+    } catch (err) {
+      logger.debug("stale project container inspect failed", {
+        name,
+        err: `${err}`,
+      });
+      continue;
+    }
+    if (!hasRuntimeProjectSecretsMount(mounts)) continue;
+    logger.warn(
+      "removing non-running project container with runtime-only secret mount",
+      { name, state },
+    );
+    try {
+      await podman(["rm", "-f", "-t", "0", name], { timeout: 10 });
+    } catch (err) {
+      if (!isLikelyMissingContainerError(err)) {
+        logger.warn("failed to remove stale project container", {
+          name,
+          state,
+          err: `${err}`,
+        });
+      }
+    }
+  }
+}
+
 export async function writeProjectSecretsHostPath({
   project_id,
   secrets,
