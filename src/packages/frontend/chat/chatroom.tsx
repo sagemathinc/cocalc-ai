@@ -2204,6 +2204,7 @@ export function ChatPanel({
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
         shortcutEnabled={isVisible && tabIsVisible}
+        isVisible={isVisible && tabIsVisible}
         onOpenGitBrowser={openGitBrowserFromMessage}
         notifyOnTurnFinish={notifyOnSelectedTurnFinish}
         onNotifyOnTurnFinishChange={setNotifyOnSelectedTurnFinish}

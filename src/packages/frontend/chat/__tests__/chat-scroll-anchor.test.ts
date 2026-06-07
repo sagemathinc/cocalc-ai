@@ -3,6 +3,8 @@
 import {
   captureChatViewportAnchor,
   clearChatViewportAnchorCacheForTests,
+  isChatScrollerAtBottom,
+  isUsableChatScroller,
   loadChatViewportAnchor,
   resolveChatViewportAnchorIndex,
   restoreChatViewportAnchorOffset,
@@ -96,6 +98,33 @@ describe("chat scroll anchors", () => {
       offsetPx: 0,
       savedAt: 456,
     });
+  });
+
+  it("does not treat a hidden zero-height scroller as a valid bottom anchor", () => {
+    const scroller = document.createElement("div");
+    Object.defineProperty(scroller, "clientHeight", {
+      configurable: true,
+      value: 0,
+    });
+    Object.defineProperty(scroller, "scrollHeight", {
+      configurable: true,
+      value: 0,
+    });
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+
+    expect(isUsableChatScroller(scroller)).toBe(false);
+    expect(isChatScrollerAtBottom(scroller)).toBe(false);
+    expect(
+      captureChatViewportAnchor({
+        now: 789,
+        scroller,
+        sortedDates: ["1000", "2000"],
+      }),
+    ).toBeUndefined();
   });
 
   it("resolves removed anchors to the next message by date", () => {
