@@ -4,6 +4,15 @@ import {
   partitionExpectedProjectHostAcpWorkers,
   planProjectHostAcpWorkerRollout,
 } from "./hub/acp/worker-manager";
+import { getAcpWorker } from "@cocalc/lite/hub/sqlite/acp-workers";
+
+jest.mock("@cocalc/lite/hub/sqlite/acp-workers", () => ({
+  getAcpWorker: jest.fn(),
+}));
+
+const mockGetAcpWorker = getAcpWorker as jest.MockedFunction<
+  typeof getAcpWorker
+>;
 
 describe("planProjectHostAcpWorkerRollout", () => {
   const launch = {
@@ -398,5 +407,110 @@ describe("ACP worker spawn backoff", () => {
 
     __test__.resetProjectHostAcpWorkerSpawnBackoff();
     expect(__test__.projectHostAcpWorkerSpawnBackoffRemainingMs()).toBe(0);
+  });
+});
+
+describe("ACP worker control startup grace", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    mockGetAcpWorker.mockReset();
+  });
+
+  it("gives newly spawned workers time to register control RPCs", () => {
+    jest.spyOn(Date, "now").mockReturnValue(10_000);
+    expect(
+      __test__.workerControlStartupGraceExpired({
+        pid: 1001,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT: "9000",
+        },
+        cmdline: ["project-host:acp-worker"],
+      } as any),
+    ).toBe(false);
+  });
+
+  it("treats workers without spawn timestamps as past grace", () => {
+    expect(
+      __test__.workerControlStartupGraceExpired({
+        pid: 1002,
+        env: {},
+        cmdline: ["project-host:acp-worker"],
+      } as any),
+    ).toBe(true);
+  });
+
+  it("treats an unresponsive worker with a fresh database heartbeat as live", () => {
+    jest.spyOn(Date, "now").mockReturnValue(100_000);
+    mockGetAcpWorker.mockReturnValue({
+      worker_id: "worker-current",
+      host_id: "host-1",
+      bundle_version: "current",
+      bundle_path: "/opt/cocalc/project-host/bundles/current",
+      pid: 1003,
+      state: "active",
+      started_at: 1_000,
+      last_heartbeat_at: 92_000,
+      last_seen_running_jobs: 1,
+    });
+
+    expect(
+      __test__.workerDatabaseStateProtectsUnresponsiveWorker({
+        pid: 1003,
+        env: {
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+        },
+        cmdline: ["project-host:acp-worker"],
+      } as any),
+    ).toBe(true);
+  });
+
+  it("does not treat a stale database heartbeat without running jobs as live", () => {
+    jest.spyOn(Date, "now").mockReturnValue(100_000);
+    mockGetAcpWorker.mockReturnValue({
+      worker_id: "worker-current",
+      host_id: "host-1",
+      bundle_version: "current",
+      bundle_path: "/opt/cocalc/project-host/bundles/current",
+      pid: 1004,
+      state: "active",
+      started_at: 1_000,
+      last_heartbeat_at: 70_000,
+      last_seen_running_jobs: 0,
+    });
+
+    expect(
+      __test__.workerDatabaseStateProtectsUnresponsiveWorker({
+        pid: 1004,
+        env: {
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+        },
+        cmdline: ["project-host:acp-worker"],
+      } as any),
+    ).toBe(false);
+  });
+
+  it("protects an unresponsive worker with running jobs even when its heartbeat is stale", () => {
+    jest.spyOn(Date, "now").mockReturnValue(100_000);
+    mockGetAcpWorker.mockReturnValue({
+      worker_id: "worker-current",
+      host_id: "host-1",
+      bundle_version: "current",
+      bundle_path: "/opt/cocalc/project-host/bundles/current",
+      pid: 1005,
+      state: "active",
+      started_at: 1_000,
+      last_heartbeat_at: 70_000,
+      last_seen_running_jobs: 1,
+    });
+
+    expect(
+      __test__.workerDatabaseStateProtectsUnresponsiveWorker({
+        pid: 1005,
+        env: {
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+        },
+        cmdline: ["project-host:acp-worker"],
+      } as any),
+    ).toBe(true);
   });
 });

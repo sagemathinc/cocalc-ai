@@ -20,10 +20,12 @@ type DaemonCommand = {
 type EnsureOptions = {
   quietHealthy?: boolean;
   preserveManagedAuxiliaryDaemons?: boolean;
+  preserveAcpWorkers?: boolean;
 };
 
 type StopOptions = {
   preserveManagedAuxiliaryDaemons?: boolean;
+  preserveAcpWorkers?: boolean;
 };
 
 export type ProjectHostRuntimeInspection = {
@@ -1362,6 +1364,7 @@ function cleanupStrayProcesses(opts: {
   sshPort?: number;
   includeManagedRouter?: boolean;
   includeManagedPersist?: boolean;
+  includeAcpWorkers?: boolean;
 }): number {
   const {
     dataDir,
@@ -1371,6 +1374,7 @@ function cleanupStrayProcesses(opts: {
     sshPort,
     includeManagedRouter = true,
     includeManagedPersist = true,
+    includeAcpWorkers = true,
   } = opts;
   const projectHostPids = terminatePids(
     matchingProjectHostPids(dataDir, httpPort),
@@ -1388,10 +1392,9 @@ function cleanupStrayProcesses(opts: {
         "project-host conat persist",
       )
     : [];
-  const acpWorkerPids = terminatePids(
-    matchingAcpWorkerPids(dataDir),
-    "project-host acp worker",
-  );
+  const acpWorkerPids = includeAcpWorkers
+    ? terminatePids(matchingAcpWorkerPids(dataDir), "project-host acp worker")
+    : [];
   const sshpiperdPids = terminatePids(
     matchingSshpiperdPids(sshPort),
     "sshpiperd",
@@ -2503,6 +2506,7 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
       !managedRouter || !options?.preserveManagedAuxiliaryDaemons,
     includeManagedPersist:
       !managedPersist || !options?.preserveManagedAuxiliaryDaemons,
+    includeAcpWorkers: !options?.preserveAcpWorkers,
   });
   if (cleaned > 0) {
     console.warn(
@@ -2715,6 +2719,7 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
         !managedRouter || !options?.preserveManagedAuxiliaryDaemons,
       includeManagedPersist:
         !managedPersist || !options?.preserveManagedAuxiliaryDaemons,
+      includeAcpWorkers: !options?.preserveAcpWorkers,
     });
     if (cleaned > 0) {
       console.log(`Stopped ${cleaned} stray project-host process(es).`);
@@ -2751,6 +2756,7 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
         !managedRouter || !options?.preserveManagedAuxiliaryDaemons,
       includeManagedPersist:
         !managedPersist || !options?.preserveManagedAuxiliaryDaemons,
+      includeAcpWorkers: !options?.preserveAcpWorkers,
     });
     if (cleaned > 0) {
       console.log(
@@ -2810,6 +2816,7 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
       !managedRouter || !options?.preserveManagedAuxiliaryDaemons,
     includeManagedPersist:
       !managedPersist || !options?.preserveManagedAuxiliaryDaemons,
+    includeAcpWorkers: !options?.preserveAcpWorkers,
   });
   if (managedPersist && !options?.preserveManagedAuxiliaryDaemons) {
     stopManagedConatPersist({
@@ -2839,6 +2846,7 @@ export function handleDaemonCli(argv: string[]): boolean {
   } else if (cmd.action === "restart-project-host") {
     restartProjectHost(cmd.index, {
       preserveManagedAuxiliaryDaemons: true,
+      preserveAcpWorkers: true,
     });
   } else {
     ensureHostAgent(cmd.index);

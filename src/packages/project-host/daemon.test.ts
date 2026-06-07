@@ -725,7 +725,7 @@ describe("project-host daemon stop", () => {
     );
   });
 
-  it("restarts only project-host for the restart-project-host daemon action", () => {
+  it("restarts only project-host for the restart-project-host daemon action and preserves ACP workers", () => {
     const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9003";
@@ -764,7 +764,7 @@ describe("project-host daemon stop", () => {
         }
         throw new Error("not running");
       }
-      if ((pid === 3333 || pid === 5555) && signal === "SIGTERM") {
+      if (pid === 3333 && signal === "SIGTERM") {
         killState.set(pid, "stopped");
         return true;
       }
@@ -838,7 +838,7 @@ describe("project-host daemon stop", () => {
       COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT: "9002",
     });
     expect(killSpy).toHaveBeenCalledWith(3333, "SIGTERM");
-    expect(killSpy).toHaveBeenCalledWith(5555, "SIGTERM");
+    expect(killSpy).not.toHaveBeenCalledWith(5555, "SIGTERM");
     expect(killSpy).toHaveBeenCalledWith(1111, 0);
     expect(killSpy).toHaveBeenCalledWith(2222, 0);
     expect(killSpy).not.toHaveBeenCalledWith(1111, "SIGTERM");

@@ -4855,7 +4855,6 @@ export async function runDetachedAcpQueueWorker(
     options.idleExitMs === undefined
       ? ACP_WORKER_IDLE_EXIT_MS
       : options.idleExitMs;
-  const restartReason = options.restartReason ?? "worker restart";
   const workerContext = projectHostWorkerContextFromEnv();
   if (workerContext) {
     const now = Date.now();
@@ -5003,15 +5002,22 @@ export async function runDetachedAcpQueueWorker(
       poll_ms: ACP_WORKER_POLL_MS,
       idle_exit_ms: idleExitMs,
     });
-    await recoverDetachedWorkerStartupState(client, {
-      workerContext,
-      restartReason,
-    });
     let idleSince = 0;
     let lastRecoveryAt = Date.now();
     while (true) {
       const workerStatus = syncDetachedWorkerState();
-      if (Date.now() - lastRecoveryAt >= ACP_ORPHAN_RECOVERY_POLL_MS) {
+      if (!workerContext || workerStatus?.state === "active") {
+        kickAllQueuedAcpJobs();
+      }
+      const queuedJobs = listQueuedAcpJobs();
+      const currentWorkerRunningJobs = workerContext
+        ? countRunningAcpJobsForWorker(workerContext.worker_id)
+        : 0;
+      if (
+        queuedJobs.length === 0 &&
+        currentWorkerRunningJobs === 0 &&
+        Date.now() - lastRecoveryAt >= ACP_ORPHAN_RECOVERY_POLL_MS
+      ) {
         lastRecoveryAt = Date.now();
         if (workerContext) {
           await recoverOrphanedAcpTurns(client, {
@@ -5030,9 +5036,6 @@ export async function runDetachedAcpQueueWorker(
               ? "ACP worker stopped unexpectedly"
               : "ACP worker stopped before turn startup",
         });
-      }
-      if (!workerContext || workerStatus?.state === "active") {
-        kickAllQueuedAcpJobs();
       }
       const hasWork =
         listQueuedAcpJobs().length > 0 || listRunningAcpJobs().length > 0;

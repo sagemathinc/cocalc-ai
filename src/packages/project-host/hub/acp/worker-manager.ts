@@ -17,6 +17,7 @@ import {
   acpDaemonControlClient,
   type AcpDaemonStatus,
 } from "@cocalc/conat/ai/acp/daemon-control";
+import { getAcpWorker } from "@cocalc/lite/hub/sqlite/acp-workers";
 import { getSoftwareVersions } from "../../software";
 import { getProjectHostConatClient } from "../../runtime-client";
 import { getProjectHostProcessTitle } from "../../process-role";
@@ -37,6 +38,14 @@ const ACP_WORKER_ROLLING_CAPABILITY = "rolling-v1";
 const ACP_WORKER_CONTROL_TIMEOUT_MS = Math.max(
   250,
   Number(process.env.COCALC_ACP_WORKER_CONTROL_TIMEOUT_MS ?? 1500),
+);
+const ACP_WORKER_CONTROL_STARTUP_GRACE_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_ACP_WORKER_CONTROL_STARTUP_GRACE_MS ?? 30_000),
+);
+const ACP_WORKER_DB_HEARTBEAT_STALE_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_ACP_WORKER_DB_HEARTBEAT_STALE_MS ?? 15_000),
 );
 
 let supervisorStarted = false;
@@ -251,6 +260,43 @@ function resolveProjectHostWorkerBundleVersion(bundlePath: string): string {
 
 function workerIdOf(worker: WorkerProcessInfo): string {
   return `${worker.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim();
+}
+
+function workerStartedAtMs(worker: WorkerProcessInfo): number {
+  const value = Number(worker.env.COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function workerControlStartupGraceExpired(
+  worker: WorkerProcessInfo,
+  now = Date.now(),
+): boolean {
+  const startedAt = workerStartedAtMs(worker);
+  if (startedAt <= 0) {
+    // Older workers did not record a spawn timestamp. If they are the current
+    // active worker candidate and are not answering control RPCs, treat them as
+    // past grace so the supervisor can recover.
+    return true;
+  }
+  return now - startedAt >= ACP_WORKER_CONTROL_STARTUP_GRACE_MS;
+}
+
+function workerDatabaseStateProtectsUnresponsiveWorker(
+  worker: WorkerProcessInfo,
+  now = Date.now(),
+): boolean {
+  const worker_id = workerIdOf(worker);
+  if (!worker_id) return false;
+  const row = getAcpWorker(worker_id);
+  if (row == null || row.state === "stopped") return false;
+  if (Number(row.pid ?? 0) !== worker.pid) return false;
+  if (Number(row.last_seen_running_jobs ?? 0) > 0) return true;
+  const lastHeartbeatAt = Number(row.last_heartbeat_at ?? 0);
+  return (
+    Number.isFinite(lastHeartbeatAt) &&
+    lastHeartbeatAt > 0 &&
+    now - lastHeartbeatAt <= ACP_WORKER_DB_HEARTBEAT_STALE_MS
+  );
 }
 
 async function getWorkerStatus(
@@ -555,6 +601,23 @@ async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
     const status = workerStatuses.find(
       (entry) => entry.worker.pid === worker.pid,
     )?.status;
+    if (
+      status == null &&
+      isExpectedWorkerProcess(worker, launch) &&
+      workerControlStartupGraceExpired(worker) &&
+      !workerDatabaseStateProtectsUnresponsiveWorker(worker)
+    ) {
+      logger.warn("terminating unresponsive active project-host ACP worker", {
+        pid: worker.pid,
+        worker_id: workerIdOf(worker) || null,
+        bundle_version: workerBundleVersionOf(worker, launch),
+        bundle_path: workerBundlePathOf(worker, launch),
+        control_startup_grace_ms: ACP_WORKER_CONTROL_STARTUP_GRACE_MS,
+        db_heartbeat_stale_ms: ACP_WORKER_DB_HEARTBEAT_STALE_MS,
+      });
+      await terminateWorkerPid(worker.pid);
+      continue;
+    }
     if (status?.state === "stopped") {
       logger.warn("terminating stale stopped project-host ACP worker", {
         pid: worker.pid,
@@ -650,6 +713,7 @@ function spawnProjectHostAcpWorker({
     COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: ACP_WORKER_ROLLING_CAPABILITY,
     COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_VERSION: bundle_version,
     COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH: bundle_path,
+    COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT: String(now),
     COCALC_PROJECT_HOST_ACP_WORKER_STATE: "active",
     COCALC_ACP_INSTANCE_ID: worker_id,
     ...(restartReason
@@ -830,4 +894,6 @@ export const __test__ = {
   projectHostAcpWorkerSpawnBackoffRemainingMs,
   noteProjectHostAcpWorkerSpawn,
   resetProjectHostAcpWorkerSpawnBackoff,
+  workerDatabaseStateProtectsUnresponsiveWorker,
+  workerControlStartupGraceExpired,
 };
