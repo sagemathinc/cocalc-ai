@@ -102,7 +102,6 @@ describe("project env helpers", () => {
   const TARGET_PROJECT_ID = "33333333-3333-4333-8333-333333333333";
 
   beforeEach(() => {
-    jest.resetModules();
     getLocalProjectCollaboratorAccessStatusMock = jest.fn(
       async () => "local-collaborator",
     );
