@@ -125,7 +125,8 @@ Linux x86_64 vs Linux arm64 and downloads the matching runtime asset.
 For a local laptop VM using Lima:
 
 \`\`\`sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh | bash
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \\
+  | COCALC_STAR_LIMA_SHARED_DIR="\$HOME/cocalc-star-scratch" bash
 \`\`\`
 
 The Lima installer creates or starts a local Ubuntu VM, forwards
@@ -168,5 +169,5 @@ Installer line after upload:
   curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo bash
 
 Local Lima installer line after upload:
-  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh | bash
+  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh | COCALC_STAR_LIMA_SHARED_DIR="\$HOME/cocalc-star-scratch" bash
 EOF

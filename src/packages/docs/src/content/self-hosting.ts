@@ -106,13 +106,17 @@ brew install lima
 Then install CoCalc Star:
 
 ~~~sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh | bash
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
+  | COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
 ~~~
 
 This creates or starts a Lima VM named \`cocalc-star\`, installs Ubuntu 24.04,
 forwards CoCalc to \`http://localhost:8170/\`, installs CoCalc Star inside the
 VM, and prints the local setup URL. Project sessions, terminals, chat, and
 Jupyter use the same localhost origin through CoCalc's built-in project proxy.
+The optional \`COCALC_STAR_LIMA_SHARED_DIR\` value is a host folder that appears
+inside projects as \`/scratch\`; edit it before running the command, or remove it
+if you do not want host file sharing.
 
 The general local setup is:
 
@@ -157,11 +161,15 @@ For example, to use 16 GiB RAM, 8 CPUs, and a 200 GiB disk:
 
 ~~~sh
 curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
-  | COCALC_STAR_LIMA_MEMORY=16GiB COCALC_STAR_LIMA_CPUS=8 COCALC_STAR_LIMA_DISK=200GiB bash
+  | COCALC_STAR_LIMA_MEMORY=16GiB COCALC_STAR_LIMA_CPUS=8 COCALC_STAR_LIMA_DISK=200GiB COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
 ~~~
 
 The default memory is host-aware. On a typical laptop it uses a reasonable
 fraction of system RAM instead of Lima's small default.
+
+The shared directory setting is initial-install only. Lima reads it when the
+\`cocalc-star\` VM is created. If you want to change it later, delete or rename
+the Lima instance and reinstall with the new path.
 
 ## Networking choice
 

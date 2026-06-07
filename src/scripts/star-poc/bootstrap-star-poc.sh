@@ -30,6 +30,7 @@ STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-docker.io/buildpack-deps:26.04}"
+STAR_LIMA_HOST_SHARE_MOUNT="${STAR_LIMA_HOST_SHARE_MOUNT:-/mnt/cocalc-star-host-share}"
 STAR_HARDEN_INSTALL_USER_SUDO="${STAR_HARDEN_INSTALL_USER_SUDO:-0}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-${STAR_HARDEN_INSTALL_USER_SUDO}}"
 STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
@@ -440,6 +441,8 @@ prepare_runtime_artifacts() {
 }
 
 ensure_btrfs() {
+  local shared_scratch_host_mount
+  shared_scratch_host_mount="$(shared_scratch_host_mount)"
   mkdir -p /var/lib/cocalc /mnt/cocalc
   if mountpoint -q /mnt/cocalc; then
     local fstype
@@ -471,7 +474,21 @@ ensure_btrfs() {
   fi
   chown root:root /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
   chmod 0755 /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
-  install -d -o "$STAR_USER" -g "$STAR_USER" -m 0775 /mnt/cocalc/shared-scratch/shared
+  if [ "$shared_scratch_host_mount" = "$STAR_LIMA_HOST_SHARE_MOUNT" ]; then
+    mkdir -p "$shared_scratch_host_mount/shared"
+    chown "$STAR_USER:$STAR_USER" "$shared_scratch_host_mount" "$shared_scratch_host_mount/shared" || true
+    chmod 0775 "$shared_scratch_host_mount" "$shared_scratch_host_mount/shared" || true
+  else
+    install -d -o "$STAR_USER" -g "$STAR_USER" -m 0775 /mnt/cocalc/shared-scratch/shared
+  fi
+}
+
+shared_scratch_host_mount() {
+  if mountpoint -q "$STAR_LIMA_HOST_SHARE_MOUNT"; then
+    printf '%s\n' "$STAR_LIMA_HOST_SHARE_MOUNT"
+  else
+    printf '%s\n' /mnt/cocalc-scratch
+  fi
 }
 
 install_wrappers() {
@@ -583,12 +600,29 @@ RUN apt-get update \\
     texlive-latex-recommended \\
     wget \\
   && python3 -m venv /opt/cocalc-jupyter \\
-  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir --upgrade pip wheel \\
-  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir ipykernel jupyterlab notebook \\
+  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \\
+  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir \\
+    ipykernel \\
+    ipywidgets \\
+    jupyterlab \\
+    matplotlib \\
+    notebook \\
+    numpy \\
+    pandas \\
+    scipy \\
+    scikit-learn \\
+    sympy \\
+    uv \\
   && /opt/cocalc-jupyter/bin/python -m ipykernel install --prefix=/usr/local --name python3 \\
+  && ln -s /opt/cocalc-jupyter/bin/python /usr/local/bin/python \\
+  && ln -s /opt/cocalc-jupyter/bin/python /usr/local/bin/python3 \\
+  && ln -s /opt/cocalc-jupyter/bin/pip /usr/local/bin/pip \\
+  && ln -s /opt/cocalc-jupyter/bin/pip /usr/local/bin/pip3 \\
+  && ln -s /opt/cocalc-jupyter/bin/uv /usr/local/bin/uv \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter /usr/local/bin/jupyter \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-lab /usr/local/bin/jupyter-lab \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-notebook /usr/local/bin/jupyter-notebook \\
+  && chown -R 2001:2001 /opt/cocalc-jupyter \\
   && mkdir -p \\
     /home/user \\
     /scratch \\
@@ -713,7 +747,7 @@ TMPDIR=${STAR_PROJECT_HOST_DATA}/tmp
 COCALC_RUSTIC=${STAR_PROJECT_HOST_DATA}/rustic
 COCALC_FILE_SERVER_MOUNTPOINT=/mnt/cocalc
 COCALC_SHARED_SCRATCH_ENABLED=1
-COCALC_SHARED_SCRATCH_HOST_MOUNT=/mnt/cocalc-scratch
+COCALC_SHARED_SCRATCH_HOST_MOUNT=$(shared_scratch_host_mount)
 COCALC_PROJECT_HOST_CPU_USAGE_MODE=observe
 COCALC_PROJECT_TOOLS=$([ -d "${SRC_ROOT}/packages/project/build/tools/current" ] && printf '%s' "${SRC_ROOT}/packages/project/build/tools/current" || printf '%s' "${SRC_ROOT}/packages/backend/node_modules/.bin")
 COCALC_PROJECT_BUNDLES=${SRC_ROOT}/packages/project/build
