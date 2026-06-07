@@ -699,9 +699,17 @@ Add automated tests and dogfood diagnostics:
 
 - suspend/resume browser with visible projects page
 - simulate DStream history gap
+  - covered in unit tests for bounded open-project repair and large warm
+    project caches
 - simulate write RPC success but dropped feed event
+  - covered in unit tests for generic ack repair and project stop lifecycle
+    repair-before-resolve
 - simulate frontend merge preserving stale optimistic state
+  - covered in unit tests for optimistic start expiry and active start LRO
+    preservation
 - simulate 15,000 projects and a current visible page
+  - covered structurally by large-cache bounded repair tests; browser-scale
+    fixture still useful before release
 
 ## Test Plan
 
