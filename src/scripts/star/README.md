@@ -79,10 +79,10 @@ curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/ins
 ```
 
 The Lima installer creates or starts a `cocalc-star` Ubuntu VM, forwards
-`http://localhost:8170` on the host to port `80` in the guest, forwards the
-project-host HTTP port `9002` on localhost for direct project connections,
-disables the public `sslip.io` onboarding path, and installs Star in the VM
-with `STAR_ACCESS_URL=http://localhost:8170`.
+`http://localhost:8170` on the host to port `80` in the guest, disables the
+public `sslip.io` onboarding path, and installs Star in the VM with
+`STAR_ACCESS_URL=http://localhost:8170`. Project sessions are routed through
+the same localhost origin, so no separate project-host port forward is needed.
 
 Customize the local VM with environment variables passed to `bash`:
 

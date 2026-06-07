@@ -110,18 +110,16 @@ curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/ins
 ~~~
 
 This creates or starts a Lima VM named \`cocalc-star\`, installs Ubuntu 24.04,
-forwards CoCalc to \`http://localhost:8170/\`, forwards the local project
-runtime port, installs CoCalc Star inside the VM, and prints the local setup
-URL.
+forwards CoCalc to \`http://localhost:8170/\`, installs CoCalc Star inside the
+VM, and prints the local setup URL. Project sessions, terminals, chat, and
+Jupyter use the same localhost origin through CoCalc's built-in project proxy.
 
 The general local setup is:
 
 1. Install a VM app that can run Ubuntu 24.04.
 2. Create an Ubuntu VM with enough disk and memory for your projects.
 3. Forward a local port on your computer to port 80 inside the VM.
-4. Forward the project runtime port when your VM app does not do this
-   automatically. The Lima installer forwards \`127.0.0.1:9002\` by default.
-5. Open CoCalc at a localhost URL such as \`http://localhost:8170/\`.
+4. Open CoCalc at a localhost URL such as \`http://localhost:8170/\`.
 
 Using \`localhost\` is better than opening the VM's private IP address directly.
 Browsers treat \`localhost\` as a trusted local address, and it is easier to
