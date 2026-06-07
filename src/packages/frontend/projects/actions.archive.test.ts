@@ -177,6 +177,7 @@ describe("ProjectsActions archive flow", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedWebappClient.async_query.mockResolvedValue(undefined as any);
     mockedWebappClient.project_collaborators.remove.mockResolvedValue(
       undefined as any,
     );
@@ -195,6 +196,17 @@ describe("ProjectsActions archive flow", () => {
       }
       return {} as any;
     });
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id,
+            users_summary: {},
+          },
+        ],
+      },
+    } as any);
 
     await actions.remove_collaborator(project_id, "account-1");
 

@@ -27,6 +27,8 @@ const STORAGE_KEY = "cocalc-chat-scroll-anchor-cache";
 const MAX_CACHE_ENTRIES = 250;
 const BOTTOM_EPSILON_PX = 32;
 const RESTORE_TOLERANCE_PX = 3;
+const MIN_USABLE_VIEWPORT_PX = 80;
+const MIN_USABLE_SCROLL_HEIGHT_PX = 120;
 
 const anchorCache = new Map<string, ChatViewportAnchor>();
 let loadedFromStorage = false;
@@ -121,10 +123,25 @@ export function clearChatViewportAnchorCacheForTests(): void {
 export function isChatScrollerAtBottom(
   scroller: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">,
 ): boolean {
+  if (!isUsableChatScroller(scroller)) return false;
   return (
     scroller.scrollTop + scroller.clientHeight >=
     scroller.scrollHeight - BOTTOM_EPSILON_PX
   );
+}
+
+export function isUsableChatScroller(
+  scroller:
+    | Pick<HTMLElement, "clientHeight" | "scrollHeight">
+    | null
+    | undefined,
+): boolean {
+  if (!scroller) return false;
+  const height = scroller.clientHeight ?? 0;
+  const scrollHeight = scroller.scrollHeight ?? 0;
+  if (height < MIN_USABLE_VIEWPORT_PX) return false;
+  if (scrollHeight < MIN_USABLE_SCROLL_HEIGHT_PX) return false;
+  return true;
 }
 
 export function resolveChatViewportAnchorIndex(
@@ -155,6 +172,7 @@ export function captureChatViewportAnchor({
   sortedDates,
 }: CaptureChatViewportAnchorOptions): ChatViewportAnchor | undefined {
   if (!scroller || sortedDates.length === 0) return undefined;
+  if (!isUsableChatScroller(scroller)) return undefined;
   const atBottom = forceAtBottom === true || isChatScrollerAtBottom(scroller);
   if (atBottom) {
     return {
