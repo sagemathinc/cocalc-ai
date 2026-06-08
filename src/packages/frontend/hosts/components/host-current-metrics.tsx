@@ -7,7 +7,7 @@ import {
   HddOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
-import { Progress, Space, Tag, Typography } from "antd";
+import { Button, Popover, Progress, Space, Tag, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
@@ -18,6 +18,7 @@ import type {
   HostMetricsRiskLevel,
 } from "@cocalc/conat/hub/api/hosts";
 import { COLORS } from "@cocalc/util/theme";
+import { openHostDrawer } from "../open-host-drawer";
 import { formatBinaryBytes } from "../utils/format";
 
 type HostCurrentMetricsProps = {
@@ -159,6 +160,13 @@ type DiskUsageSource = {
   disk_available_conservative_bytes?: number;
 };
 
+type SharedScratchUsageSource = {
+  shared_scratch_total_bytes?: number;
+  shared_scratch_used_bytes?: number;
+  shared_scratch_available_bytes?: number;
+  shared_scratch_used_percent?: number;
+};
+
 function getDisplayedDiskUsedBytes(
   source: DiskUsageSource | undefined,
 ): number | undefined {
@@ -196,6 +204,56 @@ function getDisplayedDiskUsedPercent(
     return undefined;
   }
   return normalizePercent((used / total) * 100);
+}
+
+export function getSharedScratchUsedBytes(
+  source: SharedScratchUsageSource | undefined,
+): number | undefined {
+  if (!source) return undefined;
+  const used = source.shared_scratch_used_bytes;
+  if (used != null && Number.isFinite(used) && used >= 0) {
+    return used;
+  }
+  const available = source.shared_scratch_available_bytes;
+  const total = source.shared_scratch_total_bytes;
+  if (
+    available == null ||
+    total == null ||
+    !Number.isFinite(available) ||
+    !Number.isFinite(total)
+  ) {
+    return undefined;
+  }
+  return Math.max(0, total - available);
+}
+
+export function getSharedScratchUsedPercent(
+  source: SharedScratchUsageSource | undefined,
+): number | undefined {
+  if (!source) return undefined;
+  if (
+    source.shared_scratch_used_percent != null &&
+    Number.isFinite(source.shared_scratch_used_percent)
+  ) {
+    return normalizePercent(source.shared_scratch_used_percent);
+  }
+  const total = source.shared_scratch_total_bytes;
+  const used = getSharedScratchUsedBytes(source);
+  if (
+    used == null ||
+    total == null ||
+    !Number.isFinite(used) ||
+    !Number.isFinite(total) ||
+    total <= 0
+  ) {
+    return undefined;
+  }
+  return normalizePercent((used / total) * 100);
+}
+
+export function hasSharedScratchConfigured(host: Host): boolean {
+  const value = Number(host.machine?.shared_disk_gb ?? 0);
+  return Number.isFinite(value) && value > 0;
 }
 
 function getMetadataUsedPercent(host: Host): number | undefined {
@@ -288,7 +346,7 @@ function riskColor(level: HostMetricsRiskLevel): string | undefined {
 }
 
 function riskLabel(
-  kind: "disk" | "metadata",
+  kind: "disk" | "metadata" | "shared scratch",
   level: HostMetricsRiskLevel,
 ): string {
   return `${kind} ${level}`;
@@ -375,6 +433,27 @@ function renderDerivedRiskTags(
       ),
     );
   }
+  if (derived.shared_scratch && derived.shared_scratch.level !== "healthy") {
+    const tag = (
+      <Tag color={riskColor(derived.shared_scratch.level)}>
+        {riskLabel("shared scratch", derived.shared_scratch.level)}
+      </Tag>
+    );
+    tags.push(
+      derived.shared_scratch.reason ? (
+        <Tooltip
+          key="shared-scratch-risk"
+          title={riskTooltip("Shared scratch risk", derived.shared_scratch)}
+          placement="top"
+          overlayInnerStyle={overlayInnerStyle}
+        >
+          {tag}
+        </Tooltip>
+      ) : (
+        <React.Fragment key="shared-scratch-risk">{tag}</React.Fragment>
+      ),
+    );
+  }
   if (!derived.admission_allowed) {
     tags.push(
       <Tooltip
@@ -408,28 +487,34 @@ function renderDerivedRiskTags(
 function resourceHealth({
   derived,
   diskPercent,
+  sharedScratchPercent,
   metadataPercent,
   stale,
 }: {
   derived?: HostMetricsDerived;
   diskPercent?: number;
+  sharedScratchPercent?: number;
   metadataPercent?: number;
   stale?: boolean;
 }): { label: string; tone: ResourceTone; detail: string } {
   if (
     derived?.disk.level === "critical" ||
+    derived?.shared_scratch?.level === "critical" ||
     derived?.metadata.level === "critical" ||
     derived?.admission_allowed === false ||
     percentTone(diskPercent) === "red" ||
+    percentTone(sharedScratchPercent) === "red" ||
     percentTone(metadataPercent) === "red"
   ) {
     return { label: "Critical", tone: "red", detail: "Resource pressure" };
   }
   if (
     derived?.disk.level === "warning" ||
+    derived?.shared_scratch?.level === "warning" ||
     derived?.metadata.level === "warning" ||
     derived?.auto_grow_recommended ||
     percentTone(diskPercent) === "orange" ||
+    percentTone(sharedScratchPercent) === "orange" ||
     percentTone(metadataPercent) === "orange"
   ) {
     return { label: "Watch disk", tone: "orange", detail: "Overall health" };
@@ -686,7 +771,7 @@ function CompactMetricLine({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "32px 38px minmax(40px, 1fr) minmax(0, 70px)",
+        gridTemplateColumns: "48px 38px minmax(40px, 1fr) minmax(0, 86px)",
         gap: 5,
         alignItems: "center",
         minHeight: 22,
@@ -824,6 +909,107 @@ function MetricBar({
   );
 }
 
+function ScratchNotConfiguredMetric({
+  host,
+  compact,
+  dense,
+}: {
+  host: Host;
+  compact?: boolean;
+  dense?: boolean;
+}) {
+  const content = (
+    <Space orientation="vertical" size={6} style={{ maxWidth: 280 }}>
+      <Typography.Text>
+        No shared <code>/scratch</code> disk is configured for this host.
+      </Typography.Text>
+      <Typography.Text type="secondary">
+        Shared scratch is host-local working storage for temporary project data.
+      </Typography.Text>
+      <Button
+        size="small"
+        type="link"
+        style={{ padding: 0, alignSelf: "flex-start" }}
+        onClick={() => openHostDrawer({ hostId: host.id, tab: "overview" })}
+      >
+        Open scratch config
+      </Button>
+    </Space>
+  );
+
+  if (dense) {
+    return (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "48px minmax(0, 1fr)",
+          gap: 5,
+          alignItems: "center",
+          minHeight: 22,
+          padding: "2px 0",
+          minWidth: 0,
+        }}
+      >
+        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+          Scratch
+        </Typography.Text>
+        <Popover content={content} trigger="click" placement="top">
+          <Button
+            size="small"
+            type="link"
+            style={{ height: "auto", padding: 0, textAlign: "left" }}
+          >
+            not configured
+          </Button>
+        </Popover>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: compact
+          ? "34px minmax(95px, 0.8fr) minmax(120px, 1fr)"
+          : "42px minmax(120px, 0.7fr) minmax(180px, 1fr) minmax(160px, 1fr)",
+        gap: compact ? 10 : 16,
+        alignItems: "center",
+        width: "100%",
+        padding: compact ? "8px 0" : "12px 0",
+        borderTop: `1px solid ${COLORS.GRAY_LL}`,
+      }}
+    >
+      <span
+        style={{
+          width: compact ? 30 : 38,
+          height: compact ? 30 : 38,
+          borderRadius: 10,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: COLORS.GRAY_M,
+          background: COLORS.GRAY_LLL,
+          fontSize: compact ? 17 : 20,
+        }}
+      >
+        <DatabaseOutlined />
+      </span>
+      <span>
+        <Typography.Text strong style={{ display: "block" }}>
+          Scratch
+        </Typography.Text>
+        <Typography.Text type="secondary" style={{ display: "block" }}>
+          not configured
+        </Typography.Text>
+      </span>
+      <Popover content={content} trigger="click" placement="top">
+        <Button size="small">Scratch config</Button>
+      </Popover>
+    </div>
+  );
+}
+
 export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   host,
   compact,
@@ -844,11 +1030,18 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const cpuPercent = normalizePercent(metrics.cpu_percent);
   const memoryPercent = normalizePercent(metrics.memory_used_percent);
   const diskPercent = getDisplayedDiskUsedPercent(metrics);
+  const sharedScratchConfigured = hasSharedScratchConfigured(host);
+  const sharedScratchMeasured = metrics.shared_scratch_total_bytes != null;
+  const sharedScratchPercent = getSharedScratchUsedPercent(metrics);
   const metadataPercent = getMetadataUsedPercent(host);
   const diskUsedBytes = getDisplayedDiskUsedBytes(metrics);
+  const sharedScratchUsedBytes = getSharedScratchUsedBytes(metrics);
   const diskUsed = compact
     ? formatBytesCompact(diskUsedBytes)
     : formatBytes(diskUsedBytes);
+  const sharedScratchUsed = compact
+    ? formatBytesCompact(sharedScratchUsedBytes)
+    : formatBytes(sharedScratchUsedBytes);
   const memoryUsed = compact
     ? formatBytesCompact(metrics.memory_used_bytes)
     : formatBytes(metrics.memory_used_bytes);
@@ -858,6 +1051,9 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const diskTotal = compact
     ? formatBytesCompact(metrics.disk_device_total_bytes)
     : formatBytes(metrics.disk_device_total_bytes);
+  const sharedScratchTotal = compact
+    ? formatBytesCompact(metrics.shared_scratch_total_bytes)
+    : formatBytes(metrics.shared_scratch_total_bytes);
   const metadataUsed = compact
     ? formatBytesCompact(metrics.btrfs_metadata_used_bytes)
     : formatBytes(metrics.btrfs_metadata_used_bytes);
@@ -946,8 +1142,33 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
       ]);
     },
   );
+  const sharedScratchHistory = buildHistoryPoints(
+    history?.points,
+    (point) => getSharedScratchUsedPercent(point),
+    (point, prev) => {
+      const currentUsed = getSharedScratchUsedBytes(point);
+      const previousUsed = getSharedScratchUsedBytes(prev);
+      const delta =
+        currentUsed != null && previousUsed != null
+          ? currentUsed - previousUsed
+          : undefined;
+      const displayedPercent = getSharedScratchUsedPercent(point);
+      return tooltipContent("Scratch", point, [
+        currentUsed != null && point.shared_scratch_total_bytes != null
+          ? `Used ${formatBytes(currentUsed)} / ${formatBytes(point.shared_scratch_total_bytes)}`
+          : undefined,
+        displayedPercent != null
+          ? `Used ${formatPercent(displayedPercent)}`
+          : undefined,
+        delta != null ? `Δ used ${formatSignedBytes(delta)}` : undefined,
+      ]);
+    },
+  );
   const diskTrend = formatGrowthBytesPerHour(
     history?.growth?.disk_used_bytes_per_hour,
+  );
+  const sharedScratchTrend = formatGrowthBytesPerHour(
+    history?.growth?.shared_scratch_used_bytes_per_hour,
   );
   const metadataTrend = formatGrowthBytesPerHour(
     history?.growth?.metadata_used_bytes_per_hour,
@@ -958,6 +1179,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const health = resourceHealth({
     derived,
     diskPercent,
+    sharedScratchPercent,
     metadataPercent,
     stale: metricsStaleness.stale,
   });
@@ -968,7 +1190,11 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
     />
   );
   const riskSummary = derived
-    ? `Risk: disk ${derived.disk.level}, metadata ${derived.metadata.level} · ${
+    ? `Risk: disk ${derived.disk.level}${
+        derived.shared_scratch
+          ? `, scratch ${derived.shared_scratch.level}`
+          : ""
+      }, metadata ${derived.metadata.level} · ${
         derived.admission_allowed ? "admission allowed" : "admission blocked"
       }${derived.auto_grow_recommended ? " · auto-grow suggested" : ""}`
     : undefined;
@@ -1050,6 +1276,20 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             }
             color={COLORS.ANTD_ORANGE}
           />
+          {sharedScratchConfigured || sharedScratchMeasured ? (
+            <CompactMetricLine
+              label="Scratch"
+              percent={sharedScratchPercent}
+              detail={
+                sharedScratchUsed && sharedScratchTotal
+                  ? `${sharedScratchUsed} / ${sharedScratchTotal}`
+                  : sharedScratchTotal
+              }
+              color={COLORS.COCALC_BLUE}
+            />
+          ) : (
+            <ScratchNotConfiguredMetric host={host} dense />
+          )}
           {metadataCritical ? (
             <CompactMetricLine
               label="Meta"
@@ -1126,6 +1366,23 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           color={COLORS.ANTD_ORANGE}
           icon={<DatabaseOutlined />}
         />
+        {sharedScratchConfigured || sharedScratchMeasured ? (
+          <MetricBar
+            label="Scratch"
+            percent={sharedScratchPercent}
+            detail={
+              sharedScratchUsed && sharedScratchTotal
+                ? `${sharedScratchUsed} / ${sharedScratchTotal}`
+                : sharedScratchTotal
+            }
+            compact
+            historyPoints={sharedScratchHistory}
+            color={COLORS.COCALC_BLUE}
+            icon={<DatabaseOutlined />}
+          />
+        ) : (
+          <ScratchNotConfiguredMetric host={host} compact />
+        )}
         <MetricBar
           label="Metadata"
           percent={metadataPercent}
@@ -1266,6 +1523,22 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           color={COLORS.ANTD_ORANGE}
           icon={<DatabaseOutlined />}
         />
+        {sharedScratchConfigured || sharedScratchMeasured ? (
+          <MetricBar
+            label="Scratch"
+            percent={sharedScratchPercent}
+            detail={
+              sharedScratchUsed && sharedScratchTotal
+                ? `${sharedScratchUsed} / ${sharedScratchTotal}`
+                : sharedScratchTotal
+            }
+            historyPoints={sharedScratchHistory}
+            color={COLORS.COCALC_BLUE}
+            icon={<DatabaseOutlined />}
+          />
+        ) : (
+          <ScratchNotConfiguredMetric host={host} />
+        )}
         <MetricBar
           label="Metadata"
           percent={metadataPercent}
@@ -1294,6 +1567,9 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           <Tag>{metrics.assigned_project_count ?? 0} assigned</Tag>
           {riskTags}
           {diskTrend ? <Tag color="orange">Disk trend {diskTrend}</Tag> : null}
+          {sharedScratchTrend ? (
+            <Tag color="blue">Scratch trend {sharedScratchTrend}</Tag>
+          ) : null}
           {metadataTrend ? (
             <Tag color="blue">Metadata trend {metadataTrend}</Tag>
           ) : null}
