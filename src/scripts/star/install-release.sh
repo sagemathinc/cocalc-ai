@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_RELEASE_BASE_URL="https://github.com/sagemathinc/cocalc-ai/releases/latest/download"
+RELEASE_CHANNEL="${COCALC_STAR_RELEASE_CHANNEL:-${COCALC_STAR_CHANNEL:-stable}}"
+DEFAULT_RELEASE_BASE_URL="https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-${RELEASE_CHANNEL}"
 RELEASE_BASE_URL="${COCALC_STAR_RELEASE_BASE_URL:-$DEFAULT_RELEASE_BASE_URL}"
 RELEASE_URL="${COCALC_STAR_RELEASE_URL:-${1:-}}"
+CHANNEL_MANIFEST_URL="${COCALC_STAR_CHANNEL_MANIFEST_URL:-${RELEASE_BASE_URL%/}/cocalc-star-channel.env}"
 if [ -z "${STAR_ASSUME_YES+x}" ]; then
   if [ -t 0 ]; then
     STAR_ASSUME_YES=0
@@ -36,15 +38,23 @@ Examples:
   curl -fsSL https://example.com/install-release.sh \
     | sudo bash -s -- https://example.com/cocalc-star.tar.gz
 
-  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \
+  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh \
     | sudo bash
 
 Environment:
   COCALC_STAR_RELEASE_URL   Alternative to the positional release URL/path.
+  COCALC_STAR_RELEASE_CHANNEL
+                            Release channel used when no explicit release URL is
+                            provided. Default: stable. Typical values:
+                            stable, candidate.
+  COCALC_STAR_CHANNEL       Alias for COCALC_STAR_RELEASE_CHANNEL.
+  COCALC_STAR_CHANNEL_MANIFEST_URL
+                            Channel manifest URL. Default:
+                            $COCALC_STAR_RELEASE_BASE_URL/cocalc-star-channel.env
   COCALC_STAR_RELEASE_BASE_URL
-                            Base URL used when no explicit release URL is
-                            provided. Default:
-                            https://github.com/sagemathinc/cocalc-ai/releases/latest/download
+                            Base URL fallback used when no explicit release URL
+                            or manifest asset URL is provided. Default:
+                            https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-<channel>
   COCALC_STAR_RELEASE_ARCH  Override auto-detected Linux arch: x64 or arm64.
   COCALC_STAR_RELEASE_ASSET Override default asset name.
   STAR_ASSUME_YES=1         Skip destructive install confirmation. Defaults to
@@ -77,12 +87,75 @@ detect_release_arch() {
   esac
 }
 
+load_channel_manifest() {
+  case "${COCALC_STAR_DISABLE_CHANNEL_MANIFEST:-0}" in
+    1 | true | yes | on) return 0 ;;
+  esac
+  case "$CHANNEL_MANIFEST_URL" in
+    http://* | https://*) ;;
+    *) return 0 ;;
+  esac
+  command -v curl >/dev/null 2>&1 || return 0
+  command -v mktemp >/dev/null 2>&1 || return 0
+  local manifest line key value
+  manifest="$(mktemp)"
+  if ! curl -fsSL --connect-timeout 10 --max-time 30 "$CHANNEL_MANIFEST_URL" -o "$manifest"; then
+    rm -f "$manifest"
+    log "channel manifest unavailable at ${CHANNEL_MANIFEST_URL}; falling back to release base URL"
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "" | "#"*) continue ;;
+      COCALC_STAR_*=*) ;;
+      *) die "invalid channel manifest line: $line" ;;
+    esac
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      COCALC_STAR_CHANNEL | COCALC_STAR_RELEASE_ID | COCALC_STAR_RELEASE_BASE_URL | COCALC_STAR_RUNTIME_LINUX_X64_URL | COCALC_STAR_RUNTIME_LINUX_ARM64_URL | COCALC_STAR_PROMOTED_AT | COCALC_STAR_GIT_REVISION)
+        ;;
+      *) die "unsupported channel manifest key: $key" ;;
+    esac
+    if ! printf '%s' "$value" | grep -Eq '^[A-Za-z0-9._~:/?#@%+=,;-]*$'; then
+      die "unsafe channel manifest value for $key"
+    fi
+    case "$key" in
+      COCALC_STAR_CHANNEL) COCALC_STAR_CHANNEL="$value"; export COCALC_STAR_CHANNEL ;;
+      COCALC_STAR_RELEASE_ID) COCALC_STAR_RELEASE_ID="$value"; export COCALC_STAR_RELEASE_ID ;;
+      COCALC_STAR_RELEASE_BASE_URL) COCALC_STAR_RELEASE_BASE_URL="$value"; export COCALC_STAR_RELEASE_BASE_URL ;;
+      COCALC_STAR_RUNTIME_LINUX_X64_URL) COCALC_STAR_RUNTIME_LINUX_X64_URL="$value"; export COCALC_STAR_RUNTIME_LINUX_X64_URL ;;
+      COCALC_STAR_RUNTIME_LINUX_ARM64_URL) COCALC_STAR_RUNTIME_LINUX_ARM64_URL="$value"; export COCALC_STAR_RUNTIME_LINUX_ARM64_URL ;;
+      COCALC_STAR_PROMOTED_AT) COCALC_STAR_PROMOTED_AT="$value"; export COCALC_STAR_PROMOTED_AT ;;
+      COCALC_STAR_GIT_REVISION) COCALC_STAR_GIT_REVISION="$value"; export COCALC_STAR_GIT_REVISION ;;
+    esac
+  done <"$manifest"
+  rm -f "$manifest"
+  if [ -n "${COCALC_STAR_RELEASE_ID:-}" ]; then
+    log "resolved ${RELEASE_CHANNEL} channel to release ${COCALC_STAR_RELEASE_ID}"
+  fi
+}
+
 default_release_url() {
   local arch asset
   arch="$(detect_release_arch)"
   case "$arch" in
     x64 | arm64) ;;
     *) die "unsupported COCALC_STAR_RELEASE_ARCH=$arch; expected x64 or arm64" ;;
+  esac
+  case "$arch" in
+    x64)
+      if [ -n "${COCALC_STAR_RUNTIME_LINUX_X64_URL:-}" ]; then
+        printf '%s\n' "$COCALC_STAR_RUNTIME_LINUX_X64_URL"
+        return
+      fi
+      ;;
+    arm64)
+      if [ -n "${COCALC_STAR_RUNTIME_LINUX_ARM64_URL:-}" ]; then
+        printf '%s\n' "$COCALC_STAR_RUNTIME_LINUX_ARM64_URL"
+        return
+      fi
+      ;;
   esac
   asset="${COCALC_STAR_RELEASE_ASSET:-cocalc-star-runtime-linux-${arch}.tar.gz}"
   printf '%s/%s\n' "${RELEASE_BASE_URL%/}" "$asset"
@@ -183,6 +256,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 [ -n "$RELEASE_URL" ] || {
+  load_channel_manifest
   RELEASE_URL="$(default_release_url)"
 }
 

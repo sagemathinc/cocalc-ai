@@ -112,10 +112,16 @@ CoCalc Star runtime release from commit $(short_head).
 
 ## Install
 
-Run this on a fresh Ubuntu VM:
+Public stable install on a fresh Ubuntu VM:
 
 \`\`\`sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo bash
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash
+\`\`\`
+
+Candidate-channel install for release testing:
+
+\`\`\`sh
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-candidate/install-cocalc-star.sh | sudo bash
 \`\`\`
 
 The installer auto-detects the VM public IPv4 address and uses sslip.io for the
@@ -125,7 +131,7 @@ Linux x86_64 vs Linux arm64 and downloads the matching runtime asset.
 For a local laptop VM using Lima:
 
 \`\`\`sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \\
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star-local-lima.sh \\
   | COCALC_STAR_LIMA_SHARED_DIR="\$HOME/cocalc-star-scratch" bash
 \`\`\`
 
@@ -137,7 +143,7 @@ If you know the SSH target for the VM, include it so the fallback local access
 instructions can print an exact port-forward command:
 
 \`\`\`sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \\
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh \\
   | sudo STAR_SSH_TARGET=ubuntu@<vm-ip-or-hostname> bash
 \`\`\`
 
@@ -165,9 +171,18 @@ Release id:
 GitHub release upload example:
   gh release create "$release_id" "$installer_output" "$lima_installer_output"$runtime_asset_args "${output_dir}/SHA256SUMS" --repo sagemathinc/cocalc-ai --title "CoCalc Star $release_id" --notes-file "$release_notes_output"
 
-Installer line after upload:
-  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo bash
+Publish as candidate after uploading the immutable release:
+  ${SCRIPT_DIR}/promote-github-release-channel.sh --upload "$release_id" candidate
 
-Local Lima installer line after upload:
-  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh | COCALC_STAR_LIMA_SHARED_DIR="\$HOME/cocalc-star-scratch" bash
+Promote to stable after manual testing:
+  ${SCRIPT_DIR}/promote-github-release-channel.sh --upload "$release_id" stable
+
+Candidate installer line after channel upload:
+  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-candidate/install-cocalc-star.sh | sudo bash
+
+Stable installer line after promotion:
+  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash
+
+Stable Lima installer line after promotion:
+  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star-local-lima.sh | COCALC_STAR_LIMA_SHARED_DIR="\$HOME/cocalc-star-scratch" bash
 EOF
