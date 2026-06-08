@@ -9,10 +9,9 @@ import { Loading } from "@cocalc/frontend/components";
 import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { FIXED_TABS_BG_COLOR } from "../activity-bar-tabs";
 import { useActivityBarPreferences } from "../activity-bar-storage";
 import { FIXED_PROJECT_TABS, FixedTab } from "../file-tab";
-import { FLYOUT_PADDING } from "./consts";
+import { FLYOUT_BODY_BG_COLOR, FLYOUT_PADDING } from "./consts";
 import { LSFlyout, lsKey, storeFlyoutState } from "./state";
 
 interface FlyoutBodyProps {
@@ -86,7 +85,7 @@ export function FlyoutBody({
     width: "100%",
     height: "100%",
     boxSizing: "border-box",
-    backgroundColor: FIXED_TABS_BG_COLOR,
+    backgroundColor: FLYOUT_BODY_BG_COLOR,
     overflowY: "hidden",
     overflowX: "hidden",
   };

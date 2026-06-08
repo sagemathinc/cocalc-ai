@@ -24,6 +24,7 @@ interface RecoveryActionProps {
   title: string;
   description: ReactNode;
   actions: ReactNode;
+  mode?: "project" | "flyout";
 }
 
 interface Props {
@@ -39,15 +40,19 @@ function RecoveryAction({
   title,
   description,
   actions,
+  mode,
 }: RecoveryActionProps) {
+  const isFlyout = mode === "flyout";
   return (
     <Card size="small" styles={{ body: { padding: 12 } }}>
       <div
         style={{
           display: "grid",
-          gap: 12,
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          alignItems: "center",
+          gap: isFlyout ? 10 : 12,
+          gridTemplateColumns: isFlyout
+            ? "minmax(0, 1fr)"
+            : "minmax(0, 1fr) auto",
+          alignItems: isFlyout ? "stretch" : "center",
         }}
       >
         <div style={{ minWidth: 0 }}>
@@ -64,7 +69,12 @@ function RecoveryAction({
           </div>
           <Text type="secondary">{description}</Text>
         </div>
-        <Space wrap>{actions}</Space>
+        <Space
+          wrap
+          style={{ justifyContent: isFlyout ? "flex-start" : "flex-end" }}
+        >
+          {actions}
+        </Space>
       </div>
     </Card>
   );
@@ -87,6 +97,7 @@ export function RecoveryPanel({
       style={{ width: "100%" }}
     >
       <RecoveryAction
+        mode={mode}
         icon="disk-snapshot"
         title="Snapshots"
         description="Fast point-in-time project filesystem checkpoints. Restore creates a safety snapshot before changing files."
@@ -98,6 +109,7 @@ export function RecoveryPanel({
         }
       />
       <RecoveryAction
+        mode={mode}
         icon="cloud-upload"
         title="Backups"
         description={
@@ -117,6 +129,7 @@ export function RecoveryPanel({
         actions={<CreateBackup />}
       />
       <RecoveryAction
+        mode={mode}
         icon="copy"
         title="Clone or Copy"
         description="Create a separate project copy without changing the current project."
