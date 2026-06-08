@@ -123,7 +123,12 @@ describe("moveProjectToHost", () => {
   const DEST_HOST_ID = "33333333-3333-4333-8333-333333333333";
   const SOURCE_HOST_NAME = "Source Host";
   const DEST_HOST_NAME = "Destination Host";
-  const MOVE_SENTINEL_PATH = ".move-sentinel.json";
+  const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
+  const MOVE_SENTINEL_DIR = ".cocalc/move-sentinels";
+
+  const hasMoveSentinel = (files: Map<string, string> | undefined) =>
+    !!files &&
+    [...files.keys()].some((path) => path.startsWith(`${MOVE_SENTINEL_DIR}/`));
 
   let postTimeoutState: {
     host_id: string | null;
@@ -306,7 +311,7 @@ describe("moveProjectToHost", () => {
             if (
               hangMoveSentinelReadOnDest &&
               currentRoutedHostId === DEST_HOST_ID &&
-              path === MOVE_SENTINEL_PATH
+              path.startsWith(`${MOVE_SENTINEL_DIR}/`)
             ) {
               return await new Promise<string>(() => {});
             }
@@ -430,9 +435,75 @@ describe("moveProjectToHost", () => {
     expect(savePlacementMock).toHaveBeenCalledWith(PROJECT_ID, {
       host_id: DEST_HOST_ID,
     });
-    expect(routedFsByHost.get(SOURCE_HOST_ID)?.has(MOVE_SENTINEL_PATH)).toBe(
-      false,
+    expect(hasMoveSentinel(routedFsByHost.get(SOURCE_HOST_ID))).toBe(false);
+  });
+
+  it("ignores stale legacy fixed-path move sentinel files", async () => {
+    routedFsByHost.get(SOURCE_HOST_ID)?.set(
+      LEGACY_MOVE_SENTINEL_PATH,
+      `${JSON.stringify({
+        version: 1,
+        move_log_id: "old-move",
+        project_id: PROJECT_ID,
+      })}\n`,
     );
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+        allow_offline: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(
+      routedFsByHost.get(DEST_HOST_ID)?.has(LEGACY_MOVE_SENTINEL_PATH),
+    ).toBe(false);
+    expect(hasMoveSentinel(routedFsByHost.get(DEST_HOST_ID))).toBe(false);
   });
 
   it("reverts placement and cleans destination data if the destination never reaches running", async () => {
@@ -1130,9 +1201,7 @@ describe("moveProjectToHost", () => {
       host_id: DEST_HOST_ID,
     });
     expect(purgeProjectBackupsForRepoMock).not.toHaveBeenCalled();
-    expect(routedFsByHost.get(SOURCE_HOST_ID)?.has(MOVE_SENTINEL_PATH)).toBe(
-      false,
-    );
+    expect(hasMoveSentinel(routedFsByHost.get(SOURCE_HOST_ID))).toBe(false);
   });
 
   it("fails sentinel verification cleanly if the destination read hangs", async () => {
