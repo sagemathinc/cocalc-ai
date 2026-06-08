@@ -964,9 +964,13 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 '--glob "!.snapshots" --glob "!.snapshots/**"',
                 script,
             )
-            self.assertEqual(script.count('backup_status="$?"'), 2)
+            self.assertEqual(script.count('backup_status="$?"'), 1)
             self.assertIn(
-                'if "${rustic_cmd[@]}" backup --json --no-scan --host "$host_name" "$@" .; then',
+                'if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then',
+                script,
+            )
+            self.assertIn(
+                'exec "${rustic_cmd[@]}" backup --json --no-scan --host "$host_name" "$@" .',
                 script,
             )
             self.assertIn(
