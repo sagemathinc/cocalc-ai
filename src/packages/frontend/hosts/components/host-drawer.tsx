@@ -3226,7 +3226,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   );
   const runtimeControlContent = (
     <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-      {runtimeArtifactControlsContent}
       <HostDaemonRuntimeControl
         host={host}
         deploymentStatus={deploymentStatus}
@@ -3256,6 +3255,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           onResumeRuntimeComponentClusterDefault
         }
       />
+      {runtimeArtifactControlsContent}
       {runtimeLogViewer?.log ? (
         <Card size="small" title="Recent daemon log">
           <Space orientation="vertical" size="small" style={{ width: "100%" }}>
