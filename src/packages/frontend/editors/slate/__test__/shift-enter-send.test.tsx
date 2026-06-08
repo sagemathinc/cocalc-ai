@@ -61,3 +61,63 @@ test("shift+enter sends latest markdown even when cache is stale", () => {
 
   expect(sent.trim()).toBe("hello");
 });
+
+test("command+enter syncs latest markdown to alternate editor", () => {
+  const editor = withReact(createEditor()) as any;
+  editor.children = [
+    {
+      type: "paragraph",
+      children: [{ text: "hello" }],
+    },
+  ];
+  editor.selection = {
+    anchor: { path: [0, 0], offset: 5 },
+    focus: { path: [0, 0], offset: 5 },
+  };
+  editor.markdownValue = "";
+  editor._hasUnsavedChanges = false;
+  editor.resetHasUnsavedChanges = () => {
+    editor._hasUnsavedChanges = editor.children;
+  };
+  editor.hasUnsavedChanges = () => {
+    if (editor._hasUnsavedChanges === false) return false;
+    return editor._hasUnsavedChanges !== editor.children;
+  };
+  editor.getMarkdownValue = () => {
+    if (editor.markdownValue != null && !editor.hasUnsavedChanges()) {
+      return editor.markdownValue;
+    }
+    editor.markdownValue = slate_to_markdown(editor.children);
+    return editor.markdownValue;
+  };
+
+  let sent = "";
+  let sentId = "";
+  let sentSelection: any = null;
+  const handler = getHandler({
+    key: "Enter",
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: true,
+    altKey: false,
+  });
+  expect(handler).toBeTruthy();
+  handler?.({
+    editor,
+    extra: {
+      actions: {
+        altEnter: (value, id, context) => {
+          sent = value;
+          sentId = id ?? "";
+          sentSelection = context?.selection;
+        },
+      },
+      id: "slate-frame",
+      search: EMPTY_SEARCH,
+    },
+  });
+
+  expect(sent.trim()).toBe("hello");
+  expect(sentId).toBe("slate-frame");
+  expect(sentSelection).toEqual(editor.selection);
+});
