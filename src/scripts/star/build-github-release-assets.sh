@@ -169,7 +169,7 @@ Release id:
   $release_id
 
 GitHub release upload example:
-  gh release create "$release_id" "$installer_output" "$lima_installer_output"$runtime_asset_args "${output_dir}/SHA256SUMS" --repo sagemathinc/cocalc-ai --title "CoCalc Star $release_id" --notes-file "$release_notes_output"
+  gh release create "$release_id" "$installer_output" "$lima_installer_output"$runtime_asset_args "${output_dir}/SHA256SUMS" --repo sagemathinc/cocalc-ai --title "CoCalc Star $release_id" --notes-file "$release_notes_output" --latest=false
 
 Publish as candidate after uploading the immutable release:
   ${SCRIPT_DIR}/promote-github-release-channel.sh --upload "$release_id" candidate

@@ -147,6 +147,7 @@ fi
 
 tar -xzf "$TARBALL" -C "$INSTALLER_TMP" src/scripts/star/install-from-tarball.sh
 export STAR_RELEASE_ID="${STAR_RELEASE_ID:-__STAR_RELEASE_ID__}"
+export STAR_RELEASE_METADATA_JSON="${SCRIPT_DIR}/release.json"
 if [ "$MODE" = "runtime" ]; then
   export STAR_BUILD="${STAR_BUILD:-0}"
 fi

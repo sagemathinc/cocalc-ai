@@ -112,6 +112,27 @@ replace_symlink() {
   ln -s "$target" "$link"
 }
 
+write_channel_metadata() {
+  local dest="${STAR_INSTALL_ROOT}/channel.env"
+  if [ -z "${COCALC_STAR_CHANNEL:-}" ] &&
+    [ -z "${COCALC_STAR_RELEASE_BASE_URL:-}" ] &&
+    [ -z "${COCALC_STAR_PROMOTED_AT:-}" ] &&
+    [ -z "${COCALC_STAR_GIT_REVISION:-}" ]; then
+    return
+  fi
+  cat >"$dest" <<EOF
+# CoCalc Star release channel manifest v1
+COCALC_STAR_CHANNEL=${COCALC_STAR_CHANNEL:-}
+COCALC_STAR_RELEASE_ID=${COCALC_STAR_RELEASE_ID:-${STAR_RELEASE_ID}}
+COCALC_STAR_RELEASE_BASE_URL=${COCALC_STAR_RELEASE_BASE_URL:-}
+COCALC_STAR_RUNTIME_LINUX_X64_URL=${COCALC_STAR_RUNTIME_LINUX_X64_URL:-}
+COCALC_STAR_RUNTIME_LINUX_ARM64_URL=${COCALC_STAR_RUNTIME_LINUX_ARM64_URL:-}
+COCALC_STAR_PROMOTED_AT=${COCALC_STAR_PROMOTED_AT:-}
+COCALC_STAR_GIT_REVISION=${COCALC_STAR_GIT_REVISION:-}
+EOF
+  chmod 0644 "$dest"
+}
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
@@ -252,6 +273,10 @@ cat >"$tmp_release/release.json" <<EOF
   "source_path": "${release_source}"
 }
 EOF
+if [ -n "${STAR_RELEASE_METADATA_JSON:-}" ] && [ -f "$STAR_RELEASE_METADATA_JSON" ]; then
+  cp "$STAR_RELEASE_METADATA_JSON" "$tmp_release/build-release.json"
+  chmod 0644 "$tmp_release/build-release.json"
+fi
 chown -R "$STAR_USER:$STAR_USER" "$tmp_release"
 mv "$tmp_release" "$release_dir"
 release_dir_created=1
@@ -274,6 +299,7 @@ export STAR_ACCESS_URL="${STAR_ACCESS_URL:-}"
 "$INSTALLER"
 
 replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"
+write_channel_metadata
 rm -rf "$rollback_state_dir"
 trap - EXIT
 log "installed release $STAR_RELEASE_ID"
