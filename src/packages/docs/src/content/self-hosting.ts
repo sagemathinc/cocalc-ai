@@ -57,11 +57,12 @@ CoCalc system on your own VM.
   project-host connectivity, or deployment development.
 - Use CoCalc Rocket for production multi-user or multi-bay deployments.
 
-## Current first-release target
+## Current beta target
 
-The documented first-release target is Ubuntu 24.04 on a fresh public VM with a
-public IPv4 address and ports 80 and 443 open. Ubuntu 26.04 is a test target
-until provider-level filesystem and package-manager behavior is validated.
+The documented beta target is Ubuntu 24.04 or Ubuntu 26.04 on a fresh public VM
+with a public IPv4 address and ports 80 and 443 open. Manual beta installs have
+passed on Google Cloud, AWS, and Azure. Other cloud providers should work if
+they provide a normal Ubuntu VM and let you expose ports 80 and 443.
 
 ## Agent notes
 
@@ -97,11 +98,21 @@ For a personal computer, the recommended CoCalc Star local VM path is Lima. Lima
 runs headless Linux VMs, is scriptable, supports localhost forwarding, and does
 not push you toward a graphical desktop VM.
 
-Install Lima first:
+Install Lima first. On macOS:
 
 ~~~sh
 brew install lima
 ~~~
+
+On Ubuntu Linux, install QEMU support first:
+
+~~~sh
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends ovmf qemu-system-x86 qemu-utils
+~~~
+
+Then install Lima using Homebrew on Linux if you already use it, or download the
+current Lima binary archive from <https://lima-vm.io/docs/installation/>.
 
 Then install CoCalc Star:
 
@@ -114,9 +125,15 @@ This creates or starts a Lima VM named \`cocalc-star\`, installs Ubuntu 24.04,
 forwards CoCalc to \`http://localhost:8170/\`, installs CoCalc Star inside the
 VM, and prints the local setup URL. Project sessions, terminals, chat, and
 Jupyter use the same localhost origin through CoCalc's built-in project proxy.
-The optional \`COCALC_STAR_LIMA_SHARED_DIR\` value is a host folder that appears
-inside projects as \`/scratch\`; edit it before running the command, or remove it
-if you do not want host file sharing.
+The optional \`COCALC_STAR_LIMA_SHARED_DIR\` value is a host folder that becomes
+\`/scratch\` inside projects. For example, a host file
+\`$HOME/cocalc-star-scratch/data.csv\` is visible in projects as
+\`/scratch/data.csv\`. The installer creates the host folder if it does not
+exist. Edit the path before running the command, or remove the environment
+variable if you do not want host file sharing.
+
+After install, open \`http://localhost:8170/\`, create the first account, create
+a project, and test a terminal plus a Jupyter notebook.
 
 The general local setup is:
 
@@ -171,6 +188,16 @@ The shared directory setting is initial-install only. Lima reads it when the
 \`cocalc-star\` VM is created. If you want to change it later, delete or rename
 the Lima instance and reinstall with the new path.
 
+To reinstall the local VM while keeping the host shared folder:
+
+~~~sh
+limactl stop cocalc-star
+limactl delete cocalc-star
+~~~
+
+Do not delete \`$HOME/cocalc-star-scratch\` unless you also want to remove the
+host files that were visible as \`/scratch\`.
+
 ## Networking choice
 
 Pick one of these access patterns:
@@ -198,6 +225,10 @@ A local VM install is private to your machine unless you deliberately expose it
 to your network. You can use it without depending on CoCalc's hosted service.
 If you are offline, local project tools keep working, but internet-dependent
 features still need internet access.
+
+The default project image includes Python, pip, uv, Jupyter, LaTeX, and common
+scientific Python packages. You can use \`pip install\` or \`uv pip install\`
+from a project terminal for additional packages such as PyTorch.
 
 You are responsible for the VM's disk, backups, operating-system updates, and
 any data you store there. If the VM is important, back it up like any other
