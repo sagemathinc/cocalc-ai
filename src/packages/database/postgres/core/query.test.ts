@@ -35,6 +35,21 @@ const expectNoErr = (err: unknown) => {
 
 const isPglite = process.env.COCALC_DB === "pglite";
 
+const realTimerGlobals = {
+  clearImmediate: globalThis.clearImmediate,
+  clearTimeout: globalThis.clearTimeout,
+  setImmediate: globalThis.setImmediate,
+  setTimeout: globalThis.setTimeout,
+};
+
+const restoreRealTimerGlobals = () => {
+  jest.useRealTimers();
+  globalThis.clearImmediate = realTimerGlobals.clearImmediate;
+  globalThis.clearTimeout = realTimerGlobals.clearTimeout;
+  globalThis.setImmediate = realTimerGlobals.setImmediate;
+  globalThis.setTimeout = realTimerGlobals.setTimeout;
+};
+
 const expectCommand = (result: any, command: string) => {
   if (isPglite) return;
   expect(result?.command).toBe(command);
@@ -1288,33 +1303,35 @@ describe("Query Engine - Group 6", () => {
         database._timeout_delay_ms = 1000;
         (database as any)._connect_time = new Date();
 
-        const donePromise = new Promise<void>((resolve, reject) => {
-          database.__do_query({
-            query: "SELECT 1",
-            cb: (err) => {
-              try {
-                expectNoErr(err);
-                resolve();
-              } catch (error) {
-                reject(error);
-              }
-            },
+        try {
+          const donePromise = new Promise<void>((resolve, reject) => {
+            database.__do_query({
+              query: "SELECT 1",
+              cb: (err) => {
+                try {
+                  expectNoErr(err);
+                  resolve();
+                } catch (error) {
+                  reject(error);
+                }
+              },
+            });
           });
-        });
 
-        await Promise.resolve();
+          await Promise.resolve();
 
-        jest.advanceTimersByTime(20);
-        expect(emitSpy).not.toHaveBeenCalledWith("error", "timeout");
+          jest.advanceTimersByTime(20);
+          expect(emitSpy).not.toHaveBeenCalledWith("error", "timeout");
 
-        queryCb?.(undefined, { rows: [], rowCount: 1, command: "SELECT" });
-        await donePromise;
-
-        (database as any)._get_query_client = originalGetQueryClient;
-        database._timeout_ms = originalTimeoutMs;
-        database._timeout_delay_ms = originalTimeoutDelay;
-        (database as any)._connect_time = originalConnectTime;
-        jest.useRealTimers();
+          queryCb?.(undefined, { rows: [], rowCount: 1, command: "SELECT" });
+          await donePromise;
+        } finally {
+          (database as any)._get_query_client = originalGetQueryClient;
+          database._timeout_ms = originalTimeoutMs;
+          database._timeout_delay_ms = originalTimeoutDelay;
+          (database as any)._connect_time = originalConnectTime;
+          restoreRealTimerGlobals();
+        }
       });
 
       it("emits timeout after _timeout_delay_ms has elapsed", async () => {
@@ -1339,30 +1356,32 @@ describe("Query Engine - Group 6", () => {
         database._timeout_delay_ms = 1;
         (database as any)._connect_time = new Date(Date.now() - 2000);
 
-        const donePromise = new Promise<void>((resolve, reject) => {
-          database.__do_query({
-            query: "SELECT 1",
-            cb: (err) => {
-              try {
-                expect(String(err)).toContain("postgresql error");
-                expect(emitSpy).toHaveBeenCalledWith("error", "timeout");
-                resolve();
-              } catch (error) {
-                reject(error);
-              }
-            },
+        try {
+          const donePromise = new Promise<void>((resolve, reject) => {
+            database.__do_query({
+              query: "SELECT 1",
+              cb: (err) => {
+                try {
+                  expect(String(err)).toContain("postgresql error");
+                  expect(emitSpy).toHaveBeenCalledWith("error", "timeout");
+                  resolve();
+                } catch (error) {
+                  reject(error);
+                }
+              },
+            });
           });
-        });
 
-        await Promise.resolve();
-        jest.advanceTimersByTime(20);
-        await donePromise;
-
-        (database as any)._get_query_client = originalGetQueryClient;
-        database._timeout_ms = originalTimeoutMs;
-        database._timeout_delay_ms = originalTimeoutDelay;
-        (database as any)._connect_time = originalConnectTime;
-        jest.useRealTimers();
+          await Promise.resolve();
+          jest.advanceTimersByTime(20);
+          await donePromise;
+        } finally {
+          (database as any)._get_query_client = originalGetQueryClient;
+          database._timeout_ms = originalTimeoutMs;
+          database._timeout_delay_ms = originalTimeoutDelay;
+          (database as any)._connect_time = originalConnectTime;
+          restoreRealTimerGlobals();
+        }
       });
 
       it("clears timeout timer on success", async () => {
@@ -1390,31 +1409,33 @@ describe("Query Engine - Group 6", () => {
         database._timeout_delay_ms = 1;
         (database as any)._connect_time = new Date(Date.now() - 2000);
 
-        const donePromise = new Promise<void>((resolve, reject) => {
-          database.__do_query({
-            query: "SELECT 1",
-            cb: (err) => {
-              try {
-                expectNoErr(err);
-                resolve();
-              } catch (error) {
-                reject(error);
-              }
-            },
+        try {
+          const donePromise = new Promise<void>((resolve, reject) => {
+            database.__do_query({
+              query: "SELECT 1",
+              cb: (err) => {
+                try {
+                  expectNoErr(err);
+                  resolve();
+                } catch (error) {
+                  reject(error);
+                }
+              },
+            });
           });
-        });
 
-        await Promise.resolve();
-        queryCb?.(undefined, { rows: [], rowCount: 1, command: "SELECT" });
-        await donePromise;
-        jest.advanceTimersByTime(20);
-        expect(emitSpy).not.toHaveBeenCalledWith("error", "timeout");
-
-        (database as any)._get_query_client = originalGetQueryClient;
-        database._timeout_ms = originalTimeoutMs;
-        database._timeout_delay_ms = originalTimeoutDelay;
-        (database as any)._connect_time = originalConnectTime;
-        jest.useRealTimers();
+          await Promise.resolve();
+          queryCb?.(undefined, { rows: [], rowCount: 1, command: "SELECT" });
+          await donePromise;
+          jest.advanceTimersByTime(20);
+          expect(emitSpy).not.toHaveBeenCalledWith("error", "timeout");
+        } finally {
+          (database as any)._get_query_client = originalGetQueryClient;
+          database._timeout_ms = originalTimeoutMs;
+          database._timeout_delay_ms = originalTimeoutDelay;
+          (database as any)._connect_time = originalConnectTime;
+          restoreRealTimerGlobals();
+        }
       });
     });
 
@@ -1439,35 +1460,40 @@ describe("Query Engine - Group 6", () => {
         database._timeout_ms = undefined;
         database._timeout_delay_ms = undefined;
 
-        const donePromise = new Promise<void>((resolve, reject) => {
-          const cbSpy = jest.fn((err) => {
-            expect(String(err)).toContain("postgresql error");
-
-            queryCb?.(undefined, { rows: [], rowCount: 1, command: "SELECT" });
-            setImmediate(() => {
+        try {
+          const donePromise = new Promise<void>((resolve, reject) => {
+            const cbSpy = jest.fn((err) => {
               try {
+                expect(String(err)).toContain("postgresql error");
+
+                queryCb?.(undefined, {
+                  rows: [],
+                  rowCount: 1,
+                  command: "SELECT",
+                });
                 expect(cbSpy).toHaveBeenCalledTimes(1);
                 expect(client.listenerCount("error")).toBe(0);
-                resolve();
               } catch (error) {
                 reject(error);
+                return;
               }
+              Promise.resolve().then(resolve, reject);
+            });
+
+            database.__do_query({
+              query: "SELECT 1",
+              cb: cbSpy,
             });
           });
 
-          database.__do_query({
-            query: "SELECT 1",
-            cb: cbSpy,
-          });
-        });
-
-        await Promise.resolve();
-        client.emit("error", "boom");
-        await donePromise;
-
-        (database as any)._get_query_client = originalGetQueryClient;
-        database._timeout_ms = originalTimeoutMs;
-        database._timeout_delay_ms = originalTimeoutDelay;
+          await Promise.resolve();
+          client.emit("error", "boom");
+          await donePromise;
+        } finally {
+          (database as any)._get_query_client = originalGetQueryClient;
+          database._timeout_ms = originalTimeoutMs;
+          database._timeout_delay_ms = originalTimeoutDelay;
+        }
       });
     });
 

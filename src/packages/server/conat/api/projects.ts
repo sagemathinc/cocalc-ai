@@ -908,6 +908,20 @@ export async function cancelPendingCopy({
 
 const log = getLogger("server:conat:api:projects");
 
+const TERMINAL_LRO_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+]);
+
+async function shouldLeaveTerminalLroUntouched(
+  op_id: string,
+): Promise<boolean> {
+  const current = await getLro(op_id).catch(() => undefined);
+  return !!current && TERMINAL_LRO_STATUSES.has(current.status);
+}
+
 function publishStartLroSummaryBestEffort({
   scope_type,
   scope_id,
@@ -2784,6 +2798,13 @@ async function runProjectStartLikeAction({
         canceled: 0,
         phase_timings_ms,
       };
+      if (await shouldLeaveTerminalLroUntouched(op.op_id)) {
+        log.info(`${kind}: leaving terminal project-start lro untouched`, {
+          project_id,
+          op_id: op.op_id,
+        });
+        return;
+      }
       const updated = await updateLro({
         op_id: op.op_id,
         status: "succeeded",
@@ -2811,6 +2832,14 @@ async function runProjectStartLikeAction({
             account_id,
           })
         : undefined;
+      if (await shouldLeaveTerminalLroUntouched(op.op_id)) {
+        log.info(`${kind}: leaving terminal project-start lro untouched`, {
+          project_id,
+          op_id: op.op_id,
+          err: `${err}`,
+        });
+        return;
+      }
       const updated = await updateLro({
         op_id: op.op_id,
         status: "failed",

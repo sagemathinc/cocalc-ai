@@ -386,59 +386,6 @@ async function detectListeningPorts(): Promise<DetectedAppPort[]> {
   return entries;
 }
 
-function normalizeProbeHost(hosts: string[]): string {
-  for (const host of hosts) {
-    if (host === "127.0.0.1" || host === "::1") return host;
-  }
-  return "127.0.0.1";
-}
-
-async function portLooksHttp(port: number, host: string): Promise<boolean> {
-  return await new Promise((resolve) => {
-    const socket = net.createConnection({ port, host });
-    const chunks: Buffer[] = [];
-    let settled = false;
-    const finish = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve(value);
-    };
-    socket.setTimeout(750);
-    socket.once("connect", () => {
-      socket.write("GET / HTTP/1.0\r\nHost: localhost\r\n\r\n");
-    });
-    socket.on("data", (chunk: Buffer) => {
-      chunks.push(chunk);
-      const text = Buffer.concat(chunks).toString("utf8");
-      if (text.startsWith("HTTP/")) {
-        finish(true);
-      }
-    });
-    socket.once("timeout", () => finish(false));
-    socket.once("error", () => finish(false));
-    socket.once("close", () => {
-      if (!settled) {
-        const text = Buffer.concat(chunks).toString("utf8");
-        finish(text.startsWith("HTTP/"));
-      }
-    });
-  });
-}
-
-async function detectHttpPorts(
-  entries: DetectedAppPort[],
-): Promise<DetectedAppPort[]> {
-  const out: DetectedAppPort[] = [];
-  for (const entry of entries) {
-    const host = normalizeProbeHost(entry.hosts);
-    if (await portLooksHttp(entry.port, host)) {
-      out.push(entry);
-    }
-  }
-  return out;
-}
-
 async function runAvailabilityCheck({
   cmd,
   timeoutMs = 12000,
@@ -1569,10 +1516,9 @@ export async function detectApps(opts?: {
 }): Promise<DetectedAppPort[]> {
   const includeManaged = !!opts?.include_managed;
   const limit = Math.max(1, Math.floor(Number(opts?.limit ?? 200)));
-  let detected = await detectListeningPorts();
-  if (opts?.http_only) {
-    detected = await detectHttpPorts(detected);
-  }
+  // Keep detection passive. This API runs against arbitrary user processes, so
+  // do not send HTTP requests to prove a listener speaks HTTP.
+  const detected = await detectListeningPorts();
   const filtered = includeManaged
     ? detected
     : detected.filter((d) => !d.managed);

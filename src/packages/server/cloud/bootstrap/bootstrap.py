@@ -3523,7 +3523,9 @@ def setup_master_conat_token(cfg: BootstrapConfig) -> None:
         )
 
 
-def download_file(cfg: BootstrapConfig, url: str, dest: str) -> None:
+def download_file(
+    cfg: BootstrapConfig, url: str, dest: str, *, attempts: int = 4
+) -> None:
     log_line(cfg, f"bootstrap: downloading {url}")
     Path(dest).parent.mkdir(parents=True, exist_ok=True)
     headers = {
@@ -3536,17 +3538,41 @@ def download_file(cfg: BootstrapConfig, url: str, dest: str) -> None:
             context = ssl.create_default_context(cafile=cfg.ca_cert_path)
         except Exception:
             context = None
-    try:
-        request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, context=context) as resp:
-            data = resp.read()
-        Path(dest).write_bytes(data)
-        return
-    except Exception as err:
-        log_line(cfg, f"bootstrap: download failed via urllib ({err}); trying curl")
-    if shutil.which("curl") is None:
-        raise RuntimeError("curl not available for download fallback")
-    run_cmd(cfg, ["curl", "-fsSL", "-o", dest, url], f"download {url} via curl")
+    last_error: Exception | None = None
+    attempts = max(1, attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            request = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(request, context=context) as resp:
+                data = resp.read()
+            Path(dest).write_bytes(data)
+            return
+        except Exception as err:
+            last_error = err
+            log_line(
+                cfg,
+                f"bootstrap: download failed via urllib ({err}); trying curl",
+            )
+        if shutil.which("curl") is None:
+            raise RuntimeError("curl not available for download fallback")
+        try:
+            run_cmd(
+                cfg,
+                ["curl", "-fsSL", "-o", dest, url],
+                f"download {url} via curl",
+            )
+            return
+        except Exception as err:
+            last_error = err
+            if attempt >= attempts:
+                break
+            delay = min(5 * attempt, 20)
+            log_line(
+                cfg,
+                f"bootstrap: download attempt {attempt}/{attempts} failed ({err}); retrying in {delay}s",
+            )
+            time.sleep(delay)
+    raise RuntimeError(f"download {url} failed after {attempts} attempts: {last_error}")
 
 
 def verify_sha256(cfg: BootstrapConfig, path: str, expected: str | None) -> None:
@@ -4493,16 +4519,11 @@ def configure_cloudflared_with_options(
         log_line(cfg, "bootstrap: installing cloudflared")
         arch = cfg.expected_arch
         deb_name = f"cloudflared-linux-{arch}.deb"
-        run_cmd(
+        download_file(
             cfg,
-            [
-                "curl",
-                "-fsSL",
-                "-o",
-                "/tmp/cloudflared.deb",
-                f"https://github.com/cloudflare/cloudflared/releases/latest/download/{deb_name}",
-            ],
-            "download cloudflared",
+            f"https://github.com/cloudflare/cloudflared/releases/latest/download/{deb_name}",
+            "/tmp/cloudflared.deb",
+            attempts=6,
         )
         run_cmd(cfg, ["dpkg", "-i", "/tmp/cloudflared.deb"], "install cloudflared")
     else:

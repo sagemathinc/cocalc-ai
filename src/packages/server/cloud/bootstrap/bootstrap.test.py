@@ -206,6 +206,53 @@ class BootstrapBundleManifestResolutionTest(unittest.TestCase):
                 "https://example.invalid/software/tools/latest-linux-amd64.json",
             )
 
+    def test_download_file_retries_curl_fallback_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            dest = str(Path(tmpdir) / "download.bin")
+            attempts = []
+            sleeps = []
+            original_urlopen = bootstrap.urllib.request.urlopen
+            original_which = bootstrap.shutil.which
+            original_run_cmd = bootstrap.run_cmd
+            original_sleep = bootstrap.time.sleep
+            try:
+                def fail_urlopen(*_args, **_kwargs):
+                    raise RuntimeError("urllib failed")
+
+                def fake_which(name):
+                    if name == "curl":
+                        return "/usr/bin/curl"
+                    return original_which(name)
+
+                def fake_run_cmd(_cfg, args, desc, **_kwargs):
+                    attempts.append((args, desc))
+                    if len(attempts) == 1:
+                        raise RuntimeError("curl failed")
+                    Path(dest).write_text("ok", encoding="utf-8")
+                    return subprocess.CompletedProcess(args, 0)
+
+                bootstrap.urllib.request.urlopen = fail_urlopen
+                bootstrap.shutil.which = fake_which
+                bootstrap.run_cmd = fake_run_cmd
+                bootstrap.time.sleep = lambda seconds: sleeps.append(seconds)
+
+                bootstrap.download_file(
+                    cfg,
+                    "https://example.invalid/file.tar.xz",
+                    dest,
+                    attempts=2,
+                )
+            finally:
+                bootstrap.urllib.request.urlopen = original_urlopen
+                bootstrap.shutil.which = original_which
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.time.sleep = original_sleep
+
+            self.assertEqual(Path(dest).read_text(encoding="utf-8"), "ok")
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(sleeps, [5])
+
 
 class BootstrapSizingTest(unittest.TestCase):
     def test_compute_image_size_respects_configured_root_reserve(self) -> None:
@@ -1526,8 +1573,10 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 ),
             )
             recorded = []
+            downloads = []
 
             original_run_cmd = bootstrap.run_cmd
+            original_download_file = bootstrap.download_file
             original_which = bootstrap.shutil.which
             original_mkdir = Path.mkdir
             original_write_text = Path.write_text
@@ -1535,6 +1584,11 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             try:
                 bootstrap.run_cmd = (
                     lambda _cfg, args, desc, **kwargs: recorded.append((args, desc))
+                )
+                bootstrap.download_file = (
+                    lambda _cfg, url, dest, **kwargs: downloads.append(
+                        (url, dest, kwargs)
+                    )
                 )
                 bootstrap.shutil.which = lambda name: None if name == "cloudflared" else original_which(name)
                 Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
@@ -1545,6 +1599,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 )
             finally:
                 bootstrap.run_cmd = original_run_cmd
+                bootstrap.download_file = original_download_file
                 bootstrap.shutil.which = original_which
                 Path.mkdir = original_mkdir  # type: ignore[method-assign]
                 Path.write_text = original_write_text  # type: ignore[method-assign]
@@ -1552,16 +1607,11 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
 
             self.assertIn(
                 (
-                    [
-                        "curl",
-                        "-fsSL",
-                        "-o",
-                        "/tmp/cloudflared.deb",
-                        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb",
-                    ],
-                    "download cloudflared",
+                    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb",
+                    "/tmp/cloudflared.deb",
+                    {"attempts": 6},
                 ),
-                recorded,
+                downloads,
             )
             self.assertIn((["dpkg", "-i", "/tmp/cloudflared.deb"], "install cloudflared"), recorded)
 
