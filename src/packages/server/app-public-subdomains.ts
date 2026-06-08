@@ -15,6 +15,10 @@ import {
 } from "@cocalc/server/cloud/dns";
 import { normalizeCloudflareHostname } from "@cocalc/server/cloud/derived-domains";
 import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
+import {
+  PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE,
+  PROJECT_APP_PUBLIC_EXPOSURE_ENABLED,
+} from "@cocalc/util/project-apps";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
 const TABLE = "project_app_public_subdomains";
@@ -176,6 +180,15 @@ export async function getProjectAppPublicPolicy(
   project_id: string,
 ): Promise<ProjectAppPublicPolicy> {
   const warnings: string[] = [];
+  if (!PROJECT_APP_PUBLIC_EXPOSURE_ENABLED) {
+    return {
+      enabled: false,
+      launchpad: isLaunchpadProduct(),
+      subdomain_suffix: "app",
+      metered_egress: false,
+      warnings: [PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE],
+    };
+  }
   const launchpad = isLaunchpadProduct();
   if (!launchpad) {
     return {
@@ -245,6 +258,9 @@ export async function reserveProjectAppPublicSubdomain(opts: {
   await ensureSchema();
   const project_id = `${opts.project_id ?? ""}`.trim();
   const app_id = `${opts.app_id ?? ""}`.trim();
+  if (!PROJECT_APP_PUBLIC_EXPOSURE_ENABLED) {
+    throw new Error(PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE);
+  }
   if (!project_id) throw new Error("project_id required");
   if (!app_id) throw new Error("app_id required");
   const base_path = normalizeBasePath(opts.base_path);

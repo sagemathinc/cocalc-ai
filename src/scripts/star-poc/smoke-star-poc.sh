@@ -199,8 +199,9 @@ write_smoke_notebook() {
       "metadata": {},
       "outputs": [],
       "source": [
-        "import os, sys\n",
-        "print('star-jupyter-ok', sys.version_info.major, os.path.isdir('/scratch'))"
+        "import os, shutil, sys\n",
+        "import matplotlib, numpy, pandas, scipy, sklearn, sympy\n",
+        "print('star-jupyter-ok', sys.version_info.major, os.path.isdir('/scratch'), bool(shutil.which('pip')), bool(shutil.which('uv')))"
       ]
     }
   ],

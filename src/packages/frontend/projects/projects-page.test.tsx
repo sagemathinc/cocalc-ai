@@ -127,7 +127,7 @@ jest.mock("./projects-table-controls", () => ({
     <div data-testid="projects-table-controls">
       {projectListChanged && (
         <button type="button" onClick={onRefreshProjectList}>
-          Refresh
+          Refresh project list
           {projectListChangedCount > 1 ? ` (${projectListChangedCount})` : ""}
         </button>
       )}
@@ -292,7 +292,9 @@ test("projects page shows explicit refresh for dirty backend window", () => {
 
   render(<ProjectsPage />);
 
-  expect(screen.getByRole("button", { name: "Refresh (3)" })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Refresh project list (3)" }),
+  ).toBeVisible();
   expect(screen.getByTestId("projects-table")).toHaveAttribute(
     "data-visible-projects",
     JSON.stringify(["backend-project-1", "backend-project-2"]),
@@ -301,7 +303,9 @@ test("projects page shows explicit refresh for dirty backend window", () => {
     "data-freeze-order",
     "true",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Refresh (3)" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Refresh project list (3)" }),
+  );
   expect(mockLoadProjectListWindow).toHaveBeenCalledWith({
     limit: 200,
     offset: 0,

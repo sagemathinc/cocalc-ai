@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import TTL from "@isaacs/ttlcache";
 import getLogger from "@cocalc/backend/logger";
+import { PROJECT_APP_PUBLIC_EXPOSURE_ENABLED } from "@cocalc/util/project-apps";
 import { getMountPoint } from "./file-server";
 import type { AppStaticIntegrationSpec } from "./public-viewer";
 
@@ -205,6 +206,7 @@ export async function authorizePublicAppPath({
   project_id: string;
   url?: string;
 }): Promise<boolean> {
+  if (!PROJECT_APP_PUBLIC_EXPOSURE_ENABLED) return false;
   if (!url) return false;
   const parsed = new URL(url, "http://project-host.local");
   const projectPrefix = normalizePrefix(`/${project_id}`);

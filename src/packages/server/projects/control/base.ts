@@ -82,6 +82,23 @@ function isActiveProjectState(state?: string | null): boolean {
   return state === "running" || state === "starting" || state === "pending";
 }
 
+async function loadProjectStopState(project_id: string): Promise<{
+  host_id: string;
+  state: string | null;
+}> {
+  const { rows } = await getPool().query<{
+    host_id: string | null;
+    state: string | null;
+  }>(
+    "SELECT host_id, state->>'state' AS state FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  return {
+    host_id: `${rows[0]?.host_id ?? ""}`.trim(),
+    state: rows[0]?.state ?? null,
+  };
+}
+
 function runQuotaForRestartComparison(
   run_quota?: Quota | null,
 ): Record<string, unknown> {
@@ -342,6 +359,19 @@ export class BaseProject extends EventEmitter {
     await this.ensureLocalOwnership();
     if (force) {
       logger.debug("stop -- TODO -- force not implemented");
+    }
+    const { host_id, state } = await loadProjectStopState(this.project_id);
+    if (!host_id) {
+      logger.debug(
+        `(project_id=${this.project_id}).stop: no assigned host; treating as already stopped`,
+      );
+      return;
+    }
+    if (!isActiveProjectState(state)) {
+      logger.debug(
+        `(project_id=${this.project_id}).stop: state=${state ?? "unknown"}; treating as already stopped`,
+      );
+      return;
     }
     await stopProjectOnHost(this.project_id);
   };

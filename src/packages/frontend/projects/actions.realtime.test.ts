@@ -699,6 +699,103 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-1", "title"])).toBe("Window Project");
   });
 
+  it("auto-refreshes an empty backend project window on feed upsert", async () => {
+    projectListWindow = ImmutableMap({
+      key: JSON.stringify({
+        limit: 200,
+        offset: 0,
+        hidden: false,
+        search: "",
+        sort: "last_edited",
+      }),
+      project_ids: [],
+      loading: false,
+      loaded_at: new Date("2026-04-05T03:00:00.000Z"),
+    });
+    mockedWebappClient.conat_client.hub.projects.listAccountProjectWindow.mockResolvedValueOnce(
+      [
+        {
+          project_id: "project-new",
+          title: "New Project",
+          description: "created during onboarding",
+          theme: null,
+          host_id: "host-1",
+          owning_bay_id: "bay-0",
+          users_summary: {
+            "acct-1": { group: "owner" },
+          },
+          state_summary: { state: "opened" },
+          last_activity_at: "2026-04-05T04:00:00.000Z",
+          last_edited: "2026-04-05T04:00:00.000Z",
+          last_backup: null,
+          sort_key: "2026-04-05T04:00:00.000Z",
+          updated_at: "2026-04-05T04:00:00.000Z",
+          is_hidden: false,
+        },
+      ],
+    );
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+        if (state.projects.project_list_window != null) {
+          projectListWindow = ImmutableMap(state.projects.project_list_window);
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+    redux._set_state.mockClear();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.parse("2026-04-05T04:00:00.000Z"),
+      account_id: "acct-1",
+      project: {
+        project_id: "project-new",
+        title: "New Project",
+        description: "created during onboarding",
+        theme: null,
+        host_id: "host-1",
+        owning_bay_id: "bay-0",
+        users: { "acct-1": { group: "owner" } },
+        state: { state: "opened" },
+        last_active: { "acct-1": "2026-04-05T04:00:00.000Z" },
+        last_edited: "2026-04-05T04:00:00.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(
+      mockedWebappClient.conat_client.hub.projects.listAccountProjectWindow,
+    ).toHaveBeenCalledWith({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: undefined,
+      sort: "last_edited",
+    });
+    expect(projectListWindow.get("dirty")).toBe(false);
+    expect(projectListWindow.get("project_ids")).toEqual(["project-new"]);
+    expect(projectMap.getIn(["project-new", "title"])).toBe("New Project");
+  });
+
   it("marks the backend project window dirty when feed removes a project", async () => {
     projectMap = ImmutableMap<string, any>([
       [

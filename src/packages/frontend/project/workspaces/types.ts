@@ -23,6 +23,7 @@ import type {
 
 export type ProjectWorkspaceState = {
   loading: boolean;
+  error: string;
   records: WorkspaceRecord[];
   selection: WorkspaceSelection;
   current: WorkspaceRecord | null;
@@ -38,4 +39,5 @@ export type ProjectWorkspaceState = {
   reorderWorkspaces: (order: string[]) => void;
   deleteWorkspace: (workspace_id: string) => void;
   touchWorkspace: (workspace_id: string) => void;
+  refresh: () => void;
 };

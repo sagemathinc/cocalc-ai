@@ -39,6 +39,10 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { humanSize } from "@cocalc/util/misc";
 import {
+  PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE,
+  PROJECT_APP_PUBLIC_EXPOSURE_ENABLED,
+} from "@cocalc/util/project-apps";
+import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
 } from "@cocalc/frontend/project/new/navigator-intents";
@@ -118,7 +122,7 @@ const APP_SECURITY_MARKDOWN = `
 
 ### What CoCalc is designed to protect
 
-- Public apps are exposed on separate public hostnames.
+- Public app exposure is disabled for this release.
 - Project-host session cookies are scoped to the current project instead of the whole host.
 - Project-host auth/session cookies and bootstrap bearer headers are stripped before traffic is proxied upstream to the app.
 - Private apps in one project cannot fetch private apps in another project on the same host.
@@ -126,8 +130,7 @@ const APP_SECURITY_MARKDOWN = `
 ### What this means in practice
 
 - Do **not** open untrusted private apps in projects that contain sensitive files or secrets.
-- Use **Expose** if an app should be reachable by other people on its own public hostname.
-- Use **Audit with Codex** before exposing an app publicly if you want an extra review pass.
+- Public exposure may return after a focused security/product review.
 
 More detail: \`docs/security/private-app-trust-model.md\`
 `;
@@ -1176,6 +1179,14 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   useEffect(() => {
     let cancelled = false;
     async function loadPublicAppPolicy() {
+      if (!PROJECT_APP_PUBLIC_EXPOSURE_ENABLED) {
+        if (!cancelled) {
+          setPublicAppPolicy({
+            enabled: false,
+          });
+        }
+        return;
+      }
       try {
         const policy =
           await webapp_client.conat_client.hub.system.getProjectAppPublicPolicy(
@@ -1983,6 +1994,10 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   }
 
   async function onExpose(id: string) {
+    if (!PROJECT_APP_PUBLIC_EXPOSURE_ENABLED) {
+      setError(new Error(PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE));
+      return;
+    }
     try {
       setSubmitting(true);
       setRowAction({ appId: id, action: "expose" });
@@ -2434,8 +2449,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           Applications
         </div>
         <Paragraph style={{ color: "#666", marginBottom: 0 }}>
-          Run, expose, adopt, and troubleshoot project apps without mixing this
-          page with normal file-creation workflows.
+          Run, adopt, and troubleshoot project apps without mixing this page
+          with normal file-creation workflows.
         </Paragraph>
       </div>
       <input
@@ -3120,7 +3135,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     },
                 {
                   key: "launch",
-                  label: "Launch and public defaults",
+                  label: PROJECT_APP_PUBLIC_EXPOSURE_ENABLED
+                    ? "Launch and public defaults"
+                    : "Launch",
                   children: (
                     <Space
                       orientation="vertical"
@@ -3141,51 +3158,64 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           Open when ready
                         </Checkbox>
                       </Space>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          fontSize: "12px",
-                          color: "#666",
-                        }}
-                      >
-                        Public expose defaults
-                      </div>
-                      <Space.Compact style={{ width: "100%" }}>
-                        <Input
-                          value={exposeTtlHours}
-                          onChange={(e) => setExposeTtlHours(e.target.value)}
-                          placeholder="TTL hours (e.g. 24)"
+                      {PROJECT_APP_PUBLIC_EXPOSURE_ENABLED ? (
+                        <>
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              fontSize: "12px",
+                              color: "#666",
+                            }}
+                          >
+                            Public expose defaults
+                          </div>
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              value={exposeTtlHours}
+                              onChange={(e) =>
+                                setExposeTtlHours(e.target.value)
+                              }
+                              placeholder="TTL hours (e.g. 24)"
+                            />
+                            <Select<"none" | "token">
+                              value={exposeAuthFront}
+                              style={{ width: "140px" }}
+                              options={[
+                                { label: "No front auth", value: "none" },
+                                { label: "Token gate", value: "token" },
+                              ]}
+                              onChange={(value) => setExposeAuthFront(value)}
+                            />
+                          </Space.Compact>
+                          <Space wrap>
+                            <Checkbox
+                              checked={exposeRandomSubdomain}
+                              onChange={(e) =>
+                                setExposeRandomSubdomain(e.target.checked)
+                              }
+                            >
+                              Random subdomain
+                            </Checkbox>
+                            {!exposeRandomSubdomain ? (
+                              <Input
+                                value={exposeSubdomainLabel}
+                                onChange={(e) =>
+                                  setExposeSubdomainLabel(e.target.value)
+                                }
+                                placeholder="subdomain label (optional)"
+                                style={{ width: "220px" }}
+                              />
+                            ) : null}
+                          </Space>
+                        </>
+                      ) : (
+                        <Alert
+                          type="info"
+                          showIcon
+                          title={PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE}
+                          description="Private project apps still work. Public app publishing is intentionally out of scope for launch."
                         />
-                        <Select<"none" | "token">
-                          value={exposeAuthFront}
-                          style={{ width: "140px" }}
-                          options={[
-                            { label: "No front auth", value: "none" },
-                            { label: "Token gate", value: "token" },
-                          ]}
-                          onChange={(value) => setExposeAuthFront(value)}
-                        />
-                      </Space.Compact>
-                      <Space wrap>
-                        <Checkbox
-                          checked={exposeRandomSubdomain}
-                          onChange={(e) =>
-                            setExposeRandomSubdomain(e.target.checked)
-                          }
-                        >
-                          Random subdomain
-                        </Checkbox>
-                        {!exposeRandomSubdomain ? (
-                          <Input
-                            value={exposeSubdomainLabel}
-                            onChange={(e) =>
-                              setExposeSubdomainLabel(e.target.value)
-                            }
-                            placeholder="subdomain label (optional)"
-                            style={{ width: "220px" }}
-                          />
-                        ) : null}
-                      </Space>
+                      )}
                     </Space>
                   ),
                 },
@@ -3375,14 +3405,29 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     },
                   ]
                 : []),
-              {
-                key: isPublic ? "unexpose" : "expose",
-                label: isPublic ? "Unexpose" : "Expose",
-              },
-              {
-                key: "audit",
-                label: "Audit with Codex",
-              },
+              ...(isPublic
+                ? [
+                    {
+                      key: "unexpose",
+                      label: "Unexpose",
+                    },
+                  ]
+                : PROJECT_APP_PUBLIC_EXPOSURE_ENABLED
+                  ? [
+                      {
+                        key: "expose",
+                        label: "Expose",
+                      },
+                    ]
+                  : []),
+              ...(PROJECT_APP_PUBLIC_EXPOSURE_ENABLED
+                ? [
+                    {
+                      key: "audit",
+                      label: "Audit with Codex",
+                    },
+                  ]
+                : []),
               {
                 key: "logs",
                 label: "Logs",
