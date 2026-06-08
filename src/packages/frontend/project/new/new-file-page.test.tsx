@@ -17,8 +17,10 @@ const mockCreateFile = jest.fn();
 const mockSetActiveTab = jest.fn();
 const mockSetCurrentPath = jest.fn();
 const mockSetNewFilenameFamily = jest.fn();
+const mockSetNextDefaultFilename = jest.fn();
 const mockSetState = jest.fn();
 const mockSetOtherSettings = jest.fn();
+let mockDefaultFilename = "draft.md";
 
 jest.mock("antd", () => {
   const React = require("react");
@@ -99,12 +101,13 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     set_active_tab: mockSetActiveTab,
     set_current_path: mockSetCurrentPath,
     set_new_filename_family: mockSetNewFilenameFamily,
+    set_next_default_filename: mockSetNextDefaultFilename,
     setState: mockSetState,
   }),
   useTypedRedux: (store: any, key: string) => {
     if (store === "account" && key === "other_settings") return ImmutableMap();
     if (key === "current_path_abs") return "/work";
-    if (key === "default_filename") return "draft.md";
+    if (key === "default_filename") return mockDefaultFilename;
     if (key === "file_creation_error") return "";
     return undefined;
   },
@@ -217,8 +220,11 @@ jest.mock("react-intl", () => ({
   FormattedMessage: ({ defaultMessage }: any) => <>{defaultMessage}</>,
   useIntl: () => ({
     formatMessage: (message: any, values?: any) => {
-      const text = message?.defaultMessage ?? message?.id ?? "";
-      return values?.desc ? text.replace("{desc}", values.desc) : text;
+      let text = message?.defaultMessage ?? message?.id ?? "";
+      for (const [key, value] of Object.entries(values ?? {})) {
+        text = text.replace(`{${key}}`, `${value}`);
+      }
+      return text;
     },
   }),
 }));
@@ -231,8 +237,10 @@ describe("NewFilePage folder creation", () => {
     mockSetActiveTab.mockReset();
     mockSetCurrentPath.mockReset();
     mockSetNewFilenameFamily.mockReset();
+    mockSetNextDefaultFilename.mockReset();
     mockSetState.mockReset();
     mockSetOtherSettings.mockReset();
+    mockDefaultFilename = "draft.md";
   });
 
   it("opens a selected folder-name modal from the top folder button", async () => {
@@ -269,5 +277,57 @@ describe("NewFilePage folder creation", () => {
     fireEvent.click(screen.getByText(/Filename generator:/));
 
     expect(mockSetNewFilenameFamily).toHaveBeenCalledWith("pet");
+  });
+
+  it("refreshes the generated filename when the retained new page is revealed", () => {
+    const { rerender } = render(
+      <NewFilePage project_id="project-1" isVisible={false} />,
+    );
+
+    expect(screen.getByDisplayValue("draft.md")).toBeInTheDocument();
+
+    mockDefaultFilename = "fresh.md";
+    rerender(<NewFilePage project_id="project-1" isVisible={true} />);
+
+    expect(screen.getByDisplayValue("fresh.md")).toBeInTheDocument();
+  });
+
+  it("does not replace a manually edited filename on reveal", () => {
+    const { rerender } = render(
+      <NewFilePage project_id="project-1" isVisible={true} />,
+    );
+    const input = screen.getByDisplayValue("draft.md");
+
+    fireEvent.change(input, { target: { value: "my-notes.md" } });
+    mockDefaultFilename = "fresh.md";
+    rerender(<NewFilePage project_id="project-1" isVisible={false} />);
+    rerender(<NewFilePage project_id="project-1" isVisible={true} />);
+
+    expect(screen.getByDisplayValue("my-notes.md")).toBeInTheDocument();
+  });
+
+  it("returns to generated filename mode after creating a file", async () => {
+    const { rerender } = render(
+      <NewFilePage project_id="project-1" isVisible={true} />,
+    );
+    const input = screen.getByDisplayValue("draft.md");
+
+    fireEvent.change(input, { target: { value: "my-notes.md" } });
+    fireEvent.click(screen.getByRole("button", { name: /Create md file/i }));
+
+    await waitFor(() =>
+      expect(mockCreateFile).toHaveBeenCalledWith({
+        name: "my-notes.md",
+        ext: undefined,
+        current_path: "/work",
+      }),
+    );
+    expect(mockSetNextDefaultFilename).toHaveBeenCalled();
+
+    mockDefaultFilename = "fresh.md";
+    rerender(<NewFilePage project_id="project-1" isVisible={false} />);
+    rerender(<NewFilePage project_id="project-1" isVisible={true} />);
+
+    expect(screen.getByDisplayValue("fresh.md")).toBeInTheDocument();
   });
 });
