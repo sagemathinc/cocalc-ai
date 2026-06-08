@@ -291,6 +291,8 @@ Exit criteria:
 
 USER question: what about some sort of user-visible health status?   
 
+USER could we use the cloudflare geographic location information (which we use for assigning backup regions) to also show _where_ users are from on a map. This can often help a lot with understanding abuse.
+
 ### L4: Abuse And Spend Controls
 
 Problem:
