@@ -636,6 +636,56 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
             )
             self.assertEqual(remaining, ["v5", "v6", "v7"])
 
+    def test_prune_preserves_live_mountinfo_bundle_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            root = Path(tmpdir) / "bundles"
+            root.mkdir(parents=True, exist_ok=True)
+            created: list[Path] = []
+            for index in range(1, 8):
+                version_dir = root / f"v{index}"
+                version_dir.mkdir()
+                (version_dir / "README.txt").write_text(f"v{index}\n", encoding="utf-8")
+                os.utime(version_dir, (index, index))
+                created.append(version_dir)
+            current = root / "current"
+            current.symlink_to(created[5], target_is_directory=True)
+            proc_root = Path(tmpdir) / "proc"
+            pid_dir = proc_root / "123"
+            pid_dir.mkdir(parents=True)
+            (pid_dir / "mountinfo").write_text(
+                (
+                    f"36 25 0:32 {created[1]}//deleted /opt/cocalc/bin2 "
+                    "rw,relatime - ext4 /dev/sda rw\n"
+                    f"37 25 0:32 {created[2]}\\040(deleted) "
+                    "/opt/cocalc/project-bundle rw,relatime - ext4 /dev/sda rw\n"
+                ),
+                encoding="utf-8",
+            )
+            bundle = bootstrap.BundleSpec(
+                url="",
+                sha256=None,
+                remote="",
+                root=str(root),
+                dir=str(created[6]),
+                current=str(current),
+                version="v7",
+            )
+
+            original_proc_root = bootstrap.PROC_ROOT
+            try:
+                bootstrap.PROC_ROOT = proc_root
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+            finally:
+                bootstrap.PROC_ROOT = original_proc_root
+
+            remaining = sorted(
+                child.name
+                for child in root.iterdir()
+                if child.is_dir() and not child.is_symlink()
+            )
+            self.assertEqual(remaining, ["v2", "v3", "v6", "v7"])
+
 
 class BootstrapOwnershipScopeTest(unittest.TestCase):
     def test_ensure_bootstrap_paths_does_not_recurse_over_bootstrap_root(self) -> None:
