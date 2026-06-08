@@ -112,7 +112,7 @@ sudo apt-get install -y --no-install-recommends ovmf qemu-system-x86 qemu-utils
 ~~~
 
 Then install Lima using Homebrew on Linux if you already use it, or download the
-current Lima binary archive from https://lima-vm.io/docs/installation/.
+current Lima binary archive from https://github.com/lima-vm/lima/releases.
 
 Then install CoCalc Star:
 
