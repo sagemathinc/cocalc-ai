@@ -170,8 +170,7 @@ function isActiveAcpAssistantTurn({
   const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
   const threadId = `${field<string>(message, "thread_id") ?? ""}`.trim();
   const states = [
-    field<string>(message, "acp_state"),
-    messageId ? acpState?.get?.(`message:${messageId}`) : undefined,
+    resolvedMessageAcpState({ message, acpState }),
     threadId ? acpState?.get?.(`thread:${threadId}`) : undefined,
   ];
   return states.some(
@@ -220,9 +219,9 @@ function collectSteers({
       message,
       byMessageId,
     });
-    const state =
-      toAttachedSteerState(acpState?.get?.(`message:${messageId}`)) ??
-      toAttachedSteerState(field<string>(message, "acp_state"));
+    const state = toAttachedSteerState(
+      resolvedMessageAcpState({ message, acpState }),
+    );
     if (!state || !anchoredParentId) continue;
     const steer = {
       messageId,
@@ -667,6 +666,47 @@ function isThread(message: ChatMessageTyped, numChildren: NumChildren) {
 function normalizeMessageAcpState(state: unknown): string | undefined {
   if (state === "queued") return "queue";
   return typeof state === "string" && state.length > 0 ? state : undefined;
+}
+
+function resolvedMessageAcpState({
+  message,
+  acpState,
+  hasAcpReply,
+}: {
+  message: ChatMessageTyped;
+  acpState?: { get?: (key: string) => unknown };
+  hasAcpReply?: boolean;
+}): string | undefined {
+  const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
+  if (messageId && acpState != null) {
+    const storedState = normalizeMessageAcpState(
+      acpState.get?.(`message:${messageId}`),
+    );
+    if (storedState != null) return storedState;
+  }
+  const rowState = normalizeMessageAcpState(
+    field<string>(message, "acp_state"),
+  );
+  return hasAcpReply === true && rowState === "queue" ? undefined : rowState;
+}
+
+function hasAcpChildReply({
+  message,
+  messages,
+}: {
+  message: ChatMessageTyped;
+  messages: ChatMessages;
+}): boolean {
+  const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
+  if (!messageId) return false;
+  for (const [, other] of messages) {
+    if (other == null) continue;
+    if (`${parentMessageId(other) ?? ""}`.trim() !== messageId) continue;
+    if (field<string>(other, "acp_account_id")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Messages are sorted using each message record's `date` value.
@@ -1242,10 +1282,11 @@ export function MessageList({
     }
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
     const messageAcpState = messageId
-      ? normalizeMessageAcpState(
-          acpState?.get?.(`message:${messageId}`) ??
-            field<string>(message, "acp_state"),
-        )
+      ? resolvedMessageAcpState({
+          message,
+          acpState,
+          hasAcpReply: hasAcpChildReply({ message, messages }),
+        })
       : undefined;
     const activitySteers = messageId
       ? activitySteersByAssistantMessageId?.get(messageId)

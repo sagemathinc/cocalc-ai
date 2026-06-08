@@ -105,6 +105,18 @@ function getThreadChatRows(syncdb: any, threadId?: string): any[] {
   );
 }
 
+function chatThreadIdsFromRows(rows: any[]): Set<string> {
+  const threadIds = new Set<string>();
+  for (const row of rows) {
+    if ((row as any)?.event !== CHAT_EVENT) continue;
+    const threadId = `${(row as any)?.thread_id ?? ""}`.trim();
+    if (threadId) {
+      threadIds.add(threadId);
+    }
+  }
+  return threadIds;
+}
+
 function applyChatRowAcpState(
   acpState: any,
   record: any,
@@ -163,6 +175,13 @@ export function initFromSyncDB({ syncdb, store }: { syncdb: any; store: any }) {
       acpState,
       syncdb,
       threadState: row,
+    });
+  }
+  for (const threadId of chatThreadIdsFromRows(rows)) {
+    acpState = clearRepliedPromptQueuedAcpState({
+      acpState,
+      syncdb,
+      threadId,
     });
   }
   store.setState({ acpState });
@@ -279,6 +298,39 @@ function clearStartedPromptQueuedAcpState({
   return acpState.delete(key);
 }
 
+function clearRepliedPromptQueuedAcpState({
+  acpState,
+  syncdb,
+  threadId,
+}: {
+  acpState: any;
+  syncdb: any;
+  threadId?: string;
+}): any {
+  const rows = getThreadChatRows(syncdb, threadId);
+  if (rows.length === 0) return acpState;
+
+  const messageIds = new Set<string>();
+  for (const row of rows) {
+    const messageId = chatMessageId(row);
+    if (messageId) {
+      messageIds.add(messageId);
+    }
+  }
+
+  let next = acpState;
+  for (const row of rows) {
+    const parentMessageId = chatParentMessageId(row);
+    if (!parentMessageId || !messageIds.has(parentMessageId)) continue;
+    if (!`${(row as any)?.acp_account_id ?? ""}`.trim()) continue;
+    const key = `message:${parentMessageId}`;
+    if (next?.get?.(key) === "queue") {
+      next = next.delete(key);
+    }
+  }
+  return next;
+}
+
 function clearStaleRunningThreadAcpState({
   acpState,
   syncdb,
@@ -366,6 +418,11 @@ export function handleSyncDBChange({
         syncdb,
         threadState: getThreadStateRecord(syncdb, threadId),
       });
+      acpState = clearRepliedPromptQueuedAcpState({
+        acpState,
+        syncdb,
+        threadId,
+      });
       const key = threadId;
       const now = Date.now();
       const activity = (store.get("activity") ?? iMap()).set(key, now);
@@ -396,6 +453,11 @@ export function handleSyncDBChange({
         acpState: next,
         syncdb,
         threadState: record ?? obj,
+      });
+      next = clearRepliedPromptQueuedAcpState({
+        acpState: next,
+        syncdb,
+        threadId: (record ?? obj)?.thread_id,
       });
       store.setState({
         acpState: next,
