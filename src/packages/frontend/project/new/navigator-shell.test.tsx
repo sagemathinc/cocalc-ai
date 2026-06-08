@@ -16,6 +16,10 @@ const mockMessageApi = {
 const mockGetChatActions = jest.fn();
 const mockInitChat = jest.fn();
 const mockRemoveWithInstance = jest.fn();
+const mockResolveExactProjectHomeDirectory = jest.fn();
+const mockFsMkdir = jest.fn();
+let mockLite = false;
+let mockHomeDirectory = "/home/user";
 let mockSharedChatReady = true;
 
 function createMockSharedChatActions(id = "shared") {
@@ -107,6 +111,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
   useActions: () => ({
     open_file: jest.fn(),
+    fs: () => ({
+      mkdir: (...args: any[]) => mockFsMkdir(...args),
+    }),
   }),
   useTypedRedux: (store: any, key: string) => {
     if (store === "account" && key === "account_id") return "acct-1";
@@ -221,7 +228,15 @@ jest.mock("@cocalc/frontend/lib/file-context", () => ({
 }));
 
 jest.mock("@cocalc/frontend/lite", () => ({
-  lite: false,
+  get lite() {
+    return mockLite;
+  },
+}));
+
+jest.mock("@cocalc/frontend/project/home-directory", () => ({
+  getProjectHomeDirectory: () => mockHomeDirectory,
+  resolveExactProjectHomeDirectory: (...args: any[]) =>
+    mockResolveExactProjectHomeDirectory(...args),
 }));
 
 jest.mock("@cocalc/frontend/project/page/anchor-tag-component", () => ({
@@ -256,6 +271,10 @@ describe("NavigatorShell keyboard suppression", () => {
     mockGetChatActions.mockReset();
     mockInitChat.mockReset();
     mockRemoveWithInstance.mockReset();
+    mockResolveExactProjectHomeDirectory.mockReset();
+    mockFsMkdir.mockReset();
+    mockLite = false;
+    mockHomeDirectory = "/home/user";
     mockSharedChatReady = true;
     mockSharedChatActions = createMockSharedChatActions();
     mockGetChatActions.mockReturnValue(mockSharedChatActions);
@@ -353,6 +372,35 @@ describe("NavigatorShell keyboard suppression", () => {
       "/home/user/.local/share/cocalc/navigator-acct-1.chat",
       expect.anything(),
       "project-1",
+      { instanceKey: "navigator-shell" },
+    );
+  });
+
+  it("waits for exact lite HOME before creating the navigator chat directory", async () => {
+    mockLite = true;
+    mockHomeDirectory = "/home/user";
+    mockGetChatActions.mockReturnValue(undefined);
+    mockInitChat.mockReturnValue(mockSharedChatActions);
+    mockResolveExactProjectHomeDirectory.mockResolvedValue(
+      "/Users/wstein/CoCalc Plus/project",
+    );
+
+    render(<NavigatorShell project_id="project-1" />);
+
+    expect(mockFsMkdir).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(mockFsMkdir).toHaveBeenCalledWith(
+        "/Users/wstein/CoCalc Plus/project/.local/share/cocalc",
+        { recursive: true },
+      ),
+    );
+    expect(mockFsMkdir).not.toHaveBeenCalledWith(
+      "/home/user/.local/share/cocalc",
+      expect.anything(),
+    );
+    expect(mockInitChat).toHaveBeenCalledWith(
+      "project-1",
+      "/Users/wstein/CoCalc Plus/project/.local/share/cocalc/navigator.chat",
       { instanceKey: "navigator-shell" },
     );
   });

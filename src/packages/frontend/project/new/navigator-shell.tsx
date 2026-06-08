@@ -42,7 +42,10 @@ import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { COLORS } from "@cocalc/util/theme";
-import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import {
+  getProjectHomeDirectory,
+  resolveExactProjectHomeDirectory,
+} from "@cocalc/frontend/project/home-directory";
 import { StartButton } from "@cocalc/frontend/project/start-button";
 import {
   NAVIGATOR_SUBMIT_PROMPT_EVENT,
@@ -444,7 +447,13 @@ export function NavigatorShell({
     "state",
   ]);
 
-  const homeDirectory = useMemo(() => {
+  const [homeResolveTick, setHomeResolveTick] = useState(0);
+  const [exactLiteHomeDirectory, setExactLiteHomeDirectory] = useState<{
+    project_id: string;
+    home: string;
+  } | null>(null);
+
+  const fallbackHomeDirectory = useMemo(() => {
     const resolvedHome = available_features?.get?.("homeDirectory");
     if (typeof resolvedHome === "string" && resolvedHome.length > 0) {
       return normalizeAbsolutePath(resolvedHome);
@@ -452,7 +461,52 @@ export function NavigatorShell({
     return getProjectHomeDirectory(project_id);
   }, [available_features, project_id]);
 
+  useEffect(() => {
+    if (lite) {
+      setExactLiteHomeDirectory(null);
+    }
+  }, [project_id]);
+
+  useEffect(() => {
+    if (!lite) return;
+    let cancelled = false;
+    const resolvedHome = available_features?.get?.("homeDirectory");
+    if (typeof resolvedHome === "string" && resolvedHome.length > 0) {
+      setExactLiteHomeDirectory({
+        project_id,
+        home: normalizeAbsolutePath(resolvedHome),
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    void resolveExactProjectHomeDirectory(project_id).then((home) => {
+      if (cancelled) return;
+      if (home) {
+        setExactLiteHomeDirectory({ project_id, home });
+        return;
+      }
+      window.setTimeout(() => {
+        if (!cancelled) {
+          setHomeResolveTick((tick) => tick + 1);
+        }
+      }, NAVIGATOR_CHAT_INIT_RETRY_MS);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [available_features, homeResolveTick, project_id]);
+
+  const homeDirectory = lite
+    ? exactLiteHomeDirectory?.project_id === project_id
+      ? exactLiteHomeDirectory.home
+      : ""
+    : fallbackHomeDirectory;
+
   const navigatorPath = useMemo(() => {
+    if (!homeDirectory) {
+      return "";
+    }
     if (!lite && typeof account_id !== "string") {
       return "";
     }
@@ -1112,7 +1166,7 @@ export function NavigatorShell({
       data["data-selectedThreadKey"] = selectedThreadKey;
     }
     return data;
-  }, [selectedThreadKey]);
+  }, [homeDirectory, selectedThreadKey]);
 
   const chatFileContext = useMemo(
     () => ({

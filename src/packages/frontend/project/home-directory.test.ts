@@ -147,4 +147,28 @@ describe("getProjectHomeDirectory", () => {
       "/home/wstein/scratch/cocalc-lite-daemon1",
     );
   });
+
+  it("resolves exact lite home from project configuration without using heuristic fallback", async () => {
+    getProjectStore.mockReturnValue({
+      get: () => undefined,
+      getIn: () => undefined,
+    });
+    configuration.mockResolvedValue({
+      capabilities: {
+        homeDirectory: "/Users/wstein/Library/Application Support/CoCalc",
+      },
+    });
+
+    const {
+      getProjectHomeDirectory,
+      resolveExactProjectHomeDirectory,
+    } = require("./home-directory");
+    expect(getProjectHomeDirectory("project-1")).toBe("/home/user");
+    await expect(resolveExactProjectHomeDirectory("project-1")).resolves.toBe(
+      "/Users/wstein/Library/Application Support/CoCalc",
+    );
+    expect(getProjectHomeDirectory("project-1")).toBe(
+      "/Users/wstein/Library/Application Support/CoCalc",
+    );
+  });
 });

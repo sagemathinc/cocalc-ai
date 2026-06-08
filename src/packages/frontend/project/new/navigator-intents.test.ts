@@ -69,6 +69,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 
 jest.mock("@cocalc/frontend/project/home-directory", () => ({
   getProjectHomeDirectory: () => "/home/wstein",
+  resolveExactProjectHomeDirectory: () => "/home/wstein",
 }));
 
 import {

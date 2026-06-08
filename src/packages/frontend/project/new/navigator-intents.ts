@@ -4,7 +4,10 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
-import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import {
+  getProjectHomeDirectory,
+  resolveExactProjectHomeDirectory,
+} from "@cocalc/frontend/project/home-directory";
 import {
   AGENT_PANEL_INLINE_CHAT_INSTANCE_KEY,
   loadOpenedAgentSessionSelection,
@@ -386,10 +389,22 @@ function navigatorChatPath(accountId?: string): string {
   return `.local/share/cocalc/navigator-${key}.chat`;
 }
 
-function resolveNavigatorChatPath(project_id: string): string {
+function resolveNavigatorChatPathForHome(homeDirectory: string): string {
   const accountId = `${redux.getStore("account")?.get?.("account_id") ?? ""}`;
-  const homeDirectory = getProjectHomeDirectory(project_id);
   return normalizeAbsolutePath(navigatorChatPath(accountId), homeDirectory);
+}
+
+async function resolveNavigatorChatPathForFilesystem(
+  project_id: string,
+): Promise<string> {
+  if (lite) {
+    const homeDirectory = await resolveExactProjectHomeDirectory(project_id);
+    if (!homeDirectory) {
+      throw new Error("exact project HOME is not available yet");
+    }
+    return resolveNavigatorChatPathForHome(homeDirectory);
+  }
+  return resolveNavigatorChatPathForHome(getProjectHomeDirectory(project_id));
 }
 
 async function ensureNavigatorChatDirectory(
@@ -555,7 +570,8 @@ async function writeNavigatorPromptInWorkspaceChat(
           : undefined,
     });
     const targetChatPath =
-      workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
+      workspaceTarget?.chat_path ??
+      (await resolveNavigatorChatPathForFilesystem(project_id));
     const preferredThreadKey = loadNavigatorSelectedThreadKey(
       project_id,
       targetChatPath,
@@ -1049,7 +1065,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       path: opts.path,
     });
     const targetChatPath =
-      workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
+      workspaceTarget?.chat_path ??
+      (await resolveNavigatorChatPathForFilesystem(project_id));
 
     const preferExistingThread = opts.createNewThread !== true;
     const preferredThreadKey = preferExistingThread
@@ -1338,18 +1355,17 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         createNewThread: opts.createNewThread ?? false,
       });
       if (opts.openFloating !== false) {
+        const chatPath =
+          await resolveNavigatorChatPathForFilesystem(project_id);
         revealAgentSession(
           project_id,
           {
             session_id: `navigator-${project_id}`,
             project_id,
             account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
-            chat_path: resolveNavigatorChatPath(project_id),
+            chat_path: chatPath,
             thread_key: `${
-              loadNavigatorSelectedThreadKey(
-                project_id,
-                resolveNavigatorChatPath(project_id),
-              ) ?? ""
+              loadNavigatorSelectedThreadKey(project_id, chatPath) ?? ""
             }`.trim(),
             title: requestedTitle ?? "Navigator",
             created_at: new Date().toISOString(),
