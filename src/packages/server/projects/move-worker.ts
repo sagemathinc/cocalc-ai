@@ -109,6 +109,16 @@ type MoveRuntimeSlotReservation = {
   existing?: boolean | null;
 };
 
+export function reconcileMoveWorkerInFlight({
+  inFlight,
+  freshRunning,
+}: {
+  inFlight: number;
+  freshRunning: number;
+}): number {
+  return Math.max(0, Math.min(inFlight, freshRunning));
+}
+
 export function createNonOverlappingAsyncRunner(
   run: () => Promise<void>,
 ): () => Promise<boolean> {
@@ -518,6 +528,32 @@ async function listFreshRunningMoveTopologyRows({
   return rows;
 }
 
+async function countFreshRunningMoveOpsForOwner({
+  owner_type,
+  owner_id,
+  lease_ms,
+}: {
+  owner_type: string;
+  owner_id: string;
+  lease_ms: number;
+}): Promise<number> {
+  const { rows } = await pool().query<{ count: string }>(
+    `
+      SELECT COUNT(*)::text AS count
+      FROM long_running_operations
+      WHERE kind = $1
+        AND dismissed_at IS NULL
+        AND status = 'running'
+        AND owner_type = $2
+        AND owner_id = $3
+        AND heartbeat_at IS NOT NULL
+        AND heartbeat_at >= now() - ($4::text || ' milliseconds')::interval
+    `,
+    [MOVE_LRO_KIND, owner_type, owner_id, lease_ms],
+  );
+  return Number(rows[0]?.count ?? 0) || 0;
+}
+
 async function listActiveMoveDestinationHosts({
   account_ids = [],
 }: {
@@ -855,6 +891,29 @@ export function startMoveLroWorker({
         logger.warn("move op limit lookup failed", { err });
         return;
       }
+    }
+    try {
+      const freshRunning = await countFreshRunningMoveOpsForOwner({
+        owner_type: OWNER_TYPE,
+        owner_id: WORKER_ID,
+        lease_ms: LEASE_MS,
+      });
+      const reconciled = reconcileMoveWorkerInFlight({
+        inFlight,
+        freshRunning,
+      });
+      if (reconciled !== inFlight) {
+        logger.warn("move worker reconciled stale in-flight count", {
+          worker_id: WORKER_ID,
+          in_flight: inFlight,
+          fresh_running: freshRunning,
+          reconciled,
+        });
+        inFlight = reconciled;
+      }
+    } catch (err) {
+      logger.warn("move worker in-flight reconciliation failed", { err });
+      return;
     }
     if (inFlight >= effectiveMaxParallel) return;
     let ops: LroSummary[] = [];

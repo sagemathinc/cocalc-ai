@@ -10,6 +10,7 @@ import { getProjectHostDefaultParallelLimits } from "@cocalc/server/lro/project-
 import {
   ensureLroSchema,
   expireDueLros,
+  getLro,
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
@@ -53,6 +54,12 @@ const HOST_LOCAL_BACKUP_WORKER_KIND = "project-host-backup-execution";
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 
 const WORKER_ID = randomUUID();
+const TERMINAL_LRO_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+]);
 
 const progressSteps: Record<string, number> = {
   validate: 5,
@@ -287,6 +294,14 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
       duration_ms,
     });
 
+    if (await shouldLeaveTerminalLroUntouched(op_id)) {
+      logger.info("backup op terminal state preserved", {
+        op_id,
+        project_id,
+        backup_id: backup.id,
+      });
+      return;
+    }
     const updated = await updateLro({
       op_id,
       status: "succeeded",
@@ -309,6 +324,14 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     });
   } catch (err) {
     logger.warn("backup op failed", { op_id, err: `${err}` });
+    if (await shouldLeaveTerminalLroUntouched(op_id)) {
+      logger.info("backup op terminal state preserved after failure", {
+        op_id,
+        project_id,
+        err: `${err}`,
+      });
+      return;
+    }
     const updated = await updateLro({
       op_id,
       status: "failed",
@@ -323,6 +346,13 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     clearInterval(heartbeat);
     logger.info("backup op cleanup", { op_id });
   }
+}
+
+async function shouldLeaveTerminalLroUntouched(
+  op_id: string,
+): Promise<boolean> {
+  const current = await getLro(op_id).catch(() => undefined);
+  return !!current && TERMINAL_LRO_STATUSES.has(current.status);
 }
 
 async function listFreshRunningBackupCountsByHost({
