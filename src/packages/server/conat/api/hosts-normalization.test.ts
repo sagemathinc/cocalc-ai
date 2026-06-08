@@ -5,6 +5,35 @@
 
 import { parseRow } from "./hosts-normalization";
 
+describe("parseRow host metrics normalization", () => {
+  it("preserves sampled shared scratch metrics", () => {
+    const host = parseRow({
+      id: "host-1",
+      name: "host-1",
+      status: "running",
+      region: "us-west3",
+      metadata: {
+        metrics: {
+          current: {
+            collected_at: "2026-06-08T12:00:00.000Z",
+            disk_device_total_bytes: "1000",
+            shared_scratch_total_bytes: "500",
+            shared_scratch_used_bytes: "125",
+            shared_scratch_available_bytes: "375",
+          },
+        },
+      },
+    });
+
+    expect(host.metrics?.current).toMatchObject({
+      disk_device_total_bytes: 1000,
+      shared_scratch_total_bytes: 500,
+      shared_scratch_used_bytes: 125,
+      shared_scratch_available_bytes: 375,
+    });
+  });
+});
+
 describe("parseRow bootstrap lifecycle normalization", () => {
   it("rewrites stale bootstrap desired bundle versions from current runtime targets", () => {
     const host = parseRow(
