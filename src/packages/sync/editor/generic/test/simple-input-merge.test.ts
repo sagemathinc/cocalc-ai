@@ -99,4 +99,34 @@ describe("SimpleInputMerge", () => {
     expect(local).toBe("hello world again");
     expect(applied).toBe(0);
   });
+
+  it("does not replay a local insert when remote already equals local", () => {
+    const merge = new SimpleInputMerge("P1-B: item");
+    let local = "(done) P1-B: item";
+    let applied = 0;
+
+    merge.handleRemote({
+      remote: "(done) P1-B: item",
+      getLocal: () => local,
+      applyMerged: (value) => {
+        applied += 1;
+        local = value;
+      },
+    });
+
+    expect(local).toBe("(done) P1-B: item");
+    expect(applied).toBe(0);
+
+    merge.handleRemote({
+      remote: "(done) P1-B: item\nnext",
+      getLocal: () => local,
+      applyMerged: (value) => {
+        applied += 1;
+        local = value;
+      },
+    });
+
+    expect(local).toBe("(done) P1-B: item\nnext");
+    expect(applied).toBe(1);
+  });
 });
