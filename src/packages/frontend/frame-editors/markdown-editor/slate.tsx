@@ -11,16 +11,15 @@ const ENABLE_PAGED_BLOCK_MARKDOWN_EDITOR = false;
 
 function PlainMarkdownFrameEditor(props: EditorComponentProps) {
   return (
-    <div className="smc-vfill" style={{ overflow: "auto" }}>
-      <PlainMarkdownEditor
-        {...(props as any)}
-        height="auto"
-        pageStyle={{
-          ...((props as any).pageStyle ?? {}),
-          padding: "70px",
-        }}
-      />
-    </div>
+    <PlainMarkdownEditor
+      {...(props as any)}
+      height="100%"
+      pageStyle={{
+        ...((props as any).pageStyle ?? {}),
+        padding: "70px",
+      }}
+      showEditBar
+    />
   );
 }
 
