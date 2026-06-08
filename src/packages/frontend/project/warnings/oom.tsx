@@ -37,7 +37,6 @@ export const OOMWarning: React.FC<{ project_id: string }> = ({
   const [oom_dismissed, set_oom_dismissed] = useState<number>(0);
   const project = useRedux(["projects", "project_map", project_id]);
   const projectStatus = useTypedRedux({ project_id }, "status");
-  const is_commercial = useTypedRedux("customize", "is_commercial");
 
   const membershipUrl = join(appBasePath, "/settings");
 
@@ -65,12 +64,8 @@ export const OOMWarning: React.FC<{ project_id: string }> = ({
     );
   }
 
-  if (
-    !is_commercial ||
-    project == null ||
-    project.getIn(["state", "state"]) != "running"
-  ) {
-    // never show a warning if project not loaded or commercial not set or project not running
+  if (project == null || project.getIn(["state", "state"]) != "running") {
+    // never show a warning if project not loaded or project not running
     return null;
   }
 

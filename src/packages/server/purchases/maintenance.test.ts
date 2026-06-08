@@ -11,6 +11,22 @@ describe("purchases.maintenance capability gating", () => {
     ).toEqual(["maintain statements"]);
   });
 
+  it("does not enable Stripe-backed tasks with only one Stripe key", async () => {
+    const { getEnabledMaintenanceDescriptions } = await import("./maintenance");
+    expect(
+      getEnabledMaintenanceDescriptions({
+        stripe_publishable_key: "pk_test_123",
+        stripe_secret_key: "",
+      } as any),
+    ).toEqual(["maintain statements"]);
+    expect(
+      getEnabledMaintenanceDescriptions({
+        stripe_publishable_key: "",
+        stripe_secret_key: "sk_test_456",
+      } as any),
+    ).toEqual(["maintain statements"]);
+  });
+
   it("enables Stripe-backed tasks when both Stripe keys are configured", async () => {
     const { getEnabledMaintenanceDescriptions } = await import("./maintenance");
     expect(

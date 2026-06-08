@@ -11,6 +11,7 @@ import siteURL from "./site-url";
 import { copy_with } from "@cocalc/util/misc";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import { publicSignupEmailDomainPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
+import { hasStripeBillingConfiguration } from "@cocalc/util/stripe/billing";
 export type { Customize };
 
 const fallback = (a?: string, b?: string): string =>
@@ -52,6 +53,7 @@ export default async function getCustomize(
       contactEmail: fallback(settings.organization_email, settings.help_email),
 
       isCommercial: settings.commercial,
+      stripe_enabled: hasStripeBillingConfiguration(settings),
 
       kucalc: settings.kucalc,
 

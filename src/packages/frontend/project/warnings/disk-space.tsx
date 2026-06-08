@@ -13,20 +13,16 @@ export const DiskSpaceWarning: React.FC<{ project_id: string }> = ({
   project_id,
 }) => {
   const projectStatus = useTypedRedux({ project_id }, "status");
-  const is_commercial = useTypedRedux("customize", "is_commercial");
   const { runQuota } = useProjectRunQuota(project_id);
   // We got a report of a crash when project isn't defined; that could happen
   // when opening a project via a direct link; if the run quota isn't loaded
   // yet, we simply avoid showing the warning.
-  const quotas = useMemo(
-    () => (is_commercial ? (runQuota ?? undefined) : undefined),
-    [is_commercial, runQuota],
-  );
+  const quotas = useMemo(() => runQuota ?? undefined, [runQuota]);
 
   const actions = useActions({ project_id });
 
-  if (!is_commercial || quotas == null || quotas.disk_quota == null) {
-    // never show a warning if project not loaded or commercial not set
+  if (quotas == null || quotas.disk_quota == null) {
+    // never show a warning if project run quota is not loaded
     return null;
   }
 

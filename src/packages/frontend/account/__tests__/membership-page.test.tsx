@@ -17,7 +17,7 @@ jest.mock("../membership-settings-data", () => ({
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store: string, key: string) =>
-    store === "customize" && key === "is_commercial",
+    store === "customize" && key === "stripe_enabled",
 }));
 
 jest.mock("react-intl", () => ({

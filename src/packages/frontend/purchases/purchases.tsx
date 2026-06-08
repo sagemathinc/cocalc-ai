@@ -80,10 +80,6 @@ interface Props {
 }
 
 export default function Purchases(props: Props) {
-  const is_commercial = useTypedRedux("customize", "is_commercial");
-  if (!is_commercial) {
-    return null;
-  }
   return <Purchases0 {...props} />;
 }
 

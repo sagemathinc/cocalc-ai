@@ -26,7 +26,7 @@ export default function BalanceButton({
   topBar?: boolean;
 }) {
   const intl = useIntl();
-  const is_commercial = useTypedRedux("customize", "is_commercial");
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
   const [open, setOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const dbBalance = useTypedRedux("account", "balance");
@@ -131,9 +131,9 @@ export default function BalanceButton({
     );
   }
 
-  // This ensures it only shows up in commercial setups.
-  // Wherever it is used, the component shouldn't be instantiated in those cases, though.
-  if (!is_commercial || (topBar && hideNavbarBalance && !balanceAlert)) {
+  const hasVisibleBalance = balance != null && !moneyRound2Down(balance).eq(0);
+  const shouldShow = stripeEnabled || !!balanceAlert || hasVisibleBalance;
+  if (!shouldShow || (topBar && hideNavbarBalance && !balanceAlert)) {
     return;
   } else {
     return (

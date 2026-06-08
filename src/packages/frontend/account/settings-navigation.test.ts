@@ -9,8 +9,8 @@ import { getRegisteredSettingsPageDefinition } from "./settings-page-registry";
 
 const visibleContext: SettingsNavigationContext = {
   isAdmin: false,
-  isCommercial: true,
   isLite: false,
+  stripeEnabled: true,
   zendesk: true,
 };
 
@@ -51,8 +51,8 @@ describe("settings-navigation", () => {
   it("applies runtime visibility conditions to groups and pages", () => {
     const liteNavigation = getVisibleSettingsNavigation({
       ...visibleContext,
-      isCommercial: false,
       isLite: true,
+      stripeEnabled: false,
       zendesk: false,
     });
 
@@ -119,36 +119,55 @@ describe("settings-navigation", () => {
     ).toEqual(["support"]);
   });
 
-  it("shows team license management only when commerce or admin access is available", () => {
-    const nonCommercialUser = getVisibleSettingsNavigation({
+  it("keeps non-Stripe billing and license pages visible without Stripe", () => {
+    const noStripeUser = getVisibleSettingsNavigation({
       ...visibleContext,
       isAdmin: false,
-      isCommercial: false,
+      stripeEnabled: false,
     });
-    const userLicenses = nonCommercialUser.find(
+    const userLicenses = noStripeUser.find(
       (node) => node.type === "group" && node.key === "licenses",
     );
     expect(userLicenses?.type).toBe("group");
     if (userLicenses?.type === "group") {
       expect(userLicenses.pages.map(({ page }) => page)).toEqual([
+        "team-licenses",
         "site-licenses",
         "software-licenses",
       ]);
     }
 
-    const nonCommercialAdmin = getVisibleSettingsNavigation({
-      ...visibleContext,
-      isAdmin: true,
-      isCommercial: false,
-    });
-    const adminLicenses = nonCommercialAdmin.find(
-      (node) => node.type === "group" && node.key === "licenses",
+    const billing = noStripeUser.find(
+      (node) => node.type === "group" && node.key === "billing",
     );
-    expect(adminLicenses?.type).toBe("group");
-    if (adminLicenses?.type === "group") {
-      expect(adminLicenses.pages.map(({ page }) => page)).toContain(
-        "team-licenses",
-      );
+    expect(billing?.type).toBe("group");
+    if (billing?.type === "group") {
+      expect(billing.pages.map(({ page }) => page)).toEqual([
+        "purchases",
+        "statements",
+        "vouchers",
+      ]);
+    }
+  });
+
+  it("shows Stripe billing pages only when Stripe is configured", () => {
+    const stripeNavigation = getVisibleSettingsNavigation({
+      ...visibleContext,
+      stripeEnabled: true,
+    });
+    const billing = stripeNavigation.find(
+      (node) => node.type === "group" && node.key === "billing",
+    );
+    expect(billing?.type).toBe("group");
+    if (billing?.type === "group") {
+      expect(billing.pages.map(({ page }) => page)).toEqual([
+        "subscriptions",
+        "purchases",
+        "payments",
+        "payment-methods",
+        "statements",
+        "vouchers",
+      ]);
     }
   });
 });

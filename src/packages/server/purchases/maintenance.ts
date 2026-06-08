@@ -5,6 +5,7 @@ import getLogger from "@cocalc/backend/logger";
 import maintainAutomaticPayments from "./maintain-automatic-payments";
 import maintainAutoBalance from "./maintain-auto-balance";
 import { maintainPaymentIntents } from "./stripe/process-payment-intents";
+import { hasStripeBillingConfiguration } from "@cocalc/util/stripe/billing";
 
 const logger = getLogger("purchases:maintenance");
 
@@ -44,19 +45,10 @@ const FUNCTIONS: MaintenanceDescription[] = [
   },
 ];
 
-type MaintenanceSettings = Pick<
+export type MaintenanceSettings = Pick<
   Awaited<ReturnType<typeof getServerSettings>>,
   "stripe_publishable_key" | "stripe_secret_key"
 >;
-
-export function hasStripeBillingConfiguration(
-  settings: MaintenanceSettings,
-): boolean {
-  return (
-    `${settings.stripe_publishable_key ?? ""}`.trim().length > 0 &&
-    `${settings.stripe_secret_key ?? ""}`.trim().length > 0
-  );
-}
 
 export function getEnabledMaintenanceDescriptions(
   settings: MaintenanceSettings,
