@@ -13,6 +13,10 @@ register(
   ({ editor, extra }) => {
     const altEnter = extra?.actions?.altEnter;
     if (altEnter != null) {
+      const editorAny = editor as unknown as { _hasUnsavedChanges?: any };
+      if (editorAny._hasUnsavedChanges === false) {
+        editorAny._hasUnsavedChanges = undefined;
+      }
       altEnter(editor.getMarkdownValue(), extra?.id, {
         selection: editor.selection ?? null,
         slateValue: [...editor.children] as any,
