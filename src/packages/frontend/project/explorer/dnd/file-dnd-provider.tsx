@@ -43,6 +43,30 @@ export interface FolderDropData {
   path: string;
 }
 
+export function isSelfFolderDrop(paths: string[], folderPath: string): boolean {
+  return paths.some(
+    (path) => path === folderPath || folderPath.startsWith(path + "/"),
+  );
+}
+
+export function isAlreadyInFolder(
+  paths: string[],
+  folderPath: string,
+): boolean {
+  return paths.every((path) => path_split(path).head === folderPath);
+}
+
+function folderDropPathFromEvent(
+  event: DragEndEvent,
+  pointer: { x: number; y: number },
+): string | null {
+  const dropData = event.over?.data?.current as FolderDropData | undefined;
+  if (dropData?.type === "folder-drop") {
+    return dropData.path;
+  }
+  return findFolderDropPathAtPoint(pointer.x, pointer.y);
+}
+
 export function useFileDrag(id: string, paths: string[], project_id: string) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id,
@@ -64,16 +88,10 @@ export function useFolderDrop(id: string, folderPath: string, enabled = true) {
   });
   const dragData = active?.data?.current as FileDragData | undefined;
   const isDragging = dragData?.type === "file-drag";
-  const isSelfDrop =
-    isDragging &&
-    dragData.paths.some(
-      (path) => path === folderPath || folderPath.startsWith(path + "/"),
-    );
-  const isAlreadyInFolder =
-    isDragging &&
-    !isSelfDrop &&
-    dragData.paths.every((path) => path_split(path).head === folderPath);
-  const isInvalid = isSelfDrop || isAlreadyInFolder;
+  const isSelfDrop = isDragging && isSelfFolderDrop(dragData.paths, folderPath);
+  const alreadyInFolder =
+    isDragging && !isSelfDrop && isAlreadyInFolder(dragData.paths, folderPath);
+  const isInvalid = isSelfDrop || alreadyInFolder;
   return {
     dropRef: setNodeRef,
     isOver: isOver && enabled && isDragging && !isInvalid,
@@ -277,13 +295,8 @@ export function FileDndProvider({
     const dropData = event.over?.data?.current as FolderDropData | undefined;
     const dragData = event.active?.data?.current as FileDragData | undefined;
     if (dropData?.type === "folder-drop" && dragData?.paths) {
-      const isSelf = dragData.paths.some(
-        (path) =>
-          path === dropData.path || dropData.path.startsWith(path + "/"),
-      );
-      const isAlreadyIn = dragData.paths.every(
-        (path) => path_split(path).head === dropData.path,
-      );
+      const isSelf = isSelfFolderDrop(dragData.paths, dropData.path);
+      const isAlreadyIn = isAlreadyInFolder(dragData.paths, dropData.path);
       if (isAlreadyIn && !isSelf) {
         setOverFolder(null);
         setIsInvalidTarget(false);
@@ -349,15 +362,10 @@ export function FileDndProvider({
         return;
       }
 
-      const dropData = event.over?.data?.current as FolderDropData | undefined;
-      if (dropData?.type === "folder-drop") {
-        const isSelfDrop = dragData.paths.some(
-          (path) =>
-            path === dropData.path || dropData.path.startsWith(path + "/"),
-        );
-        const isAlreadyInTarget = dragData.paths.every(
-          (path) => path_split(path).head === dropData.path,
-        );
+      const dropPath = folderDropPathFromEvent(event, pointerPos.current);
+      if (dropPath != null) {
+        const isSelfDrop = isSelfFolderDrop(dragData.paths, dropPath);
+        const isAlreadyInTarget = isAlreadyInFolder(dragData.paths, dropPath);
         if (isSelfDrop || isAlreadyInTarget) {
           actions.set_activity({
             id: uuid(),
@@ -372,12 +380,12 @@ export function FileDndProvider({
           if (shiftKey) {
             await actions.copyPaths({
               src: dragData.paths,
-              dest: dropData.path,
+              dest: dropPath,
             });
           } else {
             await actions.moveFiles({
               src: dragData.paths,
-              dest: dropData.path,
+              dest: dropPath,
             });
           }
           onUserFilesystemChange?.();
