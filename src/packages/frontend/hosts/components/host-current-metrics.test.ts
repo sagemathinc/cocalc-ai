@@ -1,12 +1,20 @@
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 
 import {
+  formatBytesDense,
   getConfiguredSharedScratchTotalBytes,
   getSharedScratchUsedBytes,
   getSharedScratchUsedPercent,
   getSharedScratchTotalBytes,
   hasSharedScratchConfigured,
 } from "./host-current-metrics";
+
+describe("host current metrics dense formatting", () => {
+  it("uses short binary units without spaces in dense resource rows", () => {
+    expect(formatBytesDense(10 * 1024 ** 3)).toBe("10G");
+    expect(formatBytesDense(2 * 1024 ** 4)).toBe("2T");
+  });
+});
 
 describe("host current metrics scratch helpers", () => {
   it("uses explicit shared scratch used bytes when present", () => {

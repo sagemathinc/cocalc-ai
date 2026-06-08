@@ -51,6 +51,15 @@ function formatBytesCompact(value?: number): string | undefined {
   return formatBinaryBytes(value, { compact: true });
 }
 
+export function formatBytesDense(value?: number): string | undefined {
+  return formatBytesCompact(value)
+    ?.replace(/\s*KiB\b/g, "K")
+    .replace(/\s*MiB\b/g, "M")
+    .replace(/\s*GiB\b/g, "G")
+    .replace(/\s*TiB\b/g, "T")
+    .replace(/\s*PiB\b/g, "P");
+}
+
 function normalizePercent(value?: number): number | undefined {
   if (value == null || !Number.isFinite(value)) return undefined;
   return Math.max(0, Math.min(100, value));
@@ -792,8 +801,8 @@ function CompactMetricLine({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "48px 54px minmax(40px, 1fr) minmax(0, 86px)",
-        gap: 5,
+        gridTemplateColumns: "48px 34px minmax(32px, 0.45fr) minmax(0, 1.55fr)",
+        gap: 4,
         alignItems: "center",
         minHeight: 22,
         padding: "2px 0",
@@ -1067,38 +1076,31 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const sharedScratchUsedBytes = getSharedScratchUsedBytes(
     sharedScratchUsageSource,
   );
-  const diskUsed = compact
-    ? formatBytesCompact(diskUsedBytes)
-    : formatBytes(diskUsedBytes);
-  const sharedScratchUsed = compact
-    ? formatBytesCompact(sharedScratchUsedBytes)
-    : formatBytes(sharedScratchUsedBytes);
-  const memoryUsed = compact
-    ? formatBytesCompact(metrics.memory_used_bytes)
-    : formatBytes(metrics.memory_used_bytes);
-  const memoryTotal = compact
-    ? formatBytesCompact(metrics.memory_total_bytes)
-    : formatBytes(metrics.memory_total_bytes);
-  const diskTotal = compact
-    ? formatBytesCompact(metrics.disk_device_total_bytes)
-    : formatBytes(metrics.disk_device_total_bytes);
-  const sharedScratchTotal = compact
-    ? formatBytesCompact(sharedScratchTotalBytes)
-    : formatBytes(sharedScratchTotalBytes);
+  const metricFormatBytes = dense
+    ? formatBytesDense
+    : compact
+      ? formatBytesCompact
+      : formatBytes;
+  const diskUsed = metricFormatBytes(diskUsedBytes);
+  const sharedScratchUsed = metricFormatBytes(sharedScratchUsedBytes);
+  const memoryUsed = metricFormatBytes(metrics.memory_used_bytes);
+  const memoryTotal = metricFormatBytes(metrics.memory_total_bytes);
+  const diskTotal = metricFormatBytes(metrics.disk_device_total_bytes);
+  const sharedScratchTotal = metricFormatBytes(sharedScratchTotalBytes);
   const sharedScratchUnknownLabel =
-    sharedScratchConfigured && !sharedScratchMeasured ? "pending" : undefined;
+    sharedScratchConfigured && !sharedScratchMeasured
+      ? dense
+        ? "..."
+        : "pending"
+      : undefined;
   const sharedScratchDetail =
     sharedScratchUsed && sharedScratchTotal
       ? `${sharedScratchUsed} / ${sharedScratchTotal}`
       : sharedScratchConfigured && !sharedScratchMeasured && sharedScratchTotal
         ? `${sharedScratchTotal} configured`
         : sharedScratchTotal;
-  const metadataUsed = compact
-    ? formatBytesCompact(metrics.btrfs_metadata_used_bytes)
-    : formatBytes(metrics.btrfs_metadata_used_bytes);
-  const metadataTotal = compact
-    ? formatBytesCompact(metrics.btrfs_metadata_total_bytes)
-    : formatBytes(metrics.btrfs_metadata_total_bytes);
+  const metadataUsed = metricFormatBytes(metrics.btrfs_metadata_used_bytes);
+  const metadataTotal = metricFormatBytes(metrics.btrfs_metadata_total_bytes);
   const cpuHistory = buildHistoryPoints(
     history?.points,
     (point) => normalizePercent(point.cpu_percent),
