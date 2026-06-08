@@ -47,7 +47,7 @@ import {
   purgeProjectBackupsForRepo,
   type ProjectBackupPurgeResult,
 } from "./backup-purge";
-import { getLro } from "@cocalc/server/lro/lro-db";
+import { getLro, updateLro } from "@cocalc/server/lro/lro-db";
 
 const log = getLogger("server:projects:move");
 const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
@@ -796,6 +796,8 @@ async function waitForChildLroCompletion({
   timeout_ms,
   onProgress,
   onSummary,
+  shouldCancel,
+  cancelStage,
 }: {
   op_id: string;
   scope_type: "project" | "account" | "host" | "hub";
@@ -803,6 +805,8 @@ async function waitForChildLroCompletion({
   timeout_ms?: number;
   onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
   onSummary?: (summary: LroSummary) => void;
+  shouldCancel?: () => Promise<boolean>;
+  cancelStage?: string;
 }): Promise<LroSummary> {
   let stream: Awaited<ReturnType<typeof getLroStream>> | undefined;
   try {
@@ -893,6 +897,14 @@ async function waitForChildLroCompletion({
     const pollSummary = async () => {
       if (done) return;
       try {
+        if (shouldCancel && (await shouldCancel())) {
+          await cancelChildLro({
+            op_id,
+            error: `parent move canceled${cancelStage ? ` during ${cancelStage}` : ""}`,
+          });
+          fail(new MoveCanceledError(cancelStage ?? "child-lro"));
+          return;
+        }
         const summary = await getLro(op_id);
         if (!summary) return;
         onSummary?.(summary);
@@ -932,14 +944,104 @@ async function waitForChildLroCompletion({
   });
 }
 
+async function cancelChildLro({
+  op_id,
+  error,
+}: {
+  op_id: string;
+  error: string;
+}): Promise<void> {
+  try {
+    await updateLro({
+      op_id,
+      status: "canceled",
+      error,
+    });
+  } catch (err) {
+    log.warn("unable to cancel move child lro", {
+      op_id,
+      err,
+    });
+  }
+}
+
+async function waitForExternalChildLroCompletion({
+  op_id,
+  scope_type,
+  scope_id,
+  client,
+  timeout_ms,
+  onProgress,
+  shouldCancel,
+  cancelStage,
+}: {
+  op_id: string;
+  scope_type: "project" | "account" | "host" | "hub";
+  scope_id?: string;
+  client: ReturnType<typeof conat>;
+  timeout_ms?: number;
+  onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
+  shouldCancel?: () => Promise<boolean>;
+  cancelStage: string;
+}): Promise<LroSummary> {
+  if (!shouldCancel) {
+    return await waitForLroCompletion({
+      op_id,
+      scope_type,
+      scope_id,
+      client,
+      timeout_ms,
+      onProgress,
+    });
+  }
+  let cancelPoll: ReturnType<typeof setInterval> | undefined;
+  const cancelPromise = new Promise<never>((_resolve, reject) => {
+    cancelPoll = setInterval(() => {
+      void (async () => {
+        try {
+          if (await shouldCancel()) {
+            await cancelChildLro({
+              op_id,
+              error: `parent move canceled during ${cancelStage}`,
+            });
+            reject(new MoveCanceledError(cancelStage));
+          }
+        } catch (err) {
+          reject(err);
+        }
+      })();
+    }, CHILD_LRO_POLL_INTERVAL_MS);
+    cancelPoll.unref?.();
+  });
+  try {
+    return await Promise.race([
+      waitForLroCompletion({
+        op_id,
+        scope_type,
+        scope_id,
+        client,
+        timeout_ms,
+        onProgress,
+      }),
+      cancelPromise,
+    ]);
+  } finally {
+    if (cancelPoll) {
+      clearInterval(cancelPoll);
+    }
+  }
+}
+
 async function performBackupRegionCutover({
   context,
   progress,
   managed_egress_override,
+  shouldCancel,
 }: {
   context: MoveProjectContext;
   progress: (update: MoveProjectProgressUpdate) => void;
   managed_egress_override?: ManagedBackupEgressOverride;
+  shouldCancel?: () => Promise<boolean>;
 }): Promise<MoveBackupRegionCutoverResult> {
   if (
     !context.backup_region_cutover ||
@@ -1021,6 +1123,8 @@ async function performBackupRegionCutover({
               step: "cutover-backup",
             }),
           managed_egress_override,
+          shouldCancel,
+          cancelStage: "cutover-backup",
         }),
     });
     progress({
@@ -1127,11 +1231,15 @@ async function createFinalBackup({
   account_id,
   progress,
   managed_egress_override,
+  shouldCancel,
+  cancelStage = "backup",
 }: {
   project_id: string;
   account_id: string;
   progress: (update: MoveProjectProgressUpdate) => void;
   managed_egress_override?: ManagedBackupEgressOverride;
+  shouldCancel?: () => Promise<boolean>;
+  cancelStage?: string;
 }): Promise<{ id: string; time: string; op_id: string }> {
   const backupOp = await createBackupLro(
     {
@@ -1176,6 +1284,8 @@ async function createFinalBackup({
         progress: event.progress,
       });
     },
+    shouldCancel,
+    cancelStage,
   });
   if (summary.status !== "succeeded") {
     throw new Error(summary.error ?? `backup failed: ${summary.status}`);
@@ -1499,6 +1609,8 @@ export async function moveProjectToHost(
                 project_id: context.project_id,
                 progress,
                 managed_egress_override: input.managed_egress_override,
+                shouldCancel,
+                cancelStage: "backup",
               }),
           });
           const backup_id = result.id;
@@ -1625,7 +1737,7 @@ export async function moveProjectToHost(
             });
             let summary: LroSummary | undefined;
             try {
-              summary = await waitForLroCompletion({
+              summary = await waitForExternalChildLroCompletion({
                 op_id: startOp.op_id,
                 scope_type: startOp.scope_type,
                 scope_id: startOp.scope_id,
@@ -1653,6 +1765,8 @@ export async function moveProjectToHost(
                     progress: event.progress,
                   });
                 },
+                shouldCancel,
+                cancelStage: "start-dest",
               });
             } catch (err) {
               const snapshot = await loadProjectPlacementState(
@@ -1746,6 +1860,7 @@ export async function moveProjectToHost(
           context,
           progress,
           managed_egress_override: input.managed_egress_override,
+          shouldCancel,
         });
 
         if (stopDestAfterStart) {

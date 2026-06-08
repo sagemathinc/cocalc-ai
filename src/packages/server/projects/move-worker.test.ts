@@ -1,4 +1,7 @@
-import { createNonOverlappingAsyncRunner } from "./move-worker";
+import {
+  createNonOverlappingAsyncRunner,
+  reconcileMoveWorkerInFlight,
+} from "./move-worker";
 
 describe("createNonOverlappingAsyncRunner", () => {
   it("skips overlapping invocations while the current run is still active", async () => {
@@ -30,5 +33,25 @@ describe("createNonOverlappingAsyncRunner", () => {
 
     expect(await runner()).toBe(true);
     expect(started).toBe(2);
+  });
+});
+
+describe("reconcileMoveWorkerInFlight", () => {
+  it("drops stale in-memory slots that are not backed by fresh running LROs", () => {
+    expect(
+      reconcileMoveWorkerInFlight({
+        inFlight: 1,
+        freshRunning: 0,
+      }),
+    ).toBe(0);
+  });
+
+  it("does not invent additional in-memory slots from database state", () => {
+    expect(
+      reconcileMoveWorkerInFlight({
+        inFlight: 1,
+        freshRunning: 3,
+      }),
+    ).toBe(1);
   });
 });
