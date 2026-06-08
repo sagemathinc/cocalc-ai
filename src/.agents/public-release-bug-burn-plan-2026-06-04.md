@@ -55,7 +55,7 @@ Size estimates:
 
 ## P0 Workstreams
 
-### P0-A: Frontend Projection And Changefeed Correctness
+### (done) P0-A: Frontend Projection And Changefeed Correctness
 
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`
 
@@ -107,7 +107,7 @@ First action:
 - Build a minimal reproducible projection trace for one account setting toggle
   and one project start operation, then fix the first broken invariant found.
 
-### P0-B: Terminal Reconnect Must Preserve Input Order
+### (done) P0-B: Terminal Reconnect Must Preserve Input Order
 
 Status: fixed first pass 2026-06-05.
 
@@ -156,7 +156,7 @@ Implemented:
 
 Estimate: `M`
 
-### P0-C: Codex/ACP Failure State Durability
+### (done) P0-C: Codex/ACP Failure State Durability
 
 Status: first recovery hardening slice fixed 2026-06-05.
 
@@ -209,7 +209,7 @@ Implemented:
 
 Estimate: `L`
 
-### P0-D: Project-Host Software Upgrade Controls
+### (done) P0-D: Project-Host Software Upgrade Controls
 
 Products: `cocalc.ai`, `cocalc-star`
 
@@ -243,7 +243,7 @@ Exit criteria:
 
 Estimate: `M`
 
-### P0-E: CoCalc Star Release Candidate
+### (done) P0-E: CoCalc Star Release Candidate
 
 Products: `cocalc-star`
 
@@ -298,7 +298,7 @@ Exit criteria:
 
 Estimate: `XL`
 
-### P0-F: Project Apps Security Scope Cut
+### (done) P0-F: Project Apps Security Scope Cut
 
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`
 
@@ -334,7 +334,7 @@ Exit criteria:
 
 Estimate: `L`
 
-### P0-G: Static Upgrade File Retention
+### (done) P0-G: Static Upgrade File Retention
 
 USER: It turns out we did this yesterday already for the multibay systemd deployment (rocket = cocalc.ai).
 
@@ -405,7 +405,7 @@ Estimate: `XL` if in scope
 
 ## P1 Workstreams
 
-### P1-A: Deletion Protection For Projects And Project Hosts
+### (done) P1-A: Deletion Protection For Projects And Project Hosts
 
 Products: `cocalc.ai`, `cocalc-star`
 
@@ -437,7 +437,7 @@ Status: `verified`
 - Live validation confirmed project deletion protection now syncs across
   browser sessions.
 
-### P1-B: Disk Usage Scan Budget
+### (done) P1-B: Disk Usage Scan Budget
 
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`
 
@@ -489,7 +489,7 @@ Plan:
 
 Estimate: `L`
 
-### P1-D: Scheduled Automation UX And Permissions
+### (done) P1-D: Scheduled Automation UX And Permissions
 
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`
 
@@ -577,7 +577,7 @@ Suggested order:
 3. Remove `@`.
 4. Parent folder drag/drop.
 
-### P1-I: TimeAgo Correctness
+### (done) P1-I: TimeAgo Correctness
 
 Products: `cocalc.ai`, `cocalc-plus`, `cocalc-star`
 
@@ -660,7 +660,7 @@ These should be picked off opportunistically while P0 work proceeds.
    - Product: all markdown editor surfaces
    - Estimate: `S-M`
 
-## Product Story And Positioning
+## (done) Product Story And Positioning
 
 ### Landing Pages
 
@@ -764,3 +764,4 @@ is hidden or clearly scoped.
   accepted.
 - Product pages clearly describe SaaS, Plus, Star, and Launchpad/Rocket.
 - Linux/macOS SEA smoke passes for Plus and CLI.
+
