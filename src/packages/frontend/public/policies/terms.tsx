@@ -20,7 +20,7 @@ export const termsPolicy: PublicPolicy = {
     <>
       <p>
         Welcome to the SageMath, Inc. ("<b>SMI</b>") website located at{" "}
-        <A href="https://cocalc.com">https://cocalc.com</A> (the "<b>Site</b>").
+        <A href="https://cocalc.ai">https://cocalc.ai</A> (the "<b>Site</b>").
         Please read these Terms of Service (the "<b>Terms</b>") carefully
         because they govern your use of our Site and services accessible via our
         Site. To make these Terms easier to read, the Site and our services are
@@ -41,12 +41,11 @@ export const termsPolicy: PublicPolicy = {
         <p>
           We may modify the Terms at any time, in our sole discretion. If we do
           so, we’ll let you know either by posting the modified Terms on the
-          Site at{" "}
-          <A href="/policies/terms">https://cocalc.com/policies/terms</A> or
-          through other communications. You can track complete details regarding
-          every change{" "}
-          <A href="https://github.com/sagemathinc/cocalc/tree/master/src/packages/next/pages/policies">
-            on GitHub
+          Site at <A href="/policies/terms">https://cocalc.ai/policies/terms</A>{" "}
+          or through other communications. You can track complete details
+          regarding every change{" "}
+          <A href="https://github.com/sagemathinc/cocalc-ai/tree/main/src/packages/frontend/public/policies">
+            https://github.com/sagemathinc/cocalc-ai/tree/main/src/packages/frontend/public/policies
           </A>
           . It’s important that you review the Terms whenever we modify them
           because if you continue to use the Services after we have posted
@@ -146,12 +145,6 @@ export const termsPolicy: PublicPolicy = {
               license, so we encourage you to consider carefully before
               POSTING.{" "}
             </span>{" "}
-          </p>
-        </PolicySubsection>
-        <PolicySubsection title="Commercial Use">
-          <p>
-            In order to use the Services for commercial purposes, you must
-            obtain a business license or subscription.
           </p>
         </PolicySubsection>
       </PolicySection>
@@ -256,12 +249,12 @@ export const termsPolicy: PublicPolicy = {
       <PolicySection title="Privacy Policy">
         <p>
           Please refer to our Privacy Policy (
-          <A href="/policies/privacy">https://cocalc.com/policies/privacy</A>)
+          <A href="/policies/privacy">https://cocalc.ai/policies/privacy</A>)
           for information on how we collect, use and disclose information from
           our users. Where SageMath, Inc. processes personal data on your behalf
           as a Data Processor, such processing is governed by our Data
           Processing Addendum (
-          <A href="/policies/dpa">https://cocalc.com/policies/dpa</A>), which is
+          <A href="/policies/dpa">https://cocalc.ai/policies/dpa</A>), which is
           hereby incorporated into these Terms by reference.{" "}
         </p>
       </PolicySection>
@@ -548,7 +541,7 @@ export const termsPolicy: PublicPolicy = {
           CONNECTION WITH THESE TERMS OR FROM THE USE OF OR INABILITY TO USE THE
           SERVICES OR CONTENT, WHETHER BASED ON WARRANTY, CONTRACT, TORT
           (INCLUDING NEGLIGENCE), PRODUCT LIABILITY OR ANY OTHER LEGAL THEORY,
-          AND WHETHER OR NOT CLIENT HAS BEEN INFORMED OF THE POSSIBILITY OF SUCH
+          AND WHETHER OR NOT SMI HAS BEEN INFORMED OF THE POSSIBILITY OF SUCH
           DAMAGE, EVEN IF A LIMITED REMEDY SET FORTH HEREIN IS FOUND TO HAVE
           FAILED OF ITS ESSENTIAL PURPOSE.
           <span>
@@ -567,7 +560,7 @@ export const termsPolicy: PublicPolicy = {
         </p>
         <p>
           THE EXCLUSIONS AND LIMITATIONS OF DAMAGES SET FORTH ABOVE ARE
-          FUNDAMENTAL ELEMENTS OF THE BASIS OF THE BARGAIN BETWEEN CLIENT AND
+          FUNDAMENTAL ELEMENTS OF THE BASIS OF THE BARGAIN BETWEEN SMI AND
           YOU.{" "}
         </p>
       </PolicySection>
@@ -698,14 +691,15 @@ export const termsPolicy: PublicPolicy = {
             if SMI changes this "Dispute Resolution" section after the date you
             first accepted these Terms (or accepted any subsequent changes to
             these Terms), you may reject any such change by sending us written
-            notice (including by email to www.client.com) within 30 days of the
-            date such change became effective, as indicated in the "Last
-            Updated" date above or in the date of SMI’s email to you notifying
-            you of such change. By rejecting any change, you are agreeing that
-            you will arbitrate any Dispute between you and SMI in accordance
-            with the provisions of this "Dispute Resolution" section as of the
-            date you first accepted these Terms (or accepted any subsequent
-            changes to these Terms).{" "}
+            notice (including by email to{" "}
+            <A href="mailto:help@sagemath.com">help@sagemath.com</A>) within 30
+            days of the date such change became effective, as indicated in the
+            "Last Updated" date above or in the date of SMI’s email to you
+            notifying you of such change. By rejecting any change, you are
+            agreeing that you will arbitrate any Dispute between you and SMI in
+            accordance with the provisions of this "Dispute Resolution" section
+            as of the date you first accepted these Terms (or accepted any
+            subsequent changes to these Terms).{" "}
           </p>
         </PolicySubsection>
         <PolicySubsection title="General Terms">
