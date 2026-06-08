@@ -5,10 +5,26 @@
 
 import BlockMarkdownEditor from "@cocalc/frontend/editors/slate/block-markdown-editor";
 import { EditableMarkdown as PlainMarkdownEditor } from "@cocalc/frontend/editors/slate/editable-markdown";
+import type { EditorComponentProps } from "@cocalc/frontend/frame-editors/frame-tree/types";
 
 const ENABLE_PAGED_BLOCK_MARKDOWN_EDITOR = false;
+
+function PlainMarkdownFrameEditor(props: EditorComponentProps) {
+  return (
+    <div className="smc-vfill" style={{ overflow: "auto" }}>
+      <PlainMarkdownEditor
+        {...(props as any)}
+        height="auto"
+        pageStyle={{
+          ...((props as any).pageStyle ?? {}),
+          padding: "70px",
+        }}
+      />
+    </div>
+  );
+}
 
 export const EditableMarkdown: typeof BlockMarkdownEditor =
   ENABLE_PAGED_BLOCK_MARKDOWN_EDITOR
     ? BlockMarkdownEditor
-    : (PlainMarkdownEditor as typeof BlockMarkdownEditor);
+    : (PlainMarkdownFrameEditor as typeof BlockMarkdownEditor);
