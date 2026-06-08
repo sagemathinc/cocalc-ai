@@ -824,6 +824,55 @@ function lookupRuntimeVersionMetadata({
   return metadataIndex.get(runtimeVersionKey(artifact, version));
 }
 
+type RuntimeArtifactCatalogChoice = {
+  source: "configured" | "hub";
+  version: string;
+  row: HostSoftwareAvailableVersion;
+  value: string;
+};
+
+function runtimeArtifactCatalogChoices({
+  artifact,
+  softwareVersions,
+}: {
+  artifact: HostRuntimeArtifact;
+  softwareVersions: HostDrawerViewModel["softwareVersions"] | undefined;
+}): RuntimeArtifactCatalogChoice[] {
+  const choices: RuntimeArtifactCatalogChoice[] = [];
+  const seen = new Set<string>();
+  const ingest = (
+    source: "configured" | "hub",
+    rows?: HostSoftwareAvailableVersion[],
+  ) => {
+    for (const row of rows ?? []) {
+      const version = `${row.version ?? ""}`.trim();
+      if (
+        !row.available ||
+        !version ||
+        runtimeArtifactForSoftwareArtifact(row.artifact) !== artifact
+      ) {
+        continue;
+      }
+      const value = `${source}:${version}`;
+      if (seen.has(value)) continue;
+      seen.add(value);
+      choices.push({ source, version, row, value });
+    }
+  };
+  ingest("configured", softwareVersions?.configuredCatalog);
+  ingest("hub", softwareVersions?.hubCatalog);
+  return choices.sort((a, b) => {
+    const aTs =
+      Date.parse(a.row.built_at ?? "") || inferredVersionTimestamp(a.version);
+    const bTs =
+      Date.parse(b.row.built_at ?? "") || inferredVersionTimestamp(b.version);
+    if (aTs && bTs && aTs !== bTs) return bTs - aTs;
+    if (aTs && !bTs) return -1;
+    if (!aTs && bTs) return 1;
+    return b.version.localeCompare(a.version);
+  });
+}
+
 function formatVersionBuiltAt({
   version,
   metadata,
@@ -1458,6 +1507,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   >({});
   const [artifactRollbackSelection, setArtifactRollbackSelection] =
     React.useState<Partial<Record<HostRuntimeArtifact, string>>>({});
+  const [artifactDeploySelection, setArtifactDeploySelection] = React.useState<
+    Partial<Record<HostRuntimeArtifact, string>>
+  >({});
   const [componentRollbackSelection, setComponentRollbackSelection] =
     React.useState<Partial<Record<ManagedComponentKind, string>>>({});
   const [runtimeLogSource, setRuntimeLogSource] =
@@ -1489,6 +1541,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   React.useEffect(() => {
     setShowAdvancedRuntime(false);
     setArtifactRollbackSelection({});
+    setArtifactDeploySelection({});
     setComponentRollbackSelection({});
     setRuntimeLogSource("project-host");
     setRuntimeLogLines(200);
@@ -2827,6 +2880,350 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
         ) : null}
       </Space>
     ) : null;
+  const runtimeArtifactControlsContent = (
+    <Card
+      size="small"
+      title={
+        <Space wrap align="center">
+          <Typography.Text strong>Runtime software artifacts</Typography.Text>
+          <Popover content={softwareHelp} trigger="click">
+            <Button
+              type="text"
+              size="small"
+              icon={<QuestionCircleOutlined />}
+            />
+          </Popover>
+          {(softwareVersions || runtimeDeployments) && (
+            <Button
+              type="text"
+              size="small"
+              icon={
+                <SyncOutlined
+                  spin={
+                    !!softwareVersions?.loading ||
+                    !!runtimeDeployments?.loading ||
+                    !!runtimeDeployments?.refreshing
+                  }
+                />
+              }
+              onClick={() => {
+                Promise.all([
+                  softwareVersions?.refresh?.(),
+                  runtimeDeployments?.refresh?.(),
+                ]).catch((err) => {
+                  console.error("failed to refresh runtime software", err);
+                });
+              }}
+            >
+              Refresh
+            </Button>
+          )}
+        </Space>
+      }
+      styles={{ body: { padding: 12 } }}
+    >
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Select host-specific artifact versions for this host. Newest catalog
+          entries are listed first; Resume cluster default removes the host
+          override.
+        </Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Configured source: server default software base URL.
+          {softwareVersions?.hubSourceBaseUrl
+            ? ` Hub source: ${softwareVersions.hubSourceBaseUrl}`
+            : " Hub source: this site's /software endpoint."}
+        </Typography.Text>
+        <Space wrap size={[8, 8]}>
+          <Tag color="green">{softwareSummary.upToDate} up to date</Tag>
+          <Tag color="orange">
+            {softwareSummary.updatesAvailable} updates available
+          </Tag>
+          <Tag>{softwareSummary.unknown} unknown</Tag>
+        </Space>
+        {softwareVersions?.configuredError ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Configured software source failed"
+            description={softwareVersions.configuredError}
+          />
+        ) : null}
+        {softwareVersions?.hubError ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Hub software source failed"
+            description={softwareVersions.hubError}
+          />
+        ) : null}
+        {SOFTWARE_ARTIFACTS.map(({ artifact, label, desiredLabel }) => {
+          const running = runningVersion(host, artifact);
+          const buildId = runningBuildId(host, artifact);
+          const configured = sourceVersionForArtifact({
+            artifact,
+            softwareVersions,
+            source: "configured",
+          });
+          const hubVersion = sourceVersionForArtifact({
+            artifact,
+            softwareVersions,
+            source: "hub",
+          });
+          const deployment = deploymentRecordForArtifact(
+            deploymentStatus,
+            artifact,
+          );
+          const observedTarget = observedTargetForArtifact(
+            deploymentStatus,
+            artifact,
+          );
+          const observedArtifact = observedArtifactForArtifact(
+            deploymentStatus,
+            artifact,
+          );
+          const componentOverride =
+            artifact === "project-host"
+              ? projectHostComponentDeployment
+              : undefined;
+          const hasHostOverride =
+            componentOverride?.scope_type === "host" ||
+            deployment?.scope_type === "host";
+          const effectiveDesiredVersion =
+            componentOverride?.desired_version ?? deployment?.desired_version;
+          const effectiveOverrideReason =
+            componentOverride?.rollout_reason ?? deployment?.rollout_reason;
+          const currentVersion =
+            observedTarget?.current_version ??
+            observedArtifact?.current_version ??
+            running;
+          const choices = runtimeArtifactCatalogChoices({
+            artifact,
+            softwareVersions,
+          });
+          const selectedValue =
+            artifactDeploySelection[artifact] ?? choices[0]?.value;
+          const selectedChoice = choices.find(
+            (choice) => choice.value === selectedValue,
+          );
+          const canDeploySelectedArtifact =
+            Boolean(canUpgrade) &&
+            !Boolean(host.deleted) &&
+            host.status === "running" &&
+            !hostOpActive &&
+            !!onSetRuntimeArtifactDeployment;
+          const deployDisabled = !canDeploySelectedArtifact;
+          return (
+            <Card
+              key={artifact}
+              size="small"
+              styles={{ body: { padding: 12 } }}
+            >
+              <Space
+                orientation="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
+                <Space wrap align="center">
+                  <Typography.Text strong>{label}</Typography.Text>
+                  {observedVersionStateTag(
+                    observedTarget?.observed_version_state,
+                  )}
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {desiredLabel}
+                  </Typography.Text>
+                  {hasHostOverride && <Tag color="blue">host override</Tag>}
+                </Space>
+                <Typography.Text type="secondary">
+                  desired <code>{effectiveDesiredVersion ?? "n/a"}</code> |
+                  current <code>{currentVersion ?? "n/a"}</code> | latest{" "}
+                  <code>{configured?.version ?? "unknown"}</code>{" "}
+                  {availableVersionTag({
+                    running: currentVersion,
+                    latest: configured?.version,
+                    error: configured?.error,
+                  })}
+                </Typography.Text>
+                {buildId || observedArtifact?.current_build_id ? (
+                  <Typography.Text type="secondary" copyable>
+                    build{" "}
+                    <code>
+                      {buildId ?? observedArtifact?.current_build_id ?? ""}
+                    </code>
+                  </Typography.Text>
+                ) : null}
+                <Space wrap align="center">
+                  <Typography.Text>Available version:</Typography.Text>
+                  <Select
+                    size="small"
+                    style={{ minWidth: 340 }}
+                    popupMatchSelectWidth={520}
+                    value={selectedValue}
+                    placeholder="No catalog versions"
+                    onChange={(value) =>
+                      setArtifactDeploySelection((prev) => ({
+                        ...prev,
+                        [artifact]: value,
+                      }))
+                    }
+                    options={choices.map((choice) => ({
+                      value: choice.value,
+                      label: (
+                        <Space align="start" size={6}>
+                          <Tag
+                            color={
+                              choice.source === "configured" ? "blue" : "cyan"
+                            }
+                          >
+                            {choice.source}
+                          </Tag>
+                          <RuntimeVersionDisplay
+                            artifact={artifact}
+                            version={choice.version}
+                            metadataIndex={versionMetadataIndex}
+                          />
+                        </Space>
+                      ),
+                    }))}
+                    disabled={choices.length === 0}
+                  />
+                  <Popconfirm
+                    title={`Deploy ${label.toLowerCase()} version ${selectedChoice?.version ?? ""}?`}
+                    description={
+                      selectedChoice
+                        ? `This pins this host to ${selectedChoice.version} from the ${selectedChoice.source} source and queues the runtime reconcile.`
+                        : "Select a version first."
+                    }
+                    okText="Deploy"
+                    cancelText="Cancel"
+                    onConfirm={() =>
+                      selectedChoice
+                        ? onSetRuntimeArtifactDeployment?.({
+                            host,
+                            artifact,
+                            desired_version: selectedChoice.version,
+                            source: selectedChoice.source,
+                          })
+                        : undefined
+                    }
+                    disabled={deployDisabled || !selectedChoice}
+                  >
+                    <Button
+                      size="small"
+                      type="primary"
+                      disabled={deployDisabled || !selectedChoice}
+                    >
+                      Deploy selected
+                    </Button>
+                  </Popconfirm>
+                </Space>
+                <Space wrap>
+                  {canUpgrade &&
+                    !host.deleted &&
+                    onSetRuntimeArtifactDeployment &&
+                    configured?.version && (
+                      <Popconfirm
+                        title={upgradeTitle({
+                          label,
+                          source: "the configured source",
+                        })}
+                        okText="Deploy"
+                        cancelText="Cancel"
+                        onConfirm={() =>
+                          onSetRuntimeArtifactDeployment({
+                            host,
+                            artifact,
+                            desired_version: configured.version!,
+                            source: "configured",
+                          })
+                        }
+                        disabled={hostOpActive || host.status !== "running"}
+                      >
+                        <Button
+                          size="small"
+                          disabled={hostOpActive || host.status !== "running"}
+                        >
+                          Deploy latest
+                        </Button>
+                      </Popconfirm>
+                    )}
+                  {canUpgrade &&
+                    !host.deleted &&
+                    onSetRuntimeArtifactDeployment &&
+                    hubVersion?.version && (
+                      <Popconfirm
+                        title={upgradeTitle({
+                          label,
+                          source: "this hub source",
+                        })}
+                        okText="Deploy"
+                        cancelText="Cancel"
+                        onConfirm={() =>
+                          onSetRuntimeArtifactDeployment({
+                            host,
+                            artifact,
+                            desired_version: hubVersion.version!,
+                            source: "hub",
+                          })
+                        }
+                        disabled={hostOpActive || host.status !== "running"}
+                      >
+                        <Button
+                          size="small"
+                          disabled={hostOpActive || host.status !== "running"}
+                        >
+                          Deploy hub latest
+                        </Button>
+                      </Popconfirm>
+                    )}
+                  {canUpgrade &&
+                    !host.deleted &&
+                    hasHostOverride &&
+                    onResumeRuntimeArtifactClusterDefault && (
+                      <Popconfirm
+                        title={`Resume following the cluster default for ${label.toLowerCase()}?`}
+                        description={`This deletes the host-specific desired version for ${label.toLowerCase()}. After that, this host will inherit the cluster default again.`}
+                        okText="Resume default"
+                        cancelText="Cancel"
+                        onConfirm={() =>
+                          onResumeRuntimeArtifactClusterDefault({
+                            host,
+                            artifact,
+                          })
+                        }
+                        disabled={hostOpActive}
+                      >
+                        <Button size="small" disabled={hostOpActive}>
+                          Resume cluster default
+                        </Button>
+                      </Popconfirm>
+                    )}
+                  <RuntimeCliButton
+                    title={`${label} CLI`}
+                    commands={cliCommandsForArtifact({ host, artifact })}
+                  />
+                </Space>
+                {observedTarget?.observed_version_state === "missing" ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="Desired version is not installed on this host yet"
+                    description="Deploying or changing the desired version queues the corresponding host artifact operation automatically."
+                  />
+                ) : null}
+                {hasHostOverride ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Override reason:{" "}
+                    {formatRolloutReason(effectiveOverrideReason)}
+                  </Typography.Text>
+                ) : null}
+              </Space>
+            </Card>
+          );
+        })}
+      </Space>
+    </Card>
+  );
   const runtimeControlContent = (
     <Space orientation="vertical" size="small" style={{ width: "100%" }}>
       <HostDaemonRuntimeControl
@@ -2858,6 +3255,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           onResumeRuntimeComponentClusterDefault
         }
       />
+      {runtimeArtifactControlsContent}
       {runtimeLogViewer?.log ? (
         <Card size="small" title="Recent daemon log">
           <Space orientation="vertical" size="small" style={{ width: "100%" }}>
