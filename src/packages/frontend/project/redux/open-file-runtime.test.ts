@@ -26,12 +26,9 @@ describe("openFileComponentRuntimeIsUsable", () => {
     expect(usable({ info: { redux_name: "editor" }, actions: {} })).toBe(false);
   });
 
-  it("allows viewer preview components without redux actions", () => {
+  it("allows component-only editors without redux actions", () => {
     expect(usable({ info: { Editor }, isViewer: true })).toBe(true);
-  });
-
-  it("rejects non-viewer components without redux actions", () => {
-    expect(usable({ info: { Editor }, isViewer: false })).toBe(false);
+    expect(usable({ info: { Editor }, isViewer: false })).toBe(true);
   });
 
   it("rejects stale runtime references", () => {

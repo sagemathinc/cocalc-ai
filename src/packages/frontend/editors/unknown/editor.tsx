@@ -89,25 +89,17 @@ export const UnknownEditor: React.FC<Props> = (props: Props) => {
           actions.close_file(path);
         })();
         break;
-      case "text/plain":
-        if (ext) {
-          // automatically register the code editor
-          register_file_editor({
-            ext: [ext],
-            component: CodeEditor,
-            Actions: CodeEditorActions,
-          });
-          (async () => {
-            actions.close_file(path);
-            await delay(1);
-            actions.open_file({ path });
-          })();
-        }
-        break;
     }
   }, [mime]);
 
   function render_ext() {
+    if (!ext) {
+      return (
+        <Text strong>
+          <Text code>{path_split(path).tail}</Text> with no extension
+        </Text>
+      );
+    }
     return (
       <Text strong>
         <Text code>*.{ext}</Text>
