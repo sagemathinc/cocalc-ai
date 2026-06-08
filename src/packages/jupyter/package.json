@@ -60,8 +60,7 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.10",
-    "@types/node-cleanup": "^2.1.2",
-    "expect": "^26.6.2"
+    "@types/node-cleanup": "^2.1.2"
   },
   "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/jupyter",
   "repository": {

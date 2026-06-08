@@ -1,4 +1,3 @@
-import expect from "expect";
 import { times_n } from "./misc";
 
 describe("test times_n", () => {
