@@ -126,7 +126,6 @@ export const PROJECT_SECRETS_HOST_ROOT = join(
   tmpdir(),
   "cocalc-project-secrets",
 );
-const SSH_PROXY_KEY_MARKER = "# Added by CoCalc project-host SSH proxy";
 
 // if computing status of a project shows pod is
 // somehow messed up, this will cleanly kill it.  It's
@@ -500,7 +499,7 @@ async function maybeRestoreFromBackup({
   }
 }
 
-export async function writeSshAuthorizedKeys({
+async function writeSshAuthorizedKeys({
   home,
   sshProxyPublicKey,
   authorizedKeys,
@@ -534,36 +533,13 @@ export async function writeSshAuthorizedKeys({
   }
 }
 
+const SSH_PROXY_KEY_MARKER = "# Added by CoCalc project-host SSH proxy";
+
 function normalizeAuthorizedKeyLine(line: string): string {
   return line.trim().replace(/\s+/g, " ");
 }
 
-function isPermissionError(err: unknown): boolean {
-  const code = (err as NodeJS.ErrnoException)?.code;
-  return code === "EACCES" || code === "EPERM";
-}
-
 async function syncSshProxyKeyForDropbear({
-  path,
-  key,
-}: {
-  path: string;
-  key: string;
-}) {
-  try {
-    await syncSshProxyKeyForDropbearUnchecked({ path, key });
-  } catch (err) {
-    if (!isPermissionError(err)) throw err;
-    logger.warn("repairing project ssh authorized_keys permissions", {
-      path,
-      err: `${err}`,
-    });
-    await repairProjectSshAuthorizedKeysPermissions(path);
-    await syncSshProxyKeyForDropbearUnchecked({ path, key });
-  }
-}
-
-async function syncSshProxyKeyForDropbearUnchecked({
   path,
   key,
 }: {
@@ -610,52 +586,8 @@ async function syncSshProxyKeyForDropbearUnchecked({
   if (!output.endsWith("\n")) {
     output += "\n";
   }
-  await atomicWriteSshAuthorizedKeys(path, output);
-}
-
-async function atomicWriteSshAuthorizedKeys(path: string, output: string) {
-  const dir = dirname(path);
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const tmp = join(
-    dir,
-    `.authorized_keys.${process.pid}.${Date.now()}.${Math.random()
-      .toString(16)
-      .slice(2)}.tmp`,
-  );
-  try {
-    await writeFile(tmp, output, { mode: 0o600 });
-    await chmod(tmp, 0o600);
-    await rename(tmp, path);
-  } catch (err) {
-    await rm(tmp, { force: true }).catch(() => {});
-    throw err;
-  }
-}
-
-export async function repairProjectSshAuthorizedKeysPermissions(path: string) {
-  const dir = dirname(path);
-  await podman([
-    "unshare",
-    "sh",
-    "-c",
-    [
-      "set -eu",
-      'ssh_dir="$1"',
-      'authorized_keys="$2"',
-      `uid="${DEFAULT_PROJECT_RUNTIME_UID}"`,
-      `gid="${DEFAULT_PROJECT_RUNTIME_GID}"`,
-      'mkdir -p "$ssh_dir"',
-      'chown "$uid:$gid" "$ssh_dir"',
-      'chmod 700 "$ssh_dir"',
-      'if [ -e "$authorized_keys" ]; then',
-      '  chown "$uid:$gid" "$authorized_keys"',
-      '  chmod 600 "$authorized_keys"',
-      "fi",
-    ].join("\n"),
-    "sh",
-    dir,
-    path,
-  ]);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFile(path, output, { mode: 0o600 });
 }
 
 function projectContainerName(project_id) {

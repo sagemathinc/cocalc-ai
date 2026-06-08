@@ -96,20 +96,7 @@ jest.mock("./conat-client", () => ({
 
 import getPort from "@cocalc/backend/get-port";
 import { mountArg } from "@cocalc/backend/podman";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import {
-  INTERNAL_SSH_CONFIG,
-  SSHD_CONFIG,
-} from "@cocalc/conat/project/runner/constants";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import {
   cleanupProjectSecretsHostPath,
   cleanupStaleProjectContainers,
@@ -118,11 +105,9 @@ import {
   projectSecretsHostPath,
   PROJECT_SECRETS_HOST_ROOT,
   redactConfigurationForLog,
-  repairProjectSshAuthorizedKeysPermissions,
   start,
   state,
   stop,
-  writeSshAuthorizedKeys,
   writeProjectSecretsHostPath,
 } from "./podman";
 
@@ -484,66 +469,6 @@ describe("project-runner podman orphan fallback", () => {
       ssh_port: 30123,
       http_port: 45123,
     });
-  });
-
-  it("syncs the ssh proxy key into the user authorized_keys file", async () => {
-    const home = await mkdtemp(join(tmpdir(), "cocalc-project-ssh-"));
-    const userKey = "ssh-ed25519 AAAAUSER user@test";
-    const proxyKey = "ssh-ed25519 AAAAPROXY proxy@test";
-    const masterKey = "ssh-ed25519 AAAAMASTER master@test";
-    await mkdir(join(home, ".ssh"), { recursive: true });
-    await writeFile(join(home, ".ssh", "authorized_keys"), `${userKey}\n`);
-
-    try {
-      await writeSshAuthorizedKeys({
-        home,
-        sshProxyPublicKey: proxyKey,
-        authorizedKeys: masterKey,
-      });
-
-      await expect(
-        readFile(join(home, ".ssh", "authorized_keys"), "utf8"),
-      ).resolves.toBe(
-        [
-          userKey,
-          "",
-          "# Added by CoCalc project-host SSH proxy",
-          proxyKey,
-          "",
-        ].join("\n"),
-      );
-      await expect(
-        readFile(join(home, SSHD_CONFIG, "authorized_keys"), "utf8"),
-      ).resolves.toBe(`${proxyKey}\n`);
-      await expect(
-        readFile(join(home, INTERNAL_SSH_CONFIG, "authorized_keys"), "utf8"),
-      ).resolves.toBe(`${masterKey}\n`);
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
-  it("repairs rootless podman ownership via podman unshare", async () => {
-    const home = await mkdtemp(join(tmpdir(), "cocalc-project-ssh-repair-"));
-    mockPodman.mockResolvedValue({ stdout: "" });
-
-    try {
-      await repairProjectSshAuthorizedKeysPermissions(
-        join(home, ".ssh", "authorized_keys"),
-      );
-
-      expect(mockPodman).toHaveBeenCalledWith([
-        "unshare",
-        "sh",
-        "-c",
-        expect.stringContaining('chown "$uid:$gid" "$ssh_dir"'),
-        "sh",
-        join(home, ".ssh"),
-        join(home, ".ssh", "authorized_keys"),
-      ]);
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
   });
 
   it("bind mounts host shared scratch into started project containers", async () => {
