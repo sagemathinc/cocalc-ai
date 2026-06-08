@@ -2636,10 +2636,19 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           height: "100%",
         }
       : undefined;
+  const fillEditor = !noVfill && height !== "auto";
 
   let slate = (
     <Slate editor={editor} value={editorValue} onChange={onChange}>
-      <div style={{ position: "relative" }}>
+      <div
+        className={fillEditor ? "smc-vfill" : undefined}
+        style={{
+          position: "relative",
+          height: fillEditor ? "100%" : undefined,
+          minHeight: fillEditor ? 0 : undefined,
+          overflow: fillEditor ? "hidden" : undefined,
+        }}
+      >
         {showPendingRemoteIndicator && (
           <div
             role="button"
@@ -2690,6 +2699,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
               ? editableFillStyle
               : {
                   height,
+                  flex: fillEditor ? "1 1 0" : undefined,
+                  minHeight: fillEditor ? 0 : undefined,
                   position: "relative", // CRITICAL!!! Without this, editor will sometimes scroll the entire frame off the screen.  Do NOT delete position:'relative'.  5+ hours of work to figure this out!  Note that this isn't needed when using windowing above.
                   minWidth: "80%",
                   padding: "15px",
