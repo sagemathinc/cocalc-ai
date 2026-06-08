@@ -45,6 +45,7 @@ RUNTIME_WRAPPER_VERSION = "20260505-v9"
 NVM_VERSION = "0.40.4"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
+PROC_ROOT = Path("/proc")
 ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
 ROOTLESS_SUBID_ALIGNMENT = 65536
 PROJECT_HOST_RUNTIME_UID = 2000
@@ -1559,6 +1560,15 @@ def prune_bundle_versions(
     if not root.is_dir():
         return
     keep_resolved: set[Path] = set()
+    live_versions = live_mounted_bundle_versions(root)
+    for version in sorted(live_versions):
+        live_dir = root / version
+        if live_dir.exists() and live_dir.is_dir():
+            keep_resolved.add(live_dir.resolve())
+            log_line(
+                cfg,
+                f"bootstrap: preserving live-mounted bundle dir {live_dir}",
+            )
     desired_dir = Path(bundle.dir)
     if desired_dir.exists() and desired_dir.is_dir():
         keep_resolved.add(desired_dir.resolve())
@@ -1620,6 +1630,69 @@ def prune_bundle_versions(
             ["sudo", "chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
             "sudo chown runtime dir roots",
         )
+
+
+def decode_mountinfo_path(value: str) -> str:
+    return re.sub(
+        r"\\([0-7]{3})",
+        lambda match: chr(int(match.group(1), 8)),
+        value,
+    )
+
+
+def strip_deleted_mount_suffix(value: str) -> str:
+    for suffix in ["//deleted", " (deleted)"]:
+        if value.endswith(suffix):
+            return value[: -len(suffix)]
+    return value
+
+
+def live_mounted_bundle_versions(root: Path) -> set[str]:
+    """Return version directories under root referenced by live mountinfo.
+
+    Podman inspect can report a symlink source such as /opt/cocalc/tools/current,
+    while the kernel mount namespace records the resolved bind source. When a
+    host upgrade prunes that source, live containers can end up with
+    /opt/cocalc/tools/<version>//deleted mounted and lose files. Mountinfo is the
+    authoritative signal for protecting runtime versions from pruning.
+    """
+    try:
+        root_abs = root.resolve()
+    except Exception:
+        root_abs = root.absolute()
+    root_text = str(root_abs)
+    versions: set[str] = set()
+    try:
+        proc_entries = list(PROC_ROOT.iterdir())
+    except Exception:
+        return versions
+    for proc in proc_entries:
+        if not proc.name.isdigit():
+            continue
+        mountinfo = proc / "mountinfo"
+        try:
+            lines = mountinfo.read_text(
+                encoding="utf-8",
+                errors="replace",
+            ).splitlines()
+        except Exception:
+            continue
+        for line in lines:
+            fields = line.split(" ")
+            if len(fields) < 5:
+                continue
+            source_root = strip_deleted_mount_suffix(
+                decode_mountinfo_path(fields[3])
+            )
+            if source_root == root_text:
+                continue
+            if not source_root.startswith(f"{root_text}/"):
+                continue
+            remainder = source_root[len(root_text) + 1 :]
+            version = remainder.split("/", 1)[0]
+            if version and version != "current":
+                versions.add(version)
+    return versions
 
 
 def pick_unmounted_or_target_disk(
