@@ -324,6 +324,41 @@ describe("app server agent workflows", () => {
     }
   });
 
+  test("http-only detect is passive and does not request arbitrary listeners", async () => {
+    let requests = 0;
+    const fragileServer = await new Promise<ReturnType<typeof createServer>>(
+      (resolve) => {
+        const srv = createServer((_req, res) => {
+          requests += 1;
+          res.statusCode = 200;
+          res.end("closing");
+          srv.close();
+        });
+        srv.listen(0, "127.0.0.1", () => resolve(srv));
+      },
+    );
+    const fragilePort = (fragileServer.address() as any).port as number;
+    expect(fragilePort).toBeGreaterThan(0);
+
+    try {
+      const detected = await detectApps({
+        include_managed: true,
+        http_only: true,
+        limit: 1000,
+      });
+
+      expect(detected.some((x) => x.port === fragilePort)).toBe(true);
+      expect(requests).toBe(0);
+      expect(fragileServer.listening).toBe(true);
+    } finally {
+      if (fragileServer.listening) {
+        await new Promise<void>((resolve) =>
+          fragileServer.close(() => resolve()),
+        );
+      }
+    }
+  });
+
   test("managed fixed-port apps fail loudly when the preferred port is unavailable", async () => {
     const id = appId("fixed-port");
     const occupied = await new Promise<ReturnType<typeof createServer>>(

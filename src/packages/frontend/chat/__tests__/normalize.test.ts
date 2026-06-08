@@ -401,6 +401,65 @@ describe("handleSyncDBChange", () => {
       "not-sent",
     );
   });
+
+  it("clears stale queued state when an assistant reply arrives incrementally", () => {
+    const store = new MockStore();
+    store.state.activityReady = true;
+    store.state.acpState = iMap().set("message:msg-user-queued", "queue");
+    const userDate = "2024-01-02T03:04:05.000Z";
+    const assistantDate = "2024-01-02T03:04:06.000Z";
+    const syncdb = new MockSyncDB([
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: userDate,
+        message_id: "msg-user-queued",
+        thread_id: "thread-complete",
+        acp_state: "queued",
+        history: [],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      },
+      {
+        event: "chat",
+        sender_id: "assistant-1",
+        date: assistantDate,
+        message_id: "msg-assistant-complete",
+        thread_id: "thread-complete",
+        parent_message_id: "msg-user-queued",
+        acp_account_id: "codex-account",
+        history: [
+          {
+            content: "hi",
+            author_id: "assistant-1",
+            date: assistantDate,
+          },
+        ],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      },
+    ]);
+
+    handleSyncDBChange({
+      syncdb,
+      store,
+      changes: [
+        {
+          event: "chat",
+          sender_id: "assistant-1",
+          date: assistantDate,
+          message_id: "msg-assistant-complete",
+          thread_id: "thread-complete",
+        },
+      ],
+    });
+
+    expect(
+      store.state.acpState?.get("message:msg-user-queued"),
+    ).toBeUndefined();
+  });
 });
 
 describe("initFromSyncDB", () => {
@@ -613,6 +672,59 @@ describe("initFromSyncDB", () => {
     expect(store.state.acpState?.get("message:msg-assistant-running")).toBe(
       "running",
     );
+  });
+
+  it("drops stale queued state from the prompt once its assistant reply exists", () => {
+    const store = new MockStore();
+    const syncdb = new MockSyncDB([
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2024-01-02T03:04:05.000Z",
+        message_id: "msg-user-queued",
+        thread_id: "thread-complete",
+        acp_state: "queued",
+        history: [],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      },
+      {
+        event: "chat",
+        sender_id: "assistant-1",
+        date: "2024-01-02T03:04:06.000Z",
+        message_id: "msg-assistant-complete",
+        thread_id: "thread-complete",
+        parent_message_id: "msg-user-queued",
+        acp_account_id: "codex-account",
+        history: [
+          {
+            content: "hi",
+            author_id: "assistant-1",
+            date: "2024-01-02T03:04:06.000Z",
+          },
+        ],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      },
+      {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: "2024-01-02T03:04:07.000Z",
+        thread_id: "thread-complete",
+        active_message_id: "msg-assistant-complete",
+        state: "complete",
+      },
+    ]);
+
+    initFromSyncDB({ syncdb, store });
+    expect(
+      store.state.acpState?.get("message:msg-user-queued"),
+    ).toBeUndefined();
+    expect(
+      store.state.acpState?.get("message:msg-assistant-complete"),
+    ).toBeUndefined();
   });
 
   it("preserves a genuinely queued follow-up while an earlier assistant reply is running", () => {

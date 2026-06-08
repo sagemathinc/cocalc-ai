@@ -824,6 +824,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     return () => {
       if (pendingRemoteTimerRef.current != null) {
         window.clearTimeout(pendingRemoteTimerRef.current);
+        pendingRemoteTimerRef.current = null;
+      }
+      if (blurMergeTimerRef.current != null) {
+        window.clearTimeout(blurMergeTimerRef.current);
+        blurMergeTimerRef.current = null;
       }
       pendingSlateValueRef.current = null;
     };
@@ -1321,6 +1326,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       saveDebounceMs ?? SAVE_DEBOUNCE_MS,
     );
   }, [editor, saveDebounceMs]);
+
+  useEffect(() => {
+    return () => {
+      // Do not let delayed saves from a stale Slate instance run after the
+      // editor has unmounted. Flush first so real local edits are not lost.
+      (saveValueDebounce as any).flush?.();
+      (setSyncstringFromSlate as any).flush?.();
+      (saveValueDebounce as any).cancel?.();
+      (setSyncstringFromSlate as any).cancel?.();
+    };
+  }, [saveValueDebounce, setSyncstringFromSlate]);
 
   const getTopLevelJupyterCell = useCallback(() => {
     const path = editor.selection?.focus?.path;

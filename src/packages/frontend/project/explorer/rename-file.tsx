@@ -87,7 +87,7 @@ export default function RenameFile({
       onUserFilesystemChange?.();
       if (duplicate) {
         await actions.copyPaths({
-          src: [opts.src],
+          src: opts.src,
           dest: opts.dest,
         });
       } else {

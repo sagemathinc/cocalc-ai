@@ -78,6 +78,34 @@ describe("project redux file operations", () => {
     });
   });
 
+  it("copies a single source to an exact destination path", async () => {
+    const cp = jest.fn().mockResolvedValue(undefined);
+    const log = jest.fn();
+
+    await copyPaths({
+      src: "/src/file.txt",
+      dest: "/src/file-1.txt",
+      fs: () => ({ cp }) as any,
+      setActivity: jest.fn(),
+      log,
+      appendSlashToDirectoryPaths: jest
+        .fn()
+        .mockResolvedValue(["/src/file.txt"]),
+    });
+
+    expect(log).toHaveBeenCalledWith({
+      event: "file_action",
+      action: "copied",
+      files: ["/src/file.txt"],
+      count: 1,
+      dest: "/src/file-1.txt",
+    });
+    expect(cp).toHaveBeenCalledWith("/src/file.txt", "/src/file-1.txt", {
+      recursive: true,
+      reflink: true,
+    });
+  });
+
   it("deletes matching fd results and returns the selected paths", async () => {
     const fd = jest.fn().mockResolvedValue({
       stdout: Buffer.from("keep.txt\nskip.log\n"),

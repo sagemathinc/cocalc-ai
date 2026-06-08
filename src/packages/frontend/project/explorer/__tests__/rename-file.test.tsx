@@ -53,7 +53,7 @@ describe("RenameFile duplicate action", () => {
 
     await waitFor(() => {
       expect(copyPaths).toHaveBeenCalledWith({
-        src: ["/foo.txt"],
+        src: "/foo.txt",
         dest: "/foo-1.txt",
       });
     });
@@ -78,7 +78,7 @@ describe("RenameFile duplicate action", () => {
 
     await waitFor(() => {
       expect(copyPaths).toHaveBeenCalledWith({
-        src: ["/work/bar.txt"],
+        src: "/work/bar.txt",
         dest: "/work/bar-1.txt",
       });
     });

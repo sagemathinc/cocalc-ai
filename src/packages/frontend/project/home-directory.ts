@@ -118,6 +118,12 @@ export function getProjectHomeDirectory(projectId?: string): string {
   return FALLBACK_HOME;
 }
 
+export function getExactProjectHomeDirectory(
+  projectId?: string,
+): string | undefined {
+  return readExactHomeFromProjectStore(projectId);
+}
+
 export function getProjectRuntimeUser(projectId?: string): string {
   const cacheKey = projectId ?? "__default__";
   const cached = USER_CACHE.get(cacheKey);
@@ -181,4 +187,31 @@ export async function resolveProjectHomeDirectory(
     return setCachedHome(projectId, heuristicFromStore);
   }
   return getProjectHomeDirectory(projectId);
+}
+
+export async function resolveExactProjectHomeDirectory(
+  projectId?: string,
+): Promise<string | undefined> {
+  const exactFromStore = readExactHomeFromProjectStore(projectId);
+  if (exactFromStore) {
+    return setCachedHome(projectId, exactFromStore);
+  }
+  if (!lite || !projectId) {
+    return;
+  }
+  try {
+    const config = await webapp_client.project_client.configuration(
+      projectId,
+      "main",
+      false,
+    );
+    const fromConfig = normalizeHome(
+      (config as any)?.capabilities?.homeDirectory,
+    );
+    if (fromConfig) {
+      return setCachedHome(projectId, fromConfig);
+    }
+  } catch {
+    // best effort only
+  }
 }

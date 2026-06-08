@@ -512,9 +512,6 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if (archivedLike || hardDeleteBlocked) {
       return [];
     }
-    if (!is_active) {
-      return [];
-    }
     const v: React.JSX.Element[] = [];
     const activeEditorPath =
       initialWorkspaceRender.displayActiveTab?.startsWith(EDITOR_PREFIX)
@@ -528,7 +525,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       const component = open_files?.getIn([path, "component"]) as any;
       const hasHydratedEditor =
         component?.Editor != null || component?.get?.("Editor") != null;
-      if (path !== activeEditorPath && !hasHydratedEditor) {
+      if (!hasHydratedEditor && (!is_active || path !== activeEditorPath)) {
         return;
       }
       const syncPathValue = open_files?.getIn([path, "sync_path"]);
@@ -537,6 +534,9 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
           ? syncPathValue
           : path;
       const tab_name = path_to_tab(path);
+      const tabIsVisible =
+        active_top_tab == project_id &&
+        initialWorkspaceRender.displayActiveTab === tab_name;
       return v.push(
         <FrameContext.Provider
           key={tab_name}
@@ -545,18 +545,12 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
             project_id,
             path,
             actions: redux.getEditorActions(project_id, syncPath) as any,
-            isFocused: initialWorkspaceRender.displayActiveTab === tab_name,
-            isVisible: initialWorkspaceRender.displayActiveTab === tab_name,
+            isFocused: tabIsVisible,
+            isVisible: tabIsVisible,
             redux,
           }}
         >
-          <Content
-            is_visible={
-              active_top_tab == project_id &&
-              initialWorkspaceRender.displayActiveTab === tab_name
-            }
-            tab_name={tab_name}
-          />
+          <Content is_visible={tabIsVisible} tab_name={tab_name} />
         </FrameContext.Provider>,
       );
     });

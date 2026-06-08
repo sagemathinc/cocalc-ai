@@ -124,6 +124,48 @@ describe("ChatLog immediate steer rendering", () => {
     expect(lastRenderedMessageProps("user-2")?.acpState).toBe("queue");
   });
 
+  it("suppresses stale queued state once an ACP reply points at the prompt", () => {
+    render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={{ clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+        acpState={new Map() as any}
+        messages={
+          new Map([
+            [
+              "1000",
+              {
+                date: 1000,
+                message_id: "user-1",
+                thread_id: "thread-1",
+                sender_id: "acct-1",
+                acp_state: "queued",
+                history: [{ content: "queued prompt" }],
+              },
+            ],
+            [
+              "2000",
+              {
+                date: 2000,
+                message_id: "assistant-1",
+                thread_id: "thread-1",
+                parent_message_id: "user-1",
+                sender_id: "acct-1",
+                acp_account_id: "codex-account",
+                history: [{ content: "response" }],
+              },
+            ],
+          ]) as any
+        }
+      />,
+    );
+
+    expect(lastRenderedMessageProps("user-1")?.acpState).toBeUndefined();
+  });
+
   it("renders immediate steer rows inline while the anchored Codex turn is still running", () => {
     render(
       <ChatLog
