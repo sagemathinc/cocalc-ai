@@ -22,8 +22,6 @@ Also generally do this:
 
 */
 
-import expect from "expect";
-
 // TODO: this hack to make quota of type any is hiding a bug
 // in our testing below.  Replace by the following to see the
 // dozens of type errors.  This is definitely something to be
