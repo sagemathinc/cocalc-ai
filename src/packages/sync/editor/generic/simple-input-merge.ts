@@ -83,6 +83,15 @@ export class SimpleInputMerge {
       return;
     }
 
+    // Remote already matches the live local buffer.  This can happen if a
+    // local save was observed through another path before `pending` saw the
+    // echo.  Rebasing stale `last → local` onto the identical remote would
+    // replay the local edit and duplicate inserted text.
+    if (remote === local) {
+      this.noteApplied(remote);
+      return;
+    }
+
     // No local edits since last baseline and no pending: adopt remote directly.
     if (local === this.last && this.pending.length === 0) {
       this.noteApplied(remote);
@@ -109,6 +118,10 @@ export class SimpleInputMerge {
     const local = opts.local ?? "";
 
     if (this.pending.includes(remote)) {
+      return { merged: local, changed: false };
+    }
+
+    if (remote === local) {
       return { merged: local, changed: false };
     }
 
