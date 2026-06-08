@@ -9,10 +9,14 @@ import {
   Alert,
   Button,
   Checkbox,
+  DatePicker,
   Dropdown,
   Empty,
   Input,
+  InputNumber,
   Modal,
+  Popover,
+  Progress,
   Select,
   Space,
   Spin,
@@ -20,6 +24,7 @@ import {
   Typography,
   type MenuProps,
 } from "antd";
+import dayjs from "dayjs";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
@@ -53,14 +58,22 @@ const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
 type GitCommitDrawerTitleProps = {
   nonRepoError: string;
   commit?: string;
-  commitSearch: string;
+  commitFilter: string;
   logOptions: Array<{
     value: string;
     label: ReactNode;
+    plainLabel?: ReactNode;
     search?: string;
   }>;
   onCommitChange: (value: string) => void;
-  onCommitSearch: (value: string) => void;
+  onCommitFilterChange: (value: string) => void;
+  filteredCommitCount: number;
+  recentCommitCount: number;
+  reviewedRecentCommitCount: number;
+  recentCutoff?: number;
+  onRecentCutoffChange: (value: number | undefined) => void;
+  gitLogFetchCount: number;
+  onGitLogFetchCountChange: (value: number) => void;
   showOnlyUnreviewedCommits: boolean;
   onToggleShowOnlyUnreviewed: (value: boolean) => void;
   diffFindInputRef: any;
@@ -83,15 +96,24 @@ type GitCommitDrawerTitleProps = {
   reviewMenuItems: NonNullable<MenuProps["items"]>;
   onReviewMenuClick: NonNullable<MenuProps["onClick"]>;
   reviewTransferBusy: boolean;
+  shortcutsOpen: boolean;
+  onShortcutsOpenChange: (open: boolean) => void;
 };
 
 export function GitCommitDrawerTitle({
   nonRepoError,
   commit,
-  commitSearch,
+  commitFilter,
   logOptions,
   onCommitChange,
-  onCommitSearch,
+  onCommitFilterChange,
+  filteredCommitCount,
+  recentCommitCount,
+  reviewedRecentCommitCount,
+  recentCutoff,
+  onRecentCutoffChange,
+  gitLogFetchCount,
+  onGitLogFetchCountChange,
   showOnlyUnreviewedCommits,
   onToggleShowOnlyUnreviewed,
   diffFindInputRef,
@@ -114,7 +136,85 @@ export function GitCommitDrawerTitle({
   reviewMenuItems,
   onReviewMenuClick,
   reviewTransferBusy,
+  shortcutsOpen,
+  onShortcutsOpenChange,
 }: GitCommitDrawerTitleProps) {
+  const reviewPercent =
+    recentCommitCount > 0
+      ? Math.round((100 * reviewedRecentCommitCount) / recentCommitCount)
+      : 0;
+  const reviewComplete =
+    recentCommitCount > 0 && reviewedRecentCommitCount >= recentCommitCount;
+  const reviewProgressColor = reviewComplete
+    ? COLORS.ANTD_GREEN
+    : reviewPercent >= 80
+      ? COLORS.ANTD_GREEN
+      : reviewPercent >= 40
+        ? COLORS.ANTD_ORANGE
+        : COLORS.ANTD_RED;
+  const progressPopover = (
+    <Space direction="vertical" size="small" style={{ width: 280 }}>
+      <Typography.Text strong>Recent commit review scope</Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        Progress counts loaded non-merge commits on or after this cutoff date.
+      </Typography.Text>
+      <DatePicker
+        allowClear
+        size="small"
+        value={recentCutoff != null ? dayjs(recentCutoff) : null}
+        style={{ width: "100%" }}
+        onChange={(value) => {
+          onRecentCutoffChange(value?.startOf("day").valueOf());
+        }}
+      />
+      <InputNumber
+        size="small"
+        min={50}
+        max={5000}
+        step={50}
+        value={gitLogFetchCount}
+        addonBefore="Load"
+        addonAfter="commits"
+        style={{ width: "100%" }}
+        onChange={(value) => {
+          if (typeof value === "number") {
+            onGitLogFetchCountChange(value);
+          }
+        }}
+      />
+    </Space>
+  );
+  const shortcutsPopover = (
+    <Space direction="vertical" size={4} style={{ minWidth: 220 }}>
+      {[
+        ["Space", "Scroll down"],
+        ["Shift+Space", "Scroll up"],
+        ["j", "Older commit"],
+        ["k", "Newer commit"],
+        ["y", "Mark commit reviewed"],
+        ["Home", "Scroll to top"],
+        ["/", "Find in diff"],
+      ].map(([key, description]) => (
+        <div
+          key={key}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "96px 1fr",
+            gap: 10,
+            fontSize: 12,
+          }}
+        >
+          <Typography.Text
+            code
+            style={{ display: "inline-block", whiteSpace: "nowrap" }}
+          >
+            {key}
+          </Typography.Text>
+          <Typography.Text>{description}</Typography.Text>
+        </div>
+      ))}
+    </Space>
+  );
   return (
     <div
       style={{
@@ -132,31 +232,74 @@ export function GitCommitDrawerTitle({
               display: "flex",
               alignItems: "center",
               gap: 8,
-              flex: "1 1 460px",
+              flex: "1 1 760px",
               minWidth: 360,
-              maxWidth: 760,
+              maxWidth: 980,
             }}
           >
             <Select
-              showSearch
               size="small"
               value={commit}
-              searchValue={commitSearch}
               options={logOptions}
               onChange={onCommitChange}
-              onSearch={onCommitSearch}
               placeholder="git log"
               style={{ minWidth: 0, flex: "1 1 auto" }}
-              optionFilterProp="search"
+              optionLabelProp="plainLabel"
+            />
+          </div>
+          <Space size="small" wrap>
+            <Input
+              size="small"
+              allowClear
+              value={commitFilter}
+              placeholder="Filter commits"
+              style={{ width: 240 }}
+              onChange={(evt) => onCommitFilterChange(evt.target.value)}
             />
             <Checkbox
               checked={showOnlyUnreviewedCommits}
               onChange={(evt) => onToggleShowOnlyUnreviewed(evt.target.checked)}
-              style={{ whiteSpace: "nowrap", flex: "0 0 auto" }}
+              style={{ whiteSpace: "nowrap" }}
             >
               Only unreviewed
             </Checkbox>
-          </div>
+            <Typography.Text
+              type="secondary"
+              style={{ fontSize: 12, whiteSpace: "nowrap" }}
+            >
+              {filteredCommitCount.toLocaleString()} /{" "}
+              {recentCommitCount.toLocaleString()} recent commits
+            </Typography.Text>
+            <Popover trigger="click" content={progressPopover}>
+              <div
+                role="button"
+                tabIndex={0}
+                style={{
+                  width: 180,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                }}
+              >
+                <Progress
+                  size="small"
+                  percent={reviewPercent}
+                  status={reviewComplete ? "success" : "normal"}
+                  strokeColor={reviewProgressColor}
+                  format={() => (
+                    <span>
+                      {reviewComplete ? (
+                        <>
+                          <Icon name="check" />{" "}
+                        </>
+                      ) : null}
+                      {reviewedRecentCommitCount.toLocaleString()} /{" "}
+                      {recentCommitCount.toLocaleString()}
+                    </span>
+                  )}
+                />
+              </div>
+            </Popover>
+          </Space>
           <Space.Compact size="small">
             <Input
               ref={diffFindInputRef}
@@ -224,6 +367,15 @@ export function GitCommitDrawerTitle({
               Find in chat
             </Button>
           ) : null}
+          <Popover
+            trigger="click"
+            open={shortcutsOpen}
+            onOpenChange={onShortcutsOpenChange}
+            title="Git review shortcuts"
+            content={shortcutsPopover}
+          >
+            <Button size="small">?</Button>
+          </Popover>
         </>
       ) : (
         <Typography.Text strong style={{ marginRight: "auto" }}>

@@ -47,7 +47,6 @@ describe("RootFS catalog dangerous-session auth", () => {
   const OTHER_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 
   beforeEach(() => {
-    jest.resetModules();
     isAdminMock = jest.fn(async () => false);
     queryMock = jest.fn(async () => ({
       rows: [{ owner_id: ACCOUNT_ID }],
@@ -153,6 +152,31 @@ describe("RootFS catalog dangerous-session auth", () => {
       require_second_factor: true,
     });
     expect(runPendingRootfsReleaseGcMock).toHaveBeenCalledWith({ limit: 100 });
+  });
+
+  it("requires fresh auth before publishing a project RootFS image", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => {
+      throw Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
+    });
+
+    const { publishProjectRootfsImage } = await import("./system");
+    await expect(
+      publishProjectRootfsImage({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        project_id: "project-1",
+        label: "Published RootFS",
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: false,
+    });
   });
 
   it("allows admins to list RootFS rustic repos without fresh auth", async () => {

@@ -100,7 +100,6 @@ describe("remote project detail reads", () => {
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
   beforeEach(() => {
-    jest.resetModules();
     getLocalProjectCollaboratorAccessStatusMock = jest.fn(
       async () => "missing-project",
     );

@@ -163,6 +163,8 @@ function sameSelection(a: WorkspaceSelection, b: WorkspaceSelection): boolean {
 }
 
 export const WORKSPACE_STORE_FOREGROUND_LOADING_TIMEOUT_MS = 15_000;
+const WORKSPACE_STORE_FOREGROUND_LOADING_TIMEOUT_MESSAGE =
+  "Failed to load workspaces. The project host did not become available in time.";
 
 export function useProjectWorkspaces(
   account_id: string | undefined,
@@ -176,6 +178,8 @@ export function useProjectWorkspaces(
   const canPersist =
     enabled && typeof account_id === "string" && account_id.trim().length > 0;
   const [loading, setLoading] = useState(canPersist);
+  const [error, setError] = useState("");
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [records, setRecords] = useState<WorkspaceRecord[]>([]);
   const [order, setOrderState] = useState<string[]>([]);
   const [selection, setSelectionState] = useState<WorkspaceSelection>(() =>
@@ -249,6 +253,7 @@ export function useProjectWorkspaces(
       storeRef.current?.close?.();
       storeRef.current = null;
       setLoading(false);
+      setError("");
       setRecords([]);
       clearRuntimeWorkspaceRecords(project_id);
       setSelectionState(loadSessionSelection(project_id));
@@ -298,6 +303,7 @@ export function useProjectWorkspaces(
   useEffect(() => {
     if (!canPersist) return;
     setLoading(true);
+    setError("");
     let closed = false;
     let store: WorkspaceStore | null = null;
     let onChange:
@@ -307,6 +313,7 @@ export function useProjectWorkspaces(
     const foregroundLoadingTimer = setTimeout(() => {
       if (!closed) {
         setLoading(false);
+        setError(WORKSPACE_STORE_FOREGROUND_LOADING_TIMEOUT_MESSAGE);
       }
     }, WORKSPACE_STORE_FOREGROUND_LOADING_TIMEOUT_MS);
 
@@ -375,6 +382,7 @@ export function useProjectWorkspaces(
 
           store.on("change", onChange);
           clearTimeout(foregroundLoadingTimer);
+          setError("");
           setLoading(false);
           return;
         } catch (err) {
@@ -387,6 +395,7 @@ export function useProjectWorkspaces(
           }
           console.warn(`workspace store initialization warning -- ${err}`);
           clearTimeout(foregroundLoadingTimer);
+          setError(`Failed to load workspaces: ${err}`);
           setLoading(false);
           return;
         }
@@ -412,7 +421,13 @@ export function useProjectWorkspaces(
         store.close();
       }
     };
-  }, [account_id, project_id, canPersist]);
+  }, [account_id, project_id, canPersist, refreshNonce]);
+
+  const refresh = useCallback(() => {
+    setError("");
+    setLoading(canPersist);
+    setRefreshNonce((nonce) => nonce + 1);
+  }, [canPersist]);
 
   const persistState = useCallback(
     (nextRecords: WorkspaceRecord[], nextOrder: string[]) => {
@@ -683,6 +698,7 @@ export function useProjectWorkspaces(
 
   return {
     loading,
+    error,
     records,
     selection,
     current,
@@ -695,6 +711,7 @@ export function useProjectWorkspaces(
     reorderWorkspaces,
     deleteWorkspace,
     touchWorkspace,
+    refresh,
   };
 }
 

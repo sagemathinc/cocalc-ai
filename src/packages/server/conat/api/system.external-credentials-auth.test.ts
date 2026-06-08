@@ -34,7 +34,6 @@ describe("external credential dangerous-session auth", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
   beforeEach(() => {
-    jest.resetModules();
     requireDangerousSessionAuthMock = jest.fn(async () => {
       throw Object.assign(new Error("fresh auth is required"), {
         code: "fresh_auth_required",

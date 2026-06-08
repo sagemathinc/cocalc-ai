@@ -351,15 +351,20 @@ export function FileDndProvider({
 
       const dropData = event.over?.data?.current as FolderDropData | undefined;
       if (dropData?.type === "folder-drop") {
-        if (
-          dragData.paths.some(
-            (path) =>
-              path === dropData.path || dropData.path.startsWith(path + "/"),
-          ) ||
-          dragData.paths.every(
-            (path) => path_split(path).head === dropData.path,
-          )
-        ) {
+        const isSelfDrop = dragData.paths.some(
+          (path) =>
+            path === dropData.path || dropData.path.startsWith(path + "/"),
+        );
+        const isAlreadyInTarget = dragData.paths.every(
+          (path) => path_split(path).head === dropData.path,
+        );
+        if (isSelfDrop || isAlreadyInTarget) {
+          actions.set_activity({
+            id: uuid(),
+            error: isSelfDrop
+              ? "Drag-and-drop did nothing: a folder cannot be moved into itself."
+              : "Drag-and-drop did nothing: the selected files are already in that folder.",
+          });
           restoreSelection();
           return;
         }

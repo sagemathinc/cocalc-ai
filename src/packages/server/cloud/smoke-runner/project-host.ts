@@ -110,6 +110,7 @@ import { savePlacement } from "@cocalc/server/project-host/control";
 import { hardDeleteProject } from "@cocalc/server/projects/hard-delete";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
+import { estimateGcpCatalogRateUsdPerHour } from "@cocalc/util/project-host-pricing";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import admins from "@cocalc/server/accounts/admins";
 import { getLro } from "@cocalc/server/lro/lro-db";
@@ -367,7 +368,6 @@ function resolveHubPassword(pathHint?: string): string | undefined {
     join(process.cwd(), "data", "app", "postgres", "secrets", "conat-password"),
   ].filter((x): x is string => !!x && !!x.trim());
 
-  const first = candidates[0]?.trim();
   for (const value of candidates) {
     const trimmed = value.trim();
     if (!trimmed) continue;
@@ -378,7 +378,7 @@ function resolveHubPassword(pathHint?: string): string | undefined {
       return trimmed;
     }
   }
-  return first;
+  return undefined;
 }
 
 function resolveCliPath(pathHint?: string): string {
@@ -1699,6 +1699,12 @@ function buildHostCreateCliArgs({
   ];
   if (create.gpu) {
     args.push("--gpu");
+  }
+  if (create.funding_mode) {
+    args.push("--funding-mode", create.funding_mode);
+  }
+  if (create.pricing_model) {
+    args.push("--pricing-model", create.pricing_model);
   }
   const machine = { ...(create.machine ?? {}) } as Record<string, any>;
   const machineType = `${machine.machine_type ?? ""}`.trim();
@@ -4191,27 +4197,46 @@ async function runMoveSmokeScenarioViaCli({
 
     await runStep("start_and_seed_workspace", async () => {
       if (!workspaceId) throw new Error("missing workspace id");
-      await runCli(cli, [
-        "project",
-        "start",
-        "--project",
-        workspaceId,
-        "--wait",
-      ]);
-      await runCli(
-        cli,
-        [
-          "project",
-          "exec",
-          "--project",
-          workspaceId,
-          "--timeout",
-          "45",
-          "--bash",
-          `mkdir -p .smoke && printf %s ${JSON.stringify(sentinelValue)} > ${sentinelPath}`,
-        ],
-        { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
-      );
+      await runCli(cli, ["project", "start", "--project", workspaceId], {
+        timeoutSeconds: 120,
+        commandTimeoutMs: 180_000,
+      });
+      let lastErr: unknown;
+      for (
+        let attempt = 1;
+        attempt <= waitProjectReady.attempts;
+        attempt += 1
+      ) {
+        try {
+          await runCli(
+            cli,
+            [
+              "project",
+              "exec",
+              "--project",
+              workspaceId,
+              "--timeout",
+              "45",
+              "--bash",
+              `mkdir -p .smoke && printf %s ${JSON.stringify(sentinelValue)} > ${sentinelPath}`,
+            ],
+            { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
+          );
+          lastErr = undefined;
+          break;
+        } catch (err) {
+          lastErr = err;
+          logger.debug("cloud smoke seed workspace retry", {
+            project_id: workspaceId,
+            attempt,
+            err: getErrorMessage(err),
+          });
+          await sleep(waitProjectReady.intervalMs);
+        }
+      }
+      if (lastErr) {
+        throw lastErr;
+      }
       await waitForProjectFileValueViaCli({
         cli,
         project_id: workspaceId,
@@ -4224,18 +4249,29 @@ async function runMoveSmokeScenarioViaCli({
     await runStep("move_workspace_to_dest", async () => {
       if (!workspaceId) throw new Error("missing workspace id");
       if (!destHostId) throw new Error("missing destination host id");
-      await runCli(
+      const move = await runCli<{ op_id?: string; status?: string }>(
         cli,
-        [
+        ["project", "move", "--project", workspaceId, "--host", destHostId],
+        { timeoutSeconds: 120, commandTimeoutMs: 180_000 },
+      );
+      const started = Date.now();
+      let currentHostId = "";
+      while (Date.now() - started <= 300_000) {
+        const row = await runCli<{ host_id?: string | null }>(cli, [
           "project",
-          "move",
+          "get",
           "--project",
           workspaceId,
-          "--host",
-          destHostId,
-          "--wait",
-        ],
-        { timeoutSeconds: 1800, commandTimeoutMs: 1_950_000 },
+        ]);
+        currentHostId = `${row?.host_id ?? ""}`.trim();
+        if (currentHostId === destHostId) {
+          return;
+        }
+        await sleep(waitProjectReady.intervalMs);
+      }
+      throw new Error(
+        `workspace ${workspaceId} did not move to destination host within 300s` +
+          ` (op=${move?.op_id ?? "unknown"}, status=${move?.status ?? "unknown"}, current_host=${currentHostId || "unknown"})`,
       );
     });
 
@@ -4258,11 +4294,10 @@ async function runMoveSmokeScenarioViaCli({
 
     await runStep("verify_files_after_move", async () => {
       if (!workspaceId) throw new Error("missing workspace id");
-      await runCli(
-        cli,
-        ["project", "start", "--project", workspaceId, "--wait"],
-        { timeoutSeconds: 120, commandTimeoutMs: 240_000 },
-      );
+      await runCli(cli, ["project", "start", "--project", workspaceId], {
+        timeoutSeconds: 120,
+        commandTimeoutMs: 180_000,
+      });
       await waitForProjectFileValueViaCli({
         cli,
         project_id: workspaceId,
@@ -5057,6 +5092,7 @@ function pickDifferent<T>(
 
 async function buildPresetForGcp(): Promise<SmokePreset | undefined> {
   const entries = await loadCatalogEntries("gcp");
+  const prices = getCatalogPayload<any>(entries, "prices", "global");
   const regions =
     getCatalogPayload<Array<{ name: string; zones: string[] }>>(
       entries,
@@ -5067,36 +5103,72 @@ async function buildPresetForGcp(): Promise<SmokePreset | undefined> {
     getCatalogPayload<Array<{ name: string }>>(entries, "zones", "global") ??
     [];
   const zoneNames = new Set(zones.map((z) => z.name));
-  const regionName = "us-west1";
-  const region = regions.find((r) => r.name === regionName);
-  if (!region) return undefined;
-  const preferredZones = ["us-west1-b", "us-west1-a", "us-west1-c"];
-  const zone =
-    preferredZones.find(
-      (z) => (region.zones ?? []).includes(z) && zoneNames.has(z),
-    ) ?? (region.zones ?? []).find((z) => zoneNames.has(z));
-  if (!zone) return undefined;
+  const preferredRegions = ["us-south1", "us-west1", "us-central1"];
+  const orderedRegions = [
+    ...preferredRegions
+      .map((name) => regions.find((region) => region.name === name))
+      .filter(
+        (region): region is { name: string; zones: string[] } => !!region,
+      ),
+    ...regions.filter((region) => !preferredRegions.includes(region.name)),
+  ];
+  const preferredMachineTypes = [
+    "t2d-standard-2",
+    "e2-standard-2",
+    "n2d-standard-2",
+    "n2-highmem-2",
+  ];
+  let selected:
+    | {
+        regionName: string;
+        zone: string;
+        machineType: string;
+      }
+    | undefined;
 
-  const machineTypes =
-    getCatalogPayload<any[]>(entries, "machine_types", `zone/${zone}`) ?? [];
-  const hasE2Standard2 = machineTypes.some(
-    (entry) => entry?.name === "e2-standard-2",
-  );
-  if (!hasE2Standard2) return undefined;
+  for (const region of orderedRegions) {
+    for (const zone of region.zones ?? []) {
+      if (!zoneNames.has(zone)) continue;
+      const machineTypes =
+        getCatalogPayload<any[]>(entries, "machine_types", `zone/${zone}`) ??
+        [];
+      const availableNames = new Set(
+        machineTypes.map((entry) => `${entry?.name ?? ""}`).filter(Boolean),
+      );
+      for (const machineType of preferredMachineTypes) {
+        if (!availableNames.has(machineType)) continue;
+        const estimate = estimateGcpCatalogRateUsdPerHour(prices, {
+          region: region.name,
+          zone,
+          machine_type: machineType,
+          disk_gb: 100,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+          pricing_model: "on_demand",
+        });
+        if (estimate == null) continue;
+        selected = { regionName: region.name, zone, machineType };
+        break;
+      }
+      if (selected) break;
+    }
+    if (selected) break;
+  }
+  if (!selected) return undefined;
 
   return {
     id: "gcp-cpu",
-    label: `GCP CPU (${regionName}/${zone}, e2-standard-2)`,
+    label: `GCP CPU (${selected.regionName}/${selected.zone}, ${selected.machineType})`,
     provider: "gcp",
     create: {
-      name: `smoke-gcp-e2s2-${Date.now()}`,
-      region: regionName,
-      size: "e2-standard-2",
+      name: `smoke-gcp-cpu-${Date.now()}`,
+      region: selected.regionName,
+      size: selected.machineType,
       gpu: false,
       machine: {
         cloud: "gcp",
-        zone,
-        machine_type: "e2-standard-2",
+        zone: selected.zone,
+        machine_type: selected.machineType,
         disk_gb: 100,
         disk_type: "balanced",
         storage_mode: "persistent",
@@ -5284,6 +5356,8 @@ export async function runProjectHostPersistenceSmokePreset({
   proxy_port,
   print_debug_hints = true,
   wait,
+  funding_mode,
+  pricing_model,
   log,
 }: {
   account_id?: string;
@@ -5300,6 +5374,8 @@ export async function runProjectHostPersistenceSmokePreset({
   proxy_port?: number;
   print_debug_hints?: boolean;
   wait?: ProjectHostSmokeOptions["wait"];
+  funding_mode?: SmokeCreateSpec["funding_mode"];
+  pricing_model?: SmokeCreateSpec["pricing_model"];
   log?: ProjectHostSmokeOptions["log"];
 }): Promise<ProjectHostSmokeResult> {
   const resolvedAccountId = await resolveSmokeAccountId(account_id);
@@ -5324,6 +5400,8 @@ export async function runProjectHostPersistenceSmokePreset({
       ...selected.create,
       name: withRunTagSuffix(selected.create.name, run_tag),
       account_id: resolvedAccountId,
+      funding_mode: funding_mode ?? selected.create.funding_mode,
+      pricing_model: pricing_model ?? selected.create.pricing_model,
     },
     update: selected.update,
     restart_after_stop: selected.restart_after_stop,

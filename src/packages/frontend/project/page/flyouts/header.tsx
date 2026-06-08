@@ -65,6 +65,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
           style={{
             marginRight: FLYOUT_PADDING,
             padding: FLYOUT_PADDING,
+            flexShrink: 0,
           }}
           onClick={() => actions?.toggleFlyout(flyout)}
         />
@@ -80,6 +81,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
       marginRight: FLYOUT_PADDING,
       padding: FLYOUT_PADDING,
       fontSize: "12px",
+      flexShrink: 0,
     };
 
     return (
@@ -109,7 +111,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
     switch (flyout) {
       case "files":
         return (
-          <div style={{ width: "100%" }}>
+          <div style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden" }}>
             <PathNavigator
               style={{ flex: 1 }}
               mode={"flyout"}
@@ -151,6 +153,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
         display: "flex",
         flexDirection: "row",
         alignItems: "start",
+        gap: FLYOUT_PADDING,
         borderRight: FIX_BORDER,
         borderTop: FIX_BORDER,
         borderLeft: FIX_BORDER,
@@ -176,6 +179,7 @@ function SearchHeader() {
     <div
       style={{
         flex: 1,
+        minWidth: 0,
         display: "flex",
         whiteSpace: "nowrap",
         overflow: "hidden",

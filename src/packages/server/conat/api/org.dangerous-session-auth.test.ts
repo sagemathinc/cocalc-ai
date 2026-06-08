@@ -32,7 +32,6 @@ describe("organization dangerous-session auth", () => {
   const USER_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 
   beforeEach(() => {
-    jest.resetModules();
     isAdminMock = jest.fn(async () => false);
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("SELECT org as name, account_id, email_address")) {

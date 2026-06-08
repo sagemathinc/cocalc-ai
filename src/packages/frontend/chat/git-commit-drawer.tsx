@@ -51,7 +51,6 @@ import {
   filterGitReviewLogEntries,
   isHeadCommit,
   parseCommitHash,
-  resolveGitCommitSearchChange,
 } from "./git-commit/commit-selection";
 import {
   buildGitDiffFindMatches,
@@ -68,14 +67,19 @@ import {
 } from "./git-commit/diff-lines";
 import {
   clampDrawerSize,
+  clampGitReviewFetchCount,
   persistGitReviewCommitSearchPreference,
+  persistGitReviewFetchCountPreference,
   persistGitReviewOnlyUnreviewedPreference,
+  persistGitReviewRecentCutoffPreference,
   persistDrawerScrollPosition,
   persistDrawerSize,
   readDrawerScrollPosition,
   readDrawerSize,
   readGitReviewCommitSearchPreference,
+  readGitReviewFetchCountPreference,
   readGitReviewOnlyUnreviewedPreference,
+  readGitReviewRecentCutoffPreference,
 } from "./git-commit/drawer-storage";
 import {
   buildGitReviewFileSectionId,
@@ -142,7 +146,7 @@ import "./git-commit-drawer.css";
 import type { ReactNode } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 
-export { buildGitLogArgs, buildGitShowArgs };
+export { buildGitLogArgs, buildGitShowArgs, parseGitLogOutput };
 export {
   buildGitDiffFindMatches,
   buildGitReviewFileSectionId,
@@ -165,8 +169,13 @@ export {
   persistGitReviewCommitSearchPreference,
   readGitReviewOnlyUnreviewedPreference,
   persistGitReviewOnlyUnreviewedPreference,
+  readGitReviewFetchCountPreference,
+  persistGitReviewFetchCountPreference,
+  readGitReviewRecentCutoffPreference,
+  persistGitReviewRecentCutoffPreference,
+  clampGitReviewFetchCount,
 };
-export { filterGitReviewLogEntries, resolveGitCommitSearchChange };
+export { filterGitReviewLogEntries };
 export {
   applySubmittedGitReviewComments,
   resolveGitReviewLoadFailure,
@@ -474,9 +483,16 @@ export function GitCommitDrawer({
       incomingRequestToken: commitSelectionRequestToken,
       appliedRequestToken: appliedCommitSelectionRequestToken,
     });
-  const [commitSearch, setCommitSearch] = useState(
+  const [commitFilter, setCommitFilter] = useState(
     readGitReviewCommitSearchPreference,
   );
+  const [recentCutoff, setRecentCutoff] = useState<number | undefined>(
+    readGitReviewRecentCutoffPreference,
+  );
+  const [gitLogFetchCount, setGitLogFetchCount] = useState(
+    readGitReviewFetchCountPreference,
+  );
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [diffFindQuery, setDiffFindQuery] = useState("");
   const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
     useState<number>(-1);
@@ -530,7 +546,6 @@ export function GitCommitDrawer({
   const repoBootstrapActionScopeRef = useRef<string | undefined>(undefined);
   const reviewNoteDraftRef = useRef(reviewNoteDraft);
   const reviewedRef = useRef(reviewed);
-  const preserveCommitSearchOnAutoClearRef = useRef(false);
   const reviewImportInputRef = useRef<HTMLInputElement | null>(null);
   const diffFindInputRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -620,26 +635,27 @@ export function GitCommitDrawer({
   useEffect(() => {
     setDiffFindQuery("");
     setActiveDiffFindMatchIndex(-1);
-    preserveCommitSearchOnAutoClearRef.current = false;
   }, [open]);
 
   const handleCommitChange = useCallback((value: string) => {
-    preserveCommitSearchOnAutoClearRef.current = true;
     setSelectedCommit(value);
   }, []);
 
-  const handleCommitSearch = useCallback((nextSearch: string) => {
-    setCommitSearch((currentSearch) => {
-      const resolved = resolveGitCommitSearchChange({
-        currentSearch,
-        nextSearch,
-        preserveSearchOnAutoClear: preserveCommitSearchOnAutoClearRef.current,
-      });
-      preserveCommitSearchOnAutoClearRef.current =
-        resolved.preserveSearchOnAutoClear;
-      persistGitReviewCommitSearchPreference(resolved.search);
-      return resolved.search;
-    });
+  const handleCommitFilterChange = useCallback((nextFilter: string) => {
+    setCommitFilter(nextFilter);
+    persistGitReviewCommitSearchPreference(nextFilter);
+  }, []);
+
+  const handleRecentCutoffChange = useCallback((value: number | undefined) => {
+    setRecentCutoff(value);
+    persistGitReviewRecentCutoffPreference(value);
+  }, []);
+
+  const handleGitLogFetchCountChange = useCallback((value: number) => {
+    const next = clampGitReviewFetchCount(value);
+    setGitLogFetchCount(next);
+    persistGitReviewFetchCountPreference(next);
+    setGitLogReloadCounter((counter) => counter + 1);
   }, []);
 
   const handleToggleShowOnlyUnreviewed = useCallback((value: boolean) => {
@@ -819,7 +835,7 @@ export function GitCommitDrawer({
         const logResult = await runGitCommand({
           projectId,
           cwd: root || cwd,
-          args: buildGitLogArgs(),
+          args: buildGitLogArgs(gitLogFetchCount),
         });
         if (logResult.exit_code !== 0) {
           throw new Error(
@@ -844,7 +860,7 @@ export function GitCommitDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, projectId, cwd, gitLogReloadCounter]);
+  }, [open, projectId, cwd, gitLogFetchCount, gitLogReloadCounter]);
 
   useEffect(() => {
     if (!open || !isHeadSelected) return;
@@ -893,15 +909,49 @@ export function GitCommitDrawer({
     setSelectedCommit(gitLog[0].hash);
   }, [open, commit, gitLog]);
 
+  const recentGitLog = useMemo(() => {
+    if (recentCutoff == null) return gitLog;
+    return gitLog.filter(
+      (entry) =>
+        typeof entry.committedAt === "number" &&
+        entry.committedAt >= recentCutoff,
+    );
+  }, [gitLog, recentCutoff]);
+
   const navigableGitLog = useMemo(
     () =>
       filterGitReviewLogEntries({
-        entries: gitLog,
+        entries: recentGitLog,
         reviewedByCommit,
         onlyUnreviewed: showOnlyUnreviewedCommits,
+        filterText: commitFilter,
         selectedCommit: commit,
       }),
-    [gitLog, reviewedByCommit, showOnlyUnreviewedCommits, commit],
+    [
+      recentGitLog,
+      reviewedByCommit,
+      showOnlyUnreviewedCommits,
+      commitFilter,
+      commit,
+    ],
+  );
+  const filteredRecentCommitCount = useMemo(
+    () =>
+      filterGitReviewLogEntries({
+        entries: recentGitLog,
+        reviewedByCommit,
+        onlyUnreviewed: showOnlyUnreviewedCommits,
+        filterText: commitFilter,
+        selectedCommit: undefined,
+      }).length,
+    [recentGitLog, reviewedByCommit, showOnlyUnreviewedCommits, commitFilter],
+  );
+  const recentCommitCount = recentGitLog.length;
+  const reviewedRecentCommitCount = useMemo(
+    () =>
+      recentGitLog.filter((entry) => reviewedByCommit[entry.hash] === true)
+        .length,
+    [recentGitLog, reviewedByCommit],
   );
 
   const commitIndex = useMemo(() => {
@@ -1028,6 +1078,19 @@ export function GitCommitDrawer({
         </div>
       );
     };
+    const makePlainLabel = (entry: GitLogEntry, fallback = false) => (
+      <span>
+        <span style={{ fontFamily: "monospace" }}>
+          {entry.hash === HEAD_REF ? HEAD_REF : entry.hash.slice(0, 10)}
+        </span>
+        {entry.subject ? (
+          <span style={{ color: fallback ? COLORS.GRAY_D : undefined }}>
+            {" "}
+            {entry.subject}
+          </span>
+        ) : null}
+      </span>
+    );
     const options = [
       {
         value: HEAD_REF,
@@ -1035,11 +1098,16 @@ export function GitCommitDrawer({
           hash: HEAD_REF,
           subject: "Uncommitted changes (git diff HEAD)",
         }),
+        plainLabel: makePlainLabel({
+          hash: HEAD_REF,
+          subject: "Uncommitted changes",
+        }),
         search: "HEAD uncommitted changes git diff",
       },
       ...visibleLogEntries.map((entry) => ({
         value: entry.hash,
         label: makeOptionLabel(entry),
+        plainLabel: makePlainLabel(entry),
         search: `${entry.hash} ${entry.subject}`.trim(),
       })),
     ];
@@ -1051,6 +1119,7 @@ export function GitCommitDrawer({
       options.unshift({
         value: commit,
         label: makeOptionLabel(fallback, true),
+        plainLabel: makePlainLabel(fallback, true),
         search: `${commit} selected commit`,
       });
     }
@@ -1136,7 +1205,7 @@ export function GitCommitDrawer({
     if (!open || !accountId) return;
     const hashes = Array.from(
       new Set(
-        [...visibleLogEntries.map((entry) => entry.hash), commit].filter(
+        [...recentGitLog.map((entry) => entry.hash), commit].filter(
           (hash): hash is string =>
             Boolean(hash) &&
             parseCommitHash(hash) != null &&
@@ -1168,7 +1237,7 @@ export function GitCommitDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, accountId, visibleLogEntries, commit, reviewReloadCounter]);
+  }, [open, accountId, recentGitLog, commit, reviewReloadCounter]);
 
   useEffect(() => {
     const token = ++reviewLoadTokenRef.current;
@@ -2722,6 +2791,25 @@ export function GitCommitDrawer({
         diffFindInputRef.current?.focus?.();
         return;
       }
+      if (evt.key === "?") {
+        evt.preventDefault();
+        setShortcutsOpen(true);
+        return;
+      }
+      if (evt.key === "y") {
+        evt.preventDefault();
+        if (
+          !isHeadSelected &&
+          currentReviewCommit &&
+          !reviewLoading &&
+          !reviewSaving
+        ) {
+          setReviewed(true);
+          setReviewDirty(true);
+          void saveReview({ reviewed: true });
+        }
+        return;
+      }
       if (evt.key === "j") {
         evt.preventDefault();
         if (canGoOlder) {
@@ -2761,6 +2849,10 @@ export function GitCommitDrawer({
     navigableGitLog,
     contextLines,
     isHeadSelected,
+    currentReviewCommit,
+    reviewLoading,
+    reviewSaving,
+    saveReview,
     scrollStorageId,
   ]);
 
@@ -2778,10 +2870,17 @@ export function GitCommitDrawer({
         <GitCommitDrawerTitle
           nonRepoError={nonRepoError}
           commit={commit}
-          commitSearch={commitSearch}
+          commitFilter={commitFilter}
           logOptions={logOptions}
           onCommitChange={handleCommitChange}
-          onCommitSearch={handleCommitSearch}
+          onCommitFilterChange={handleCommitFilterChange}
+          filteredCommitCount={filteredRecentCommitCount}
+          recentCommitCount={recentCommitCount}
+          reviewedRecentCommitCount={reviewedRecentCommitCount}
+          recentCutoff={recentCutoff}
+          onRecentCutoffChange={handleRecentCutoffChange}
+          gitLogFetchCount={gitLogFetchCount}
+          onGitLogFetchCountChange={handleGitLogFetchCountChange}
           showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
           onToggleShowOnlyUnreviewed={handleToggleShowOnlyUnreviewed}
           diffFindInputRef={diffFindInputRef}
@@ -2817,6 +2916,8 @@ export function GitCommitDrawer({
           reviewMenuItems={reviewMenuItems}
           onReviewMenuClick={handleReviewMenuClick}
           reviewTransferBusy={reviewTransferBusy}
+          shortcutsOpen={shortcutsOpen}
+          onShortcutsOpenChange={setShortcutsOpen}
         />
       }
       placement="right"

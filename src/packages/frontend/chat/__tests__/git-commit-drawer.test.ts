@@ -38,13 +38,13 @@ import {
   shouldFinalizeGitRepoBootstrapAction,
   buildGitLogArgs,
   buildGitShowArgs,
+  parseGitLogOutput,
   formatMergeCommitBodyMarkdown,
   hasExpandedTextSelectionWithin,
   isMergeCommitSummary,
   shouldDisableGitReviewSubmission,
   shouldApplyGitFileOpenScopedResult,
   matchGitDrawerScrollCommand,
-  resolveGitCommitSearchChange,
   resolveEffectiveGitCommitSelection,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
@@ -53,6 +53,11 @@ import {
   persistGitReviewCommitSearchPreference,
   readGitReviewOnlyUnreviewedPreference,
   persistGitReviewOnlyUnreviewedPreference,
+  readGitReviewFetchCountPreference,
+  persistGitReviewFetchCountPreference,
+  readGitReviewRecentCutoffPreference,
+  persistGitReviewRecentCutoffPreference,
+  clampGitReviewFetchCount,
   shouldDisplayGitCommitData,
   shouldFinalizeGitFileOpenAction,
   shouldRefreshGitReviewStateOnReconnect,
@@ -188,6 +193,26 @@ describe("git commit drawer merge commit formatting", () => {
 
   it("excludes merge commits from the git review log", () => {
     expect(buildGitLogArgs()).toContain("--no-merges");
+  });
+
+  it("builds timestamped git log output with configurable fetch count", () => {
+    expect(buildGitLogArgs(123)).toEqual([
+      "log",
+      "--no-merges",
+      "-n123",
+      "--format=%H%x09%ct%x09%s",
+      "--date-order",
+    ]);
+  });
+
+  it("parses git log timestamps for recent review cutoffs", () => {
+    expect(parseGitLogOutput("aaa1111\t1717000000\tFix quota\n").at(0)).toEqual(
+      {
+        hash: "aaa1111",
+        committedAt: 1717000000000,
+        subject: "Fix quota",
+      },
+    );
   });
 
   it("keeps undo and redo local for git review note/comment editors", () => {
@@ -1933,6 +1958,21 @@ describe("git commit drawer merge commit formatting", () => {
     expect(readGitReviewCommitSearchPreference()).toBe("");
   });
 
+  it("persists git review recent scope settings globally", () => {
+    expect(readGitReviewFetchCountPreference()).toBe(500);
+    expect(clampGitReviewFetchCount(10)).toBe(50);
+    expect(clampGitReviewFetchCount(6000)).toBe(5000);
+
+    persistGitReviewFetchCountPreference(1250);
+    expect(readGitReviewFetchCountPreference()).toBe(1250);
+
+    expect(readGitReviewRecentCutoffPreference()).toBeUndefined();
+    persistGitReviewRecentCutoffPreference(1717000000000);
+    expect(readGitReviewRecentCutoffPreference()).toBe(1717000000000);
+    persistGitReviewRecentCutoffPreference(undefined);
+    expect(readGitReviewRecentCutoffPreference()).toBeUndefined();
+  });
+
   it("keeps the currently selected reviewed commit visible under the unreviewed filter", () => {
     expect(
       filterGitReviewLogEntries({
@@ -1973,39 +2013,53 @@ describe("git commit drawer merge commit formatting", () => {
     ]);
   });
 
-  it("preserves the current commit search across antd auto-clear after selection", () => {
+  it("filters recent commits by hash or subject text", () => {
     expect(
-      resolveGitCommitSearchChange({
-        currentSearch: "slate",
-        nextSearch: "",
-        preserveSearchOnAutoClear: true,
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111", subject: "Fix storage quota" },
+          { hash: "bbb2222", subject: "Refactor chat scroll" },
+          { hash: "ccc3333", subject: "Improve billing" },
+        ],
+        reviewedByCommit: {},
+        onlyUnreviewed: false,
+        filterText: "quota",
+        selectedCommit: undefined,
       }),
-    ).toEqual({
-      search: "slate",
-      preserveSearchOnAutoClear: false,
-    });
+    ).toEqual([{ hash: "aaa1111", subject: "Fix storage quota" }]);
 
     expect(
-      resolveGitCommitSearchChange({
-        currentSearch: "slate",
-        nextSearch: "",
-        preserveSearchOnAutoClear: false,
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111", subject: "Fix storage quota" },
+          { hash: "bbb2222", subject: "Refactor chat scroll" },
+        ],
+        reviewedByCommit: {},
+        onlyUnreviewed: false,
+        filterText: "bbb",
+        selectedCommit: undefined,
       }),
-    ).toEqual({
-      search: "",
-      preserveSearchOnAutoClear: false,
-    });
+    ).toEqual([{ hash: "bbb2222", subject: "Refactor chat scroll" }]);
+  });
 
+  it("keeps the selected commit visible even when it misses the review text filter", () => {
     expect(
-      resolveGitCommitSearchChange({
-        currentSearch: "slate",
-        nextSearch: "codex",
-        preserveSearchOnAutoClear: true,
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111", subject: "Fix storage quota" },
+          { hash: "bbb2222", subject: "Refactor chat scroll" },
+        ],
+        reviewedByCommit: {
+          bbb2222: true,
+        },
+        onlyUnreviewed: true,
+        filterText: "quota",
+        selectedCommit: "bbb2222",
       }),
-    ).toEqual({
-      search: "codex",
-      preserveSearchOnAutoClear: false,
-    });
+    ).toEqual([
+      { hash: "aaa1111", subject: "Fix storage quota" },
+      { hash: "bbb2222", subject: "Refactor chat scroll" },
+    ]);
   });
 
   it("matches git review scroll keys without modifiers", () => {

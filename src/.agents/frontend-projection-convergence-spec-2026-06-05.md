@@ -667,6 +667,25 @@ Priority:
 1. account settings
    - implemented for `account.other_settings` via the shared write-ack helper
 2. project lifecycle
+   - implemented for `start_project`: start RPC waits for
+     `account_project_index.state_summary.state` to become `starting` or
+     `running`, with targeted project-row repair on lag
+   - implemented for `restart_project`: restart RPC waits for
+     `account_project_index.state_summary.state` to become `starting` or
+     `running`, with targeted project-row repair on lag
+   - implemented for `stop_project`: stop RPC waits for
+     `account_project_index.state_summary.state === "opened"`, with targeted
+     project-row repair on lag
+   - implemented for `archive_project`: the archive RPC waits for
+     `account_project_index.state_summary.state === "archived"` and uses
+     targeted project-row repair if the feed/projection lags
+   - implemented for project move LRO success with an explicit destination
+     host: after local success handling, the projection ack verifies
+     `account_project_index.host_id` matches the destination host and repairs
+     the project row if needed
+   - implemented for `assign_project_to_host`: host assignment RPC waits for
+     `account_project_index.host_id` to match the assigned host, with targeted
+     project-row repair on lag
 3. project metadata
    - implemented for project title, description, and theme via `account_project_index` ack checks and targeted row repair
 4. notification read state
@@ -680,9 +699,17 @@ Add automated tests and dogfood diagnostics:
 
 - suspend/resume browser with visible projects page
 - simulate DStream history gap
+  - covered in unit tests for bounded open-project repair and large warm
+    project caches
 - simulate write RPC success but dropped feed event
+  - covered in unit tests for generic ack repair and project stop lifecycle
+    repair-before-resolve
 - simulate frontend merge preserving stale optimistic state
+  - covered in unit tests for optimistic start expiry and active start LRO
+    preservation
 - simulate 15,000 projects and a current visible page
+  - covered structurally by large-cache bounded repair tests; browser-scale
+    fixture still useful before release
 
 ## Test Plan
 

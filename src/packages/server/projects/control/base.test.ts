@@ -3,6 +3,7 @@ export {};
 let assertLocalProjectOwnershipMock: jest.Mock;
 let projectRunnerClientMock: jest.Mock;
 let stopProjectOnHostMock: jest.Mock;
+let getPoolQueryMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -39,7 +40,9 @@ jest.mock("@cocalc/backend/logger", () => ({
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: jest.fn(async () => ({ rows: [] })) })),
+  default: jest.fn(() => ({
+    query: (...args: any[]) => getPoolQueryMock(...args),
+  })),
 }));
 
 jest.mock("@cocalc/database", () => ({
@@ -74,6 +77,7 @@ describe("BaseProject local ownership", () => {
     jest.resetModules();
     assertLocalProjectOwnershipMock = jest.fn(async () => undefined);
     stopProjectOnHostMock = jest.fn(async () => undefined);
+    getPoolQueryMock = jest.fn(async () => ({ rows: [] }));
     projectRunnerClientMock = jest.fn(() => ({
       status: jest.fn(async () => ({ state: "running", ip: "1.2.3.4" })),
     }));
@@ -101,6 +105,36 @@ describe("BaseProject local ownership", () => {
       "project belongs to another bay",
     );
     expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("treats stop with no assigned host as already stopped", async () => {
+    getPoolQueryMock = jest.fn(async () => ({
+      rows: [{ host_id: null, state: "opened" }],
+    }));
+    const { getProject } = await import("./base");
+    const project = getProject(PROJECT_ID);
+    await expect(project.stop()).resolves.toBeUndefined();
+    expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("treats stop for an inactive project as already stopped", async () => {
+    getPoolQueryMock = jest.fn(async () => ({
+      rows: [{ host_id: "host-1", state: "opened" }],
+    }));
+    const { getProject } = await import("./base");
+    const project = getProject(PROJECT_ID);
+    await expect(project.stop()).resolves.toBeUndefined();
+    expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("stops active projects with an assigned host", async () => {
+    getPoolQueryMock = jest.fn(async () => ({
+      rows: [{ host_id: "host-1", state: "running" }],
+    }));
+    const { getProject } = await import("./base");
+    const project = getProject(PROJECT_ID);
+    await expect(project.stop()).resolves.toBeUndefined();
+    expect(stopProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID);
   });
 
   it("allows local state access and caches the ownership check", async () => {

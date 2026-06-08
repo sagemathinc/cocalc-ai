@@ -26,17 +26,19 @@ export function filterGitReviewLogEntries({
   entries,
   reviewedByCommit,
   onlyUnreviewed,
+  filterText,
   selectedCommit,
 }: {
   entries: GitLogEntry[];
   reviewedByCommit: Record<string, boolean>;
   onlyUnreviewed: boolean;
+  filterText?: string;
   selectedCommit?: string;
 }): GitLogEntry[] {
-  if (!onlyUnreviewed) return entries;
   const normalizedSelectedCommit = `${selectedCommit ?? ""}`
     .trim()
     .toLowerCase();
+  const normalizedFilter = `${filterText ?? ""}`.trim().toLowerCase();
   return entries.filter((entry) => {
     if (
       normalizedSelectedCommit &&
@@ -45,30 +47,12 @@ export function filterGitReviewLogEntries({
     ) {
       return true;
     }
-    return reviewedByCommit[entry.hash] !== true;
+    if (onlyUnreviewed && reviewedByCommit[entry.hash] === true) {
+      return false;
+    }
+    if (!normalizedFilter) return true;
+    return `${entry.hash} ${entry.subject}`
+      .toLowerCase()
+      .includes(normalizedFilter);
   });
-}
-
-export function resolveGitCommitSearchChange({
-  currentSearch,
-  nextSearch,
-  preserveSearchOnAutoClear,
-}: {
-  currentSearch: string;
-  nextSearch: string;
-  preserveSearchOnAutoClear: boolean;
-}): {
-  search: string;
-  preserveSearchOnAutoClear: boolean;
-} {
-  if (preserveSearchOnAutoClear && nextSearch === "") {
-    return {
-      search: currentSearch,
-      preserveSearchOnAutoClear: false,
-    };
-  }
-  return {
-    search: nextSearch,
-    preserveSearchOnAutoClear: false,
-  };
 }
