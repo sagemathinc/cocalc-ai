@@ -110,6 +110,12 @@ describe("BaseProject.start RootFS sealing", () => {
       if (sql === "SELECT host_id FROM projects WHERE project_id=$1") {
         return { rows: [{ host_id: HOST_ID }] };
       }
+      if (
+        sql ===
+        "SELECT host_id, state->>'state' AS state FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ host_id: HOST_ID, state: "running" }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     queryTableMock = jest.fn(async () => ({}));
