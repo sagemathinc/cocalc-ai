@@ -9,6 +9,7 @@ const actions = {
   close_file: jest.fn(),
   open_file: jest.fn(),
 };
+const mockRegisterFileEditor = jest.fn();
 
 jest.mock("../../app-framework", () => {
   const React = require("react");
@@ -31,7 +32,7 @@ jest.mock("../../webapp-client", () => ({
 }));
 
 jest.mock("../../frame-editors/frame-tree/register", () => ({
-  register_file_editor: jest.fn(),
+  register_file_editor: (...args: any[]) => mockRegisterFileEditor(...args),
 }));
 
 jest.mock("../../components", () => ({
@@ -68,6 +69,7 @@ describe("UnknownEditor", () => {
     actions.open_directory.mockReset();
     actions.close_file.mockReset();
     actions.open_file.mockReset();
+    mockRegisterFileEditor.mockReset();
   });
 
   it("renders cleanly from the files service description", async () => {
@@ -83,6 +85,28 @@ describe("UnknownEditor", () => {
     });
 
     expect(screen.queryByText(/^Error$/i)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /open .* code editor/i }),
+    ).toBeTruthy();
+    expect(mockRegisterFileEditor).not.toHaveBeenCalled();
+    expect(actions.close_file).not.toHaveBeenCalled();
+    expect(actions.open_file).not.toHaveBeenCalled();
+  });
+
+  it("renders no-extension files instead of staying on loading", async () => {
+    describeFile.mockResolvedValue({
+      mime: "inode/x-empty",
+      snippet: "",
+    });
+
+    render(<UnknownEditor project_id="p" path="Makefile" />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/with no extension/i).length).toBeGreaterThan(
+        0,
+      );
+    });
+
     expect(
       screen.getByRole("button", { name: /open .* code editor/i }),
     ).toBeTruthy();

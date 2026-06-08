@@ -24,7 +24,6 @@ type ResetOpenFileRuntimeAfterHostResetOpts = {
 
 export function openFileComponentRuntimeIsUsable({
   info,
-  isViewer,
   getActions,
   getStore,
 }: {
@@ -37,7 +36,9 @@ export function openFileComponentRuntimeIsUsable({
     return false;
   }
   if (info.redux_name == null) {
-    return isViewer;
+    // Some editors are pure React components with no per-file Redux runtime
+    // at all, e.g. media previews, unknown-file fallback, and viewer previews.
+    return true;
   }
   const actions = getActions(info.redux_name);
   const store = getStore(info.redux_name);
