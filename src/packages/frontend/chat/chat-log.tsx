@@ -167,7 +167,6 @@ function isActiveAcpAssistantTurn({
 }): boolean {
   if (message == null) return false;
   if (field<boolean>(message, "generating") === true) return true;
-  const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
   const threadId = `${field<string>(message, "thread_id") ?? ""}`.trim();
   const states = [
     resolvedMessageAcpState({ message, acpState }),
