@@ -84,8 +84,8 @@ The Lima installer creates or starts a `cocalc-star` Ubuntu VM, forwards
 public `sslip.io` onboarding path, and installs Star in the VM with
 `STAR_ACCESS_URL=http://localhost:8170`. Project sessions are routed through
 the same localhost origin, so no separate project-host port forward is needed.
-The optional `COCALC_STAR_LIMA_SHARED_DIR` host directory appears inside
-projects as `/scratch`; edit or remove it before the first install.
+The optional `COCALC_STAR_LIMA_SHARED_DIR` host directory is mounted as
+`/scratch` inside projects; edit or remove it before the first install.
 
 Customize the local VM with environment variables passed to `bash`:
 
@@ -97,6 +97,10 @@ curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/ins
 The shared directory is initial-install only because it is written into the
 Lima VM configuration when the instance is created. To change it later, delete
 or rename the Lima instance and reinstall with a different path.
+
+The default project rootfs includes Python, pip, uv, Jupyter, LaTeX, and common
+scientific Python packages. Project users can install additional packages with
+`pip install` or `uv pip install`.
 
 By default this installs source under a versioned release directory and points
 `/opt/cocalc-star/source` at the active release. It uses the sudo caller as the
