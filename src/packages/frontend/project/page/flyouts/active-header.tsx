@@ -22,7 +22,7 @@ export function ActiveHeader() {
 
   function renderScroll() {
     return (
-      <Space.Compact style={{ float: "right", marginRight: "10px" }}>
+      <Space.Compact style={{ flex: "0 0 auto", marginRight: "10px" }}>
         <Button
           size="small"
           onClick={() => setFlipVal(flipVal + 1)}
@@ -42,9 +42,30 @@ export function ActiveHeader() {
   }
 
   return (
-    <div style={{ flex: 1, fontWeight: "bold" }}>
-      <Icon name={FIXED_PROJECT_TABS.active.icon} />{" "}
-      {formatIntl(FIXED_PROJECT_TABS.active.label)} {renderScroll()}
+    <div
+      style={{
+        alignItems: "center",
+        display: "flex",
+        flex: "1 1 0",
+        fontWeight: "bold",
+        gap: 6,
+        minWidth: 0,
+        overflow: "hidden",
+      }}
+    >
+      <span
+        style={{
+          flex: "1 1 0",
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <Icon name={FIXED_PROJECT_TABS.active.icon} />{" "}
+        {formatIntl(FIXED_PROJECT_TABS.active.label)}
+      </span>
+      {renderScroll()}
     </div>
   );
 }

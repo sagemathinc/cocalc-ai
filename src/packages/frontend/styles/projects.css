@@ -96,10 +96,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
   float: left;
+  max-width: 100%;
+  min-width: 0;
   white-space: nowrap;
 }
 .cc-project-flyout-path-navigator > ol {
   display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .cc-project-flyout-path-navigator > ol > li {

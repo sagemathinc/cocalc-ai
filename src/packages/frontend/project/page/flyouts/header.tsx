@@ -111,9 +111,9 @@ export function FlyoutHeader(_: Readonly<Props>) {
     switch (flyout) {
       case "files":
         return (
-          <div style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden" }}>
+          <div style={{ flex: "1 1 0", minWidth: 0, overflow: "hidden" }}>
             <PathNavigator
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: 0, maxWidth: "100%" }}
               mode={"flyout"}
               project_id={project_id}
               showSourceSelector
@@ -138,7 +138,16 @@ export function FlyoutHeader(_: Readonly<Props>) {
         return <ActiveHeader />;
       default:
         return (
-          <div style={{ flex: 1, fontWeight: "bold" }}>
+          <div
+            style={{
+              flex: "1 1 0",
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontWeight: "bold",
+            }}
+          >
             {renderIcon()} {renderDefaultTitle()}
           </div>
         );
@@ -152,7 +161,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
         overflow: "hidden",
         display: "flex",
         flexDirection: "row",
-        alignItems: "start",
+        alignItems: "flex-start",
         gap: FLYOUT_PADDING,
         borderRight: FIX_BORDER,
         borderTop: FIX_BORDER,
@@ -167,8 +176,17 @@ export function FlyoutHeader(_: Readonly<Props>) {
       }}
     >
       {renderTitle()}
-      {fullPageBtn()}
-      {closeBtn()}
+      <div
+        style={{
+          display: "flex",
+          flex: "0 0 auto",
+          alignItems: "center",
+          gap: FLYOUT_PADDING,
+        }}
+      >
+        {fullPageBtn()}
+        {closeBtn()}
+      </div>
     </div>
   );
 }
@@ -178,7 +196,7 @@ function SearchHeader() {
   return (
     <div
       style={{
-        flex: 1,
+        flex: "1 1 0",
         minWidth: 0,
         display: "flex",
         whiteSpace: "nowrap",
@@ -189,7 +207,7 @@ function SearchHeader() {
     >
       <Icon name="search" style={{ fontSize: "120%", marginRight: "10px" }} />{" "}
       <PathNavigator
-        style={{ flex: "1 0 auto" }}
+        style={{ flex: "1 1 0", minWidth: 0, maxWidth: "100%" }}
         mode={"flyout"}
         project_id={project_id}
         className={"cc-project-flyout-path-navigator"}
