@@ -167,7 +167,6 @@ function isActiveAcpAssistantTurn({
 }): boolean {
   if (message == null) return false;
   if (field<boolean>(message, "generating") === true) return true;
-  const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
   const threadId = `${field<string>(message, "thread_id") ?? ""}`.trim();
   const states = [
     resolvedMessageAcpState({ message, acpState }),
@@ -690,23 +689,17 @@ function resolvedMessageAcpState({
   return hasAcpReply === true && rowState === "queue" ? undefined : rowState;
 }
 
-function hasAcpChildReply({
-  message,
-  messages,
-}: {
-  message: ChatMessageTyped;
-  messages: ChatMessages;
-}): boolean {
-  const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
-  if (!messageId) return false;
+function acpReplyParentMessageIds(messages: ChatMessages): Set<string> {
+  const parentMessageIds = new Set<string>();
   for (const [, other] of messages) {
     if (other == null) continue;
-    if (`${parentMessageId(other) ?? ""}`.trim() !== messageId) continue;
-    if (field<string>(other, "acp_account_id")) {
-      return true;
+    if (!field<string>(other, "acp_account_id")) continue;
+    const parentId = `${parentMessageId(other) ?? ""}`.trim();
+    if (parentId) {
+      parentMessageIds.add(parentId);
     }
   }
-  return false;
+  return parentMessageIds;
 }
 
 // Messages are sorted using each message record's `date` value.
@@ -1270,6 +1263,11 @@ export function MessageList({
     setAtBottom(true);
   }, [forceScrollToBottom]);
 
+  const acpReplyParents = useMemo(
+    () => acpReplyParentMessageIds(messages),
+    [messages],
+  );
+
   const renderMessage = (index: number) => {
     const date = sortedDates[index];
     const message: ChatMessageTyped | undefined = getMessageAtDate({
@@ -1285,7 +1283,7 @@ export function MessageList({
       ? resolvedMessageAcpState({
           message,
           acpState,
-          hasAcpReply: hasAcpChildReply({ message, messages }),
+          hasAcpReply: acpReplyParents.has(messageId),
         })
       : undefined;
     const activitySteers = messageId
