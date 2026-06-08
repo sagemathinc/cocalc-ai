@@ -22,10 +22,10 @@ On a fresh Ubuntu 24.04 VM with ports 80 and 443 open:
 curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo bash
 ~~~
 
-The installer detects the public IPv4 address, uses sslip.io for DNS, obtains a
-Let's Encrypt certificate through Caddy, and shows a web onboarding page before
-continuing. If the onboarding URL does not open, fix the VM firewall or cloud
-network rule for port 443 before continuing.
+The installer detects the public IPv4 address, uses https://sslip.io for DNS,
+obtains a Let's Encrypt certificate through Caddy, and shows a web onboarding
+page before continuing. If the onboarding URL does not open, fix the VM firewall
+or cloud network rule for port 443 before continuing.
 
 ## First-run flow
 
@@ -121,18 +121,18 @@ curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/ins
   | COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
 ~~~
 
-This creates or starts a Lima VM named \`cocalc-star\`, installs Ubuntu 24.04,
-forwards CoCalc to \`http://localhost:8170/\`, installs CoCalc Star inside the
+This creates or starts a Lima VM named cocalc-star, installs Ubuntu 24.04,
+forwards CoCalc to http://localhost:8170/, installs CoCalc Star inside the
 VM, and prints the local setup URL. Project sessions, terminals, chat, and
 Jupyter use the same localhost origin through CoCalc's built-in project proxy.
-The optional \`COCALC_STAR_LIMA_SHARED_DIR\` value is a host folder that becomes
-\`/scratch\` inside projects. For example, a host file
-\`$HOME/cocalc-star-scratch/data.csv\` is visible in projects as
-\`/scratch/data.csv\`. The installer creates the host folder if it does not
+The optional COCALC_STAR_LIMA_SHARED_DIR value is a host folder that becomes
+/scratch inside projects. For example, a host file
+$HOME/cocalc-star-scratch/data.csv is visible in projects as
+/scratch/data.csv. The installer creates the host folder if it does not
 exist. Edit the path before running the command, or remove the environment
 variable if you do not want host file sharing.
 
-After install, open \`http://localhost:8170/\`, create the first account, create
+After install, open http://localhost:8170/, create the first account, create
 a project, and test a terminal plus a Jupyter notebook.
 
 The general local setup is:
@@ -140,10 +140,10 @@ The general local setup is:
 1. Install a VM app that can run Ubuntu 24.04.
 2. Create an Ubuntu VM with enough disk and memory for your projects.
 3. Forward a local port on your computer to port 80 inside the VM.
-4. Open CoCalc at a localhost URL such as \`http://localhost:8170/\`.
+4. Open CoCalc at a localhost URL such as http://localhost:8170/.
 
-Using \`localhost\` is better than opening the VM's private IP address directly.
-Browsers treat \`localhost\` as a trusted local address, and it is easier to
+Using localhost is better than opening the VM's private IP address directly.
+Browsers treat localhost as a trusted local address, and it is easier to
 bookmark and remember.
 
 ## Which VM app should I use?
@@ -171,7 +171,7 @@ choose UTM if you want a free desktop VM app.
 
 ## Customizing the Lima VM
 
-The Lima installer accepts environment variables passed to \`bash\` at the end
+The Lima installer accepts environment variables passed to bash at the end
 of the install pipeline.
 
 For example, to use 16 GiB RAM, 8 CPUs, and a 200 GiB disk:
@@ -184,9 +184,9 @@ curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/ins
 The default memory is host-aware. On a typical laptop it uses a reasonable
 fraction of system RAM instead of Lima's small default.
 
-The shared directory setting is initial-install only. Lima reads it when the
-\`cocalc-star\` VM is created. If you want to change it later, delete or rename
-the Lima instance and reinstall with the new path.
+The shared directory setting is initial-install only. Lima reads this setting
+when the cocalc-star VM is created. If you want to change it later, delete or
+rename the Lima instance and reinstall with the new path.
 
 To reinstall the local VM while keeping the host shared folder:
 
@@ -195,25 +195,25 @@ limactl stop cocalc-star
 limactl delete cocalc-star
 ~~~
 
-Do not delete \`$HOME/cocalc-star-scratch\` unless you also want to remove the
-host files that were visible as \`/scratch\`.
+Do not delete $HOME/cocalc-star-scratch unless you also want to remove the host
+files that were visible as /scratch.
 
 ## Networking choice
 
 Pick one of these access patterns:
 
-1. **Best**: \`http://localhost:8170/\`
+1. **Best**: http://localhost:8170/
 
-   Configure your VM app to forward host port \`8170\` to guest port \`80\`.
-   This gives you a local browser URL and avoids public internet exposure.
+   Configure your VM app to forward host port 8170 to guest port 80. This gives
+   you a local browser URL and avoids public internet exposure.
 
-2. **Simple fallback**: \`http://<vm-private-ip>/\`
+2. **Simple fallback**: http://vm-private-ip/
 
-   Many VM apps show a private VM IP address, such as \`192.168.x.y\` or
-   \`10.x.y.z\`. You can often open that directly from your host browser. This
+   Many VM apps show a private VM IP address, such as 192.168.x.y or 10.x.y.z.
+   You can often open that directly from your host browser. This
    is simple, but it is less polished than a localhost URL.
 
-3. **Avoid for local-only VMs**: public HTTPS with \`sslip.io\`
+3. **Avoid for local-only VMs**: public HTTPS with https://sslip.io
 
    The public CoCalc Star installer can set up automatic HTTPS for a public VM.
    That is the right path for cloud servers, not for a VM that only exists on
@@ -227,7 +227,7 @@ If you are offline, local project tools keep working, but internet-dependent
 features still need internet access.
 
 The default project image includes Python, pip, uv, Jupyter, LaTeX, and common
-scientific Python packages. You can use \`pip install\` or \`uv pip install\`
+scientific Python packages. You can use pip install or uv pip install
 from a project terminal for additional packages such as PyTorch.
 
 You are responsible for the VM's disk, backups, operating-system updates, and
@@ -258,8 +258,8 @@ VM.
 
 A reverse SSH tunnel makes this possible. Your computer opens an SSH connection
 out to the CoCalc project, and that connection exposes a local SSH server back
-inside the project. The project can then SSH to \`127.0.0.1\` on a temporary
-port and reach your computer.
+inside the project. The project can then SSH to 127.0.0.1 on a temporary port
+and reach your computer.
 
 This is useful for short debugging sessions. It is not a general replacement for
 careful deployment, VPNs, or normal remote administration.
@@ -320,8 +320,8 @@ chmod 600 ~/.ssh/authorized_keys
 ~~~
 
 Use the account name on your computer when you later connect back from the
-project. For example, if your laptop username is \`alice\`, the project will
-connect as \`alice@127.0.0.1\`.
+project. For example, if your laptop username is alice, the project will connect
+as alice@127.0.0.1.
 
 Then make sure your computer has an SSH server running locally.
 
@@ -353,13 +353,13 @@ Run this on your computer:
 ssh -N -R 22222:127.0.0.1:22 <cocalc-project-ssh-alias>
 ~~~
 
-Replace \`<cocalc-project-ssh-alias>\` with the SSH alias configured by the
-CoCalc project SSH setup command.
+Replace the placeholder with the SSH alias configured by the CoCalc project SSH
+setup command.
 
-This keeps a terminal open. While it is running, port \`22222\` inside the
-CoCalc project forwards to port \`22\` on your computer.
+This keeps a terminal open. While it is running, port 22222 inside the CoCalc
+project forwards to port 22 on your computer.
 
-If port \`22222\` is already in use, choose another high port such as \`30022\`.
+If port 22222 is already in use, choose another high port such as 30022.
 
 ## Connect from the CoCalc project
 
@@ -369,19 +369,19 @@ In a CoCalc project terminal, connect back to your computer:
 ssh -p 22222 <local-username>@127.0.0.1
 ~~~
 
-Replace \`<local-username>\` with your username on your computer.
+Replace the placeholder with your username on your computer.
 
-To stop access, press \`Ctrl-C\` in the terminal where the reverse tunnel is
+To stop access, press Ctrl-C in the terminal where the reverse tunnel is
 running. When that SSH command exits, the project can no longer reach your
 computer through this tunnel.
 
 ## Troubleshooting
 
-If the project says \`Connection refused\`, the SSH server on your computer is
+If the project says "Connection refused", the SSH server on your computer is
 not running, the local SSH port is different, or the reverse tunnel is not
 running.
 
-If the project says \`Permission denied\`, the tunnel is working but SSH
+If the project says "Permission denied", the tunnel is working but SSH
 authentication to your computer failed. Check the local username and SSH keys.
 
 If the tunnel command says remote port forwarding failed, the chosen project
@@ -396,14 +396,14 @@ nc -vz 127.0.0.1 22222
 
 ## Safer future CLI workflow
 
-The safest version of this workflow would be a dedicated \`cocalc-cli\` command
+The safest version of this workflow would be a dedicated cocalc-cli command
 that creates a short-lived reverse SSH session instead of exposing your normal
 SSH server by hand.
 
 Such a command could:
 
 - create a temporary SSH key,
-- start a temporary local \`sshd\` bound only to localhost,
+- start a temporary local sshd bound only to localhost,
 - open the reverse tunnel through the existing CoCalc project SSH connection,
 - print the exact command to run from the CoCalc project,
 - set a timeout, and
