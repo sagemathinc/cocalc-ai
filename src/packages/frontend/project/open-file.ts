@@ -90,6 +90,13 @@ export function findOpenDisplayPathForSyncPath(
       if (otherSyncPath === syncPath) {
         found = displayPath;
       }
+      return;
+    }
+    // Terminal tabs can be restored or still opening before their sync_path is
+    // populated.  Avoid opening a second hidden terminal identity tab for a
+    // mention target that resolves to the same terminal session.
+    if (canonicalPath(`${displayPath}`) === syncPath) {
+      found = displayPath;
     }
   });
   return found;
@@ -588,6 +595,10 @@ export async function open_file(
       });
     } else if (PRELOAD_BACKGROUND_TABS) {
       await actions.initFileRedux(syncPath);
+    }
+
+    if (alreadyOpened && opts.chat) {
+      actions.open_chat({ path: displayPath, width: opts.chat_width });
     }
 
     if (alreadyOpened && opts.fragmentId) {

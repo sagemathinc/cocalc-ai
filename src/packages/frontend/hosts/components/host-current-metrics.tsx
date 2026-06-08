@@ -31,6 +31,7 @@ type MetricBarProps = {
   label: string;
   percent?: number;
   detail?: string;
+  unknownLabel?: string;
   compact?: boolean;
   historyPoints?: SparklinePoint[];
   color?: string;
@@ -48,6 +49,15 @@ function formatBytes(value?: number): string | undefined {
 
 function formatBytesCompact(value?: number): string | undefined {
   return formatBinaryBytes(value, { compact: true });
+}
+
+export function formatBytesDense(value?: number): string | undefined {
+  return formatBytesCompact(value)
+    ?.replace(/\s*KiB\b/g, "K")
+    .replace(/\s*MiB\b/g, "M")
+    .replace(/\s*GiB\b/g, "G")
+    .replace(/\s*TiB\b/g, "T")
+    .replace(/\s*PiB\b/g, "P");
 }
 
 function normalizePercent(value?: number): number | undefined {
@@ -167,6 +177,25 @@ type SharedScratchUsageSource = {
   shared_scratch_used_percent?: number;
 };
 
+export function getConfiguredSharedScratchTotalBytes(
+  host: Host,
+): number | undefined {
+  const value = Number(host.machine?.shared_disk_gb ?? 0);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  return value * 1024 ** 3;
+}
+
+export function getSharedScratchTotalBytes(
+  host: Host,
+  source: SharedScratchUsageSource | undefined,
+): number | undefined {
+  const sampled = source?.shared_scratch_total_bytes;
+  if (sampled != null && Number.isFinite(sampled) && sampled > 0) {
+    return sampled;
+  }
+  return getConfiguredSharedScratchTotalBytes(host);
+}
+
 function getDisplayedDiskUsedBytes(
   source: DiskUsageSource | undefined,
 ): number | undefined {
@@ -252,8 +281,7 @@ export function getSharedScratchUsedPercent(
 }
 
 export function hasSharedScratchConfigured(host: Host): boolean {
-  const value = Number(host.machine?.shared_disk_gb ?? 0);
-  return Number.isFinite(value) && value > 0;
+  return getConfiguredSharedScratchTotalBytes(host) != null;
 }
 
 function getMetadataUsedPercent(host: Host): number | undefined {
@@ -756,11 +784,13 @@ function CompactMetricLine({
   label,
   percent,
   detail,
+  unknownLabel,
   color,
 }: {
   label: string;
   percent?: number;
   detail?: string;
+  unknownLabel?: string;
   color?: string;
 }) {
   const displayPercent = normalizePercent(percent);
@@ -771,8 +801,8 @@ function CompactMetricLine({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "48px 38px minmax(40px, 1fr) minmax(0, 86px)",
-        gap: 5,
+        gridTemplateColumns: "48px 34px minmax(32px, 0.45fr) minmax(0, 1.55fr)",
+        gap: 4,
         alignItems: "center",
         minHeight: 22,
         padding: "2px 0",
@@ -790,7 +820,7 @@ function CompactMetricLine({
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        {display != null ? `${display}%` : "n/a"}
+        {display != null ? `${display}%` : (unknownLabel ?? "n/a")}
       </Typography.Text>
       <Progress
         percent={display ?? 0}
@@ -823,6 +853,7 @@ function MetricBar({
   label,
   percent,
   detail,
+  unknownLabel,
   compact,
   historyPoints,
   color,
@@ -871,7 +902,7 @@ function MetricBar({
           strong
           style={{ color: toneColors.text, fontSize: compact ? 16 : 18 }}
         >
-          {display != null ? `${display}%` : "n/a"}
+          {display != null ? `${display}%` : (unknownLabel ?? "n/a")}
         </Typography.Text>
         {detail ? (
           <Typography.Text
@@ -1032,34 +1063,44 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const diskPercent = getDisplayedDiskUsedPercent(metrics);
   const sharedScratchConfigured = hasSharedScratchConfigured(host);
   const sharedScratchMeasured = metrics.shared_scratch_total_bytes != null;
-  const sharedScratchPercent = getSharedScratchUsedPercent(metrics);
+  const sharedScratchTotalBytes = getSharedScratchTotalBytes(host, metrics);
+  const sharedScratchUsageSource = {
+    ...metrics,
+    shared_scratch_total_bytes: sharedScratchTotalBytes,
+  };
+  const sharedScratchPercent = getSharedScratchUsedPercent(
+    sharedScratchUsageSource,
+  );
   const metadataPercent = getMetadataUsedPercent(host);
   const diskUsedBytes = getDisplayedDiskUsedBytes(metrics);
-  const sharedScratchUsedBytes = getSharedScratchUsedBytes(metrics);
-  const diskUsed = compact
-    ? formatBytesCompact(diskUsedBytes)
-    : formatBytes(diskUsedBytes);
-  const sharedScratchUsed = compact
-    ? formatBytesCompact(sharedScratchUsedBytes)
-    : formatBytes(sharedScratchUsedBytes);
-  const memoryUsed = compact
-    ? formatBytesCompact(metrics.memory_used_bytes)
-    : formatBytes(metrics.memory_used_bytes);
-  const memoryTotal = compact
-    ? formatBytesCompact(metrics.memory_total_bytes)
-    : formatBytes(metrics.memory_total_bytes);
-  const diskTotal = compact
-    ? formatBytesCompact(metrics.disk_device_total_bytes)
-    : formatBytes(metrics.disk_device_total_bytes);
-  const sharedScratchTotal = compact
-    ? formatBytesCompact(metrics.shared_scratch_total_bytes)
-    : formatBytes(metrics.shared_scratch_total_bytes);
-  const metadataUsed = compact
-    ? formatBytesCompact(metrics.btrfs_metadata_used_bytes)
-    : formatBytes(metrics.btrfs_metadata_used_bytes);
-  const metadataTotal = compact
-    ? formatBytesCompact(metrics.btrfs_metadata_total_bytes)
-    : formatBytes(metrics.btrfs_metadata_total_bytes);
+  const sharedScratchUsedBytes = getSharedScratchUsedBytes(
+    sharedScratchUsageSource,
+  );
+  const metricFormatBytes = dense
+    ? formatBytesDense
+    : compact
+      ? formatBytesCompact
+      : formatBytes;
+  const diskUsed = metricFormatBytes(diskUsedBytes);
+  const sharedScratchUsed = metricFormatBytes(sharedScratchUsedBytes);
+  const memoryUsed = metricFormatBytes(metrics.memory_used_bytes);
+  const memoryTotal = metricFormatBytes(metrics.memory_total_bytes);
+  const diskTotal = metricFormatBytes(metrics.disk_device_total_bytes);
+  const sharedScratchTotal = metricFormatBytes(sharedScratchTotalBytes);
+  const sharedScratchUnknownLabel =
+    sharedScratchConfigured && !sharedScratchMeasured
+      ? dense
+        ? "..."
+        : "pending"
+      : undefined;
+  const sharedScratchDetail =
+    sharedScratchUsed && sharedScratchTotal
+      ? `${sharedScratchUsed} / ${sharedScratchTotal}`
+      : sharedScratchConfigured && !sharedScratchMeasured && sharedScratchTotal
+        ? `${sharedScratchTotal} configured`
+        : sharedScratchTotal;
+  const metadataUsed = metricFormatBytes(metrics.btrfs_metadata_used_bytes);
+  const metadataTotal = metricFormatBytes(metrics.btrfs_metadata_total_bytes);
   const cpuHistory = buildHistoryPoints(
     history?.points,
     (point) => normalizePercent(point.cpu_percent),
@@ -1280,11 +1321,8 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             <CompactMetricLine
               label="Scratch"
               percent={sharedScratchPercent}
-              detail={
-                sharedScratchUsed && sharedScratchTotal
-                  ? `${sharedScratchUsed} / ${sharedScratchTotal}`
-                  : sharedScratchTotal
-              }
+              detail={sharedScratchDetail}
+              unknownLabel={sharedScratchUnknownLabel}
               color={COLORS.COCALC_BLUE}
             />
           ) : (
@@ -1370,11 +1408,8 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           <MetricBar
             label="Scratch"
             percent={sharedScratchPercent}
-            detail={
-              sharedScratchUsed && sharedScratchTotal
-                ? `${sharedScratchUsed} / ${sharedScratchTotal}`
-                : sharedScratchTotal
-            }
+            detail={sharedScratchDetail}
+            unknownLabel={sharedScratchUnknownLabel}
             compact
             historyPoints={sharedScratchHistory}
             color={COLORS.COCALC_BLUE}
@@ -1527,11 +1562,8 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           <MetricBar
             label="Scratch"
             percent={sharedScratchPercent}
-            detail={
-              sharedScratchUsed && sharedScratchTotal
-                ? `${sharedScratchUsed} / ${sharedScratchTotal}`
-                : sharedScratchTotal
-            }
+            detail={sharedScratchDetail}
+            unknownLabel={sharedScratchUnknownLabel}
             historyPoints={sharedScratchHistory}
             color={COLORS.COCALC_BLUE}
             icon={<DatabaseOutlined />}

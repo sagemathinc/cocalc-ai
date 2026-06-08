@@ -1,10 +1,20 @@
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 
 import {
+  formatBytesDense,
+  getConfiguredSharedScratchTotalBytes,
   getSharedScratchUsedBytes,
   getSharedScratchUsedPercent,
+  getSharedScratchTotalBytes,
   hasSharedScratchConfigured,
 } from "./host-current-metrics";
+
+describe("host current metrics dense formatting", () => {
+  it("uses short binary units without spaces in dense resource rows", () => {
+    expect(formatBytesDense(10 * 1024 ** 3)).toBe("10G");
+    expect(formatBytesDense(2 * 1024 ** 4)).toBe("2T");
+  });
+});
 
 describe("host current metrics scratch helpers", () => {
   it("uses explicit shared scratch used bytes when present", () => {
@@ -46,18 +56,19 @@ describe("host current metrics scratch helpers", () => {
   });
 
   it("detects configured shared scratch from host machine metadata", () => {
-    expect(
-      hasSharedScratchConfigured({
-        id: "host-1",
-        name: "Host",
-        owner: "account-1",
-        region: "us",
-        size: "custom",
-        gpu: false,
-        status: "running",
-        machine: { shared_disk_gb: 500 },
-      } as Host),
-    ).toBe(true);
+    const host = {
+      id: "host-1",
+      name: "Host",
+      owner: "account-1",
+      region: "us",
+      size: "custom",
+      gpu: false,
+      status: "running",
+      machine: { shared_disk_gb: 500 },
+    } as Host;
+    expect(hasSharedScratchConfigured(host)).toBe(true);
+    expect(getConfiguredSharedScratchTotalBytes(host)).toBe(500 * 1024 ** 3);
+    expect(getSharedScratchTotalBytes(host, undefined)).toBe(500 * 1024 ** 3);
     expect(
       hasSharedScratchConfigured({
         id: "host-1",
@@ -69,5 +80,23 @@ describe("host current metrics scratch helpers", () => {
         status: "running",
       } as Host),
     ).toBe(false);
+  });
+
+  it("prefers sampled shared scratch total over configured capacity", () => {
+    expect(
+      getSharedScratchTotalBytes(
+        {
+          id: "host-1",
+          name: "Host",
+          owner: "account-1",
+          region: "us",
+          size: "custom",
+          gpu: false,
+          status: "running",
+          machine: { shared_disk_gb: 500 },
+        } as Host,
+        { shared_scratch_total_bytes: 750 * 1024 ** 3 },
+      ),
+    ).toBe(750 * 1024 ** 3);
   });
 });

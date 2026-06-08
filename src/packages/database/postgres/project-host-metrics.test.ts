@@ -140,6 +140,65 @@ describe("project host metrics history", () => {
     expect(entry?.derived?.admission_allowed).toBe(true);
   });
 
+  it("does not mark a mostly empty small shared scratch disk critical", async () => {
+    const host_id = uuid();
+    await insertProjectHost(host_id);
+    const gib = 1024 ** 3;
+
+    await recordProjectHostMetricsSample({
+      host_id,
+      metrics: {
+        collected_at: new Date().toISOString(),
+        disk_device_total_bytes: 200 * gib,
+        disk_device_used_bytes: 50 * gib,
+        disk_available_conservative_bytes: 150 * gib,
+        shared_scratch_total_bytes: 10 * gib,
+        shared_scratch_used_bytes: 0,
+        shared_scratch_available_bytes: 10 * gib,
+      },
+    });
+
+    const history = await loadProjectHostMetricsHistory({
+      host_ids: [host_id],
+      window_minutes: 60,
+      max_points: 60,
+    });
+    const entry = history.get(host_id);
+    expect(entry).toBeDefined();
+    expect(entry?.points[0].shared_scratch_used_percent).toBe(0);
+    expect(entry?.derived?.shared_scratch?.level).toBe("healthy");
+    expect(entry?.derived?.admission_allowed).toBe(true);
+  });
+
+  it("still marks shared scratch critical when low headroom combines with high usage", async () => {
+    const host_id = uuid();
+    await insertProjectHost(host_id);
+    const gib = 1024 ** 3;
+
+    await recordProjectHostMetricsSample({
+      host_id,
+      metrics: {
+        collected_at: new Date().toISOString(),
+        disk_device_total_bytes: 200 * gib,
+        disk_device_used_bytes: 50 * gib,
+        disk_available_conservative_bytes: 150 * gib,
+        shared_scratch_total_bytes: 10 * gib,
+        shared_scratch_used_bytes: 7 * gib,
+        shared_scratch_available_bytes: 3 * gib,
+      },
+    });
+
+    const history = await loadProjectHostMetricsHistory({
+      host_ids: [host_id],
+      window_minutes: 60,
+      max_points: 60,
+    });
+    const entry = history.get(host_id);
+    expect(entry).toBeDefined();
+    expect(entry?.points[0].shared_scratch_used_percent).toBe(70);
+    expect(entry?.derived?.shared_scratch?.level).toBe("critical");
+  });
+
   it("does not warn on high metadata chunk usage when device unallocated headroom is ample", async () => {
     const host_id = uuid();
     await insertProjectHost(host_id);

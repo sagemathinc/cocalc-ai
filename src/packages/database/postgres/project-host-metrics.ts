@@ -18,6 +18,7 @@ const DISK_WARNING_AVAILABLE_BYTES = 25 * GIB;
 const DISK_CRITICAL_AVAILABLE_BYTES = 10 * GIB;
 const DISK_WARNING_PERCENT = 85;
 const DISK_CRITICAL_PERCENT = 93;
+const SHARED_SCRATCH_MIN_USED_PERCENT_FOR_HEADROOM = 60;
 const METADATA_WARNING_PERCENT = 80;
 const METADATA_CRITICAL_PERCENT = 90;
 const METADATA_WARNING_AVAILABLE_BYTES = 8 * GIB;
@@ -331,11 +332,18 @@ function riskState(opts: {
   critical_percent: number;
   warning_available_bytes?: number;
   critical_available_bytes?: number;
+  min_used_percent_for_available_bytes?: number;
   label: string;
 }): HostMetricsRiskState {
   let level: HostMetricsRiskLevel = "healthy";
   const reasons: string[] = [];
+  const availableThresholdEligible =
+    opts.min_used_percent_for_available_bytes == null ||
+    (opts.used_percent != null &&
+      Number.isFinite(opts.used_percent) &&
+      opts.used_percent >= opts.min_used_percent_for_available_bytes);
   if (
+    availableThresholdEligible &&
     opts.critical_available_bytes != null &&
     opts.available_bytes != null &&
     opts.available_bytes <= opts.critical_available_bytes
@@ -343,6 +351,7 @@ function riskState(opts: {
     level = worstLevel(level, "critical");
     reasons.push(`${opts.label} headroom is critically low`);
   } else if (
+    availableThresholdEligible &&
     opts.warning_available_bytes != null &&
     opts.available_bytes != null &&
     opts.available_bytes <= opts.warning_available_bytes
@@ -561,6 +570,8 @@ function computeDerived(
           critical_percent: DISK_CRITICAL_PERCENT,
           warning_available_bytes: DISK_WARNING_AVAILABLE_BYTES,
           critical_available_bytes: DISK_CRITICAL_AVAILABLE_BYTES,
+          min_used_percent_for_available_bytes:
+            SHARED_SCRATCH_MIN_USED_PERCENT_FOR_HEADROOM,
         })
       : undefined;
   const alerts: HostMetricsDerived["alerts"] = [];

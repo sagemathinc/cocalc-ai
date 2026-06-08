@@ -815,6 +815,33 @@ export function parseRow(
               }
             : {}),
           ...(parseNonNegativeNumber(
+            rawCurrentMetrics.shared_scratch_total_bytes,
+          ) != null
+            ? {
+                shared_scratch_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.shared_scratch_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.shared_scratch_used_bytes,
+          ) != null
+            ? {
+                shared_scratch_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.shared_scratch_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.shared_scratch_available_bytes,
+          ) != null
+            ? {
+                shared_scratch_available_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.shared_scratch_available_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
             rawCurrentMetrics.btrfs_data_total_bytes,
           ) != null
             ? {
