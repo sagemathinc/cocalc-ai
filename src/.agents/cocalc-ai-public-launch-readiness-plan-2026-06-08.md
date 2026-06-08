@@ -17,8 +17,8 @@ Initial hosted deployment:
 
 - Single-bay Rocket deployment.
 - GCP `us-south1-a` or equivalent, similar to the `delta.cocalc.ai` deployment.
-- Start with a non-spot VM, likely around `t2d-standard-8`.
-- Use a fast network SSD disk.
+- Start with a non-spot VM, likely around `t2d-standard-16`.
+- Use a fast network SSD disk with automated GCP snapshots.
 - Add CPU project hosts in the US, Europe, and possibly Asia.
 - Allow users to add dedicated hosts.
 - Defer true multi-bay production until it has had another 1-2 months of
@@ -38,6 +38,15 @@ Rationale:
 - Vertical scaling should be enough for the first public traffic and UCLA class.
 - Multi-bay correctness is strategically important, but it is not the right
   first-launch risk unless single-bay capacity is already exhausted.
+
+Price note:
+
+```
+t2d-standard-16 with 150GB SSD in us-south1-a 
+16 vCPU + 64 GB memory      - $582.25
+150 GB SSD persistent disk  - $30.09
+total:  $612.34
+```
 
 ## Definition Of Release-Ready
 
@@ -158,10 +167,11 @@ Required backups:
 - Deployment secrets and configuration.
 - Caddy/TLS or ingress configuration if relevant.
 - Billing/account critical metadata.
+- Site master key (one time backup to encrypted vault; drill to verify it works)
 
 Planned operator backup:
 
-- R2 buckets are backed up with `rclone` to encrypted office disks.
+- R2 buckets are backed up with `rclone` to encrypted office disks that are rotated that are rotated periodically.
 
 Required drills before launch:
 
@@ -187,9 +197,9 @@ Problem:
 - The system can appear healthy from the outside while control-plane queues,
   project starts, websocket reconnects, or billing paths are already failing.
 
-Minimum launch dashboard:
+Minimum launch dashboard - everything must be equally visible to cocalc-cli, so that it's easy for codex to watch/help as well, and also to use tools like prometheus.
 
-- Hub process:
+- Hub processes (many nodejs processes, conat, etc., managed by systemd):
   - CPU,
   - memory,
   - event-loop lag,
@@ -202,7 +212,7 @@ Minimum launch dashboard:
   - lock waits,
   - transaction age,
   - database size,
-  - replication/backup status if applicable.
+  - backup status
 - Project lifecycle:
   - project starts requested,
   - starts succeeded,
@@ -211,6 +221,8 @@ Minimum launch dashboard:
   - stop duration percentiles,
   - running projects per host,
   - queued/starting projects per host.
+  - move starts, move duration, moves per host
+  - backup starts, backup duration, backups per host (this is rustic backup of project)
 - Project hosts:
   - online/offline status,
   - host pressure,
@@ -224,8 +236,8 @@ Minimum launch dashboard:
   - latest successful backup age,
   - snapshot/rootfs publish failures.
 - Billing/payment:
-  - checkout failures,
-  - webhook failures,
+  - purchase failures: membership purchase upgrade/downgrade, team package purchase, voucher purchase.
+  - stripe webhook failures,
   - purchase-session reconciliation failures,
   - spend-limit stops.
 - Abuse:
@@ -241,7 +253,7 @@ Minimum alerting:
 - Hub process restart loop.
 - Postgres unavailable.
 - Project starts failing above threshold.
-- No successful project backup in expected window.
+- No successful project backup in expected window. (NOTE: users can configure this.)
 - Billing webhook failures.
 - R2 failures above threshold.
 - Disk space below threshold on control plane or project hosts.
@@ -259,7 +271,7 @@ Implementation plan:
    - backup freshness.
 4. Add Prometheus/OpenTelemetry-style export if already aligned with the
    deployment stack; otherwise start with a pragmatic internal health endpoint
-   plus log-based dashboards.
+   plus log-based dashboards.   (USER: via cocalc-cli)
 5. Add synthetic probes:
    - sign in,
    - create project,
@@ -276,6 +288,8 @@ Exit criteria:
 - Project-start failures and websocket reconnect storms are visible without
   browser console access.
 - Backup freshness is visible.
+
+USER question: what about some sort of user-visible health status?   
 
 ### L4: Abuse And Spend Controls
 
@@ -314,6 +328,8 @@ Exit criteria:
 - A bot cannot create unlimited accounts from one IP without hitting a throttle.
 - A sudden traffic spike has a documented operator response.
 
+USER: we already did a LOT of work on all of the above, so the goal here is an _audit_ to ensure that it's right.  It's hopefully not (much) new code.
+
 ### L5: User Flow Smoke Matrix
 
 This track overlaps with the separate visible bug-burn effort, but the launch
@@ -335,7 +351,7 @@ Required user flows:
 12. Project stop/start cycle.
 13. Snapshot/backup visibility and one restore/copy path.
 14. Admin host view: host health, runtime control, project list.
-15. Dedicated host add/remove or explicitly feature-flagged out.
+15. Dedicated host add/remove.
 
 Exit criteria:
 
@@ -433,6 +449,7 @@ Measurements:
 
 - Time to create projects.
 - Time to start projects.
+- Time to open files.
 - Browser reconnect behavior.
 - Hub CPU/memory/event-loop lag.
 - Project-host memory and disk pressure.
