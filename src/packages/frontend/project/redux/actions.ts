@@ -2578,7 +2578,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     id,
     only_contents,
   }: {
-    src: string[];
+    src: string[] | string;
     dest: string;
     id?: string;
     only_contents?: boolean;

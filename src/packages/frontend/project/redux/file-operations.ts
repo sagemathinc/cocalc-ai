@@ -46,7 +46,7 @@ export async function copyPaths({
   log,
   appendSlashToDirectoryPaths,
 }: {
-  src: string[];
+  src: string[] | string;
   dest: string;
   id?: string;
   only_contents?: boolean;
@@ -55,33 +55,38 @@ export async function copyPaths({
   log: LogProjectEvent;
   appendSlashToDirectoryPaths: (paths: string[]) => Promise<string[]>;
 }): Promise<void> {
-  const withSlashes = await appendSlashToDirectoryPaths(src);
+  const srcPaths = typeof src === "string" ? [src] : src;
+  const withSlashes = await appendSlashToDirectoryPaths(srcPaths);
 
   log({
     event: "file_action",
     action: "copied",
     files: withSlashes,
-    count: src.length,
-    dest: only_contents ? dest : normalizeDirectoryDestination(dest),
+    count: srcPaths.length,
+    dest:
+      typeof src === "string" || only_contents
+        ? dest
+        : normalizeDirectoryDestination(dest),
   });
 
   if (only_contents) {
     src = withSlashes;
   }
 
-  src = src.map(normalizeCpSourcePath);
+  const normalizedSrc =
+    typeof src === "string"
+      ? normalizeCpSourcePath(src)
+      : src.map(normalizeCpSourcePath);
+  const count = typeof src === "string" ? 1 : src.length;
 
   id ??= misc.uuid();
   setActivity({
     id,
-    status: `Copying ${src.length} ${misc.plural(
-      src.length,
-      "file",
-    )} to ${dest}`,
+    status: `Copying ${count} ${misc.plural(count, "file")} to ${dest}`,
   });
 
   try {
-    await fs().cp(src, dest, { recursive: true, reflink: true });
+    await fs().cp(normalizedSrc, dest, { recursive: true, reflink: true });
     setActivity({ id, stop: "" });
   } catch (err) {
     setActivity({ id, error: `${err}` });
