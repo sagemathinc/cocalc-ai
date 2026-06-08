@@ -55,9 +55,30 @@ export function LogHeader(): React.JSX.Element {
   }
 
   return (
-    <div style={{ flex: 1, fontWeight: "bold" }}>
-      <Icon name={FIXED_PROJECT_TABS.log.icon} />{" "}
-      {intl.formatMessage(labels.recent)} {renderToggle()}
+    <div
+      style={{
+        alignItems: "center",
+        display: "flex",
+        flex: "1 1 0",
+        fontWeight: "bold",
+        gap: 8,
+        minWidth: 0,
+        overflow: "hidden",
+      }}
+    >
+      <span
+        style={{
+          flex: "1 1 0",
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <Icon name={FIXED_PROJECT_TABS.log.icon} />{" "}
+        {intl.formatMessage(labels.recent)}
+      </span>
+      <span style={{ flex: "0 0 auto" }}>{renderToggle()}</span>
     </div>
   );
 }

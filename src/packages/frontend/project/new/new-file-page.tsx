@@ -110,16 +110,30 @@ export default function NewFilePage(props: Props) {
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
   const filename0 = useTypedRedux({ project_id }, "default_filename");
-  const fallbackFilename = filename0
-    ? filename0
-    : default_filename(undefined, project_id);
+  function makeDefaultFilename(ext?: string): string {
+    return default_filename(ext, project_id);
+  }
+  const fallbackFilename = useMemo(
+    () => (filename0 ? filename0 : default_filename(undefined, project_id)),
+    [filename0, isVisible, project_id],
+  );
   const [filename, setFilename] = useState<string>(
     initialFilename?.trim() ? initialFilename : fallbackFilename,
   );
+  const [filenameChanged, setFilenameChanged] = useState<boolean>(
+    !!initialFilename?.trim(),
+  );
   useEffect(() => {
     if (initialFilename === undefined) return;
-    setFilename(initialFilename.trim() ? initialFilename : fallbackFilename);
+    const hasInitialFilename = !!initialFilename.trim();
+    setFilename(hasInitialFilename ? initialFilename : fallbackFilename);
+    setFilenameChanged(hasInitialFilename);
   }, [initialFilename, fallbackFilename]);
+  useEffect(() => {
+    if (!isVisible || filenameChanged || initialFilename?.trim()) return;
+    setFilename(fallbackFilename);
+    setExtensionWarning(false);
+  }, [fallbackFilename, filenameChanged, initialFilename, isVisible]);
   const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   const [showFolderModal, setShowFolderModal] = useState<boolean>(false);
@@ -244,9 +258,18 @@ export default function NewFilePage(props: Props) {
         ext,
         current_path: effective_current_path,
       });
+      resetToGeneratedFilename(ext ?? filename_extension(filename));
     } finally {
       setCreatingFile("");
     }
+  }
+
+  function resetToGeneratedFilename(ext?: string) {
+    const next = makeDefaultFilename(ext);
+    getActions().set_next_default_filename(next);
+    setFilename(next);
+    setFilenameChanged(false);
+    setExtensionWarning(false);
   }
 
   function submit(ext?: string) {
@@ -540,6 +563,7 @@ export default function NewFilePage(props: Props) {
                 if (extensionWarning) {
                   setExtensionWarning(false);
                 } else {
+                  setFilenameChanged(true);
                   setFilename(e.target.value);
                 }
               }}

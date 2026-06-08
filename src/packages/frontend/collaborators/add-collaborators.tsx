@@ -87,6 +87,33 @@ interface NonregisteredUser {
 
 type User = RegisteredUser | NonregisteredUser;
 
+function userKey(user: User): string {
+  return user.account_id ?? user.email_address;
+}
+
+export function uniqueSelectedCollaboratorEntries(entries: string[]): string[] {
+  return Array.from(new Set(entries.filter((x) => !!x)));
+}
+
+export function selectedCollaboratorUsersForEntries(
+  selectedEntries: string[],
+  selectedUsers: User[],
+  results: User[],
+): User[] {
+  const selected = new Set(selectedEntries);
+  const byKey = new Map<string, User>();
+  for (const user of [...selectedUsers, ...results]) {
+    const key = userKey(user);
+    if (selected.has(key)) {
+      byKey.set(key, user);
+    }
+  }
+  return selectedEntries.flatMap((key) => {
+    const user = byKey.get(key);
+    return user == null ? [] : [user];
+  });
+}
+
 interface Props {
   project_id: string;
   autoFocus?: boolean;
@@ -133,6 +160,7 @@ export const AddCollaborators: React.FC<Props> = ({
 
   // list of actually selected entries in the selector list
   const [selected_entries, set_selected_entries] = useState<string[]>([]);
+  const [selected_users, set_selected_users] = useState<User[]>([]);
   const select_ref = useRef<any>(null);
 
   // currently carrying out a search
@@ -203,6 +231,7 @@ export const AddCollaborators: React.FC<Props> = ({
     set_results([]);
     set_num_matching_already(0);
     set_selected_entries([]);
+    set_selected_users([]);
     set_state("input");
     set_err("");
     set_email_to("");
@@ -276,7 +305,6 @@ export const AddCollaborators: React.FC<Props> = ({
     }
     set_num_matching_already(num_already_matching);
     write_email_invite();
-    set_selected_entries([]);
     // sort search_results with collaborators first by last_active,
     // then non-collabs by last_active.
     search_results.sort((x, y) => {
@@ -293,6 +321,13 @@ export const AddCollaborators: React.FC<Props> = ({
     set_state("searched");
     set_err(err);
     set_results(search_results);
+    set_selected_users((selected) =>
+      selectedCollaboratorUsersForEntries(
+        selected_entries,
+        selected,
+        search_results,
+      ),
+    );
     set_email_to("");
     set_customize_email(false);
     set_select_open(true);
@@ -767,7 +802,14 @@ export const AddCollaborators: React.FC<Props> = ({
         users.push(r);
       }
     }
-    const showSelector = state === ("searched" as State) && users.length > 0;
+    const optionUsersByKey = new Map<string, User>();
+    for (const user of [...selected_users, ...users]) {
+      optionUsersByKey.set(userKey(user), user);
+    }
+    const optionUsers = Array.from(optionUsersByKey.values());
+    const showSelector =
+      state === ("searched" as State) &&
+      (users.length > 0 || selected_entries.length > 0);
 
     const hasSearchContentBelow =
       showSelector || selected_entries.length > 0 || state == "searched";
@@ -821,8 +863,17 @@ export const AddCollaborators: React.FC<Props> = ({
               "matching user",
             )}.`}
             onChange={(value) => {
-              const selected = value as string[];
+              const selected = uniqueSelectedCollaboratorEntries(
+                value as string[],
+              );
               set_selected_entries(selected);
+              set_selected_users((selectedUsers) =>
+                selectedCollaboratorUsersForEntries(
+                  selected,
+                  selectedUsers,
+                  optionUsers,
+                ),
+              );
               if (selected.length > 0) {
                 set_select_open(false);
               }
@@ -840,7 +891,7 @@ export const AddCollaborators: React.FC<Props> = ({
               set_select_open(open);
             }}
           >
-            {render_options(users)}
+            {render_options(optionUsers)}
           </Select>
         )}
         {selected_entries.length > 0 && (

@@ -13,6 +13,7 @@ export const FLYOUT_EXTRA2_WIDTH_PX = Math.floor(FLYOUT_DEFAULT_WIDTH_PX * 1.4);
 
 // use this in styles for padding or margins
 export const FLYOUT_PADDING = "5px";
+export const FLYOUT_BODY_BG_COLOR = "rgba(255, 255, 255, 0.72)";
 
 // a non-standard filetype for a folder
 export const ACTIVE_FOLDER_TYPE = "_folder_";
