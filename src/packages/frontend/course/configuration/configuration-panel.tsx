@@ -7,12 +7,7 @@ import { Card, Col, Row, Spin } from "antd";
 import { debounce } from "lodash";
 import { FormattedMessage, useIntl } from "react-intl";
 
-import {
-  useActions,
-  useState,
-  useStore,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { useActions, useState, useStore } from "@cocalc/frontend/app-framework";
 import {
   Icon,
   LabeledRow,
@@ -104,8 +99,6 @@ export function ConfigurationPanel({ name, project_id, settings }: Props) {
 }
 
 export function UpgradeConfiguration({ settings, actions, project_id }) {
-  const is_commercial = useTypedRedux("customize", "is_commercial");
-
   return (
     <Card
       title={
@@ -118,13 +111,11 @@ export function UpgradeConfiguration({ settings, actions, project_id }) {
         </>
       }
     >
-      {is_commercial && (
-        <StudentPay
-          actions={actions}
-          settings={settings}
-          project_id={project_id}
-        />
-      )}
+      <StudentPay
+        actions={actions}
+        settings={settings}
+        project_id={project_id}
+      />
     </Card>
   );
 }
