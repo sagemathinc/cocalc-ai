@@ -135,6 +135,21 @@ describe("findOpenDisplayPathForSyncPath", () => {
       findOpenDisplayPathForSyncPath(actions, "/root/real.txt"),
     ).toBeUndefined();
   });
+
+  it("finds already-open terminal tabs before their sync_path is populated", () => {
+    const visibleTerminalPath = "/root/shell.term";
+    const terminalSyncPath = termPath({
+      path: visibleTerminalPath,
+      cmd: "",
+      number: 0,
+    });
+    const actions = mkActions({
+      [visibleTerminalPath]: { component: {} },
+    });
+    expect(findOpenDisplayPathForSyncPath(actions, terminalSyncPath)).toBe(
+      visibleTerminalPath,
+    );
+  });
 });
 
 describe("resolveSyncPath", () => {
@@ -602,6 +617,67 @@ describe("open_file workspaceSelection passthrough", () => {
 describe("open_file wait_for_ready", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("opens side chat when the target file is already open", async () => {
+    const path = "/home/user/shell.term";
+    const syncPath = termPath({ path, cmd: "", number: 0 });
+    const ensureProjectIsOpen = jest.fn().mockResolvedValue(undefined);
+    const openProject = jest.fn();
+    const saveSession = jest.fn();
+    const { open_files, openFilesState, store } = makeOpenFilesHarness();
+    openFilesState.set(path, {
+      component: { Editor: () => null },
+      display_path: path,
+      sync_path: syncPath,
+    });
+
+    jest.spyOn(redux as any, "getStore").mockImplementation((name: string) => {
+      if (name === "page") {
+        return { get: jest.fn().mockReturnValue(false) };
+      }
+      return undefined;
+    });
+    jest
+      .spyOn(redux as any, "getActions")
+      .mockImplementation((name: string) => {
+        if (name === "projects") {
+          return { open_project: openProject };
+        }
+        if (name === "page") {
+          return { save_session: saveSession };
+        }
+        return {};
+      });
+
+    const actions = {
+      project_id: "project-1",
+      get_store: () => store,
+      open_files,
+      fs: () => ({
+        canonicalSyncIdentityPath: jest.fn().mockResolvedValue(path),
+      }),
+      ensureProjectIsOpen,
+      open_in_new_browser_window: jest.fn(),
+      foreground_project: jest.fn(),
+      set_active_tab: jest.fn(),
+      initFileRedux: jest.fn(),
+      gotoFragment: jest.fn(),
+      open_chat: jest.fn(),
+      set_activity: jest.fn(),
+    } as any;
+
+    await open_file(actions, {
+      path,
+      chat: true,
+      chat_width: 0.5,
+      foreground: true,
+      foreground_project: true,
+      wait_for_ready: true,
+    });
+
+    expect(actions.open_chat).toHaveBeenCalledWith({ path, width: 0.5 });
+    expect(actions.set_active_tab).toHaveBeenCalled();
   });
 
   it("returns immediately for background opens without hydrating the editor", async () => {
