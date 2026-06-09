@@ -320,6 +320,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
           cacheId={`${props.id}${frameActions.current?.frame_id}`}
           value={localValue}
           height="auto"
+          unboundedAutoGrow
           onChange={setCellInput}
           getValueRef={getValueRef}
           onShiftEnter={(value) => {

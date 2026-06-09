@@ -219,7 +219,7 @@ restore_path() {
 snapshot_mutable_state() {
   snapshot_path /etc/cocalc/star/config.env
   snapshot_path /etc/cocalc/star/hub.env
-  snapshot_path /etc/cocalc/project-host.env
+  snapshot_path /etc/cocalc/star/project-host.env
   snapshot_path /etc/systemd/system/cocalc-star-hub.service
   snapshot_path /etc/systemd/system/cocalc-star-project-host.service
   snapshot_path /etc/caddy/Caddyfile
@@ -228,7 +228,7 @@ snapshot_mutable_state() {
 restore_mutable_state() {
   restore_path /etc/cocalc/star/config.env
   restore_path /etc/cocalc/star/hub.env
-  restore_path /etc/cocalc/project-host.env
+  restore_path /etc/cocalc/star/project-host.env
   restore_path /etc/systemd/system/cocalc-star-hub.service
   restore_path /etc/systemd/system/cocalc-star-project-host.service
   restore_path /etc/caddy/Caddyfile

@@ -12,19 +12,33 @@ export const DOWNLOAD_ERROR_HEADER = "X-CoCalc-Download-Error";
 const logger = getLogger("conat:file-download");
 
 // assumes request has already been authenticated!
-function extractDownloadPath(url: string): string {
-  const i = url.indexOf("files/");
+function parseDownloadUrl(url: string): { project_id: string; path: string } {
+  const filesMarker = "/files/";
+  const i = url.indexOf(filesMarker);
+  if (i === -1) {
+    throw new Error(`invalid project file download URL: ${url}`);
+  }
+  const prefix = url.slice(0, i);
+  const parts = prefix.split("/").filter(Boolean);
+  const project_id =
+    parts[0] === "projects" && parts[1] != null ? parts[1] : parts[0];
+  if (!project_id) {
+    throw new Error(`invalid project id in file download URL: ${url}`);
+  }
   let j = url.lastIndexOf("?");
   if (j == -1) {
     j = url.length;
   }
-  const decodedPath = decodeURIComponent(url.slice(i + "files/".length, j));
+  const decodedPath = decodeURIComponent(url.slice(i + filesMarker.length, j));
   if (decodedPath == "" || decodedPath == "/") {
-    return "/";
+    return { project_id, path: "/" };
   }
   // Frontend routes encode absolute paths as ".../files/<path-without-leading-slash>".
   // Re-add the leading slash so backend file APIs do not interpret it relative to cwd.
-  return decodedPath.startsWith("/") ? decodedPath : `/${decodedPath}`;
+  return {
+    project_id,
+    path: decodedPath.startsWith("/") ? decodedPath : `/${decodedPath}`,
+  };
 }
 
 function hasExplicitDownloadQuery(url: string): boolean {
@@ -78,8 +92,7 @@ export async function handleFileDownload({
     res.end("Invalid URL");
     return;
   }
-  const path = extractDownloadPath(url);
-  const project_id = url.split("/").slice(1)[0];
+  const { project_id, path } = parseDownloadUrl(url);
   logger.debug("conat: get file", { project_id, path, url });
   const fileName = path_split(path).tail;
   const contentType = mime.lookup(fileName);
