@@ -2663,13 +2663,14 @@ function SiteLicenseDashboard({
                                 ) : null}
                                 {canArchivePool ? (
                                   <Popconfirm
-                                    title="Archive this pool?"
-                                    description="The pool will be hidden, but its audit history and past seat records will be preserved."
+                                    title={`Archive ${pool.pool_name}?`}
+                                    description="This removes the pool from active site-license use. Audit history and past seat records will be preserved."
                                     okButtonProps={{
                                       danger: true,
                                       loading: archivingPoolId === pool.id,
                                     }}
-                                    okText="Archive"
+                                    okText="Archive pool"
+                                    cancelText="Cancel"
                                     onConfirm={async () => {
                                       setArchivingPoolId(pool.id);
                                       try {

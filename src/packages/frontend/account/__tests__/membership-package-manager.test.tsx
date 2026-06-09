@@ -886,12 +886,23 @@ describe("membership package managers", () => {
       expect(screen.getByText("Students")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByText("Archive pool"));
+    const clickArchivePoolAction = () =>
+      fireEvent.click(
+        screen.getAllByRole("button", { name: /Archive pool/ })[0],
+      );
+
+    clickArchivePoolAction();
 
     await waitFor(() => {
-      expect(screen.getByText("Archive")).toBeTruthy();
+      expect(screen.getByText("Archive Students?")).toBeTruthy();
     });
-    fireEvent.click(screen.getByText("Archive"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(archiveSiteLicensePool).not.toHaveBeenCalled();
+
+    const archiveButtons = screen.getAllByRole("button", {
+      name: /Archive pool/,
+    });
+    fireEvent.click(archiveButtons[archiveButtons.length - 1]);
 
     await waitFor(() => {
       expect(archiveSiteLicensePool).toHaveBeenCalledWith({
