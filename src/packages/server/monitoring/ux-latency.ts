@@ -5,8 +5,10 @@
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import getAdmins from "@cocalc/server/accounts/admins";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { ADMIN_UX_LATENCY_ALERTS_ENABLED_KEY } from "@cocalc/util/admin-alerts";
 import type {
   UxLatencyEventInput,
   UxLatencyMetricSummary,
@@ -364,16 +366,38 @@ function alertCandidates(summary: UxLatencySummary): UxLatencyAlertCandidate[] {
   return alerts;
 }
 
+async function getUxLatencyAlertRecipients(): Promise<string[]> {
+  const admins = await getAdmins();
+  if (admins.length === 0) return [];
+  const { rows } = await getPool().query<{ account_id: string }>(
+    `
+    SELECT account_id
+      FROM accounts
+     WHERE account_id = ANY($1)
+       AND COALESCE(other_settings->>$2, 'true') <> 'false'
+    `,
+    [admins, ADMIN_UX_LATENCY_ALERTS_ENABLED_KEY],
+  );
+  return rows.map(({ account_id }) => account_id);
+}
+
 export async function runUxLatencyAlertCheck(): Promise<number> {
   const summary = await getUxLatencySummary({
     window_minutes: ALERT_WINDOW_MINUTES,
   });
   const alerts = alertCandidates(summary);
+  if (alerts.length === 0) return 0;
+  const to_ids = await getUxLatencyAlertRecipients();
+  if (to_ids.length === 0) {
+    logger.debug("no admins opted into ux latency alerts");
+    return 0;
+  }
   for (const alert of alerts) {
     await adminAlert({
       subject: `UX latency: ${alert.subject}`,
       body: `${alert.body}\n\nWindow: ${summary.window_minutes} minutes\nChecked: ${summary.checked_at}`,
       dedupMinutes: 60,
+      to_ids,
     });
   }
   return alerts.length;

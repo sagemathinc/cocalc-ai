@@ -13,14 +13,20 @@ import {
   Space,
   Spin,
   Statistic,
+  Switch,
   Table,
+  Typography,
 } from "antd";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   UxLatencyMetricSummary,
   UxLatencyRecentEvent,
   UxLatencySummary,
 } from "@cocalc/conat/hub/api/system";
+import { ADMIN_UX_LATENCY_ALERTS_ENABLED_KEY } from "@cocalc/util/admin-alerts";
+
+const { Text } = Typography;
 
 const WINDOW_OPTIONS = [
   { label: "Last hour", value: 60 },
@@ -65,6 +71,9 @@ export const UsageStatistics: React.FC = () => {
   const [summary, setSummary] = useState<UxLatencySummary>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const alertsEnabled =
+    otherSettings?.get?.(ADMIN_UX_LATENCY_ALERTS_ENABLED_KEY) !== false;
 
   useEffect(() => {
     let canceled = false;
@@ -185,14 +194,37 @@ export const UsageStatistics: React.FC = () => {
       <Card
         title="User Latency"
         extra={
-          <Select
-            options={WINDOW_OPTIONS}
-            value={windowMinutes}
-            onChange={setWindowMinutes}
-            style={{ minWidth: 140 }}
-          />
+          <Space wrap>
+            <Space>
+              <Text type="secondary">My alerts</Text>
+              <Switch
+                checked={alertsEnabled}
+                onChange={(checked) =>
+                  redux
+                    .getActions("account")
+                    .set_other_settings(
+                      ADMIN_UX_LATENCY_ALERTS_ENABLED_KEY,
+                      checked,
+                    )
+                }
+              />
+            </Space>
+            <Select
+              options={WINDOW_OPTIONS}
+              value={windowMinutes}
+              onChange={setWindowMinutes}
+              style={{ minWidth: 140 }}
+            />
+          </Space>
         }
       >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Admin alert preference"
+          description="The My alerts switch only controls whether this admin account receives UX latency admin alerts. It does not disable monitoring or alerts for other admins."
+        />
         {error ? (
           <Alert
             type="error"
