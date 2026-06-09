@@ -53,7 +53,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "A durable workspace for humans and agents.",
+        name: "AI-Native Technical Workspace for Humans and Agents",
       }),
     ).not.toBeNull();
     expect(
