@@ -8,6 +8,7 @@ import {
   Alert,
   Card,
   Col,
+  Popover,
   Row,
   Select,
   Space,
@@ -18,6 +19,7 @@ import {
   Typography,
 } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   UxLatencyMetricSummary,
@@ -30,9 +32,16 @@ const { Text } = Typography;
 
 const WINDOW_OPTIONS = [
   { label: "Last hour", value: 60 },
-  { label: "Last day", value: 24 * 60 },
-  { label: "Last week", value: 7 * 24 * 60 },
+  { label: "Last 6 hours", value: 6 * 60 },
+  { label: "Last 24 hours", value: 24 * 60 },
 ];
+
+function windowLabel(minutes: number): string {
+  return (
+    WINDOW_OPTIONS.find((option) => option.value === minutes)?.label ??
+    `Last ${minutes} minutes`
+  );
+}
 
 function formatMs(value?: number): string {
   const ms = Math.max(0, Math.round(Number(value) || 0));
@@ -188,6 +197,7 @@ export const UsageStatistics: React.FC = () => {
   const metricRows = summary?.metrics ?? [];
   const segmentRows = summary?.segments ?? [];
   const recentRows = summary?.recent_slow_events ?? [];
+  const activeWindowLabel = windowLabel(windowMinutes).toLowerCase();
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -197,6 +207,20 @@ export const UsageStatistics: React.FC = () => {
           <Space wrap>
             <Space>
               <Text type="secondary">My alerts</Text>
+              <Popover
+                title="Admin alert preference"
+                content={
+                  <div style={{ maxWidth: 320 }}>
+                    The My alerts switch only controls whether this admin
+                    account receives UX latency admin alerts. It does not
+                    disable monitoring or alerts for other admins.
+                  </div>
+                }
+              >
+                <Text type="secondary" style={{ cursor: "help" }}>
+                  <Icon name="info-circle" />
+                </Text>
+              </Popover>
               <Switch
                 checked={alertsEnabled}
                 onChange={(checked) =>
@@ -213,18 +237,11 @@ export const UsageStatistics: React.FC = () => {
               options={WINDOW_OPTIONS}
               value={windowMinutes}
               onChange={setWindowMinutes}
-              style={{ minWidth: 140 }}
+              style={{ minWidth: 150 }}
             />
           </Space>
         }
       >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="Admin alert preference"
-          description="The My alerts switch only controls whether this admin account receives UX latency admin alerts. It does not disable monitoring or alerts for other admins."
-        />
         {error ? (
           <Alert
             type="error"
@@ -237,19 +254,19 @@ export const UsageStatistics: React.FC = () => {
           <Row gutter={[16, 16]}>
             <Col xs={24} md={8}>
               <Statistic
-                title="Project start P50"
+                title={`Project start P50 (${activeWindowLabel})`}
                 value={summaryValue(summary, "project_start_running", "p50_ms")}
               />
             </Col>
             <Col xs={24} md={8}>
               <Statistic
-                title="File visible P95"
+                title={`File visible P95 (${activeWindowLabel})`}
                 value={summaryValue(summary, "file_open_visible", "p95_ms")}
               />
             </Col>
             <Col xs={24} md={8}>
               <Statistic
-                title="File sync-ready P95"
+                title={`File sync-ready P95 (${activeWindowLabel})`}
                 value={summaryValue(summary, "file_open_sync_ready", "p95_ms")}
               />
             </Col>

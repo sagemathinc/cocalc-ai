@@ -183,6 +183,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },
+  "system.recordUxLatencyEvent": {
+    decision: "fresh-auth-not-required",
+    reason: TELEMETRY_ONLY,
+  },
   "hosts.rehomeHost": {
     decision: "fresh-auth-required",
     reason: "host ownership/placement mutation",

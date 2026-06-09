@@ -642,6 +642,7 @@ describe("ProjectsActions archive flow", () => {
       const started = await actions.start_project(project_id);
 
       expect(started).toBe(true);
+      expect(mockedWebappClient.async_query).not.toHaveBeenCalled();
       expect(
         redux._set_state.mock.calls.some(
           ([state]) =>
