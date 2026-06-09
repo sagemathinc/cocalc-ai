@@ -21,6 +21,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { User } from "./user";
 
 const AVATAR_SIZE = 22;
+const COMPACT_AVATAR_SIZE = 16;
 
 function UserLabel({
   account_id,
@@ -65,15 +66,61 @@ function UserLabel({
   );
 }
 
+function CompactUserLabel({ account_id }: { account_id: string }) {
+  return (
+    <User
+      account_id={account_id}
+      trunc={18}
+      show_avatar
+      avatarSize={COMPACT_AVATAR_SIZE}
+      style={{
+        maxWidth: 170,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        verticalAlign: "middle",
+      }}
+    />
+  );
+}
+
+function selectOption({
+  account_id,
+  knownUsers,
+  last_active,
+  compactSelectedLabel,
+}: {
+  account_id: string;
+  knownUsers: Set<string>;
+  last_active?: Date;
+  compactSelectedLabel?: boolean;
+}) {
+  return {
+    value: account_id,
+    label: (
+      <UserLabel
+        account_id={account_id}
+        knownUsers={knownUsers}
+        last_active={last_active}
+      />
+    ),
+    ...(compactSelectedLabel
+      ? { selectedLabel: <CompactUserLabel account_id={account_id} /> }
+      : undefined),
+    last_active,
+  };
+}
+
 const handleSearch = throttle(
   async ({
     query,
     setData,
     knownUsers,
+    compactSelectedLabel,
   }: {
     query: string;
     setData;
     knownUsers: Set<string>;
+    compactSelectedLabel?: boolean;
   }) => {
     const isEmail = query?.trim() && isValidEmailAddress(query?.trim());
     const terms = search_split(query?.toLowerCase() ?? "");
@@ -85,15 +132,12 @@ const handleSearch = throttle(
       if (!name || search_match(name.toLowerCase(), terms)) {
         const last_active = user_map.getIn([account_id, "last_active"]);
         v.push({
-          value: account_id,
-          label: (
-            <UserLabel
-              account_id={account_id}
-              knownUsers={knownUsers}
-              last_active={last_active}
-            />
-          ),
-          last_active,
+          ...selectOption({
+            account_id,
+            knownUsers,
+            last_active,
+            compactSelectedLabel,
+          }),
         });
       }
     }
@@ -110,12 +154,14 @@ const handleSearch = throttle(
     const found = select
       .filter(({ account_id }) => isEmail || !knownUsers.has(account_id))
       .map((user) => {
+        const last_active = user_map.getIn([user.account_id, "last_active"]);
         return {
-          value: user.account_id,
-          label: (
-            <UserLabel account_id={user.account_id} knownUsers={knownUsers} />
-          ),
-          last_active: user_map.getIn([user.account_id, "last_active"]),
+          ...selectOption({
+            account_id: user.account_id,
+            knownUsers,
+            last_active,
+            compactSelectedLabel,
+          }),
         };
       });
     const w = v.concat(found);
@@ -140,6 +186,7 @@ export default function SelectUser({
   defaultValue,
   autoFocus,
   autoOpen,
+  compactSelectedLabel,
 }: {
   placeholder: string;
   style?;
@@ -148,6 +195,7 @@ export default function SelectUser({
   defaultValue?;
   autoFocus?: boolean;
   autoOpen?: number;
+  compactSelectedLabel?: boolean;
 }) {
   const [open, setOpen] = useState<boolean>(false);
   const ref = useRef<any>(null);
@@ -169,16 +217,15 @@ export default function SelectUser({
     if (defaultValue != null) {
       setData(
         defaultValue.map((account_id) => {
-          return {
-            value: account_id,
-            label: (
-              <UserLabel account_id={account_id} knownUsers={knownUsers} />
-            ),
-          };
+          return selectOption({
+            account_id,
+            knownUsers,
+            compactSelectedLabel,
+          });
         }),
       );
     } else {
-      handleSearch({ query: "", setData, knownUsers });
+      handleSearch({ query: "", setData, knownUsers, compactSelectedLabel });
     }
     if (ref.current && autoFocus) {
       ref.current.focus();
@@ -186,7 +233,7 @@ export default function SelectUser({
     if (autoOpen) {
       setTimeout(() => {
         setOpen(true);
-        handleSearch({ query: "", setData, knownUsers });
+        handleSearch({ query: "", setData, knownUsers, compactSelectedLabel });
       }, autoOpen);
     }
   }, []);
@@ -212,7 +259,10 @@ export default function SelectUser({
       defaultActiveFirstOption={false}
       suffixIcon={null}
       filterOption={false}
-      onSearch={(query) => handleSearch({ query, setData, knownUsers })}
+      optionLabelProp={compactSelectedLabel ? "selectedLabel" : undefined}
+      onSearch={(query) =>
+        handleSearch({ query, setData, knownUsers, compactSelectedLabel })
+      }
       onChange={handleChange}
       notFoundContent={null}
       options={data}
