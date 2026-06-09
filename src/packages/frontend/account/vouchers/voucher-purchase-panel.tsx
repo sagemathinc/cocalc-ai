@@ -29,7 +29,7 @@ import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
 import { MAX_VOUCHERS, MAX_VOUCHER_VALUE } from "@cocalc/util/vouchers";
 
-import { createVoucherPurchase } from "./api";
+import { createVoucherPurchase } from "@cocalc/frontend/store/api";
 
 const { Paragraph, Text } = Typography;
 

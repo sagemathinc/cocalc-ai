@@ -39,7 +39,7 @@ import {
   getAdminVouchers,
   getVouchersData,
   getVoucherCodes,
-} from "./api";
+} from "@cocalc/frontend/store/api";
 import VoucherPurchasePanel from "./voucher-purchase-panel";
 import VoucherCodeNotes from "./voucher-code-notes";
 
