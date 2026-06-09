@@ -385,6 +385,10 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   }
 
   private sync_slate_to_cm(id: string) {
+    const markdown = this.getSlateMarkdown(id);
+    if (markdown != null) {
+      this.set_value(markdown, true);
+    }
     const blockControl = this.getBlockEditorControl(id);
     if (blockControl?.getMarkdownPositionForSelection) {
       const pos = blockControl.getMarkdownPositionForSelection();
