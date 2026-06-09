@@ -22,6 +22,7 @@ import { SsoAdmin } from "./sso";
 import { SiteSetupAdmin, SiteSetupBanner } from "./site-setup";
 import { SiteLicensesAdmin } from "./site-licenses";
 import { AdminPurchaseAdmin } from "./admin-purchase";
+import { UsageStatistics } from "./stats/page";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -125,6 +126,16 @@ export function AdminPage({
         </div>
       ),
       children: <UserSearch />,
+    },
+    {
+      key: "usage-stats",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="line-chart" style={{ marginRight: "8px" }} /> Operations &
+          Latency
+        </div>
+      ),
+      children: <UsageStatistics />,
     },
     {
       key: "managed-cpu",
@@ -320,16 +331,6 @@ export function AdminPage({
       ),
       children: <SiteLicensesAdmin />,
     },
-    //     {
-    //       key: "usage-stats",
-    //       label: (
-    //         <div style={headerStyle}>
-    //           <Icon name="line-chart" style={{ marginRight: "8px" }} /> Usage
-    //           Statistics
-    //         </div>
-    //       ),
-    //       children: <UsageStatistics />,
-    //     },
   ].filter(
     (item) =>
       !(

@@ -837,8 +837,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   // hook up to syncstring if available:
   useEffect(() => {
     if (actions._syncstring == null) return;
-    const change = () => {
+    const change = (event?: { local?: boolean }) => {
       const remote = actions._syncstring?.to_str() ?? "";
+      if (event?.local) {
+        mergeHelperRef.current.noteLocalEcho(remote);
+        pendingRemoteRef.current = null;
+        setPendingRemoteIndicator(false);
+        return;
+      }
       if (ignoreRemoteWhileFocused && isMergeFocused()) {
         updatePendingRemoteIndicator(remote, editor.getMarkdownValue());
         return;

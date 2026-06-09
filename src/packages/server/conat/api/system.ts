@@ -118,6 +118,8 @@ import type {
   SiteSetupStep,
   SiteSetupStepState,
   StarServerInfo,
+  UxLatencyEventInput,
+  UxLatencySummary,
 } from "@cocalc/conat/hub/api/system";
 import {
   bootstrapCloudflareConfiguration as bootstrapCloudflareConfiguration0,
@@ -241,6 +243,10 @@ import {
 } from "@cocalc/server/lro/worker-config";
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-host-defaults";
+import {
+  getUxLatencySummary as getUxLatencySummary0,
+  recordUxLatencyEvent as recordUxLatencyEvent0,
+} from "@cocalc/server/monitoring/ux-latency";
 import { getAccountProjectIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-project-index-maintenance";
 import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-collaborator-index-maintenance";
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
@@ -1490,6 +1496,27 @@ export async function getBayLoad({
       }),
     },
   };
+}
+
+export async function recordUxLatencyEvent({
+  account_id,
+  event,
+}: {
+  account_id?: string;
+  event: UxLatencyEventInput;
+}): Promise<void> {
+  await recordUxLatencyEvent0({ account_id, event });
+}
+
+export async function getUxLatencySummary({
+  account_id,
+  window_minutes,
+}: {
+  account_id?: string;
+  window_minutes?: number;
+} = {}): Promise<UxLatencySummary> {
+  await assertAdmin(account_id);
+  return await getUxLatencySummary0({ window_minutes });
 }
 
 export async function getBayBackups({
