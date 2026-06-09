@@ -23,6 +23,7 @@ import {
 import { until } from "@cocalc/util/async-utils";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
 import { getRuntimeWorkspaceRecords } from "@cocalc/frontend/project/workspaces/records-runtime";
+import { workingDirectoryForProjectFile } from "@cocalc/frontend/project/workspaces/chat-working-directory";
 import {
   dispatchWorkspaceSelectionEvent,
   loadSessionSelection,
@@ -351,6 +352,11 @@ export async function open_file(
 
   const tabIsOpened = () =>
     !!actions.get_store()?.get("open_files")?.has(displayPath);
+  const workingDirectory = () =>
+    workingDirectoryForProjectFile(displayPath, {
+      projectHomeDirectory: projectHome,
+      workspaceRecords: getRuntimeWorkspaceRecords(actions.project_id),
+    });
   const hasComponentBootstrap = () =>
     actions.get_store()?.getIn(["open_files", displayPath, "component"]) !=
     null;
@@ -440,7 +446,7 @@ export async function open_file(
     actions.open_files?.set(displayPath, "fragmentId", opts.fragmentId ?? "");
     redux.getActions("page").save_session();
     if (opts.foreground) {
-      actions.set_current_path(path_split(displayPath).head);
+      actions.set_current_path(workingDirectory());
       actions.foreground_project(opts.change_history);
       actions.set_active_tab(path_to_tab(displayPath), {
         change_history: opts.change_history,
