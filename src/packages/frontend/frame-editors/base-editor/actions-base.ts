@@ -2510,7 +2510,7 @@ export class BaseEditorActions<
     // NOTE: above is the only place where syncstring is changed, and when *we* change syncstring,
     // no change event is fired.  However, derived classes may want to update some preview when
     // syncstring changes, so we explicitly emit a change here:
-    this._syncstring.emit("change");
+    this._syncstring.emit("change", { local: true });
   }
 
   async set_codemirror_to_syncstring(): Promise<void> {

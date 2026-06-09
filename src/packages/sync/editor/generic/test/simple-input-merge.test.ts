@@ -129,4 +129,31 @@ describe("SimpleInputMerge", () => {
     expect(local).toBe("(done) P1-B: item\nnext");
     expect(applied).toBe(1);
   });
+
+  it("does not replay a locally echoed save with canonicalization drift", () => {
+    const merge = new SimpleInputMerge("P1-B: item");
+    let local = "(done) P1-B: item\n";
+    merge.noteSaved(local);
+
+    // The local backing store can synchronously echo a canonical variant of
+    // the requested save. This is causally our save, so it must advance the
+    // merge baseline instead of becoming a remote target for replaying the
+    // same local patch.
+    merge.noteLocalEcho("(done) P1-B: item");
+
+    local = "(done) P1-B: item and more";
+    let applied = 0;
+    merge.handleRemote({
+      remote: "(done) P1-B: item",
+      getLocal: () => local,
+      applyMerged: (value) => {
+        applied += 1;
+        local = value;
+      },
+    });
+
+    expect(local).toBe("(done) P1-B: item and more");
+    expect(local).not.toContain("(done) (done)");
+    expect(applied).toBe(0);
+  });
 });

@@ -56,6 +56,19 @@ export class SimpleInputMerge {
     this.pending.push(next);
   }
 
+  // A locally requested save was synchronously reflected by the backing store.
+  // Treat the reflected value as the new baseline, and keep it pending so a
+  // later persisted echo of the same save is ignored if the user has typed more.
+  public noteLocalEcho(value: string): void {
+    const next = value ?? "";
+    this.last = next;
+    if (this.pending.length === 0) {
+      this.pending = [next];
+      return;
+    }
+    this.pending[this.pending.length - 1] = next;
+  }
+
   // Mark that local and remote are known to be in sync.
   public noteApplied(value: string): void {
     this.last = value ?? "";
