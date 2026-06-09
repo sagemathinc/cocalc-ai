@@ -706,7 +706,12 @@ export async function main(
     if (!origin) return;
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    const requestedHeaders =
+      `${req.headers["access-control-request-headers"] ?? ""}`.trim();
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      requestedHeaders || "Content-Type, Cache-Control, X-Requested-With",
+    );
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Vary", "Origin");
   };
