@@ -1,5 +1,13 @@
-import { Badge, Progress, Descriptions, Typography, Space, Alert } from "antd";
-import type { ReactNode } from "react";
+import {
+  Alert,
+  Badge,
+  Button,
+  Descriptions,
+  Progress,
+  Space,
+  Typography,
+} from "antd";
+import { useState, type ReactNode } from "react";
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -52,7 +60,9 @@ export function ConnectionStatsDisplay({
   address?: string;
   rates?: ConnectionRateSnapshot;
 }) {
+  const [showDetails, setShowDetails] = useState(false);
   const connected = status.state === "connected";
+  const hasTechnicalDetails = status.details != null || !!address;
   const statusText = targetLabel ? (
     connected ? (
       <>Connected to {targetLabel}</>
@@ -214,20 +224,31 @@ export function ConnectionStatsDisplay({
         )}
       </Descriptions>
 
-      {/* Optionally, details debugging */}
-      {status.details && (
-        <Typography.Paragraph
-          copyable
-          code
-          style={{ maxHeight: 120, overflow: "auto", marginTop: 12 }}
-        >
-          {JSON.stringify(status.details, null, 2)}
-        </Typography.Paragraph>
-      )}
-      {address && (
-        <Typography.Paragraph copyable code style={{ marginTop: 0 }}>
-          {address}
-        </Typography.Paragraph>
+      {hasTechnicalDetails && (
+        <div>
+          <Button
+            size="small"
+            type="link"
+            onClick={() => setShowDetails((show) => !show)}
+            style={{ padding: 0 }}
+          >
+            {showDetails ? "Hide technical details" : "Show technical details"}
+          </Button>
+          {showDetails && status.details && (
+            <Typography.Paragraph
+              copyable
+              code
+              style={{ maxHeight: 120, overflow: "auto", marginTop: 12 }}
+            >
+              {JSON.stringify(status.details, null, 2)}
+            </Typography.Paragraph>
+          )}
+          {showDetails && address && (
+            <Typography.Paragraph copyable code style={{ marginTop: 0 }}>
+              {address}
+            </Typography.Paragraph>
+          )}
+        </div>
       )}
     </Space>
   );

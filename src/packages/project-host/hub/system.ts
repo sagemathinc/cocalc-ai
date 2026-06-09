@@ -29,6 +29,8 @@ async function forwardSystem(
 }
 
 export function wireSystemApi(): void {
+  hubApi.system.ping = () => ({ now: Date.now() });
+
   hubApi.system.getProjectHostParallelOpsLimit = async (opts?: {
     account_id?: string;
     host_id?: string;

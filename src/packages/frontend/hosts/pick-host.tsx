@@ -35,6 +35,7 @@ import {
 } from "./pressure-ui";
 import { isSpotHost, SpotHostTag } from "./spot-ui";
 import { HostReliabilityButton } from "./components/host-reliability-button";
+import { useProjectHostLatencies } from "./use-project-host-latencies";
 
 const STATUS_COLOR = {
   stopped: "red",
@@ -188,6 +189,7 @@ export function HostPickerPanel({
     string | undefined
   >(regionFilter);
   const [autoExpandedRemote, setAutoExpandedRemote] = useState(false);
+  const hostLatencies = useProjectHostLatencies(active, hosts);
 
   const currentHost = useMemo(
     () => hosts.find((host) => host.id === currentHostId),
@@ -563,6 +565,7 @@ export function HostPickerPanel({
             const disabled =
               (isMove && host.id === currentHostId) || host.can_place === false;
             const muted = !host.can_place;
+            const latency = hostLatencies[host.id];
             return (
               <List.Item style={muted ? { opacity: 0.6 } : undefined}>
                 <Space
@@ -608,6 +611,13 @@ export function HostPickerPanel({
                       <Tag>{host.region}</Tag>
                       <Tag>{host.size}</Tag>
                       {host.gpu && <Tag color="purple">GPU</Tag>}
+                      {latency != null ? (
+                        <Tooltip title="Live browser to project-host Conat round trip. Only shown for hosts this browser is currently routed to.">
+                          <Tag color={latency < 100 ? "green" : "orange"}>
+                            {latency}ms
+                          </Tag>
+                        </Tooltip>
+                      ) : null}
                     </Space>
                   </Space>
                   <Typography.Text type="secondary">
