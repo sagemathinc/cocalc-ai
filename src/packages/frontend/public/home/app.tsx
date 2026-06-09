@@ -173,7 +173,7 @@ function Hero({ config, siteName }: { config?: HomeConfig; siteName: string }) {
                 margin: 0,
               }}
             >
-              A durable workspace for humans and agents.
+              AI-Native Technical Workspace for Humans and Agents
             </Title>
             <Paragraph
               style={{
