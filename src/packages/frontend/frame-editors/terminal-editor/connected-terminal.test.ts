@@ -141,6 +141,10 @@ function loadTerminalModule({
   });
 
   jest.doMock("@cocalc/frontend/project/project-start-warning", () => ({
+    classifyProjectReadinessUxSegment: jest.fn(() => ({
+      segment: projectState === "running" ? "warm" : "autostart",
+      initial_state: projectState,
+    })),
     ensure_project_running: ensureProjectRunning,
   }));
 

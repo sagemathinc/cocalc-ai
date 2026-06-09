@@ -19,7 +19,11 @@ import {
   recordUxLatencyEvent,
   startUxTimer,
 } from "@cocalc/frontend/monitoring/ux-latency";
-import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
+import {
+  classifyProjectReadinessUxSegment,
+  ensure_project_running,
+  type ProjectReadinessUxSegment,
+} from "@cocalc/frontend/project/project-start-warning";
 import { API } from "@cocalc/frontend/project/websocket/api";
 import { connection_to_project } from "@cocalc/frontend/project/websocket/connect";
 import {
@@ -255,6 +259,7 @@ export class ProjectClient {
     debug?: string;
   }): Promise<void> {
     const readyTimer = startUxTimer();
+    const readiness = classifyProjectReadinessUxSegment(opts.project_id);
     if (!(await ensure_project_running(opts.project_id, "run code"))) {
       execStream.emit(
         "error",
@@ -266,7 +271,13 @@ export class ProjectClient {
     execStream.once("start", async () => {
       try {
         // Use conat streaming similar to AI streaming
-        await this.streamExecViaConat({ opts, execStream, debug, readyTimer });
+        await this.streamExecViaConat({
+          opts,
+          execStream,
+          debug,
+          readyTimer,
+          readiness,
+        });
       } catch (err) {
         execStream.emit("error", err);
       }
@@ -278,11 +289,17 @@ export class ProjectClient {
     execStream,
     debug,
     readyTimer,
+    readiness,
   }: {
     opts: ExecOptsBlocking;
     execStream: ExecStream;
     debug?: string;
     readyTimer: number;
+    readiness: {
+      segment: ProjectReadinessUxSegment;
+      initial_state?: string;
+      provisioned?: unknown;
+    };
   }): Promise<void> {
     try {
       const cn = await this.client.conat_client.projectConat({
@@ -338,9 +355,12 @@ export class ProjectClient {
                 duration_ms: elapsedUxMs(readyTimer),
                 project_id: opts.project_id,
                 path_ext: filename_extension(opts.path ?? ""),
+                segment: readiness.segment,
                 details: {
                   command: opts.command,
                   stream: true,
+                  initial_project_state: readiness.initial_state ?? "unknown",
+                  provisioned: readiness.provisioned as any,
                 },
               });
             }
@@ -421,6 +441,7 @@ export class ProjectClient {
     });
 
     const readyTimer = startUxTimer();
+    const readiness = classifyProjectReadinessUxSegment(opts.project_id);
     if (!(await ensure_project_running(opts.project_id, msg))) {
       return {
         type: "blocking",
@@ -439,9 +460,12 @@ export class ProjectClient {
         duration_ms: elapsedUxMs(readyTimer),
         project_id: opts.project_id,
         path_ext: filename_extension(`${(opts as any).path ?? ""}`),
+        segment: readiness.segment,
         details: {
           command: isExecOptsBlocking(opts) ? opts.command : opts.async_get,
           stream: false,
+          initial_project_state: readiness.initial_state ?? "unknown",
+          provisioned: readiness.provisioned as any,
         },
       });
       const exec_opts = copy_without(opts, ["project_id", "cb"]);

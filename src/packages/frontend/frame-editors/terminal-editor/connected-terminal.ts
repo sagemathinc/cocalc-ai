@@ -33,7 +33,10 @@ import {
   recordUxLatencyEvent,
   startUxTimer,
 } from "@cocalc/frontend/monitoring/ux-latency";
-import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
+import {
+  classifyProjectReadinessUxSegment,
+  ensure_project_running,
+} from "@cocalc/frontend/project/project-start-warning";
 import { close, filename_extension, replace_all } from "@cocalc/util/misc";
 import {
   BaseEditorActions as Actions,
@@ -703,6 +706,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       const projectState =
         redux.getProjectsStore?.()?.get_state?.(this.project_id) ??
         redux.getStore("projects")?.get_state?.(this.project_id);
+      const readiness = classifyProjectReadinessUxSegment(
+        this.project_id,
+        projectState,
+      );
       if (projectState === "starting") {
         this.set_connection_status("disconnected");
         this.scheduleProjectStartingRetry();
@@ -869,8 +876,11 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           duration_ms: elapsedUxMs(readyTimer),
           project_id: this.project_id,
           path_ext: filename_extension(this.path ?? ""),
+          segment: readiness.segment,
           details: {
             command: this.command ?? "bash",
+            initial_project_state: readiness.initial_state ?? "unknown",
+            provisioned: readiness.provisioned as any,
           },
         });
         this.flushWriteBuffer();

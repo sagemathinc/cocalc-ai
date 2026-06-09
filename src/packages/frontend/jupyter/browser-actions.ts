@@ -113,7 +113,10 @@ import {
 } from "./run-batch-order";
 import { ensureProjectRunningForJupyter } from "./project-start";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
-import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
+import {
+  classifyProjectReadinessUxSegment,
+  ensure_project_running,
+} from "@cocalc/frontend/project/project-start-warning";
 import {
   elapsedUxMs,
   recordUxLatencyEvent,
@@ -2831,6 +2834,10 @@ export class JupyterActions extends JupyterActions0 {
     let runError: string | undefined;
     const readyTimer = startUxTimer();
     const initialProjectState = this.getProjectRuntimeState();
+    const readiness = classifyProjectReadinessUxSegment(
+      this.project_id,
+      initialProjectState,
+    );
     this.runDebug("runCells.call", { runId, ids, opts });
     if (this.store?.get("read_only")) {
       this.runDebug("runCells.skip.read_only", { runId });
@@ -2951,16 +2958,12 @@ export class JupyterActions extends JupyterActions0 {
         duration_ms: elapsedUxMs(readyTimer),
         project_id: this.project_id,
         path_ext: filename_extension(this.path ?? ""),
-        segment:
-          initialProjectState === "running"
-            ? "warm"
-            : initialProjectState === "starting"
-              ? "already_starting"
-              : "autostart",
+        segment: readiness.segment,
         details: {
           cells: cells.length,
           kernel,
-          initial_project_state: initialProjectState ?? "unknown",
+          initial_project_state: readiness.initial_state ?? "unknown",
+          provisioned: readiness.provisioned as any,
         },
       });
       this.runDebug("runCells.runner.start", {

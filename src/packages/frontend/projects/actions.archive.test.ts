@@ -670,4 +670,52 @@ describe("ProjectsActions archive flow", () => {
       jest.useRealTimers();
     }
   });
+
+  it("logs project_started only after the project is observed running", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "opened",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      const { actions } = makeActions();
+      jest
+        .spyOn(actions, "ensure_host_info" as any)
+        .mockResolvedValue(undefined as any);
+      const projectLog = jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+
+      const started = await actions.start_project(project_id);
+
+      expect(started).toBe(true);
+      expect(projectLog).toHaveBeenCalledWith(project_id, {
+        event: "project_start_requested",
+      });
+      expect(
+        projectLog.mock.calls.some(
+          ([, entry]) => entry.event === "project_started",
+        ),
+      ).toBe(false);
+
+      configureProject({
+        state: "running",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      await jest.advanceTimersByTimeAsync(1_000);
+
+      expect(projectLog).toHaveBeenCalledWith(
+        project_id,
+        expect.objectContaining({
+          event: "project_started",
+          op_id: "start-op-1",
+          duration_ms: expect.any(Number),
+        }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

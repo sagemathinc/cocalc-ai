@@ -48,6 +48,41 @@ function projectState(project_id: string): string | undefined {
   return projectMap()?.getIn?.([project_id, "state", "state"]);
 }
 
+export type ProjectReadinessUxSegment =
+  | "warm"
+  | "already_starting"
+  | "restore_autostart"
+  | "autostart"
+  | "unknown";
+
+export function classifyProjectReadinessUxSegment(
+  project_id: string,
+  initial_state = projectState(project_id),
+): {
+  segment: ProjectReadinessUxSegment;
+  initial_state?: string;
+  provisioned?: unknown;
+} {
+  if (lite) {
+    return { segment: "warm", initial_state: "running" };
+  }
+  const provisioned = project(project_id)?.get?.("provisioned");
+  if (initial_state === "running") {
+    return { segment: "warm", initial_state, provisioned };
+  }
+  if (initial_state === "starting") {
+    return { segment: "already_starting", initial_state, provisioned };
+  }
+  if (initial_state === "archived" || provisioned === false) {
+    return { segment: "restore_autostart", initial_state, provisioned };
+  }
+  return {
+    segment: initial_state == null ? "unknown" : "autostart",
+    initial_state,
+    provisioned,
+  };
+}
+
 function accountStore(): any {
   return redux.getStore("account");
 }
