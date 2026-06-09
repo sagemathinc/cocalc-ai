@@ -96,25 +96,14 @@ describe("DocsBrowser", () => {
     ).toBeTruthy();
   });
 
-  it("shows chapter landing cards with a start action", () => {
-    const startEntry = getDocsEntry("projects.create-project");
-    if (startEntry == null) throw new Error("missing project start entry");
-    const onSelectedEntryChange = jest.fn();
+  it("does not show redundant chapter cards below the table of contents", () => {
+    render(<DocsBrowser />);
 
-    render(<DocsBrowser onSelectedEntryChange={onSelectedEntryChange} />);
-
+    expect(screen.getByText("Table of contents")).toBeTruthy();
     expect(
-      screen.getByText(/Create projects, choose runtime settings/),
-    ).toBeTruthy();
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: /Start chapter/ })[0],
-    );
-
-    expect(onSelectedEntryChange).toHaveBeenCalledWith(startEntry);
-    expect(
-      screen.getAllByRole("heading", { name: startEntry.title })[0],
-    ).toBeTruthy();
+      screen.queryByText(/Create projects, choose runtime settings/),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Start chapter/ })).toBeNull();
   });
 
   it("uses a callback for app print-friendly docs", () => {

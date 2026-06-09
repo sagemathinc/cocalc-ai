@@ -33,7 +33,6 @@ import {
 } from "antd";
 import {
   type DocsAccess,
-  getDocsChapter,
   listDocsEntries,
   searchDocsEntries,
   type DocsAction,
@@ -53,12 +52,6 @@ type DocsBrowserLayout = "page" | "flyout";
 const DOCS_FONT_SIZE_STORAGE_KEY = "cocalc-docs-font-size";
 const DOCS_BROWSER_CARD_STYLE = { fontSize: "inherit" };
 const DOCS_BROWSER_CARD_BODY_STYLE = { fontSize: "inherit" };
-const DOCS_BROWSER_CATEGORY_CARD_STYLE = {
-  ...DOCS_BROWSER_CARD_STYLE,
-  height: "100%",
-  maxHeight: 500,
-  overflow: "auto",
-};
 const DOCS_BROWSER_TOC_LINK_STYLE: CSSProperties = {
   background: "transparent",
   border: 0,
@@ -822,107 +815,6 @@ export function DocsIndexContent({
             printHref={printHref}
             privateSummaries={privateState?.summaries}
           />
-          <Row gutter={[16, 16]}>
-            {groupedEntries.map(({ category, entries: categoryEntries }) => {
-              const chapter = getDocsChapter(category, docsAccess);
-              const learnedCount = categoryEntries.filter(
-                (entry) => privateState?.summaries[entry.id]?.learnedAt != null,
-              ).length;
-              const firstUnlearnedEntry = categoryEntries.find(
-                (entry) => privateState?.summaries[entry.id]?.learnedAt == null,
-              );
-              const startEntry =
-                categoryEntries.find(
-                  (entry) => entry.id === chapter?.startEntryId,
-                ) ?? categoryEntries[0];
-              const chapterEntry =
-                privateState?.enabled && firstUnlearnedEntry != null
-                  ? firstUnlearnedEntry
-                  : startEntry;
-              const chapterHref =
-                chapterEntry != null ? linkForEntry?.(chapterEntry) : undefined;
-              const chapterButtonLabel =
-                privateState?.enabled && firstUnlearnedEntry != null
-                  ? "Continue chapter"
-                  : privateState?.enabled && learnedCount > 0
-                    ? "Review chapter"
-                    : "Start chapter";
-
-              return (
-                <Col
-                  key={category}
-                  lg={layout === "flyout" ? 24 : 8}
-                  md={12}
-                  xs={24}
-                >
-                  <Card
-                    size="small"
-                    style={DOCS_BROWSER_CATEGORY_CARD_STYLE}
-                    styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
-                    title={
-                      <Space>
-                        <BookOutlined />
-                        <span>{category}</span>
-                        <Text type="secondary">({categoryEntries.length})</Text>
-                      </Space>
-                    }
-                  >
-                    <Flex gap={10} vertical>
-                      {chapter != null ? (
-                        <Flex gap={8} vertical>
-                          <Text type="secondary">{chapter.summary}</Text>
-                          <Space size={[4, 4]} wrap>
-                            {chapter.workflows.map((workflow) => (
-                              <Tag key={workflow}>{workflow}</Tag>
-                            ))}
-                          </Space>
-                          {privateState?.enabled ? (
-                            <Flex gap={6} vertical>
-                              <Text type="secondary">
-                                {learnedCount} / {categoryEntries.length}{" "}
-                                learned
-                              </Text>
-                              <Progress
-                                percent={Math.round(
-                                  (100 * learnedCount) / categoryEntries.length,
-                                )}
-                                showInfo={false}
-                                size="small"
-                              />
-                            </Flex>
-                          ) : null}
-                          {chapterEntry != null ? (
-                            <Button
-                              href={chapterHref}
-                              onClick={
-                                chapterHref == null
-                                  ? () => onSelectEntry?.(chapterEntry)
-                                  : undefined
-                              }
-                              size="small"
-                              type="primary"
-                            >
-                              {chapterButtonLabel}
-                            </Button>
-                          ) : null}
-                        </Flex>
-                      ) : null}
-                      {categoryEntries.map((entry) => (
-                        <DocsCard
-                          entry={entry}
-                          key={entry.id}
-                          href={linkForEntry?.(entry)}
-                          onSelect={onSelectEntry}
-                          privateNoteMatched={privateNoteMatched(entry)}
-                          privateSummary={privateState?.summaries[entry.id]}
-                        />
-                      ))}
-                    </Flex>
-                  </Card>
-                </Col>
-              );
-            })}
-          </Row>
         </Flex>
       ) : layout === "flyout" ? (
         <Flex gap={10} vertical>
