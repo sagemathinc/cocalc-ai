@@ -3,14 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { commercial } from "@cocalc/frontend/customize";
 import { gtag_id, sign_up_id } from "@cocalc/util/theme";
 
-// conversion tracking (commercial only)
+// Conversion tracking is active only when Google Analytics initialized gtag.
 export function track_conversion(type: string): void {
-  if (!commercial) {
-    return;
-  }
   if ((window as any).DEBUG) {
     return;
   }
@@ -23,7 +19,11 @@ export function track_conversion(type: string): void {
     return;
   }
 
-  (window as any).gtag?.("event", "conversion", {
+  const gtag = (window as any).gtag;
+  if (typeof gtag !== "function") {
+    return;
+  }
+  gtag("event", "conversion", {
     send_to: `${gtag_id}/${tag}`,
   });
 }

@@ -2,6 +2,7 @@ import { Button, Flex, Modal, Space, Spin } from "antd";
 import Balance from "./balance";
 import { useEffect, useRef, useState } from "react";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import ShowError from "@cocalc/frontend/components/error";
 import Payments from "@cocalc/frontend/purchases/payments";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -21,6 +22,7 @@ export default function BalanceModal({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const refreshPaymentsRef = useRef<any>(null);
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
 
   const handleRefresh = async () => {
     try {
@@ -94,11 +96,13 @@ export default function BalanceModal({
         </div>
       </div>
       <ShowError error={error} setError={setError} />
-      <Payments
-        unfinished
-        refreshPaymentsRef={refreshPaymentsRef}
-        refresh={handleRefresh}
-      />
+      {stripeEnabled && (
+        <Payments
+          unfinished
+          refreshPaymentsRef={refreshPaymentsRef}
+          refresh={handleRefresh}
+        />
+      )}
     </Modal>
   );
 }
@@ -107,8 +111,8 @@ const LINKS = [
   { label: "Membership", value: "membership" },
   { label: "Vouchers", value: "vouchers" },
   { label: "Purchases", value: "purchases" },
-  { label: "Payments", value: "payments" },
-  { label: "Methods", value: "payment-methods" },
+  { label: "Payments", value: "payments", stripe: true },
+  { label: "Methods", value: "payment-methods", stripe: true },
   { label: "Statements", value: "statements" },
 ] as const;
 
@@ -117,9 +121,12 @@ function openPage(value: (typeof LINKS)[number]["value"]) {
 }
 
 function Links({ onClose }) {
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
   return (
     <Space.Compact>
-      {LINKS.map(({ label, value }) => (
+      {LINKS.filter(
+        (link) => !("stripe" in link) || !link.stripe || stripeEnabled,
+      ).map(({ label, value }) => (
         <Button
           key={value}
           size="small"

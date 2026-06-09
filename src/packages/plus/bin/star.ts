@@ -13,7 +13,7 @@ import {
 } from "../ssh/core";
 
 const DEFAULT_INSTALLER_URL =
-  "https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh";
+  "https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh";
 const STAR_REMOTE_PORT = 9100;
 
 type StarCliOptions = {

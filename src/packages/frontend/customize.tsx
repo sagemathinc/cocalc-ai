@@ -65,6 +65,7 @@ for (const k in site_settings_conf) {
 }
 const defaults: any = dict(defaultKeyVals);
 defaults.is_commercial = defaults.commercial;
+defaults.stripe_enabled = false;
 defaults.platform_mode = defaults.kucalc;
 defaults._is_configured = false; // will be true after set via call to server
 defaults.ssh_remote_target = "";
@@ -79,6 +80,7 @@ defaults.signup_email_domain_public_policy = { mode: "allow_all" };
 export interface CustomizeState {
   time: number; // this will always get set once customize has loaded.
   is_commercial: boolean;
+  stripe_enabled: boolean;
   ssh_remote_target?: string;
   ssh_remote_url?: string;
 
@@ -209,7 +211,8 @@ export class CustomizeActions extends Actions<CustomizeState> {
 
 export const store = redux.createStore("customize", CustomizeStore, defaults);
 const actions = redux.createActions("customize", CustomizeActions);
-// really simple way to have a default value -- gets changed below once the $?.get returns.
+// Legacy compatibility value; modern billing UI should use stripe_enabled or
+// entitlement state instead.
 actions.setState({ is_commercial: true });
 
 // If we are running in the browser, then we customize the schema.  This also gets run on the backend
@@ -506,8 +509,7 @@ async function setup_google_analytics(w) {
   const ga4 = store.get("google_analytics");
   if (!ga4) return;
 
-  // for commercial setup, enable conversion tracking...
-  // the gtag initialization
+  // Initialize conversion tracking when Google Analytics is configured.
   w.dataLayer = w.dataLayer || [];
   w.gtag = function () {
     w.dataLayer.push(arguments);
@@ -535,8 +537,6 @@ function setup_cocalc_analytics(w) {
 async function init_analytics() {
   await store.until_configured();
   if (store.get("lite")) return;
-  if (!store.get("is_commercial")) return;
-
   let w: any;
   try {
     w = window;

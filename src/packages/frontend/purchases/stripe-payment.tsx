@@ -36,6 +36,7 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { loadStripe } from "@cocalc/frontend/billing/stripe";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { delay } from "awaiting";
@@ -78,19 +79,24 @@ export default function StripePayment({
   const [hasPaymentMethods, setHasPaymentMethods] = useState<boolean | null>(
     null,
   );
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
   });
   const safeLineItems = lineItems ?? [];
 
   useEffect(() => {
+    if (!stripeEnabled) {
+      setHasPaymentMethods(false);
+      return;
+    }
     (async () => {
       try {
         const x = await getPaymentMethods({ limit: 1 });
         setHasPaymentMethods(x.data.length > 0);
       } catch (_err) {}
     })();
-  }, []);
+  }, [stripeEnabled]);
 
   useEffect(() => {
     setRequiresPayment(false);
@@ -107,6 +113,7 @@ export default function StripePayment({
   }
 
   const showOneClick =
+    stripeEnabled &&
     (hasPaymentMethods === true || hasPaymentMethods == null) &&
     !requiresPayment &&
     totalStripe > 0;
@@ -160,11 +167,13 @@ export default function StripePayment({
             {!requiresPayment && hasPaymentMethods != null && (
               <ConfirmButton
                 notPrimary={showOneClick}
-                disabled={loading}
-                showAddress={!showOneClick && totalStripe > 0}
+                disabled={loading || (!stripeEnabled && totalStripe > 0)}
+                showAddress={stripeEnabled && !showOneClick && totalStripe > 0}
                 label={
                   totalStripe > 0
-                    ? "Choose Payment Method"
+                    ? stripeEnabled
+                      ? "Choose Payment Method"
+                      : "Stripe payments unavailable"
                     : "Purchase With 1-Click Using Account Credit"
                 }
                 onClick={async () => {
@@ -172,6 +181,12 @@ export default function StripePayment({
                     // no need to do stripe part at all -- just do next step of whatever purchase is happening.
                     onFinished?.(0);
                     setRequiresPayment(true);
+                    return;
+                  }
+                  if (!stripeEnabled) {
+                    setError(
+                      "Stripe payments are not configured on this site. This purchase can only be completed if account credit covers the full amount.",
+                    );
                     return;
                   }
                   try {
@@ -188,6 +203,15 @@ export default function StripePayment({
               />
             )}
           </Space>
+          {!stripeEnabled && totalStripe > 0 && (
+            <Alert
+              showIcon
+              style={{ margin: "15px auto", maxWidth: "600px" }}
+              type="warning"
+              message="Stripe payments are not configured on this site."
+              description="This purchase can only be completed here if account credit covers the full amount."
+            />
+          )}
         </div>
         <ShowError
           style={{ margin: "15px 0" }}

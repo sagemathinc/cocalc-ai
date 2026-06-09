@@ -19,6 +19,32 @@ describe("buildPublicSiteSettings", () => {
     ).toBe(false);
   });
 
+  it("derives a public stripe_enabled flag without exposing Stripe keys", () => {
+    const { configuration } = buildPublicSiteSettings({
+      stripe_publishable_key: "pk_test_123",
+      stripe_secret_key: "sk_test_456",
+    });
+
+    expect(configuration.stripe_enabled).toBe(true);
+    expect(configuration.stripe_publishable_key).toBeUndefined();
+    expect(configuration.stripe_secret_key).toBeUndefined();
+  });
+
+  it("requires both Stripe keys for stripe_enabled", () => {
+    expect(
+      buildPublicSiteSettings({
+        stripe_publishable_key: "pk_test_123",
+        stripe_secret_key: "",
+      }).configuration.stripe_enabled,
+    ).toBe(false);
+    expect(
+      buildPublicSiteSettings({
+        stripe_publishable_key: "",
+        stripe_secret_key: "sk_test_456",
+      }).configuration.stripe_enabled,
+    ).toBe(false);
+  });
+
   it("does not expose the removed legacy policy visibility flag", () => {
     expect(
       buildPublicSiteSettings({

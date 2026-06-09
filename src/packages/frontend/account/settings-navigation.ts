@@ -13,16 +13,16 @@ import type { SettingsPageIcon } from "./settings-page";
 
 export type SettingsNavigationContext = {
   isAdmin: boolean;
-  isCommercial: boolean;
   isLite: boolean;
+  stripeEnabled: boolean;
   zendesk: boolean;
 };
 
 export function useSettingsNavigationContext(): SettingsNavigationContext {
   return {
     isAdmin: !!useTypedRedux("account", "is_admin"),
-    isCommercial: !!useTypedRedux("customize", "is_commercial"),
     isLite: lite,
+    stripeEnabled: !!useTypedRedux("customize", "stripe_enabled"),
     zendesk: !!useTypedRedux("customize", "zendesk"),
   };
 }
@@ -83,7 +83,6 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
       {
         type: "page",
         page: "team-licenses",
-        visible: ({ isAdmin, isCommercial }) => isCommercial || isAdmin,
       },
       { type: "page", page: "site-licenses" },
       { type: "page", page: "software-licenses" },
@@ -112,7 +111,7 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
   {
     type: "group",
     key: "billing",
-    visible: ({ isAdmin, isCommercial }) => isCommercial || isAdmin,
+    visible: ({ isLite }) => !isLite,
     icon: "money-check",
     label: labels.billing,
     overview: "section",
@@ -120,27 +119,25 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
       {
         type: "page",
         page: "subscriptions",
-        visible: ({ isCommercial }) => isCommercial,
+        visible: ({ stripeEnabled }) => stripeEnabled,
       },
       {
         type: "page",
         page: "purchases",
-        visible: ({ isCommercial }) => isCommercial,
       },
       {
         type: "page",
         page: "payments",
-        visible: ({ isCommercial }) => isCommercial,
+        visible: ({ stripeEnabled }) => stripeEnabled,
       },
       {
         type: "page",
         page: "payment-methods",
-        visible: ({ isCommercial }) => isCommercial,
+        visible: ({ stripeEnabled }) => stripeEnabled,
       },
       {
         type: "page",
         page: "statements",
-        visible: ({ isCommercial }) => isCommercial,
       },
       { type: "page", page: "vouchers" },
     ],

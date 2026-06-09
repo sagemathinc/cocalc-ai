@@ -16,7 +16,53 @@ const EMPTY_SEARCH: SearchHook = {
   search: "",
 };
 
-test("shift+enter sends latest markdown even when cache is stale", () => {
+test("shift+enter preserves cached markdown when editor is clean", () => {
+  const editor = withReact(createEditor()) as any;
+  editor.children = [
+    {
+      type: "paragraph",
+      children: [{ text: "hello" }],
+    },
+  ];
+  editor.markdownValue = "original\n\nsource";
+  editor._hasUnsavedChanges = false;
+  editor.resetHasUnsavedChanges = () => {
+    editor._hasUnsavedChanges = editor.children;
+  };
+  editor.hasUnsavedChanges = () => {
+    if (editor._hasUnsavedChanges === false) return false;
+    return editor._hasUnsavedChanges !== editor.children;
+  };
+  editor.getMarkdownValue = () => {
+    if (editor.markdownValue != null && !editor.hasUnsavedChanges()) {
+      return editor.markdownValue;
+    }
+    editor.markdownValue = slate_to_markdown(editor.children);
+    return editor.markdownValue;
+  };
+
+  let sent = "";
+  const handler = getHandler({
+    key: "Enter",
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+  });
+  expect(handler).toBeTruthy();
+  handler?.({
+    editor,
+    extra: {
+      actions: { shiftEnter: (value) => (sent = value) },
+      id: "",
+      search: EMPTY_SEARCH,
+    },
+  });
+
+  expect(sent).toBe("original\n\nsource");
+});
+
+test("shift+enter sends latest markdown when editor is dirty", () => {
   const editor = withReact(createEditor()) as any;
   editor.children = [
     {
@@ -25,7 +71,7 @@ test("shift+enter sends latest markdown even when cache is stale", () => {
     },
   ];
   editor.markdownValue = "";
-  editor._hasUnsavedChanges = false;
+  editor._hasUnsavedChanges = {};
   editor.resetHasUnsavedChanges = () => {
     editor._hasUnsavedChanges = editor.children;
   };
@@ -62,7 +108,7 @@ test("shift+enter sends latest markdown even when cache is stale", () => {
   expect(sent.trim()).toBe("hello");
 });
 
-test("command+enter syncs latest markdown to alternate editor", () => {
+test("command+enter preserves cached markdown when editor is clean", () => {
   const editor = withReact(createEditor()) as any;
   editor.children = [
     {
@@ -74,7 +120,7 @@ test("command+enter syncs latest markdown to alternate editor", () => {
     anchor: { path: [0, 0], offset: 5 },
     focus: { path: [0, 0], offset: 5 },
   };
-  editor.markdownValue = "";
+  editor.markdownValue = "original\n\nsource";
   editor._hasUnsavedChanges = false;
   editor.resetHasUnsavedChanges = () => {
     editor._hasUnsavedChanges = editor.children;
@@ -117,7 +163,7 @@ test("command+enter syncs latest markdown to alternate editor", () => {
     },
   });
 
-  expect(sent.trim()).toBe("hello");
+  expect(sent).toBe("original\n\nsource");
   expect(sentId).toBe("slate-frame");
   expect(sentSelection).toEqual(editor.selection);
 });

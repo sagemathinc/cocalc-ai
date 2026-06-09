@@ -282,19 +282,6 @@ function num_dns_hosts(val): string {
   return `Found ${split_iframe_comm_hosts(val).length} hosts.`;
 }
 
-const commercial_to_val: ToValFunc<boolean> = (
-  val?,
-  conf?: { [key in SiteSettingsKeys]: string },
-) => {
-  // Special case: only the managed cloud platform can enable commercial mode.
-  const platformMode =
-    conf != null ? fallback(conf, "kucalc") : site_settings_conf.kucalc.default;
-  if (platformMode === PLATFORM_MODE_CLOUD) {
-    return to_bool(val);
-  }
-  return false;
-};
-
 const PROJECT_HOSTS_FUNDING_MODES = [
   "auto",
   "account-prepaid",
@@ -318,11 +305,10 @@ const project_hosts_funding_mode_to_val: ToValFunc<ProjectHostsFundingMode> = (
   ) {
     return mode;
   }
-  return commercial_to_val(
+  return to_bool(
     conf != null
       ? fallback(conf, "commercial")
       : site_settings_conf.commercial.default,
-    conf,
   )
     ? "account-postpaid"
     : "site-funded";
@@ -730,11 +716,11 @@ export const site_settings_conf: SiteSettings = {
   },
   commercial: {
     name: "Commercial",
-    desc: "Whether or not to include user interface elements related to for-pay upgrades and other features.  Set to 'yes' to include these elements. **IMPORTANT:** *You must restart your server after changing this setting for it to take effect.*",
+    desc: "Legacy setting. Membership and entitlement UI is always enabled; Stripe-specific UI is derived from the Stripe publishable and secret keys.",
     default: "no",
     valid: only_booleans,
-    to_val: commercial_to_val,
-    show: only_cocalc_com,
+    to_val: to_bool,
+    hidden: true,
     tags: ["Commercialization"],
     group: "Payments & Billing",
     subgroup: "Commercialization",

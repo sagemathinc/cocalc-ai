@@ -7,6 +7,7 @@ import {
   publicSignupEmailDomainPolicy,
   SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS,
 } from "../accounts/signup-email-domain-policy";
+import { hasStripeBillingConfiguration } from "../stripe/billing";
 
 export const PUBLIC_SITE_SETTINGS_KEYS = Object.freeze(
   Object.keys(site_settings_conf) as SiteSettingsKeys[],
@@ -77,6 +78,10 @@ export function buildPublicSiteSettings(all: Record<string, any>): {
     all.zendesk_username &&
     all.zendesk_uri
   );
+
+  // The browser only needs to know whether Stripe self-service is available;
+  // never expose either Stripe key in the public customize payload.
+  configuration.stripe_enabled = hasStripeBillingConfiguration(all);
 
   configuration.signup_email_domain_public_policy =
     publicSignupEmailDomainPolicy(all);

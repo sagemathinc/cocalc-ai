@@ -42,7 +42,7 @@ export const HELP_EMAIL = "help@cocalc.com";
 export const TWITTER_HANDLE = "cocalc_com"; // without the @
 export const BILLING_EMAIL = "billing@sagemath.com";
 export const BILLING_TAXID = "TAX EIN: 47-3015407";
-// for conversion tracking (commercial only)
+// for conversion tracking when Google Analytics is configured
 export const gtag_id = "AW-943259268";
 export const sign_up_id = "44ZfCImosncQhP3jwQM";
 

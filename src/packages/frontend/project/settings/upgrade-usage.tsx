@@ -6,7 +6,7 @@
 import { Card, Typography } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
-import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { React, Rendered } from "@cocalc/frontend/app-framework";
 import {
   Icon,
   Loading,
@@ -32,9 +32,7 @@ export const UpgradeUsage: React.FC<Props> = React.memo(
     const intl = useIntl();
     const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
 
-    const is_commercial: boolean = useTypedRedux("customize", "is_commercial");
     function render_membership_note(): Rendered {
-      if (!is_commercial) return;
       return (
         <Typography.Text type="secondary">
           <FormattedMessage

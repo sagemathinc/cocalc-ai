@@ -9,7 +9,7 @@ import ReactDOMServer from "react-dom/server"; // for dropzone below
 import { Button } from "antd";
 import { join } from "path";
 import { useIntl } from "react-intl";
-import { redux, useProjectMapField } from "@cocalc/frontend/app-framework";
+import { redux } from "@cocalc/frontend/app-framework";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon, Tip } from "@cocalc/frontend/components";
@@ -230,7 +230,7 @@ export function FileUploadWrapper({
         url: postUrl(project_id, dest_path),
         previewsContainer: preview_ref.current,
         previewTemplate: ReactDOMServer.renderToStaticMarkup(
-          preview_template?.() ?? <DropzonePreview project_id={project_id} />,
+          preview_template?.() ?? <DropzonePreview />,
         ),
         addRemoveLinks: event_handlers?.removedfile != null,
         ...UPLOAD_OPTIONS,
@@ -448,19 +448,9 @@ export function FileUploadWrapper({
   );
 }
 
-interface DropzonePreviewProps {
-  project_id: string;
-}
-
-function DropzonePreview({ project_id }: DropzonePreviewProps) {
-  const state = useProjectMapField<string>(project_id, ["state", "state"]);
+function DropzonePreview() {
   return (
     <div className="dz-preview dz-file-preview">
-      {state != "running" && (
-        <div style={{ background: "red", color: "white", padding: "5px" }}>
-          You must start the project.
-        </div>
-      )}
       <div className="dz-details">
         <div className="dz-filename">
           <span data-dz-name></span>

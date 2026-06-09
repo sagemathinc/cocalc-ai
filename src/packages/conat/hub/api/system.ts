@@ -79,6 +79,7 @@ export const system = {
   getAccountNotificationIndexProjectionStatus: authFirst,
   getParallelOpsStatus: authFirst,
   getSiteSetupStatus: authFirstRequireAccount,
+  getStarServerInfo: authFirstRequireAccount,
   getProjectHostParallelOpsLimit: authFirst,
   setParallelOpsLimit: authFirst,
   clearParallelOpsLimit: authFirst,
@@ -927,6 +928,31 @@ export interface SiteSetupStatus {
   };
 }
 
+export interface StarServerInfo {
+  detected: boolean;
+  checked_at: string;
+  product?: string;
+  channel?: string;
+  release_id?: string;
+  release_base_url?: string;
+  promoted_at?: string;
+  git_revision?: string;
+  git_dirty?: boolean;
+  artifact_mode?: string;
+  payload_kind?: string;
+  payload_sha256?: string;
+  built_at?: string;
+  installed_at?: string;
+  tarball_sha256?: string;
+  install_root?: string;
+  current_release_path?: string;
+  source_path?: string;
+  hostname: string;
+  architecture: string;
+  platform: string;
+  os_release: string;
+}
+
 export interface BayLoadBrowserControlStatus {
   active_accounts: number;
   active_browsers: number;
@@ -1687,6 +1713,10 @@ export interface System {
   getSiteSetupStatus: (opts?: {
     account_id?: string;
   }) => Promise<SiteSetupStatus>;
+
+  getStarServerInfo: (opts?: {
+    account_id?: string;
+  }) => Promise<StarServerInfo>;
 
   getProjectHostParallelOpsLimit: (opts?: {
     account_id?: string;

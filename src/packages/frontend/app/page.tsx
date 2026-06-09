@@ -132,7 +132,6 @@ export const Page: React.FC = () => {
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const groups = useTypedRedux("account", "groups");
   const show_i18n = useShowI18NBanner();
-  const is_commercial = useTypedRedux("customize", "is_commercial");
   const zendesk = !!useTypedRedux("customize", "zendesk");
 
   function account_tab_icon(): IconName | React.JSX.Element {
@@ -175,7 +174,6 @@ export const Page: React.FC = () => {
   }
 
   function render_balance() {
-    if (!is_commercial) return;
     return <BalanceButton minimal topBar />;
   }
 

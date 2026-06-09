@@ -37,7 +37,6 @@ export const RamWarning: React.FC<{ project_id: string }> = ({
 }) => {
   const project = useRedux(["projects", "project_map", project_id]);
   const projectStatus = useTypedRedux({ project_id }, "status");
-  const is_commercial = useTypedRedux("customize", "is_commercial");
   const [hideUntil, setHideUntil] = useState<number>(0);
   const { val, inc } = useCounter();
 
@@ -45,8 +44,8 @@ export const RamWarning: React.FC<{ project_id: string }> = ({
     if (hideUntil > Date.now()) {
       return false;
     }
-    if (!is_commercial || project == null) {
-      // never show a warning if project not loaded or commercial not set
+    if (project == null) {
+      // never show a warning if project not loaded
       return false;
     }
     const memory = projectStatus?.get("memory");
@@ -70,7 +69,7 @@ export const RamWarning: React.FC<{ project_id: string }> = ({
 
   useEffect(() => {
     setOpen(shouldShow());
-  }, [is_commercial, project, projectStatus, val]);
+  }, [project, projectStatus, val]);
 
   if (!open) {
     return null;

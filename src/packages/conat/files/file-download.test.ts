@@ -64,6 +64,100 @@ describe("handleFileDownload", () => {
     expect(res.end).toHaveBeenCalled();
   });
 
+  it("parses legacy /projects project file URLs for HEAD downloads", async () => {
+    mockFsStat.mockResolvedValue({ size: 123 });
+    const req: any = {
+      method: "HEAD",
+      url: "/projects/project-123/files/home/user/a.tar?download",
+    };
+    const res: any = {
+      statusCode: undefined,
+      setHeader: jest.fn(),
+      end: jest.fn(),
+      on: jest.fn(),
+      writableEnded: false,
+      destroyed: false,
+    };
+
+    await handleFileDownload({
+      req,
+      res,
+      client: { id: "client-1" } as any,
+    });
+
+    expect(mockFsSubject).toHaveBeenCalledWith({ project_id: "project-123" });
+    expect(mockFsStat).toHaveBeenCalledWith("/home/user/a.tar");
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("parses legacy /projects project file URLs for streamed downloads", async () => {
+    mockReadFile.mockResolvedValue([
+      Buffer.from("hello"),
+      Buffer.from(" world"),
+    ]);
+    const req: any = {
+      method: "GET",
+      url: "/projects/project-123/files/home/user/a.txt?download",
+    };
+    const res: any = {
+      statusCode: undefined,
+      setHeader: jest.fn(),
+      write: jest.fn(() => true),
+      end: jest.fn(),
+      on: jest.fn(),
+      writableEnded: false,
+      destroyed: false,
+    };
+
+    await handleFileDownload({
+      req,
+      res,
+      client: { id: "client-1" } as any,
+    });
+
+    expect(mockReadFile).toHaveBeenCalledWith({
+      client: { id: "client-1" },
+      project_id: "project-123",
+      path: "/home/user/a.txt",
+      maxWait: 1000 * 60 * 60,
+    });
+    expect(res.write).toHaveBeenCalledWith(Buffer.from("hello"));
+    expect(res.write).toHaveBeenCalledWith(Buffer.from(" world"));
+    expect(res.end).toHaveBeenCalled();
+  });
+
+  it("uses an explicit read service name for streamed downloads", async () => {
+    mockReadFile.mockResolvedValue([Buffer.from("hello")]);
+    const req: any = {
+      method: "GET",
+      url: "/project-123/files/home/user/a.txt?download",
+    };
+    const res: any = {
+      statusCode: undefined,
+      setHeader: jest.fn(),
+      write: jest.fn(() => true),
+      end: jest.fn(),
+      on: jest.fn(),
+      writableEnded: false,
+      destroyed: false,
+    };
+
+    await handleFileDownload({
+      req,
+      res,
+      client: { id: "client-1" } as any,
+      readServiceName: ":project-host",
+    });
+
+    expect(mockReadFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "project-123",
+        path: "/home/user/a.txt",
+        name: ":project-host",
+      }),
+    );
+  });
+
   it("returns the managed download error for blocked HEAD preflight", async () => {
     const req: any = {
       method: "HEAD",

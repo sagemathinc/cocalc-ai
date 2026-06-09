@@ -7,10 +7,9 @@
 A banner across the top of a course that appears if the instructor is not paying
 in any way, so they know they should.
 
-This banner only shows up if commercial is set for hub configuration.
 */
 
-import { CSS, useTypedRedux } from "../app-framework";
+import { CSS } from "../app-framework";
 import { Alert } from "antd";
 import { CourseSettingsRecord } from "./store";
 import { Icon } from "../components";
@@ -26,12 +25,6 @@ export function PayBanner({
   num_students,
   show_config,
 }: PayBannerProps) {
-  const is_commercial = useTypedRedux("customize", "is_commercial");
-
-  if (!is_commercial) {
-    return <></>;
-  }
-
   function paid(): boolean {
     if ((num_students != null ? num_students : 0) <= 3) {
       // don't bother at first

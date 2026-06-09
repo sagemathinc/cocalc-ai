@@ -94,6 +94,7 @@ export interface Customize {
   helpEmail?: string;
   contactEmail?: string;
   isCommercial?: boolean;
+  stripe_enabled?: boolean;
   kucalc?: PlatformMode;
   platform_mode?: PlatformMode;
   logoSquareURL?: string;

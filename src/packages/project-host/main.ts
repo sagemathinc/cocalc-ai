@@ -30,6 +30,7 @@ import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
   configureProjectHostAcpContainerFileIO,
+  ensureFileDownloadReadServer,
   initFileServer,
   initFsServer,
 } from "./file-server";
@@ -141,6 +142,7 @@ import {
 import {
   DOWNLOAD_ERROR_HEADER,
   handleFileDownload,
+  PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
 } from "@cocalc/conat/files/file-download";
 import {
   isProjectHostManagedEgressEnforced,
@@ -1177,10 +1179,15 @@ export async function main(
           req,
           project_id,
         );
+        await ensureFileDownloadReadServer({
+          client: conatClient,
+          project_id,
+        });
         await handleFileDownload({
           req,
           res,
           client: conatClient,
+          readServiceName: PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
           beforeExplicitDownload: explicitDownload
             ? async ({ project_id }: { project_id: string; path: string }) =>
                 await checkManagedFileDownloadAllowedBestEffort({

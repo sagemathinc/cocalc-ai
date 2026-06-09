@@ -139,7 +139,9 @@ export function useBlockSelection(options: Options) {
       const applied = tryApplySelectionAtOffset(index, offset);
       if (!applied) {
         virtuosoRef.current?.scrollToIndex({ index, align: "center" });
-        return false;
+        // The target block is not mounted yet; pendingSelectionRef will apply
+        // the selection when virtualization renders it.
+        return true;
       }
       return true;
     },
@@ -170,7 +172,9 @@ export function useBlockSelection(options: Options) {
           index: target.index,
           align: "center",
         });
-        return false;
+        // The target block is not mounted yet; pendingSelectionRef will apply
+        // the selection when virtualization renders it.
+        return true;
       }
       const point =
         markdownPositionToSlatePoint({
@@ -243,7 +247,9 @@ export function useBlockSelection(options: Options) {
           index: start.index,
           align: "center",
         });
-        return false;
+        // The target block is not mounted yet; pendingSelectionRef will apply
+        // the selection when virtualization renders it.
+        return true;
       }
       const startPoint =
         markdownPositionToSlatePoint({

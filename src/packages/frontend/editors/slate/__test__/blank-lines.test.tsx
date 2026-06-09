@@ -1,5 +1,6 @@
 import "../elements/types";
 import { markdown_to_slate } from "../markdown-to-slate";
+import { slate_to_markdown } from "../slate-to-markdown";
 import { stripBlankParagraphs } from "../padding";
 
 test("stripBlankParagraphs removes blank_line paragraphs", () => {
@@ -32,4 +33,34 @@ test("markdown parser preserves blank quoted line between quoted paragraphs", ()
     expect(quote.children[1]?.children?.[0]?.text ?? "").toBe("");
     expect(quote.children[2]?.children?.[0]?.text ?? "").toContain("bar");
   }
+});
+
+test("html image followed by preserved blank lines is stable", () => {
+  const markdown =
+    '<img src="/blobs/paste.png?uuid=test"   width="202px"  height="82px"  style="object-fit:cover"/>\n\n\nb';
+  const once = slate_to_markdown(markdown_to_slate(markdown, false, {}), {
+    preserveBlankLines: true,
+  });
+  const twice = slate_to_markdown(markdown_to_slate(once, false, {}), {
+    preserveBlankLines: true,
+  });
+
+  expect(twice).toBe(once);
+  expect(once).toContain("/>\n\n\nb\n");
+  expect(once).not.toContain("/>\n\n\n\nb");
+});
+
+test("html image followed by preserved blank lines and trailing blank lines is stable", () => {
+  const markdown =
+    '<img src="/blobs/paste.png?uuid=test"   width="202px"  height="82px"  style="object-fit:cover"/>\n\n\nb\n\n\n';
+  const once = slate_to_markdown(markdown_to_slate(markdown, false, {}), {
+    preserveBlankLines: true,
+  });
+  const twice = slate_to_markdown(markdown_to_slate(once, false, {}), {
+    preserveBlankLines: true,
+  });
+
+  expect(twice).toBe(once);
+  expect(once).toContain("/>\n\n\nb\n");
+  expect(once).not.toContain("/>\n\n\n\nb");
 });

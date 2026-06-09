@@ -601,7 +601,7 @@ export const labels = defineMessages({
   },
   download: {
     id: "labels.download",
-    defaultMessage: "download",
+    defaultMessage: "Download",
     description: "download a file from the web",
   },
   videos: {

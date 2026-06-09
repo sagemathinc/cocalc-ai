@@ -45,7 +45,6 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getProjectActions: jest.fn(() => ({ log: jest.fn() })),
   },
-  useProjectMapField: jest.fn(() => undefined),
   useTypedRedux: jest.fn(() => undefined),
 }));
 
@@ -75,6 +74,18 @@ describe("BlobUpload", () => {
     );
 
     expect(latestDropzone.options.url).toBe("/blobs?project_id=project-1");
+  });
+
+  it("does not tell users to start the project in the upload preview", () => {
+    render(
+      <BlobUpload show_upload={false} project_id="project-1">
+        <div>body</div>
+      </BlobUpload>,
+    );
+
+    expect(latestDropzone.options.previewTemplate).not.toContain(
+      "You must start the project",
+    );
   });
 
   it("uses non-project blob uploads when project_id is not set", () => {

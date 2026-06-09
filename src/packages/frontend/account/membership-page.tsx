@@ -98,7 +98,7 @@ function MembershipSettingsContent() {
     refresh,
     tierById,
   } = useMembershipSettingsData();
-  const isCommercial = !!useTypedRedux("customize", "is_commercial");
+  const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
   const [purchaseOpen, setPurchaseOpen] = useState<boolean>(false);
   const [purchaseCurrentClass, setPurchaseCurrentClass] = useState<
     string | undefined
@@ -240,7 +240,7 @@ function MembershipSettingsContent() {
               />
             </Suspense>
           </Space>
-          {isCommercial ? <UseBalance /> : null}
+          {stripeEnabled ? <UseBalance /> : null}
           <Suspense fallback={null}>
             <SiteLicenseReverificationPanel onChanged={refreshMembership} />
           </Suspense>

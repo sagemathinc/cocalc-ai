@@ -29,6 +29,7 @@ import type {
   SiteSetupStatus,
   SiteSetupStep,
   SiteSetupStepState,
+  StarServerInfo,
 } from "@cocalc/conat/hub/api/system";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -384,6 +385,100 @@ function StarInviteCard({ inviteUrl }: { inviteUrl?: string }) {
   );
 }
 
+function formatDate(value?: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function InfoLine({ label, value }: { label: string; value?: ReactNode }) {
+  if (!value) return null;
+  return (
+    <Col xs={24} md={12}>
+      <Space direction="vertical" size={0}>
+        <Text type="secondary">{label}</Text>
+        <Text>{value}</Text>
+      </Space>
+    </Col>
+  );
+}
+
+function StarAboutCard({ info }: { info?: StarServerInfo }) {
+  const releaseUrl = info?.release_id
+    ? `https://github.com/sagemathinc/cocalc-ai/releases/tag/${info.release_id}`
+    : undefined;
+  return (
+    <Card
+      size="small"
+      title={
+        <Space>
+          <Icon name="info-circle" />
+          <span>About this server</span>
+        </Space>
+      }
+      style={subtlePanelStyle}
+    >
+      {!info ? (
+        <Loading />
+      ) : !info.detected ? (
+        <Alert
+          type="info"
+          showIcon
+          message="No CoCalc Star release metadata found on this server."
+        />
+      ) : (
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Row gutter={[16, 12]}>
+            <InfoLine label="Product" value={info.product} />
+            <InfoLine
+              label="Channel"
+              value={info.channel ? <Tag>{info.channel}</Tag> : "unknown"}
+            />
+            <InfoLine
+              label="Release"
+              value={
+                info.release_id ? (
+                  releaseUrl ? (
+                    <Typography.Link href={releaseUrl} target="_blank">
+                      {info.release_id}
+                    </Typography.Link>
+                  ) : (
+                    info.release_id
+                  )
+                ) : (
+                  "unknown"
+                )
+              }
+            />
+            <InfoLine label="Git revision" value={info.git_revision} />
+            <InfoLine label="Built" value={formatDate(info.built_at)} />
+            <InfoLine label="Installed" value={formatDate(info.installed_at)} />
+            <InfoLine label="Promoted" value={formatDate(info.promoted_at)} />
+            <InfoLine
+              label="Runtime"
+              value={`${info.platform} ${info.os_release} (${info.architecture})`}
+            />
+            <InfoLine label="Hostname" value={info.hostname} />
+            <InfoLine label="Install root" value={info.install_root} />
+          </Row>
+          <Space wrap>
+            {info.release_id ? (
+              <CopyToClipBoard
+                value={info.release_id}
+                inputWidth="min(76vw, 360px)"
+                copyTip="Release id copied"
+              />
+            ) : null}
+            {info.git_dirty ? <Tag color="orange">dirty build</Tag> : null}
+            {info.artifact_mode ? <Tag>{info.artifact_mode}</Tag> : null}
+          </Space>
+        </Space>
+      )}
+    </Card>
+  );
+}
+
 export function SiteSetupBanner({ onOpenSetup }: { onOpenSetup: () => void }) {
   const [status, setStatus] = useState<SiteSetupStatus>();
 
@@ -443,15 +538,23 @@ export function SiteSetupBanner({ onOpenSetup }: { onOpenSetup: () => void }) {
 
 export function SiteSetupAdmin() {
   const [status, setStatus] = useState<SiteSetupStatus>();
+  const [starInfo, setStarInfo] = useState<StarServerInfo>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
 
   const load = async () => {
     setLoading(true);
     try {
-      setStatus(
-        await webapp_client.conat_client.hub.system.getSiteSetupStatus({}),
-      );
+      const nextStatus =
+        await webapp_client.conat_client.hub.system.getSiteSetupStatus({});
+      setStatus(nextStatus);
+      if (nextStatus.profile === "star") {
+        setStarInfo(
+          await webapp_client.conat_client.hub.system.getStarServerInfo({}),
+        );
+      } else {
+        setStarInfo(undefined);
+      }
       setError("");
     } catch (err) {
       setError(`${err}`);
@@ -496,6 +599,7 @@ export function SiteSetupAdmin() {
         <>
           <ProgressSummary status={status} />
           {isStar ? <StarInviteCard inviteUrl={status.invite_url} /> : null}
+          {isStar ? <StarAboutCard info={starInfo} /> : null}
           <Title level={4} style={{ marginBottom: 0 }}>
             Required Setup Gates
           </Title>
