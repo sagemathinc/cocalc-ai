@@ -3340,14 +3340,25 @@ function SiteLicenseManagersEditor({
                           )
                         }
                       />
-                      <Button
-                        size="small"
-                        danger
-                        loading={working === `remove-${manager.account_id}`}
-                        onClick={() => void removeManager(manager.account_id)}
+                      <Popconfirm
+                        title={`Remove ${identity.name} as a manager?`}
+                        description="This removes their delegated site-license management access."
+                        okText="Remove manager"
+                        cancelText="Cancel"
+                        okButtonProps={{
+                          danger: true,
+                          loading: working === `remove-${manager.account_id}`,
+                        }}
+                        onConfirm={() => void removeManager(manager.account_id)}
                       >
-                        Remove
-                      </Button>
+                        <Button
+                          size="small"
+                          danger
+                          loading={working === `remove-${manager.account_id}`}
+                        >
+                          Remove
+                        </Button>
+                      </Popconfirm>
                     </>
                   ) : null}
                 </Space>

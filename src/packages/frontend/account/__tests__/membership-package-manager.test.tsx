@@ -1427,6 +1427,54 @@ describe("membership package managers", () => {
     expect(await screen.findByText("Ada Lovelace")).toBeTruthy();
   });
 
+  it("confirms before removing a site-license manager", async () => {
+    isAdmin = true;
+    const overview = makeSiteLicenseOverview({
+      managers: [
+        {
+          id: "manager-1",
+          site_license_id: "license-1",
+          account_id: "manager-1",
+          role: "manager",
+        },
+      ],
+    });
+    listSiteLicenseOverviews
+      .mockResolvedValueOnce([overview])
+      .mockResolvedValueOnce([{ ...overview, managers: [] }]);
+    removeSiteLicenseManager.mockResolvedValue(undefined);
+
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Campus License")).toBeTruthy();
+    });
+
+    fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
+
+    await waitFor(() => {
+      expect(screen.getByText("manager-1")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Remove manager-1 as a manager?")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(removeSiteLicenseManager).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove manager" }));
+
+    await waitFor(() => {
+      expect(removeSiteLicenseManager).toHaveBeenCalledWith({
+        site_license_id: "license-1",
+        target_account_id: "manager-1",
+      });
+    });
+  });
+
   it("requires fresh auth before reviewing site-license pool requests", async () => {
     const sitePackage = {
       id: "site-1",
