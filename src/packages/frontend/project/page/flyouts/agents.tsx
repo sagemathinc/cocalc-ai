@@ -95,6 +95,7 @@ import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 import { AGENT_CHAT_MAX_WIDTH_PX } from "@cocalc/frontend/project/page/agent-layout-constants";
+import { agentSessionMarkdownLinkBasePath } from "@cocalc/frontend/project/page/flyouts/agent-link-base";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import {
   ensureWorkspaceChatDirectory,
@@ -807,21 +808,39 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     };
   }, [inlineSession?.thread_key]);
 
+  const inlineThreadKey = `${inlineSession?.thread_key ?? ""}`.trim();
+  const inlineThreadMetadata =
+    inlineThreadKey && inlineActions
+      ? inlineActions.getThreadMetadata?.(inlineThreadKey, {
+          threadId: inlineThreadKey,
+        })
+      : undefined;
+  const inlineMarkdownLinkBasePath = useMemo(
+    () => agentSessionMarkdownLinkBasePath(inlineSession, inlineThreadMetadata),
+    [
+      inlineSession?.chat_path,
+      inlineSession?.working_directory,
+      inlineThreadMetadata?.acp_config?.workingDirectory,
+    ],
+  );
+
   const inlineFileContext = useMemo(() => {
-    if (!inlineSession?.chat_path) return undefined;
+    if (!inlineSession?.chat_path || !inlineMarkdownLinkBasePath) {
+      return undefined;
+    }
     return {
       project_id,
-      path: inlineSession.chat_path,
+      path: inlineMarkdownLinkBasePath,
       urlTransform: getUrlTransform({
         project_id,
-        path: inlineSession.chat_path,
+        path: inlineMarkdownLinkBasePath,
       }),
       AnchorTagComponent: getAnchorTagComponent({
         project_id,
-        path: inlineSession.chat_path,
+        path: inlineMarkdownLinkBasePath,
       }),
     };
-  }, [inlineSession?.chat_path, project_id]);
+  }, [inlineMarkdownLinkBasePath, inlineSession?.chat_path, project_id]);
 
   const automationModalMetadata = useMemo(
     () =>
@@ -1803,13 +1822,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   if (inlineSession) {
     const inlineTitle = normalizedTitle(inlineSession);
-    const inlineThreadKey = `${inlineSession.thread_key ?? ""}`.trim();
-    const inlineThreadMetadata =
-      inlineThreadKey && inlineActions
-        ? inlineActions.getThreadMetadata?.(inlineThreadKey, {
-            threadId: inlineThreadKey,
-          })
-        : undefined;
     const inlineThreadModel =
       inlineThreadMetadata?.agent_model?.trim() ||
       inlineThreadMetadata?.acp_config?.model?.trim() ||
