@@ -58,6 +58,50 @@ describe("do a basic test that the file read service works", () => {
   });
 });
 
+describe("read service supports async stream factories", () => {
+  const project_id = "00000000-0000-4000-8000-000000000001";
+  const name = "async";
+  let cleanups: any[] = [];
+  let source;
+
+  it("creates the async read server", async () => {
+    await createServer({
+      project_id,
+      name,
+      createReadStream: async (path, opts) => createReadStream(path, opts),
+      client: testClient,
+    });
+  });
+
+  it("creates the file we will read", async () => {
+    const { path, cleanup } = await tempFile();
+    source = path;
+    await fsWriteFile(path, "async cocalc");
+    cleanups.push(cleanup);
+  });
+
+  it("reads through the async stream factory", async () => {
+    const r = await readFile({
+      project_id,
+      path: source,
+      name,
+      client: testClient,
+    });
+    const chunks: any[] = [];
+    for await (const chunk of r) {
+      chunks.push(chunk);
+    }
+    expect(Buffer.concat(chunks).toString()).toBe("async cocalc");
+  });
+
+  it("closes the async read server", async () => {
+    close({ project_id, name });
+    for (const f of cleanups) {
+      f();
+    }
+  });
+});
+
 describe("do a larger test that involves multiple chunks and a different name", () => {
   const project_id = "00000000-0000-4000-8000-000000000000";
   const name = "b";

@@ -3,6 +3,7 @@
 // without having to run that project.
 
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   chmod,
@@ -28,6 +29,8 @@ import {
   type SnapshotRestoreMode,
   type SnapshotUsage,
 } from "@cocalc/conat/files/file-server";
+import { createServer as createReadServer } from "@cocalc/conat/files/read";
+import { PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE } from "@cocalc/conat/files/file-download";
 import {
   ConatError,
   type Client as ConatClient,
@@ -3851,6 +3854,46 @@ export async function initFsServer({
       void touchProjectLastEdited(project_id, `fs:${op}`);
     },
   });
+}
+
+const fileDownloadReadServers = new Map<string, Promise<void>>();
+
+export async function ensureFileDownloadReadServer({
+  client,
+  project_id,
+}: {
+  client: ConatClient;
+  project_id: string;
+}) {
+  let server = fileDownloadReadServers.get(project_id);
+  if (server == null) {
+    server = createReadServer({
+      client,
+      project_id,
+      name: PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
+      createReadStream: async (containerPath: string, opts?: any) => {
+        const { path: home } = await getVolume(project_id);
+        const fs = createProjectSandboxFilesystem({
+          project_id,
+          home,
+          rootfs: getRootfsMountpoint(project_id),
+          scratch: getScratchMountpoint(project_id),
+          sharedScratch: getSharedScratchMountpoint(),
+          deleteSnapshot: async (name: string) =>
+            await deleteSnapshot({ project_id, name }),
+        });
+        const absPath = await fs.safeAbsPath(containerPath);
+        return createReadStream(absPath, opts);
+      },
+    })
+      .then(() => undefined)
+      .catch((err) => {
+        fileDownloadReadServers.delete(project_id);
+        throw err;
+      });
+    fileDownloadReadServers.set(project_id, server);
+  }
+  await server;
 }
 
 export async function initViewerFsServer({
