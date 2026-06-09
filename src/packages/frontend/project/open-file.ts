@@ -38,6 +38,7 @@ import {
   getProjectUserRole,
   isViewerProjectRole,
 } from "@cocalc/frontend/project/realtime-access";
+import { recordUxLatencyEvent } from "@cocalc/frontend/monitoring/ux-latency";
 
 // if true, PRELOAD_BACKGROUND_TABS makes it so all tabs have their file editing
 // preloaded, even background tabs.  This can make the UI much more responsive,
@@ -715,6 +716,7 @@ type OpenPhaseDetails = {
 
 interface OpenTiming {
   id: string;
+  project_id: string;
   path: string;
   start: number;
   marks: Partial<Record<OpenPhase, number>>;
@@ -723,6 +725,10 @@ interface OpenTiming {
   opened_time_ms?: number;
   deleted?: number;
   opened_time_logged: boolean;
+  ux_latency_logged?: {
+    visible?: boolean;
+    sync_ready?: boolean;
+  };
 }
 
 const log_open_time: { [path: string]: OpenTiming } = {};
@@ -793,6 +799,38 @@ function buildOpenUpdateEvent(
   return event;
 }
 
+function fileOpenSegment(data: OpenTiming): string {
+  const ext = filename_extension(data.path).toLowerCase();
+  return ext ? `.${ext}` : "no-extension";
+}
+
+function recordFileOpenUxLatency(
+  data: OpenTiming,
+  metric: "file_open_visible" | "file_open_sync_ready",
+  elapsed_ms: number,
+  phase?: OpenPhase,
+): void {
+  data.ux_latency_logged ??= {};
+  const flag = metric === "file_open_visible" ? "visible" : "sync_ready";
+  if (data.ux_latency_logged[flag]) return;
+  data.ux_latency_logged[flag] = true;
+  const ext = filename_extension(data.path).toLowerCase();
+  recordUxLatencyEvent({
+    event_type: "file_open",
+    metric,
+    duration_ms: elapsed_ms,
+    project_id: data.project_id,
+    client_event_id: data.id,
+    path_ext: ext ? `.${ext}` : undefined,
+    segment: fileOpenSegment(data),
+    details: {
+      phase,
+      marks: data.marks,
+      ...(data.lastPhaseDetails ?? {}),
+    },
+  });
+}
+
 export function restart_open_timer(
   project_id: string,
   path: string,
@@ -824,6 +862,12 @@ export function mark_open_phase(
   data.lastPhase = phase;
   if (details != null) {
     data.lastPhaseDetails = details;
+  }
+  if (phase === "optimistic_ready") {
+    recordFileOpenUxLatency(data, "file_open_visible", elapsed_ms, phase);
+  }
+  if (phase === "sync_ready" || phase === "handoff_done") {
+    recordFileOpenUxLatency(data, "file_open_sync_ready", elapsed_ms, phase);
   }
   const event = buildOpenUpdateEvent(data, phase, elapsed_ms);
   redux.getProjectActions(project_id).log(event, data.id);
@@ -862,6 +906,7 @@ export function log_file_open(
     const key = openTimingKey(project_id, path);
     log_open_time[key] = {
       id,
+      project_id,
       path,
       start: Date.now(),
       marks: { open_start: 0 },
@@ -870,6 +915,7 @@ export function log_file_open(
       opened_time_ms: undefined,
       deleted,
       opened_time_logged: false,
+      ux_latency_logged: {},
     };
   }
 }
@@ -893,6 +939,7 @@ export function log_opened_time(project_id: string, path: string): void {
   const time = Date.now() - start;
   data.opened_time_logged = true;
   data.opened_time_ms = time;
+  recordFileOpenUxLatency(data, "file_open_visible", time, data.lastPhase);
   actions.log(buildOpenUpdateEvent(data), id);
   maybeCleanupOpenTiming(project_id, path);
 }
