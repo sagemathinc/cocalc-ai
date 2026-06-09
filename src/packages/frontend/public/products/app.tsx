@@ -145,7 +145,7 @@ function CocalcRocketPage() {
 
 function CocalcStarPage() {
   const installCommand =
-    "curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo bash";
+    "curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash";
 
   return (
     <>
@@ -175,11 +175,11 @@ function CocalcStarPage() {
           <CodeCommand value={installCommand} />
           <Flex gap={12} wrap>
             <CopyCommandButton value={installCommand} />
-            <Button href="https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh">
+            <Button href="https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh">
               Open install script
             </Button>
-            <Button href="https://github.com/sagemathinc/cocalc-ai/releases/latest">
-              Latest release
+            <Button href="https://github.com/sagemathinc/cocalc-ai/releases/tag/cocalc-star-stable">
+              Stable channel
             </Button>
           </Flex>
           <Paragraph style={{ margin: 0 }}>

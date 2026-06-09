@@ -63,19 +63,20 @@ src/scripts/star/build-github-release-assets.sh dist/star/github
 Then the intended copy/paste installer is:
 
 ```sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh \
   | sudo STAR_ASSUME_YES=1 bash
 ```
 
 The installer auto-detects `x86_64` vs `aarch64` and downloads the matching
-`cocalc-star-runtime-linux-<arch>.tar.gz` asset from the latest GitHub release.
-Set `COCALC_STAR_RELEASE_URL` to test a specific artifact URL.
+`cocalc-star-runtime-linux-<arch>.tar.gz` asset from the stable Star channel.
+Set `COCALC_STAR_RELEASE_CHANNEL=candidate` to test the candidate channel, or
+set `COCALC_STAR_RELEASE_URL` to test a specific immutable artifact URL.
 
 For a local laptop or desktop VM using Lima, publish the same release assets and
 run this on the host computer, not inside the VM:
 
 ```sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star-local-lima.sh \
   | COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
 ```
 
@@ -90,7 +91,7 @@ The optional `COCALC_STAR_LIMA_SHARED_DIR` host directory is mounted as
 Customize the local VM with environment variables passed to `bash`:
 
 ```sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star-local-lima.sh \
   | COCALC_STAR_LIMA_MEMORY=16GiB COCALC_STAR_LIMA_CPUS=8 COCALC_STAR_LIMA_DISK=200GiB COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
 ```
 
@@ -144,7 +145,7 @@ If the installer knows the SSH target, pass it so the final instructions are
 fully copy/pasteable:
 
 ```sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh \
   | sudo STAR_ASSUME_YES=1 STAR_SSH_TARGET=ubuntu@1.2.3.4 bash
 ```
 

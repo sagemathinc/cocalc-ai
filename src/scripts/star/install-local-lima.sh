@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_RELEASE_BASE_URL="https://github.com/sagemathinc/cocalc-ai/releases/latest/download"
+RELEASE_CHANNEL="${COCALC_STAR_RELEASE_CHANNEL:-${COCALC_STAR_CHANNEL:-stable}}"
+DEFAULT_RELEASE_BASE_URL="https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-${RELEASE_CHANNEL}"
 
 LIMA_INSTANCE="${COCALC_STAR_LIMA_INSTANCE:-cocalc-star}"
 LIMA_HOST_PORT="${COCALC_STAR_LIMA_HOST_PORT:-8170}"
@@ -28,7 +29,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh | bash
+  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star-local-lima.sh | bash
 
 Create or start a Lima Ubuntu VM, install CoCalc Star inside it, and expose the
 site on a localhost URL such as http://localhost:8170/.
@@ -42,7 +43,10 @@ Environment:
   COCALC_STAR_LIMA_SHARED_DIR    Initial-install-only host directory mounted
                                   into projects at /scratch. Default: unset
   COCALC_STAR_LIMA_TEMPLATE      Lima template. Default: template:ubuntu-24.04
-  COCALC_STAR_RELEASE_BASE_URL   Release base URL. Default: GitHub latest
+  COCALC_STAR_RELEASE_CHANNEL    Release channel. Default: stable. Typical
+                                  values: stable, candidate
+  COCALC_STAR_CHANNEL            Alias for COCALC_STAR_RELEASE_CHANNEL
+  COCALC_STAR_RELEASE_BASE_URL   Release base URL. Default: GitHub channel
   COCALC_STAR_RELEASE_URL        Explicit runtime asset URL passed to the guest
   COCALC_STAR_LIMA_OPEN_BROWSER  Open browser after install. Default: 1
 
@@ -196,9 +200,10 @@ start_instance() {
 }
 
 install_star_in_guest() {
-  local installer_url release_base_url access_url release_url_env release_url_value
+  local installer_url release_base_url access_url release_channel release_url_env release_url_value
   installer_url="$(shell_quote "$INSTALLER_URL")"
   release_base_url="$(shell_quote "$RELEASE_BASE_URL")"
+  release_channel="$(shell_quote "$RELEASE_CHANNEL")"
   access_url="$(shell_quote "$ACCESS_URL")"
   release_url_env=""
   if [ -n "${COCALC_STAR_RELEASE_URL:-}" ]; then
@@ -222,6 +227,7 @@ curl -fsSL ${installer_url} | sudo env \\
   STAR_WEB_ONBOARDING=0 \\
   STAR_WEB_ONBOARDING_REQUIRE_OPEN=0 \\
   STAR_ACCESS_URL=${access_url} \\
+  COCALC_STAR_RELEASE_CHANNEL=${release_channel} \\
   COCALC_STAR_RELEASE_BASE_URL=${release_base_url} \\
   ${release_url_env} \\
   bash
