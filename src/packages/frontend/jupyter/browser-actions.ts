@@ -34,6 +34,7 @@ import {
   closest_kernel_match,
   cmp,
   field_cmp,
+  filename_extension,
   from_json,
   history_path,
   merge_copy,
@@ -111,6 +112,12 @@ import {
 } from "./run-batch-order";
 import { ensureProjectRunningForJupyter } from "./project-start";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
+import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
+import {
+  elapsedUxMs,
+  recordUxLatencyEvent,
+  startUxTimer,
+} from "@cocalc/frontend/monitoring/ux-latency";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -2795,6 +2802,7 @@ export class JupyterActions extends JupyterActions0 {
     let totalChunks = 0;
     let totalMesgs = 0;
     let runError: string | undefined;
+    const readyTimer = startUxTimer();
     this.runDebug("runCells.call", { runId, ids, opts });
     if (this.store?.get("read_only")) {
       this.runDebug("runCells.skip.read_only", { runId });
@@ -2814,6 +2822,11 @@ export class JupyterActions extends JupyterActions0 {
     try {
       this.runningNow = true;
       this.runDebug("runCells.start", { runId });
+      if (
+        !(await ensure_project_running(this.project_id, "run notebook cells"))
+      ) {
+        return;
+      }
       const cells: InputCell[] = [];
       const kernel = await this.ensureKernelForRun(runId);
       if (!kernel) {
@@ -2904,6 +2917,17 @@ export class JupyterActions extends JupyterActions0 {
         },
       });
       runnerStartedAt = Date.now();
+      recordUxLatencyEvent({
+        event_type: "project_ready",
+        metric: "project_jupyter_ready",
+        duration_ms: elapsedUxMs(readyTimer),
+        project_id: this.project_id,
+        path_ext: filename_extension(this.path ?? ""),
+        details: {
+          cells: cells.length,
+          kernel,
+        },
+      });
       this.runDebug("runCells.runner.start", {
         runId,
         limit,

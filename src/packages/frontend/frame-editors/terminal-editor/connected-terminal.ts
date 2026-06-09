@@ -28,6 +28,12 @@ import {
   handoffProjectNavigationFromLocalOwner,
   matchProjectNavigationCommand,
 } from "@cocalc/frontend/project/page/keyboard-navigation";
+import {
+  elapsedUxMs,
+  recordUxLatencyEvent,
+  startUxTimer,
+} from "@cocalc/frontend/monitoring/ux-latency";
+import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { close, filename_extension, replace_all } from "@cocalc/util/misc";
 import {
   BaseEditorActions as Actions,
@@ -691,6 +697,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
   connect = reuseInFlight(async () => {
     if (this.isClosed() || this.ptyExited) return;
+    const readyTimer = startUxTimer();
 
     try {
       const projectState =
@@ -702,8 +709,19 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         return;
       }
       if (projectState !== "running") {
-        await this.showManualStartMessage();
-        return;
+        this.set_connection_status("disconnected");
+        if (!this.manualStartMessageShown) {
+          this.terminal.reset();
+          await this.handleDataFromProject(
+            connectingTerminalMessage(this.terminal.cols),
+          );
+        }
+        if (
+          !(await ensure_project_running(this.project_id, "use this terminal"))
+        ) {
+          await this.showManualStartMessage();
+          return;
+        }
       }
       this.clearProjectStartingRetry();
       this.manualStartMessageShown = false;
@@ -845,6 +863,16 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         }
         this.setTransientReconnectStyle(false);
         this.ptyInputReady = true;
+        recordUxLatencyEvent({
+          event_type: "project_ready",
+          metric: "project_terminal_ready",
+          duration_ms: elapsedUxMs(readyTimer),
+          project_id: this.project_id,
+          path_ext: filename_extension(this.path ?? ""),
+          details: {
+            command: this.command ?? "bash",
+          },
+        });
         this.flushWriteBuffer();
         pty.once("ready", () => {
           this.flushWriteBuffer();

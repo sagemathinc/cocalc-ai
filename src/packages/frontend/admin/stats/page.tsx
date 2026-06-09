@@ -52,7 +52,7 @@ function formatMs(value?: number): string {
 function metricLabel(metric: string): string {
   switch (metric) {
     case "project_start_running":
-      return "Project start to running";
+      return "Project lifecycle to running";
     case "project_start_running_timeout":
       return "Project start timeout";
     case "project_start_request_failed":
@@ -61,6 +61,12 @@ function metricLabel(metric: string): string {
       return "File open to visible";
     case "file_open_sync_ready":
       return "File open to sync ready";
+    case "project_exec_ready":
+      return "Project exec ready";
+    case "project_jupyter_ready":
+      return "Project Jupyter ready";
+    case "project_terminal_ready":
+      return "Project terminal ready";
     default:
       return metric.replace(/_/g, " ");
   }
@@ -254,7 +260,7 @@ export const UsageStatistics: React.FC = () => {
           <Row gutter={[16, 16]}>
             <Col xs={24} md={8}>
               <Statistic
-                title={`Project start P50 (${activeWindowLabel})`}
+                title={`Lifecycle running P50 (${activeWindowLabel})`}
                 value={summaryValue(summary, "project_start_running", "p50_ms")}
               />
             </Col>

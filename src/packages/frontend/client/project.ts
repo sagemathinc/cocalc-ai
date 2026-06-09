@@ -14,6 +14,11 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { dialogs } from "@cocalc/frontend/i18n";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
 import { projectReadFileURL } from "@cocalc/frontend/lib/cocalc-urls";
+import {
+  elapsedUxMs,
+  recordUxLatencyEvent,
+  startUxTimer,
+} from "@cocalc/frontend/monitoring/ux-latency";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { API } from "@cocalc/frontend/project/websocket/api";
 import { connection_to_project } from "@cocalc/frontend/project/websocket/connect";
@@ -30,6 +35,7 @@ import {
 import {
   copy_without,
   defaults,
+  filename_extension,
   is_valid_uuid_string,
   required,
 } from "@cocalc/util/misc";
@@ -248,9 +254,8 @@ export class ProjectClient {
     execStream: ExecStream;
     debug?: string;
   }): Promise<void> {
-    if (
-      !(await ensure_project_running(opts.project_id, "Streaming execution"))
-    ) {
+    const readyTimer = startUxTimer();
+    if (!(await ensure_project_running(opts.project_id, "run code"))) {
       execStream.emit(
         "error",
         new Error("Project must be running to stream execution"),
@@ -261,7 +266,7 @@ export class ProjectClient {
     execStream.once("start", async () => {
       try {
         // Use conat streaming similar to AI streaming
-        await this.streamExecViaConat({ opts, execStream, debug });
+        await this.streamExecViaConat({ opts, execStream, debug, readyTimer });
       } catch (err) {
         execStream.emit("error", err);
       }
@@ -272,10 +277,12 @@ export class ProjectClient {
     opts,
     execStream,
     debug,
+    readyTimer,
   }: {
     opts: ExecOptsBlocking;
     execStream: ExecStream;
     debug?: string;
+    readyTimer: number;
   }): Promise<void> {
     try {
       const cn = await this.client.conat_client.projectConat({
@@ -296,6 +303,7 @@ export class ProjectClient {
           waitForInterest: true,
         },
       );
+      let recordedReady = false;
       for await (const resp of await req) {
         if (resp.data == null) {
           // Stream ended
@@ -322,6 +330,20 @@ export class ProjectClient {
         // Handle different types of streaming data
         switch (type) {
           case "job":
+            if (!recordedReady) {
+              recordedReady = true;
+              recordUxLatencyEvent({
+                event_type: "project_ready",
+                metric: "project_exec_ready",
+                duration_ms: elapsedUxMs(readyTimer),
+                project_id: opts.project_id,
+                path_ext: filename_extension(opts.path ?? ""),
+                details: {
+                  command: opts.command,
+                  stream: true,
+                },
+              });
+            }
             execStream.job_id = data.job_id;
             execStream.emit("job", data);
             break;
@@ -398,6 +420,7 @@ export class ProjectClient {
       arg: isExecOptsBlocking(opts) ? opts.command : opts.async_get,
     });
 
+    const readyTimer = startUxTimer();
     if (!(await ensure_project_running(opts.project_id, msg))) {
       return {
         type: "blocking",
@@ -410,6 +433,17 @@ export class ProjectClient {
 
     try {
       const ws = await this.websocket(opts.project_id);
+      recordUxLatencyEvent({
+        event_type: "project_ready",
+        metric: "project_exec_ready",
+        duration_ms: elapsedUxMs(readyTimer),
+        project_id: opts.project_id,
+        path_ext: filename_extension(`${(opts as any).path ?? ""}`),
+        details: {
+          command: isExecOptsBlocking(opts) ? opts.command : opts.async_get,
+          stream: false,
+        },
+      });
       const exec_opts = copy_without(opts, ["project_id", "cb"]);
       const msg = await ws.api.exec(exec_opts);
       if (msg.status && msg.status == "error") {
