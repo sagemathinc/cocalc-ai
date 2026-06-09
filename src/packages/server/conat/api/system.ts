@@ -117,6 +117,7 @@ import type {
   SiteSetupStatus,
   SiteSetupStep,
   SiteSetupStepState,
+  StarServerInfo,
 } from "@cocalc/conat/hub/api/system";
 import {
   bootstrapCloudflareConfiguration as bootstrapCloudflareConfiguration0,
@@ -138,7 +139,14 @@ import {
   type CloudflareR2AuditResult,
   type CloudflareR2UsageResult,
 } from "@cocalc/server/cloud/cloudflare-r2-usage";
-import { totalmem } from "node:os";
+import {
+  arch,
+  hostname,
+  platform,
+  release as osRelease,
+  totalmem,
+} from "node:os";
+import { readFile, readlink } from "node:fs/promises";
 import {
   clearProviderSetupChallenge as clearProviderSetupChallenge0,
   createProviderSetupChallenge as createProviderSetupChallenge0,
@@ -3237,6 +3245,110 @@ function siteSetupProfile(): SiteSetupStatus["profile"] {
     .toLowerCase();
   if (profile === "star") return "star";
   return "launchpad-cloud";
+}
+
+const STAR_INSTALL_ROOT = "/opt/cocalc-star";
+
+async function readJsonFile(path: string): Promise<Record<string, any>> {
+  try {
+    const raw = await readFile(path, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function readTextFile(path: string): Promise<string> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function parseStarChannelEnv(raw: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const idx = trimmed.indexOf("=");
+    if (idx <= 0) continue;
+    const key = trimmed.slice(0, idx);
+    const value = trimmed.slice(idx + 1);
+    if (/^COCALC_STAR_[A-Z0-9_]+$/.test(key)) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+async function readlinkBestEffort(path: string): Promise<string | undefined> {
+  try {
+    return await readlink(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+export async function getStarServerInfo({
+  account_id,
+}: {
+  account_id?: string;
+} = {}): Promise<StarServerInfo> {
+  await assertAdmin(account_id);
+  const installMetadata = await readJsonFile(
+    `${STAR_INSTALL_ROOT}/current/release.json`,
+  );
+  const buildMetadata = {
+    ...(await readJsonFile(`${STAR_INSTALL_ROOT}/current/source/release.json`)),
+    ...(await readJsonFile(`${STAR_INSTALL_ROOT}/current/build-release.json`)),
+  };
+  const channelEnv = parseStarChannelEnv(
+    await readTextFile(`${STAR_INSTALL_ROOT}/channel.env`),
+  );
+  const releaseId =
+    optionalString(installMetadata.release_id) ??
+    optionalString(buildMetadata.release_id);
+
+  return {
+    detected: !!releaseId || !!optionalString(buildMetadata.product),
+    checked_at: new Date().toISOString(),
+    product: optionalString(buildMetadata.product) ?? "cocalc-star",
+    channel: optionalString(channelEnv.COCALC_STAR_CHANNEL),
+    release_id: releaseId,
+    release_base_url: optionalString(channelEnv.COCALC_STAR_RELEASE_BASE_URL),
+    promoted_at: optionalString(channelEnv.COCALC_STAR_PROMOTED_AT),
+    git_revision:
+      optionalString(channelEnv.COCALC_STAR_GIT_REVISION) ??
+      optionalString(buildMetadata.git_revision),
+    git_dirty: optionalBoolean(buildMetadata.git_dirty),
+    artifact_mode: optionalString(buildMetadata.artifact_mode),
+    payload_kind: optionalString(buildMetadata.payload_kind),
+    payload_sha256: optionalString(buildMetadata.payload_sha256),
+    built_at: optionalString(buildMetadata.built_at),
+    installed_at: optionalString(installMetadata.installed_at),
+    tarball_sha256: optionalString(installMetadata.tarball_sha256),
+    install_root: STAR_INSTALL_ROOT,
+    current_release_path: await readlinkBestEffort(
+      `${STAR_INSTALL_ROOT}/current`,
+    ),
+    source_path:
+      optionalString(installMetadata.source_path) ??
+      (await readlinkBestEffort(`${STAR_INSTALL_ROOT}/source`)),
+    hostname: hostname(),
+    architecture: arch(),
+    platform: platform(),
+    os_release: osRelease(),
+  };
 }
 
 function boolSetting(value: unknown): boolean {

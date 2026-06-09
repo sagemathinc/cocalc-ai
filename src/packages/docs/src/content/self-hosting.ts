@@ -19,7 +19,7 @@ Caddy HTTPS.
 On a fresh Ubuntu 24.04 VM with ports 80 and 443 open:
 
 ~~~sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh | sudo bash
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash
 ~~~
 
 The installer detects the public IPv4 address, uses https://sslip.io for DNS,
@@ -117,7 +117,7 @@ current Lima binary archive from https://github.com/lima-vm/lima/releases.
 Then install CoCalc Star:
 
 ~~~sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star-local-lima.sh \
   | COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
 ~~~
 
@@ -177,7 +177,7 @@ of the install pipeline.
 For example, to use 16 GiB RAM, 8 CPUs, and a 200 GiB disk:
 
 ~~~sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star-local-lima.sh \
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star-local-lima.sh \
   | COCALC_STAR_LIMA_MEMORY=16GiB COCALC_STAR_LIMA_CPUS=8 COCALC_STAR_LIMA_DISK=200GiB COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
 ~~~
 

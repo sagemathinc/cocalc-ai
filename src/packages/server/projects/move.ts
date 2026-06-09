@@ -60,7 +60,8 @@ const MOVE_START_DEST_TIMEOUT_MS = Math.max(
   Number(process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS) || 2 * 60 * 60 * 1000,
 );
 const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
-const MOVE_SENTINEL_PATH = ".move-sentinel.json";
+const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
+const MOVE_SENTINEL_DIR = ".cocalc/move-sentinels";
 const MOVE_SENTINEL_VERIFY_TIMEOUT_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS) || 30 * 1000,
@@ -173,6 +174,10 @@ type MoveSentinel = {
   content: string;
 };
 
+function moveSentinelPath(move_log_id: string): string {
+  return pathPosix.join(MOVE_SENTINEL_DIR, `${move_log_id}.json`);
+}
+
 function summarizeMoveSentinelContent(content: string): Record<string, string> {
   try {
     const parsed = JSON.parse(content);
@@ -273,7 +278,8 @@ async function createMoveSentinel({
   op_id?: string;
 }): Promise<MoveSentinel> {
   const fs = await waitForProjectFsReady(context.project_id, { fresh: true });
-  const parentDir = pathPosix.dirname(MOVE_SENTINEL_PATH);
+  const sentinelPath = moveSentinelPath(move_log_id);
+  const parentDir = pathPosix.dirname(sentinelPath);
   if (parentDir && parentDir !== ".") {
     await fs.mkdir(parentDir, { recursive: true });
   }
@@ -293,8 +299,8 @@ async function createMoveSentinel({
     null,
     2,
   )}\n`;
-  await fs.writeFile(MOVE_SENTINEL_PATH, content);
-  return { path: MOVE_SENTINEL_PATH, content };
+  await fs.writeFile(sentinelPath, content);
+  return { path: sentinelPath, content };
 }
 
 async function withTimeout<T>({
@@ -376,9 +382,11 @@ async function verifyMoveSentinel({
 
 async function deleteMoveSentinelBestEffort({
   project_id,
+  path,
   stage,
 }: {
   project_id: string;
+  path: string;
   stage: string;
 }): Promise<void> {
   try {
@@ -386,10 +394,14 @@ async function deleteMoveSentinelBestEffort({
       fresh: true,
       timeout_ms: MOVE_SENTINEL_IO_TIMEOUT_MS,
     });
-    await fs.rm(MOVE_SENTINEL_PATH, { force: true });
+    await fs.rm(path, { force: true });
+    if (path !== LEGACY_MOVE_SENTINEL_PATH) {
+      await fs.rm(LEGACY_MOVE_SENTINEL_PATH, { force: true }).catch(() => {});
+    }
   } catch (err) {
     log.warn("moveProjectToHost sentinel cleanup failed", {
       project_id,
+      path,
       stage,
       err,
     });
@@ -1845,6 +1857,7 @@ export async function moveProjectToHost(
           });
           await deleteMoveSentinelBestEffort({
             project_id: context.project_id,
+            path: moveSentinel.path,
             stage: "post-verify-dest",
           });
           moveSentinel = undefined;
@@ -1937,6 +1950,7 @@ export async function moveProjectToHost(
         if (moveSentinel) {
           await deleteMoveSentinelBestEffort({
             project_id: context.project_id,
+            path: moveSentinel.path,
             stage: "failed-move-source-cleanup",
           });
           moveSentinel = undefined;
@@ -2044,6 +2058,7 @@ export async function moveProjectToHost(
     if (moveSentinel) {
       await deleteMoveSentinelBestEffort({
         project_id: context.project_id,
+        path: moveSentinel.path,
         stage: "move-error-cleanup",
       });
       moveSentinel = undefined;
