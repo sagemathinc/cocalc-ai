@@ -99,16 +99,28 @@ function requireExplicitConatClient(client?: ConatClient): ConatClient {
   throw new Error("must provide an explicit Conat client");
 }
 
-function getWriteSubject({ project_id }: { project_id: string }) {
+function getWriteSubject({
+  project_id,
+  name = "",
+}: {
+  project_id: string;
+  name?: string;
+}) {
   return projectSubject({
     project_id,
-    service: "files:write",
+    service: `files:write${name ?? ""}`,
   });
 }
 
 let subs: { [name: string]: Subscription } = {};
-export async function close({ project_id }: { project_id: string }) {
-  const subject = getWriteSubject({ project_id });
+export async function close({
+  project_id,
+  name,
+}: {
+  project_id: string;
+  name?: string;
+}) {
+  const subject = getWriteSubject({ project_id, name });
   if (subs[subject] == null) {
     return;
   }
@@ -120,18 +132,20 @@ export async function close({ project_id }: { project_id: string }) {
 export async function createServer({
   client,
   project_id,
+  name = "",
   createWriteStream,
   maxActiveStreams,
 }: {
   client?: ConatClient;
   project_id: string;
+  name?: string;
   // createWriteStream returns a writeable stream
   // for writing the specified path to disk.  It
   // can be an async function.
   createWriteStream: (path: string) => any;
   maxActiveStreams?: number;
 }) {
-  const subject = getWriteSubject({ project_id });
+  const subject = getWriteSubject({ project_id, name });
   logger.debug("createServer", { subject });
   const cn = requireExplicitConatClient(client);
   let sub = subs[subject];
@@ -236,6 +250,7 @@ async function handleMessage({ mesg, createWriteStream, project_id, client }) {
 export interface WriteFileOptions {
   project_id: string;
   path: string;
+  name?: string;
   stream: Readable;
   maxWait?: number;
   client?: ConatClient;
@@ -245,6 +260,7 @@ export async function writeFile({
   client,
   project_id,
   path,
+  name: writeServiceName,
   stream,
   maxWait = 1000 * 60 * 10, // 10 minutes
 }: WriteFileOptions): Promise<{ bytes: number; chunks: number }> {
@@ -264,7 +280,7 @@ export async function writeFile({
     });
     // tell the project to start reading our file.
     const resp = await cn.request(
-      getWriteSubject({ project_id }),
+      getWriteSubject({ project_id, name: writeServiceName }),
       { name, path, maxWait },
       { timeout: maxWait },
     );

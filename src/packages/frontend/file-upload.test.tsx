@@ -1,9 +1,11 @@
 /** @jest-environment jsdom */
 
-import { act, render } from "@testing-library/react";
-import { BlobUpload } from "./file-upload";
+import { act, render, waitFor } from "@testing-library/react";
+import { BlobUpload, FileUploadWrapper } from "./file-upload";
 
 let latestDropzone: any;
+const mockEnsureProjectHostBrowserSessionForProject = jest.fn();
+const mockRouteProjectHostHttpUrl = jest.fn();
 
 (globalThis as any).$ = {
   extend: (...args: any[]) => {
@@ -61,9 +63,53 @@ jest.mock("@cocalc/frontend/alerts", () => ({
   alert_message: jest.fn(),
 }));
 
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: {
+      ensureProjectHostBrowserSessionForProject: (...args: any[]) =>
+        mockEnsureProjectHostBrowserSessionForProject(...args),
+      routeProjectHostHttpUrl: (...args: any[]) =>
+        mockRouteProjectHostHttpUrl(...args),
+    },
+  },
+}));
+
 describe("BlobUpload", () => {
   beforeEach(() => {
     latestDropzone = undefined;
+    mockEnsureProjectHostBrowserSessionForProject.mockReset();
+    mockRouteProjectHostHttpUrl.mockReset();
+    mockRouteProjectHostHttpUrl.mockImplementation(
+      async ({ url }) => `https://host.example${url}`,
+    );
+  });
+
+  it("routes project file uploads directly to the project host", async () => {
+    render(
+      <FileUploadWrapper
+        show_upload={false}
+        project_id="project-1"
+        dest_path="/home/user"
+      >
+        <div>body</div>
+      </FileUploadWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(latestDropzone).toBeTruthy();
+    });
+
+    expect(mockEnsureProjectHostBrowserSessionForProject).toHaveBeenCalledWith({
+      project_id: "project-1",
+    });
+    expect(mockRouteProjectHostHttpUrl).toHaveBeenCalledWith({
+      project_id: "project-1",
+      url: "/project-1/upload?path=%2Fhome%2Fuser",
+    });
+    expect(latestDropzone.options.url).toBe(
+      "https://host.example/project-1/upload?path=%2Fhome%2Fuser",
+    );
+    expect(latestDropzone.options.withCredentials).toBe(true);
   });
 
   it("uses project-scoped blob uploads when project_id is set", () => {
@@ -74,6 +120,10 @@ describe("BlobUpload", () => {
     );
 
     expect(latestDropzone.options.url).toBe("/blobs?project_id=project-1");
+    expect(
+      mockEnsureProjectHostBrowserSessionForProject,
+    ).not.toHaveBeenCalled();
+    expect(mockRouteProjectHostHttpUrl).not.toHaveBeenCalled();
   });
 
   it("does not tell users to start the project in the upload preview", () => {
