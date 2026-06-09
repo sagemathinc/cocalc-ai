@@ -36,6 +36,26 @@ type ConnectionSampleHistory = ConnectionSample[];
 
 type SelectedTargetPingStatus = "idle" | "measuring" | "ok" | "unavailable";
 
+type LatencySample = {
+  at: number;
+  ms: number;
+};
+
+type LatencySummary = {
+  latest: number;
+  best: number;
+};
+
+const LATENCY_HISTORY_LIMIT = 8;
+
+function latencySummary(history?: LatencySample[]): LatencySummary | undefined {
+  if (!history?.length) return undefined;
+  return {
+    latest: history[history.length - 1].ms,
+    best: Math.min(...history.map(({ ms }) => ms)),
+  };
+}
+
 function cloneConnectionStats(
   stats: ConnectionStatsSnapshot,
 ): ConnectionStatsSnapshot {
@@ -95,6 +115,9 @@ export const ConnectionInfo: React.FC = React.memo(() => {
     React.useState<SelectedTargetPingStatus>("idle");
   const [samples, setSamples] = React.useState<
     Record<string, ConnectionSampleHistory>
+  >({});
+  const [latencySamples, setLatencySamples] = React.useState<
+    Record<string, LatencySample[]>
   >({});
 
   React.useEffect(() => {
@@ -171,7 +194,15 @@ export const ConnectionInfo: React.FC = React.memo(() => {
           await webapp_client.conat_client.probeConnectionTarget(targetId);
         if (!cancelled) {
           if (typeof nextPing === "number") {
-            setSelectedTargetPing(nextPing);
+            const roundedPing = Math.round(nextPing);
+            setSelectedTargetPing(roundedPing);
+            setLatencySamples((prev) => {
+              const history = [
+                ...(prev[targetId] ?? []),
+                { at: Date.now(), ms: roundedPing },
+              ].slice(-LATENCY_HISTORY_LIMIT);
+              return { ...prev, [targetId]: history };
+            });
             setSelectedTargetPingStatus("ok");
           } else {
             setSelectedTargetPing(undefined);
@@ -213,6 +244,11 @@ export const ConnectionInfo: React.FC = React.memo(() => {
     );
   }, [selectedTarget, selectedTargetId, targets]);
 
+  const selectedLatencySummary = React.useMemo(
+    () => latencySummary(latencySamples[selectedTargetId]),
+    [latencySamples, selectedTargetId],
+  );
+
   const exportSelectedConnectionStats = React.useCallback(() => {
     if (typeof window === "undefined" || !selectedTarget || !selectedStatus) {
       return;
@@ -229,7 +265,11 @@ export const ConnectionInfo: React.FC = React.memo(() => {
       ping:
         selectedTarget.id === "hub"
           ? { latest_ms: ping, average_ms: avgping }
-          : { latest_ms: selectedTargetPing, status: selectedTargetPingStatus },
+          : {
+              latest_ms: selectedTargetPing,
+              best_ms: selectedLatencySummary?.best,
+              status: selectedTargetPingStatus,
+            },
       status: {
         state: selectedStatus.state,
         reason: selectedStatus.reason,
@@ -265,6 +305,7 @@ export const ConnectionInfo: React.FC = React.memo(() => {
   }, [
     avgping,
     ping,
+    selectedLatencySummary,
     samples,
     selectedRates,
     selectedStatus,
@@ -335,29 +376,33 @@ export const ConnectionInfo: React.FC = React.memo(() => {
             <h5 style={{ margin: 0, minWidth: 95 }}>
               <FormattedMessage
                 id="connection-info.ping"
-                defaultMessage="Ping Time"
-                description={"Ping how long a server takes to respond"}
+                defaultMessage="Latency"
+                description={"Latency for how long a server takes to respond"}
               />
             </h5>
             <code style={{ whiteSpace: "nowrap" }}>
               {selectedTarget?.id === "hub" ? (
                 <FormattedMessage
                   id="connection-info.ping_info"
-                  defaultMessage="{avgping}ms (latest: {ping}ms)"
+                  defaultMessage="{avgping}ms avg (latest: {ping}ms)"
                   description={
-                    "Short string stating the average and the most recent ping in milliseconds."
+                    "Short string stating the average and the most recent latency in milliseconds."
                   }
                   values={{ avgping, ping }}
                 />
               ) : selectedTargetPingStatus === "ok" &&
-                selectedTargetPing != null ? (
+                selectedTargetPing != null &&
+                selectedLatencySummary != null ? (
                 <FormattedMessage
                   id="connection-info.project_host_ping_info"
-                  defaultMessage="{ping}ms (live probe)"
+                  defaultMessage="{best}ms best (latest: {latest}ms)"
                   description={
-                    "Short string stating the latest measured project-host ping in milliseconds."
+                    "Short string stating the best and latest measured project-host latency in milliseconds."
                   }
-                  values={{ ping: selectedTargetPing }}
+                  values={{
+                    best: selectedLatencySummary.best,
+                    latest: selectedLatencySummary.latest,
+                  }}
                 />
               ) : selectedTargetPingStatus === "measuring" ? (
                 <FormattedMessage
