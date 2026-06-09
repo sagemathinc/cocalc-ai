@@ -36,6 +36,10 @@ import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import {
+  mergeStartProjectTimings,
+  takeStartProjectTimings,
+} from "@cocalc/server/projects/start-timings";
 import type {
   HostAccessRole,
   HostEffectiveAccessRole,
@@ -58,7 +62,6 @@ type StartProjectInFlight = {
   promise: Promise<void>;
 };
 const startProjectInFlight = new Map<string, StartProjectInFlight>();
-const startProjectPhaseTimings = new Map<string, Record<string, number>>();
 
 type HostPlacement = {
   host_id: string;
@@ -902,7 +905,7 @@ export async function startProjectOnHost(
       });
       await saveProjectStateSnapshot(project_id, response.state ?? "running");
       if (opts?.lro_op_id && response.phase_timings_ms) {
-        startProjectPhaseTimings.set(opts.lro_op_id, response.phase_timings_ms);
+        mergeStartProjectTimings(opts.lro_op_id, response.phase_timings_ms);
       }
     } catch (err) {
       const autoGrow = await maybeAutoGrowHostDiskForReservationFailure({
@@ -929,7 +932,7 @@ export async function startProjectOnHost(
         });
         await saveProjectStateSnapshot(project_id, retry.state ?? "running");
         if (opts?.lro_op_id && retry.phase_timings_ms) {
-          startProjectPhaseTimings.set(opts.lro_op_id, retry.phase_timings_ms);
+          mergeStartProjectTimings(opts.lro_op_id, retry.phase_timings_ms);
         }
         return;
       }
@@ -959,11 +962,7 @@ export async function startProjectOnHost(
 export function takeStartProjectPhaseTimings(
   op_id?: string,
 ): Record<string, number> | undefined {
-  const key = `${op_id ?? ""}`.trim();
-  if (!key) return;
-  const timings = startProjectPhaseTimings.get(key);
-  startProjectPhaseTimings.delete(key);
-  return timings;
+  return takeStartProjectTimings(op_id);
 }
 
 export async function stopProjectOnHost(
