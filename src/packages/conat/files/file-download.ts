@@ -10,6 +10,7 @@ const DANGEROUS_CONTENT_TYPE = new Set(["image/svg+xml" /*, "text/html"*/]);
 export const DOWNLOAD_ERROR_HEADER = "X-CoCalc-Download-Error";
 
 const logger = getLogger("conat:file-download");
+export const PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE = ":project-host";
 
 // assumes request has already been authenticated!
 function parseDownloadUrl(url: string): { project_id: string; path: string } {
@@ -62,6 +63,7 @@ export async function handleFileDownload({
   client,
   beforeExplicitDownload,
   onExplicitDownloadComplete,
+  readServiceName,
   // allow a long download time (1 hour), since files can be large and
   // networks can be slow.
   maxWait = 1000 * 60 * 60,
@@ -83,6 +85,7 @@ export async function handleFileDownload({
     bytes: number;
     partial: boolean;
   }) => Promise<void>;
+  readServiceName?: string;
   maxWait?: number;
 }) {
   url ??= req.url;
@@ -172,6 +175,7 @@ export async function handleFileDownload({
       client,
       project_id,
       path,
+      name: readServiceName,
       maxWait,
     })) {
       if (res.writableEnded || res.destroyed) {

@@ -202,7 +202,7 @@ async function sendData(mesg, createReadStream) {
     await delay(CHUNK_INTERVAL);
   };
 
-  for await (let chunk of createReadStream(path, {
+  for await (let chunk of await createReadStream(path, {
     highWaterMark: CHUNK_SIZE,
   })) {
     chunks.push(chunk);

@@ -126,6 +126,38 @@ describe("handleFileDownload", () => {
     expect(res.end).toHaveBeenCalled();
   });
 
+  it("uses an explicit read service name for streamed downloads", async () => {
+    mockReadFile.mockResolvedValue([Buffer.from("hello")]);
+    const req: any = {
+      method: "GET",
+      url: "/project-123/files/home/user/a.txt?download",
+    };
+    const res: any = {
+      statusCode: undefined,
+      setHeader: jest.fn(),
+      write: jest.fn(() => true),
+      end: jest.fn(),
+      on: jest.fn(),
+      writableEnded: false,
+      destroyed: false,
+    };
+
+    await handleFileDownload({
+      req,
+      res,
+      client: { id: "client-1" } as any,
+      readServiceName: ":project-host",
+    });
+
+    expect(mockReadFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "project-123",
+        path: "/home/user/a.txt",
+        name: ":project-host",
+      }),
+    );
+  });
+
   it("returns the managed download error for blocked HEAD preflight", async () => {
     const req: any = {
       method: "HEAD",
