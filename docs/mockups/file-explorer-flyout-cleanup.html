@@ -1,0 +1,945 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>File Explorer Flyout Cleanup Mockup</title>
+    <style>
+      :root {
+        --blue-dark: #2a5aa6;
+        --blue: #4474c0;
+        --blue-soft: #e6f4ff;
+        --orange: #fcc861;
+        --text: #303030;
+        --muted: #6b7280;
+        --line: #d7dee8;
+        --line-soft: #e8edf4;
+        --surface: #ffffff;
+        --surface-soft: #f6f8fb;
+        --surface-hover: #f0f6ff;
+        --danger: #c9302c;
+        --star: #f6b800;
+        --shadow: 0 18px 48px rgba(14, 43, 89, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        background:
+          linear-gradient(180deg, rgba(230, 244, 255, 0.86), transparent 280px),
+          #f4f6f9;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+          Arial, sans-serif;
+      }
+
+      .page {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 28px 24px 44px;
+      }
+
+      .page-header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 18px;
+      }
+
+      .page-title {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 650;
+      }
+
+      .page-note {
+        max-width: 640px;
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .legend span {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.72);
+        padding: 4px 9px;
+      }
+
+      .mockups {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(330px, 1fr));
+        gap: 22px;
+        align-items: start;
+      }
+
+      .scenario {
+        min-width: 0;
+      }
+
+      .scenario-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 0 0 10px;
+        color: #1f2937;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .scenario-title small {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 500;
+      }
+
+      .flyout {
+        position: relative;
+        width: 350px;
+        height: 790px;
+        margin: 0 auto;
+        overflow: hidden;
+        border: 1px solid #c8d3e2;
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .flyout-header {
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, #ffffff, #f8fafc);
+        padding: 10px 10px 9px;
+      }
+
+      .pathbar {
+        display: grid;
+        grid-template-columns: 28px 1fr 28px;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .path {
+        min-width: 0;
+        color: #374151;
+        font-size: 13px;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .search {
+        position: relative;
+        margin-bottom: 8px;
+      }
+
+      .search::before {
+        content: "";
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        width: 11px;
+        height: 11px;
+        border: 2px solid #7c899a;
+        border-radius: 999px;
+        transform: translateY(-55%);
+      }
+
+      .search::after {
+        content: "";
+        position: absolute;
+        left: 21px;
+        top: 23px;
+        width: 7px;
+        height: 2px;
+        border-radius: 1px;
+        background: #7c899a;
+        transform: rotate(45deg);
+      }
+
+      .search input {
+        width: 100%;
+        height: 36px;
+        border: 1px solid #bfc9d7;
+        border-radius: 6px;
+        background: #fff;
+        color: var(--text);
+        font: inherit;
+        font-size: 13px;
+        padding: 0 12px 0 34px;
+        outline: none;
+      }
+
+      .search input:focus {
+        border-color: var(--blue);
+        box-shadow: 0 0 0 3px rgba(68, 116, 192, 0.14);
+      }
+
+      .toolbar {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr 1fr 32px;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .toolbar.selection {
+        grid-template-columns: 1fr auto auto auto;
+      }
+
+      button {
+        height: 30px;
+        border: 1px solid #c5cfdd;
+        border-radius: 6px;
+        background: #fff;
+        color: #2f3a4a;
+        cursor: default;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 0 9px;
+      }
+
+      .icon-button {
+        display: inline-grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+      }
+
+      .button-primary {
+        border-color: var(--blue-dark);
+        background: var(--blue);
+        color: #fff;
+      }
+
+      .button-subtle {
+        background: var(--surface-soft);
+      }
+
+      .button-danger {
+        color: var(--danger);
+      }
+
+      .selected-count {
+        color: #1f2937;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .view-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        border-bottom: 1px solid var(--line-soft);
+        background: #fbfcfe;
+        color: var(--muted);
+        font-size: 11px;
+        padding: 6px 10px;
+      }
+
+      .view-summary strong {
+        color: #4b5563;
+        font-weight: 600;
+      }
+
+      .list {
+        height: 612px;
+        overflow: hidden;
+        background: #fff;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        min-height: 38px;
+        border-bottom: 1px solid #edf1f6;
+        padding: 0 10px;
+      }
+
+      .row:hover,
+      .row.focused {
+        background: var(--surface-hover);
+      }
+
+      .row.selected {
+        border-left: 2px solid var(--blue);
+        background: #eef6ff;
+        padding-left: 8px;
+      }
+
+      .row.open {
+        background: #f5f5f5;
+      }
+
+      .row-name {
+        min-width: 0;
+        overflow: hidden;
+        color: #2f3a4a;
+        font-size: 13px;
+        font-weight: 500;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .row.open .row-name {
+        color: var(--blue-dark);
+        font-weight: 700;
+      }
+
+      .file-ext {
+        color: #8b95a4;
+        font-weight: 500;
+      }
+
+      .row-meta {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: #7a8493;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .recent-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--orange);
+      }
+
+      .file-icon {
+        position: relative;
+        width: 20px;
+        height: 18px;
+        border-radius: 4px;
+        background: #e8edf4;
+      }
+
+      .file-icon.folder {
+        background: #dcecff;
+      }
+
+      .file-icon.folder::before {
+        content: "";
+        position: absolute;
+        left: 2px;
+        top: -3px;
+        width: 10px;
+        height: 5px;
+        border-radius: 3px 3px 0 0;
+        background: #b9d8ff;
+      }
+
+      .file-icon.notebook {
+        background: #fff2d0;
+      }
+
+      .file-icon.code {
+        background: #e8f5e9;
+      }
+
+      .file-icon.md {
+        background: #eeeeee;
+      }
+
+      .checkbox {
+        display: inline-grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        border: 1px solid #9db1cc;
+        border-radius: 4px;
+        background: #fff;
+        color: #fff;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .checkbox.checked {
+        border-color: var(--blue);
+        background: var(--blue);
+      }
+
+      .star {
+        color: var(--star);
+        font-size: 13px;
+      }
+
+      .row-actions {
+        display: none;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .row.focused .row-actions,
+      .row:hover .row-actions {
+        display: flex;
+      }
+
+      .row.focused .row-meta,
+      .row:hover .row-meta {
+        display: none;
+      }
+
+      .footer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 38px;
+        border-top: 1px solid var(--line);
+        background: #fbfcfe;
+        color: var(--muted);
+        font-size: 12px;
+        padding: 0 10px;
+      }
+
+      .footer strong {
+        color: #374151;
+        font-weight: 650;
+      }
+
+      .footer-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .menu {
+        position: absolute;
+        z-index: 5;
+        width: 235px;
+        border: 1px solid #c8d3e2;
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 12px 36px rgba(14, 43, 89, 0.18);
+        overflow: hidden;
+      }
+
+      .view-menu {
+        top: 122px;
+        right: 44px;
+      }
+
+      .actions-menu {
+        top: 83px;
+        right: 10px;
+        width: 205px;
+      }
+
+      .menu-section {
+        padding: 8px;
+      }
+
+      .menu-section + .menu-section {
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .menu-title {
+        margin: 0 0 5px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .menu-item {
+        display: grid;
+        grid-template-columns: 20px 1fr auto;
+        gap: 7px;
+        align-items: center;
+        min-height: 28px;
+        border-radius: 5px;
+        color: #2f3a4a;
+        font-size: 12px;
+        padding: 0 7px;
+      }
+
+      .menu-item:hover,
+      .menu-item.active {
+        background: var(--blue-soft);
+      }
+
+      .menu-item.danger {
+        color: var(--danger);
+      }
+
+      .menu-item kbd {
+        border: 1px solid #d2d9e4;
+        border-radius: 4px;
+        background: #f8fafc;
+        color: #6b7280;
+        font: inherit;
+        font-size: 10px;
+        padding: 1px 4px;
+      }
+
+      .switch {
+        position: relative;
+        width: 28px;
+        height: 16px;
+        border-radius: 999px;
+        background: #cbd5e1;
+      }
+
+      .switch.on {
+        background: var(--blue);
+      }
+
+      .switch::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        background: #fff;
+      }
+
+      .switch.on::after {
+        left: 14px;
+      }
+
+      .command-hint {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .command-pill {
+        border: 1px solid #d8e0ec;
+        border-radius: 999px;
+        background: #fff;
+        color: #4b5563;
+        font-size: 11px;
+        padding: 2px 7px;
+      }
+
+      @media (max-width: 1120px) {
+        .mockups {
+          grid-template-columns: 1fr;
+        }
+
+        .page-header {
+          display: block;
+        }
+
+        .legend {
+          justify-content: flex-start;
+          margin-top: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">File Explorer Flyout Cleanup Mockup</h1>
+          <p class="page-note">
+            Proposed structure: browse first, advanced controls second. The
+            default state keeps the file list dominant; sorting, filters, hidden
+            files, recovery, terminal tools, and destructive actions move into
+            explicit menus.
+          </p>
+        </div>
+        <div class="legend" aria-label="Design notes">
+          <span>350px flyout width</span>
+          <span>no idle bottom tray</span>
+          <span>one metadata lane</span>
+        </div>
+      </header>
+
+      <section class="mockups" aria-label="File explorer flyout states">
+        <article class="scenario">
+          <h2 class="scenario-title">
+            Default browsing
+            <small>quiet first screen</small>
+          </h2>
+          <div class="flyout">
+            <header class="flyout-header">
+              <div class="pathbar">
+                <button class="icon-button" aria-label="Go up">Up</button>
+                <div class="path" title="/home/user/cocalc-ai/src">
+                  /home/user/cocalc-ai/src
+                </div>
+                <button class="icon-button" aria-label="Project tools">
+                  ...
+                </button>
+              </div>
+              <label class="search">
+                <input
+                  aria-label="Search files"
+                  value=""
+                  placeholder="Search files"
+                />
+              </label>
+              <div class="toolbar">
+                <button class="button-primary">New</button>
+                <button>Upload</button>
+                <button>Select</button>
+                <button>View</button>
+                <button class="icon-button" aria-label="More">...</button>
+              </div>
+            </header>
+            <div class="view-summary">
+              <span><strong>Name</strong> sort · all files</span>
+              <span class="command-hint">
+                <span class="command-pill">Terminal</span>
+                <span class="command-pill">Agent</span>
+              </span>
+            </div>
+            <div class="list">
+              <div class="row open">
+                <span class="file-icon folder" aria-hidden="true"></span>
+                <span class="row-name">packages</span>
+                <span class="row-meta"><span class="recent-dot"></span>8m</span>
+              </div>
+              <div class="row">
+                <span class="file-icon folder" aria-hidden="true"></span>
+                <span class="row-name">frontend</span>
+                <span class="row-meta">1h</span>
+              </div>
+              <div class="row">
+                <span class="file-icon folder" aria-hidden="true"></span>
+                <span class="row-name">next</span>
+                <span class="row-meta">2h</span>
+              </div>
+              <div class="row focused">
+                <span class="file-icon code" aria-hidden="true"></span>
+                <span class="row-name"
+                  >pnpm-workspace<span class="file-ext">.yaml</span></span
+                >
+                <span class="row-actions">
+                  <span class="star" aria-label="Starred">★</span>
+                  <button class="icon-button" aria-label="File actions">
+                    ...
+                  </button>
+                </span>
+                <span class="row-meta">12 KB</span>
+              </div>
+              <div class="row">
+                <span class="file-icon code" aria-hidden="true"></span>
+                <span class="row-name"
+                  >package<span class="file-ext">.json</span></span
+                >
+                <span class="row-meta">54 KB</span>
+              </div>
+              <div class="row">
+                <span class="file-icon md" aria-hidden="true"></span>
+                <span class="row-name"
+                  >README<span class="file-ext">.md</span></span
+                >
+                <span class="row-meta">18 KB</span>
+              </div>
+              <div class="row">
+                <span class="file-icon notebook" aria-hidden="true"></span>
+                <span class="row-name"
+                  >analysis<span class="file-ext">.ipynb</span></span
+                >
+                <span class="row-meta">420 KB</span>
+              </div>
+              <div class="row">
+                <span class="file-icon folder" aria-hidden="true"></span>
+                <span class="row-name">patches</span>
+                <span class="row-meta">Yesterday</span>
+              </div>
+              <div class="row">
+                <span class="file-icon code" aria-hidden="true"></span>
+                <span class="row-name"
+                  >pnpm-lock<span class="file-ext">.yaml</span></span
+                >
+                <span class="row-meta">4.1 MB</span>
+              </div>
+              <div class="row">
+                <span class="file-icon folder" aria-hidden="true"></span>
+                <span class="row-name">scripts</span>
+                <span class="row-meta">May 31</span>
+              </div>
+            </div>
+            <footer class="footer">
+              <span><strong>22</strong> items · 1.4 GB</span>
+              <span class="footer-actions">
+                <button class="icon-button" aria-label="Refresh">↻</button>
+              </span>
+            </footer>
+          </div>
+        </article>
+
+        <article class="scenario">
+          <h2 class="scenario-title">
+            View menu
+            <small>sorts and filters hidden</small>
+          </h2>
+          <div class="flyout">
+            <header class="flyout-header">
+              <div class="pathbar">
+                <button class="icon-button" aria-label="Go up">Up</button>
+                <div class="path" title="/home/user/cocalc-ai/src">
+                  /home/user/cocalc-ai/src
+                </div>
+                <button class="icon-button" aria-label="Project tools">
+                  ...
+                </button>
+              </div>
+              <label class="search">
+                <input aria-label="Search files" placeholder="Search files" />
+              </label>
+              <div class="toolbar">
+                <button class="button-primary">New</button>
+                <button>Upload</button>
+                <button>Select</button>
+                <button class="button-subtle">View</button>
+                <button class="icon-button" aria-label="More">...</button>
+              </div>
+            </header>
+            <div class="view-summary">
+              <span><strong>Name</strong> sort · all files</span>
+              <span>hidden off</span>
+            </div>
+            <div class="list">
+              <div class="row open">
+                <span class="file-icon folder" aria-hidden="true"></span>
+                <span class="row-name">packages</span>
+                <span class="row-meta"><span class="recent-dot"></span>8m</span>
+              </div>
+              <div class="row">
+                <span class="file-icon folder" aria-hidden="true"></span>
+                <span class="row-name">frontend</span>
+                <span class="row-meta">1h</span>
+              </div>
+              <div class="row">
+                <span class="file-icon folder" aria-hidden="true"></span>
+                <span class="row-name">next</span>
+                <span class="row-meta">2h</span>
+              </div>
+              <div class="row">
+                <span class="file-icon code" aria-hidden="true"></span>
+                <span class="row-name"
+                  >pnpm-workspace<span class="file-ext">.yaml</span></span
+                >
+                <span class="row-meta">12 KB</span>
+              </div>
+              <div class="row">
+                <span class="file-icon code" aria-hidden="true"></span>
+                <span class="row-name"
+                  >package<span class="file-ext">.json</span></span
+                >
+                <span class="row-meta">54 KB</span>
+              </div>
+              <div class="row">
+                <span class="file-icon md" aria-hidden="true"></span>
+                <span class="row-name"
+                  >README<span class="file-ext">.md</span></span
+                >
+                <span class="row-meta">18 KB</span>
+              </div>
+              <div class="row">
+                <span class="file-icon notebook" aria-hidden="true"></span>
+                <span class="row-name"
+                  >analysis<span class="file-ext">.ipynb</span></span
+                >
+                <span class="row-meta">420 KB</span>
+              </div>
+              <div class="row">
+                <span class="file-icon folder" aria-hidden="true"></span>
+                <span class="row-name">patches</span>
+                <span class="row-meta">Yesterday</span>
+              </div>
+            </div>
+            <div class="menu view-menu" role="menu" aria-label="View menu">
+              <div class="menu-section">
+                <p class="menu-title">Sort by</p>
+                <div class="menu-item active">
+                  <span>✓</span><span>Name</span><kbd>A-Z</kbd>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Recent</span><kbd>Time</kbd>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Size</span><kbd>Size</kbd>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Type</span><kbd>Ext</kbd>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Starred first</span><span></span>
+                </div>
+              </div>
+              <div class="menu-section">
+                <p class="menu-title">Show</p>
+                <div class="menu-item active">
+                  <span>✓</span><span>All file types</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Notebooks only</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Source files only</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span>
+                  <span>Hidden files</span>
+                  <span class="switch"></span>
+                </div>
+              </div>
+            </div>
+            <footer class="footer">
+              <span><strong>22</strong> items · 1.4 GB</span>
+              <span>View options open</span>
+            </footer>
+          </div>
+        </article>
+
+        <article class="scenario">
+          <h2 class="scenario-title">
+            Selection mode
+            <small>actions only when relevant</small>
+          </h2>
+          <div class="flyout">
+            <header class="flyout-header">
+              <div class="pathbar">
+                <button class="icon-button" aria-label="Go up">Up</button>
+                <div class="path" title="/home/user/cocalc-ai/src">
+                  /home/user/cocalc-ai/src
+                </div>
+                <button class="icon-button" aria-label="Project tools">
+                  ...
+                </button>
+              </div>
+              <label class="search">
+                <input
+                  aria-label="Search selected files"
+                  placeholder="Filter selected files"
+                />
+              </label>
+              <div class="toolbar selection">
+                <span class="selected-count">3 selected</span>
+                <button class="button-primary">Open</button>
+                <button class="button-subtle">Actions</button>
+                <button>Clear</button>
+              </div>
+            </header>
+            <div class="view-summary">
+              <span><strong>Selection</strong> · 3 files</span>
+              <span>58 KB</span>
+            </div>
+            <div class="list">
+              <div class="row">
+                <span class="checkbox"></span>
+                <span class="row-name">packages</span>
+                <span class="row-meta">folder</span>
+              </div>
+              <div class="row">
+                <span class="checkbox"></span>
+                <span class="row-name">frontend</span>
+                <span class="row-meta">folder</span>
+              </div>
+              <div class="row selected">
+                <span class="checkbox checked">✓</span>
+                <span class="row-name"
+                  >pnpm-workspace<span class="file-ext">.yaml</span></span
+                >
+                <span class="row-meta">12 KB</span>
+              </div>
+              <div class="row selected">
+                <span class="checkbox checked">✓</span>
+                <span class="row-name"
+                  >package<span class="file-ext">.json</span></span
+                >
+                <span class="row-meta">54 KB</span>
+              </div>
+              <div class="row selected focused">
+                <span class="checkbox checked">✓</span>
+                <span class="row-name"
+                  >README<span class="file-ext">.md</span></span
+                >
+                <span class="row-actions">
+                  <button class="icon-button" aria-label="File actions">
+                    ...
+                  </button>
+                </span>
+                <span class="row-meta">18 KB</span>
+              </div>
+              <div class="row">
+                <span class="checkbox"></span>
+                <span class="row-name"
+                  >analysis<span class="file-ext">.ipynb</span></span
+                >
+                <span class="row-meta">420 KB</span>
+              </div>
+              <div class="row">
+                <span class="checkbox"></span>
+                <span class="row-name">patches</span>
+                <span class="row-meta">folder</span>
+              </div>
+              <div class="row">
+                <span class="checkbox"></span>
+                <span class="row-name"
+                  >pnpm-lock<span class="file-ext">.yaml</span></span
+                >
+                <span class="row-meta">4.1 MB</span>
+              </div>
+            </div>
+            <div
+              class="menu actions-menu"
+              role="menu"
+              aria-label="Selected file actions"
+            >
+              <div class="menu-section">
+                <p class="menu-title">Selected files</p>
+                <div class="menu-item active">
+                  <span></span><span>Download</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Compress</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Move</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Copy</span><span></span>
+                </div>
+                <div class="menu-item danger">
+                  <span></span><span>Delete</span><span></span>
+                </div>
+              </div>
+            </div>
+            <footer class="footer">
+              <span><strong>3 selected</strong> · 58 KB</span>
+              <span class="footer-actions">
+                <button>Details</button>
+              </span>
+            </footer>
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
