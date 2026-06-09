@@ -3577,27 +3577,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
       const actions = redux.getProjectActions(project_id);
       try {
         this.optimisticProjectStateUpdate(project_id, "starting");
-        const resp = await writeAndWaitForProjection({
-          consumer: "projects",
-          id: `project:${project_id}:start`,
-          name: "project.start",
-          write: () =>
-            webapp_client.conat_client.hub.projects.start({
-              project_id,
-              ...(opts.autostart ? { autostart: true } : {}),
-              wait: false,
-            }),
-          matchesProjection: () =>
-            this.projectedProjectStateMatches({
-              project_id,
-              states: ["starting", "running"],
-            }),
-          repair: () =>
-            this.repairProjectProjection({
-              kind: "project-ids",
-              project_ids: [project_id],
-              reason: "project-start",
-            }),
+        const resp = await webapp_client.conat_client.hub.projects.start({
+          project_id,
+          ...(opts.autostart ? { autostart: true } : {}),
+          wait: false,
         });
         actions.trackStartOp(resp);
         opts.onStartOp?.(resp);
