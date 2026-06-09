@@ -9,6 +9,26 @@ packages:
   # exclude generated build artifacts that can confuse workspace discovery
   - "!**/build/**"
 
+allowBuilds:
+  '@cocalc/gcloud-pricing-calculator': true
+  '@cocalc/primus-multiplex': true
+  '@cocalc/widgets': true
+  bufferutil: true
+  electron: true
+  es5-ext: true
+  esbuild: true
+  fs-ext: false
+  node-pty: true
+  protobufjs: true
+  storage-engine: true
+  unrs-resolver: true
+  utf-8-validate: true
+  zeromq: true
+
+patchedDependencies:
+  "@rc-component/portal@2.2.0": patches/@rc-component__portal@2.2.0.patch
+  fs-ext@2.1.1: patches/fs-ext@2.1.1.patch
+
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - "@cocalc/xterm"
