@@ -478,8 +478,8 @@ export const termsPolicy: PublicPolicy = {
           SMI’s policy to terminate in appropriate circumstances Account holders
           who repeatedly infringe the rights of copyright holders. Please see
           SMI’<i>s</i> Copyright and IP Policy at{" "}
-          <A href="/policies/copyright"> /policies/copyright </A> for further
-          information.{" "}
+          <A href="/policies/copyright">https://cocalc.ai/policies/copyright</A>{" "}
+          for further information.{" "}
         </p>
       </PolicySection>
       <PolicySection title="Links to Third Party Websites or Resources">
@@ -765,14 +765,14 @@ export const termsPolicy: PublicPolicy = {
             its other remedies under these Terms or otherwise.{" "}
           </p>
           <p>
-            The look and feel of the Services is copyright ©2015 Sagemath, Inc.
-            All rights reserved. You may only duplicate, copy, or reuse any
+            The look and feel of the Services is copyright ©2015-2026 Sagemath,
+            Inc. All rights reserved. You may only duplicate, copy, or reuse any
             portion of the HTML/CSS, Javascript, or visual design elements or
             concepts under the terms of the MICROSOFT REFERENCE SOURCE LICENSE
             (MS-RSL), as stated at{" "}
-            <A href="https://github.com/sagemathinc/cocalc">
+            <A href="https://github.com/sagemathinc/cocalc-ai">
               {" "}
-              https://github.com/sagemathinc/cocalc{" "}
+              https://github.com/sagemathinc/cocalc-ai{" "}
             </A>
             .{" "}
           </p>
