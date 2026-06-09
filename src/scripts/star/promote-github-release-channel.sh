@@ -77,6 +77,18 @@ chmod 0755 "$installer_output"
 cp "${SCRIPT_DIR}/install-local-lima.sh" "$lima_installer_output"
 chmod 0755 "$lima_installer_output"
 
+stamp_channel_default() {
+  local file="$1"
+  local tmp="${file}.tmp.$$"
+  sed \
+    "s|^RELEASE_CHANNEL=.*|RELEASE_CHANNEL=\"\${COCALC_STAR_RELEASE_CHANNEL:-\${COCALC_STAR_CHANNEL:-${channel}}}\"|" \
+    "$file" >"$tmp"
+  mv "$tmp" "$file"
+}
+
+stamp_channel_default "$installer_output"
+stamp_channel_default "$lima_installer_output"
+
 cat >"$env_manifest_output" <<EOF
 # CoCalc Star release channel manifest v1
 COCALC_STAR_CHANNEL=${channel}
