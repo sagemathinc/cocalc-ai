@@ -98,10 +98,10 @@ wait_for_url() {
 
 wait_for_runtime_health() {
   wait_for_url "hub customize endpoint" "${STAR_API}/customize"
-  if [ -f /etc/cocalc/project-host.env ]; then
+  if [ -f /etc/cocalc/star/project-host.env ]; then
     # shellcheck disable=SC1091
     set -a
-    source /etc/cocalc/project-host.env
+    source /etc/cocalc/star/project-host.env
     set +a
     local conat_health_host="${COCALC_PROJECT_HOST_CONAT_ROUTER_HOST:-127.0.0.1}"
     if [ "$conat_health_host" = "0.0.0.0" ] || [ "$conat_health_host" = "::" ]; then
@@ -166,13 +166,13 @@ doctor() {
     fail "hub env exists"
   fi
 
-  if [ -f /etc/cocalc/project-host.env ]; then
+  if [ -f /etc/cocalc/star/project-host.env ]; then
     ok "project-host env exists"
     # shellcheck disable=SC1091
     set -a
-    source /etc/cocalc/project-host.env
+    source /etc/cocalc/star/project-host.env
     set +a
-    if grep -q '^COCALC_PODMAN_RUNTIME_DIR=' /etc/cocalc/project-host.env; then
+    if grep -q '^COCALC_PODMAN_RUNTIME_DIR=' /etc/cocalc/star/project-host.env; then
       fail "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
     else
       ok "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
@@ -1074,7 +1074,7 @@ EOF
   backup_and_remove_file /etc/systemd/system/cocalc-star-project-host.service "$backup_dir"
   backup_and_remove_file /etc/cocalc/star/hub.env "$backup_dir"
   backup_and_remove_file /etc/cocalc/star/config.env "$backup_dir"
-  backup_and_remove_file /etc/cocalc/project-host.env "$backup_dir"
+  backup_and_remove_file /etc/cocalc/star/project-host.env "$backup_dir"
   backup_and_remove_file /etc/sudoers.d/cocalc-project-host-runtime "$backup_dir"
   backup_and_remove_file /etc/sudoers.d/cocalc-star-admin "$backup_dir"
   backup_and_remove_file /usr/local/sbin/cocalc-runtime-storage "$backup_dir"

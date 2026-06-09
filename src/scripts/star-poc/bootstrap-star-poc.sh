@@ -37,6 +37,7 @@ STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
 STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
 STAR_AUTO_APT_STATE_DIR=""
 STAR_AUTO_APT_DISABLED=0
+STAR_PROJECT_HOST_ENV="/etc/cocalc/star/project-host.env"
 
 log() {
   printf '[star] %s\n' "$*" >&2
@@ -85,6 +86,44 @@ apt_get() {
   local timeout="${STAR_APT_LOCK_TIMEOUT:-900}"
   wait_for_apt_locks
   run apt-get -o "DPkg::Lock::Timeout=${timeout}" "$@"
+}
+
+wait_for_gce_startup_scripts() {
+  local timeout="${STAR_GCE_STARTUP_SCRIPT_TIMEOUT:-900}"
+  local waited=0
+  if ! systemctl list-unit-files google-startup-scripts.service >/dev/null 2>&1 &&
+    ! systemctl list-unit-files google-startup-scripts >/dev/null 2>&1; then
+    return 0
+  fi
+  while [ "$waited" -lt "$timeout" ]; do
+    if ! systemctl is-active --quiet google-startup-scripts.service 2>/dev/null &&
+      ! systemctl is-active --quiet google-startup-scripts 2>/dev/null &&
+      ! pgrep -f google_metadata_script_runner >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ "$waited" = "0" ]; then
+      log "waiting for GCE startup scripts to finish before installing CoCalc Star"
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  die "timed out after ${timeout}s waiting for GCE startup scripts"
+}
+
+check_for_conflicting_project_host_install() {
+  [ "${STAR_ALLOW_EXISTING_PROJECT_HOST:-0}" != "1" ] || return 0
+
+  local env="/etc/cocalc/project-host.env"
+  if [ -f "$env" ]; then
+    if grep -Eq '^COCALC_ROOT=/opt/cocalc/project-host(/|$)' "$env" ||
+      { grep -q '^PROJECT_HOST_ID=' "$env" && ! grep -q '^PROJECT_HOST_NAME=star-local$' "$env"; }; then
+      die "this VM already appears to be configured as a CoCalc dedicated project-host via ${env}; use a fresh VM, remove the old project-host startup/configuration, or set STAR_ALLOW_EXISTING_PROJECT_HOST=1 if you are intentionally taking over the machine"
+    fi
+  fi
+
+  if [ -e /opt/cocalc/project-host/current ] && { [ ! -f "$env" ] || ! grep -q '^PROJECT_HOST_NAME=star-local$' "$env"; }; then
+    die "this VM already has /opt/cocalc/project-host/current from a dedicated project-host install; use a fresh VM, remove the old project-host startup/configuration, or set STAR_ALLOW_EXISTING_PROJECT_HOST=1 if you are intentionally taking over the machine"
+  fi
 }
 
 automatic_apt_units() {
@@ -649,7 +688,7 @@ ensure_default_rootfs_cache() {
   elif [ -f "$SRC_ROOT/scripts/star-poc/ensure-rootfs-cache.cjs" ]; then
     script="scripts/star-poc/ensure-rootfs-cache.cjs"
   fi
-  as_star_user "set -a && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
+  as_star_user "set -a && source '$STAR_PROJECT_HOST_ENV' && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
 }
 
 publish_default_rootfs() {
@@ -660,7 +699,7 @@ publish_default_rootfs() {
   if [ -f "$SRC_ROOT/scripts/star-poc/build/publish-default-rootfs/index.cjs" ]; then
     script="scripts/star-poc/build/publish-default-rootfs/index.cjs"
   fi
-  as_star_user "set -a && source /etc/cocalc/star/hub.env && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && source '$STAR_PROJECT_HOST_ENV' && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
 }
 
 write_env_files() {
@@ -731,7 +770,7 @@ EOF
   chown "$STAR_USER:$STAR_USER" /etc/cocalc/star/hub.env
   chmod 600 /etc/cocalc/star/hub.env
 
-  cat >/etc/cocalc/project-host.env <<EOF
+  cat >"$STAR_PROJECT_HOST_ENV" <<EOF
 PROJECT_HOST_ID=${STAR_HOST_ID}
 PROJECT_HOST_NAME=star-local
 COCALC_ROOT=${SRC_ROOT}
@@ -751,6 +790,9 @@ COCALC_SHARED_SCRATCH_HOST_MOUNT=$(shared_scratch_host_mount)
 COCALC_PROJECT_HOST_CPU_USAGE_MODE=observe
 COCALC_PROJECT_TOOLS=$([ -d "${SRC_ROOT}/packages/project/build/tools/current" ] && printf '%s' "${SRC_ROOT}/packages/project/build/tools/current" || printf '%s' "${SRC_ROOT}/packages/backend/node_modules/.bin")
 COCALC_PROJECT_BUNDLES=${SRC_ROOT}/packages/project/build
+COCALC_PROJECT_HOST_BUNDLE_ROOT=${SRC_ROOT}/packages/project-host/build/bundle
+COCALC_PROJECT_HOST_CURRENT=${SRC_ROOT}/packages/project-host/build/bundle
+COCALC_PROJECT_HOST_BIN=${SRC_ROOT}/packages/project-host/build/bundle/bundle/index.js
 COCALC_PROJECT_HOST_CONAT_ROUTER_HOST=0.0.0.0
 COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9112
 COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT=9212
@@ -761,8 +803,8 @@ COCALC_ALLOW_INSECURE_HTTP_MODE=true
 DEBUG_CONSOLE=no
 COCALC_PROJECT_HOST_LOG=${STAR_PROJECT_HOST_DATA}/log
 EOF
-  chown "$STAR_USER:$STAR_USER" /etc/cocalc/project-host.env
-  chmod 600 /etc/cocalc/project-host.env
+  chown "$STAR_USER:$STAR_USER" "$STAR_PROJECT_HOST_ENV"
+  chmod 600 "$STAR_PROJECT_HOST_ENV"
 }
 
 seed_database() {
@@ -901,7 +943,7 @@ Type=simple
 User=${STAR_USER}
 Group=${STAR_USER}
 WorkingDirectory=${project_host_workdir}
-EnvironmentFile=/etc/cocalc/project-host.env
+EnvironmentFile=${STAR_PROJECT_HOST_ENV}
 Environment=COCALC_PROJECT_HOST_AGENT=1
 Environment=COCALC_PROJECT_HOST_AGENT_INDEX=0
 ExecStart=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && ${project_host_exec}'
@@ -1060,6 +1102,8 @@ web_onboarding_exit_trap() {
 require_root
 trap web_onboarding_exit_trap EXIT
 disable_automatic_apt
+wait_for_gce_startup_scripts
+check_for_conflicting_project_host_install
 install_packages
 configure_kernel_limits
 start_web_onboarding
