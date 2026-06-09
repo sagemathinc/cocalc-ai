@@ -34,6 +34,8 @@ type ConnectionSample = {
 
 type ConnectionSampleHistory = ConnectionSample[];
 
+type SelectedTargetPingStatus = "idle" | "measuring" | "ok" | "unavailable";
+
 function cloneConnectionStats(
   stats: ConnectionStatsSnapshot,
 ): ConnectionStatsSnapshot {
@@ -89,6 +91,8 @@ export const ConnectionInfo: React.FC = React.memo(() => {
   const [selectedTargetPing, setSelectedTargetPing] = React.useState<
     number | undefined
   >();
+  const [selectedTargetPingStatus, setSelectedTargetPingStatus] =
+    React.useState<SelectedTargetPingStatus>("idle");
   const [samples, setSamples] = React.useState<
     Record<string, ConnectionSampleHistory>
   >({});
@@ -149,23 +153,35 @@ export const ConnectionInfo: React.FC = React.memo(() => {
     const targetState = selectedTarget?.status.state;
     if (!targetId || targetId === "hub") {
       setSelectedTargetPing(undefined);
+      setSelectedTargetPingStatus("idle");
       return;
     }
     if (targetState !== "connected") {
       setSelectedTargetPing(undefined);
+      setSelectedTargetPingStatus("unavailable");
       return;
     }
     let cancelled = false;
     const probe = async () => {
+      setSelectedTargetPingStatus((status) =>
+        status === "ok" ? status : "measuring",
+      );
       try {
         const nextPing =
           await webapp_client.conat_client.probeConnectionTarget(targetId);
         if (!cancelled) {
-          setSelectedTargetPing(nextPing);
+          if (typeof nextPing === "number") {
+            setSelectedTargetPing(nextPing);
+            setSelectedTargetPingStatus("ok");
+          } else {
+            setSelectedTargetPing(undefined);
+            setSelectedTargetPingStatus("unavailable");
+          }
         }
       } catch {
         if (!cancelled) {
           setSelectedTargetPing(undefined);
+          setSelectedTargetPingStatus("unavailable");
         }
       }
     };
@@ -213,7 +229,7 @@ export const ConnectionInfo: React.FC = React.memo(() => {
       ping:
         selectedTarget.id === "hub"
           ? { latest_ms: ping, average_ms: avgping }
-          : { latest_ms: selectedTargetPing },
+          : { latest_ms: selectedTargetPing, status: selectedTargetPingStatus },
       status: {
         state: selectedStatus.state,
         reason: selectedStatus.reason,
@@ -254,6 +270,7 @@ export const ConnectionInfo: React.FC = React.memo(() => {
     selectedStatus,
     selectedTarget,
     selectedTargetPing,
+    selectedTargetPingStatus,
     targets,
   ]);
 
@@ -305,7 +322,8 @@ export const ConnectionInfo: React.FC = React.memo(() => {
             </Col>
           </Row>
         )}
-        {(selectedTarget?.id === "hub" ? ping : selectedTargetPing) != null ? (
+        {(selectedTarget?.id === "hub" && ping != null) ||
+        selectedTarget?.kind === "project-host" ? (
           <div
             style={{
               alignItems: "baseline",
@@ -331,7 +349,8 @@ export const ConnectionInfo: React.FC = React.memo(() => {
                   }
                   values={{ avgping, ping }}
                 />
-              ) : (
+              ) : selectedTargetPingStatus === "ok" &&
+                selectedTargetPing != null ? (
                 <FormattedMessage
                   id="connection-info.project_host_ping_info"
                   defaultMessage="{ping}ms (live probe)"
@@ -339,6 +358,22 @@ export const ConnectionInfo: React.FC = React.memo(() => {
                     "Short string stating the latest measured project-host ping in milliseconds."
                   }
                   values={{ ping: selectedTargetPing }}
+                />
+              ) : selectedTargetPingStatus === "measuring" ? (
+                <FormattedMessage
+                  id="connection-info.project_host_ping_measuring"
+                  defaultMessage="measuring..."
+                  description={
+                    "Shown while measuring project-host ping in the connection dialog."
+                  }
+                />
+              ) : (
+                <FormattedMessage
+                  id="connection-info.project_host_ping_unavailable"
+                  defaultMessage="not available"
+                  description={
+                    "Shown when project-host ping is not currently available in the connection dialog."
+                  }
                 />
               )}
             </code>
