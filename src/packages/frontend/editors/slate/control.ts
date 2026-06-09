@@ -10,6 +10,23 @@ import { ensurePoint, pointAtPath, rangeAll } from "./slate-util";
 import { delay } from "awaiting";
 import { logSlateDebug, withSelectionReason } from "./slate-utils/slate-debug";
 
+function selectHeadingStart(editor: ReactEditor, path: number[]): void {
+  try {
+    const point = Editor.start(editor, path);
+    Transforms.setSelection(editor, { anchor: point, focus: point });
+  } catch {
+    // Ignore transient invalid paths. The caller still scrolls best-effort.
+  }
+}
+
+function focusHeadingSelection(editor: ReactEditor): void {
+  try {
+    ReactEditor.focus(editor);
+  } catch {
+    // If the heading is not in the DOM yet, the next scroll attempt retries.
+  }
+}
+
 // Scroll to the n-th heading in the document
 export async function scrollToHeading(
   editor: ReactEditor,
@@ -21,8 +38,10 @@ export async function scrollToHeading(
     match: (node) => node["type"] == "heading",
   })) {
     if (i == n) {
+      selectHeadingStart(editor, x[1]);
       if (!ReactEditor.isUsingWindowing(editor)) {
         // easy case
+        focusHeadingSelection(editor);
         ReactEditor.toDOMNode(editor, x[0]).scrollIntoView(true);
         return;
       }
@@ -37,6 +56,7 @@ export async function scrollToHeading(
           ReactEditor.scrollIntoDOM(editor, x[1]);
           // wait for scroll to actually happen resulting in something in the DOM.
           await new Promise(requestAnimationFrame);
+          focusHeadingSelection(editor);
           ReactEditor.toDOMNode(editor, x[0]).scrollIntoView(true);
         } catch (_err) {
           console.log("WARNING: still not in DOM", _err);
