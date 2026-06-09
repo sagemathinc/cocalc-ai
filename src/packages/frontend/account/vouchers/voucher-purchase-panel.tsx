@@ -9,10 +9,11 @@ import {
   Flex,
   Input,
   InputNumber,
+  Modal,
   Space,
   Typography,
 } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type ReactNode, useMemo, useState } from "react";
 
 import {
   FreshAuthModal,
@@ -31,11 +32,35 @@ import { MAX_VOUCHERS, MAX_VOUCHER_VALUE } from "@cocalc/util/vouchers";
 
 import { createVoucherPurchase } from "@cocalc/frontend/store/api";
 
-const { Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 const DEFAULT_AMOUNT = 25;
 const DEFAULT_COUNT = 1;
 const DEFAULT_TITLE = "CoCalc voucher";
+
+function normalizeVoucherCount(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_COUNT;
+  }
+  return Math.max(1, Math.min(MAX_VOUCHERS.now, Math.trunc(value)));
+}
+
+function VoucherField({
+  children,
+  label,
+  style,
+}: {
+  children: ReactNode;
+  label: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <Space vertical size={4} style={style}>
+      <Text strong>{label}</Text>
+      {children}
+    </Space>
+  );
+}
 
 export default function VoucherPurchasePanel({
   onPurchased,
@@ -53,6 +78,7 @@ export default function VoucherPurchasePanel({
     discouraged?: boolean;
     reason?: string;
   } | null>(null);
+  const [checkoutOpen, setCheckoutOpen] = useState<boolean>(false);
   const [processing, setProcessing] = useState<boolean>(false);
   const [codes, setCodes] = useState<string[]>([]);
   const [actionError, setActionError] = useState<string>("");
@@ -65,39 +91,6 @@ export default function VoucherPurchasePanel({
     if (!amount || !count) return toDecimal(0);
     return toDecimal(amount).mul(count);
   }, [amount, count]);
-
-  useEffect(() => {
-    let canceled = false;
-    async function loadQuote() {
-      if (!amount || !count) {
-        setQuote(null);
-        return;
-      }
-      setQuoteLoading(true);
-      setQuoteError("");
-      try {
-        const result = await isPurchaseAllowed(
-          "voucher",
-          totalValue.toNumber(),
-        );
-        if (!canceled) {
-          setQuote(result);
-        }
-      } catch (err) {
-        if (!canceled) {
-          setQuoteError(`${err}`);
-        }
-      } finally {
-        if (!canceled) {
-          setQuoteLoading(false);
-        }
-      }
-    }
-    loadQuote();
-    return () => {
-      canceled = true;
-    };
-  }, [amount, count, totalValue]);
 
   const chargeAmountValue = useMemo(() => {
     if (quote?.chargeAmount == null) {
@@ -119,11 +112,57 @@ export default function VoucherPurchasePanel({
         description: "Apply account credit toward vouchers",
         amount: chargeAmountValue.sub(totalValue).toNumber(),
       });
+    } else if (chargeAmountValue.gt(totalValue)) {
+      lineItems.push({
+        description: "Minimum charge top-up added to account credit",
+        amount: chargeAmountValue.sub(totalValue).toNumber(),
+      });
     }
   }
 
   const canPurchase =
-    amount > 0 && count > 0 && title.trim().length > 0 && !actionLoading;
+    amount > 0 &&
+    count > 0 &&
+    title.trim().length > 0 &&
+    !actionLoading &&
+    !quoteLoading;
+  const canCompleteQuote =
+    quote != null &&
+    (quote.allowed !== false ||
+      (quote.chargeAmount != null && toDecimal(quote.chargeAmount).gt(0)));
+  const quoteWarning =
+    quote?.reason && (quote.discouraged || quote.allowed === false)
+      ? quote.reason
+      : "";
+
+  async function beginCheckout() {
+    if (!canPurchase) {
+      setQuoteError("Enter a voucher value, count, and description first.");
+      return;
+    }
+    setQuoteError("");
+    setActionError("");
+    setQuote(null);
+    setProcessing(false);
+    setCodes([]);
+    setQuoteLoading(true);
+    try {
+      const result = await isPurchaseAllowed("voucher", totalValue.toNumber());
+      const canComplete =
+        result.allowed !== false ||
+        (result.chargeAmount != null && toDecimal(result.chargeAmount).gt(0));
+      setQuote(result);
+      if (!canComplete) {
+        setQuoteError(result.reason ?? "This voucher purchase is not allowed.");
+        return;
+      }
+      setCheckoutOpen(true);
+    } catch (err) {
+      setQuoteError(`${err}`);
+    } finally {
+      setQuoteLoading(false);
+    }
+  }
 
   async function directPurchase() {
     if (!canPurchase) return;
@@ -138,6 +177,7 @@ export default function VoucherPurchasePanel({
         });
         setCodes(result.codes ?? []);
         await onPurchased?.();
+        setCheckoutOpen(false);
       });
     } catch (err) {
       setActionError(`${err}`);
@@ -147,103 +187,59 @@ export default function VoucherPurchasePanel({
   }
 
   return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-        Purchase credit vouchers to share with students, collaborators, or
-        teammates. Vouchers redeem into account credit and do not expire.
-      </Paragraph>
-      <Flex gap="middle" wrap="wrap">
-        <Space.Compact>
-          <Button disabled tabIndex={-1}>
-            $
-          </Button>
+    <Space vertical style={{ width: "100%" }}>
+      <Flex align="end" gap="middle" wrap="wrap">
+        <VoucherField label="Credit per voucher">
           <InputNumber
             max={MAX_VOUCHER_VALUE}
             min={1}
             precision={2}
+            prefix="$"
             step={5}
+            style={{ width: "160px" }}
             value={amount}
             onChange={(value) => {
               setAmount(typeof value === "number" ? value : DEFAULT_AMOUNT);
             }}
           />
-        </Space.Compact>
-        <Space.Compact>
+        </VoucherField>
+        <VoucherField label="Number of vouchers">
           <InputNumber
             max={MAX_VOUCHERS.now}
             min={1}
+            precision={0}
+            step={1}
+            style={{ width: "160px" }}
             value={count}
             onChange={(value) => {
-              setCount(typeof value === "number" ? value : DEFAULT_COUNT);
+              setCount(normalizeVoucherCount(value));
             }}
           />
-          <Button disabled tabIndex={-1}>
-            {`voucher${count === 1 ? "" : "s"}`}
-          </Button>
-        </Space.Compact>
-        <Input
-          placeholder="Voucher title"
-          style={{ minWidth: "240px" }}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-      </Flex>
-      <Text>
-        Total face value: {currency(totalValue.toNumber())}{" "}
-        {quoteLoading && (
-          <Text type="secondary">(checking purchase limits)</Text>
-        )}
-      </Text>
-      {quote?.discouraged && quote?.reason && (
-        <Alert title={quote.reason} type="warning" />
-      )}
-      {quoteError && <Alert title={quoteError} type="error" />}
-      {actionError && <Alert title={actionError} type="error" />}
-
-      {!processing && chargeAmountValue.eq(0) && (
-        <Button
-          disabled={!canPurchase}
-          loading={actionLoading}
-          type="primary"
-          onClick={directPurchase}
+        </VoucherField>
+        <VoucherField
+          label="Description"
+          style={{ flex: "1 1 240px", maxWidth: "420px" }}
         >
-          Create vouchers now
-        </Button>
+          <Input
+            placeholder="Description shown in your voucher list"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+        </VoucherField>
+      </Flex>
+      {quoteError && <Alert title={quoteError} type="error" />}
+      {!checkoutOpen && actionError && (
+        <Alert title={actionError} type="error" />
       )}
 
-      {!processing && chargeAmountValue.gt(0) && (
-        <StripePayment
-          description="Voucher purchase"
-          lineItems={lineItems}
-          metadata={{
-            voucher_amount: `${amount}`,
-            voucher_count: `${count}`,
-            voucher_title: title.trim(),
-          }}
-          purpose={VOUCHER_PURCHASE}
-          onFinished={async (total) => {
-            if (!total) {
-              await directPurchase();
-              return;
-            }
-            setProcessing(true);
-            try {
-              await processPaymentIntents();
-              await onPurchased?.();
-            } catch (err) {
-              setActionError(`${err}`);
-            }
-          }}
-        />
-      )}
-
-      {processing && (
-        <Alert
-          title="Payment processing"
-          description="Your voucher codes will appear below shortly."
-          type="info"
-        />
-      )}
+      <Button
+        disabled={!canPurchase}
+        loading={quoteLoading}
+        type="primary"
+        onClick={beginCheckout}
+      >
+        Buy vouchers
+      </Button>
 
       {codes.length > 0 && (
         <Alert
@@ -252,6 +248,69 @@ export default function VoucherPurchasePanel({
           type="success"
         />
       )}
+
+      <Modal
+        destroyOnHidden
+        footer={null}
+        open={checkoutOpen}
+        title="Buy vouchers"
+        width={820}
+        onCancel={() => setCheckoutOpen(false)}
+      >
+        <Space vertical size="middle" style={{ width: "100%" }}>
+          <Space vertical size={4}>
+            <Text strong>Voucher purchase</Text>
+            <Text>
+              {count} voucher{count === 1 ? "" : "s"} at {currency(amount)}{" "}
+              each, for {currency(totalValue.toNumber())} total credit.
+            </Text>
+          </Space>
+          {quoteWarning && <Alert title={quoteWarning} type="warning" />}
+          {actionError && <Alert title={actionError} type="error" />}
+          {!processing && canCompleteQuote && chargeAmountValue.eq(0) && (
+            <Button
+              disabled={!canPurchase}
+              loading={actionLoading}
+              type="primary"
+              onClick={directPurchase}
+            >
+              Create vouchers now
+            </Button>
+          )}
+          {!processing && canCompleteQuote && chargeAmountValue.gt(0) && (
+            <StripePayment
+              description="Voucher purchase"
+              lineItems={lineItems}
+              metadata={{
+                voucher_amount: `${amount}`,
+                voucher_count: `${count}`,
+                voucher_title: title.trim(),
+              }}
+              purpose={VOUCHER_PURCHASE}
+              onFinished={async (total) => {
+                if (!total) {
+                  await directPurchase();
+                  return;
+                }
+                setProcessing(true);
+                try {
+                  await processPaymentIntents();
+                  await onPurchased?.();
+                } catch (err) {
+                  setActionError(`${err}`);
+                }
+              }}
+            />
+          )}
+          {processing && (
+            <Alert
+              title="Payment processing"
+              description="Your voucher codes will appear below shortly."
+              type="info"
+            />
+          )}
+        </Space>
+      </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );

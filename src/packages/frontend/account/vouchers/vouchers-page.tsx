@@ -26,7 +26,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { TimeAgo } from "@cocalc/frontend/components";
 import CopyToClipboard from "@cocalc/frontend/components/copy-to-clipboard";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
@@ -43,7 +43,7 @@ import {
 import VoucherPurchasePanel from "./voucher-purchase-panel";
 import VoucherCodeNotes from "./voucher-code-notes";
 
-const { Text, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
 
 export const VOUCHERS_SETTINGS_PAGE = {
   component: VouchersPage,
@@ -359,28 +359,17 @@ export function VouchersPage() {
         onClose={() => setSelectedVoucher(null)}
       />
 
-      <Title level={3}>Vouchers</Title>
+      <Paragraph>
+        Create and manage vouchers to transfer account credit to another CoCalc
+        account.
+        <br />
+        <a href={joinUrlPath(appBasePath, "redeem")}>Redeem</a> a voucher to add
+        credit to your account.
+        <br />
+        Vouchers and account credit are not cash and are not refundable.
+      </Paragraph>
 
-      <Card title="Buy vouchers">
-        <VoucherPurchasePanel onPurchased={load} />
-      </Card>
-
-      <Flex
-        align="center"
-        gap="middle"
-        justify="space-between"
-        style={{ marginTop: "16px" }}
-        wrap
-      >
-        <Space>
-          <Button onClick={load}>
-            <Icon name="sync-alt" /> Refresh
-          </Button>
-          <Button href={joinUrlPath(appBasePath, "redeem")} target="_blank">
-            Redeem Voucher
-          </Button>
-        </Space>
-      </Flex>
+      <VoucherPurchasePanel onPurchased={load} />
 
       {error && (
         <Alert style={{ marginTop: "16px" }} title={error} type="error" />
@@ -395,7 +384,7 @@ export function VouchersPage() {
             children: loading ? (
               <Card loading />
             ) : created.length === 0 ? (
-              <Empty description="You have not created any voucher batches yet." />
+              <Empty description="You have not created any vouchers yet." />
             ) : (
               <Table
                 columns={createdColumns}
