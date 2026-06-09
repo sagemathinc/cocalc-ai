@@ -66,14 +66,8 @@ import {
   getActivityBarCollapsed,
   setActivityBarCollapsed,
 } from "@cocalc/frontend/project/page/activity-bar-storage";
-import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { transform_get_url } from "@cocalc/frontend/project/transform-get-url";
-import {
-  NewFilenames,
-  download_href,
-  normalize,
-  url_href,
-} from "@cocalc/frontend/project/utils";
+import { NewFilenames, normalize } from "@cocalc/frontend/project/utils";
 import { API } from "@cocalc/frontend/project/websocket/api";
 import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import {
@@ -84,6 +78,7 @@ import {
   get_configuration,
 } from "@cocalc/frontend/project_configuration";
 import { ModalInfo, ProjectStore, ProjectStoreState } from "./store";
+import { downloadProjectFile } from "./download-file";
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -2948,66 +2943,23 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     print?: boolean;
     showError?: boolean;
   }): Promise<void> => {
-    let url;
-    if (
-      !(await ensure_project_running(
-        this.project_id,
-        `download the file '${path}'`,
-      ))
-    ) {
-      return;
-    }
-
-    // log could also be an array of strings to record all the files that were downloaded in a zip file
-    if (log) {
-      const files = Array.isArray(log) ? log : [path];
-      this.log({
-        event: "file_action",
-        action: "downloaded",
-        files,
-      });
-    }
-
-    if (auto && !print) {
-      const hubUrl = download_href(this.project_id, path);
-      url = await webapp_client.conat_client.routeProjectHostHttpUrl({
-        project_id: this.project_id,
-        url: hubUrl,
-      });
-      try {
-        await download_file(url, {
-          onAuthFailure: async () => {
-            await webapp_client.conat_client.ensureProjectHostBrowserSessionForProject(
-              {
-                project_id: this.project_id,
-              },
-            );
-            return await webapp_client.conat_client.routeProjectHostHttpUrl({
-              project_id: this.project_id,
-              url: hubUrl,
-            });
-          },
-        });
-      } catch (err) {
-        if (showError) {
-          alert_message({
-            type: "error",
-            title: "Download blocked",
-            message: err,
-            timeout: 15,
-          });
-          return;
-        }
-        throw err;
-      }
-    } else {
-      url = url_href(this.project_id, path);
-      const tab = open_new_tab(url);
-      if (tab != null && print) {
-        // "?" since there might be no print method -- could depend on browser API
-        tab.print?.();
-      }
-    }
+    await downloadProjectFile({
+      project_id: this.project_id,
+      path,
+      log,
+      auto,
+      print,
+      showError,
+      logAction: (opts) => this.log(opts),
+      routeProjectHostHttpUrl: (opts) =>
+        webapp_client.conat_client.routeProjectHostHttpUrl(opts),
+      ensureProjectHostBrowserSessionForProject: (opts) =>
+        webapp_client.conat_client.ensureProjectHostBrowserSessionForProject(
+          opts,
+        ),
+      downloadFile: download_file,
+      openNewTab: open_new_tab,
+    });
   };
 
   print_file = (opts): void => {
