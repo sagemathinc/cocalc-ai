@@ -306,40 +306,43 @@ export const ConnectionInfo: React.FC = React.memo(() => {
           </Row>
         )}
         {(selectedTarget?.id === "hub" ? ping : selectedTargetPing) != null ? (
-          <Row style={{ marginTop: "30px" }}>
-            <Col sm={3}>
-              <h5>
+          <div
+            style={{
+              alignItems: "baseline",
+              display: "flex",
+              gap: "12px",
+              marginTop: "30px",
+            }}
+          >
+            <h5 style={{ margin: 0, minWidth: 95 }}>
+              <FormattedMessage
+                id="connection-info.ping"
+                defaultMessage="Ping Time"
+                description={"Ping how long a server takes to respond"}
+              />
+            </h5>
+            <code style={{ whiteSpace: "nowrap" }}>
+              {selectedTarget?.id === "hub" ? (
                 <FormattedMessage
-                  id="connection-info.ping"
-                  defaultMessage="Ping Time"
-                  description={"Ping how long a server takes to respond"}
+                  id="connection-info.ping_info"
+                  defaultMessage="{avgping}ms (latest: {ping}ms)"
+                  description={
+                    "Short string stating the average and the most recent ping in milliseconds."
+                  }
+                  values={{ avgping, ping }}
                 />
-              </h5>
-            </Col>
-            <Col sm={7}>
-              <pre>
-                {selectedTarget?.id === "hub" ? (
-                  <FormattedMessage
-                    id="connection-info.ping_info"
-                    defaultMessage="{avgping}ms (latest: {ping}ms)"
-                    description={
-                      "Short string stating the average and the most recent ping in milliseconds."
-                    }
-                    values={{ avgping, ping }}
-                  />
-                ) : (
-                  <FormattedMessage
-                    id="connection-info.project_host_ping_info"
-                    defaultMessage="{ping}ms (live probe)"
-                    description={
-                      "Short string stating the latest measured project-host ping in milliseconds."
-                    }
-                    values={{ ping: selectedTargetPing }}
-                  />
-                )}
-              </pre>
-            </Col>
-          </Row>
+              ) : (
+                <FormattedMessage
+                  id="connection-info.project_host_ping_info"
+                  defaultMessage="{ping}ms (live probe)"
+                  description={
+                    "Short string stating the latest measured project-host ping in milliseconds."
+                  }
+                  values={{ ping: selectedTargetPing }}
+                />
+              )}
+            </code>
+          </div>
         ) : undefined}
       </div>
     </Modal>

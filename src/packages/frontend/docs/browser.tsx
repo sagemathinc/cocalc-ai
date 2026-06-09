@@ -41,6 +41,7 @@ import {
 import Markdown from "@cocalc/frontend/markdown/component";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
+import { useProjectHostLatencies } from "@cocalc/frontend/hosts/use-project-host-latencies";
 import type {
   DocsPrivateEntrySummary,
   DocsPrivateFilter,
@@ -877,10 +878,16 @@ function actionState(action: DocsBrowserAction): {
   return { buttonText: action.label, disabled: false, tagText: "open in app" };
 }
 
-function formatProjectHostOption(host: Host): { label: string; value: string } {
+function formatProjectHostOption(
+  host: Host,
+  latency?: number,
+): { label: string; value: string } {
   const region = `${host.region ?? ""}`.trim();
+  const details = [region, latency == null ? undefined : `${latency}ms`].filter(
+    Boolean,
+  );
   return {
-    label: region ? `${host.name} (${region})` : host.name,
+    label: details.length ? `${host.name} (${details.join(", ")})` : host.name,
     value: host.id,
   };
 }
@@ -890,14 +897,21 @@ function useProjectHostParameterOptions(enabled: boolean): {
   loading: boolean;
   options: { label: string; value: string }[];
 } {
-  const [options, setOptions] = useState<{ label: string; value: string }[]>(
-    [],
-  );
+  const [hosts, setHosts] = useState<Host[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const latencies = useProjectHostLatencies(enabled, hosts);
+  const options = useMemo(
+    () =>
+      hosts.map((host) => formatProjectHostOption(host, latencies[host.id])),
+    [hosts, latencies],
+  );
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      setHosts([]);
+      return;
+    }
     let canceled = false;
     setLoading(true);
     setError(undefined);
@@ -907,7 +921,7 @@ function useProjectHostParameterOptions(enabled: boolean): {
       )
       .then((hosts: Host[]) => {
         if (canceled) return;
-        setOptions(hosts.map(formatProjectHostOption));
+        setHosts(hosts);
       })
       .catch((err) => {
         if (canceled) return;

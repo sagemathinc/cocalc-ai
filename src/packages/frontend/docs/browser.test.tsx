@@ -1,10 +1,16 @@
 /** @jest-environment jsdom */
 
 const mockListHosts = jest.fn(async () => []);
+const mockGetConnectionTargets = jest.fn(() => []);
+const mockProbeConnectionTarget = jest.fn(async () => undefined);
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
+      getConnectionTargets: (...args: any[]) =>
+        mockGetConnectionTargets(...args),
+      probeConnectionTarget: (...args: any[]) =>
+        mockProbeConnectionTarget(...args),
       hub: {
         hosts: {
           listHosts: (...args: any[]) => mockListHosts(...args),
@@ -22,6 +28,8 @@ import { DocsBrowser } from "./browser";
 describe("DocsBrowser", () => {
   beforeEach(() => {
     mockListHosts.mockClear();
+    mockGetConnectionTargets.mockClear();
+    mockProbeConnectionTarget.mockClear();
   });
 
   it("notifies when the detail view returns to the index", () => {
