@@ -33,7 +33,7 @@ import type {
   AccountProjectListWindowRow,
   AccountProjectListWindowSort,
 } from "@cocalc/conat/hub/api/projects";
-import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
+import { defaults, is_valid_uuid_string, uuid } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
 import { switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -65,6 +65,11 @@ import {
   recordProjectionRepairFailure,
 } from "@cocalc/frontend/projection-diagnostics";
 import { writeAndWaitForProjection } from "@cocalc/frontend/projection-ack";
+import {
+  elapsedUxMs,
+  recordUxLatencyEvent,
+  startUxTimer,
+} from "@cocalc/frontend/monitoring/ux-latency";
 
 import type {
   CourseInfo,
@@ -146,6 +151,12 @@ export function buildProjectRecordFromFeedRow(
 type ProjectIndexBootstrapRow = AccountProjectListWindowRow & {
   account_id?: string | null;
 };
+
+type ProjectStartUxSegment =
+  | "warm_provisioned"
+  | "project_restore"
+  | "host_start_or_unknown"
+  | "unknown";
 
 function buildProjectRecordFromProjectIndexRow({
   row,
@@ -3404,6 +3415,86 @@ export class ProjectsActions extends Actions<ProjectsState> {
     await this.redux.getProjectActions(project_id).log(entry);
   }
 
+  private classifyProjectStartUxSegment({
+    project_id,
+    initialState,
+  }: {
+    project_id: string;
+    initialState?: string;
+  }): ProjectStartUxSegment {
+    if (initialState === "archived") {
+      return "project_restore";
+    }
+    const provisioned = store.getIn(["project_map", project_id, "provisioned"]);
+    if (provisioned === false) {
+      return "project_restore";
+    }
+    const host_id = store.getIn(["project_map", project_id, "host_id"]);
+    if (host_id && provisioned !== false) {
+      return "warm_provisioned";
+    }
+    return "host_start_or_unknown";
+  }
+
+  private recordProjectStartUxLatencyWhenRunning({
+    project_id,
+    timer,
+    client_event_id,
+    segment,
+    details,
+    deadline_ms = 20 * 60 * 1000,
+  }: {
+    project_id: string;
+    timer: number;
+    client_event_id: string;
+    segment: ProjectStartUxSegment;
+    details?: Record<string, unknown>;
+    deadline_ms?: number;
+  }): void {
+    const started = Date.now();
+    const poll = () => {
+      const state = store.getIn([
+        "project_map",
+        project_id,
+        "state",
+        "state",
+      ]) as string | undefined;
+      if (state === "running") {
+        recordUxLatencyEvent({
+          event_type: "project_start",
+          metric: "project_start_running",
+          duration_ms: elapsedUxMs(timer),
+          project_id,
+          client_event_id,
+          segment,
+          details: {
+            ...details,
+            observed_state: state,
+          },
+        });
+        return;
+      }
+      if (Date.now() - started >= deadline_ms) {
+        recordUxLatencyEvent({
+          event_type: "project_start",
+          metric: "project_start_running_timeout",
+          duration_ms: elapsedUxMs(timer),
+          project_id,
+          client_event_id,
+          segment,
+          details: {
+            ...details,
+            observed_state: state,
+          },
+        });
+        return;
+      }
+      const timerId = setTimeout(poll, state === "starting" ? 250 : 1000);
+      (timerId as any).unref?.();
+    };
+    poll();
+  }
+
   // return true, if it actually started the project
   start_project = reuseInFlight(
     async (
@@ -3463,6 +3554,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
         });
       }
 
+      const uxTimer = startUxTimer();
+      const uxClientEventId = uuid();
+      const uxSegment = this.classifyProjectStartUxSegment({
+        project_id,
+        initialState: lifecycleState,
+      });
+      const uxDetails = {
+        autostart: opts.autostart === true,
+        initial_state: lifecycleState,
+        host_id:
+          (store.getIn(["project_map", project_id, "host_id"]) as
+            | string
+            | undefined) ?? undefined,
+        provisioned: store.getIn(["project_map", project_id, "provisioned"]),
+      };
       const t0 = webapp_client.server_time().getTime();
       // make an action request:
       this.project_log(project_id, {
@@ -3495,6 +3601,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         });
         actions.trackStartOp(resp);
         opts.onStartOp?.(resp);
+        this.recordProjectStartUxLatencyWhenRunning({
+          project_id,
+          timer: uxTimer,
+          client_event_id: uxClientEventId,
+          segment: uxSegment,
+          details: {
+            ...uxDetails,
+            op_id: resp?.op_id,
+          },
+          deadline_ms: opts.waitTimeoutMs,
+        });
         const host_id = store.getIn(["project_map", project_id, "host_id"]) as
           | string
           | undefined;
@@ -3511,6 +3628,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
           }
         }
       } catch (err) {
+        recordUxLatencyEvent({
+          event_type: "project_start",
+          metric: "project_start_request_failed",
+          duration_ms: elapsedUxMs(uxTimer),
+          project_id,
+          client_event_id: uxClientEventId,
+          segment: uxSegment,
+          details: {
+            ...uxDetails,
+            error: `${err}`,
+          },
+        });
         if (extractRuntimeSponsorDenial(err)) {
           actions.setState({ control_error: "" });
         } else {

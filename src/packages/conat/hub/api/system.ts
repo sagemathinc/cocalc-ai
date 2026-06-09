@@ -54,6 +54,8 @@ export const system = {
   getGlobalConfigPropagationStatus: authFirstRequireAccount,
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
+  recordUxLatencyEvent: authFirst,
+  getUxLatencySummary: authFirstRequireAccount,
   getBayBackups: authFirst,
   getAcpAdmissionDenialReport: authFirstRequireAccount,
   getServiceAdmissionDenialReport: authFirstRequireAccount,
@@ -217,6 +219,58 @@ export interface CloudflareBootstrapResult {
   r2: { ok: boolean; message?: string };
   values: Record<string, string>;
   notes: string[];
+}
+
+export type UxLatencyEventType = "project_start" | "file_open" | string;
+
+export interface UxLatencyEventInput {
+  event_type: UxLatencyEventType;
+  metric: string;
+  duration_ms: number;
+  project_id?: string;
+  host_id?: string;
+  bay_id?: string;
+  client_event_id?: string;
+  started_at?: string;
+  sample_rate?: number;
+  path_ext?: string;
+  editor?: string;
+  segment?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface UxLatencyMetricSummary {
+  metric: string;
+  event_type: string;
+  segment?: string;
+  count: number;
+  avg_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  max_ms: number;
+}
+
+export interface UxLatencyRecentEvent {
+  received_at: string;
+  event_type: string;
+  metric: string;
+  segment?: string;
+  duration_ms: number;
+  project_id?: string;
+  host_id?: string;
+  path_ext?: string;
+  editor?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface UxLatencySummary {
+  checked_at: string;
+  window_minutes: number;
+  since: string;
+  metrics: UxLatencyMetricSummary[];
+  segments: UxLatencyMetricSummary[];
+  recent_slow_events: UxLatencyRecentEvent[];
 }
 
 export interface CloudflareTunnelApplyResult {
@@ -1603,6 +1657,16 @@ export interface System {
     account_id?: string;
     bay_id?: string;
   }) => Promise<BayLoadInfo>;
+
+  recordUxLatencyEvent: (opts: {
+    account_id?: string;
+    event: UxLatencyEventInput;
+  }) => Promise<void>;
+
+  getUxLatencySummary: (opts?: {
+    account_id?: string;
+    window_minutes?: number;
+  }) => Promise<UxLatencySummary>;
 
   getBayBackups: (opts?: {
     account_id?: string;
