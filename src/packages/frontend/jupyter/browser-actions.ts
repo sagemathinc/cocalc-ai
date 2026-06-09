@@ -13,6 +13,7 @@ import { debounce, isEqual } from "lodash";
 import { jupyter, labels } from "@cocalc/frontend/i18n";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
+import { lite } from "@cocalc/frontend/lite";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import {
   delete_local_storage,
@@ -2166,16 +2167,42 @@ export class JupyterActions extends JupyterActions0 {
     });
   });
 
+  private getProjectRuntimeState(): string | undefined {
+    if (lite) {
+      return "running";
+    }
+    const projectsStore = this.redux.getStore("projects") as any;
+    return (
+      projectsStore?.get_state?.(this.project_id) ??
+      projectsStore
+        ?.get?.("project_map")
+        ?.getIn?.([this.project_id, "state", "state"])
+    );
+  }
+
+  private shouldWaitForProjectForPassiveJupyterWork(): boolean {
+    const state = this.getProjectRuntimeState();
+    return state === "running" || state === "starting";
+  }
+
   fetch_jupyter_kernels = async ({
     noCache,
-  }: { noCache?: boolean } = {}): Promise<void> => {
-    try {
-      await this.waitUntilProjectIsRunning();
-    } catch (err) {
-      if (getProjectStartPolicyBlockFromError(err)) {
-        return;
+    autostart = false,
+  }: { noCache?: boolean; autostart?: boolean } = {}): Promise<void> => {
+    if (autostart || this.shouldWaitForProjectForPassiveJupyterWork()) {
+      try {
+        await this.waitUntilProjectIsRunning();
+      } catch (err) {
+        if (getProjectStartPolicyBlockFromError(err)) {
+          return;
+        }
+        throw err;
       }
-      throw err;
+    } else {
+      // Notebook open/toolbar rendering should not hide a cold project start.
+      // Explicit actions such as Run Cell or Refresh Kernels opt into autostart.
+      this.check_select_kernel();
+      return;
     }
     if (this.isClosed()) return;
 
@@ -2803,6 +2830,7 @@ export class JupyterActions extends JupyterActions0 {
     let totalMesgs = 0;
     let runError: string | undefined;
     const readyTimer = startUxTimer();
+    const initialProjectState = this.getProjectRuntimeState();
     this.runDebug("runCells.call", { runId, ids, opts });
     if (this.store?.get("read_only")) {
       this.runDebug("runCells.skip.read_only", { runId });
@@ -2923,9 +2951,16 @@ export class JupyterActions extends JupyterActions0 {
         duration_ms: elapsedUxMs(readyTimer),
         project_id: this.project_id,
         path_ext: filename_extension(this.path ?? ""),
+        segment:
+          initialProjectState === "running"
+            ? "warm"
+            : initialProjectState === "starting"
+              ? "already_starting"
+              : "autostart",
         details: {
           cells: cells.length,
           kernel,
+          initial_project_state: initialProjectState ?? "unknown",
         },
       });
       this.runDebug("runCells.runner.start", {
@@ -3167,8 +3202,12 @@ export class JupyterActions extends JupyterActions0 {
     }
   };
 
-  refreshKernelStatus = async () => {
-    await this.waitUntilProjectIsRunning();
+  refreshKernelStatus = async ({ autostart = false } = {}) => {
+    if (autostart || this.shouldWaitForProjectForPassiveJupyterWork()) {
+      await this.waitUntilProjectIsRunning();
+    } else {
+      return;
+    }
     if (this.isClosed()) return;
     let status: {
       backend_state: BackendState;
