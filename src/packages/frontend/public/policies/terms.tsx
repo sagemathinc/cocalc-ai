@@ -15,7 +15,7 @@ export const termsPolicy: PublicPolicy = {
   navLabel: "Terms",
   slug: "terms",
   title: "Terms of Service",
-  updated: "April 15, 2026",
+  updated: "June 9, 2026",
   content: (
     <>
       <p>
@@ -184,53 +184,78 @@ export const termsPolicy: PublicPolicy = {
           </li>
         </ul>
       </PolicySection>
-      <PolicySection title="Payments and Refunds">
+      <PolicySection title="Payments and Account Credit">
         <p>
-          Your use of the Services can be on a free trial or paid basis. If you
-          are using the Services pursuant to a paid plan (or you upgrade from a
-          free to a paid plan) you must provide SMI with complete and accurate
-          billing and contact information. You will be billed immediately upon
-          an upgrade from the free plan to any paid plan. Paid plans may include
-          free temporary trial periods. All payments are done on a
-          non-refundable basis except for billing errors. All fees due hereunder
-          in connection with the Services are exclusive of all taxes, levies, or
-          duties imposed by taxing authorities, and you shall be responsible for
-          payment of all such taxes, levies, or duties, excluding only United
-          States (federal or state) taxes on SMI’s net income. You agree to pay,
-          and authorize SMI’s third party payment processor to charge using your
-          selected payment method, for all applicable fees and taxes that may
-          accrue in relation to your use of the Services. Downgrading your plan
-          may cause the loss of access to Content, features, or capacity of your
-          Account. SMI does not accept any liability for such loss.
+          Your use of the Services may be free or subject to fees. Fees may be
+          fixed, recurring, usage-based, invoiced, prepaid, or otherwise
+          described in the Service at the time of purchase or use. Paid Services
+          may include free trial periods, during which you may be required to
+          provide a payment method and authorize renewal or conversion to a paid
+          period unless you cancel before the trial ends.
         </p>
-        <PolicySubsection title="Licenses and Subscriptions">
+        <p>
+          If you use paid Services, you must provide SMI with complete and
+          accurate billing and contact information. You agree to pay all
+          applicable fees and taxes, and authorize SMI or its third party
+          payment processor to charge your selected payment method, invoice you,
+          or apply your CoCalc account credit or account balance ("
+          <b>Account Credit</b>"), as applicable.
+        </p>
+        <p>
+          All fees are exclusive of taxes, levies, or duties imposed by taxing
+          authorities, and you are responsible for payment of all such taxes,
+          levies, or duties, excluding only United States (federal or state)
+          taxes on SMI’s net income.
+        </p>
+        <PolicySubsection title="Account Credit and Usage-Based Services">
           <p>
-            A license allows you to use the Services with configurable
-            resources. It may have either set start and end dates, or be an
-            automatically renewing subscription. For subscriptions where payment
-            is due on a monthly or annual basis, you will be billed for the
-            Services five (5) days in advance for the next period. We may
-            suspend or terminate the subscription Services if fees are past due.
-            There will be no refunds or credits for partial months or years of
-            service or refunds for months unused with an open Account. The fees
-            for your subscription to use the Services are subject to change upon
-            thirty (30) days’ notice from SMI. Such notice may be provided at
-            any time by posting the changes to the Site or the Service
-            itself.{" "}
+            Some Services may require sufficient Account Credit, an approved
+            payment method, postpaid billing authorization, or another billing
+            arrangement before you can access or continue using them.
+          </p>
+          <p>
+            Account Credit has no cash value and is provided on a non-refundable
+            basis. It may be used toward usage-based Services or to purchase
+            paid Services, as supported by the Service. Usage-based Services may
+            be suspended or terminated immediately if your Account Credit
+            becomes negative, your payment method fails, or your billing
+            authorization is no longer sufficient.
           </p>
         </PolicySubsection>
-        <PolicySubsection title="CoCalc Credit and Pay-As-You-Go Services">
+        <PolicySubsection title="Access, Downgrades, and Data">
           <p>
-            Some Services, such as compute servers, may require you to put
-            CoCalc Credit on your Account before you can access them. CoCalc
-            Credit has no cash value and is given on a non-refundable basis. It
-            may be used, however, towards any of the Pay-As-You-Go services or
-            to purchase licenses and subscriptions. Pay-As-You-Go services may
-            be suspended or terminated immediately, if your CoCalc credit
-            balance becomes negative. The fees for Pay-As-You-Go Services are
-            subject to change without any advance notice at any time by posting
-            the changes to the Site or the Service itself. Typically these
-            changes mirror fee changes by cloud providers that we utilize.
+            Changes to paid Services, including upgrades, downgrades,
+            cancellations, and renewals, may take effect immediately or at the
+            end of the then-current billing period, as shown in the Service at
+            the time of the change. We may suspend or terminate paid Services if
+            fees are past due.
+          </p>
+          <p>
+            Downgrading, canceling, failing to renew, failing to pay, or
+            otherwise changing your paid Services may cause loss of access to
+            Content, features, compute resources, storage, backups, or other
+            capacity of your Account. SMI does not accept liability for such
+            loss. You are responsible for exporting or backing up Content you
+            wish to retain. We may delete, disable, or limit access to Accounts,
+            projects, files, backups, or other Content after cancellation,
+            termination, extended inactivity, nonpayment, or if your Content
+            exceeds the resources allocated to your Account, subject to
+            applicable law and our other policies.
+          </p>
+        </PolicySubsection>
+        <PolicySubsection title="Refunds and Changes">
+          <p>
+            All payments are non-refundable except for billing errors or as
+            expressly stated by SMI. There will be no refunds or credits for
+            partial months or years of service, unused time, unused resources,
+            or unused Account Credit.
+          </p>
+          <p>
+            Fees for paid Services are subject to change. For automatically
+            renewing paid Services, we will provide notice before fee changes
+            take effect. For usage-based Services, such as dedicated compute
+            resources, fees may change without advance notice by posting the
+            changes to the Site or the Service itself.
           </p>
         </PolicySubsection>
       </PolicySection>
