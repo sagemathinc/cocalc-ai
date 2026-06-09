@@ -11,7 +11,7 @@ export const dpaPolicy: PublicPolicy = {
   navLabel: "DPA",
   slug: "dpa",
   title: "Data Processing Addendum",
-  updated: "April 15, 2026",
+  updated: "June 9, 2026",
   content: (
     <>
       <p>
@@ -55,7 +55,7 @@ export const dpaPolicy: PublicPolicy = {
             at the{" "}
             <b>
               SageMath, Inc. Trust Center (
-              <A href="https://trust.cocalc.com/">https://trust.cocalc.com/</A>)
+              <A href="https://trust.cocalc.ai/">https://trust.cocalc.ai/</A>)
             </b>
             .
           </li>
