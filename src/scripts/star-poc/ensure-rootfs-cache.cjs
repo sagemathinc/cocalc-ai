@@ -11,7 +11,7 @@ const {
 } = require("node:fs/promises");
 const { join } = require("node:path");
 
-const ROOTFS_PREFLIGHT_VERSION = 10;
+const ROOTFS_PREFLIGHT_VERSION = 11;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 function log(message) {
@@ -169,6 +169,13 @@ function validatePreflightResult(result) {
 
 async function loadCurrentMetadata(image, rootfsPath, metadataPath) {
   if (!(await exists(rootfsPath)) || !(await exists(metadataPath))) return;
+  if (
+    !(await exists(join(rootfsPath, "home", "user"))) ||
+    !(await exists(join(rootfsPath, "scratch"))) ||
+    !(await exists(join(rootfsPath, "run", "secrets", "cocalc")))
+  ) {
+    return;
+  }
   const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
   if (
     metadata.version === ROOTFS_PREFLIGHT_VERSION &&

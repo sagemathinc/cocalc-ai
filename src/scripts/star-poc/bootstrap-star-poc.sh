@@ -30,6 +30,7 @@ STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-docker.io/buildpack-deps:26.04}"
+STAR_DEFAULT_ROOTFS_VERSION="${STAR_DEFAULT_ROOTFS_VERSION:-20260609-python-venv}"
 STAR_LIMA_HOST_SHARE_MOUNT="${STAR_LIMA_HOST_SHARE_MOUNT:-/mnt/cocalc-star-host-share}"
 STAR_HARDEN_INSTALL_USER_SUDO="${STAR_HARDEN_INSTALL_USER_SUDO:-0}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-${STAR_HARDEN_INSTALL_USER_SUDO}}"
@@ -618,6 +619,8 @@ build_default_rootfs_image() {
   cat >"$containerfile" <<EOF
 FROM ${STAR_DEFAULT_ROOTFS_BASE_IMAGE}
 
+LABEL com.cocalc.star.default_rootfs_version="${STAR_DEFAULT_ROOTFS_VERSION}"
+
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \\
   && apt-get install -y --no-install-recommends \\
@@ -675,7 +678,7 @@ RUN apt-get update \\
   && rm -rf /var/lib/apt/lists/*
 EOF
   chown "$STAR_USER:$STAR_USER" "$containerfile"
-  as_star_user "podman image exists '$build_image' >/dev/null 2>&1 && exit 0; podman build --pull=always -t '$build_image' -f '$containerfile' '$STAR_ROOT'"
+  as_star_user "existing_version=\"\$(podman image inspect '$build_image' --format '{{ index .Config.Labels \"com.cocalc.star.default_rootfs_version\" }}' 2>/dev/null || true)\"; if [ \"\$existing_version\" = '$STAR_DEFAULT_ROOTFS_VERSION' ]; then exit 0; fi; if [ -n \"\$existing_version\" ]; then podman rmi -f '$build_image' >/dev/null 2>&1 || true; fi; podman build --pull=always -t '$build_image' -f '$containerfile' '$STAR_ROOT'"
 }
 
 ensure_default_rootfs_cache() {
