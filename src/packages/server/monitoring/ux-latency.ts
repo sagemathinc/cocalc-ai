@@ -5,6 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import adminAlert from "@cocalc/server/messages/admin-alert";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import type {
   UxLatencyEventInput,
@@ -21,8 +22,12 @@ const MAX_DURATION_MS = 24 * 60 * 60 * 1000;
 const MAX_DETAILS_BYTES = 8192;
 const DEFAULT_WINDOW_MINUTES = 24 * 60;
 const MAX_WINDOW_MINUTES = 30 * 24 * 60;
+const ALERT_WINDOW_MINUTES = 15;
+const ALERT_INTERVAL_MS = 5 * 60 * 1000;
+const ALERT_INITIAL_DELAY_MS = 60 * 1000;
 
 let schemaReady: Promise<void> | undefined;
+let alertMaintenanceStarted = false;
 
 export async function ensureUxLatencySchema(): Promise<void> {
   schemaReady ??= (async () => {
@@ -249,5 +254,160 @@ export function recordUxLatencyEventBestEffort(opts: {
 }): void {
   recordUxLatencyEvent(opts).catch((err) => {
     logger.debug("failed to record ux latency event", { err: `${err}` });
+  });
+}
+
+type UxLatencyAlertCandidate = {
+  subject: string;
+  body: string;
+};
+
+function rowByMetric(
+  rows: UxLatencyMetricSummary[],
+  metric: string,
+): UxLatencyMetricSummary | undefined {
+  return rows.find((row) => row.metric === metric);
+}
+
+function rowByMetricAndSegment(
+  rows: UxLatencyMetricSummary[],
+  metric: string,
+  segment: string,
+): UxLatencyMetricSummary | undefined {
+  return rows.find((row) => row.metric === metric && row.segment === segment);
+}
+
+function formatMs(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+}
+
+function latencyBody(row: UxLatencyMetricSummary, expectation: string): string {
+  return [
+    expectation,
+    "",
+    `Metric: ${row.metric}`,
+    row.segment ? `Segment: ${row.segment}` : undefined,
+    `Samples: ${row.count}`,
+    `P50: ${formatMs(row.p50_ms)}`,
+    `P95: ${formatMs(row.p95_ms)}`,
+    `P99: ${formatMs(row.p99_ms)}`,
+    `Max: ${formatMs(row.max_ms)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function alertCandidates(summary: UxLatencySummary): UxLatencyAlertCandidate[] {
+  const alerts: UxLatencyAlertCandidate[] = [];
+  const warmStart = rowByMetricAndSegment(
+    summary.segments,
+    "project_start_running",
+    "warm_provisioned",
+  );
+  if (warmStart && warmStart.count >= 5 && warmStart.p95_ms > 2000) {
+    alerts.push({
+      subject: "warm project starts are slow",
+      body: latencyBody(
+        warmStart,
+        "Warm provisioned project starts should usually be under 1 second.",
+      ),
+    });
+  }
+
+  const allStarts = rowByMetric(summary.metrics, "project_start_running");
+  if (allStarts && allStarts.count >= 5 && allStarts.p95_ms > 10_000) {
+    alerts.push({
+      subject: "project starts are slow",
+      body: latencyBody(
+        allStarts,
+        "Overall project start latency is high. Restore/dearchive paths may be expected outliers; check segment rows before treating this as a warm-start regression.",
+      ),
+    });
+  }
+
+  const startTimeouts = rowByMetric(
+    summary.metrics,
+    "project_start_running_timeout",
+  );
+  if (startTimeouts && startTimeouts.count >= 1) {
+    alerts.push({
+      subject: "project starts timed out",
+      body: latencyBody(
+        startTimeouts,
+        "At least one project start did not reach browser-observed running state within the monitoring deadline.",
+      ),
+    });
+  }
+
+  const visible = rowByMetric(summary.metrics, "file_open_visible");
+  if (visible && visible.count >= 10 && visible.p95_ms > 3000) {
+    alerts.push({
+      subject: "file open visible latency is high",
+      body: latencyBody(
+        visible,
+        "Users are waiting too long before file contents are visible.",
+      ),
+    });
+  }
+
+  const syncReady = rowByMetric(summary.metrics, "file_open_sync_ready");
+  if (syncReady && syncReady.count >= 10 && syncReady.p95_ms > 8000) {
+    alerts.push({
+      subject: "file open sync-ready latency is high",
+      body: latencyBody(
+        syncReady,
+        "Users can see files, but realtime sync is taking too long to become ready.",
+      ),
+    });
+  }
+
+  return alerts;
+}
+
+export async function runUxLatencyAlertCheck(): Promise<number> {
+  const summary = await getUxLatencySummary({
+    window_minutes: ALERT_WINDOW_MINUTES,
+  });
+  const alerts = alertCandidates(summary);
+  for (const alert of alerts) {
+    await adminAlert({
+      subject: `UX latency: ${alert.subject}`,
+      body: `${alert.body}\n\nWindow: ${summary.window_minutes} minutes\nChecked: ${summary.checked_at}`,
+      dedupMinutes: 60,
+    });
+  }
+  return alerts.length;
+}
+
+export function startUxLatencyAlertMaintenance({
+  interval_ms = ALERT_INTERVAL_MS,
+  initial_delay_ms = ALERT_INITIAL_DELAY_MS,
+}: {
+  interval_ms?: number;
+  initial_delay_ms?: number;
+} = {}): void {
+  if (alertMaintenanceStarted) return;
+  if (`${process.env.COCALC_UX_LATENCY_ALERTS ?? "true"}` === "false") {
+    logger.info("ux latency alert maintenance disabled");
+    return;
+  }
+  alertMaintenanceStarted = true;
+  const run = async () => {
+    try {
+      const count = await runUxLatencyAlertCheck();
+      if (count) {
+        logger.warn("ux latency alerts sent", { count });
+      }
+    } catch (err) {
+      logger.warn("ux latency alert check failed", { err: `${err}` });
+    }
+  };
+  const initial = setTimeout(() => void run(), initial_delay_ms);
+  initial.unref?.();
+  const timer = setInterval(() => void run(), interval_ms);
+  timer.unref?.();
+  logger.info("ux latency alert maintenance started", {
+    interval_ms,
+    initial_delay_ms,
   });
 }
