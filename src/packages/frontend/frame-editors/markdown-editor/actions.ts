@@ -26,6 +26,7 @@ import {
 } from "@cocalc/frontend/editors/slate/sync";
 import { ReactEditor } from "@cocalc/frontend/editors/slate/slate-react";
 import { Transforms } from "slate";
+import type * as CodeMirror from "codemirror";
 import { toggle_checkbox } from "@cocalc/frontend/editors/task-editor/desc-rendering";
 import { parseTableOfContents } from "@cocalc/frontend/markdown";
 import { parseHeader } from "@cocalc/frontend/markdown/header";
@@ -336,8 +337,9 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   private async sync_cm_to_slate(
     id: string,
     editor_actions: Actions,
+    liveCm?: CodeMirror.Editor,
   ): Promise<void> {
-    const cm = editor_actions._cm[id];
+    const cm = liveCm ?? editor_actions._cm[id];
     if (cm == null) return;
     // important to get markdown from cm and not syncstring to get latest version.
     const markdown = cm.getValue();
@@ -431,7 +433,11 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     void this.sync(activeId, this);
   }
 
-  public async sync(id: string, editor_actions: Actions): Promise<void> {
+  public async sync(
+    id: string,
+    editor_actions: Actions,
+    liveCm?: CodeMirror.Editor,
+  ): Promise<void> {
     const node = this._get_frame_node(id);
     if (!node) return;
     switch (node.get("type")) {
@@ -439,7 +445,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
         this.sync_slate_to_cm(id);
         return;
       case "cm":
-        this.sync_cm_to_slate(id, editor_actions);
+        this.sync_cm_to_slate(id, editor_actions, liveCm);
         return;
     }
   }

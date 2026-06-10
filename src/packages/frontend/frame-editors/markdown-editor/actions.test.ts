@@ -81,6 +81,43 @@ describe("markdown editor Actions", () => {
     expect(calls).toEqual(["set_value", "show_focused_frame_of_type"]);
   });
 
+  it("uses the live CodeMirror instance passed by the key handler", async () => {
+    const actions: any = Object.create(Actions.prototype);
+    actions._cm = {
+      "cm-frame": {
+        getValue: () => "stale registered text",
+        getDoc: () => ({
+          getCursor: () => ({ line: 0, ch: 0 }),
+        }),
+      },
+    };
+    const liveCm = {
+      getValue: () => "live codemirror text",
+      getDoc: () => ({
+        getCursor: () => ({ line: 0, ch: 5 }),
+      }),
+    };
+    actions.set_value = jest.fn();
+    actions.show_focused_frame_of_type = jest.fn(() => "slate-frame");
+    const setSelectionFromMarkdownPosition = jest.fn(() => true);
+    actions.getBlockEditorControl = jest.fn(() => ({
+      setSelectionFromMarkdownPosition,
+    }));
+    actions.set_active_id = jest.fn();
+
+    await actions.sync_cm_to_slate("cm-frame", actions, liveCm);
+
+    expect(actions.set_value).toHaveBeenCalledWith(
+      "live codemirror text",
+      true,
+      "cm",
+    );
+    expect(setSelectionFromMarkdownPosition).toHaveBeenCalledWith({
+      line: 0,
+      ch: 5,
+    });
+  });
+
   it("restores the last focused Slate block on refocus instead of jumping to block 0", () => {
     const actions: any = Object.create(Actions.prototype);
     const restoreFocusBlock = jest.fn(() => true);
