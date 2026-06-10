@@ -245,6 +245,8 @@ Validation:
 
 ### P1-C: Copy From Timetravel Slate Markdown Loses Formatting
 
+Status: Fixed. Markdown TimeTravel versions now render through the same read-only `EditableMarkdown` surface used for rich-copy chat messages instead of static markdown rendering.
+
 Symptom: copying from a past markdown version in timetravel loses formatting because the view is static rendered HTML instead of a read-only Slate view.
 
 Impact: broken copy/paste workflow for recovering rich markdown content.
@@ -264,6 +266,8 @@ Plan:
 
 Validation:
 
+- Completed: `cd src/packages/frontend && pnpm test -- frame-editors/time-travel-editor/viewer.test.tsx`.
+- Completed: `cd src/packages/frontend && pnpm tsc --build`.
 - Browser smoke: copy bold/link/list/code from timetravel and paste into Slate.
 - Focused renderer test if clipboard behavior can be isolated.
 
@@ -503,4 +507,3 @@ Validation:
 ### Done: Ping/Latency Layout And Project-Host Latency
 
 The source list still contains the old ping-time layout and project-host latency report. This was handled in the 2026-06-08 beta plan as `P2-D`; do not create a duplicate task unless a new regression is reported.
-

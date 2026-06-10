@@ -3,7 +3,7 @@ Render a document, where the rendering is determined by the file extension
 */
 
 import ChatViewer from "@cocalc/frontend/chat/viewer";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
 import { TasksHistoryViewer } from "@cocalc/frontend/editors/task-editor/history-viewer";
 import { getScale } from "@cocalc/frontend/frame-editors/frame-tree/hooks";
 import Whiteboard from "@cocalc/frontend/frame-editors/whiteboard-editor/time-travel";
@@ -83,9 +83,27 @@ export function Viewer({
       const scale = getScale(font_size);
       return (
         <div style={{ overflow: "auto", padding: "50px 70px" }}>
-          <StaticMarkdown
+          <EditableMarkdown
             value={doc()?.to_str() ?? "unknown version"}
-            style={{ fontSize: `${100 * scale}%` }}
+            read_only
+            font_size={font_size}
+            hidePath
+            disableWindowing
+            noVfill
+            showEditBar={false}
+            height="auto"
+            autoMinHeight={0}
+            style={{
+              fontSize: `${100 * scale}%`,
+              backgroundColor: "transparent",
+              minHeight: 0,
+            }}
+            pageStyle={{
+              padding: 0,
+              background: "transparent",
+              minWidth: "100%",
+              overflowX: "visible",
+            }}
           />
         </div>
       );
