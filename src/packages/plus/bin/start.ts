@@ -162,7 +162,7 @@ function defaultReflectHome() {
   return path.join(defaultPlusRootDir(), "reflect-sync");
 }
 
-function portProbeHost() {
+function portProbeHost(): string {
   const rawHost = (process.env.HOST ?? "localhost").trim();
   if (rawHost.startsWith("https://") || rawHost.startsWith("http://")) {
     try {
@@ -172,6 +172,26 @@ function portProbeHost() {
     }
   }
   return rawHost || "localhost";
+}
+
+function portProbeHosts(host: string): string[] {
+  const normalized = host.trim().toLowerCase();
+  if (
+    normalized === "localhost" ||
+    normalized === "ip6-localhost" ||
+    normalized === "ip6-loopback"
+  ) {
+    return ["127.0.0.1", "::1"];
+  }
+  return [host];
+}
+
+function isUnsupportedAddressFamily(err: any): boolean {
+  return err?.code === "EAFNOSUPPORT" || err?.code === "EINVAL";
+}
+
+function isUnavailablePortError(err: any): boolean {
+  return err?.code === "EADDRINUSE" || err?.code === "EACCES";
 }
 
 function probePort(port: number, host: string): Promise<number> {
@@ -190,6 +210,25 @@ function probePort(port: number, host: string): Promise<number> {
   });
 }
 
+async function canBindPortOnHosts(port: number, hosts: string[]) {
+  let supportedHostCount = 0;
+  for (const host of hosts) {
+    try {
+      await probePort(port, host);
+      supportedHostCount += 1;
+    } catch (err: any) {
+      if (isUnsupportedAddressFamily(err)) {
+        continue;
+      }
+      if (isUnavailablePortError(err)) {
+        return false;
+      }
+      throw err;
+    }
+  }
+  return supportedHostCount > 0;
+}
+
 export async function chooseLitePort({
   preferredPort = DEFAULT_PLUS_PORT,
   host = portProbeHost(),
@@ -197,14 +236,17 @@ export async function chooseLitePort({
   preferredPort?: number;
   host?: string;
 } = {}): Promise<number> {
-  try {
-    return await probePort(preferredPort, host);
-  } catch (err: any) {
-    if (err?.code !== "EADDRINUSE" && err?.code !== "EACCES") {
-      throw err;
+  const hosts = portProbeHosts(host);
+  if (await canBindPortOnHosts(preferredPort, hosts)) {
+    return preferredPort;
+  }
+  for (let i = 0; i < 20; i += 1) {
+    const candidate = await probePort(0, hosts[0]);
+    if (await canBindPortOnHosts(candidate, hosts)) {
+      return candidate;
     }
   }
-  return await probePort(0, host);
+  throw new Error("failed to choose a free Lite port");
 }
 
 export async function ensureLitePort(): Promise<void> {
@@ -462,6 +504,8 @@ async function runCli() {
   if (!process.env.COCALC_ENABLE_SSH_UI) {
     process.env.COCALC_ENABLE_SSH_UI = "1";
   }
+  process.env.COCALC_PRODUCT ??= "plus";
+  process.env.COCALC_LITE_API_V2 ??= "0";
 
   const daemonStop = hasFlag(argv, "--daemon-stop");
   const daemonStatus = hasFlag(argv, "--daemon-status");
