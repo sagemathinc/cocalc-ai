@@ -29,7 +29,6 @@ import { Transforms } from "slate";
 import type * as CodeMirror from "codemirror";
 import { toggle_checkbox } from "@cocalc/frontend/editors/task-editor/desc-rendering";
 import { parseTableOfContents } from "@cocalc/frontend/markdown";
-import { parseHeader } from "@cocalc/frontend/markdown/header";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import {
@@ -52,7 +51,6 @@ interface MarkdownEditorState extends CodeEditorState {
 
 export class Actions extends CodeEditorActions<MarkdownEditorState> {
   private slateEditors: { [id: string]: SlateEditor } = {};
-  private blockEditorControls: { [id: string]: any } = {};
 
   _init2(): void {
     this._init_syncstring_value();
@@ -176,21 +174,6 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
       super.focus(targetId);
       return;
     }
-    const blockControl = this.getBlockEditorControl(targetId);
-    const preferredIndex =
-      blockControl?.getFocusedIndex?.() ??
-      blockControl?.getLastFocusedIndex?.();
-    if (
-      preferredIndex != null &&
-      typeof blockControl?.restoreFocusBlock === "function" &&
-      blockControl.restoreFocusBlock(preferredIndex)
-    ) {
-      return;
-    }
-    if (typeof blockControl?.focusBlock === "function") {
-      blockControl.focusBlock(preferredIndex ?? 0);
-      return;
-    }
     const editor = this.getSlateEditor(targetId);
     if (editor != null) {
       ReactEditor.focus(editor);
@@ -199,23 +182,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     super.focus(targetId);
   }
 
-  public registerBlockEditorControl(id: string, control: any): void {
-    this.blockEditorControls[id] = control;
-  }
-
-  public unregisterBlockEditorControl(id: string): void {
-    delete this.blockEditorControls[id];
-  }
-
-  private getBlockEditorControl(id: string): any | undefined {
-    return this.blockEditorControls[id];
-  }
-
   private getSlateMarkdown(id: string): string | undefined {
-    const blockControl = this.getBlockEditorControl(id);
-    if (typeof blockControl?.getMarkdown === "function") {
-      return blockControl.getMarkdown();
-    }
     const editor = this.getSlateEditor(id);
     if (typeof editor?.getMarkdownValue === "function") {
       return editor.getMarkdownValue();
@@ -283,29 +250,6 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   public async scrollToHeading(entry: TableOfContentsEntry): Promise<void> {
     const id = this.show_focused_frame_of_type("slate");
     if (id == null) return;
-    const blockControl = this.getBlockEditorControl(id);
-    const rawLine =
-      entry?.extra != null && typeof entry.extra.line === "number"
-        ? entry.extra.line
-        : undefined;
-    let source = "";
-    try {
-      source = this._syncstring?.to_str?.() ?? "";
-    } catch {
-      // ignore transient sync-doc startup races
-    }
-    const headerInfo = parseHeader(source);
-    const headerLineOffset =
-      headerInfo.header == null
-        ? 0
-        : (headerInfo.header.length === 0
-            ? 0
-            : headerInfo.header.split("\n").length) + 2;
-    const line = rawLine == null ? undefined : rawLine + headerLineOffset;
-    if (blockControl?.setSelectionFromMarkdownPosition && line != null) {
-      const ok = blockControl.setSelectionFromMarkdownPosition({ line, ch: 0 });
-      if (ok) return;
-    }
     let editor = this.getSlateEditor(id);
     if (editor == null) {
       // if slate frame just created, have to wait until after it gets
@@ -348,12 +292,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     const slate_id = this.show_focused_frame_of_type("slate");
     if (slate_id == null) return;
     const pos = cm.getDoc().getCursor();
-    const { blockControl, editor } = await this.waitForSlateTarget(slate_id);
-    if (blockControl?.setSelectionFromMarkdownPosition) {
-      blockControl.setSelectionFromMarkdownPosition(pos);
-      this.set_active_id(slate_id, true);
-      return;
-    }
+    const editor = await this.waitForSlateEditor(slate_id);
     if (editor == null) return;
     if (editor.getMarkdownValue?.() !== markdown) {
       this._syncstring.emit("change", { local: true, source: "cm" });
@@ -381,45 +320,25 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     }
   }
 
-  private async waitForSlateTarget(id: string): Promise<{
-    blockControl?: any;
-    editor?: SlateEditor;
-  }> {
+  private async waitForSlateEditor(
+    id: string,
+  ): Promise<SlateEditor | undefined> {
     for (const wait of [0, 16, 32, 64, 128, 250, 500]) {
       if (wait) {
         await delay(wait);
       }
-      const blockControl = this.getBlockEditorControl(id);
       const editor = this.getSlateEditor(id);
-      if (blockControl != null || editor != null) {
-        return { blockControl, editor };
+      if (editor != null) {
+        return editor;
       }
     }
-    return {};
+    return undefined;
   }
 
   private sync_slate_to_cm(id: string) {
     const markdown = this.getSlateMarkdown(id);
     if (markdown != null) {
       this.set_value(markdown, true, "slate");
-    }
-    const blockControl = this.getBlockEditorControl(id);
-    if (blockControl?.getMarkdownPositionForSelection) {
-      const pos = blockControl.getMarkdownPositionForSelection();
-      if (pos != null) {
-        this.programmatically_goto_line(
-          pos.line + 1,
-          true,
-          true,
-          undefined,
-          pos.ch,
-        );
-        const cmId = this.show_recently_focused_frame_of_type("cm");
-        if (cmId != null) {
-          this.set_active_id(cmId, true);
-        }
-        return;
-      }
     }
     const editor = this.getSlateEditor(id);
     if (editor == null) return;

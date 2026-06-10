@@ -74,7 +74,5 @@ export interface Actions {
     id?: string,
     context?: { selection?: Range | null; slateValue?: Descendant[] },
   ) => void;
-  registerBlockEditorControl?: (id: string, control: any) => void;
-  unregisterBlockEditorControl?: (id: string) => void;
   _syncstring?: any;
 }
