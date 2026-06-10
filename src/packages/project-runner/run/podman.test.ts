@@ -462,6 +462,11 @@ describe("project-runner podman orphan fallback", () => {
         "127.0.0.1:45123:9000",
         "-e",
         "LD_LIBRARY_PATH=/runtime-lib:/lib",
+        "-e",
+        expect.stringContaining("COCALC_PROJECT_SSH_START_SCRIPT="),
+        "--sshd",
+        "--init",
+        ".local/share/cocalc/startup.sh",
       ]),
     );
     expect(status).toMatchObject({
