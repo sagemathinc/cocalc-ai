@@ -1,11 +1,12 @@
 /** @jest-environment jsdom */
 
 import immutable from "immutable";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FilesBottom } from "./files-bottom";
 
 const start_project = jest.fn();
 let mockProjectMap: any;
+let mockFlyoutState: any;
 
 jest.mock("antd", () => {
   const Button = ({ children, ...props }: any) => (
@@ -13,16 +14,31 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
-  const Collapse = ({ items }: any) => (
-    <div>
-      {items.map((item: any) => (
-        <section key={item.key}>
-          <div>{item.label}</div>
-          <div>{item.children}</div>
-        </section>
-      ))}
-    </div>
-  );
+  const Collapse = ({ activeKey = [], items, onChange }: any) => {
+    const activeKeys = Array.isArray(activeKey) ? activeKey : [activeKey];
+    return (
+      <div>
+        {items.map((item: any) => (
+          <section key={item.key}>
+            <button
+              type="button"
+              data-testid={`collapse-${item.key}`}
+              onClick={() => {
+                onChange(
+                  activeKeys.includes(item.key)
+                    ? activeKeys.filter((key: string) => key !== item.key)
+                    : [...activeKeys, item.key],
+                );
+              }}
+            >
+              {item.label}
+            </button>
+            {activeKeys.includes(item.key) ? <div>{item.children}</div> : null}
+          </section>
+        ))}
+      </div>
+    );
+  };
   const Space = ({ children }: any) => <div>{children}</div>;
   Space.Compact = ({ children }: any) => <div>{children}</div>;
   return {
@@ -117,10 +133,7 @@ jest.mock("./files-terminal", () => ({
 }));
 
 jest.mock("./state", () => ({
-  getFlyoutFiles: () => ({
-    terminal: { show: true },
-    selected: { show: false },
-  }),
+  getFlyoutFiles: () => mockFlyoutState,
   storeFlyoutState: jest.fn(),
 }));
 
@@ -142,13 +155,22 @@ describe("FilesBottom", () => {
         }),
       }),
     });
+    mockFlyoutState = {
+      terminal: { show: false },
+      selected: { show: false },
+    };
     (global as any).ResizeObserver = class {
       observe() {}
       disconnect() {}
     };
   });
 
-  it("starts the project automatically when the terminal panel is shown", async () => {
+  it("does not automatically start just because the terminal panel is restored", async () => {
+    mockFlyoutState = {
+      terminal: { show: true },
+      selected: { show: false },
+    };
+
     render(
       <FilesBottom
         project_id="project-1"
@@ -168,6 +190,35 @@ describe("FilesBottom", () => {
     );
 
     await waitFor(() => {
+      expect(
+        screen.getByText("Project is stopped. Start it to use this terminal."),
+      ).toBeTruthy();
+    });
+    expect(start_project).not.toHaveBeenCalled();
+  });
+
+  it("starts the project automatically once when the terminal panel is explicitly opened", async () => {
+    const { rerender } = render(
+      <FilesBottom
+        project_id="project-1"
+        checked_files={immutable.Set()}
+        activeFile={null}
+        directoryFiles={[]}
+        projectIsRunning={false}
+        rootHeightPx={600}
+        open={jest.fn()}
+        modeState={["open", jest.fn()]}
+        clearAllSelections={jest.fn()}
+        selectAllFiles={jest.fn()}
+        getFile={jest.fn()}
+        currentPath="/"
+        onNavigate={jest.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("collapse-terminal"));
+
+    await waitFor(() => {
       expect(start_project).toHaveBeenCalledWith("project-1", {
         autostart: true,
       });
@@ -175,9 +226,89 @@ describe("FilesBottom", () => {
     expect(
       screen.getByText("Starting the project so the terminal can connect..."),
     ).toBeTruthy();
+
+    rerender(
+      <FilesBottom
+        project_id="project-1"
+        checked_files={immutable.Set()}
+        activeFile={null}
+        directoryFiles={[]}
+        projectIsRunning={true}
+        rootHeightPx={600}
+        open={jest.fn()}
+        modeState={["open", jest.fn()]}
+        clearAllSelections={jest.fn()}
+        selectAllFiles={jest.fn()}
+        getFile={jest.fn()}
+        currentPath="/"
+        onNavigate={jest.fn()}
+      />,
+    );
+    rerender(
+      <FilesBottom
+        project_id="project-1"
+        checked_files={immutable.Set()}
+        activeFile={null}
+        directoryFiles={[]}
+        projectIsRunning={false}
+        rootHeightPx={600}
+        open={jest.fn()}
+        modeState={["open", jest.fn()]}
+        clearAllSelections={jest.fn()}
+        selectAllFiles={jest.fn()}
+        getFile={jest.fn()}
+        currentPath="/"
+        onNavigate={jest.fn()}
+      />,
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText("Project is stopped. Start it to use this terminal."),
+      ).toBeTruthy();
+    });
+    expect(start_project).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts the project manually from a stopped terminal", async () => {
+    mockFlyoutState = {
+      terminal: { show: true },
+      selected: { show: false },
+    };
+
+    render(
+      <FilesBottom
+        project_id="project-1"
+        checked_files={immutable.Set()}
+        activeFile={null}
+        directoryFiles={[]}
+        projectIsRunning={false}
+        rootHeightPx={600}
+        open={jest.fn()}
+        modeState={["open", jest.fn()]}
+        clearAllSelections={jest.fn()}
+        selectAllFiles={jest.fn()}
+        getFile={jest.fn()}
+        currentPath="/"
+        onNavigate={jest.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Start project")).toBeTruthy();
+    });
+    expect(start_project).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Start project"));
+    expect(start_project).toHaveBeenCalledWith("project-1", {
+      autostart: false,
+    });
   });
 
   it("does not automatically start terminals when automatic starts are disabled", async () => {
+    mockFlyoutState = {
+      terminal: { show: true },
+      selected: { show: false },
+    };
     mockProjectMap = immutable.Map({
       "project-1": immutable.Map({
         autostart_enabled: false,

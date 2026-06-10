@@ -58,6 +58,7 @@ import {
   setStripeCheckoutSession,
 } from "./create-stripe-checkout-session";
 import type { Checkout } from "stripe";
+import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 import { delay } from "awaiting";
 import { createCreditFromPaidStripePaymentIntent } from "./create-invoice";
 import syncPaidInvoices from "./sync-paid-invoices";
@@ -81,6 +82,7 @@ export async function createStripeUsageBasedSubscription(
     logger.debug("createStripeUsageBasedSubscription", ...args);
   };
   log(opts);
+  await assertPaymentCheckoutAllowed();
 
   if (!success_url) {
     throw Error("success_url must be set");

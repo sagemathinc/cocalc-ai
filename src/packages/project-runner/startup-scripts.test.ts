@@ -31,7 +31,14 @@ describe("writeStartupScripts", () => {
     expect(script).toContain(
       `mkdir -p "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"`,
     );
-    expect(script).toContain("dropbear -p ${COCALC_SSHD_PORT:=22} -e -s -a -R");
+    expect(script).toContain('if [ "$(id -u)" != "0" ]; then');
+    expect(script).toContain("project ssh startup must run as root");
+    expect(script).toContain("mkdir -p /etc/dropbear");
+    expect(script).toContain('DROPBEAR="$(command -v dropbear || true)"');
+    expect(script).toContain("[ -x /opt/cocalc/bin2/dropbear ]");
+    expect(script).toContain(
+      '"$DROPBEAR" -p ${COCALC_SSHD_PORT:=22} -e -s -a -R',
+    );
     expect(script).not.toContain(" -D ");
   });
 

@@ -70,6 +70,7 @@ import {
 } from "@cocalc/server/projects/rehome";
 import { assertProjectNotHardDeleting } from "@cocalc/server/projects/hard-delete-state";
 import { mergeStartProjectTimings } from "@cocalc/server/projects/start-timings";
+import { assertFreeProjectStartAllowed } from "@cocalc/server/launch/kill-switches";
 
 const LRO_TERMINAL_STATUSES = new Set<LroStatus>([
   "succeeded",
@@ -166,6 +167,10 @@ export async function handleProjectControlStart(
       if (req.autostart) {
         assertProjectAutostartEnabled({ sponsor });
       }
+      await assertFreeProjectStartAllowed({
+        actor_account_id: req.account_id,
+        sponsor_account_id: sponsor.sponsor_account_id,
+      });
       await assertCanStartUsingRuntimeSponsor({
         sponsor,
         account_id: req.account_id,
@@ -248,6 +253,10 @@ export async function handleProjectControlCheckStartAdmission(
   if (req.autostart) {
     assertProjectAutostartEnabled({ sponsor });
   }
+  await assertFreeProjectStartAllowed({
+    actor_account_id: req.account_id,
+    sponsor_account_id: sponsor.sponsor_account_id,
+  });
   await assertCanStartUsingRuntimeSponsor({
     sponsor,
     account_id: req.account_id,

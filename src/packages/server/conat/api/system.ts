@@ -91,6 +91,7 @@ import {
 } from "@cocalc/server/external-credentials/routing";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { isAiLaunchDisabled } from "@cocalc/server/launch/kill-switches";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { is_valid_email_address } from "@cocalc/util/misc";
@@ -5478,6 +5479,7 @@ export async function getCodexPaymentSource({
   const settings = await getServerSettings();
   const hasSiteApiKey =
     to_bool(settings.openai_enabled) &&
+    !(await isAiLaunchDisabled()) &&
     !!`${settings.openai_api_key ?? ""}`.trim();
   const [hasSubscription, hasProjectApiKeyStored, hasAccountApiKeyStored] =
     await Promise.all([

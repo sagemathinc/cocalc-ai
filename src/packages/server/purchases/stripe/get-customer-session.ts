@@ -15,6 +15,7 @@ import getConn from "@cocalc/server/stripe/connection";
 import getLogger from "@cocalc/backend/logger";
 import { getStripeCustomerId } from "./util";
 import type { CustomerSessionSecret } from "@cocalc/util/stripe/types";
+import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 const logger = getLogger("purchases:stripe:get-customer-session");
 
@@ -24,6 +25,7 @@ export default async function getCustomerSession(
   logger.debug("getCustomerSession", {
     account_id,
   });
+  await assertPaymentCheckoutAllowed();
 
   const customer = await getStripeCustomerId({ account_id, create: true });
   if (!customer) {

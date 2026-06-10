@@ -63,7 +63,9 @@ describe("settings-routing", () => {
       "settings/appearance",
     );
     expect(getSettingsUrlPath({ page: "profile" })).toBe("/settings/profile");
-    expect(getSettingsPushStatePath({ page: "profile" })).toBe("/profile");
+    expect(getSettingsPushStatePath({ page: "profile" })).toBe(
+      "/settings/profile",
+    );
   });
 
   it("derives account state without nested sub-tab state", () => {
@@ -115,7 +117,7 @@ describe("settings-routing", () => {
     expect(actions.setState).toHaveBeenCalledWith({
       active_page: "vouchers",
     });
-    expect(actions.push_state).toHaveBeenCalledWith("/vouchers");
+    expect(actions.push_state).toHaveBeenCalledWith("/settings/vouchers");
 
     applyAccountSettingsRoute(
       actions,

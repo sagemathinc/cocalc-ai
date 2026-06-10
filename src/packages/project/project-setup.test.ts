@@ -39,6 +39,10 @@ describe("project environment cleanup", () => {
     process.env.PATH = "/usr/bin:/bin";
     process.env.COCALC_PROXY_HOST = "0.0.0.0";
     process.env.COCALC_PROXY_PORT = "18080";
+    process.env.COCALC_PROJECT_SSH_START_SCRIPT =
+      "/home/user/.ssh/.cocalc/sshd/start-project-ssh.sh";
+    process.env.COCALC_RUNTIME_HOME = "/home/user";
+    process.env.COCALC_SSHD_PORT = "2200";
     process.env.COCALC_EXTRA_ENV = Buffer.from(
       JSON.stringify({ FOO: "bar" }),
     ).toString("base64");
@@ -51,6 +55,11 @@ describe("project environment cleanup", () => {
 
     expect(process.env.COCALC_PROXY_HOST).toBe("0.0.0.0");
     expect(process.env.COCALC_PROXY_PORT).toBe("18080");
+    expect(process.env.COCALC_PROJECT_SSH_START_SCRIPT).toBe(
+      "/home/user/.ssh/.cocalc/sshd/start-project-ssh.sh",
+    );
+    expect(process.env.COCALC_RUNTIME_HOME).toBe("/home/user");
+    expect(process.env.COCALC_SSHD_PORT).toBe("2200");
     expect(process.env.COCALC_EXTRA_ENV).toBeDefined();
     expect(process.env[PROJECT_SECRETS_ENV]).toBe(PROJECT_SECRETS_MOUNT_PATH);
     expect(process.env.COCALC_PROJECT_ID).toBeUndefined();

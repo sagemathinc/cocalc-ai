@@ -14,6 +14,7 @@ import { isEqual } from "lodash";
 import { decimalToStripe } from "@cocalc/util/stripe/calc";
 import { url } from "@cocalc/server/messages/send";
 import { toDecimal } from "@cocalc/util/money";
+import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 const logger = getLogger("purchases:stripe:get-checkout-session");
 
@@ -41,6 +42,7 @@ export default async function getCheckoutSession({
   if (!purpose) {
     throw Error("purpose must be set");
   }
+  await assertPaymentCheckoutAllowed();
   assertValidUserMetadata(metadata);
 
   let total = toDecimal(0);

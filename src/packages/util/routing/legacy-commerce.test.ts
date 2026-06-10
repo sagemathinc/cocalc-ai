@@ -17,13 +17,10 @@ describe("routing/legacy-commerce", () => {
     );
   });
 
-  it("maps legacy store paths to specific replacement settings pages", () => {
+  it("maps supported legacy store paths to replacement settings pages", () => {
     expect(getLegacyCommerceTargetPath("store")).toBe("settings/membership");
     expect(getLegacyCommerceTargetPath("/store/membership")).toBe(
       "settings/membership",
-    );
-    expect(getLegacyCommerceTargetPath("/store/vouchers?id=123")).toBe(
-      "settings/vouchers",
     );
     expect(getLegacyCommerceTargetPath("/store/checkout")).toBe(
       "settings/membership",
@@ -33,5 +30,8 @@ describe("routing/legacy-commerce", () => {
   it("ignores unrelated paths", () => {
     expect(getLegacyCommerceTargetPath("/pricing")).toBeUndefined();
     expect(getLegacyCommerceTargetPath("/settings/store")).toBeUndefined();
+    expect(
+      getLegacyCommerceTargetPath("/store/vouchers?id=123"),
+    ).toBeUndefined();
   });
 });
