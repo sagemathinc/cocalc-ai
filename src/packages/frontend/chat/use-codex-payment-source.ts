@@ -154,7 +154,7 @@ export function getCodexPaymentSourceTooltip(
     }
     switch (paymentSource.source) {
       case "subscription":
-        return "Codex will use your ChatGPT Plan.";
+        return "Codex will use your ChatGPT Plan. ChatGPT shows the exact plan and remaining Codex usage.";
       case "project-api-key":
       case "account-api-key":
       case "site-api-key":
@@ -174,7 +174,9 @@ export function getCodexPaymentSourceTooltip(
     "Precedence: ChatGPT Plan → Project OpenAI API key → Account OpenAI API key → Site OpenAI API key.",
   ];
   if (paymentSource.hasSubscription) {
-    parts.push("A ChatGPT subscription is connected.");
+    parts.push(
+      "A ChatGPT subscription is connected; ChatGPT shows the exact plan and remaining Codex usage.",
+    );
   }
   return parts.join(" ");
 }

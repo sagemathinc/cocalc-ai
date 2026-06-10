@@ -57,6 +57,7 @@ export const system = {
   recordUxLatencyEvent: authFirst,
   getUxLatencySummary: authFirstRequireAccount,
   getLaunchHealth: authFirstRequireAccount,
+  recordLaunchSmokeResult: authFirstRequireAccount,
   getBayBackups: authFirst,
   getAcpAdmissionDenialReport: authFirstRequireAccount,
   getServiceAdmissionDenialReport: authFirstRequireAccount,
@@ -284,6 +285,27 @@ export interface LaunchHealthCheck {
   details?: string[];
 }
 
+export interface LaunchSmokeStepResult {
+  id: string;
+  label: string;
+  status: "succeeded" | "failed" | "skipped";
+  duration_ms: number;
+  summary: string;
+  details?: Record<string, unknown>;
+}
+
+export interface LaunchSmokeResult {
+  id?: string;
+  account_id?: string | null;
+  project_id: string;
+  status: "succeeded" | "failed";
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  steps: LaunchSmokeStepResult[];
+  error?: string | null;
+}
+
 export interface LaunchHealthKillSwitches {
   read_mostly_maintenance: boolean;
   disable_project_creation: boolean;
@@ -303,12 +325,24 @@ export interface LaunchHealthCounts {
   active_browser_connections: number | null;
 }
 
+export interface LaunchHealthLatencySla {
+  project_start_warm_p95_ms: number;
+  project_start_overall_p95_ms: number;
+  project_terminal_ready_p95_ms: number;
+  project_jupyter_ready_p95_ms: number;
+  project_exec_ready_p95_ms: number;
+  file_open_visible_p95_ms: number;
+  file_open_sync_ready_p95_ms: number;
+}
+
 export interface LaunchHealthStatus {
   checked_at: string;
   bay_id: string;
   seed_bay_id: string;
   overall: LaunchHealthLevel;
   latency_window_minutes: number;
+  latency_sla_ms: LaunchHealthLatencySla;
+  latest_smoke: LaunchSmokeResult | null;
   kill_switches: LaunchHealthKillSwitches;
   counts: LaunchHealthCounts;
   checks: LaunchHealthCheck[];
@@ -1713,6 +1747,11 @@ export interface System {
     account_id?: string;
     window_minutes?: number;
   }) => Promise<LaunchHealthStatus>;
+
+  recordLaunchSmokeResult: (opts: {
+    account_id?: string;
+    result: LaunchSmokeResult;
+  }) => Promise<LaunchSmokeResult>;
 
   getBayBackups: (opts?: {
     account_id?: string;
