@@ -26,6 +26,7 @@ import {
 } from "@cocalc/frontend/editors/slate/sync";
 import { ReactEditor } from "@cocalc/frontend/editors/slate/slate-react";
 import { Transforms } from "slate";
+import type * as CodeMirror from "codemirror";
 import { toggle_checkbox } from "@cocalc/frontend/editors/task-editor/desc-rendering";
 import { parseTableOfContents } from "@cocalc/frontend/markdown";
 import { parseHeader } from "@cocalc/frontend/markdown/header";
@@ -158,7 +159,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
       }
       throw Error("no slate editors");
     }
-    return this.slateEditors[id];
+    return this.slateEditors?.[id];
   }
 
   public registerSlateEditor(id: string, editor: SlateEditor): void {
@@ -336,8 +337,10 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   private async sync_cm_to_slate(
     id: string,
     editor_actions: Actions,
+    liveCm?: CodeMirror.Editor,
   ): Promise<void> {
-    const cm = editor_actions._cm[id];
+    const registeredCm = editor_actions._cm[id];
+    const cm = liveCm ?? registeredCm;
     if (cm == null) return;
     // important to get markdown from cm and not syncstring to get latest version.
     const markdown = cm.getValue();
@@ -345,40 +348,17 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     const slate_id = this.show_focused_frame_of_type("slate");
     if (slate_id == null) return;
     const pos = cm.getDoc().getCursor();
-    let blockControl = this.getBlockEditorControl(slate_id);
-    let syncedSlateMarkdown = false;
-    const syncSlateMarkdownNow = () => {
-      if (syncedSlateMarkdown) return;
-      if (typeof blockControl?.setMarkdown === "function") {
-        blockControl.setMarkdown(markdown);
-        syncedSlateMarkdown = true;
-        return;
-      }
-      const editor = this.getSlateEditor(slate_id);
-      if (typeof editor?.setMarkdownValueNow === "function") {
-        editor.setMarkdownValueNow(markdown);
-        syncedSlateMarkdown = true;
-      }
-    };
-    syncSlateMarkdownNow();
-    if (!blockControl) {
-      await delay(1);
-      blockControl = this.getBlockEditorControl(slate_id);
-      syncSlateMarkdownNow();
-    }
+    const { blockControl, editor } = await this.waitForSlateTarget(slate_id);
     if (blockControl?.setSelectionFromMarkdownPosition) {
       blockControl.setSelectionFromMarkdownPosition(pos);
       this.set_active_id(slate_id, true);
       return;
     }
-    let editor = this.getSlateEditor(slate_id);
-    if (editor == null) {
-      // if slate frame just created, have to wait until after it gets
-      // rendered for the actual editor to get registered.
-      await delay(1);
-      editor = this.getSlateEditor(slate_id);
-    }
     if (editor == null) return;
+    if (editor.getMarkdownValue?.() !== markdown) {
+      this._syncstring.emit("change", { local: true, source: "cm" });
+      await delay(0);
+    }
     let point =
       markdownPositionToSlatePoint({
         markdown,
@@ -399,6 +379,23 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     } catch (err) {
       console.log("point not found", point);
     }
+  }
+
+  private async waitForSlateTarget(id: string): Promise<{
+    blockControl?: any;
+    editor?: SlateEditor;
+  }> {
+    for (const wait of [0, 16, 32, 64, 128, 250, 500]) {
+      if (wait) {
+        await delay(wait);
+      }
+      const blockControl = this.getBlockEditorControl(id);
+      const editor = this.getSlateEditor(id);
+      if (blockControl != null || editor != null) {
+        return { blockControl, editor };
+      }
+    }
+    return {};
   }
 
   private sync_slate_to_cm(id: string) {
@@ -447,7 +444,11 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     void this.sync(activeId, this);
   }
 
-  public async sync(id: string, editor_actions: Actions): Promise<void> {
+  public async sync(
+    id: string,
+    editor_actions: Actions,
+    liveCm?: CodeMirror.Editor,
+  ): Promise<void> {
     const node = this._get_frame_node(id);
     if (!node) return;
     switch (node.get("type")) {
@@ -455,7 +456,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
         this.sync_slate_to_cm(id);
         return;
       case "cm":
-        this.sync_cm_to_slate(id, editor_actions);
+        this.sync_cm_to_slate(id, editor_actions, liveCm);
         return;
     }
   }

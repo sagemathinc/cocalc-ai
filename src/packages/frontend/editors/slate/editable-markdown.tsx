@@ -845,6 +845,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         setPendingRemoteIndicator(false);
         return;
       }
+      if (event?.local && event.source === "cm") {
+        mergeHelperRef.current.noteApplied(remote);
+        pendingRemoteRef.current = null;
+        setPendingRemoteIndicator(false);
+        forceSetEditorToValue(remote);
+        return;
+      }
       if (ignoreRemoteWhileFocused && isMergeFocused()) {
         updatePendingRemoteIndicator(remote, editor.getMarkdownValue());
         return;
@@ -2115,6 +2122,41 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     editor.markdownValue = normalizedValue;
   }
 
+  function forceSetEditorToValue(value: string) {
+    (saveValueDebounce as any).cancel?.();
+    (setSyncstringFromSlate as any).cancel?.();
+    if (value == null) return;
+    editor.syncCache = {};
+    const nextEditorValueRaw = markdown_to_slate(
+      value,
+      false,
+      editor.syncCache,
+    );
+    const nextEditorValue = withBlockSpacerParagraphs(
+      preserveBlankLines
+        ? nextEditorValueRaw
+        : stripBlankParagraphs(nextEditorValueRaw),
+    );
+    const normalizedValue = preserveBlankLines
+      ? value
+      : slate_to_markdown(nextEditorValue, {
+          cache: editor.syncCache,
+          preserveBlankLines,
+        });
+    editor.syncCausedUpdate = true;
+    Editor.withoutNormalizing(editor, () => {
+      editor.children = nextEditorValue;
+    });
+    editor.resetHasUnsavedChanges();
+    editor.markdownValue = normalizedValue;
+    setEditorValue(nextEditorValue);
+    setChange((prev) => prev + 1);
+    onSlateChange?.([...nextEditorValue], {
+      onlySelectionOps: false,
+      syncCausedUpdate: true,
+    });
+  }
+
   const setEditorToValue = (value) => {
     // console.log("setEditorToValue", { value, ed: editor.getMarkdownValue() });
     if (lastSetValueRef.current == value) {
@@ -2396,11 +2438,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     } else {
       applyExternalValue();
     }
-  };
-
-  editor.setMarkdownValueNow = (nextValue: string) => {
-    allowFocusedValueUpdateRef.current = true;
-    setEditorToValue(nextValue ?? "");
   };
 
   if ((window as any).cc != null) {
