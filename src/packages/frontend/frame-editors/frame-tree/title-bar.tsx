@@ -16,7 +16,7 @@ import { Button, Dropdown, Input, InputNumber, Popover } from "antd";
 import type * as CodeMirror from "codemirror";
 import type { MenuProps } from "antd/lib";
 import { List } from "immutable";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useIntl } from "react-intl";
 import {
   CSS,
@@ -220,6 +220,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   }>({ main: false, popover: false });
 
   const [helpSearch, setHelpSearch] = useState<string>("");
+  const titleBarRef = useRef<HTMLDivElement | null>(null);
+  const [titleBarWidth, setTitleBarWidth] = useState<number | undefined>();
 
   const student_project_functionality = useStudentProjectFunctionality(
     props.project_id,
@@ -307,6 +309,22 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     }
     return true;
   }, [tours, props.type]);
+
+  useEffect(() => {
+    const node = titleBarRef.current;
+    if (node == null || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const updateWidth = () =>
+      setTitleBarWidth(node.getBoundingClientRect().width);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const compactFrameControls = titleBarWidth != null && titleBarWidth < 360;
+  const compactDragHandle = titleBarWidth != null && titleBarWidth < 240;
 
   // comes from actions's store:
   const switch_to_files: List<string> = useRedux([
@@ -397,7 +415,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     );
   }
 
-  function renderFrameControls(): Rendered {
+  function renderFrameControls(popup = false): Rendered {
+    const showSecondaryControls = popup || !compactFrameControls;
     return (
       <div
         key="control-buttons-group"
@@ -428,10 +447,16 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
               ...(is_active ? undefined : { opacity: 0.3 }),
             }}
           >
-            {render_terminal_button()}
-            {!props.is_full ? render_split_row() : undefined}
-            {!props.is_full ? render_split_col() : undefined}
-            {!props.is_only ? render_full() : undefined}
+            {showSecondaryControls ? render_terminal_button() : undefined}
+            {showSecondaryControls && !props.is_full
+              ? render_split_row()
+              : undefined}
+            {showSecondaryControls && !props.is_full
+              ? render_split_col()
+              : undefined}
+            {showSecondaryControls && !props.is_only
+              ? render_full()
+              : undefined}
             {render_x()}
           </span>
         </ButtonGroup>
@@ -824,17 +849,21 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         }
       >
         <Icon name="bars" />
-        <span style={{ marginLeft: 4, fontWeight: 450, whiteSpace: "nowrap" }}>
-          {(() => {
-            const spec = props.editor_spec?.[props.type];
-            if (!spec) return props.type;
-            return (
-              manageCommands.spec2display(spec, "short") ||
-              manageCommands.spec2display(spec, "name") ||
-              props.type
-            );
-          })()}
-        </span>
+        {!compactDragHandle && (
+          <span
+            style={{ marginLeft: 4, fontWeight: 450, whiteSpace: "nowrap" }}
+          >
+            {(() => {
+              const spec = props.editor_spec?.[props.type];
+              if (!spec) return props.type;
+              return (
+                manageCommands.spec2display(spec, "short") ||
+                manageCommands.spec2display(spec, "name") ||
+                props.type
+              );
+            })()}
+          </span>
+        )}
       </div>
     );
 
@@ -970,7 +999,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
                 )}
               </div>
               <div>
-                {renderFrameControls()}
+                {renderFrameControls(true)}
                 <Button
                   style={{ float: "right" }}
                   onClick={() => setShowMainButtonsPopover(false)}
@@ -1393,6 +1422,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           style={style}
           id={`titlebar-${props.id}`}
           className={"cc-frame-tree-title-bar"}
+          ref={titleBarRef}
         >
           {renderDragHandle()}
           {renderMainMenusAndButtons()}
