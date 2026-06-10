@@ -13,7 +13,7 @@ import {
 } from "../base-editor/actions-base";
 import * as tree_ops from "../frame-tree/tree-ops";
 import { close, len } from "@cocalc/util/misc";
-import type { Terminal } from "./connected-terminal";
+import type { Terminal, TerminalOptions } from "./connected-terminal";
 
 type TerminalCtor<T extends CodeEditorState = CodeEditorState> = new (
   actions: Actions<T>,
@@ -24,6 +24,7 @@ type TerminalCtor<T extends CodeEditorState = CodeEditorState> = new (
   args?: string[],
   workingDir?: string,
   terminalThemeOverride?: string | null,
+  options?: TerminalOptions,
 ) => Terminal<T>;
 
 let connectedTerminalPromise:
@@ -156,6 +157,7 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
             args,
             undefined,
             terminalThemeOverride,
+            { autoStartProjectOnFirstConnect: true },
           );
           terminal.connect();
           if (this.terminals !== terminals) {
