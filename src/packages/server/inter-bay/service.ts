@@ -1715,12 +1715,14 @@ async function startHostConnectionService(): Promise<void> {
       account_id,
       id,
       components,
+      base_url,
       reason,
     }) =>
       await rolloutHostManagedComponents({
         account_id,
         id,
         components,
+        base_url,
         reason,
       }),
     deleteHost: async ({

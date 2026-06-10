@@ -166,15 +166,18 @@ export function rolloutComponentsForUpgradeResults(
 export function hostManagedComponentRolloutDedupeKey({
   hostId,
   components,
+  baseUrl,
   reason,
 }: {
   hostId: string;
   components: ManagedComponentKind[];
+  baseUrl?: string;
   reason?: string;
 }): string {
   return `${HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND}:${hostId}:${JSON.stringify(
     {
       components: normalizeManagedComponentKindsForDedupe(components),
+      base_url: `${baseUrl ?? ""}`.trim() || null,
       reason: `${reason ?? ""}`.trim() || null,
     },
   )}`;
