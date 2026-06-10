@@ -97,8 +97,8 @@ const STOP_RM_TIMEOUT_S = 10;
 const STOP_RM_PODMAN_TERM_S = 5;
 const STOP_INSPECT_TIMEOUT_S = 10;
 const STOP_FORCE_KILL_SETTLE_MS = 250;
-const SSH_PREREQUISITE_TIMEOUT_MS = 2 * 60 * 1000;
-const SSH_PREREQUISITE_POLL_MS = 500;
+const SSH_START_TIMEOUT_MS = 2 * 60 * 1000;
+const SSH_START_POLL_MS = 500;
 
 const DEFAULT_PROJECT_SCRIPT = join(
   COCALC_SRC,
@@ -1282,7 +1282,7 @@ export async function start({
       });
     }
 
-    let { home, scratch } = await timings.measure(
+    let { home, scratch, quota_applied } = await timings.measure(
       "resolve_initial_paths",
       async () =>
         await localPath({
@@ -1313,7 +1313,7 @@ export async function start({
       });
     });
 
-    ({ home, scratch } = await timings.measure(
+    ({ home, scratch, quota_applied } = await timings.measure(
       "ensure_local_path",
       async () =>
         await localPath({
@@ -1463,7 +1463,7 @@ export async function start({
       }
     });
 
-    if (config.disk) {
+    if (config.disk && !quota_applied) {
       // TODO: maybe this should be done in parallel with other things
       // to make startup time slightly faster (?) -- could also be incorporated
       // into mount.
@@ -1939,42 +1939,20 @@ export function getImage(config?: Configuration): string {
 }
 
 export async function initSshServer(name: string) {
-  await waitForSshPrerequisites(name);
-  await podman([
-    "exec",
-    "--user",
-    "0:0",
-    name,
-    "bash",
-    "-c",
-    join(DEFAULT_PROJECT_RUNTIME_HOME, START_PROJECT_SSH),
-  ]);
-}
-
-async function waitForSshPrerequisites(name: string): Promise<void> {
   const start = Date.now();
   let lastError: unknown;
-  while (Date.now() - start < SSH_PREREQUISITE_TIMEOUT_MS) {
+  const script = join(DEFAULT_PROJECT_RUNTIME_HOME, START_PROJECT_SSH);
+  while (Date.now() - start < SSH_START_TIMEOUT_MS) {
     try {
-      await podman([
-        "exec",
-        "--user",
-        "0:0",
-        name,
-        "bash",
-        "-lc",
-        "command -v dropbear >/dev/null",
-      ]);
+      await podman(["exec", "--user", "0:0", name, "bash", "-c", script]);
       return;
     } catch (err) {
       lastError = err;
-      await new Promise((resolve) =>
-        setTimeout(resolve, SSH_PREREQUISITE_POLL_MS),
-      );
+      await new Promise((resolve) => setTimeout(resolve, SSH_START_POLL_MS));
     }
   }
   throw new Error(
-    `timed out waiting for project container ssh prerequisites: ${lastError}`,
+    `timed out starting project container ssh server: ${lastError}`,
   );
 }
 

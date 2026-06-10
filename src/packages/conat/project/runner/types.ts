@@ -8,7 +8,7 @@ export type LocalPathFunction = (opts: {
   scratch?: number;
   // if false, only resolve paths without creating volumes
   ensure?: boolean;
-}) => Promise<{ home: string; scratch?: string }>;
+}) => Promise<{ home: string; scratch?: string; quota_applied?: boolean }>;
 
 export interface SshServer {
   name: string;

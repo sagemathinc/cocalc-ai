@@ -471,6 +471,27 @@ describe("project-runner podman orphan fallback", () => {
     });
   });
 
+  it("does not set project quota twice when localPath already applied it", async () => {
+    mockPodman.mockResolvedValue({ stdout: "" });
+    const { setQuota } = jest.requireMock("./filesystem");
+
+    await start({
+      project_id: project1,
+      localPath: async () => ({
+        home: `/tmp/project-${project1}`,
+        quota_applied: true,
+      }),
+      config: {
+        disk: 1024,
+        image: "docker.io/library/ubuntu:latest",
+        ssh_port: 30123,
+        http_port: 45123,
+      },
+    });
+
+    expect(setQuota).not.toHaveBeenCalled();
+  });
+
   it("bind mounts host shared scratch into started project containers", async () => {
     mockPodman.mockResolvedValue({ stdout: "" });
     process.env.COCALC_SHARED_SCRATCH_ENABLED = "1";
