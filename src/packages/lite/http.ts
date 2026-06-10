@@ -1,6 +1,7 @@
 import express, { type Application } from "express";
 import { path as STATIC_PATH } from "@cocalc/static";
 import { path as ASSET_PATH } from "@cocalc/assets";
+import { createApiV2Router } from "@cocalc/http-api";
 import getPort from "@cocalc/backend/get-port";
 import {
   createServer as httpCreateServer,
@@ -121,6 +122,7 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
 
 export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
   initAuth({ app, AUTH_TOKEN, isHttps });
+  app.use("/api/v2", createApiV2Router());
 
   let pathToStaticAssets;
   if (fs.existsSync(join(STATIC_PATH, "app.html"))) {

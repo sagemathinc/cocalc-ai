@@ -40,6 +40,7 @@
     "@cocalc/backend": "workspace:*",
     "@cocalc/chat": "workspace:*",
     "@cocalc/conat": "workspace:*",
+    "@cocalc/http-api": "workspace:*",
     "@cocalc/lite": "workspace:*",
     "@cocalc/project": "workspace:*",
     "@cocalc/static": "workspace:*",
