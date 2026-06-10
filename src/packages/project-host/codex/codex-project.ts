@@ -1573,13 +1573,19 @@ export function initCodexProjectRunner(): void {
         },
       };
     },
-    async spawnCodexAppServer({ projectId, accountId, cwd, env: extraEnv }) {
+    async spawnCodexAppServer({
+      projectId,
+      accountId,
+      cwd,
+      env: extraEnv,
+      touchReason,
+    }) {
       const spawned = await spawnCodexAppServerInProjectRuntime({
         projectId,
         accountId,
         cwd,
         env: extraEnv,
-        touchReason: "codex",
+        touchReason: touchReason ?? "codex",
       });
       return {
         proc: spawned.proc,

@@ -4,6 +4,7 @@ This is a very lightweight small subset of the hub's API for browser clients.
 
 import getLogger from "@cocalc/backend/logger";
 import { getFrontendSourceFingerprint } from "@cocalc/backend/frontend-build-fingerprint";
+import { getCodexAppServerAccountStatus } from "@cocalc/ai/acp";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import type {
   AccountBayLocation,
@@ -19,6 +20,7 @@ import type {
   BayInfo,
   BayOwnershipBackfillResult,
   CodexPaymentSourceInfo,
+  CodexUsageStatusInfo,
   HostBayLocation,
   ProjectBayLocation,
 } from "@cocalc/conat/hub/api/system";
@@ -717,6 +719,51 @@ async function getCodexPaymentSource(opts?: {
   };
 }
 
+async function getCodexUsageStatus(opts?: {
+  account_id?: string;
+  project_id?: string;
+}): Promise<CodexUsageStatusInfo> {
+  const checkedAt = new Date().toISOString();
+  const paymentSource = await getCodexPaymentSource(opts);
+  if (paymentSource.source !== "subscription") {
+    return {
+      available: false,
+      checkedAt,
+      paymentSource,
+      project_id: paymentSource.project_id,
+      reason:
+        paymentSource.source === "none"
+          ? "Codex is not connected."
+          : "Live ChatGPT Codex usage is only available when Codex is using a ChatGPT Plan.",
+    };
+  }
+  try {
+    const status = await getCodexAppServerAccountStatus({});
+    return {
+      available: !!status.rateLimits,
+      checkedAt,
+      paymentSource,
+      project_id: paymentSource.project_id,
+      account: status.account,
+      rateLimits: status.rateLimits,
+      tokenUsage: status.tokenUsage,
+      errors: status.errors,
+      reason:
+        !status.rateLimits && status.errors?.rateLimits
+          ? status.errors.rateLimits
+          : undefined,
+    };
+  } catch (err) {
+    return {
+      available: false,
+      checkedAt,
+      paymentSource,
+      project_id: paymentSource.project_id,
+      reason: `${err}`,
+    };
+  }
+}
+
 async function getCodexLocalStatus(): Promise<{
   installed: boolean;
   binaryPath?: string;
@@ -1410,6 +1457,7 @@ export const hubApi: HubApi = {
     getAccountNotificationIndexProjectionStatus:
       getAccountNotificationIndexProjectionStatusLite,
     getCodexPaymentSource,
+    getCodexUsageStatus,
     getCodexLocalStatus,
     getFrontendSourceFingerprint: getFrontendSourceFingerprintInfo,
     logClientError,
