@@ -31,8 +31,8 @@ export default async function init() {
   const envVars = projectSetup.set_extra_env();
 
   if (options.sshd) {
-    sshd.init(envVars);
+    await sshd.init(envVars);
   }
 
-  initScript.run();
+  await initScript.run();
 }

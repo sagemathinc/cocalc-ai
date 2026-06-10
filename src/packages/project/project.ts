@@ -49,7 +49,7 @@ export async function main() {
   initBugCounter();
   checkEnvVariables();
   cleanupEnvironmentVariables();
-  initKucalc(); // must be after cleanupEnvironmentVariables, since this *adds* custom environment variables.
+  await initKucalc(); // must be after cleanupEnvironmentVariables, since this *adds* custom environment variables.
   logger.info("main init function");
   logger.info("initialize INFO.json file");
   await initInfoJson();
