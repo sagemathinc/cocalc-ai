@@ -159,7 +159,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
       }
       throw Error("no slate editors");
     }
-    return this.slateEditors[id];
+    return this.slateEditors?.[id];
   }
 
   public registerSlateEditor(id: string, editor: SlateEditor): void {
@@ -339,7 +339,8 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     editor_actions: Actions,
     liveCm?: CodeMirror.Editor,
   ): Promise<void> {
-    const cm = liveCm ?? editor_actions._cm[id];
+    const registeredCm = editor_actions._cm[id];
+    const cm = liveCm ?? registeredCm;
     if (cm == null) return;
     // important to get markdown from cm and not syncstring to get latest version.
     const markdown = cm.getValue();
@@ -347,24 +348,17 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     const slate_id = this.show_focused_frame_of_type("slate");
     if (slate_id == null) return;
     const pos = cm.getDoc().getCursor();
-    let blockControl = this.getBlockEditorControl(slate_id);
-    if (!blockControl) {
-      await delay(1);
-      blockControl = this.getBlockEditorControl(slate_id);
-    }
+    const { blockControl, editor } = await this.waitForSlateTarget(slate_id);
     if (blockControl?.setSelectionFromMarkdownPosition) {
       blockControl.setSelectionFromMarkdownPosition(pos);
       this.set_active_id(slate_id, true);
       return;
     }
-    let editor = this.getSlateEditor(slate_id);
-    if (editor == null) {
-      // if slate frame just created, have to wait until after it gets
-      // rendered for the actual editor to get registered.
-      await delay(1);
-      editor = this.getSlateEditor(slate_id);
-    }
     if (editor == null) return;
+    if (editor.getMarkdownValue?.() !== markdown) {
+      this._syncstring.emit("change", { local: true, source: "cm" });
+      await delay(0);
+    }
     let point =
       markdownPositionToSlatePoint({
         markdown,
@@ -385,6 +379,23 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     } catch (err) {
       console.log("point not found", point);
     }
+  }
+
+  private async waitForSlateTarget(id: string): Promise<{
+    blockControl?: any;
+    editor?: SlateEditor;
+  }> {
+    for (const wait of [0, 16, 32, 64, 128, 250, 500]) {
+      if (wait) {
+        await delay(wait);
+      }
+      const blockControl = this.getBlockEditorControl(id);
+      const editor = this.getSlateEditor(id);
+      if (blockControl != null || editor != null) {
+        return { blockControl, editor };
+      }
+    }
+    return {};
   }
 
   private sync_slate_to_cm(id: string) {

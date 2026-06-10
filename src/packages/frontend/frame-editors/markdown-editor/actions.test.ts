@@ -118,6 +118,39 @@ describe("markdown editor Actions", () => {
     });
   });
 
+  it("waits for a newly opened Slate frame to register before selecting", async () => {
+    const actions: any = Object.create(Actions.prototype);
+    actions._cm = {
+      "cm-frame": {
+        getValue: () => "foo",
+        getDoc: () => ({
+          getCursor: () => ({ line: 0, ch: 3 }),
+        }),
+      },
+    };
+    actions.set_value = jest.fn();
+    actions.show_focused_frame_of_type = jest.fn(() => "slate-frame");
+    const setSelectionFromMarkdownPosition = jest.fn(() => true);
+    actions.getBlockEditorControl = jest
+      .fn()
+      .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce(undefined)
+      .mockReturnValue({
+        setSelectionFromMarkdownPosition,
+      });
+    actions.getSlateEditor = jest.fn(() => undefined);
+    actions.set_active_id = jest.fn();
+
+    await actions.sync_cm_to_slate("cm-frame", actions);
+
+    expect(actions.getBlockEditorControl).toHaveBeenCalledTimes(3);
+    expect(setSelectionFromMarkdownPosition).toHaveBeenCalledWith({
+      line: 0,
+      ch: 3,
+    });
+    expect(actions.set_active_id).toHaveBeenCalledWith("slate-frame", true);
+  });
+
   it("restores the last focused Slate block on refocus instead of jumping to block 0", () => {
     const actions: any = Object.create(Actions.prototype);
     const restoreFocusBlock = jest.fn(() => true);
