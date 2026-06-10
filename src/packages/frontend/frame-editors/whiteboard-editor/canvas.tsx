@@ -144,6 +144,7 @@ interface Props {
   cursors?: { [id: string]: { [account_id: string]: any[] } };
   mainFrameType: MainFrameType;
   presentation?: boolean;
+  legacyMarkdown?: boolean;
 }
 
 export default function Canvas({
@@ -162,6 +163,7 @@ export default function Canvas({
   cursors,
   mainFrameType,
   presentation,
+  legacyMarkdown,
 }: Props) {
   const isMountedRef = useIsMountedRef();
   const frame = useFrameContext();
@@ -646,6 +648,7 @@ export default function Canvas({
         canvasScale={canvasScale}
         readOnly={readOnly || isNavigator || !isFinite(element.z)}
         cursors={cursors?.[id]}
+        legacyMarkdown={legacyMarkdown}
       />
     );
     if (!isNavRectangle && (element.style || selected || isNavigator)) {

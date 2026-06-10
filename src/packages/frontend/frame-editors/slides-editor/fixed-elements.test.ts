@@ -1,11 +1,11 @@
-import fixedElements from "./fixed-elements";
+import fixedElements, { LEGACY_SLIDE_TOP } from "./fixed-elements";
 import { SLIDE_TEMPLATE_ELEMENTS } from "./template";
 
 describe("slides fixed elements", () => {
-  it("centers the fixed slide background around the origin", () => {
+  it("keeps the fixed slide background at the legacy CoCalc top", () => {
     const slide = fixedElements["the-slide"];
     expect(slide.x).toBe(-(slide.w ?? 0) / 2);
-    expect(slide.y).toBe(-(slide.h ?? 0) / 2);
+    expect(slide.y).toBe(LEGACY_SLIDE_TOP);
   });
 
   it("keeps the default title and subtitle template inside the slide", () => {

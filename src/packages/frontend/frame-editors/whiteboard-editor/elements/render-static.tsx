@@ -16,10 +16,14 @@ import Chat from "./chat-static";
 
 export interface Props {
   element: Element;
-  canvasScale?: number;
+  focused?: boolean;
+  canvasScale: number;
+  readOnly?: boolean;
+  cursors?: { [account_id: string]: any[] };
+  legacyMarkdown?: boolean;
 }
 
-export default function RenderStatic(props) {
+export default function RenderStatic(props: Props) {
   if (props.element.hide) {
     // don't show hidden objects at all.
     return null;

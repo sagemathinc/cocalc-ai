@@ -2,23 +2,24 @@ import { CSSProperties } from "react";
 import { Element } from "../types";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 import { DEFAULT_FONT_SIZE, DEFAULT_FONT_FAMILY } from "../tools/defaults";
+import { legacyEscapedMathDelimitersToText } from "../document-schema";
 
 interface Props {
   element: Element;
+  legacyMarkdown?: boolean;
 }
 
 export const PADDING: number = 5;
 export const PLACEHOLDER = "Type text...";
 
-export default function Text({ element }: Props) {
+export default function Text({ element, legacyMarkdown }: Props) {
   const isEmpty = !element.str?.trim();
+  const value = legacyMarkdown
+    ? legacyEscapedMathDelimitersToText(element.str ?? "")
+    : (element.str ?? "");
   return (
     <StaticMarkdown
-      value={
-        isEmpty
-          ? (element.data?.placeholder ?? PLACEHOLDER)
-          : (element.str ?? "")
-      }
+      value={isEmpty ? (element.data?.placeholder ?? PLACEHOLDER) : value}
       style={getFullStyle(element, isEmpty)}
     />
   );

@@ -5,6 +5,7 @@ import { Loading } from "@cocalc/frontend/components";
 import useAutoHide from "@cocalc/frontend/components/use-auto-hide";
 import { State, elementsList } from "./actions";
 import Canvas from "./canvas";
+import { isLegacyDocumentSchemaVersion } from "./document-schema";
 import KernelPanel from "./elements/code/kernel";
 import { hasCodeElements } from "./has-code-elements";
 import { useFrameContext, usePageInfo } from "./hooks";
@@ -59,6 +60,9 @@ export default function Whiteboard({ presentation }: Props) {
     if (pageId == null) return [];
     return elementsList(pagesMap.get(pageId)) ?? [];
   }, [pagesMap?.get(pageId ?? "")]);
+  const legacyMarkdown = isLegacyDocumentSchemaVersion(
+    elementsMap?.getIn([pageId ?? "", "data", "schemaVersion"]),
+  );
   const hasCodeElementsOnPage = useMemo(
     () => hasCodeElements(elementsOnPage),
     [elementsOnPage],
@@ -130,6 +134,7 @@ export default function Whiteboard({ presentation }: Props) {
       readOnly={readOnly}
       cursors={cursors}
       presentation={presentation}
+      legacyMarkdown={legacyMarkdown}
     />
   );
 

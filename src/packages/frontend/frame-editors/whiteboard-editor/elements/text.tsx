@@ -22,6 +22,7 @@ interface Props {
   markdownProps?: object;
   resizable?: boolean;
   style?: CSSProperties;
+  legacyMarkdown?: boolean;
 }
 
 export default function Text(props: Props) {
@@ -59,7 +60,13 @@ export function TextEditor(props: Props) {
   ) {
     // NOTE: not using static whenever possible (e.g., when not focused) results
     // in massive performance problems when there are many notes.
-    return <TextStatic element={props.element} style={props.style} />;
+    return (
+      <TextStatic
+        element={props.element}
+        style={props.style}
+        legacyMarkdown={props.legacyMarkdown}
+      />
+    );
   }
   return <EditText {...props} />;
 }

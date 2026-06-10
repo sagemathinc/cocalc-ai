@@ -12,7 +12,7 @@ export const STYLE = {
   overflow: "hidden",
 } as CSSProperties;
 
-export default function Note({ element }: Props) {
+export default function Note({ element, legacyMarkdown }: Props) {
   const data = {
     ...element.data,
     color: avatar_fontcolor(element.data?.color),
@@ -25,7 +25,7 @@ export default function Note({ element }: Props) {
         padding: "10px",
       }}
     >
-      <Text element={{ ...element, data }} />
+      <Text element={{ ...element, data }} legacyMarkdown={legacyMarkdown} />
     </div>
   );
 }

@@ -1,4 +1,8 @@
 import type { Element } from "../types";
+import {
+  isLegacyDocumentSchemaVersion,
+  normalizeLegacyTextElement,
+} from "../document-schema";
 import { field_cmp } from "@cocalc/util/misc";
 
 // the old page format
@@ -7,8 +11,9 @@ export function parseSyncdbFileUsingPageNumbers(content: string): Element[][] {
   let maxPage = 1;
   for (const line of content.split("\n")) {
     try {
-      const element = JSON.parse(line);
-      const page = element.page ?? 1;
+      const raw = JSON.parse(line);
+      const element = normalizeLegacyTextElement(raw);
+      const page = typeof raw.page == "number" ? raw.page : 1;
       if (pages[page - 1] == null) {
         pages[page - 1] = [element];
       } else {
@@ -34,6 +39,7 @@ function parseSyncdbFileUsingPageIds(
 ): Element[][] {
   const v: { pos: number; id: string }[] = [];
   const pageMap: { [id: string]: Element[] } = {};
+  const pageSchemaVersions: { [id: string]: unknown } = {};
   for (const line of content.split("\n")) {
     try {
       const element = JSON.parse(line);
@@ -43,6 +49,7 @@ function parseSyncdbFileUsingPageIds(
       }
       if (element.type == "page") {
         v.push({ pos: element.data.pos, id: element.id });
+        pageSchemaVersions[element.id] = element.data?.schemaVersion;
         if (pageMap[element.id] == null) {
           pageMap[element.id] = [...fixedElements];
         }
@@ -59,7 +66,10 @@ function parseSyncdbFileUsingPageIds(
   v.sort(field_cmp("pos"));
   const pages: Element[][] = [];
   for (const { id } of v) {
-    pages.push(pageMap[id]);
+    const legacy = isLegacyDocumentSchemaVersion(pageSchemaVersions[id]);
+    pages.push(
+      legacy ? pageMap[id].map(normalizeLegacyTextElement) : pageMap[id],
+    );
   }
   return pages;
 }

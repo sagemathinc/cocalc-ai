@@ -72,6 +72,7 @@ import debug from "debug";
 import { moveCell } from "@cocalc/jupyter/util/cell-utils";
 import { migrateToNewPageNumbers } from "./migrate";
 import { toMarkdown, elementToMarkdown } from "./export";
+import { CURRENT_DOCUMENT_SCHEMA_VERSION } from "./document-schema";
 
 const log = debug("whiteboard:actions");
 
@@ -1567,7 +1568,12 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
     }
     this.setElement({
       create: true,
-      obj: { type: "page", id, z: 0, data: { pos } },
+      obj: {
+        type: "page",
+        id,
+        z: 0,
+        data: { pos, schemaVersion: CURRENT_DOCUMENT_SCHEMA_VERSION },
+      },
       commit,
     });
     return id;
