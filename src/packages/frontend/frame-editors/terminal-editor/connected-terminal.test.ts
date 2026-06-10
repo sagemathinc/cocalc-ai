@@ -50,6 +50,13 @@ function loadTerminalModule({
   const createdPtys = [...availablePtys];
   const terminalClient = jest.fn(() => availablePtys.shift() ?? makePty());
   const showProjectStartRequiredModal = jest.fn();
+  const ensureProjectRunning = jest.fn(async () => {
+    if (project?.autostart_enabled === false) {
+      return false;
+    }
+    projectStore.setStatus("running");
+    return true;
+  });
   const reconnectResources: {
     requestReconnect: jest.Mock;
     close: jest.Mock;
@@ -133,16 +140,12 @@ function loadTerminalModule({
     };
   });
 
-  jest.doMock("@cocalc/frontend/projects/start-required-modal", () => ({
-    getAutostartProjectStartPolicyBlock: () =>
-      project?.autostart_enabled === false
-        ? {
-            code: "autostart_disabled",
-            message: "Automatic starts are disabled for this project.",
-            action: "Start the project manually, then try again.",
-          }
-        : undefined,
-    showProjectStartRequiredModal,
+  jest.doMock("@cocalc/frontend/project/project-start-warning", () => ({
+    classifyProjectReadinessUxSegment: jest.fn(() => ({
+      segment: projectState === "running" ? "warm" : "autostart",
+      initial_state: projectState,
+    })),
+    ensure_project_running: ensureProjectRunning,
   }));
 
   jest.doMock("./themes", () => ({
@@ -170,6 +173,7 @@ function loadTerminalModule({
     projectStore,
     terminalClient,
     showProjectStartRequiredModal,
+    ensureProjectRunning,
     reconnectResources,
     registerReconnectResource,
   };
@@ -437,7 +441,7 @@ describe("connected terminal resizing", () => {
   });
 
   it("shows an inline manual-start message instead of connecting when automatic starts are disabled", async () => {
-    const { Terminal, terminalClient, showProjectStartRequiredModal } =
+    const { Terminal, terminalClient, ensureProjectRunning } =
       loadTerminalModule({
         projectState: "opened",
         project: { autostart_enabled: false },
@@ -468,12 +472,14 @@ describe("connected terminal resizing", () => {
     await terminal.connect();
 
     expect(terminalClient).not.toHaveBeenCalled();
-    expect(showProjectStartRequiredModal).not.toHaveBeenCalled();
+    expect(ensureProjectRunning).toHaveBeenCalledWith(
+      "project-1",
+      "use this terminal",
+    );
     expect(actions.set_connection_status).toHaveBeenCalledWith(
       "term-1",
       "disconnected",
     );
-    expect(terminal["terminal"].write).toHaveBeenCalledTimes(1);
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
       expect.stringContaining("Project is stopped"),
       expect.any(Function),
@@ -490,8 +496,8 @@ describe("connected terminal resizing", () => {
     terminal.close();
   });
 
-  it("shows an inline manual-start message instead of connecting for any stopped project", async () => {
-    const { Terminal, terminalClient, showProjectStartRequiredModal } =
+  it("autostarts and connects for a stopped project when automatic starts are enabled", async () => {
+    const { Terminal, terminalClient, ensureProjectRunning } =
       loadTerminalModule({
         projectState: "opened",
         project: { autostart_enabled: true },
@@ -519,15 +525,15 @@ describe("connected terminal resizing", () => {
 
     const terminal = new Terminal(actions, 0, "term-1", parent);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    await terminal.connect();
 
-    expect(terminalClient).not.toHaveBeenCalled();
-    expect(showProjectStartRequiredModal).not.toHaveBeenCalled();
-    expect(terminal["terminal"].write).toHaveBeenCalledWith(
-      expect.stringContaining("Project is stopped"),
-      expect.any(Function),
+    expect(ensureProjectRunning).toHaveBeenCalledWith(
+      "project-1",
+      "use this terminal",
     );
+    expect(terminalClient).toHaveBeenCalled();
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
-      expect.stringContaining("Start the project to use this terminal."),
+      expect.stringContaining("Connecting terminal"),
       expect.any(Function),
     );
 

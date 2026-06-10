@@ -1,4 +1,5 @@
 import { fromJS } from "immutable";
+import { EventEmitter } from "events";
 
 const getStore = jest.fn();
 const getProjectActions = jest.fn();
@@ -41,9 +42,16 @@ import { ensure_project_running } from "./project-start-warning";
 describe("ensure_project_running", () => {
   const project_id = "project-1";
   const start_project = jest.fn();
+  const set_project_runtime_sponsor_to_me = jest.fn();
   const wait_until_no_modals = jest.fn();
   const show_modal = jest.fn();
   const clear_modal = jest.fn();
+  let projectsStore: EventEmitter & {
+    state: string;
+    autostart_enabled?: boolean;
+    get: (key: string) => any;
+    get_title: () => string;
+  };
 
   let modalOpen = false;
   let modalWaiters: Array<() => void> = [];
@@ -75,21 +83,29 @@ describe("ensure_project_running", () => {
     modalWaiters = [];
     modalResolvers = [];
 
-    const projectsStore = {
+    projectsStore = Object.assign(new EventEmitter(), {
+      state: "stopped",
+      autostart_enabled: undefined as boolean | undefined,
       get: (key: string) => {
         if (key === "project_map") {
           return fromJS({
             [project_id]: {
-              state: { state: "stopped" },
+              state: { state: projectsStore.state },
+              ...(projectsStore.autostart_enabled == null
+                ? {}
+                : { autostart_enabled: projectsStore.autostart_enabled }),
             },
           });
         }
       },
       get_title: () => "Test Project",
-    };
+    });
 
     getStore.mockReturnValue(projectsStore);
-    getActions.mockReturnValue({ start_project });
+    getActions.mockReturnValue({
+      start_project,
+      set_project_runtime_sponsor_to_me,
+    });
     getIntl.mockResolvedValue({
       formatMessage: (_message, values) =>
         values?.what == null ? "Start Project" : `Start ${values.what}`,
@@ -124,9 +140,53 @@ describe("ensure_project_running", () => {
     jest.useRealTimers();
   });
 
-  it("reuses one start warning for concurrent callers", async () => {
+  function setProjectState(state: string): void {
+    projectsStore.state = state;
+    projectsStore.emit("change");
+  }
+
+  it("autostarts without a modal and waits until running", async () => {
+    start_project.mockImplementation(async () => {
+      setProjectState("starting");
+    });
+
+    const request = ensure_project_running(project_id, "run code");
+    await flushMicrotasks();
+
+    expect(show_modal).not.toHaveBeenCalled();
+    expect(start_project).toHaveBeenCalledWith(project_id, {
+      autostart: true,
+    });
+
+    setProjectState("running");
+    await expect(request).resolves.toBe(true);
+  });
+
+  it("reuses one autostart request for concurrent callers", async () => {
+    start_project.mockImplementation(async () => {
+      setProjectState("starting");
+    });
+
     const first = ensure_project_running(project_id, "open a file");
     const second = ensure_project_running(project_id, "download a file");
+
+    await flushMicrotasks();
+    expect(show_modal).not.toHaveBeenCalled();
+    expect(start_project).toHaveBeenCalledTimes(1);
+
+    setProjectState("running");
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+  });
+
+  it("shows one start warning when automatic starts are disabled", async () => {
+    projectsStore.autostart_enabled = false;
+    start_project.mockImplementation(async () => {
+      setProjectState("starting");
+    });
+
+    const first = ensure_project_running(project_id, "compile LaTeX");
+    const second = ensure_project_running(project_id, "run code");
 
     await flushMicrotasks();
     expect(show_modal).toHaveBeenCalledTimes(1);
@@ -134,8 +194,12 @@ describe("ensure_project_running", () => {
     resolveNextModal("ok");
     await flushMicrotasks();
 
-    expect(show_modal).toHaveBeenCalledTimes(1);
-    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
     expect(start_project).toHaveBeenCalledTimes(1);
+    expect(start_project).toHaveBeenCalledWith(project_id, {
+      autostart: false,
+    });
+
+    setProjectState("running");
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
   });
 });

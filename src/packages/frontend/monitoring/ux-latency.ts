@@ -16,9 +16,16 @@ export function elapsedUxMs(start: number): number {
 }
 
 export function recordUxLatencyEvent(event: UxLatencyEventInput): void {
-  void webapp_client.conat_client.hub.system
-    .recordUxLatencyEvent({ event })
-    .catch(() => {
+  try {
+    const record =
+      webapp_client.conat_client?.hub?.system?.recordUxLatencyEvent;
+    if (typeof record !== "function") {
+      return;
+    }
+    void record({ event }).catch(() => {
       // Telemetry must never affect the user-visible action being measured.
     });
+  } catch {
+    // Telemetry must never affect the user-visible action being measured.
+  }
 }
