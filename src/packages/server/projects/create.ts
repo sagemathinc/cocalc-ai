@@ -59,6 +59,7 @@ import {
   releaseProjectRuntimeSlot,
   reserveProjectRuntimeSlot,
 } from "@cocalc/server/projects/runtime-slots";
+import { assertProjectCreationAllowed } from "@cocalc/server/launch/kill-switches";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -199,6 +200,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     region: requested_region_raw_input,
   } = opts;
   if (account_id) {
+    await assertProjectCreationAllowed({ account_id });
     await assertAccountTrustedForProductAccess(account_id, "create projects");
     await assertCanOwnAdditionalProject({ account_id });
     // Creating an empty project should not block on a fresh full-account
