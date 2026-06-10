@@ -249,6 +249,7 @@ import {
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-host-defaults";
 import {
+  getUxLatencySlaThresholdsFromSettings,
   getUxLatencySummary as getUxLatencySummary0,
   recordUxLatencyEvent as recordUxLatencyEvent0,
 } from "@cocalc/server/monitoring/ux-latency";
@@ -1740,6 +1741,7 @@ export async function getLaunchHealth({
     setupResult.status === "fulfilled" ? setupResult.value : undefined;
   const config =
     configResult.status === "fulfilled" ? configResult.value : undefined;
+  const sla = getUxLatencySlaThresholdsFromSettings(settings);
   const killSwitches = launchHealthKillSwitches(settings);
   const projectionTotal = projectionBacklogTotal(load);
   const oldestProjectionAgeMs = oldestProjectionBacklogAgeMs(load);
@@ -1759,6 +1761,14 @@ export async function getLaunchHealth({
     summary: latency,
     metric: "project_start_running",
     segment: "warm_provisioned",
+  });
+  const fileVisibleP95 = uxLatencyP95({
+    summary: latency,
+    metric: "file_open_visible",
+  });
+  const fileSyncReadyP95 = uxLatencyP95({
+    summary: latency,
+    metric: "file_open_sync_ready",
   });
   const configBayStates =
     config?.scopes.flatMap((scope) => scope.bays.map((bay) => bay.status)) ??
@@ -1785,23 +1795,33 @@ export async function getLaunchHealth({
   const latencyLevel = worstLaunchHealthLevel([
     classifyLatencyP95({
       p95: lifecycleP95,
-      warningMs: 2_000,
-      criticalMs: 5_000,
+      warningMs: sla.project_start_warm_p95_ms,
+      criticalMs: sla.project_start_warm_p95_ms * 2,
     }),
     classifyLatencyP95({
       p95: terminalP95,
-      warningMs: 5_000,
-      criticalMs: 10_000,
+      warningMs: sla.project_terminal_ready_p95_ms,
+      criticalMs: sla.project_terminal_ready_p95_ms * 2,
     }),
     classifyLatencyP95({
       p95: jupyterP95,
-      warningMs: 5_000,
-      criticalMs: 10_000,
+      warningMs: sla.project_jupyter_ready_p95_ms,
+      criticalMs: sla.project_jupyter_ready_p95_ms * 2,
     }),
     classifyLatencyP95({
       p95: execP95,
-      warningMs: 5_000,
-      criticalMs: 10_000,
+      warningMs: sla.project_exec_ready_p95_ms,
+      criticalMs: sla.project_exec_ready_p95_ms * 2,
+    }),
+    classifyLatencyP95({
+      p95: fileVisibleP95,
+      warningMs: sla.file_open_visible_p95_ms,
+      criticalMs: sla.file_open_visible_p95_ms * 2,
+    }),
+    classifyLatencyP95({
+      p95: fileSyncReadyP95,
+      warningMs: sla.file_open_sync_ready_p95_ms,
+      criticalMs: sla.file_open_sync_ready_p95_ms * 2,
     }),
   ]);
 
@@ -1943,7 +1963,7 @@ export async function getLaunchHealth({
       label: "Browser-observed latency",
       level: latencyResult.status === "rejected" ? "critical" : latencyLevel,
       summary: latency
-        ? `P95 over ${latency.window_minutes}m: lifecycle=${formatDurationMs(lifecycleP95)}, terminal=${formatDurationMs(terminalP95)}, Jupyter=${formatDurationMs(jupyterP95)}, exec=${formatDurationMs(execP95)}.`
+        ? `P95 over ${latency.window_minutes}m: lifecycle=${formatDurationMs(lifecycleP95)} (SLA ${formatDurationMs(sla.project_start_warm_p95_ms)}), terminal=${formatDurationMs(terminalP95)} (SLA ${formatDurationMs(sla.project_terminal_ready_p95_ms)}), Jupyter=${formatDurationMs(jupyterP95)} (SLA ${formatDurationMs(sla.project_jupyter_ready_p95_ms)}), exec=${formatDurationMs(execP95)} (SLA ${formatDurationMs(sla.project_exec_ready_p95_ms)}), file visible=${formatDurationMs(fileVisibleP95)} (SLA ${formatDurationMs(sla.file_open_visible_p95_ms)}), file sync=${formatDurationMs(fileSyncReadyP95)} (SLA ${formatDurationMs(sla.file_open_sync_ready_p95_ms)}).`
         : "Unable to read UX latency summary.",
       details:
         latencyResult.status === "rejected" ? [`${latencyResult.reason}`] : [],
@@ -1966,6 +1986,7 @@ export async function getLaunchHealth({
     seed_bay_id: seedBayId,
     overall: worstLaunchHealthLevel(checks.map((check) => check.level)),
     latency_window_minutes: latencyWindowMinutes,
+    latency_sla_ms: sla,
     kill_switches: killSwitches,
     counts,
     checks,

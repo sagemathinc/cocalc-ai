@@ -228,6 +228,14 @@ export type SiteSettingsExtrasKeys =
   | "launch_disable_user_host_create"
   | "launch_disable_ai"
   | "launch_disable_payment_checkout"
+  | "launch_sla_heading"
+  | "launch_sla_project_start_warm_p95_ms"
+  | "launch_sla_project_start_overall_p95_ms"
+  | "launch_sla_project_terminal_ready_p95_ms"
+  | "launch_sla_project_jupyter_ready_p95_ms"
+  | "launch_sla_project_exec_ready_p95_ms"
+  | "launch_sla_file_open_visible_p95_ms"
+  | "launch_sla_file_open_sync_ready_p95_ms"
   | "conat_heading"
   | "conat_password"
   | "conat_admission_hub_api_max_active"
@@ -406,6 +414,85 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Security", "Commercialization"],
     group: "System / Advanced",
     subgroup: "Launch Emergency Controls",
+  },
+  launch_sla_heading: {
+    name: "Launch SLA Thresholds",
+    desc: "Operator thresholds for browser-observed launch readiness latency. UX latency alerts and Launch Health compare recent P95 values to these thresholds.",
+    default: "",
+    type: "header",
+    tags: ["Support"],
+    group: "System / Advanced",
+    subgroup: "Launch SLA Thresholds",
+  },
+  launch_sla_project_start_warm_p95_ms: {
+    name: "Warm Project Start P95 SLA",
+    desc: "Maximum acceptable P95 milliseconds from project start request to lifecycle running for the warm provisioned path. Blank uses 2000.",
+    default: "2000",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Support", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Launch SLA Thresholds",
+  },
+  launch_sla_project_start_overall_p95_ms: {
+    name: "Overall Project Start P95 SLA",
+    desc: "Maximum acceptable P95 milliseconds from project start request to lifecycle running across all start paths, including restore/dearchive outliers. Blank uses 10000.",
+    default: "10000",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Support", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Launch SLA Thresholds",
+  },
+  launch_sla_project_terminal_ready_p95_ms: {
+    name: "Terminal Ready P95 SLA",
+    desc: "Maximum acceptable P95 milliseconds from terminal connect/open action to terminal ready for input. Blank uses 5000.",
+    default: "5000",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Support", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Launch SLA Thresholds",
+  },
+  launch_sla_project_jupyter_ready_p95_ms: {
+    name: "Jupyter Ready P95 SLA",
+    desc: "Maximum acceptable P95 milliseconds from Run Cell to the Jupyter run request being accepted. Blank uses 5000.",
+    default: "5000",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Support", "Jupyter"],
+    group: "System / Advanced",
+    subgroup: "Launch SLA Thresholds",
+  },
+  launch_sla_project_exec_ready_p95_ms: {
+    name: "Project Exec Ready P95 SLA",
+    desc: "Maximum acceptable P95 milliseconds from an exec/compile action to project exec request acceptance. Blank uses 5000.",
+    default: "5000",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Support", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Launch SLA Thresholds",
+  },
+  launch_sla_file_open_visible_p95_ms: {
+    name: "File Visible P95 SLA",
+    desc: "Maximum acceptable P95 milliseconds from file-open initiation until contents are visibly rendered. Blank uses 3000.",
+    default: "3000",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Support"],
+    group: "System / Advanced",
+    subgroup: "Launch SLA Thresholds",
+  },
+  launch_sla_file_open_sync_ready_p95_ms: {
+    name: "File Sync Ready P95 SLA",
+    desc: "Maximum acceptable P95 milliseconds from file-open initiation until realtime sync is connected and ready. Blank uses 8000.",
+    default: "8000",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Support"],
+    group: "System / Advanced",
+    subgroup: "Launch SLA Thresholds",
   },
   conat_heading: {
     name: "Conat Configuration",

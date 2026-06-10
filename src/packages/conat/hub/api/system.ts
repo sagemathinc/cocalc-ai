@@ -303,12 +303,23 @@ export interface LaunchHealthCounts {
   active_browser_connections: number | null;
 }
 
+export interface LaunchHealthLatencySla {
+  project_start_warm_p95_ms: number;
+  project_start_overall_p95_ms: number;
+  project_terminal_ready_p95_ms: number;
+  project_jupyter_ready_p95_ms: number;
+  project_exec_ready_p95_ms: number;
+  file_open_visible_p95_ms: number;
+  file_open_sync_ready_p95_ms: number;
+}
+
 export interface LaunchHealthStatus {
   checked_at: string;
   bay_id: string;
   seed_bay_id: string;
   overall: LaunchHealthLevel;
   latency_window_minutes: number;
+  latency_sla_ms: LaunchHealthLatencySla;
   kill_switches: LaunchHealthKillSwitches;
   counts: LaunchHealthCounts;
   checks: LaunchHealthCheck[];
