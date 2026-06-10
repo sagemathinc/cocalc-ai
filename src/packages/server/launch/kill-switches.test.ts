@@ -104,4 +104,14 @@ describe("launch kill switches", () => {
       "AI and Codex are temporarily disabled",
     );
   });
+
+  it("blocks payment checkout when the checkout switch is on", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      launch_disable_payment_checkout: "yes",
+    });
+    const { assertPaymentCheckoutAllowed } = await import("./kill-switches");
+    await expect(assertPaymentCheckoutAllowed()).rejects.toThrow(
+      "Payment checkout is temporarily disabled",
+    );
+  });
 });

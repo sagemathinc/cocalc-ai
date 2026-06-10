@@ -28,6 +28,7 @@ import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import { getStripeCustomerId } from "./stripe/util";
 import { getCurrentSession } from "./create-stripe-checkout-session";
 import type { Checkout } from "stripe";
+import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 const logger = getLogger("purchases:create-stripe-payment-method-session");
 
@@ -45,6 +46,7 @@ export default async function createStripePaymentMethodSession(
     logger.debug("createStripePaymentMethodSession", ...args);
   };
   log(opts);
+  await assertPaymentCheckoutAllowed();
 
   // check if there is already a stripe checkout session; if so throw error.
   if ((await getCurrentSession(account_id)) != null) {

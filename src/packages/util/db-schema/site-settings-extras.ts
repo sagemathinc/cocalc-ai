@@ -226,6 +226,7 @@ export type SiteSettingsExtrasKeys =
   | "launch_disable_free_project_starts"
   | "launch_disable_user_host_create"
   | "launch_disable_ai"
+  | "launch_disable_payment_checkout"
   | "conat_heading"
   | "conat_password"
   | "conat_admission_hub_api_max_active"
@@ -382,6 +383,16 @@ export const EXTRAS: SettingsExtras = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Security", "AI", "OpenAI"],
+    group: "System / Advanced",
+    subgroup: "Launch Emergency Controls",
+  },
+  launch_disable_payment_checkout: {
+    name: "Disable Payment Checkout",
+    desc: "Blocks users from creating new Stripe checkout, payment, and setup sessions. Existing billing records and read-only billing pages still work.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Security", "Commercialization"],
     group: "System / Advanced",
     subgroup: "Launch Emergency Controls",
   },

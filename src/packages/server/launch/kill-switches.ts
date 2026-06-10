@@ -15,6 +15,7 @@ export const LAUNCH_KILL_SWITCHES = {
   disableFreeProjectStarts: "launch_disable_free_project_starts",
   disableUserHostCreate: "launch_disable_user_host_create",
   disableAi: "launch_disable_ai",
+  disablePaymentCheckout: "launch_disable_payment_checkout",
 } as const;
 
 async function getLaunchFlag(
@@ -93,5 +94,14 @@ export async function assertAiLaunchAllowed(): Promise<void> {
   }
   throw new Error(
     "AI and Codex are temporarily disabled by the site administrator.",
+  );
+}
+
+export async function assertPaymentCheckoutAllowed(): Promise<void> {
+  if (!(await getLaunchFlag(LAUNCH_KILL_SWITCHES.disablePaymentCheckout))) {
+    return;
+  }
+  throw new Error(
+    "Payment checkout is temporarily disabled by the site administrator.",
   );
 }

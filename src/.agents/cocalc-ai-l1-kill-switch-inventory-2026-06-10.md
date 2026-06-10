@@ -20,6 +20,7 @@ These settings are dynamic server settings, not environment variables, so they c
 | Disable new free project starts          | `launch_disable_free_project_starts=yes`                                      | Inter-bay project start admission and start execution   | Yes          | Free-sponsored starts fail; paid and admin-sponsored starts continue.         |
 | Disable user dedicated-host creation     | `launch_disable_user_host_create=yes`                                         | Host create API                                         | Yes          | Non-admin host creation fails with a clear disabled-by-admin message.         |
 | Disable or restrict Codex/AI usage       | `launch_disable_ai=yes`                                                       | Site OpenAI key exposure and Codex site-usage allowance | No           | Site-managed AI/Codex usage is denied with a clear disabled-by-admin message. |
+| Disable payment checkout globally        | `launch_disable_payment_checkout=yes`                                         | User-facing Stripe checkout/session/payment routes      | No           | New checkout/payment setup fails with a clear disabled-by-admin message.      |
 
 ## Existing Related Controls
 
@@ -33,12 +34,10 @@ These settings are dynamic server settings, not environment variables, so they c
 
 ## Still Gaps After First Pass
 
-| Gap                                   | Why it is not covered yet                                                                                                                                                                     | Proposed next step                                                                                        |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Disable payment checkout globally     | Stripe keys can be removed, but that is not a clean operational switch and may produce poor UX.                                                                                               | Add `launch_disable_payment_checkout` and enforce it at checkout/session creation with a non-500 message. |
-| Read-mostly maintenance mode          | This spans project mutation, file writes, starts, purchases, host actions, and possibly public API calls. A naive single flag risks blocking admin recovery paths or corrupting in-flight UX. | Define an explicit maintenance policy matrix, then enforce through shared write/admission helpers.        |
-| Dedicated-host purchases vs. creation | The new host-create switch blocks new hosts, but purchase-session creation may still exist in billing-specific paths.                                                                         | Add a checkout kill switch and audit all purchase/session creation APIs.                                  |
-| Abuse-specific kill switches          | Current controls are global, not per account/domain/IP/project.                                                                                                                               | Add scoped bans/holds only after monitoring identifies the highest-risk abuse vectors.                    |
+| Gap                          | Why it is not covered yet                                                                                                                                                                     | Proposed next step                                                                     |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Read-mostly maintenance mode | This spans project mutation, file writes, starts, purchases, host actions, and possibly public API calls. A naive single flag risks blocking admin recovery paths or corrupting in-flight UX. | Implement from `.agents/cocalc-ai-read-mostly-maintenance-mode-design-2026-06-10.md`.  |
+| Abuse-specific kill switches | Current controls are global, not per account/domain/IP/project.                                                                                                                               | Add scoped bans/holds only after monitoring identifies the highest-risk abuse vectors. |
 
 ## Smoke Test Checklist
 
@@ -46,7 +45,8 @@ These settings are dynamic server settings, not environment variables, so they c
 2. Set `launch_disable_free_project_starts=yes`; verify a free-sponsored project cannot start, while a paid/admin-sponsored project can.
 3. Set `launch_disable_user_host_create=yes`; verify a non-admin cannot create a host and an admin can.
 4. Set `launch_disable_ai=yes`; verify Codex/site-key usage is denied and normal project file/terminal flows still work.
-5. Set `public_signup_without_registration_token=no`; verify signup without a registration token is blocked.
+5. Set `launch_disable_payment_checkout=yes`; verify Stripe checkout/payment/setup session creation fails and billing history still loads.
+6. Set `public_signup_without_registration_token=no`; verify signup without a registration token is blocked.
 
 ## Release Readiness Notes
 
