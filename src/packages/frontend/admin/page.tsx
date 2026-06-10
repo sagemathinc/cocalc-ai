@@ -143,12 +143,19 @@ export function AdminPage({
   function renderMenuLabel(icon: IconName, title: string) {
     return (
       <span>
-        <Icon name={icon} /> {!navCollapsed && title}
+        <Icon name={icon} /> {title}
       </span>
     );
   }
 
   function renderMenuItems(): MenuProps["items"] {
+    if (navCollapsed) {
+      return navigationItems.map((item) => ({
+        key: item.key,
+        icon: <Icon name={item.icon} />,
+        label: item.title,
+      }));
+    }
     return Object.entries(ADMIN_GROUPS).map(([groupKey, group]) => ({
       key: groupKey,
       label: renderMenuLabel(group.icon, group.title),
