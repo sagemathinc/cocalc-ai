@@ -58,7 +58,7 @@ interface Props {
 }
 
 const { Text } = Typography;
-const BULK_STOP_PROJECT_CONCURRENCY = 5;
+const BULK_PROJECT_CONTROL_CONCURRENCY = 5;
 
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -85,6 +85,14 @@ function shouldSendProjectStop(project: any): boolean {
   const state = `${project?.getIn?.(["state", "state"]) ?? ""}`;
   const hostId = `${project?.get?.("host_id") ?? ""}`.trim();
   return !!hostId && ["pending", "running", "starting"].includes(state);
+}
+
+function shouldSendProjectStart(project: any): boolean {
+  const state = `${project?.getIn?.(["state", "state"]) ?? ""}`;
+  const hostId = `${project?.get?.("host_id") ?? ""}`.trim();
+  return (
+    !!hostId && !["deleting", "running", "starting", "stopping"].includes(state)
+  );
 }
 
 export function ProjectsOperations({
@@ -284,10 +292,76 @@ export function ProjectsOperations({
     });
   }
 
+  function confirmSelectedStart() {
+    const projectIds = selected_project_ids.slice();
+    Modal.confirm({
+      title: `Start selected ${projectsLabelLower}`,
+      content: `Start ${projectIds.length} selected ${projectsLabelLower}?`,
+      okText: "Start",
+      onOk: () => {
+        void startSelectedProjects(projectIds);
+      },
+    });
+  }
+
+  async function startSelectedProjects(projectIds: string[]) {
+    const results = await mapWithConcurrency(
+      projectIds,
+      BULK_PROJECT_CONTROL_CONCURRENCY,
+      async (project_id) => {
+        const project = project_map?.get(project_id);
+        if (!shouldSendProjectStart(project)) {
+          return { project_id, ok: true as const, skipped: true as const };
+        }
+        try {
+          const started = await actions.start_project(project_id);
+          return {
+            project_id,
+            ok: true as const,
+            skipped: !started,
+          };
+        } catch (err) {
+          return { project_id, ok: false as const, error: `${err}` };
+        }
+      },
+    );
+    const succeeded = results
+      .filter((result) => result.ok && !result.skipped)
+      .map((result) => result.project_id);
+    const skipped = results.filter((result) => result.ok && result.skipped);
+    const errors: Array<{ project_id: string; error: string }> =
+      results.flatMap((result) =>
+        result.ok
+          ? []
+          : [{ project_id: result.project_id, error: result.error }],
+      );
+    alert_message({
+      type: errors.length > 0 ? "warning" : "success",
+      message:
+        errors.length > 0
+          ? `Started ${succeeded.length} project(s); ${errors.length} failed; ${skipped.length} skipped.`
+          : `Started ${succeeded.length} selected project(s); ${skipped.length} skipped.`,
+    });
+    if (errors.length > 0) {
+      Modal.error({
+        title: "Some projects could not be started",
+        content: (
+          <ul>
+            {errors.map((result) => (
+              <li key={result.project_id}>
+                {selectedTitle(result.project_id)}: {result.error}
+              </li>
+            ))}
+          </ul>
+        ),
+      });
+    }
+  }
+
   async function stopSelectedProjects(projectIds: string[]) {
     const results = await mapWithConcurrency(
       projectIds,
-      BULK_STOP_PROJECT_CONCURRENCY,
+      BULK_PROJECT_CONTROL_CONCURRENCY,
       async (project_id) => {
         const project = project_map?.get(project_id);
         if (!shouldSendProjectStop(project)) {
@@ -596,6 +670,13 @@ export function ProjectsOperations({
             </Text>
             <Button size="small" onClick={() => onSelectionChange([])}>
               Clear
+            </Button>
+            <Button
+              size="small"
+              icon={<Icon name="play" />}
+              onClick={confirmSelectedStart}
+            >
+              Start
             </Button>
             <Button
               size="small"
