@@ -82,7 +82,17 @@ export function Viewer({
     case "md":
       const scale = getScale(font_size);
       return (
-        <div style={{ overflow: "auto", padding: "50px 70px" }}>
+        <div
+          className="smc-vfill"
+          data-testid="timetravel-markdown-scroll"
+          style={{
+            boxSizing: "border-box",
+            height: "100%",
+            minHeight: 0,
+            overflow: "auto",
+            padding: "50px 70px",
+          }}
+        >
           <EditableMarkdown
             value={doc()?.to_str() ?? "unknown version"}
             read_only

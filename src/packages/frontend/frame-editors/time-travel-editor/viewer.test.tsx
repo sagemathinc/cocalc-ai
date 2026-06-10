@@ -69,6 +69,13 @@ describe("TimeTravel Viewer", () => {
       />,
     );
 
+    const scroll = screen.getByTestId("timetravel-markdown-scroll");
+    expect(scroll.classList.contains("smc-vfill")).toBe(true);
+    expect(scroll).toHaveStyle({
+      height: "100%",
+      minHeight: "0",
+      overflow: "auto",
+    });
     expect(screen.getByTestId("editable-markdown")).not.toBeNull();
     expect(mockEditableMarkdown).toHaveBeenCalledWith(
       expect.objectContaining({
