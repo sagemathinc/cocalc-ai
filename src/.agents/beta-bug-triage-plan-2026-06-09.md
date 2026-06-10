@@ -271,7 +271,7 @@ Validation:
 - Browser smoke: copy bold/link/list/code from timetravel and paste into Slate.
 - Focused renderer test if clipboard behavior can be isolated.
 
-### P1-D: Mention Notification Emails Leak Raw HTML
+### (done) P1-D: Mention Notification Emails Leak Raw HTML
 
 Symptom: emailed `@mention` notifications include escaped raw HTML such as `<span class="user-mention" ...>`.
 
@@ -347,7 +347,7 @@ Validation:
 - Focused docs filtering test.
 - Browser smoke in CoCalc Plus docs navigation.
 
-### P1-G: Titlebar Close Button Disappears In Narrow Windows
+### (done) P1-G: Titlebar Close Button Disappears In Narrow Windows
 
 Symptom: the upper-right `x` close icon in `frame-editors/title-bar` can disappear when the titlebar has too much content or the window is narrow.
 
@@ -395,7 +395,7 @@ Validation:
 - Focused CLI auth error test.
 - Manual CLI smoke with only `COCALC_API_KEY` set.
 
-### P1-I: Backend Errors Need End-User Presentation
+### (done) P1-I: Backend Errors Need End-User Presentation
 
 Symptom: frontend surfaces raw backend errors such as `Error - Error:` and `callHub: subject='...'`, which are meaningless to users.
 

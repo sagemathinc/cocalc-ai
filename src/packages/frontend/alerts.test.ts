@@ -47,4 +47,19 @@ describe("alert_message", () => {
 
     expect(notificationOpen).toHaveBeenCalledTimes(2);
   });
+
+  it("normalizes backend error text for display but logs the raw message", async () => {
+    const { alert_message } = await import("./alerts");
+    const raw =
+      "Error: Error: not authorized - callHub: subject='hub.account.user', name='projects.start', code='not_authorized'";
+
+    alert_message({ type: "error", message: raw });
+
+    expect(notificationError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "not authorized",
+      }),
+    );
+    expect(trackingLogError).toHaveBeenCalledWith(raw);
+  });
 });

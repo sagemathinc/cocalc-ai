@@ -74,6 +74,7 @@ import {
   redux,
 } from "@cocalc/frontend/app-framework";
 import type { PageActions } from "@cocalc/frontend/app/actions";
+import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { get_buffer, set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { filenameMode } from "@cocalc/frontend/file-associations";
@@ -2813,17 +2814,7 @@ export class BaseEditorActions<
     if (isTimeoutCallingProject(error)) {
       return TIMEOUT_CALLING_PROJECT_MSG;
     }
-    if (typeof error == "string") {
-      return error;
-    }
-    const e = (error as any).message;
-    if (e === undefined) {
-      let e = JSON.stringify(error);
-      if (e === "{}") {
-        e = `${error}`;
-      }
-    }
-    return e;
+    return normalizeUserFacingError(error).message;
   };
 
   // big scary error shown at top
