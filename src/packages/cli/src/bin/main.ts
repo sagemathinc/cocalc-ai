@@ -2536,6 +2536,7 @@ const adminCommandDeps = {
   withContext,
   resolveAccountByIdentifier,
   isValidUUID,
+  waitForLro,
 } satisfies AdminCommandDeps;
 
 registerAdminCommand(program, adminCommandDeps);
