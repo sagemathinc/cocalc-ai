@@ -5,6 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
 import {
@@ -23,6 +24,8 @@ import {
   type RootfsProjectPreflightScanResult,
   type RootfsReleaseScanRun,
 } from "@cocalc/util/rootfs-scan";
+
+const logger = getLogger("server:rootfs:scan-execution");
 
 function optionalPositiveInteger(value: unknown): number | undefined {
   const n = Number(value);
@@ -135,6 +138,110 @@ export async function runRootfsReleaseScan({
     release_id,
     requested_by,
   });
+  return await executeRootfsReleaseScanRun({
+    run,
+    host_id,
+    requested_by,
+    scanner_image: config.scanner_image,
+    trivy_cache_dir: config.trivy_cache_dir,
+    timeout_ms,
+    max_target_bytes,
+    max_report_bytes,
+    memory_limit,
+    cpu_limit,
+    tmpfs_size,
+    retention_days: config.retention_days,
+  });
+}
+
+export async function queueRootfsReleaseScan({
+  release_id,
+  host_id,
+  requested_by,
+  scanner_image,
+  trivy_cache_dir,
+  timeout_ms: timeoutMsOverride,
+  max_target_bytes: maxTargetBytesOverride,
+  max_report_bytes: maxReportBytesOverride,
+  memory_limit,
+  cpu_limit,
+  tmpfs_size,
+}: {
+  release_id: string;
+  host_id: string;
+  requested_by?: string | null;
+  scanner_image?: string;
+  trivy_cache_dir?: string;
+  timeout_ms?: number;
+  max_target_bytes?: number;
+  max_report_bytes?: number;
+  memory_limit?: string;
+  cpu_limit?: string;
+  tmpfs_size?: string;
+}): Promise<RootfsReleaseScanRun> {
+  const config = await getRootfsScanConfig({ scanner_image, trivy_cache_dir });
+  const timeout_ms = timeoutMsOverride ?? config.timeout_ms;
+  const max_target_bytes = maxTargetBytesOverride ?? config.max_target_bytes;
+  const max_report_bytes = maxReportBytesOverride ?? config.max_report_bytes;
+  const release = await loadRootfsReleaseForScan({ release_id });
+  if (!release) {
+    throw new Error(`RootFS release ${release_id} not found`);
+  }
+  const run = await createRootfsReleaseScanRun({
+    release_id,
+    requested_by,
+  });
+  void executeRootfsReleaseScanRun({
+    run,
+    host_id,
+    requested_by,
+    scanner_image: config.scanner_image,
+    trivy_cache_dir: config.trivy_cache_dir,
+    timeout_ms,
+    max_target_bytes,
+    max_report_bytes,
+    memory_limit,
+    cpu_limit,
+    tmpfs_size,
+    retention_days: config.retention_days,
+  }).catch((err) => {
+    logger.error("background RootFS release scan failed", {
+      scan_run_id: run.scan_run_id,
+      release_id,
+      host_id,
+      err: `${err}`,
+    });
+  });
+  return run;
+}
+
+async function executeRootfsReleaseScanRun({
+  run,
+  host_id,
+  requested_by,
+  scanner_image,
+  trivy_cache_dir,
+  timeout_ms,
+  max_target_bytes,
+  max_report_bytes,
+  memory_limit,
+  cpu_limit,
+  tmpfs_size,
+  retention_days,
+}: {
+  run: RootfsReleaseScanRun;
+  host_id: string;
+  requested_by?: string | null;
+  scanner_image: string;
+  trivy_cache_dir: string;
+  timeout_ms: number;
+  max_target_bytes?: number;
+  max_report_bytes: number;
+  memory_limit?: string;
+  cpu_limit?: string;
+  tmpfs_size?: string;
+  retention_days: number;
+}): Promise<RootfsReleaseScanRun> {
   try {
     await markRootfsReleaseScanRunStarted({
       scan_run_id: run.scan_run_id,
@@ -148,9 +255,14 @@ export async function runRootfsReleaseScan({
     });
     const result = await client.scanRootfsRelease({
       scan_run_id: run.scan_run_id,
-      target: release,
-      scanner_image: config.scanner_image,
-      trivy_cache_dir: config.trivy_cache_dir,
+      target: {
+        target_kind: "rootfs-release",
+        release_id: run.release_id,
+        content_key: run.content_key,
+        runtime_image: run.runtime_image,
+      },
+      scanner_image,
+      trivy_cache_dir,
       timeout_ms,
       max_target_bytes,
       max_report_bytes,
@@ -159,13 +271,13 @@ export async function runRootfsReleaseScan({
       tmpfs_size,
     });
     const retention = new Date(
-      Date.now() + config.retention_days * 24 * 60 * 60 * 1000,
+      Date.now() + retention_days * 24 * 60 * 60 * 1000,
     );
     const reportArtifact =
       result.report_json != null
         ? await storeRootfsReleaseScanReport({
             scan_run_id: run.scan_run_id,
-            release_id,
+            release_id: run.release_id,
             report_json: result.report_json,
             report: result.report,
             retention_until: retention,

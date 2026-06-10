@@ -56,6 +56,7 @@ export const system = {
   getBayLoad: authFirst,
   recordUxLatencyEvent: authFirst,
   getUxLatencySummary: authFirstRequireAccount,
+  getLaunchHealth: authFirstRequireAccount,
   getBayBackups: authFirst,
   getAcpAdmissionDenialReport: authFirstRequireAccount,
   getServiceAdmissionDenialReport: authFirstRequireAccount,
@@ -271,6 +272,46 @@ export interface UxLatencySummary {
   metrics: UxLatencyMetricSummary[];
   segments: UxLatencyMetricSummary[];
   recent_slow_events: UxLatencyRecentEvent[];
+}
+
+export type LaunchHealthLevel = "healthy" | "warning" | "critical" | "unknown";
+
+export interface LaunchHealthCheck {
+  id: string;
+  label: string;
+  level: LaunchHealthLevel;
+  summary: string;
+  details?: string[];
+}
+
+export interface LaunchHealthKillSwitches {
+  read_mostly_maintenance: boolean;
+  disable_project_creation: boolean;
+  disable_free_project_starts: boolean;
+  disable_user_host_create: boolean;
+  disable_ai: boolean;
+  disable_payment_checkout: boolean;
+  active: string[];
+}
+
+export interface LaunchHealthCounts {
+  project_hosts_total: number | null;
+  parallel_ops_queued: number | null;
+  parallel_ops_running: number | null;
+  parallel_ops_stale_running: number | null;
+  projection_unpublished_events: number | null;
+  active_browser_connections: number | null;
+}
+
+export interface LaunchHealthStatus {
+  checked_at: string;
+  bay_id: string;
+  seed_bay_id: string;
+  overall: LaunchHealthLevel;
+  latency_window_minutes: number;
+  kill_switches: LaunchHealthKillSwitches;
+  counts: LaunchHealthCounts;
+  checks: LaunchHealthCheck[];
 }
 
 export interface CloudflareTunnelApplyResult {
@@ -1668,6 +1709,11 @@ export interface System {
     window_minutes?: number;
   }) => Promise<UxLatencySummary>;
 
+  getLaunchHealth: (opts?: {
+    account_id?: string;
+    window_minutes?: number;
+  }) => Promise<LaunchHealthStatus>;
+
   getBayBackups: (opts?: {
     account_id?: string;
     bay_id?: string;
@@ -2300,6 +2346,7 @@ export interface System {
     memory_limit?: string;
     cpu_limit?: string;
     tmpfs_size?: string;
+    wait?: boolean;
     account_id?: string;
     browser_id?: string | null;
     session_hash?: string | null;

@@ -16,12 +16,16 @@ import {
   Statistic,
   Switch,
   Table,
+  Tag,
   Typography,
 } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
+  LaunchHealthCheck,
+  LaunchHealthLevel,
+  LaunchHealthStatus,
   UxLatencyMetricSummary,
   UxLatencyRecentEvent,
   UxLatencySummary,
@@ -47,6 +51,23 @@ function formatMs(value?: number): string {
   const ms = Math.max(0, Math.round(Number(value) || 0));
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+}
+
+function formatCount(value?: number | null): string {
+  return value == null ? "n/a" : `${value}`;
+}
+
+function healthColor(level: LaunchHealthLevel): string {
+  switch (level) {
+    case "healthy":
+      return "green";
+    case "warning":
+      return "orange";
+    case "critical":
+      return "red";
+    default:
+      return "default";
+  }
 }
 
 function metricLabel(metric: string): string {
@@ -166,6 +187,7 @@ function summaryValue(
 export const UsageStatistics: React.FC = () => {
   const [windowMinutes, setWindowMinutes] = useState(24 * 60);
   const [summary, setSummary] = useState<UxLatencySummary>();
+  const [launchHealth, setLaunchHealth] = useState<LaunchHealthStatus>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
   const otherSettings = useTypedRedux("account", "other_settings");
@@ -178,12 +200,17 @@ export const UsageStatistics: React.FC = () => {
       setLoading(true);
       setError(undefined);
       try {
-        const next =
-          await webapp_client.conat_client.hub.system.getUxLatencySummary({
+        const [nextSummary, nextHealth] = await Promise.all([
+          webapp_client.conat_client.hub.system.getUxLatencySummary({
             window_minutes: windowMinutes,
-          });
+          }),
+          webapp_client.conat_client.hub.system.getLaunchHealth({
+            window_minutes: windowMinutes,
+          }),
+        ]);
         if (!canceled) {
-          setSummary(next);
+          setSummary(nextSummary);
+          setLaunchHealth(nextHealth);
         }
       } catch (err) {
         if (!canceled) {
@@ -202,6 +229,38 @@ export const UsageStatistics: React.FC = () => {
       clearInterval(interval);
     };
   }, [windowMinutes]);
+
+  const healthColumns = [
+    {
+      title: "Level",
+      dataIndex: "level",
+      key: "level",
+      render: (level: LaunchHealthLevel) => (
+        <Tag color={healthColor(level)}>{level}</Tag>
+      ),
+    },
+    {
+      title: "Check",
+      dataIndex: "label",
+      key: "label",
+    },
+    {
+      title: "Summary",
+      dataIndex: "summary",
+      key: "summary",
+      render: (summary: string, row: LaunchHealthCheck) => (
+        <div>
+          <div>{summary}</div>
+          {row.details?.length ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {row.details.slice(0, 3).join(" | ")}
+              {row.details.length > 3 ? " | ..." : ""}
+            </Text>
+          ) : null}
+        </div>
+      ),
+    },
+  ];
 
   const metricColumns = [
     {
@@ -300,6 +359,65 @@ export const UsageStatistics: React.FC = () => {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Card
+        title={
+          <Space>
+            <span>Launch Health</span>
+            {launchHealth ? (
+              <Tag color={healthColor(launchHealth.overall)}>
+                {launchHealth.overall}
+              </Tag>
+            ) : null}
+          </Space>
+        }
+        extra={
+          launchHealth ? (
+            <Text type="secondary">
+              {launchHealth.bay_id} checked{" "}
+              {new Date(launchHealth.checked_at).toLocaleString()}
+            </Text>
+          ) : null
+        }
+      >
+        <Spin spinning={loading && !launchHealth}>
+          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="Project hosts"
+                value={formatCount(launchHealth?.counts.project_hosts_total)}
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="Queued ops"
+                value={formatCount(launchHealth?.counts.parallel_ops_queued)}
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="Projection backlog"
+                value={formatCount(
+                  launchHealth?.counts.projection_unpublished_events,
+                )}
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="Active switches"
+                value={launchHealth?.kill_switches.active.length ?? "n/a"}
+              />
+            </Col>
+          </Row>
+          <Table<LaunchHealthCheck>
+            columns={healthColumns}
+            dataSource={launchHealth?.checks ?? []}
+            rowKey="id"
+            pagination={false}
+            size="small"
+          />
+        </Spin>
+      </Card>
+
+      <Card
         title="User Latency"
         extra={
           <Space wrap>
@@ -344,7 +462,7 @@ export const UsageStatistics: React.FC = () => {
           <Alert
             type="error"
             showIcon
-            message="Unable to load UX latency"
+            message="Unable to load operations health"
             description={error}
           />
         ) : null}
