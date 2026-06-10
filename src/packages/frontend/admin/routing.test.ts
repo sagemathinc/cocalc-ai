@@ -24,6 +24,10 @@ describe("admin routing", () => {
       kind: "index",
       section: "managed-cpu",
     });
+    expect(parseAdminRoute("admin/usage-stats")).toEqual({
+      kind: "index",
+      section: "usage-stats",
+    });
     expect(getAdminTargetPath({ kind: "index", section: "user-search" })).toBe(
       "admin/user-search",
     );

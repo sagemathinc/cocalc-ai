@@ -3804,29 +3804,32 @@ export async function getSiteSetupStatus({
         "A project host proves provider credentials, bootstrap, DNS, and host heartbeat are working.",
       ],
     }),
-    setupStep({
-      id: "rootfs",
-      title: "Official RootFS",
-      state: rootfs.official > 0 && rootfs.prepull > 0 ? "done" : "blocked",
-      admin_section: "rootfs",
-      summary:
-        rootfs.official > 0 && rootfs.prepull > 0
-          ? `${rootfs.official} official image${rootfs.official === 1 ? "" : "s"} and ${rootfs.prepull} prepull image${rootfs.prepull === 1 ? "" : "s"} are visible.`
-          : "Create an official RootFS and mark it for prepull.",
-      details: [
-        "The first public recipe can start as Ubuntu with Jupyter and LaTeX packages installed.",
-      ],
-    }),
-    setupStep({
-      id: "smoke-test",
-      title: "Smoke Test",
-      state:
-        healthyProjectHosts > 0 && rootfs.official > 0 ? "manual" : "blocked",
-      summary:
-        healthyProjectHosts > 0 && rootfs.official > 0
-          ? "Create a project, start it on the official RootFS, and verify terminal/Jupyter manually."
-          : "Smoke testing is blocked until a host and official RootFS exist.",
-    }),
+    // TODO: restore these before treating Site Setup as a complete launch gate.
+    // Official RootFS detection is not reliable enough yet, and the smoke-test
+    // step needs a persisted browser/project result instead of a manual prompt.
+    // setupStep({
+    //   id: "rootfs",
+    //   title: "Official RootFS",
+    //   state: rootfs.official > 0 && rootfs.prepull > 0 ? "done" : "blocked",
+    //   admin_section: "rootfs",
+    //   summary:
+    //     rootfs.official > 0 && rootfs.prepull > 0
+    //       ? `${rootfs.official} official image${rootfs.official === 1 ? "" : "s"} and ${rootfs.prepull} prepull image${rootfs.prepull === 1 ? "" : "s"} are visible.`
+    //       : "Create an official RootFS and mark it for prepull.",
+    //   details: [
+    //     "The first public recipe can start as Ubuntu with Jupyter and LaTeX packages installed.",
+    //   ],
+    // }),
+    // setupStep({
+    //   id: "smoke-test",
+    //   title: "Smoke Test",
+    //   state:
+    //     healthyProjectHosts > 0 && rootfs.official > 0 ? "manual" : "blocked",
+    //   summary:
+    //     healthyProjectHosts > 0 && rootfs.official > 0
+    //       ? "Create a project, start it on the official RootFS, and verify terminal/Jupyter manually."
+    //       : "Smoke testing is blocked until a host and official RootFS exist.",
+    // }),
   ];
   steps[4] = emailSetupState(settings);
   steps.push(
