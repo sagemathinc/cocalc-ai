@@ -59,6 +59,7 @@ describe("localPath remote quota fallback", () => {
       }),
     ).resolves.toEqual({
       home: "/mnt/project-home",
+      quota_applied: false,
       scratch: "/mnt/project-scratch",
     });
 

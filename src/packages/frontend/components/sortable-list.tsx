@@ -19,7 +19,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./icon";
-import { DndContext, DragOverlay } from "@dnd-kit/core";
+import { DndContext, DragOverlay, closestCenter } from "@dnd-kit/core";
 import {
   SortableContext,
   useSortable,
@@ -35,9 +35,34 @@ interface Props {
   Item?;
   children?: ReactNode;
   onDragStart?: (id) => void;
-  onDragStop?: (oldIndex: number, newIndex: number) => void;
+  onDragStop?: (
+    oldIndex: number,
+    newIndex: number,
+    activeId?: string | number,
+    overId?: string | number,
+  ) => void;
   onDragMove?: () => void;
   disabled?: boolean;
+}
+
+export function getSortableDragIndices({
+  items,
+  activeId,
+  overId,
+}: {
+  items: (string | number)[];
+  activeId: string | number | null | undefined;
+  overId: string | number | null | undefined;
+}): [number, number] | undefined {
+  if (activeId == null || overId == null || activeId == overId) {
+    return;
+  }
+  const oldIndex = items.indexOf(activeId);
+  const newIndex = items.indexOf(overId);
+  if (oldIndex < 0 || newIndex < 0 || oldIndex == newIndex) {
+    return;
+  }
+  return [oldIndex, newIndex];
 }
 
 interface SortableHandleContextValue {
@@ -63,19 +88,16 @@ export function SortableList({
   function onDragEnd(event) {
     const { active, over } = event;
     setDragId(null);
-    if (active != null && over == null) {
-      // moved to the very top or bottom
-      const oldIndex = items.indexOf(active.id);
-      const newIndex = event.delta?.y < 0 ? 0 : items.length - 1;
-      onDragStop?.(oldIndex, newIndex);
+    const indices = getSortableDragIndices({
+      items,
+      activeId: active?.id,
+      overId: over?.id,
+    });
+    if (indices == null) {
       return;
     }
-    if (active == null || over == null || active.id == over.id) {
-      return;
-    }
-    const oldIndex = items.indexOf(active.id);
-    const newIndex = items.indexOf(over?.id);
-    onDragStop?.(oldIndex, newIndex);
+    const [oldIndex, newIndex] = indices;
+    onDragStop?.(oldIndex, newIndex, active?.id, over?.id);
   }
 
   const [dragId, setDragId] = useState<string | null>(null);
@@ -86,11 +108,13 @@ export function SortableList({
 
   return (
     <DndContext
+      collisionDetection={closestCenter}
       onDragStart={(event) => {
         setDragId(`${event.active.id}`);
         onDragStart?.(event.active.id);
       }}
       onDragEnd={onDragEnd}
+      onDragCancel={() => setDragId(null)}
       onDragMove={onDragMove}
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
     >
