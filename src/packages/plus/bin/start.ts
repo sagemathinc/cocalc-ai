@@ -4,6 +4,7 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { reflectVersion } from "../reflect/manager";
@@ -13,6 +14,8 @@ import { main as starMain } from "./star";
 const dynamicImport = new Function("p", "return import(p);") as (
   p: string,
 ) => Promise<any>;
+
+const DEFAULT_PLUS_PORT = 5000;
 
 function configureProcessMaxListeners() {
   const configured = Number.parseInt(
@@ -157,6 +160,100 @@ function defaultPlusDataDir() {
 
 function defaultReflectHome() {
   return path.join(defaultPlusRootDir(), "reflect-sync");
+}
+
+function portProbeHost(): string {
+  const rawHost = (process.env.HOST ?? "localhost").trim();
+  if (rawHost.startsWith("https://") || rawHost.startsWith("http://")) {
+    try {
+      return new URL(rawHost).hostname;
+    } catch {
+      return "localhost";
+    }
+  }
+  return rawHost || "localhost";
+}
+
+function portProbeHosts(host: string): string[] {
+  const normalized = host.trim().toLowerCase();
+  if (
+    normalized === "localhost" ||
+    normalized === "ip6-localhost" ||
+    normalized === "ip6-loopback"
+  ) {
+    return ["127.0.0.1", "::1"];
+  }
+  return [host];
+}
+
+function isUnsupportedAddressFamily(err: any): boolean {
+  return err?.code === "EAFNOSUPPORT" || err?.code === "EINVAL";
+}
+
+function isUnavailablePortError(err: any): boolean {
+  return err?.code === "EADDRINUSE" || err?.code === "EACCES";
+}
+
+function probePort(port: number, host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      const address = server.address();
+      if (typeof address === "object" && address != null) {
+        const actualPort = address.port;
+        server.close(() => resolve(actualPort));
+        return;
+      }
+      server.close(() => reject(new Error("failed to probe port")));
+    });
+  });
+}
+
+async function canBindPortOnHosts(port: number, hosts: string[]) {
+  let supportedHostCount = 0;
+  for (const host of hosts) {
+    try {
+      await probePort(port, host);
+      supportedHostCount += 1;
+    } catch (err: any) {
+      if (isUnsupportedAddressFamily(err)) {
+        continue;
+      }
+      if (isUnavailablePortError(err)) {
+        return false;
+      }
+      throw err;
+    }
+  }
+  return supportedHostCount > 0;
+}
+
+export async function chooseLitePort({
+  preferredPort = DEFAULT_PLUS_PORT,
+  host = portProbeHost(),
+}: {
+  preferredPort?: number;
+  host?: string;
+} = {}): Promise<number> {
+  const hosts = portProbeHosts(host);
+  if (await canBindPortOnHosts(preferredPort, hosts)) {
+    return preferredPort;
+  }
+  for (let i = 0; i < 20; i += 1) {
+    const candidate = await probePort(0, hosts[0]);
+    if (await canBindPortOnHosts(candidate, hosts)) {
+      return candidate;
+    }
+  }
+  throw new Error("failed to choose a free Lite port");
+}
+
+export async function ensureLitePort(): Promise<void> {
+  if ((process.env.PORT ?? "").trim()) {
+    return;
+  }
+  process.env.PORT = String(await chooseLitePort());
 }
 
 function getPackageVersion() {
@@ -407,6 +504,8 @@ async function runCli() {
   if (!process.env.COCALC_ENABLE_SSH_UI) {
     process.env.COCALC_ENABLE_SSH_UI = "1";
   }
+  process.env.COCALC_PRODUCT ??= "plus";
+  process.env.COCALC_LITE_API_V2 ??= "0";
 
   const daemonStop = hasFlag(argv, "--daemon-stop");
   const daemonStatus = hasFlag(argv, "--daemon-status");
@@ -474,6 +573,7 @@ async function runCli() {
   if (!process.env.COCALC_DATA_DIR) {
     process.env.COCALC_DATA_DIR = defaultPlusDataDir();
   }
+  await ensureLitePort();
 
   writeVersionInfo();
 
@@ -500,7 +600,9 @@ async function runCli() {
   await liteMain.main({ sshUi, reflectUi });
 }
 
-runCli().catch((err) => {
-  console.error(err?.message || err);
-  process.exit(1);
-});
+if (require.main === module) {
+  runCli().catch((err) => {
+    console.error(err?.message || err);
+    process.exit(1);
+  });
+}

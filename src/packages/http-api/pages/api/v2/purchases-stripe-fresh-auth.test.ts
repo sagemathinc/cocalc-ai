@@ -52,6 +52,10 @@ jest.mock("@cocalc/server/accounts/is-in-group", () => ({
   default: (...args: any[]) => mockUserIsInGroup(...args),
 }));
 
+jest.mock("@cocalc/server/launch/kill-switches", () => ({
+  assertPaymentCheckoutAllowed: jest.fn(async () => undefined),
+}));
+
 jest.mock("@cocalc/server/purchases/stripe/create-payment-intent", () => ({
   __esModule: true,
   default: (...args: any[]) => mockCreatePaymentIntent(...args),

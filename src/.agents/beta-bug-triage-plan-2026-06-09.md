@@ -90,7 +90,7 @@ Validation:
 - Focused Slate selection validity test.
 - Live smoke: edit in text side, switch back to Slate, click/edit without crash.
 
-### P0-D: Jupyter Cell Drag-And-Drop Reorder Is Nearly Unusable
+### (done) P0-D: Jupyter Cell Drag-And-Drop Reorder Is Nearly Unusable
 
 Symptom: cells cannot be dragged reliably to the top or bottom, ordering feels broken, and dragged cells change to a visually broken style.
 
@@ -218,6 +218,8 @@ Validation:
 - Live host smoke: new version, one click deploy latest, project-host updated.
 
 ### P1-B: CoCalc Plus Uses Port 5000 Even When Occupied
+
+Status: Fixed. Plus now sets a free Lite `PORT` before loading the Lite server, preferring 5000 only when it can bind it.
 
 Symptom: `cocalc-plus` advertises `localhost:5000` even when another process is already listening there, so the app fails to work.
 

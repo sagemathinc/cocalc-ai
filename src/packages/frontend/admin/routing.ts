@@ -17,6 +17,7 @@ export type AdminSection =
   | "site-settings"
   | "software-licenses"
   | "sso"
+  | "usage-stats"
   | "user-search";
 
 const ADMIN_SECTIONS = new Set<AdminSection>([
@@ -33,6 +34,7 @@ const ADMIN_SECTIONS = new Set<AdminSection>([
   "site-settings",
   "software-licenses",
   "sso",
+  "usage-stats",
   "user-search",
 ]);
 

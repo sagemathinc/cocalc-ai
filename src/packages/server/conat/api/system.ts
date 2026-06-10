@@ -3817,30 +3817,32 @@ export async function getSiteSetupStatus({
         "The first public recipe can start as Ubuntu with Jupyter and LaTeX packages installed.",
       ],
     }),
-    setupStep({
-      id: "smoke-test",
-      title: "Smoke Test",
-      state:
-        healthyProjectHosts > 0 && rootfs.official > 0 ? "manual" : "blocked",
-      summary:
-        healthyProjectHosts > 0 && rootfs.official > 0
-          ? "Create a project, start it on the official RootFS, and verify terminal/Jupyter manually."
-          : "Smoke testing is blocked until a host and official RootFS exist.",
-    }),
+    // TODO: restore this when Site Setup can persist a browser/project smoke-test result.
+    // setupStep({
+    //   id: "smoke-test",
+    //   title: "Smoke Test",
+    //   state:
+    //     healthyProjectHosts > 0 && rootfs.official > 0 ? "manual" : "blocked",
+    //   summary:
+    //     healthyProjectHosts > 0 && rootfs.official > 0
+    //       ? "Create a project, start it on the official RootFS, and verify terminal/Jupyter manually."
+    //       : "Smoke testing is blocked until a host and official RootFS exist.",
+    // }),
   ];
   steps[4] = emailSetupState(settings);
-  steps.push(
-    setupStep({
-      id: "mark-ready",
-      title: "Mark Site Ready",
-      state: "manual",
-      summary:
-        "Explicit completion is not persisted yet; this first implementation only derives setup readiness.",
-      details: [
-        "The follow-up write path should require fresh admin auth and store a small site setup state record.",
-      ],
-    }),
-  );
+  // TODO: restore this when explicit completion is persisted with fresh auth.
+  // steps.push(
+  //   setupStep({
+  //     id: "mark-ready",
+  //     title: "Mark Site Ready",
+  //     state: "manual",
+  //     summary:
+  //       "Explicit completion is not persisted yet; this first implementation only derives setup readiness.",
+  //     details: [
+  //       "The follow-up write path should require fresh admin auth and store a small site setup state record.",
+  //     ],
+  //   }),
+  // );
 
   return buildSiteSetupStatus({ counts, profile, steps });
 }
