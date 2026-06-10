@@ -88,51 +88,11 @@ describe("markdown editor Actions", () => {
     ]);
   });
 
-  it("uses source replacement when syncing CodeMirror into an existing block Slate frame", async () => {
-    const actions: any = Object.create(Actions.prototype);
-    const calls: string[] = [];
-    actions._cm = {
-      "cm-frame": {
-        getValue: () => "fresh codemirror text",
-        getDoc: () => ({
-          getCursor: () => ({ line: 0, ch: 6 }),
-        }),
-      },
-    };
-    actions.set_value = jest.fn(() => calls.push("set_value"));
-    actions.show_focused_frame_of_type = jest.fn(() => {
-      calls.push("show_focused_frame_of_type");
-      return "slate-frame";
-    });
-    const replaceMarkdownFromSource = jest.fn(() =>
-      calls.push("replaceMarkdownFromSource"),
-    );
-    const setMarkdown = jest.fn(() => calls.push("setMarkdown"));
-    actions.getBlockEditorControl = jest.fn(() => ({
-      replaceMarkdownFromSource,
-      setMarkdown,
-      setSelectionFromMarkdownPosition: jest.fn(() => true),
-    }));
-    actions.set_active_id = jest.fn();
-
-    await actions.sync_cm_to_slate("cm-frame", actions);
-
-    expect(replaceMarkdownFromSource).toHaveBeenCalledWith(
-      "fresh codemirror text",
-    );
-    expect(setMarkdown).not.toHaveBeenCalled();
-    expect(calls).toEqual([
-      "set_value",
-      "show_focused_frame_of_type",
-      "replaceMarkdownFromSource",
-    ]);
-  });
-
   it("updates a plain Slate editor before selecting after CodeMirror sync", async () => {
     const actions: any = Object.create(Actions.prototype);
     const calls: string[] = [];
-    const replaceMarkdownFromSource = jest.fn(() =>
-      calls.push("replaceMarkdownFromSource"),
+    const setMarkdownValueNow = jest.fn(() =>
+      calls.push("setMarkdownValueNow"),
     );
     actions._cm = {
       "cm-frame": {
@@ -155,13 +115,13 @@ describe("markdown editor Actions", () => {
         setSelectionFromMarkdownPosition,
       });
     actions.getSlateEditor = jest.fn(() => ({
-      replaceMarkdownFromSource,
+      setMarkdownValueNow,
     }));
     actions.set_active_id = jest.fn();
 
     await actions.sync_cm_to_slate("cm-frame", actions);
 
-    expect(replaceMarkdownFromSource).toHaveBeenCalledWith("fresh source");
+    expect(setMarkdownValueNow).toHaveBeenCalledWith("fresh source");
     expect(setSelectionFromMarkdownPosition).toHaveBeenCalledWith({
       line: 0,
       ch: 5,
@@ -170,7 +130,7 @@ describe("markdown editor Actions", () => {
     expect(calls).toEqual([
       "set_value",
       "show_focused_frame_of_type",
-      "replaceMarkdownFromSource",
+      "setMarkdownValueNow",
     ]);
   });
 

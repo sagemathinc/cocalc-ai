@@ -2403,20 +2403,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     setEditorToValue(nextValue ?? "");
   };
 
-  editor.replaceMarkdownFromSource = (nextValue: string) => {
-    (saveValueDebounce as any).cancel?.();
-    (setSyncstringFromSlate as any).cancel?.();
-    if (pendingRemoteTimerRef.current != null) {
-      window.clearTimeout(pendingRemoteTimerRef.current);
-      pendingRemoteTimerRef.current = null;
-    }
-    pendingRemoteRef.current = null;
-    pendingSlateValueRef.current = null;
-    setPendingRemoteIndicator(false);
-    mergeHelperRef.current.noteApplied(nextValue ?? "");
-    editor.setMarkdownValueNow?.(nextValue ?? "");
-  };
-
   if ((window as any).cc != null) {
     // This only gets set when running in cc-in-cc dev mode -- i.e., it is for low level
     // interactive debugging and dev work.

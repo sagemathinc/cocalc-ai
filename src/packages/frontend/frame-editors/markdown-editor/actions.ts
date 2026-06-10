@@ -349,22 +349,12 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     let syncedSlateMarkdown = false;
     const syncSlateMarkdownNow = () => {
       if (syncedSlateMarkdown) return;
-      if (typeof blockControl?.replaceMarkdownFromSource === "function") {
-        blockControl.replaceMarkdownFromSource(markdown);
-        syncedSlateMarkdown = true;
-        return;
-      }
       if (typeof blockControl?.setMarkdown === "function") {
         blockControl.setMarkdown(markdown);
         syncedSlateMarkdown = true;
         return;
       }
       const editor = this.getSlateEditor(slate_id);
-      if (typeof editor?.replaceMarkdownFromSource === "function") {
-        editor.replaceMarkdownFromSource(markdown);
-        syncedSlateMarkdown = true;
-        return;
-      }
       if (typeof editor?.setMarkdownValueNow === "function") {
         editor.setMarkdownValueNow(markdown);
         syncedSlateMarkdown = true;

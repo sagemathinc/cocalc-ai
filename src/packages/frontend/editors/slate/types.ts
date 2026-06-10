@@ -22,7 +22,6 @@ export interface SlateEditor extends ReactEditor {
   markdownValue?: string;
   getMarkdownValue: () => string;
   setMarkdownValueNow?: (value: string) => void;
-  replaceMarkdownFromSource?: (value: string) => void;
   getPlainValue: () => string;
   getSourceValue: (fragment?) => string;
   syncCache?: any;
