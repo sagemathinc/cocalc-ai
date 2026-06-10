@@ -221,6 +221,12 @@ function custom_ai_model_display(value: string): string {
 
 export type SiteSettingsExtrasKeys =
   | "pii_retention"
+  | "launch_emergency_heading"
+  | "launch_disable_project_creation"
+  | "launch_disable_free_project_starts"
+  | "launch_disable_user_host_create"
+  | "launch_disable_ai"
+  | "launch_disable_payment_checkout"
   | "conat_heading"
   | "conat_password"
   | "conat_admission_hub_api_max_active"
@@ -331,6 +337,65 @@ export type SettingsExtras = Record<SiteSettingsExtrasKeys, Config>;
 
 // not public, but admins can edit them
 export const EXTRAS: SettingsExtras = {
+  launch_emergency_heading: {
+    name: "Launch Emergency Controls",
+    desc: "Temporary operator kill switches for public-launch incidents. These settings are read dynamically by backend request paths and are intended for fast mitigation, not long-term policy.",
+    default: "",
+    type: "header",
+    tags: ["Security"],
+    group: "System / Advanced",
+    subgroup: "Launch Emergency Controls",
+  },
+  launch_disable_project_creation: {
+    name: "Disable New Project Creation",
+    desc: "Blocks non-admin users from creating new projects. Existing projects can still be opened, started, stopped, and edited.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Security"],
+    group: "System / Advanced",
+    subgroup: "Launch Emergency Controls",
+  },
+  launch_disable_free_project_starts: {
+    name: "Disable Free Project Starts",
+    desc: "Blocks starts for projects sponsored by free memberships. Paid and admin-sponsored project starts still work, and admins can start projects for diagnosis.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Security", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Launch Emergency Controls",
+  },
+  launch_disable_user_host_create: {
+    name: "Disable User Dedicated Host Creation",
+    desc: "Blocks non-admin users from creating new dedicated hosts, including cloud hosts and user-added hosts. Existing hosts are not stopped or deleted.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Security", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Launch Emergency Controls",
+  },
+  launch_disable_ai: {
+    name: "Disable AI and Codex",
+    desc: "Blocks site-managed AI/Codex usage while preserving unrelated project functionality. Use this for abuse or runaway AI-cost incidents.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Security", "AI", "OpenAI"],
+    group: "System / Advanced",
+    subgroup: "Launch Emergency Controls",
+  },
+  launch_disable_payment_checkout: {
+    name: "Disable Payment Checkout",
+    desc: "Blocks users from creating new Stripe checkout, payment, and setup sessions. Existing billing records and read-only billing pages still work.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Security", "Commercialization"],
+    group: "System / Advanced",
+    subgroup: "Launch Emergency Controls",
+  },
   conat_heading: {
     name: "Conat Configuration",
     desc: "Conat is a [NATS](https://nats.io/)-like [socketio](https://socket.io/) websocket server and persistence layer that CoCalc uses extensively for communication.",

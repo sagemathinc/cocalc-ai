@@ -3,6 +3,7 @@ import createSubscriptionPayment from "@cocalc/server/purchases/stripe/create-su
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
+import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 // Legacy/manual Stripe subscription-payment route. The user-facing React unpaid
 // subscription banner calls /api/v2/purchases/renew-subscription instead.
@@ -27,6 +28,7 @@ async function get(req) {
     account_id,
     endpoint: "purchases/stripe/create-subscription-payment",
   });
+  await assertPaymentCheckoutAllowed();
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   const { subscription_id } = getParams(req);
   await createSubscriptionPayment({

@@ -17,6 +17,7 @@ import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
 import { getStripeCustomerId, sanityCheckAmount } from "./stripe/util";
 import { decimalToStripe } from "@cocalc/util/stripe/calc";
+import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 const MINIMUM_STRIPE_TRANSACTION = 0.5; // Stripe requires transactions to be at least $0.50.
 const logger = getLogger("purchases:create-stripe-checkout-session");
@@ -36,6 +37,7 @@ export const createStripeCheckoutSession = async (
   const { account_id, cancel_url, force, line_items, success_url, token } =
     opts;
   logger.debug("createStripeCheckoutSession", opts);
+  await assertPaymentCheckoutAllowed();
 
   const cartTotal = line_items.reduce(
     (total, line_item) => total.add(toDecimal(line_item.amount)),

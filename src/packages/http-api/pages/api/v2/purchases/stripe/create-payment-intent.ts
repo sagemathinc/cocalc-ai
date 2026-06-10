@@ -8,6 +8,7 @@ import {
 } from "@cocalc/server/auth/auth-sessions";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import throttle from "@cocalc/util/api/throttle";
+import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 export default async function handle(req, res) {
   try {
@@ -24,6 +25,7 @@ export default async function handle(req, res) {
 async function get(req) {
   const { user_account_id, lineItems, purpose, description, metadata } =
     getParams(req);
+  await assertPaymentCheckoutAllowed();
   if (user_account_id) {
     // admin version
     const admin_account_id = await getAccountId(req);
