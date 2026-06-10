@@ -4,6 +4,7 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { reflectVersion } from "../reflect/manager";
@@ -13,6 +14,8 @@ import { main as starMain } from "./star";
 const dynamicImport = new Function("p", "return import(p);") as (
   p: string,
 ) => Promise<any>;
+
+const DEFAULT_PLUS_PORT = 5000;
 
 function configureProcessMaxListeners() {
   const configured = Number.parseInt(
@@ -157,6 +160,58 @@ function defaultPlusDataDir() {
 
 function defaultReflectHome() {
   return path.join(defaultPlusRootDir(), "reflect-sync");
+}
+
+function portProbeHost() {
+  const rawHost = (process.env.HOST ?? "localhost").trim();
+  if (rawHost.startsWith("https://") || rawHost.startsWith("http://")) {
+    try {
+      return new URL(rawHost).hostname;
+    } catch {
+      return "localhost";
+    }
+  }
+  return rawHost || "localhost";
+}
+
+function probePort(port: number, host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      const address = server.address();
+      if (typeof address === "object" && address != null) {
+        const actualPort = address.port;
+        server.close(() => resolve(actualPort));
+        return;
+      }
+      server.close(() => reject(new Error("failed to probe port")));
+    });
+  });
+}
+
+export async function chooseLitePort({
+  preferredPort = DEFAULT_PLUS_PORT,
+  host = portProbeHost(),
+}: {
+  preferredPort?: number;
+  host?: string;
+} = {}): Promise<number> {
+  try {
+    return await probePort(preferredPort, host);
+  } catch (err: any) {
+    if (err?.code !== "EADDRINUSE" && err?.code !== "EACCES") {
+      throw err;
+    }
+  }
+  return await probePort(0, host);
+}
+
+export async function ensureLitePort(): Promise<void> {
+  if ((process.env.PORT ?? "").trim()) {
+    return;
+  }
+  process.env.PORT = String(await chooseLitePort());
 }
 
 function getPackageVersion() {
@@ -474,6 +529,7 @@ async function runCli() {
   if (!process.env.COCALC_DATA_DIR) {
     process.env.COCALC_DATA_DIR = defaultPlusDataDir();
   }
+  await ensureLitePort();
 
   writeVersionInfo();
 
@@ -500,7 +556,9 @@ async function runCli() {
   await liteMain.main({ sshUi, reflectUi });
 }
 
-runCli().catch((err) => {
-  console.error(err?.message || err);
-  process.exit(1);
-});
+if (require.main === module) {
+  runCli().catch((err) => {
+    console.error(err?.message || err);
+    process.exit(1);
+  });
+}
