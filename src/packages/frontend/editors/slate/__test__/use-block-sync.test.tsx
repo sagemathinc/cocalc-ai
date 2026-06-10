@@ -282,6 +282,50 @@ test("ignores stale value-prop replays when a syncstring is present", () => {
   expect(observedMarkdownRef.current).toBe("local typing");
 });
 
+function SourceReplaceHarness({
+  observedMarkdownRef,
+}: {
+  observedMarkdownRef: React.MutableRefObject<string>;
+}) {
+  const valueRef = useRef("old");
+  const blocksRef = useRef(["old"]);
+  const didReplaceRef = useRef(false);
+
+  const sync = useBlockSync({
+    actions: {
+      set_value: jest.fn(),
+      syncstring_commit: jest.fn(),
+    },
+    value: "old",
+    initialValue: "old",
+    valueRef,
+    blocksRef,
+    focusedIndex: 0,
+    setBlocksFromValue: (markdown) => {
+      blocksRef.current = [markdown];
+      valueRef.current = markdown;
+      observedMarkdownRef.current = markdown;
+    },
+    getFullMarkdown: () => blocksRef.current.join(""),
+  });
+
+  useEffect(() => {
+    if (didReplaceRef.current) return;
+    didReplaceRef.current = true;
+    sync.replaceBlocksFromSource("fresh source");
+  }, [sync]);
+
+  return null;
+}
+
+test("source replacement updates blocks instead of short-circuiting on valueRef", () => {
+  const observedMarkdownRef = { current: "old" };
+
+  render(<SourceReplaceHarness observedMarkdownRef={observedMarkdownRef} />);
+
+  expect(observedMarkdownRef.current).toBe("fresh source");
+});
+
 function PendingRemoteSupersededHarness({
   stage,
   syncstring,

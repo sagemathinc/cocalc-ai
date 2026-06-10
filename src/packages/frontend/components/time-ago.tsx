@@ -9,7 +9,11 @@
  */
 
 import { Popover, Radio } from "antd";
-import React, { CSSProperties as CSS, useEffect, useState } from "react";
+import React, {
+  CSSProperties as CSS,
+  useEffect,
+  useSyncExternalStore,
+} from "react";
 import { is_date, is_different as misc_is_different } from "@cocalc/util/misc";
 import useAppContext from "@cocalc/frontend/app/use-context";
 
@@ -222,6 +226,74 @@ const MINUTE = 60;
 const HOUR = MINUTE * 60;
 const DAY = HOUR * 24;
 const MAX_RELATIVE_TIME_REFRESH_MS = DAY * 1000;
+const RELATIVE_TIME_SAFETY_REFRESH_MS = 30 * 1000;
+
+let relativeTimeVersion = 0;
+let relativeTimeInterval: ReturnType<typeof setInterval> | undefined;
+const relativeTimeListeners = new Set<() => void>();
+
+function notifyRelativeTimeListeners() {
+  relativeTimeVersion += 1;
+  for (const listener of relativeTimeListeners) {
+    listener();
+  }
+}
+
+function getRelativeTimeSnapshot() {
+  return relativeTimeVersion;
+}
+
+function getStaticRelativeTimeSnapshot() {
+  return 0;
+}
+
+function subscribeStaticRelativeTime() {
+  return () => {};
+}
+
+function subscribeRelativeTime(listener: () => void) {
+  relativeTimeListeners.add(listener);
+  if (relativeTimeListeners.size === 1) {
+    startRelativeTimeClock();
+  }
+  return () => {
+    relativeTimeListeners.delete(listener);
+    if (relativeTimeListeners.size === 0) {
+      stopRelativeTimeClock();
+    }
+  };
+}
+
+function startRelativeTimeClock() {
+  if (relativeTimeInterval == null) {
+    relativeTimeInterval = setInterval(
+      notifyRelativeTimeListeners,
+      RELATIVE_TIME_SAFETY_REFRESH_MS,
+    );
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", notifyRelativeTimeListeners);
+  }
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", notifyRelativeTimeListeners);
+  }
+}
+
+function stopRelativeTimeClock() {
+  if (relativeTimeInterval != null) {
+    clearInterval(relativeTimeInterval);
+    relativeTimeInterval = undefined;
+  }
+  if (typeof document !== "undefined") {
+    document.removeEventListener(
+      "visibilitychange",
+      notifyRelativeTimeListeners,
+    );
+  }
+  if (typeof window !== "undefined") {
+    window.removeEventListener("focus", notifyRelativeTimeListeners);
+  }
+}
 
 function msUntilRelativeTimeTextChange(
   epochMs: number,
@@ -267,7 +339,11 @@ function RelativeTimeText({
   date: Date;
   live: boolean;
 }): React.JSX.Element {
-  const [, setTick] = useState(0);
+  useSyncExternalStore(
+    live ? subscribeRelativeTime : subscribeStaticRelativeTime,
+    live ? getRelativeTimeSnapshot : getStaticRelativeTimeSnapshot,
+    getStaticRelativeTimeSnapshot,
+  );
   const epochMs = date.valueOf();
   const { refreshMs, text } = relativeTimeParts(epochMs, Date.now());
 
@@ -275,9 +351,7 @@ function RelativeTimeText({
     if (!live || refreshMs == null) {
       return;
     }
-    const timeoutId = setTimeout(() => {
-      setTick((current) => current + 1);
-    }, refreshMs);
+    const timeoutId = setTimeout(notifyRelativeTimeListeners, refreshMs);
     return () => clearTimeout(timeoutId);
   }, [epochMs, live, refreshMs]);
 

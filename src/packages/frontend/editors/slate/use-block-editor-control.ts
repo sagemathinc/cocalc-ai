@@ -21,12 +21,12 @@ export function useBlockEditorControl({
   allowNextValueUpdateWhileFocused,
   getFullMarkdown,
   focusBlock,
+  replaceBlocksFromSource,
   blocksRef,
   editorMapRef,
   pendingFocusRef,
   virtuosoRef,
   setFocusedIndex,
-  setBlocksFromValue,
   focusedIndex,
   lastFocusedIndex,
   setSelectionFromMarkdownPosition,
@@ -38,6 +38,7 @@ export function useBlockEditorControl({
   allowNextValueUpdateWhileFocused: () => void;
   getFullMarkdown: () => string;
   focusBlock: (index: number, position?: "start" | "end") => void;
+  replaceBlocksFromSource: (markdown: string) => void;
   blocksRef: React.MutableRefObject<string[]>;
   editorMapRef: React.MutableRefObject<Map<number, SlateEditor>>;
   pendingFocusRef: React.MutableRefObject<{
@@ -46,7 +47,6 @@ export function useBlockEditorControl({
   } | null>;
   virtuosoRef: React.MutableRefObject<VirtuosoHandle | null>;
   setFocusedIndex: React.Dispatch<React.SetStateAction<number | null>>;
-  setBlocksFromValue: (markdown: string) => void;
   focusedIndex: number | null;
   lastFocusedIndex: number | null;
   setSelectionFromMarkdownPosition: (
@@ -129,8 +129,9 @@ export function useBlockEditorControl({
       getBlocks: () => [...blocksRef.current],
       getMarkdown: getFullMarkdown,
       setMarkdown: (markdown: string) => {
-        setBlocksFromValue(markdown);
+        replaceBlocksFromSource(markdown);
       },
+      replaceMarkdownFromSource: replaceBlocksFromSource,
       getFocusedIndex: () => focusedIndex,
       getLastFocusedIndex: () => lastFocusedIndex,
       setSelectionFromMarkdownPosition,
@@ -155,7 +156,7 @@ export function useBlockEditorControl({
     getMarkdownPositionForSelection,
     id,
     pendingFocusRef,
-    setBlocksFromValue,
+    replaceBlocksFromSource,
     setFocusedIndex,
     setSelectionFromMarkdownPosition,
     virtuosoRef,

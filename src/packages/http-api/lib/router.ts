@@ -11,6 +11,7 @@ import express, {
 import { getLogger } from "@cocalc/backend/logger";
 import { applyBrowserCors } from "@cocalc/server/bay-public-origin";
 import { discoverApiV2Routes, type ApiV2RouteEntry } from "./api-v2-routes";
+import { getLaunchpadApiV2Routes } from "./launchpad-routes";
 
 export interface ApiV2RouterOptions {
   includeDocs?: boolean;
@@ -53,6 +54,17 @@ function loadBundledRoutes(
   }
 }
 
+function loadLaunchpadRoutes(
+  logger: ReturnType<typeof getLogger>,
+): ApiV2RouteEntry[] | undefined {
+  if (process.env.COCALC_LAUNCHPAD_API_V2_ROUTES !== "1") {
+    return;
+  }
+  const routes = getLaunchpadApiV2Routes();
+  logger.info("using launchpad api v2 routes", { count: routes.length });
+  return routes;
+}
+
 export default function createApiV2Router(
   opts: ApiV2RouterOptions = {},
 ): express.Router {
@@ -75,6 +87,7 @@ export default function createApiV2Router(
     opts.routes ??
     opts.manifest ??
     loadBundledRoutes(logger) ??
+    loadLaunchpadRoutes(logger) ??
     discoverApiV2Routes({
       includeDocs: opts.includeDocs,
       logger,
