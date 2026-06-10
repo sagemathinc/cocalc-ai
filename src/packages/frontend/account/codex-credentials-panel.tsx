@@ -143,6 +143,17 @@ function formatResetTime(seconds?: number | null): string | undefined {
   return new Date(seconds * 1000).toLocaleString();
 }
 
+function formatCodexUsageReason(reason?: string): string | undefined {
+  if (!reason) return undefined;
+  if (
+    reason.includes("account/rateLimits/read") ||
+    reason.includes("authentication required to read rate limits")
+  ) {
+    return "ChatGPT Codex usage is connected, but live rate-limit details are not available from Codex right now. Use the ChatGPT usage page for the latest limits.";
+  }
+  return reason;
+}
+
 export function CodexCredentialsPanel(props: CodexCredentialsPanelProps = {}) {
   return <CodexCredentialsPanelBody {...props} />;
 }
@@ -192,6 +203,7 @@ function CodexCredentialsPanelBody({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
+  const [usageRefreshToken, setUsageRefreshToken] = useState<number>(0);
   const [selectedProjectId, setSelectedProjectId] = useState<string>(
     defaultProjectId ?? "",
   );
@@ -233,11 +245,17 @@ function CodexCredentialsPanelBody({
     onUnhandledError: (err) => setError(`${err}`),
   });
 
-  const refresh = () => setRefreshToken((x) => x + 1);
+  const refresh = useCallback(() => {
+    setRefreshToken((x) => x + 1);
+    setUsageRefreshToken((x) => x + 1);
+  }, []);
+  const refreshUsage = useCallback(() => {
+    setUsageRefreshToken((x) => x + 1);
+  }, []);
   const refreshAfterPaymentSourceChange = useCallback(() => {
     refresh();
     onPaymentSourceChanged?.();
-  }, [onPaymentSourceChanged]);
+  }, [onPaymentSourceChanged, refresh]);
   const deviceAuthPending =
     deviceAuthActionPending || deviceAuth?.state === "pending";
   const openSubscriptionAuthPanel = useCallback(() => {
@@ -373,13 +391,13 @@ function CodexCredentialsPanelBody({
           checkedAt: new Date().toISOString(),
           paymentSource,
           project_id: authProjectId || undefined,
-          reason: getErrorMessage(err),
+          reason: formatCodexUsageReason(getErrorMessage(err)),
         });
       } finally {
         if (isMounted()) setCodexUsageLoading(false);
       }
     },
-    [authProjectId, paymentSource?.source, refreshToken],
+    [authProjectId, paymentSource?.source, usageRefreshToken],
   );
 
   const columns = useMemo(
@@ -712,10 +730,11 @@ function CodexCredentialsPanelBody({
     const planType =
       formatPlanType(chatgptAccount?.planType) ??
       formatPlanType(rateLimit?.planType ?? rateLimit?.plan_type);
+    const reason = formatCodexUsageReason(codexUsageStatus?.reason);
     return (
       <Space orientation="vertical" size={6}>
         <Text strong>ChatGPT Codex usage</Text>
-        {codexUsageLoading ? (
+        {codexUsageLoading && !codexUsageStatus ? (
           <Text type="secondary">Checking ChatGPT Codex usage...</Text>
         ) : !codexUsageStatus ? (
           <Text type="secondary">Usage status has not been checked yet.</Text>
@@ -732,11 +751,14 @@ function CodexCredentialsPanelBody({
           ) : null}
           {resetAt ? <Tag>resets {resetAt}</Tag> : null}
         </Space>
-        {codexUsageStatus?.reason ? (
-          <Text type="secondary">{codexUsageStatus.reason}</Text>
-        ) : null}
+        {reason ? <Text type="secondary">{reason}</Text> : null}
         <Space wrap>
-          <Button size="small" onClick={refresh} loading={codexUsageLoading}>
+          <Button
+            size="small"
+            onClick={refreshUsage}
+            loading={codexUsageLoading}
+            disabled={codexUsageLoading}
+          >
             Refresh usage
           </Button>
           <Button
@@ -804,32 +826,54 @@ function CodexCredentialsPanelBody({
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <div style={recommendedCardStyle}>
         <Space orientation="vertical" size={10} style={{ width: "100%" }}>
-          <Space wrap>
-            <Tag color="green">Recommended</Tag>
-            <Text strong style={{ fontSize: 18 }}>
-              Connect Codex with ChatGPT
-            </Text>
-          </Space>
-          <Text type="secondary">
-            Sign in once to use your ChatGPT Codex subscription in CoCalc. No
-            API key is needed. ChatGPT shows your exact plan and remaining Codex
-            usage.
-          </Text>
-          <Space wrap>
-            <Button
-              type="primary"
-              onClick={() => void startDeviceAuth()}
-              loading={deviceAuthActionPending}
-              disabled={!authProjectId || deviceAuth?.state === "pending"}
-            >
-              {deviceAuthActionPending
-                ? "Getting sign-in code..."
-                : "Sign in with ChatGPT"}
-            </Button>
-            <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-              {CODEX_USAGE_LABEL}
-            </Button>
-          </Space>
+          {paymentSource?.source === "subscription" ? (
+            <>
+              <Space wrap>
+                <Tag color="green">Connected</Tag>
+                <Text strong style={{ fontSize: 18 }}>
+                  ChatGPT is connected
+                </Text>
+              </Space>
+              <Text type="secondary">
+                CoCalc is using your ChatGPT subscription for Codex. ChatGPT
+                shows your exact plan and remaining Codex usage.
+              </Text>
+              <Space wrap>
+                <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+                  {CODEX_USAGE_LABEL}
+                </Button>
+              </Space>
+            </>
+          ) : (
+            <>
+              <Space wrap>
+                <Tag color="green">Recommended</Tag>
+                <Text strong style={{ fontSize: 18 }}>
+                  Connect Codex with ChatGPT
+                </Text>
+              </Space>
+              <Text type="secondary">
+                Sign in once to use your ChatGPT Codex subscription in CoCalc.
+                No API key is needed. ChatGPT shows your exact plan and
+                remaining Codex usage.
+              </Text>
+              <Space wrap>
+                <Button
+                  type="primary"
+                  onClick={() => void startDeviceAuth()}
+                  loading={deviceAuthActionPending}
+                  disabled={!authProjectId || deviceAuth?.state === "pending"}
+                >
+                  {deviceAuthActionPending
+                    ? "Getting sign-in code..."
+                    : "Sign in with ChatGPT"}
+                </Button>
+                <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+                  {CODEX_USAGE_LABEL}
+                </Button>
+              </Space>
+            </>
+          )}
         </Space>
       </div>
       {renderDeviceAuthLogin()}
