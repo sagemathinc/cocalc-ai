@@ -222,6 +222,7 @@ function custom_ai_model_display(value: string): string {
 export type SiteSettingsExtrasKeys =
   | "pii_retention"
   | "launch_emergency_heading"
+  | "launch_read_mostly_maintenance"
   | "launch_disable_project_creation"
   | "launch_disable_free_project_starts"
   | "launch_disable_user_host_create"
@@ -342,6 +343,16 @@ export const EXTRAS: SettingsExtras = {
     desc: "Temporary operator kill switches for public-launch incidents. These settings are read dynamically by backend request paths and are intended for fast mitigation, not long-term policy.",
     default: "",
     type: "header",
+    tags: ["Security"],
+    group: "System / Advanced",
+    subgroup: "Launch Emergency Controls",
+  },
+  launch_read_mostly_maintenance: {
+    name: "Read-Mostly Maintenance Mode",
+    desc: "Broad emergency brake for launch incidents. Blocks non-admin project creation, non-admin project starts, non-admin dedicated-host creation, payment checkout, and AI/Codex while preserving existing read paths and admin diagnosis paths.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
     tags: ["Security"],
     group: "System / Advanced",
     subgroup: "Launch Emergency Controls",

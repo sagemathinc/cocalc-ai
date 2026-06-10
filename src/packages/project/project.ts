@@ -11,10 +11,13 @@ import daemonizeProcess from "daemonize-process";
 import { init as initBugCounter } from "./bug-counter";
 import { init as initClient, initDEBUG } from "./client";
 import initInfoJson from "./info-json";
-import initKucalc from "./init-kucalc";
+import {
+  initAfterRuntimeUserDrop,
+  initBeforeRuntimeUserDrop,
+} from "./init-project-runtime";
 import { getOptions } from "./init-program";
 import { cleanup as cleanupEnvironmentVariables } from "./project-setup";
-import { maybeActivateRuntimeUser } from "./runtime-bootstrap";
+import { dropToRuntimeUser, prepareRuntimeUser } from "./runtime-bootstrap";
 import initServers from "./servers/init";
 
 import { getLogger } from "./logger";
@@ -36,7 +39,7 @@ function checkEnvVariables() {
 }
 
 export async function main() {
-  await maybeActivateRuntimeUser();
+  const runtime = await prepareRuntimeUser();
   const options = getOptions();
   if (options.daemon) {
     logger.info(`daemonize the process pid=${process.pid}`);
@@ -49,7 +52,9 @@ export async function main() {
   initBugCounter();
   checkEnvVariables();
   cleanupEnvironmentVariables();
-  initKucalc(); // must be after cleanupEnvironmentVariables, since this *adds* custom environment variables.
+  await initBeforeRuntimeUserDrop(); // must be after cleanupEnvironmentVariables, since this *adds* custom environment variables.
+  dropToRuntimeUser(runtime);
+  await initAfterRuntimeUserDrop();
   logger.info("main init function");
   logger.info("initialize INFO.json file");
   await initInfoJson();

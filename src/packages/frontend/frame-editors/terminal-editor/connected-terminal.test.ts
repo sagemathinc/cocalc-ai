@@ -467,7 +467,17 @@ describe("connected terminal resizing", () => {
       })),
     } as any;
 
-    const terminal = new Terminal(actions, 0, "term-1", parent);
+    const terminal = new Terminal(
+      actions,
+      0,
+      "term-1",
+      parent,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { autoStartProjectOnFirstConnect: true },
+    );
     await new Promise((resolve) => setTimeout(resolve, 0));
     await terminal.connect();
 
@@ -497,7 +507,7 @@ describe("connected terminal resizing", () => {
   });
 
   it("autostarts and connects for a stopped project when automatic starts are enabled", async () => {
-    const { Terminal, terminalClient, ensureProjectRunning } =
+    const { Terminal, terminalClient, ensureProjectRunning, projectStore } =
       loadTerminalModule({
         projectState: "opened",
         project: { autostart_enabled: true },
@@ -523,7 +533,17 @@ describe("connected terminal resizing", () => {
       })),
     } as any;
 
-    const terminal = new Terminal(actions, 0, "term-1", parent);
+    const terminal = new Terminal(
+      actions,
+      0,
+      "term-1",
+      parent,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { autoStartProjectOnFirstConnect: true },
+    );
     await new Promise((resolve) => setTimeout(resolve, 0));
     await terminal.connect();
 
@@ -534,6 +554,20 @@ describe("connected terminal resizing", () => {
     expect(terminalClient).toHaveBeenCalled();
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
       expect.stringContaining("Connecting terminal"),
+      expect.any(Function),
+    );
+
+    ensureProjectRunning.mockClear();
+    terminalClient.mockClear();
+    terminal["terminal"].write.mockClear();
+
+    projectStore.setStatus("opened");
+    await terminal.connect();
+
+    expect(ensureProjectRunning).not.toHaveBeenCalled();
+    expect(terminalClient).not.toHaveBeenCalled();
+    expect(terminal["terminal"].write).toHaveBeenCalledWith(
+      expect.stringContaining("Project is stopped"),
       expect.any(Function),
     );
 

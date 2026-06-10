@@ -50,6 +50,7 @@ const DOCS_ENTRY_IDS = [
   "admin.rootfs",
   "admin.project-backup-shards",
   "admin.registration-tokens",
+  "admin.signup-emergency-controls",
   "admin.membership-licenses",
   "admin.managed-egress",
   "admin.sso",

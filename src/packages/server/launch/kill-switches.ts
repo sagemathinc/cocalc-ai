@@ -11,6 +11,7 @@ import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 type SettingsRecord = Record<string, any>;
 
 export const LAUNCH_KILL_SWITCHES = {
+  readMostlyMaintenance: "launch_read_mostly_maintenance",
   disableProjectCreation: "launch_disable_project_creation",
   disableFreeProjectStarts: "launch_disable_free_project_starts",
   disableUserHostCreate: "launch_disable_user_host_create",
@@ -30,11 +31,39 @@ async function isAdminAccount(account_id?: string): Promise<boolean> {
   return await isAdmin(account_id);
 }
 
+export async function isReadMostlyMaintenanceEnabled(): Promise<boolean> {
+  return await getLaunchFlag(LAUNCH_KILL_SWITCHES.readMostlyMaintenance);
+}
+
+async function assertReadMostlyMaintenanceAllowed({
+  account_id,
+  action,
+  admin_bypass = true,
+}: {
+  account_id?: string;
+  action: string;
+  admin_bypass?: boolean;
+}): Promise<void> {
+  if (!(await isReadMostlyMaintenanceEnabled())) {
+    return;
+  }
+  if (admin_bypass && (await isAdminAccount(account_id))) {
+    return;
+  }
+  throw new Error(
+    `${action} is temporarily disabled because the site is in read-mostly maintenance mode.`,
+  );
+}
+
 export async function assertProjectCreationAllowed({
   account_id,
 }: {
   account_id?: string;
 }): Promise<void> {
+  await assertReadMostlyMaintenanceAllowed({
+    account_id,
+    action: "Creating new projects",
+  });
   if (!(await getLaunchFlag(LAUNCH_KILL_SWITCHES.disableProjectCreation))) {
     return;
   }
@@ -51,6 +80,10 @@ export async function assertUserHostCreateAllowed({
 }: {
   account_id?: string;
 }): Promise<void> {
+  await assertReadMostlyMaintenanceAllowed({
+    account_id,
+    action: "Creating new dedicated hosts",
+  });
   if (!(await getLaunchFlag(LAUNCH_KILL_SWITCHES.disableUserHostCreate))) {
     return;
   }
@@ -69,6 +102,10 @@ export async function assertFreeProjectStartAllowed({
   actor_account_id?: string;
   sponsor_account_id: string;
 }): Promise<void> {
+  await assertReadMostlyMaintenanceAllowed({
+    account_id: actor_account_id,
+    action: "Starting projects",
+  });
   if (!(await getLaunchFlag(LAUNCH_KILL_SWITCHES.disableFreeProjectStarts))) {
     return;
   }
@@ -85,10 +122,17 @@ export async function assertFreeProjectStartAllowed({
 }
 
 export async function isAiLaunchDisabled(): Promise<boolean> {
-  return await getLaunchFlag(LAUNCH_KILL_SWITCHES.disableAi);
+  return (
+    (await isReadMostlyMaintenanceEnabled()) ||
+    (await getLaunchFlag(LAUNCH_KILL_SWITCHES.disableAi))
+  );
 }
 
 export async function assertAiLaunchAllowed(): Promise<void> {
+  await assertReadMostlyMaintenanceAllowed({
+    action: "AI and Codex",
+    admin_bypass: false,
+  });
   if (!(await isAiLaunchDisabled())) {
     return;
   }
@@ -98,6 +142,10 @@ export async function assertAiLaunchAllowed(): Promise<void> {
 }
 
 export async function assertPaymentCheckoutAllowed(): Promise<void> {
+  await assertReadMostlyMaintenanceAllowed({
+    action: "Payment checkout",
+    admin_bypass: false,
+  });
   if (!(await getLaunchFlag(LAUNCH_KILL_SWITCHES.disablePaymentCheckout))) {
     return;
   }

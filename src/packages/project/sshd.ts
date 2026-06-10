@@ -52,9 +52,11 @@ export async function init(envVars?: EnvVars) {
   const out = openSync(SSH_LOG, "w");
   const err = openSync(SSH_ERR, "w");
 
-  const script =
-    process.env.COCALC_PROJECT_SSH_START_SCRIPT ??
-    "/cocalc/kucalc-start-sshd.sh";
+  const script = process.env.COCALC_PROJECT_SSH_START_SCRIPT?.trim();
+  if (!script) {
+    warn("COCALC_PROJECT_SSH_START_SCRIPT is not set; not starting sshd");
+    return;
+  }
   const sshd = spawn("bash", [script], {
     detached: true,
     stdio: ["ignore", out, err],
