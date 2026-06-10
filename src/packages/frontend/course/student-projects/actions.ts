@@ -28,6 +28,7 @@ import { CourseActions } from "../actions";
 import { CourseStore } from "../store";
 import { Result, run_in_all_projects } from "./run-in-all-projects";
 import type { StudentRecord } from "../store";
+import { getEmailInviteValidationError } from "../configuration/email-invite-validation";
 
 // Project starts can mount RootFS overlays and update host/control-plane state.
 // Keep course-wide start/stop fanout conservative for single-host Star installs.
@@ -169,6 +170,10 @@ export class StudentProjectsActions {
       const subject = `${site_name} course invitation: ${title}`;
       let body = store.get_email_invite();
       body = body.replace(/{title}/g, title).replace(/{name}/g, name);
+      const inviteError = getEmailInviteValidationError(body);
+      if (inviteError) {
+        throw new Error(inviteError);
+      }
       const message = body;
       const email = markdown_to_html(body);
       await webapp_client.project_collaborators.invite_noncloud({
@@ -943,12 +948,15 @@ export class StudentProjectsActions {
         const idDel: number = this.course_actions.set_activity({
           desc: `Configuring deleted student project ${i} of ${deletedIDs.length}`,
         });
-        await this.configure_project({
-          student_id: deleted_student_id,
-          student_project_id: undefined,
-          force_send_invite_by_email: false,
-        });
-        this.course_actions.set_activity({ id: idDel });
+        try {
+          await this.configure_project({
+            student_id: deleted_student_id,
+            student_project_id: undefined,
+            force_send_invite_by_email: false,
+          });
+        } finally {
+          this.course_actions.set_activity({ id: idDel });
+        }
         await delay(0); // give UI, etc. a solid chance to render
       }
 
@@ -960,12 +968,15 @@ export class StudentProjectsActions {
           desc: `Configuring student project ${i} of ${ids.length}`,
         });
 
-        await this.configure_project({
-          student_id,
-          student_project_id: undefined,
-          force_send_invite_by_email: force,
-        });
-        this.course_actions.set_activity({ id: id1 });
+        try {
+          await this.configure_project({
+            student_id,
+            student_project_id: undefined,
+            force_send_invite_by_email: force,
+          });
+        } finally {
+          this.course_actions.set_activity({ id: id1 });
+        }
         await delay(0); // give UI, etc. a solid chance to render
       }
 
