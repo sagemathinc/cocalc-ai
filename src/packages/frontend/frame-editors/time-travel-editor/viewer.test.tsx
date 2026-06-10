@@ -69,6 +69,10 @@ describe("TimeTravel Viewer", () => {
       />,
     );
 
+    const content = screen.getByTestId("timetravel-markdown-content");
+    expect(content).toHaveStyle({
+      minHeight: "100%",
+    });
     expect(screen.getByTestId("editable-markdown")).not.toBeNull();
     expect(mockEditableMarkdown).toHaveBeenCalledWith(
       expect.objectContaining({

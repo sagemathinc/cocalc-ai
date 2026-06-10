@@ -13,12 +13,13 @@ import {
   normalizeNotificationEmailText,
 } from "@cocalc/server/notifications/email-format";
 import getProjectTitle from "@cocalc/server/projects/get-title";
-import { trunc } from "@cocalc/util/misc";
+import { path_split, trunc, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import type { Action, Key } from "./types";
 
-const HOWTO_REPLY = `Note: You have to either contact the person directly or respond via the linked chat.
-Just replying to this email will not work.`;
+const HOWTO_REPLY =
+  "Reply in CoCalc using the link above; replies to this email are not delivered.";
+const MAX_SUBJECT_LENGTH = 120;
 
 export default async function sendNotificationIfPossible(
   key: Key,
@@ -43,15 +44,23 @@ export default async function sendNotificationIfPossible(
           emailDescription,
         )}</blockquote>`
       : "";
-  const subject = `[${trunc(projectTitle, 40)}] ${key.path}`;
+  const subject = mentionEmailSubject({
+    sourceName,
+    projectTitle,
+    path: key.path,
+  });
   const url = `${await siteURL()}/projects/${key.project_id}/files/${key.path}${
     key.fragment_id
       ? (key.fragment_id.startsWith("#") ? "" : "#") + key.fragment_id
       : ""
   }`;
+  const safeUrl = escapeNotificationEmailHtml(url);
+  const safePath = escapeNotificationEmailHtml(key.path);
+  const safeProjectTitle = escapeNotificationEmailHtml(projectTitle);
+  const safeSourceName = escapeNotificationEmailHtml(sourceName);
   const html = `
-${sourceName} mentioned you in
-<a href="${url}">a chat at ${key.path} in ${projectTitle}</a>.
+${safeSourceName} mentioned you in
+<a href="${safeUrl}">${safePath}</a> in ${safeProjectTitle}.
 ${context}
 <br/>
 <br/>
@@ -59,7 +68,7 @@ ${context}
 `;
 
   const text = `
-${sourceName} mentioned you in a chat at ${key.path} in ${projectTitle}.
+${sourceName} mentioned you in ${key.path} in ${projectTitle}.
 
     ${url}
 
@@ -86,4 +95,26 @@ ${HOWTO_REPLY}
     source,
   );
   return "email";
+}
+
+export function mentionEmailSubject({
+  sourceName,
+  projectTitle,
+  path,
+}: {
+  sourceName: string;
+  projectTitle: string;
+  path: string;
+}): string {
+  const filename = mentionPathLabel(path);
+  const subject = `${trunc(sourceName, 40)} mentioned you in ${filename} (${trunc(
+    projectTitle,
+    50,
+  )})`;
+  return `${trunc(subject, MAX_SUBJECT_LENGTH)}`;
+}
+
+export function mentionPathLabel(path: string): string {
+  const tail = path_split(path).tail || path;
+  return `${trunc_middle(tail, 40)}`;
 }

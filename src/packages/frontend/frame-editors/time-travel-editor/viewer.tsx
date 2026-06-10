@@ -82,7 +82,14 @@ export function Viewer({
     case "md":
       const scale = getScale(font_size);
       return (
-        <div style={{ overflow: "auto", padding: "50px 70px" }}>
+        <div
+          data-testid="timetravel-markdown-content"
+          style={{
+            boxSizing: "border-box",
+            minHeight: "100%",
+            padding: "50px 70px",
+          }}
+        >
           <EditableMarkdown
             value={doc()?.to_str() ?? "unknown version"}
             read_only
