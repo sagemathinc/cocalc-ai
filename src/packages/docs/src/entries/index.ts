@@ -78,6 +78,7 @@ const DOCS_ENTRY_IDS = [
   "projects.runtime-image",
   "self-hosting.cocalc-star",
   "self-hosting.cocalc-star-local-vm",
+  "self-hosting.install-chromium",
   "self-hosting.reverse-ssh-access",
   "troubleshooting.memory",
   "troubleshooting.connectivity",

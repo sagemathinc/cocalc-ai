@@ -248,6 +248,150 @@ important local computer.
   the security implications.
 `;
 
+export const INSTALL_CHROMIUM_BODY = String.raw`
+## Why this matters on Ubuntu
+
+Ubuntu's \`chromium-browser\` package is often not a real browser package. On
+many Ubuntu releases it is a small transition package that prints a message
+telling you to install the Chromium snap:
+
+~~~text
+Command '/usr/bin/chromium-browser' requires the chromium snap to be installed.
+Please install it with:
+
+snap install chromium
+~~~
+
+That snap package is usually the wrong answer for containers, rootless Podman,
+CI images, and many server-style CoCalc deployments. Snap expects system
+services and confinement features that are often absent or deliberately disabled
+inside containers.
+
+For container and server images, prefer a normal Debian package that installs a
+real \`/usr/bin/chromium\` binary and can be upgraded with \`apt upgrade\`.
+
+## Recommended apt recipe: xtradeb Chromium
+
+The xtradeb applications PPA publishes real Chromium \`.deb\` packages for
+Ubuntu. The recipe below:
+
+1. Adds the PPA using a deb822 source file.
+2. Installs the PPA signing key in \`/usr/share/keyrings\`.
+3. Pins Ubuntu's snap transition package so upgrades do not reinstall it.
+4. Prefers xtradeb's real Chromium packages.
+5. Installs Chromium, ChromeDriver, and the Chromium sandbox package.
+6. Adds a \`chromium-browser\` compatibility wrapper for scripts that expect
+   that command name.
+
+Copy and paste this on Ubuntu:
+
+~~~sh
+set -euo pipefail
+
+sudo gpg --keyserver hkps://keyserver.ubuntu.com \
+  --recv-keys 5301FA4FD93244FBC6F6149982BB6851C64F6880
+sudo gpg --export 5301FA4FD93244FBC6F6149982BB6851C64F6880 \
+  | sudo tee /usr/share/keyrings/xtradeb-apps.gpg >/dev/null
+
+. /etc/os-release
+sudo tee /etc/apt/sources.list.d/xtradeb-apps.sources >/dev/null <<EOF
+Types: deb
+URIs: https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu/
+Suites: \${VERSION_CODENAME}
+Components: main
+Signed-By: /usr/share/keyrings/xtradeb-apps.gpg
+EOF
+
+sudo tee /etc/apt/preferences.d/chromium-real-deb >/dev/null <<'EOF'
+Package: chromium-browser
+Pin: version 2:1snap*
+Pin-Priority: -1
+
+Package: chromium chromium-common chromium-driver chromium-headless-shell chromium-l10n chromium-sandbox chromium-shell
+Pin: release o=LP-PPA-xtradeb-apps
+Pin-Priority: 700
+EOF
+
+sudo apt-get update
+sudo apt-get purge -y chromium-browser || true
+sudo apt-get install -y chromium chromium-driver chromium-sandbox
+
+sudo tee /usr/local/bin/chromium-browser >/dev/null <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /usr/bin/chromium "$@"
+EOF
+sudo chmod 0755 /usr/local/bin/chromium-browser
+~~~
+
+## Verify the install
+
+Run:
+
+~~~sh
+which -a chromium chromium-browser
+chromium --version
+chromium-browser --version
+chromedriver --version
+
+chromium --headless=new --disable-gpu \
+  --dump-dom 'data:text/html,<h1>chromium works</h1>'
+~~~
+
+You should see \`/usr/bin/chromium\` for the real browser and
+\`/usr/local/bin/chromium-browser\` for the compatibility wrapper. The
+\`chromium-browser\` command should no longer print the snap installation
+message.
+
+## Podman and sandbox notes
+
+First try Chromium with its sandbox enabled:
+
+~~~sh
+chromium --headless=new --disable-gpu \
+  --dump-dom 'data:text/html,<h1>sandbox works</h1>'
+~~~
+
+If the container runtime, kernel, or user namespace setup blocks the Chromium
+sandbox, use \`--no-sandbox\` for automation inside that container:
+
+~~~sh
+chromium --headless=new --no-sandbox --disable-gpu \
+  --dump-dom 'data:text/html,<h1>no sandbox fallback works</h1>'
+~~~
+
+Use \`--no-sandbox\` only when the container boundary is the intended sandbox.
+For normal desktop use, leave Chromium's own sandbox enabled.
+
+## If \`add-apt-repository\` is available
+
+On full Ubuntu systems with \`software-properties-common\` installed, the PPA
+can also be added with:
+
+~~~sh
+sudo add-apt-repository ppa:xtradeb/apps -y
+sudo apt-get update
+~~~
+
+Still keep the apt preferences file above. It is what prevents Ubuntu's
+\`chromium-browser\` snap transition package from coming back during later
+\`apt upgrade\` runs.
+
+## Troubleshooting
+
+- If \`apt-cache policy chromium\` has no xtradeb candidate, check that the PPA
+  publishes your Ubuntu codename and that \`Suites:\` in
+  \`/etc/apt/sources.list.d/xtradeb-apps.sources\` matches
+  \`VERSION_CODENAME\` from \`/etc/os-release\`.
+- If \`chromium-browser\` still runs \`/usr/bin/chromium-browser\`, refresh your
+  shell command cache with \`hash -r\` or open a new shell.
+- If headless Chromium logs DBus warnings in a container but still prints the
+  DOM, the warnings are usually harmless.
+- If the PPA is temporarily unavailable, do not install Ubuntu's snap transition
+  package as a fallback in containers. Use a pinned browser snapshot only as a
+  temporary workaround, then return to an apt-managed package.
+`;
+
 export const REVERSE_SSH_ACCESS_BODY = String.raw`
 ## What this is
 
