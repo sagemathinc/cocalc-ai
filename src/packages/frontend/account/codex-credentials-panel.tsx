@@ -703,7 +703,7 @@ function CodexCredentialsPanelBody({
     );
   };
 
-  const renderCodexUsageStatus = () => {
+  const renderCodexUsageStatusDetails = () => {
     if (paymentSource?.source !== "subscription") return null;
     const chatgptAccount = getChatGptAccount(codexUsageStatus);
     const rateLimit = getCodexRateLimit(codexUsageStatus);
@@ -713,50 +713,42 @@ function CodexCredentialsPanelBody({
       formatPlanType(chatgptAccount?.planType) ??
       formatPlanType(rateLimit?.planType ?? rateLimit?.plan_type);
     return (
-      <Alert
-        type={codexUsageStatus?.available === false ? "warning" : "success"}
-        showIcon
-        title="ChatGPT Codex usage"
-        description={
-          <Space orientation="vertical" size={6}>
-            {codexUsageLoading ? (
-              <Text type="secondary">Checking ChatGPT Codex usage...</Text>
-            ) : null}
-            <Space wrap>
-              {chatgptAccount?.email ? (
-                <Tag color="blue">{chatgptAccount.email}</Tag>
-              ) : null}
-              {planType ? <Tag color="green">{planType}</Tag> : null}
-              {typeof primary?.usedPercent === "number" ? (
-                <Tag>{primary.usedPercent}% used</Tag>
-              ) : typeof primary?.used_percent === "number" ? (
-                <Tag>{primary.used_percent}% used</Tag>
-              ) : null}
-              {resetAt ? <Tag>resets {resetAt}</Tag> : null}
-            </Space>
-            {codexUsageStatus?.reason ? (
-              <Text type="secondary">{codexUsageStatus.reason}</Text>
-            ) : null}
-            <Space wrap>
-              <Button
-                size="small"
-                onClick={refresh}
-                loading={codexUsageLoading}
-              >
-                Refresh usage
-              </Button>
-              <Button
-                size="small"
-                href={CODEX_USAGE_URL}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {CODEX_USAGE_LABEL}
-              </Button>
-            </Space>
-          </Space>
-        }
-      />
+      <Space orientation="vertical" size={6}>
+        <Text strong>ChatGPT Codex usage</Text>
+        {codexUsageLoading ? (
+          <Text type="secondary">Checking ChatGPT Codex usage...</Text>
+        ) : !codexUsageStatus ? (
+          <Text type="secondary">Usage status has not been checked yet.</Text>
+        ) : null}
+        <Space wrap>
+          {chatgptAccount?.email ? (
+            <Tag color="blue">{chatgptAccount.email}</Tag>
+          ) : null}
+          {planType ? <Tag color="green">{planType}</Tag> : null}
+          {typeof primary?.usedPercent === "number" ? (
+            <Tag>{primary.usedPercent}% used</Tag>
+          ) : typeof primary?.used_percent === "number" ? (
+            <Tag>{primary.used_percent}% used</Tag>
+          ) : null}
+          {resetAt ? <Tag>resets {resetAt}</Tag> : null}
+        </Space>
+        {codexUsageStatus?.reason ? (
+          <Text type="secondary">{codexUsageStatus.reason}</Text>
+        ) : null}
+        <Space wrap>
+          <Button size="small" onClick={refresh} loading={codexUsageLoading}>
+            Refresh usage
+          </Button>
+          <Button
+            size="small"
+            href={CODEX_USAGE_URL}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {CODEX_USAGE_LABEL}
+          </Button>
+        </Space>
+      </Space>
     );
   };
 
@@ -878,6 +870,7 @@ function CodexCredentialsPanelBody({
                     </a>
                     .
                   </Text>
+                  {renderCodexUsageStatusDetails()}
                 </Space>
               ) : (
                 <Space orientation="vertical" size={6}>
@@ -927,12 +920,12 @@ function CodexCredentialsPanelBody({
                       .
                     </Text>
                   ) : null}
+                  {renderCodexUsageStatusDetails()}
                 </Space>
               )
             }
           />
         ))}
-      {renderCodexUsageStatus()}
       <Collapse
         size="small"
         activeKey={openCredentialPanelKeys}
