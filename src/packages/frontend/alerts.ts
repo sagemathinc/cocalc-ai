@@ -12,6 +12,7 @@ import {
 } from "@cocalc/util/misc";
 
 import { getAntdNotificationInstance } from "./app/antd-notification";
+import { normalizeUserFacingError } from "./components/user-facing-error";
 import { webapp_client } from "./webapp-client";
 
 type NotificationType = "error" | "default" | "success" | "info" | "warning";
@@ -52,12 +53,21 @@ export function alert_message(opts: AlertMessageOptions = {}) {
     opts.timeout = t;
   }
 
+  const trackingMessage = opts.message;
+
+  if (opts.type === "error" && typeof opts.message === "string") {
+    opts.message = normalizeUserFacingError(opts.message).message;
+  } else if (opts.type === "error" && opts.message instanceof Error) {
+    opts.message = normalizeUserFacingError(opts.message).message;
+  }
+
   // Don't show the exact same alert message more than once per 5s.
   // This prevents a screen full of identical useless messages, which
   // is just annoying and useless.
   if (opts.message instanceof Error) {
-    opts.message = `${opts.message}`;
-  } else if (typeof opts.message === "string") {
+    opts.message = normalizeUserFacingError(opts.message).message;
+  }
+  if (typeof opts.message === "string") {
     const hash = hash_string(opts.message + opts.type);
     if (last_shown[hash] >= server_seconds_ago(5)) {
       return;
@@ -75,7 +85,7 @@ export function alert_message(opts: AlertMessageOptions = {}) {
 
   f({
     title: opts.title != null ? opts.title : "",
-    description: stripExcessiveError(opts.message),
+    description: opts.message,
     duration: opts.block ? 0 : opts.timeout,
   });
 
@@ -84,7 +94,7 @@ export function alert_message(opts: AlertMessageOptions = {}) {
     // that us developers know what errors people are hitting.
     // There really should be no situation where users *regularly*
     // get error alert messages.
-    webapp_client.tracking_client.log_error(opts.message);
+    webapp_client.tracking_client.log_error(trackingMessage ?? opts.message);
   }
 }
 
@@ -96,14 +106,3 @@ alert_message({ type: "warning", message: "This is a warning alert" });
 alert_message({ type: "success", message: "This is a success alert" });
 alert_message({ type: "info", message: "This is an info alert" });
 */
-
-function stripExcessiveError(s) {
-  if (typeof s != "string") {
-    return s;
-  }
-  s = s.trim();
-  if (s.startsWith("Error: Error:")) {
-    s = s.slice("Error: ".length);
-  }
-  return s;
-}
