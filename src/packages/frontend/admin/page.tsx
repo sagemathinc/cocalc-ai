@@ -146,8 +146,14 @@ export function AdminPage({
 
   function renderMenuLabel(icon: IconName, title: string) {
     return (
-      <span>
-        <Icon name={icon} /> {!navCollapsed && title}
+      <span
+        style={{
+          alignItems: "center",
+          display: "inline-flex",
+          gap: navCollapsed ? 0 : 8,
+        }}
+      >
+        <Icon name={icon} style={{ lineHeight: 1 }} /> {!navCollapsed && title}
       </span>
     );
   }
@@ -508,8 +514,11 @@ function AdminOverview({
         return (
           <div key={groupKey} style={{ marginBottom: "28px" }}>
             <Flex align="center" gap="small" style={{ marginBottom: "12px" }}>
-              <Icon name={group.icon} />
-              <Title level={4} style={{ marginBottom: 0 }}>
+              <Icon
+                name={group.icon}
+                style={{ lineHeight: 1, transform: "translateY(1px)" }}
+              />
+              <Title level={4} style={{ lineHeight: 1.2, margin: 0 }}>
                 {group.title}
               </Title>
             </Flex>
