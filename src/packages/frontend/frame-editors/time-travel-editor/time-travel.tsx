@@ -1313,7 +1313,7 @@ export function TimeTravel(props: Props) {
   }
 
   return (
-    <div className="smc-vfill">
+    <div className="smc-vfill" style={{ height: "100%", minHeight: 0 }}>
       {renderControls()}
       {renderCommitRangeModal()}
       {renderGitChangedFilesModal()}
@@ -1327,9 +1327,19 @@ export function TimeTravel(props: Props) {
       <div
         className="smc-vfill"
         data-testid="timetravel-body"
-        style={{ minHeight: 0, overflow: "auto" }}
+        style={{ height: "100%", minHeight: 0 }}
       >
-        {body}
+        <div
+          data-testid="timetravel-body-scroll"
+          style={{
+            flex: "1 1 0",
+            height: "100%",
+            minHeight: 0,
+            overflow: "auto",
+          }}
+        >
+          {body}
+        </div>
       </div>
     </div>
   );
