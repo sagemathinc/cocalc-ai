@@ -17,6 +17,7 @@ import type {
   ProjectCollabInviteRow,
   ProjectCollabInviteStatus,
 } from "@cocalc/conat/hub/api/projects";
+import type { ProjectEmailInviteDeliveryResult } from "@cocalc/frontend/client/project-collaborators";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { days_ago } from "@cocalc/util/misc";
 import { SITE_NAME } from "@cocalc/util/theme";
@@ -153,7 +154,7 @@ export class StudentProjectsActions {
     student_id: string;
     student: string; // could be account_id or email_address
     student_project_id?: string;
-  }) => {
+  }): Promise<ProjectEmailInviteDeliveryResult | undefined> => {
     const { student_id, student, student_project_id } = props;
     if (student_project_id == null) return;
 
@@ -176,7 +177,7 @@ export class StudentProjectsActions {
       }
       const message = body;
       const email = markdown_to_html(body);
-      await webapp_client.project_collaborators.invite_noncloud({
+      const result = await webapp_client.project_collaborators.invite_noncloud({
         project_id: student_project_id,
         title,
         link2proj: "",
@@ -199,6 +200,7 @@ export class StudentProjectsActions {
         student_id,
         last_email_invite: webapp_client.server_time(),
       });
+      return result;
     } else {
       await webapp_client.project_collaborators.invite({
         project_id: student_project_id,

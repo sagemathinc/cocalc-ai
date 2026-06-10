@@ -521,6 +521,20 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Bay-local UX latency telemetry used for operational monitoring and launch tuning. It is diagnostic history, not authoritative account/project/host state.",
   }),
 
+  ...adHocEntries(["launch_smoke_results"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "stable",
+    secondary_reference_fields: {
+      account_id: "Admin actor attribution, not account-home authority.",
+      project_id: "Smoke-test target reference, not project ownership.",
+    },
+    source: "server monitoring schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Bay-local synthetic launch smoke telemetry used for operator health checks. It records diagnostic probe history, not authoritative project state.",
+  }),
+
   ...adHocEntries(
     [
       "bay_restore_test_pitr_events",

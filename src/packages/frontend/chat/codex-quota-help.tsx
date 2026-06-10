@@ -6,6 +6,10 @@
 import { Button, Modal, Space, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
+import {
+  CODEX_USAGE_LABEL,
+  CODEX_USAGE_URL,
+} from "@cocalc/frontend/account/codex-usage";
 
 const { Paragraph, Text } = Typography;
 
@@ -102,7 +106,8 @@ export function CodexQuotaHelp({
           <>
             <Paragraph type="secondary" style={{ marginBottom: 8 }}>
               <Text strong>Need more Codex access?</Text> Connect your ChatGPT
-              Plan or add an OpenAI API key in AI settings.
+              Plan or add an OpenAI API key in AI settings. CoCalc shows which
+              source Codex will use; ChatGPT shows your remaining Codex usage.
             </Paragraph>
             <Space wrap>
               <Button
@@ -111,6 +116,14 @@ export function CodexQuotaHelp({
                 onClick={() => setSettingsOpen(true)}
               >
                 Open AI Settings
+              </Button>
+              <Button
+                size="small"
+                href={CODEX_USAGE_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {CODEX_USAGE_LABEL}
               </Button>
             </Space>
           </>

@@ -233,4 +233,27 @@ describe("CodexConfigButton", () => {
       }),
     );
   });
+
+  it("shows the ChatGPT Codex usage link in payment settings", async () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("ChatGPT")).not.toBeNull();
+    });
+    fireEvent.click(screen.getByText("ChatGPT"));
+
+    expect(screen.getByText("Open ChatGPT Codex Usage")).not.toBeNull();
+  });
 });

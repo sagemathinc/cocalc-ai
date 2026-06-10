@@ -21,6 +21,10 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { lite } from "@cocalc/frontend/lite";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
+import {
+  CODEX_USAGE_LABEL,
+  CODEX_USAGE_URL,
+} from "@cocalc/frontend/account/codex-usage";
 import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -257,6 +261,14 @@ export function CodexPaymentCredentialsModal({
             defaultProjectId={projectId}
             onPaymentSourceChanged={refreshPaymentSource}
           />
+          <Text type="secondary">
+            CoCalc can show which source Codex will use. To check remaining
+            ChatGPT Codex usage,{" "}
+            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+              {CODEX_USAGE_LABEL}
+            </a>
+            .
+          </Text>
           <Divider style={{ margin: "8px 0" }} />
           <LiteAISettings onSaved={refreshPaymentSource} showTitle />
         </Space>
@@ -268,6 +280,14 @@ export function CodexPaymentCredentialsModal({
             defaultProjectId={projectId}
             onPaymentSourceChanged={refreshPaymentSource}
           />
+          <Text type="secondary">
+            CoCalc can show which source Codex will use. To check remaining
+            ChatGPT Codex usage,{" "}
+            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+              {CODEX_USAGE_LABEL}
+            </a>
+            .
+          </Text>
         </Space>
       )}
     </Modal>

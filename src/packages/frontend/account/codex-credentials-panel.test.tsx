@@ -179,6 +179,9 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(screen.getAllByText("ChatGPT Plan").length).toBeGreaterThan(0);
       expect(screen.getByText("Current Codex payment source:")).toBeTruthy();
+      expect(
+        screen.getAllByText("Open ChatGPT Codex Usage").length,
+      ).toBeGreaterThan(0);
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
