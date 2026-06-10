@@ -248,7 +248,7 @@ important local computer.
   the security implications.
 `;
 
-export const INSTALL_CHROMIUM_BODY = String.raw`
+export const INSTALL_CHROMIUM_BODY = `
 ## Why this matters on Ubuntu
 
 Ubuntu's \`chromium-browser\` package is often not a real browser package. On
@@ -288,9 +288,9 @@ Copy and paste this on Ubuntu:
 ~~~sh
 set -euo pipefail
 
-sudo gpg --keyserver hkps://keyserver.ubuntu.com \
+sudo gpg --keyserver hkps://keyserver.ubuntu.com \\
   --recv-keys 5301FA4FD93244FBC6F6149982BB6851C64F6880
-sudo gpg --export 5301FA4FD93244FBC6F6149982BB6851C64F6880 \
+sudo gpg --export 5301FA4FD93244FBC6F6149982BB6851C64F6880 \\
   | sudo tee /usr/share/keyrings/xtradeb-apps.gpg >/dev/null
 
 . /etc/os-release
@@ -334,7 +334,7 @@ chromium --version
 chromium-browser --version
 chromedriver --version
 
-chromium --headless=new --disable-gpu \
+chromium --headless=new --disable-gpu \\
   --dump-dom 'data:text/html,<h1>chromium works</h1>'
 ~~~
 
@@ -348,7 +348,7 @@ message.
 First try Chromium with its sandbox enabled:
 
 ~~~sh
-chromium --headless=new --disable-gpu \
+chromium --headless=new --disable-gpu \\
   --dump-dom 'data:text/html,<h1>sandbox works</h1>'
 ~~~
 
@@ -356,7 +356,7 @@ If the container runtime, kernel, or user namespace setup blocks the Chromium
 sandbox, use \`--no-sandbox\` for automation inside that container:
 
 ~~~sh
-chromium --headless=new --no-sandbox --disable-gpu \
+chromium --headless=new --no-sandbox --disable-gpu \\
   --dump-dom 'data:text/html,<h1>no sandbox fallback works</h1>'
 ~~~
 
