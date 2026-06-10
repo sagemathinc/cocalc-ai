@@ -415,8 +415,31 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     );
   }
 
+  function renderPinnedClose(): Rendered {
+    return (
+      <div
+        key="pinned-close-button"
+        ref={getTourRef("control")}
+        style={{
+          position: "absolute",
+          right: "1px",
+          top: "1px",
+          height: button_height(),
+          display: "flex",
+          alignItems: "flex-start",
+          zIndex: 3,
+        }}
+      >
+        {render_x()}
+      </div>
+    );
+  }
+
   function renderFrameControls(popup = false): Rendered {
     const showSecondaryControls = popup || !compactFrameControls;
+    if (!popup && !showSecondaryControls) {
+      return;
+    }
     return (
       <div
         key="control-buttons-group"
@@ -429,7 +452,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           position: "relative",
           zIndex: 1,
         }}
-        ref={getTourRef("control")}
+        ref={popup ? getTourRef("control") : undefined}
       >
         <ButtonGroup
           style={{
@@ -457,7 +480,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
             {showSecondaryControls && !props.is_only
               ? render_full()
               : undefined}
-            {render_x()}
+            {popup ? render_x() : undefined}
           </span>
         </ButtonGroup>
       </div>
@@ -1403,6 +1426,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   // position relative, so we can absolute position the
   // frame controls to the right
   style.position = "relative";
+  style.paddingRight = "30px";
 
   if (is_safari()) {
     // ugly hack....
@@ -1430,6 +1454,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           {is_active && allButtonsPopover()}
           {!showSymbolBarLabels ? renderButtonBar() : undefined}
           {renderFrameControls()}
+          {renderPinnedClose()}
         </div>
         {showSymbolBarLabels ? renderButtonBar() : undefined}
         {renderConfirmBar()}
