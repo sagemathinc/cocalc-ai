@@ -180,6 +180,7 @@ import {
 } from "@cocalc/server/rootfs/catalog";
 import { getRootfsReleaseScanReport } from "@cocalc/server/rootfs/scans";
 import {
+  queueRootfsReleaseScan,
   runProjectRootfsPreflightScan,
   runRootfsReleaseScan,
 } from "@cocalc/server/rootfs/scan-execution";
@@ -4422,6 +4423,7 @@ export async function scanRootfsRelease(opts: {
   memory_limit?: string;
   cpu_limit?: string;
   tmpfs_size?: string;
+  wait?: boolean;
 }): Promise<RootfsReleaseScanRun> {
   const {
     account_id,
@@ -4442,7 +4444,9 @@ export async function scanRootfsRelease(opts: {
     session_hash,
     require_second_factor: true,
   });
-  return await runRootfsReleaseScan({
+  const scan =
+    opts.wait === false ? queueRootfsReleaseScan : runRootfsReleaseScan;
+  return await scan({
     release_id,
     host_id,
     requested_by: account_id,

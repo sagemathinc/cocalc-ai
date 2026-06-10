@@ -2346,6 +2346,7 @@ export interface System {
     memory_limit?: string;
     cpu_limit?: string;
     tmpfs_size?: string;
+    wait?: boolean;
     account_id?: string;
     browser_id?: string | null;
     session_hash?: string | null;
