@@ -762,9 +762,11 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
         disabled={actions == null}
         items={cell_list.toJS()}
         Item={({ id }) => renderDragPreview(`${id}`)}
-        onDragStop={(oldIndex, newIndex) => {
-          const delta = newIndex - oldIndex;
-          frameActions.current?.move_selected_cells(delta);
+        onDragStop={(oldIndex, newIndex, activeId) => {
+          actions.moveCell(oldIndex, newIndex);
+          if (activeId != null) {
+            frameActions.current?.move_cursor_to_cell(`${activeId}`);
+          }
           setTimeout(() => {
             frameActions.current?.scroll("cell visible");
           }, 0);

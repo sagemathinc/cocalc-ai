@@ -35,7 +35,12 @@ interface Props {
   Item?;
   children?: ReactNode;
   onDragStart?: (id) => void;
-  onDragStop?: (oldIndex: number, newIndex: number) => void;
+  onDragStop?: (
+    oldIndex: number,
+    newIndex: number,
+    activeId?: string | number,
+    overId?: string | number,
+  ) => void;
   onDragMove?: () => void;
   disabled?: boolean;
 }
@@ -92,7 +97,7 @@ export function SortableList({
       return;
     }
     const [oldIndex, newIndex] = indices;
-    onDragStop?.(oldIndex, newIndex);
+    onDragStop?.(oldIndex, newIndex, active?.id, over?.id);
   }
 
   const [dragId, setDragId] = useState<string | null>(null);
@@ -109,6 +114,7 @@ export function SortableList({
         onDragStart?.(event.active.id);
       }}
       onDragEnd={onDragEnd}
+      onDragCancel={() => setDragId(null)}
       onDragMove={onDragMove}
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
     >
