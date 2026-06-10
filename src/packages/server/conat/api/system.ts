@@ -250,6 +250,7 @@ import {
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-host-defaults";
 import {
+  getUxLatencySlaThresholdsFromSettings,
   getUxLatencySummary as getUxLatencySummary0,
   recordUxLatencyEvent as recordUxLatencyEvent0,
 } from "@cocalc/server/monitoring/ux-latency";
@@ -297,6 +298,7 @@ import type {
   LaunchHealthKillSwitches,
   LaunchHealthLevel,
   LaunchHealthStatus,
+  LaunchSmokeResult,
   ProjectBackupShardAdminStatus,
   SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
@@ -1692,6 +1694,124 @@ function classifyLatencyP95({
   return "healthy";
 }
 
+let launchSmokeSchemaReady: Promise<void> | undefined;
+
+async function ensureLaunchSmokeSchema(): Promise<void> {
+  launchSmokeSchemaReady ??= getPool().query(`
+    CREATE TABLE IF NOT EXISTS launch_smoke_results (
+      id UUID PRIMARY KEY,
+      account_id UUID,
+      project_id UUID NOT NULL,
+      status TEXT NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL,
+      finished_at TIMESTAMPTZ NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      steps JSONB NOT NULL,
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS launch_smoke_results_created_idx
+      ON launch_smoke_results (created_at DESC);
+  `) as unknown as Promise<void>;
+  await launchSmokeSchemaReady;
+}
+
+function normalizeLaunchSmokeResult({
+  result,
+  account_id,
+  id,
+}: {
+  result: LaunchSmokeResult;
+  account_id?: string;
+  id?: string;
+}): LaunchSmokeResult {
+  const steps = Array.isArray(result.steps) ? result.steps : [];
+  const status = result.status === "succeeded" ? "succeeded" : "failed";
+  return {
+    id: id ?? result.id ?? uuid(),
+    account_id: account_id ?? result.account_id ?? null,
+    project_id: `${result.project_id}`,
+    status,
+    started_at: new Date(result.started_at).toISOString(),
+    finished_at: new Date(result.finished_at).toISOString(),
+    duration_ms: Math.max(0, Math.round(Number(result.duration_ms) || 0)),
+    steps: steps.map((step) => ({
+      id: `${step.id}`,
+      label: `${step.label}`,
+      status:
+        step.status === "succeeded"
+          ? "succeeded"
+          : step.status === "skipped"
+            ? "skipped"
+            : "failed",
+      duration_ms: Math.max(0, Math.round(Number(step.duration_ms) || 0)),
+      summary: `${step.summary ?? ""}`,
+      details: step.details ?? undefined,
+    })),
+    error: result.error ? `${result.error}` : null,
+  };
+}
+
+function launchSmokeResultFromRow(row: any): LaunchSmokeResult {
+  return {
+    id: `${row.id}`,
+    account_id: row.account_id ?? null,
+    project_id: `${row.project_id}`,
+    status: row.status === "succeeded" ? "succeeded" : "failed",
+    started_at: toIsoString(row.started_at) ?? new Date(0).toISOString(),
+    finished_at: toIsoString(row.finished_at) ?? new Date(0).toISOString(),
+    duration_ms: Number(row.duration_ms) || 0,
+    steps: Array.isArray(row.steps) ? row.steps : [],
+    error: row.error ?? null,
+  };
+}
+
+async function getLatestLaunchSmokeResult(): Promise<LaunchSmokeResult | null> {
+  await ensureLaunchSmokeSchema();
+  const { rows } = await getPool().query(
+    `
+    SELECT id, account_id, project_id, status, started_at, finished_at,
+           duration_ms, steps, error
+      FROM launch_smoke_results
+     ORDER BY created_at DESC
+     LIMIT 1
+    `,
+  );
+  return rows[0] ? launchSmokeResultFromRow(rows[0]) : null;
+}
+
+export async function recordLaunchSmokeResult({
+  account_id,
+  result,
+}: {
+  account_id?: string;
+  result: LaunchSmokeResult;
+}): Promise<LaunchSmokeResult> {
+  await assertAdmin(account_id);
+  await ensureLaunchSmokeSchema();
+  const normalized = normalizeLaunchSmokeResult({ result, account_id });
+  await getPool().query(
+    `
+    INSERT INTO launch_smoke_results
+      (id, account_id, project_id, status, started_at, finished_at,
+       duration_ms, steps, error)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `,
+    [
+      normalized.id,
+      normalized.account_id,
+      normalized.project_id,
+      normalized.status,
+      normalized.started_at,
+      normalized.finished_at,
+      normalized.duration_ms,
+      JSON.stringify(normalized.steps),
+      normalized.error,
+    ],
+  );
+  return normalized;
+}
+
 export async function getLaunchHealth({
   account_id,
   window_minutes,
@@ -1715,6 +1835,7 @@ export async function getLaunchHealth({
     latencyResult,
     setupResult,
     configResult,
+    smokeResult,
   ] = await Promise.allSettled([
     getPool("medium").query("SELECT 1"),
     getServerSettings(),
@@ -1726,6 +1847,7 @@ export async function getLaunchHealth({
       account_id,
       scope: SERVER_SETTINGS_CONFIG_SCOPE,
     }),
+    getLatestLaunchSmokeResult(),
   ]);
 
   const settings =
@@ -1741,6 +1863,9 @@ export async function getLaunchHealth({
     setupResult.status === "fulfilled" ? setupResult.value : undefined;
   const config =
     configResult.status === "fulfilled" ? configResult.value : undefined;
+  const smoke =
+    smokeResult.status === "fulfilled" ? smokeResult.value : undefined;
+  const sla = getUxLatencySlaThresholdsFromSettings(settings);
   const killSwitches = launchHealthKillSwitches(settings);
   const projectionTotal = projectionBacklogTotal(load);
   const oldestProjectionAgeMs = oldestProjectionBacklogAgeMs(load);
@@ -1760,6 +1885,14 @@ export async function getLaunchHealth({
     summary: latency,
     metric: "project_start_running",
     segment: "warm_provisioned",
+  });
+  const fileVisibleP95 = uxLatencyP95({
+    summary: latency,
+    metric: "file_open_visible",
+  });
+  const fileSyncReadyP95 = uxLatencyP95({
+    summary: latency,
+    metric: "file_open_sync_ready",
   });
   const configBayStates =
     config?.scopes.flatMap((scope) => scope.bays.map((bay) => bay.status)) ??
@@ -1786,23 +1919,33 @@ export async function getLaunchHealth({
   const latencyLevel = worstLaunchHealthLevel([
     classifyLatencyP95({
       p95: lifecycleP95,
-      warningMs: 2_000,
-      criticalMs: 5_000,
+      warningMs: sla.project_start_warm_p95_ms,
+      criticalMs: sla.project_start_warm_p95_ms * 2,
     }),
     classifyLatencyP95({
       p95: terminalP95,
-      warningMs: 5_000,
-      criticalMs: 10_000,
+      warningMs: sla.project_terminal_ready_p95_ms,
+      criticalMs: sla.project_terminal_ready_p95_ms * 2,
     }),
     classifyLatencyP95({
       p95: jupyterP95,
-      warningMs: 5_000,
-      criticalMs: 10_000,
+      warningMs: sla.project_jupyter_ready_p95_ms,
+      criticalMs: sla.project_jupyter_ready_p95_ms * 2,
     }),
     classifyLatencyP95({
       p95: execP95,
-      warningMs: 5_000,
-      criticalMs: 10_000,
+      warningMs: sla.project_exec_ready_p95_ms,
+      criticalMs: sla.project_exec_ready_p95_ms * 2,
+    }),
+    classifyLatencyP95({
+      p95: fileVisibleP95,
+      warningMs: sla.file_open_visible_p95_ms,
+      criticalMs: sla.file_open_visible_p95_ms * 2,
+    }),
+    classifyLatencyP95({
+      p95: fileSyncReadyP95,
+      warningMs: sla.file_open_sync_ready_p95_ms,
+      criticalMs: sla.file_open_sync_ready_p95_ms * 2,
     }),
   ]);
 
@@ -1944,10 +2087,37 @@ export async function getLaunchHealth({
       label: "Browser-observed latency",
       level: latencyResult.status === "rejected" ? "critical" : latencyLevel,
       summary: latency
-        ? `P95 over ${latency.window_minutes}m: lifecycle=${formatDurationMs(lifecycleP95)}, terminal=${formatDurationMs(terminalP95)}, Jupyter=${formatDurationMs(jupyterP95)}, exec=${formatDurationMs(execP95)}.`
+        ? `P95 over ${latency.window_minutes}m: lifecycle=${formatDurationMs(lifecycleP95)} (SLA ${formatDurationMs(sla.project_start_warm_p95_ms)}), terminal=${formatDurationMs(terminalP95)} (SLA ${formatDurationMs(sla.project_terminal_ready_p95_ms)}), Jupyter=${formatDurationMs(jupyterP95)} (SLA ${formatDurationMs(sla.project_jupyter_ready_p95_ms)}), exec=${formatDurationMs(execP95)} (SLA ${formatDurationMs(sla.project_exec_ready_p95_ms)}), file visible=${formatDurationMs(fileVisibleP95)} (SLA ${formatDurationMs(sla.file_open_visible_p95_ms)}), file sync=${formatDurationMs(fileSyncReadyP95)} (SLA ${formatDurationMs(sla.file_open_sync_ready_p95_ms)}).`
         : "Unable to read UX latency summary.",
       details:
         latencyResult.status === "rejected" ? [`${latencyResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "synthetic-smoke",
+      label: "Synthetic smoke probe",
+      level:
+        smokeResult.status === "rejected"
+          ? "critical"
+          : smoke == null
+            ? "unknown"
+            : smoke.status === "succeeded"
+              ? Date.now() - Date.parse(smoke.finished_at) > 60 * 60 * 1000
+                ? "warning"
+                : "healthy"
+              : "critical",
+      summary:
+        smokeResult.status === "rejected"
+          ? "Unable to read the latest synthetic smoke result."
+          : smoke == null
+            ? "No synthetic smoke probe result has been recorded."
+            : `${smoke.status} ${formatDurationMs(smoke.duration_ms)} on project ${smoke.project_id} at ${new Date(smoke.finished_at).toLocaleString()}.`,
+      details:
+        smokeResult.status === "rejected"
+          ? [`${smokeResult.reason}`]
+          : (smoke?.steps.map(
+              (step) =>
+                `${step.label}: ${step.status} in ${formatDurationMs(step.duration_ms)} (${step.summary})`,
+            ) ?? []),
     }),
   ];
 
@@ -1967,6 +2137,8 @@ export async function getLaunchHealth({
     seed_bay_id: seedBayId,
     overall: worstLaunchHealthLevel(checks.map((check) => check.level)),
     latency_window_minutes: latencyWindowMinutes,
+    latency_sla_ms: sla,
+    latest_smoke: smoke ?? null,
     kill_switches: killSwitches,
     counts,
     checks,

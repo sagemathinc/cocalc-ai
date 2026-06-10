@@ -1087,7 +1087,13 @@ export interface Projects {
       invite_role?: Exclude<ProjectUserRole, "owner">;
       read_policy?: ProjectViewerReadPolicy | null;
     };
-  }) => Promise<void>;
+  }) => Promise<{
+    email_sent: boolean;
+    email_available: boolean;
+    manual_delivery_required: boolean;
+    email_blocked_reason?: ProjectInviteEmailBlockedReason | null;
+    in_app_notification_sent: boolean;
+  }>;
 
   inviteCollaboratorWithoutAccount: ({
     account_id,
