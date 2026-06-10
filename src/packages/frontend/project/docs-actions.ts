@@ -7,6 +7,7 @@ import {
   getDocsAction,
   isDocsActionId,
   listDocsActions,
+  type DocsAccess,
   type DocsActionId,
   type DocsActionSummary,
 } from "@cocalc/docs";
@@ -1273,15 +1274,21 @@ export function getDocsAppAction(actionId: string): DocsAppAction | undefined {
 }
 
 export function listDocsAppActions({
+  docsAccess,
   includeAdmin = accountIsAdmin(),
   includeSignedIn = accountIsSignedIn(),
   projectId,
 }: {
+  docsAccess?: DocsAccess;
   includeAdmin?: boolean;
   includeSignedIn?: boolean;
   projectId: string;
 }): DocsActionAvailability[] {
-  return listDocsActions({ includeAdmin, includeSignedIn }).map((action) => {
+  return listDocsActions({
+    includeAdmin,
+    includeSignedIn,
+    ...docsAccess,
+  }).map((action) => {
     const appAction = getDocsAppAction(action.id);
     if (appAction && !projectId && actionNeedsProjectParameter(action)) {
       return {
@@ -1303,12 +1310,14 @@ export function listDocsAppActions({
 
 export function revealDocsAction({
   actionId,
+  docsAccess,
   includeAdmin = accountIsAdmin(),
   includeSignedIn = accountIsSignedIn(),
   parameters,
   projectId,
 }: {
   actionId: string;
+  docsAccess?: DocsAccess;
   includeAdmin?: boolean;
   includeSignedIn?: boolean;
   parameters?: DocsActionParameters;
@@ -1317,7 +1326,11 @@ export function revealDocsAction({
   if (!isDocsActionId(actionId)) {
     throw Error(`unknown docs action '${actionId}'`);
   }
-  const action = getDocsAction(actionId, { includeAdmin, includeSignedIn });
+  const action = getDocsAction(actionId, {
+    includeAdmin,
+    includeSignedIn,
+    ...docsAccess,
+  });
   if (!action) {
     throw Error(`docs action '${actionId}' is not available`);
   }

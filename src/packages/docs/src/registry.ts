@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { DOCS_ENTRIES } from "./entries";
+import { DOCS_ENTRIES, isPlusDocsEntryId } from "./entries";
 import { DOCS_CHAPTERS } from "./chapters";
 import type {
   DocsAccess,
@@ -34,6 +34,9 @@ export function isDocsEntryVisible(
   entry: DocsEntry,
   access: DocsAccess = {},
 ): boolean {
+  if (access.product === "plus" && !isPlusDocsEntryId(entry.id)) {
+    return false;
+  }
   switch (docsEntryVisibility(entry)) {
     case "admin":
       return access.includeAdmin === true;

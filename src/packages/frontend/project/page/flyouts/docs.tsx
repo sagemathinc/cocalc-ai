@@ -40,6 +40,7 @@ import {
   listDocsAppActions,
   revealDocsAction,
 } from "@cocalc/frontend/project/docs-actions";
+import { lite } from "@cocalc/frontend/lite";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -84,14 +85,22 @@ export function ProjectDocsPanel({
   const accountId = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const docsAccess = useMemo<DocsAccess>(
-    () => ({ includeAdmin: isAdmin, includeSignedIn: !!accountId }),
+    () =>
+      lite
+        ? { includeAdmin: false, includeSignedIn: false, product: "plus" }
+        : { includeAdmin: isAdmin, includeSignedIn: !!accountId },
     [accountId, isAdmin],
   );
   const docsPrivateState = useDocsPrivateState(accountId);
   const [requestedEntry, setRequestedEntry] = useState<DocsEntry | undefined>();
   const actionAvailability = useMemo(
-    () => listDocsAppActions({ includeAdmin: isAdmin, projectId: project_id }),
-    [isAdmin, project_id],
+    () =>
+      listDocsAppActions({
+        docsAccess,
+        includeAdmin: isAdmin,
+        projectId: project_id,
+      }),
+    [docsAccess, isAdmin, project_id],
   );
   const allDocsEntries = useMemo(
     () => listDocsEntries(docsAccess),
@@ -132,6 +141,7 @@ export function ProjectDocsPanel({
     try {
       const result = await revealDocsAction({
         actionId: action.id,
+        docsAccess,
         parameters,
         projectId: project_id,
       });

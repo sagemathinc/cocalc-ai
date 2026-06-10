@@ -73,6 +73,11 @@ const COMPACT_TAG_STYLE: CSSProperties = {
   marginInlineEnd: 0,
 };
 
+const PERCENT_TEXT_STYLE: CSSProperties = {
+  whiteSpace: "nowrap",
+  fontVariantNumeric: "tabular-nums",
+};
+
 type Tone = "green" | "blue" | "orange" | "red" | "gray";
 
 const TONE_COLORS: Record<
@@ -386,6 +391,11 @@ function activeOpPercent(op: HostLroState): number | undefined {
   return Math.max(0, Math.min(100, Math.round(progress)));
 }
 
+function PercentText({ percent }: { percent?: number }) {
+  if (percent == null) return null;
+  return <span style={PERCENT_TEXT_STYLE}>{percent}%</span>;
+}
+
 function ActiveOperation({
   op,
   displayPhaseLabel,
@@ -432,8 +442,10 @@ function ActiveOperation({
           </Typography.Text>
         </Space>
         {percent != null && !failed ? (
-          <Typography.Text style={{ color: tone.text, fontSize: 12 }}>
-            {percent}%
+          <Typography.Text
+            style={{ color: tone.text, fontSize: 12, ...PERCENT_TEXT_STYLE }}
+          >
+            <PercentText percent={percent} />
           </Typography.Text>
         ) : null}
       </div>
@@ -965,6 +977,7 @@ function DetailsPopover({
                   {operation.active ? (
                     <Progress
                       percent={operation.percent ?? 30}
+                      format={(percent) => <PercentText percent={percent} />}
                       showInfo={operation.percent != null}
                       size="small"
                       status={operation.percent == null ? "active" : "normal"}

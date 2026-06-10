@@ -37,7 +37,6 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 
 const { Text } = Typography;
-const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 const SUBSCRIPTION_AUTH_PANEL_KEY = "subscription-auth";
 
 const recommendedCardStyle: CSSProperties = {
@@ -500,7 +499,21 @@ function CodexCredentialsPanelBody({
           />
         ) : null}
         {userCode && deviceAuth?.state !== "completed" ? (
-          <div style={deviceAuthCodeStyle}>
+          <div
+            style={{
+              ...deviceAuthCodeStyle,
+              cursor: "pointer",
+            }}
+            role="button"
+            tabIndex={0}
+            onClick={() => void copyText(userCode, "Device code")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                void copyText(userCode, "Device code");
+              }
+            }}
+          >
             <Text type="secondary">1. Copy this one-time code</Text>
             <div
               style={{
@@ -523,7 +536,12 @@ function CodexCredentialsPanelBody({
               >
                 {userCode}
               </Text>
-              <Button onClick={() => void copyText(userCode, "Device code")}>
+              <Button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void copyText(userCode, "Device code");
+                }}
+              >
                 Copy code
               </Button>
             </div>
@@ -547,19 +565,19 @@ function CodexCredentialsPanelBody({
             <div style={{ marginTop: 8 }}>
               <Space wrap>
                 <Button
-                  onClick={() =>
-                    void copyText(verificationUrl, "Verification URL")
-                  }
-                >
-                  Copy URL
-                </Button>
-                <Button
                   type="primary"
                   href={verificationUrl}
                   target="_blank"
                   rel="noreferrer"
                 >
                   Open
+                </Button>
+                <Button
+                  onClick={() =>
+                    void copyText(verificationUrl, "Verification URL")
+                  }
+                >
+                  Copy URL
                 </Button>
               </Space>
             </div>
@@ -664,9 +682,6 @@ function CodexCredentialsPanelBody({
                 ? "Getting sign-in code..."
                 : "Sign in with ChatGPT"}
             </Button>
-            <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-              View Codex usage
-            </Button>
           </Space>
         </Space>
       </div>
@@ -735,17 +750,6 @@ function CodexCredentialsPanelBody({
                     </Tag>
                     <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
                   </Space>
-                  {paymentSource.hasSubscription ? (
-                    <div style={{ marginTop: 8 }}>
-                      <a
-                        href={CODEX_USAGE_URL}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Check ChatGPT Codex usage
-                      </a>
-                    </div>
-                  ) : null}
                 </>
               )
             }
