@@ -37,7 +37,7 @@ export const trustPolicy: PublicPolicy = {
   navLabel: "Trust",
   slug: "trust",
   title: "Trust and Compliance",
-  updated: "March 12, 2025",
+  updated: "June 9, 2026",
   content: (
     <>
       <PolicySection title="SOC 2">
@@ -60,8 +60,8 @@ export const trustPolicy: PublicPolicy = {
             <p>
               <strong>
                 Please learn more about the current status in{" "}
-                <A href="https://trust.cocalc.com/">
-                  Sagemath, Inc.'s Trust Center
+                <A href="https://trust.cocalc.ai/">
+                  SageMath, Inc.'s Trust Center
                 </A>
                 .
               </strong>
