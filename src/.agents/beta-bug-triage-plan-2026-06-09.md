@@ -90,7 +90,7 @@ Validation:
 - Focused Slate selection validity test.
 - Live smoke: edit in text side, switch back to Slate, click/edit without crash.
 
-### P0-D: Jupyter Cell Drag-And-Drop Reorder Is Nearly Unusable
+### (done) P0-D: Jupyter Cell Drag-And-Drop Reorder Is Nearly Unusable
 
 Symptom: cells cannot be dragged reliably to the top or bottom, ordering feels broken, and dragged cells change to a visually broken style.
 
