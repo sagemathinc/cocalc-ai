@@ -1327,7 +1327,7 @@ export function TimeTravel(props: Props) {
       <div
         className="smc-vfill"
         data-testid="timetravel-body"
-        style={{ minHeight: 0 }}
+        style={{ minHeight: 0, overflow: "auto" }}
       >
         {body}
       </div>

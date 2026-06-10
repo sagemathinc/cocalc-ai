@@ -83,13 +83,10 @@ export function Viewer({
       const scale = getScale(font_size);
       return (
         <div
-          className="smc-vfill"
-          data-testid="timetravel-markdown-scroll"
+          data-testid="timetravel-markdown-content"
           style={{
             boxSizing: "border-box",
-            height: "100%",
-            minHeight: 0,
-            overflow: "auto",
+            minHeight: "100%",
             padding: "50px 70px",
           }}
         >
