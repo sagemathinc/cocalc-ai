@@ -300,6 +300,7 @@ describe("public/docs", () => {
     );
 
     const markdown = screen.getByTestId("docs-markdown");
+    expect(markdown).toHaveClass("cocalc-docs-markdown");
     await waitFor(() =>
       expect(markdown.querySelector(".cocalc-slate-code-block")).not.toBeNull(),
     );

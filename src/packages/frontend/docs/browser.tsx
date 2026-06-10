@@ -52,6 +52,7 @@ import type {
   DocsPrivateEntrySummary,
   DocsPrivateFilter,
 } from "./private-state/types";
+import "./browser.css";
 
 const { Paragraph, Text, Title } = Typography;
 const StaticMarkdown = lazy(
@@ -273,7 +274,7 @@ export function DocsFontSizeFrame({
 
 export function DocsMarkdown({ value }: { value: string }) {
   return (
-    <div data-testid="docs-markdown">
+    <div className="cocalc-docs-markdown" data-testid="docs-markdown">
       <Suspense fallback={<Text type="secondary">Loading markdown...</Text>}>
         <StaticMarkdown value={value} />
       </Suspense>
