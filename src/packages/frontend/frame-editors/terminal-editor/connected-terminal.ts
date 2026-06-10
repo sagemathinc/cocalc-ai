@@ -103,6 +103,14 @@ interface TerminalTransmit {
   kind: TerminalMessageKind;
 }
 
+export interface TerminalOptions {
+  autoStartProjectOnFirstConnect?: boolean;
+}
+
+export interface TerminalConnectOptions {
+  autoStartProject?: boolean;
+}
+
 function normalizeTerminalCommand(command: any): string | undefined {
   return typeof command === "string" ? command : undefined;
 }
@@ -267,6 +275,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private projectsStore?;
   private lastProjectState?: string;
   private projectStartingRetryTimer?: ReturnType<typeof setTimeout>;
+  private autoStartProjectOnNextConnect = false;
 
   constructor(
     actions: Actions<T>,
@@ -277,6 +286,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     args?: string[],
     workingDir?: string,
     terminalThemeOverride?: string | null,
+    options?: TerminalOptions,
   ) {
     this.actions = actions;
     this.account_store = redux.getStore("account");
@@ -290,6 +300,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.command = normalizeTerminalCommand(command);
     this.args = normalizeTerminalArgs(args);
     this.workingDir = workingDir;
+    this.autoStartProjectOnNextConnect =
+      options?.autoStartProjectOnFirstConnect === true;
     this.terminalThemeOverride =
       typeof terminalThemeOverride === "string" &&
       terminalThemeOverride.trim().length > 0
@@ -385,8 +397,6 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     });
 
     this.initKeyHandler();
-
-    this.connect();
   }
 
   get is_visible(): boolean {
@@ -698,9 +708,12 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     );
   };
 
-  connect = reuseInFlight(async () => {
+  connect = reuseInFlight(async (options: TerminalConnectOptions = {}) => {
     if (this.isClosed() || this.ptyExited) return;
     const readyTimer = startUxTimer();
+    const autoStartProject =
+      options.autoStartProject === true || this.autoStartProjectOnNextConnect;
+    this.autoStartProjectOnNextConnect = false;
 
     try {
       const projectState =
@@ -717,6 +730,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       }
       if (projectState !== "running") {
         this.set_connection_status("disconnected");
+        if (!autoStartProject) {
+          await this.showManualStartMessage();
+          return;
+        }
         if (!this.manualStartMessageShown) {
           this.terminal.reset();
           await this.handleDataFromProject(

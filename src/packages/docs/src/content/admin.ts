@@ -257,6 +257,75 @@ Tokens grant access to the site. Keep names and descriptions clear enough that
 another admin can tell why the token exists and when it should be removed.
 `;
 
+export const ADMIN_SIGNUP_EMERGENCY_CONTROLS_BODY = String.raw`
+## What this runbook is for
+
+Use this during a launch incident when new-account creation is causing abuse,
+support load, or operational risk. These controls affect new signups only; they
+do not stop existing users, existing projects, active sessions, or billing
+records.
+
+## Fast close: require registration tokens
+
+1. Open **Admin -> Registration Tokens**.
+2. Turn off **Public signup without a registration token**.
+3. Confirm there is at least one active registration token if invite-only
+   signup should continue.
+4. If there are no active tokens, email/password signup is effectively closed
+   until an admin creates an active token or re-enables public signup.
+5. Verify in a private browser session that creating a new account requires a
+   token.
+
+This is the preferred first response because it preserves controlled onboarding
+for known cohorts while blocking public anonymous account creation.
+
+## Full close: disable email signup
+
+1. Open **Admin -> Site Settings**.
+2. Find **Access & Identity -> Signup**.
+3. Set **Allow email signup** to **no**.
+4. Save and verify in a private browser session that the email/password signup
+   path is unavailable.
+
+Use this when even token-gated email/password signup should stop. This is more
+disruptive than requiring registration tokens.
+
+## Narrow close: restrict signup domains
+
+1. Open **Admin -> Site Settings**.
+2. Find **Access & Identity -> Signup**.
+3. Set **Signup email domain policy** to **Allow only listed domains**.
+4. Add the allowed domains, for example \`example.edu\` or
+   \`*.example.edu\`.
+5. Optionally set a public message explaining who can sign up.
+6. Save and verify one allowed address and one blocked address.
+
+Use domain restrictions when abuse is coming from disposable or unrelated email
+domains but a known institution or pilot group should continue onboarding.
+
+## SSO account creation
+
+If SSO is enabled, also review **Access & Identity -> Single Sign-On** and any
+domain-specific SSO policies. Prefer **Registration token required** or
+**Disabled** for SSO account creation during an incident. Otherwise users may
+still create accounts through an SSO path even when ordinary email signup is
+closed.
+
+## Reopen checklist
+
+1. Decide whether reopening should be public, token-gated, or domain-limited.
+2. Re-enable only the needed path.
+3. Test signup in a private browser session.
+4. Leave a short admin note or incident note with the old and new values.
+
+## Related emergency switches
+
+The **Launch Emergency Controls** in **Admin -> Site Settings** stop specific
+post-signup capabilities such as project creation, free project starts,
+dedicated-host creation, AI/Codex, and payment checkout. Use those when the
+incident is not primarily new-account creation.
+`;
+
 export const ADMIN_MEMBERSHIP_AND_LICENSES_BODY = String.raw`
 ## What membership tiers and software licenses are for
 

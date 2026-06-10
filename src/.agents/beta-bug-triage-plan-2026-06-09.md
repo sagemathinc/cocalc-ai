@@ -15,7 +15,7 @@ Goal: turn the newest beta tester reports into a release-focused work queue. Fix
 
 ## P0: Release Blockers / Data Loss / Lockouts
 
-### P0-A: Markdown Data Loss When Splitting Slate And CodeMirror
+### (done) P0-A: Markdown Data Loss When Splitting Slate And CodeMirror
 
 Symptom: in a new markdown file, type `foo`, press `Alt+Enter`, CodeMirror appears with `foo`, the Slate side is blanked, then CodeMirror is also blanked and the file contents are lost.
 
@@ -40,7 +40,7 @@ Validation:
 - Focused markdown editor/frame split test.
 - Live smoke: fresh markdown file, type, `Alt+Enter`, wait for save, reload.
 
-### P0-B: Launchpad Initial Admin Bootstrap APIs Return 404
+### (done) P0-B: Launchpad Initial Admin Bootstrap APIs Return 404
 
 Symptom: creating the initial admin account in the Launchpad SEA binary fails because `/api/v2/auth/bootstrap`, `/api/v2/auth/requires-token`, and `/api/v2/auth/sign-up` return 404 HTML responses.
 
@@ -65,7 +65,7 @@ Validation:
 - Focused auth route test.
 - Local fresh Launchpad bootstrap smoke through admin creation.
 
-### P0-C: Slate Crash After Editing Markdown In CodeMirror Side
+### (done) P0-C: Slate Crash After Editing Markdown In CodeMirror Side
 
 Symptom: after editing a markdown file through the CodeMirror side and switching back to Slate, Slate can throw `Cannot resolve a DOM point from Slate point`.
 
@@ -116,7 +116,7 @@ Validation:
 - Browser smoke: reorder cells to top, bottom, and between distant cells.
 - Verify notebook model order persists after save/reload.
 
-### P0-E: Launchpad 2FA Onboarding Catch-22 With Passkeys
+### (done) P0-E: Launchpad 2FA Onboarding Catch-22 With Passkeys
 
 Symptom: setting up only a localhost-bound passkey during onboarding can block later Cloudflare-hosted sign-in, and recovery-code sign-in does not allow adding a non-passkey 2FA method.
 
@@ -141,7 +141,7 @@ Validation:
 - Focused auth/2FA permission tests.
 - Browser smoke: recovery-code sign-in, add TOTP, then sign in from DNS host.
 
-### P0-F: Course Invite URL Error Leaves Project Configuration Spinner Stuck
+### (done) P0-F: Course Invite URL Error Leaves Project Configuration Spinner Stuck
 
 Symptom: adding a student with an invite message containing a URL shows an error, but the floating `configuring projects` progress remains stuck forever at 1.
 
@@ -166,7 +166,7 @@ Validation:
 - Focused course action test for validation failure cleanup.
 - Live course smoke: failing invite clears progress; valid invite still configures projects.
 
-### P0-G: Failed Chat Resubmit Requires Copy/Paste
+### (done) P0-G: Failed Chat Resubmit Requires Copy/Paste
 
 Symptom: after a chat/Codex message fails, the UI says the user can resubmit, but actually requires manually copying and pasting the failed message; after signing back in there is no simple retry-and-clear-error path.
 
@@ -501,3 +501,4 @@ Validation:
 ### Done: Ping/Latency Layout And Project-Host Latency
 
 The source list still contains the old ping-time layout and project-host latency report. This was handled in the 2026-06-08 beta plan as `P2-D`; do not create a duplicate task unless a new regression is reported.
+

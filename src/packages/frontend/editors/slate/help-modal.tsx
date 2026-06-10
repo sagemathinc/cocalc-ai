@@ -91,23 +91,15 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
         </li>
       </ul>
 
-      <Title level={5}>Block editor notes</Title>
+      <Title level={5}>Large documents</Title>
       <ul style={{ paddingLeft: 22 }}>
         <li>
-          Large documents are chunked into blocks for performance (page
-          boundaries indicate chunks).
+          The rich text editor is optimized for normal Markdown documents and
+          notes.
         </li>
         <li>
-          Blank lines are treated as paragraphs in inline editors, but not in
-          the block editor.
-        </li>
-        <li>
-          Selection across blocks is block-based (use block selection for moving
-          or deleting blocks).
-        </li>
-        <li>
-          Some actions (like full-document find/replace) are more reliable in
-          the source view.
+          Use Markdown source mode for very large documents or heavy
+          full-document find/replace workflows.
         </li>
       </ul>
 

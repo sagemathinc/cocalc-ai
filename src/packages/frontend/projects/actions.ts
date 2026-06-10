@@ -1423,6 +1423,55 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return states.includes(projectedState);
   }
 
+  private async projectedProjectStopMatches({
+    project_id,
+    requestedAtMs,
+  }: {
+    project_id: string;
+    requestedAtMs: number;
+  }): Promise<boolean> {
+    const account_id = this.getAccountId();
+    if (!account_id || !project_id || !webapp_client.is_signed_in()) {
+      return false;
+    }
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          account_project_index: [
+            {
+              account_id,
+              project_id,
+              state_summary: null,
+              updated_at: null,
+            },
+          ],
+        },
+        options: [{ limit: 1 }],
+      });
+    } catch (err) {
+      console.warn("project stop projection check failed", {
+        project_id,
+        err,
+      });
+      return false;
+    }
+    const row = resp?.query?.account_project_index?.[0];
+    const stateSummary = row?.state_summary;
+    const projectedState = stateSummary?.state;
+    if (projectedState === "opened" || projectedState === "stopped") {
+      return true;
+    }
+    const projectedMs =
+      stateTimeMs(stateSummary) ?? dateValueMs(row?.updated_at);
+    const isFreshTransition =
+      projectedMs != null && projectedMs >= requestedAtMs - 1000;
+    return (
+      isFreshTransition &&
+      (projectedState === "starting" || projectedState === "running")
+    );
+  }
+
   private async projectedProjectHostMatches({
     project_id,
     host_id,
@@ -4088,9 +4137,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
           write: () =>
             webapp_client.conat_client.hub.projects.stop({ project_id }),
           matchesProjection: () =>
-            this.projectedProjectStateMatches({
+            this.projectedProjectStopMatches({
               project_id,
-              states: ["opened"],
+              requestedAtMs: t0,
             }),
           repair: () =>
             this.repairProjectProjection({

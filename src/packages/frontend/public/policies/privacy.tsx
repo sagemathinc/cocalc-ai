@@ -11,7 +11,7 @@ export const privacyPolicy: PublicPolicy = {
   navLabel: "Privacy",
   slug: "privacy",
   title: "Privacy Policy",
-  updated: "May 13, 2026",
+  updated: "June 9, 2026",
   content: (
     <>
       <p>
@@ -821,7 +821,7 @@ export const privacyPolicy: PublicPolicy = {
           encryption for data storage and backups, firewalls, and access
           controls. You can learn more about our security controls, third-party
           audits, and certifications on our Trust page at{" "}
-          <A href="/policies/trust">https://cocalc.com/policies/trust</A> No
+          <A href="/policies/trust">https://cocalc.ai/policies/trust</A>. No
           method of transmission or storage over the Internet is completely
           secure, and we cannot guarantee absolute security. To the fullest
           extent permitted by applicable law, we do not accept liability for
@@ -1155,9 +1155,9 @@ export const privacyPolicy: PublicPolicy = {
         <p>
           {" "}
           A revision control history for this web page can be found at
-          <A href="https://github.com/sagemathinc/cocalc/commits/master/src/packages/next/pages/policies/privacy.tsx">
+          <A href="https://github.com/sagemathinc/cocalc-ai/commits/main/src/packages/frontend/public/policies/privacy.tsx">
             {" "}
-            github.com/sagemathinc/cocalc/commits/master/src/packages/next/pages/policies/privacy.tsx
+            github.com/sagemathinc/cocalc-ai/commits/main/src/packages/frontend/public/policies/privacy.tsx
           </A>
           .{" "}
         </p>{" "}

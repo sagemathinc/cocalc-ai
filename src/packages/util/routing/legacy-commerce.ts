@@ -21,7 +21,6 @@ const STORE_ROUTE_ALIASES: Record<string, NavigatePath> = {
   checkout: "settings/membership",
   processing: "settings/membership",
   congrats: "settings/membership",
-  vouchers: "settings/vouchers",
 };
 
 export function getLegacyCommerceTargetPath(

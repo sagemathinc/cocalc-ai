@@ -78,7 +78,7 @@ describe("page-routing", () => {
     });
   });
 
-  it("maps legacy billing and store aliases onto canonical settings pages", () => {
+  it("maps legacy billing and membership store aliases onto canonical settings pages", () => {
     expect(parsePageTarget("billing/cards")).toEqual({
       page: "account",
       tab: "payment-methods",
@@ -93,7 +93,7 @@ describe("page-routing", () => {
     });
     expect(parsePageTarget("store/vouchers")).toEqual({
       page: "account",
-      tab: "vouchers",
+      tab: "index",
     });
   });
 

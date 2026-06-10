@@ -21,8 +21,6 @@ export interface SlateEditor extends ReactEditor {
   resetHasUnsavedChanges: () => void;
   markdownValue?: string;
   getMarkdownValue: () => string;
-  setMarkdownValueNow?: (value: string) => void;
-  replaceMarkdownFromSource?: (value: string) => void;
   getPlainValue: () => string;
   getSourceValue: (fragment?) => string;
   syncCache?: any;
@@ -76,7 +74,5 @@ export interface Actions {
     id?: string,
     context?: { selection?: Range | null; slateValue?: Descendant[] },
   ) => void;
-  registerBlockEditorControl?: (id: string, control: any) => void;
-  unregisterBlockEditorControl?: (id: string) => void;
   _syncstring?: any;
 }

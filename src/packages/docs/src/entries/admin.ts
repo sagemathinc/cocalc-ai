@@ -15,6 +15,7 @@ import {
   ADMIN_OVERVIEW_BODY,
   ADMIN_REGISTRATION_TOKENS_BODY,
   ADMIN_ROOTFS_BODY,
+  ADMIN_SIGNUP_EMERGENCY_CONTROLS_BODY,
   ADMIN_SITE_SETTINGS_BODY,
   ADMIN_SSO_BODY,
   ADMIN_USERS_BODY,
@@ -238,6 +239,25 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
     summary:
       "Create and review targeted signup tokens for cohorts, classrooms, pilots, and restricted sites.",
     title: "Manage registration tokens",
+    visibility: "admin",
+  },
+  {
+    audiences: ["agents", "teams"],
+    body: ADMIN_SIGNUP_EMERGENCY_CONTROLS_BODY.trim(),
+    category: "Admin",
+    id: "admin.signup-emergency-controls",
+    image: docsIcon(
+      "/public/docs/project-secrets-ea9872ae.webp",
+      "Emergency signup controls with registration token and site setting safeguards",
+    ),
+    lastReviewed: "2026-06-10",
+    noActionReason:
+      "Runbook page; use the linked Admin -> Registration Tokens and Admin -> Site Settings pages for executable navigation.",
+    slug: "admin/signup-emergency-controls",
+    status: "ready",
+    summary:
+      "Close, restrict, verify, and reopen signup paths during a launch incident.",
+    title: "Signup emergency controls",
     visibility: "admin",
   },
   {
