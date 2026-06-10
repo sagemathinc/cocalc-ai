@@ -95,6 +95,11 @@ const ADMIN_GROUPS: Record<AdminGroupKey, { icon: IconName; title: string }> = {
   content: { icon: "file-alt", title: "Content" },
   commercial: { icon: "shopping-cart", title: "Commercial" },
 };
+const ADMIN_GROUP_KEYS = Object.keys(ADMIN_GROUPS) as AdminGroupKey[];
+
+function isAdminGroupKey(key: string): key is AdminGroupKey {
+  return key in ADMIN_GROUPS;
+}
 
 export function AdminPage({
   route = { kind: "index" },
@@ -150,15 +155,34 @@ export function AdminPage({
 
   function renderMenuItems(): MenuProps["items"] {
     if (navCollapsed) {
-      return navigationItems.map((item) => ({
-        key: item.key,
-        icon: <Icon name={item.icon} />,
-        label: item.title,
-      }));
+      return ADMIN_GROUP_KEYS.flatMap((groupKey) => {
+        const group = ADMIN_GROUPS[groupKey];
+        const groupItem = {
+          key: groupKey,
+          icon: <Icon name={group.icon} />,
+          label: group.title,
+        };
+        if (!openKeys.includes(groupKey)) {
+          return [groupItem];
+        }
+        return [
+          groupItem,
+          ...navigationItems
+            .filter((item) => item.group === groupKey)
+            .map((item) => ({
+              key: item.key,
+              icon: <Icon name={item.icon} />,
+              label: item.title,
+            })),
+        ];
+      });
     }
-    return Object.entries(ADMIN_GROUPS).map(([groupKey, group]) => ({
+    return ADMIN_GROUP_KEYS.map((groupKey) => ({
       key: groupKey,
-      label: renderMenuLabel(group.icon, group.title),
+      label: renderMenuLabel(
+        ADMIN_GROUPS[groupKey].icon,
+        ADMIN_GROUPS[groupKey].title,
+      ),
       children: navigationItems
         .filter((item) => item.group === groupKey)
         .map((item) => ({
@@ -184,6 +208,14 @@ export function AdminPage({
   }
 
   function handleSelect(key: string) {
+    if (isAdminGroupKey(key)) {
+      setOpenKeys((openKeys) =>
+        openKeys.includes(key)
+          ? openKeys.filter((openKey) => openKey !== key)
+          : [...openKeys, key],
+      );
+      return;
+    }
     if (key === OVERVIEW_MENU_KEY) {
       navigate({ kind: "index" });
       return;
