@@ -115,6 +115,7 @@ const title_bar_style: CSS = {
   flexDirection: "row",
   flexWrap: "nowrap",
   flex: "0 0 auto",
+  minWidth: 0,
   display: "flex",
 } as const;
 
@@ -350,7 +351,13 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           description: "Click this X button to close the frame",
         })}
       >
-        <Button key={"close"} size="small" type="text" onClick={click_close}>
+        <Button
+          key={"close"}
+          size="small"
+          type="text"
+          onClick={click_close}
+          style={{ flex: "0 0 auto" }}
+        >
           <Icon name={"times"} />
         </Button>
       </Tooltip>
@@ -395,8 +402,13 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       <div
         key="control-buttons-group"
         style={{
-          overflow: "hidden",
-          display: "inline-block",
+          display: "flex",
+          flex: "0 0 auto",
+          alignItems: "stretch",
+          marginLeft: "auto",
+          minWidth: "fit-content",
+          position: "relative",
+          zIndex: 1,
         }}
         ref={getTourRef("control")}
       >
@@ -404,11 +416,18 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           style={{
             padding: "3.5px 0 0 0",
             height: button_height(),
-            float: "right",
+            display: "flex",
+            flex: "0 0 auto",
           }}
           key={"control-buttons"}
         >
-          <span style={is_active ? undefined : { opacity: 0.3 }}>
+          <span
+            style={{
+              display: "flex",
+              flex: "0 0 auto",
+              ...(is_active ? undefined : { opacity: 0.3 }),
+            }}
+          >
             {render_terminal_button()}
             {!props.is_full ? render_split_row() : undefined}
             {!props.is_full ? render_split_col() : undefined}
@@ -799,8 +818,9 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
                 background: COLORS.BLUE_D,
                 color: "#fff",
                 borderRight: `1px solid ${COLORS.BLUE_D}`,
+                flex: "0 0 auto",
               }
-            : undefined
+            : { flex: "0 0 auto" }
         }
       >
         <Icon name="bars" />
@@ -907,7 +927,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         style={{
           flexFlow: "row nowrap",
           display: "flex",
-          flex: 1,
+          flex: "1 1 auto",
+          minWidth: 0,
           whiteSpace: "nowrap",
           overflow: "hidden",
         }}
@@ -1230,7 +1251,17 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       );
     } else {
       return wrapButtonBarContextMenu(
-        <div style={{ marginTop: "3px" }}>{v}</div>,
+        <div
+          style={{
+            marginTop: "3px",
+            display: "flex",
+            flex: "0 1 auto",
+            minWidth: 0,
+            overflow: "hidden",
+          }}
+        >
+          {v}
+        </div>,
       );
     }
   }
