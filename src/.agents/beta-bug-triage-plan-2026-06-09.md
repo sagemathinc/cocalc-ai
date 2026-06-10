@@ -13,7 +13,7 @@ Goal: turn the newest beta tester reports into a release-focused work queue. Fix
 - For live validation, use the CoCalc CLI path exactly:
   `"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"`.
 
-## P0: Release Blockers / Data Loss / Lockouts
+## (done) P0: Release Blockers / Data Loss / Lockouts
 
 ### (done) P0-A: Markdown Data Loss When Splitting Slate And CodeMirror
 
@@ -191,9 +191,9 @@ Validation:
 - Focused chat state-machine test.
 - Browser smoke: fail message, re-auth if needed, retry without copy/paste.
 
-## P1: Core Workflows / High-Frequency UX
+## (done) P1: Core Workflows / High-Frequency UX
 
-### P1-A: Project Host `Deploy Hub Latest` Does Not Deploy Missing Asset
+### (done) P1-A: Project Host `Deploy Hub Latest` Does Not Deploy Missing Asset
 
 Symptom: after making a new host version, clicking the blue `Deploy hub latest` button next to `Project host` fails unless `Project host bundle` is deployed first.
 
@@ -243,7 +243,7 @@ Validation:
 - Focused port-selection test.
 - Local smoke with a dummy listener on 5000.
 
-### P1-C: Copy From Timetravel Slate Markdown Loses Formatting
+### (done) P1-C: Copy From Timetravel Slate Markdown Loses Formatting
 
 Status: Fixed. Markdown TimeTravel versions now render through the same read-only `EditableMarkdown` surface used for rich-copy chat messages instead of static markdown rendering.
 
@@ -323,7 +323,7 @@ Validation:
 - Completed: `cd src/packages/frontend && pnpm tsc --build`.
 - Completed: `cd src/packages/static && pnpm check-entry-budgets`.
 
-### P1-F: CoCalc Plus Docs Include Non-Plus Content
+### (done) P1-F: CoCalc Plus Docs Include Non-Plus Content
 
 Symptom: CoCalc Plus docs include content about multiple projects, collaborators, project hosts, and other non-Plus features.
 
@@ -371,7 +371,7 @@ Validation:
 - Browser visual smoke at narrow widths.
 - Component/layout test if existing titlebar tests support it.
 
-### P1-H: CLI Auth Failure Should Suggest Or Trigger Login
+### (done) P1-H: CLI Auth Failure Should Suggest Or Trigger Login
 
 Symptom: CLI commands that need an interactive auth cookie fail with `no auth cookie set` even when an API key is set, without suggesting `cocalc auth login`.
 
@@ -419,7 +419,7 @@ Validation:
 - Focused error formatting tests for representative RPC/backend errors.
 - Browser smoke on one known backend error path.
 
-### P1-J: Markdown Editor Reopens Closed CodeMirror Split After Refresh
+### (done) P1-J: Markdown Editor Reopens Closed CodeMirror Split After Refresh
 
 Symptom: open `foo.md`, press `Alt+Enter` to split Slate/CodeMirror, close the CodeMirror side, close the file, refresh, reopen the file, and the CodeMirror text view appears again.
 
@@ -443,9 +443,9 @@ Validation:
 - Focused frame-tree persistence test.
 - Browser smoke with split, close side, close file, refresh, reopen.
 
-## P2: Polish / Small But Visible Regressions
+## (done) P2: Polish / Small But Visible Regressions
 
-### P2-A: Project Host Status Percent Wraps
+### (done) P2-A: Project Host Status Percent Wraps
 
 Symptom: project host status card displays `75` and `%` on different lines.
 
@@ -464,7 +464,7 @@ Validation:
 
 - Browser visual smoke in host drawer.
 
-### P2-B: Chat Zoom Does Not Scale Fenced Code Blocks
+### (done) P2-B: Chat Zoom Does Not Scale Fenced Code Blocks
 
 Symptom: zooming the chatroom scales composer text but not code blocks in fenced code blocks, likely a Slate markdown rendering issue.
 
@@ -486,7 +486,7 @@ Validation:
 - Browser visual smoke with multiple zoom levels.
 - Focused style/component test if practical.
 
-### P2-C: Sign-Out Confirm Buttons Are Reversed
+### (done) P2-C: Sign-Out Confirm Buttons Are Reversed
 
 Symptom: sign-out confirmation has `Cancel` on the wrong side; CoCalc convention is cancel on the left.
 
