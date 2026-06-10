@@ -35,7 +35,6 @@ import type {
 } from "@cocalc/frontend/project/explorer/types";
 import { FileActionsDropdown } from "@cocalc/frontend/project/explorer/file-actions-dropdown";
 import { human_readable_size, path_split, plural } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
 import { PANEL_STYLE_BOTTOM, PANEL_STYLE_TOP } from "./consts";
 import { useSingleFile } from "./utils";
 import {
@@ -271,23 +270,7 @@ export function FilesSelectedControls({
   }, [actions, checked_files.size, selectedOpenablePaths]);
 
   function renderFileInfoTop() {
-    if (checked_files.size !== 0) return;
-
-    let [nFiles, nDirs] = [0, 0];
-    for (const f of directoryFiles) {
-      if (f.isDir) {
-        nDirs++;
-      } else {
-        nFiles++;
-      }
-    }
-
-    return (
-      <div style={{ color: COLORS.GRAY_M }}>
-        <Icon name="files" /> {nFiles} {plural(nFiles, "file")}, {nDirs}{" "}
-        {plural(nDirs, "folder")}
-      </div>
-    );
+    return null;
   }
 
   function renderFileInfoBottom() {

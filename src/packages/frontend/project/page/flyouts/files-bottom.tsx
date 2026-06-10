@@ -42,7 +42,7 @@ import {
 } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../common";
-import { FLYOUT_PADDING, PANEL_STYLE_BOTTOM, PanelKey } from "./consts";
+import { FLYOUT_PADDING, PanelKey } from "./consts";
 import { FilesSelectedControls } from "./files-controls";
 import { TerminalFlyout } from "./files-terminal";
 import { getFlyoutFiles, storeFlyoutState } from "./state";
@@ -167,6 +167,11 @@ export function FilesBottom({
       .getActions("projects")
       .start_project(project_id, { autostart: true });
   }, [activeKeys, projectIsRunning, project_id, terminalStartPolicyBlock]);
+
+  useEffect(() => {
+    if (checked_files.size !== 0 || !activeKeys.includes("selected")) return;
+    setActiveKeyHandler(activeKeys.filter((key) => key !== "selected"));
+  }, [activeKeys, checked_files.size]);
 
   // useEffect(() => {
   //   // if any selected and nothing in state, open "selected".
@@ -334,15 +339,7 @@ export function FilesBottom({
 
   function renderSelected() {
     if (checked_files.size === 0) {
-      let totSize = 0;
-      for (const f of directoryFiles) {
-        if (!f.isDir) totSize += f.size ?? 0;
-      }
-      return (
-        <div style={PANEL_STYLE_BOTTOM}>
-          No files selected. Total size {human_readable_size(totSize)}.
-        </div>
-      );
+      return null;
     } else {
       return renderSelectedControls();
     }
@@ -476,14 +473,18 @@ export function FilesBottom({
   } as const;
 
   const items: CollapseProps["items"] = [
-    {
-      key: "selected",
-      label: renderSelectedHeader(),
-      extra: renderSelectExtra(),
-      style,
-      className: "cc-project-flyout-files-panel",
-      children: renderSelected(),
-    },
+    ...(checked_files.size > 0
+      ? [
+          {
+            key: "selected",
+            label: renderSelectedHeader(),
+            extra: renderSelectExtra(),
+            style,
+            className: "cc-project-flyout-files-panel",
+            children: renderSelected(),
+          },
+        ]
+      : []),
     {
       key: "terminal",
       label: terminalHeader(),

@@ -3,11 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, InputRef, Radio, Select, Space } from "antd";
+import { Alert, Button, Input, InputRef, Space, Tag } from "antd";
 import immutable from "immutable";
 import { useIntl } from "react-intl";
 import { VirtuosoHandle } from "react-virtuoso";
-import { Button as BootstrapButton } from "@cocalc/frontend/antd-bootstrap";
 import {
   CSS,
   React,
@@ -441,29 +440,276 @@ export function FilesHeader({
     );
   }
 
-  function renderSortButton(name: string, display): React.JSX.Element {
+  function setSort(name: string): void {
     const isActive = activeFileSort.column_name === name;
-    const direction = isActive ? (
-      <Icon
-        style={{ marginLeft: FLYOUT_PADDING }}
-        name={activeFileSort.is_descending ? "caret-up" : "caret-down"}
-      />
-    ) : undefined;
+    setActiveFileSort({
+      column_name: name,
+      is_descending: isActive ? !activeFileSort.is_descending : false,
+    });
+  }
 
+  function renderSortMenuItem(
+    name: string,
+    label: React.JSX.Element | string,
+  ): MenuItems[number] {
+    const isActive = activeFileSort.column_name === name;
+    return {
+      key: `sort-${name}`,
+      label: (
+        <span style={{ whiteSpace: "nowrap" }}>
+          {isActive ? (
+            <Icon name="check" style={{ marginRight: 6 }} />
+          ) : (
+            <span
+              style={{ display: "inline-block", width: 14, marginRight: 6 }}
+            />
+          )}
+          {label}
+          {isActive ? (
+            <Icon
+              name={activeFileSort.is_descending ? "caret-up" : "caret-down"}
+              style={{ marginLeft: 6, color: COLORS.GRAY_M }}
+            />
+          ) : undefined}
+        </span>
+      ),
+      onClick: () => setSort(name),
+    };
+  }
+
+  function renderViewMenuItems(): MenuItems {
+    const typeItems: MenuItems = [
+      {
+        key: "type-all",
+        label: (
+          <span style={{ whiteSpace: "nowrap" }}>
+            {typeFilter == null ? (
+              <Icon name="check" style={{ marginRight: 6 }} />
+            ) : (
+              <span
+                style={{ display: "inline-block", width: 14, marginRight: 6 }}
+              />
+            )}
+            All file types
+          </span>
+        ),
+        onClick: () => setTypeFilter(null),
+      },
+      ...typeFilterOptions.map((ext) => ({
+        key: `type-${ext}`,
+        label: (
+          <span style={{ whiteSpace: "nowrap" }}>
+            {typeFilter === ext ? (
+              <Icon name="check" style={{ marginRight: 6 }} />
+            ) : (
+              <span
+                style={{ display: "inline-block", width: 14, marginRight: 6 }}
+              />
+            )}
+            <TypeFilterLabel ext={ext} />
+          </span>
+        ),
+        onClick: () => setTypeFilter(ext),
+      })),
+    ];
+
+    return [
+      {
+        key: "sort",
+        label: "Sort by",
+        children: [
+          renderSortMenuItem(
+            "starred",
+            <span>
+              <Icon name="star-filled" style={{ marginRight: 4 }} />
+              Starred
+            </span>,
+          ),
+          renderSortMenuItem("name", "Name"),
+          renderSortMenuItem("size", "Size"),
+          renderSortMenuItem("time", "Time"),
+          renderSortMenuItem("type", "Type"),
+        ],
+      },
+      {
+        key: "type",
+        label: typeFilter == null ? "File type" : `File type: ${typeFilter}`,
+        children: typeItems,
+      },
+      { type: "divider" },
+      {
+        key: "hidden",
+        label: (
+          <span style={{ whiteSpace: "nowrap" }}>
+            <Icon
+              name={hidden ? "eye" : "eye-slash"}
+              style={{ marginRight: 6 }}
+            />
+            {hidden ? "Hide hidden files" : "Show hidden files"}
+          </span>
+        ),
+        onClick: () => actions?.setState({ show_hidden: !hidden }),
+      },
+    ];
+  }
+
+  function renderMoreMenuItems(): MenuItems {
+    const commandItems: MenuItems = [
+      {
+        key: "terminal-command",
+        label: (
+          <span style={{ whiteSpace: "nowrap" }}>
+            <Icon name="terminal" style={{ marginRight: 6 }} />
+            Terminal command
+          </span>
+        ),
+        onClick: () => {
+          setSearchState("!");
+          setTimeout(() => refInput.current?.focus(), 0);
+        },
+      },
+      {
+        key: "agent-prompt",
+        label: (
+          <span style={{ whiteSpace: "nowrap" }}>
+            <Icon name="magic" style={{ marginRight: 6 }} />
+            Agent prompt
+          </span>
+        ),
+        onClick: () => {
+          setSearchState("/");
+          setTimeout(() => refInput.current?.focus(), 0);
+        },
+      },
+    ];
+
+    const recoveryItems: MenuItems = lite
+      ? []
+      : [
+          { type: "divider" },
+          {
+            key: "snapshots-open",
+            label: "Browse Snapshots",
+            onClick: () => {
+              onNavigate(SNAPSHOTS);
+            },
+          },
+          {
+            key: "snapshots-config",
+            label: "Configure Snapshots",
+            onClick: () => {
+              onNavigate(SNAPSHOTS);
+              actions?.setState({ open_snapshot_schedule: true });
+            },
+          },
+          {
+            key: "snapshots-create",
+            label: "Create Snapshot",
+            onClick: () => {
+              onNavigate(SNAPSHOTS);
+              actions?.setState({ open_create_snapshot: true });
+            },
+          },
+          {
+            key: "snapshots-restore",
+            label: "Restore Snapshot",
+            onClick: () => {
+              onNavigate(SNAPSHOTS);
+              actions?.setState({
+                open_restore_snapshot: true,
+              });
+            },
+          },
+          { type: "divider" },
+          {
+            key: "backups-open",
+            label: "Browse Backups",
+            onClick: () => {
+              onNavigate(BACKUPS);
+            },
+          },
+          {
+            key: "backups-config",
+            label: "Configure Backups",
+            onClick: () => {
+              onNavigate(BACKUPS);
+              actions?.setState({ open_backup_schedule: true });
+            },
+          },
+          {
+            key: "backups-create",
+            label: "Create Backup",
+            onClick: () => {
+              onNavigate(BACKUPS);
+              actions?.setState({ open_create_backup: true });
+            },
+          },
+        ];
+
+    return [
+      ...commandItems,
+      ...recoveryItems,
+      ...(platformMode === PLATFORM_MODE_CLOUD
+        ? [
+            { type: "divider" } as const,
+            {
+              key: "clone-project",
+              label: <CloneProject project_id={project_id} flyout />,
+            },
+          ]
+        : []),
+    ];
+  }
+
+  function renderActiveViewFilters() {
+    const tags: React.JSX.Element[] = [];
+    if (activeFileSort.column_name !== "name" || activeFileSort.is_descending) {
+      tags.push(
+        <Tag
+          key="sort"
+          closable
+          onClose={(e) => {
+            e.preventDefault();
+            setActiveFileSort({ column_name: "name", is_descending: false });
+          }}
+        >
+          Sort: {activeFileSort.column_name}
+        </Tag>,
+      );
+    }
+    if (typeFilter != null) {
+      tags.push(
+        <Tag
+          key="type"
+          closable
+          onClose={(e) => {
+            e.preventDefault();
+            setTypeFilter(null);
+          }}
+        >
+          Type: {typeFilter}
+        </Tag>,
+      );
+    }
+    if (hidden) {
+      tags.push(
+        <Tag
+          key="hidden"
+          closable
+          onClose={(e) => {
+            e.preventDefault();
+            actions?.setState({ show_hidden: false });
+          }}
+        >
+          Hidden files
+        </Tag>,
+      );
+    }
+    if (tags.length === 0) return null;
     return (
-      <Radio.Button
-        value={name}
-        style={{ background: isActive ? COLORS.ANTD_BG_BLUE_L : undefined }}
-        onClick={() =>
-          setActiveFileSort({
-            column_name: name,
-            is_descending: isActive ? !activeFileSort.is_descending : false,
-          })
-        }
-      >
-        {display}
-        {direction}
-      </Radio.Button>
+      <Space size={0} wrap style={{ lineHeight: 1 }}>
+        {tags}
+      </Space>
     );
   }
 
@@ -621,6 +867,8 @@ export function FilesHeader({
   }
 
   function renderFileControls() {
+    if (checked_files.size === 0) return null;
+
     return (
       <div
         style={{
@@ -631,41 +879,15 @@ export function FilesHeader({
           width: "100%",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            minWidth: 0,
-          }}
-        >
-          <FilesSelectedControls
-            project_id={project_id}
-            checked_files={checked_files}
-            directoryFiles={directoryFiles}
-            open={open}
-            getFile={getFile}
-            mode="top"
-            activeFile={activeFile}
-            refreshBackups={refreshBackups}
-          />
-          <div
-            aria-hidden={!hasPendingUpdate}
-            style={{
-              display: "inline-flex",
-              visibility: hasPendingUpdate ? "visible" : "hidden",
-              pointerEvents: hasPendingUpdate ? undefined : "none",
-            }}
-          >
-            <RefreshButton onClick={onRefreshListing} />
-          </div>
-        </div>
-        <FilesSelectButtons
-          setMode={setMode}
+        <FilesSelectedControls
+          project_id={project_id}
           checked_files={checked_files}
-          mode={mode}
-          selectAllFiles={selectAllFiles}
-          clearAllSelections={clearAllSelections}
+          directoryFiles={directoryFiles}
+          open={open}
+          getFile={getFile}
+          mode="top"
+          activeFile={activeFile}
+          refreshBackups={refreshBackups}
         />
       </div>
     );
@@ -677,6 +899,7 @@ export function FilesHeader({
         orientation="vertical"
         style={{
           flex: "0 0 auto",
+          width: "100%",
           paddingBottom: FLYOUT_PADDING,
           paddingRight: FLYOUT_PADDING,
         }}
@@ -685,219 +908,115 @@ export function FilesHeader({
           <div
             style={{
               display: "flex",
-              flexDirection: "row",
-              justifyContent: "space-between",
+              flexDirection: "column",
               gap: FLYOUT_PADDING,
+              width: "100%",
             }}
           >
-            <Space size="small">
-              <Radio.Group size="small">
-                {renderSortButton(
-                  "starred",
-                  <Icon name="star-filled" style={{ fontSize: "10pt" }} />,
-                )}
-                {renderSortButton("name", "Name")}
-                {renderSortButton("size", "Size")}
-                {renderSortButton("time", "Time")}
-                {renderSortButton("type", "Type")}
-              </Radio.Group>
-              <Select
+            <div style={{ flex: "1", position: "relative" }}>
+              <Input
+                ref={refInput}
+                placeholder="Search files"
                 size="small"
+                value={file_search}
+                onKeyDown={filterKeyHandler}
+                onChange={(e) => {
+                  setHistoryMode(false);
+                  setHistoryIndex(0);
+                  handleSearchChange(e.target.value);
+                }}
+                onFocus={() => setScrollIdxHide(false)}
+                onBlur={() => {
+                  setScrollIdxHide(true);
+                  setHistoryMode(false);
+                  setHistoryIndex(0);
+                }}
+                style={{ width: "100%" }}
                 allowClear
-                placeholder="Type"
-                value={typeFilter ?? undefined}
-                onChange={(value) =>
-                  setTypeFilter(
-                    value == null || value === "__clear__" ? null : value,
-                  )
-                }
-                style={{ minWidth: 88 }}
-                popupMatchSelectWidth={false}
-                options={[
-                  ...(typeFilter != null
-                    ? [
-                        {
-                          label: (
-                            <span
-                              style={{
-                                color: COLORS.GRAY,
-                                display: "block",
-                                borderBottom: `1px solid ${COLORS.GRAY_L0}`,
-                                paddingBottom: 4,
-                                marginBottom: 2,
-                              }}
-                            >
-                              <Icon name="times-circle" /> Clear filter
-                            </span>
-                          ),
-                          value: "__clear__",
-                        },
-                      ]
-                    : []),
-                  ...typeFilterOptions.map((ext) => ({
-                    label: <TypeFilterLabel ext={ext} />,
-                    value: ext,
-                  })),
-                ]}
+                prefix={<Icon name="search" />}
               />
-            </Space>
-            <Space.Compact orientation="horizontal" size={"small"}>
-              <Tooltip
-                title={intl.formatMessage(labels.upload_tooltip)}
-                placement="bottom"
-              >
-                <Button
-                  className={uploadClassName}
-                  size="small"
-                  disabled={!projectIsRunning || disableUploads}
+              {historyMode && history.length > 0 && (
+                <SearchHistoryDropdown
+                  history={history}
+                  historyIndex={historyIndex}
+                  setHistoryIndex={setHistoryIndex}
+                  onSelect={applyHistorySelection}
+                  style={{ top: "32px" }}
+                />
+              )}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: FLYOUT_PADDING,
+                flexWrap: "wrap",
+              }}
+            >
+              <Space size="small" wrap>
+                <Tooltip
+                  title={intl.formatMessage(labels.new_tooltip)}
+                  placement="bottom"
                 >
-                  <Icon name={"upload"} />
-                </Button>
-              </Tooltip>
-              <Tooltip
-                title={intl.formatMessage(labels.new_tooltip)}
-                placement="bottom"
-              >
-                <Button
-                  size="small"
-                  type="primary"
-                  onClick={() => actions?.toggleFlyout("new")}
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={() => actions?.toggleFlyout("new")}
+                  >
+                    <Icon name={"plus-circle"} /> New
+                  </Button>
+                </Tooltip>
+                <Tooltip
+                  title={intl.formatMessage(labels.upload_tooltip)}
+                  placement="bottom"
                 >
-                  <Icon name={"plus-circle"} />
-                </Button>
-              </Tooltip>
-            </Space.Compact>
+                  <Button
+                    className={uploadClassName}
+                    size="small"
+                    disabled={!projectIsRunning || disableUploads}
+                  >
+                    <Icon name={"upload"} /> Upload
+                  </Button>
+                </Tooltip>
+                <FilesSelectButtons
+                  setMode={setMode}
+                  checked_files={checked_files}
+                  mode={mode}
+                  selectAllFiles={selectAllFiles}
+                  clearAllSelections={clearAllSelections}
+                />
+                <DropdownMenu
+                  button
+                  showDown
+                  size="small"
+                  items={renderViewMenuItems()}
+                  title={
+                    <>
+                      <Icon name="eye" /> View
+                    </>
+                  }
+                />
+                <DropdownMenu
+                  button
+                  showDown
+                  size="small"
+                  items={renderMoreMenuItems()}
+                  title={
+                    <>
+                      <Icon name="ellipsis" /> More
+                    </>
+                  }
+                />
+              </Space>
+              {hasPendingUpdate ? (
+                <RefreshButton onClick={onRefreshListing} />
+              ) : null}
+            </div>
+            {renderActiveViewFilters()}
           </div>,
         )}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "row",
-            justifyContent: "space-between",
-            width: "100%",
-            gap: FLYOUT_PADDING,
-          }}
-        >
-          <div style={{ flex: "1", position: "relative" }}>
-            <Input
-              ref={refInput}
-              placeholder='Filter or "!" / "/" for Terminal...'
-              size="small"
-              value={file_search}
-              onKeyDown={filterKeyHandler}
-              onChange={(e) => {
-                setHistoryMode(false);
-                setHistoryIndex(0);
-                handleSearchChange(e.target.value);
-              }}
-              onFocus={() => setScrollIdxHide(false)}
-              onBlur={() => {
-                setScrollIdxHide(true);
-                setHistoryMode(false);
-                setHistoryIndex(0);
-              }}
-              style={{ width: "100%" }}
-              allowClear
-              prefix={<Icon name="search" />}
-            />
-            {historyMode && history.length > 0 && (
-              <SearchHistoryDropdown
-                history={history}
-                historyIndex={historyIndex}
-                setHistoryIndex={setHistoryIndex}
-                onSelect={applyHistorySelection}
-                style={{ top: "32px" }}
-              />
-            )}
-          </div>
-          <Space.Compact orientation="horizontal" size="small">
-            <BootstrapButton
-              title={intl.formatMessage(labels.hidden_files, { hidden })}
-              bsSize="xsmall"
-              style={{ flex: "0" }}
-              onClick={() => actions?.setState({ show_hidden: !hidden })}
-            >
-              <Icon name={hidden ? "eye" : "eye-slash"} />
-            </BootstrapButton>
-          </Space.Compact>
-          <Space.Compact orientation="horizontal" size="small">
-            {!lite ? (
-              <Tooltip title="Recovery" placement="bottom">
-                <span>
-                  <DropdownMenu
-                    button
-                    size="small"
-                    items={
-                      [
-                        {
-                          key: "snapshots-open",
-                          label: "Browse Snapshots",
-                          onClick: () => {
-                            onNavigate(SNAPSHOTS);
-                          },
-                        },
-                        {
-                          key: "snapshots-config",
-                          label: "Configure Snapshots",
-                          onClick: () => {
-                            onNavigate(SNAPSHOTS);
-                            actions?.setState({ open_snapshot_schedule: true });
-                          },
-                        },
-                        {
-                          key: "snapshots-create",
-                          label: "Create Snapshot",
-                          onClick: () => {
-                            onNavigate(SNAPSHOTS);
-                            actions?.setState({ open_create_snapshot: true });
-                          },
-                        },
-                        {
-                          key: "snapshots-restore",
-                          label: "Restore Snapshot",
-                          onClick: () => {
-                            onNavigate(SNAPSHOTS);
-                            actions?.setState({
-                              open_restore_snapshot: true,
-                            });
-                          },
-                        },
-                        { type: "divider" },
-                        {
-                          key: "backups-open",
-                          label: "Browse Backups",
-                          onClick: () => {
-                            onNavigate(BACKUPS);
-                          },
-                        },
-                        {
-                          key: "backups-config",
-                          label: "Configure Backups",
-                          onClick: () => {
-                            onNavigate(BACKUPS);
-                            actions?.setState({ open_backup_schedule: true });
-                          },
-                        },
-                        {
-                          key: "backups-create",
-                          label: "Create Backup",
-                          onClick: () => {
-                            onNavigate(BACKUPS);
-                            actions?.setState({ open_create_backup: true });
-                          },
-                        },
-                      ] as MenuItems
-                    }
-                    title={<Icon name="disk-snapshot" />}
-                  />
-                </span>
-              </Tooltip>
-            ) : null}
-            {platformMode === PLATFORM_MODE_CLOUD ? (
-              <CloneProject project_id={project_id} flyout />
-            ) : null}
-          </Space.Compact>
-        </div>
         {renderFileControls()}
       </Space>
       <Space

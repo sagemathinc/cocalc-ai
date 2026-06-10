@@ -337,6 +337,11 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     return (
       <Icon
         name={icon}
+        className={
+          isStarred
+            ? "cc-project-flyout-file-star"
+            : "cc-project-flyout-file-star cc-project-flyout-file-star-unstarred"
+        }
         style={{
           ...ICON_STYLE,
           color: starColor,

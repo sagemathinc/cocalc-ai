@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Refined File Explorer Flyout Mockup</title>
+    <style>
+      :root {
+        --blue: #4474c0;
+        --blue-dark: #2a5aa6;
+        --blue-soft: #e6f4ff;
+        --orange: #fcc861;
+        --text: #263244;
+        --muted: #687386;
+        --line: #d8e0eb;
+        --line-soft: #edf1f6;
+        --bg: #f3f6fa;
+        --surface: #fff;
+        --surface-soft: #f8fafc;
+        --hover: #f0f7ff;
+        --danger: #c9302c;
+        --shadow: 0 18px 46px rgba(14, 43, 89, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        background:
+          linear-gradient(180deg, rgba(230, 244, 255, 0.95), transparent 310px),
+          var(--bg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+          Arial, sans-serif;
+      }
+
+      .page {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 28px 24px 44px;
+      }
+
+      .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 28px;
+        margin-bottom: 18px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 650;
+        letter-spacing: 0;
+      }
+
+      .note {
+        max-width: 720px;
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .chips span {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--muted);
+        font-size: 12px;
+        padding: 4px 9px;
+      }
+
+      .mockups {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(330px, 1fr));
+        gap: 22px;
+        align-items: start;
+      }
+
+      .scenario-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin: 0 0 10px;
+        color: #172033;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .scenario-title small {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 500;
+      }
+
+      .flyout {
+        position: relative;
+        width: 350px;
+        height: 760px;
+        margin: 0 auto;
+        overflow: hidden;
+        border: 1px solid #c8d3e2;
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .header {
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, #fff, #f9fbfe);
+        padding: 10px;
+      }
+
+      .pathbar {
+        display: grid;
+        grid-template-columns: 30px 1fr 30px;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .path {
+        min-width: 0;
+        color: #2d3748;
+        font-size: 13px;
+        font-weight: 650;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .search input {
+        width: 100%;
+        height: 36px;
+        border: 1px solid #bdc9d9;
+        border-radius: 6px;
+        background: #fff;
+        color: var(--text);
+        font: inherit;
+        font-size: 13px;
+        outline: none;
+        padding: 0 11px 0 34px;
+      }
+
+      .search {
+        position: relative;
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .search::before {
+        content: "";
+        position: absolute;
+        left: 11px;
+        top: 11px;
+        width: 11px;
+        height: 11px;
+        border: 2px solid #7b8797;
+        border-radius: 50%;
+      }
+
+      .search::after {
+        content: "";
+        position: absolute;
+        left: 22px;
+        top: 24px;
+        width: 7px;
+        height: 2px;
+        border-radius: 1px;
+        background: #7b8797;
+        transform: rotate(45deg);
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .toolbar-left,
+      .toolbar-right {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      button {
+        height: 30px;
+        border: 1px solid #c5cfdd;
+        border-radius: 6px;
+        background: #fff;
+        color: #273244;
+        cursor: default;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 650;
+        padding: 0 9px;
+      }
+
+      .primary {
+        border-color: var(--blue-dark);
+        background: var(--blue);
+        color: #fff;
+      }
+
+      .icon-button {
+        display: inline-grid;
+        place-items: center;
+        width: 30px;
+        padding: 0;
+      }
+
+      .tag-row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid var(--line-soft);
+        background: #fbfcfe;
+        padding: 6px 10px;
+      }
+
+      .tag {
+        border: 1px solid #cad5e4;
+        border-radius: 999px;
+        background: #fff;
+        color: #435168;
+        font-size: 11px;
+        padding: 3px 8px;
+      }
+
+      .list {
+        height: 584px;
+        overflow: hidden;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        min-height: 38px;
+        border-bottom: 1px solid var(--line-soft);
+        padding: 0 10px;
+      }
+
+      .row:hover,
+      .row.focused {
+        background: var(--hover);
+      }
+
+      .row.open {
+        background: #f5f7fa;
+      }
+
+      .row.selected {
+        border-left: 2px solid var(--blue);
+        background: #edf6ff;
+        padding-left: 8px;
+      }
+
+      .name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #273244;
+        font-size: 13px;
+        font-weight: 500;
+      }
+
+      .open .name {
+        color: var(--blue-dark);
+        font-weight: 700;
+      }
+
+      .ext {
+        color: #8a95a6;
+        font-weight: 500;
+      }
+
+      .meta {
+        color: #758196;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .actions {
+        display: none;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .focused .actions,
+      .row:hover .actions {
+        display: flex;
+      }
+
+      .focused .meta,
+      .row:hover .meta {
+        display: none;
+      }
+
+      .icon {
+        position: relative;
+        width: 19px;
+        height: 17px;
+        border-radius: 4px;
+        background: #e8edf4;
+      }
+
+      .folder {
+        background: #dcecff;
+      }
+
+      .folder::before {
+        content: "";
+        position: absolute;
+        left: 2px;
+        top: -3px;
+        width: 10px;
+        height: 5px;
+        border-radius: 3px 3px 0 0;
+        background: #b9d8ff;
+      }
+
+      .code {
+        background: #e8f5e9;
+      }
+
+      .notebook {
+        background: #fff2d0;
+      }
+
+      .doc {
+        background: #eeeeee;
+      }
+
+      .checkbox {
+        display: inline-grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        border: 1px solid #97aac7;
+        border-radius: 4px;
+        background: #fff;
+        color: #fff;
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      .checked {
+        border-color: var(--blue);
+        background: var(--blue);
+      }
+
+      .checked::after {
+        content: "";
+        width: 4px;
+        height: 8px;
+        border: solid #fff;
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
+      }
+
+      .footer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 34px;
+        border-top: 1px solid var(--line);
+        background: #fbfcfe;
+        color: var(--muted);
+        font-size: 12px;
+        padding: 0 10px;
+      }
+
+      .footer strong {
+        color: #334155;
+      }
+
+      .menu {
+        position: absolute;
+        z-index: 10;
+        width: 248px;
+        border: 1px solid #c8d3e2;
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 14px 38px rgba(14, 43, 89, 0.2);
+        overflow: hidden;
+      }
+
+      .menu.more {
+        top: 121px;
+        right: 10px;
+      }
+
+      .menu.actions {
+        display: block;
+        top: 85px;
+        right: 10px;
+        width: 205px;
+      }
+
+      .menu-section {
+        padding: 8px;
+      }
+
+      .menu-section + .menu-section {
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .menu-title {
+        margin: 0 0 5px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .menu-item {
+        display: grid;
+        grid-template-columns: 20px 1fr auto;
+        gap: 7px;
+        align-items: center;
+        min-height: 29px;
+        border-radius: 5px;
+        color: #283448;
+        font-size: 12px;
+        padding: 0 7px;
+      }
+
+      .menu-item.active,
+      .menu-item:hover {
+        background: var(--blue-soft);
+      }
+
+      .menu-item.danger {
+        color: var(--danger);
+      }
+
+      .selection-bar {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .selection-count {
+        color: #1f2a3d;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      @media (max-width: 1120px) {
+        .mockups {
+          grid-template-columns: 1fr;
+        }
+
+        .page-header {
+          display: block;
+        }
+
+        .chips {
+          justify-content: flex-start;
+          margin-top: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1>Refined File Explorer Flyout</h1>
+          <p class="note">
+            Lowest-noise direction: the flyout is primarily for navigation,
+            search, and creation. Sort, type filters, hidden files, recovery,
+            terminal, and agent entry points are still available, but not
+            competing with the file list by default.
+          </p>
+        </div>
+        <div class="chips">
+          <span>350px target width</span>
+          <span>advanced tools behind More</span>
+          <span>no idle bottom tray</span>
+        </div>
+      </header>
+
+      <section class="mockups">
+        <article>
+          <h2 class="scenario-title">
+            Default
+            <small>browse, search, create</small>
+          </h2>
+          <div class="flyout">
+            <div class="header">
+              <div class="pathbar">
+                <button class="icon-button">Up</button>
+                <div class="path">cocalc-ai / src / packages</div>
+                <button class="icon-button">...</button>
+              </div>
+              <label class="search">
+                <input placeholder="Search files" />
+              </label>
+              <div class="toolbar">
+                <div class="toolbar-left">
+                  <button class="primary">New</button>
+                  <button>Upload</button>
+                </div>
+                <div class="toolbar-right">
+                  <button>Select</button>
+                  <button class="icon-button">...</button>
+                </div>
+              </div>
+            </div>
+            <div class="list">
+              <div class="row open">
+                <span class="icon folder"></span>
+                <span class="name">frontend</span>
+                <span class="meta">8m</span>
+              </div>
+              <div class="row">
+                <span class="icon folder"></span>
+                <span class="name">project</span>
+                <span class="meta">1h</span>
+              </div>
+              <div class="row">
+                <span class="icon folder"></span>
+                <span class="name">server</span>
+                <span class="meta">2h</span>
+              </div>
+              <div class="row focused">
+                <span class="icon code"></span>
+                <span class="name"
+                  >pnpm-workspace<span class="ext">.yaml</span></span
+                >
+                <span class="actions">
+                  <button class="icon-button">*</button>
+                  <button class="icon-button">...</button>
+                </span>
+                <span class="meta">12 KB</span>
+              </div>
+              <div class="row">
+                <span class="icon code"></span>
+                <span class="name">package<span class="ext">.json</span></span>
+                <span class="meta">54 KB</span>
+              </div>
+              <div class="row">
+                <span class="icon doc"></span>
+                <span class="name">README<span class="ext">.md</span></span>
+                <span class="meta">18 KB</span>
+              </div>
+              <div class="row">
+                <span class="icon notebook"></span>
+                <span class="name"
+                  >analysis<span class="ext">.ipynb</span></span
+                >
+                <span class="meta">420 KB</span>
+              </div>
+              <div class="row">
+                <span class="icon folder"></span>
+                <span class="name">patches</span>
+                <span class="meta">Yesterday</span>
+              </div>
+              <div class="row">
+                <span class="icon code"></span>
+                <span class="name"
+                  >pnpm-lock<span class="ext">.yaml</span></span
+                >
+                <span class="meta">4.1 MB</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article>
+          <h2 class="scenario-title">
+            More
+            <small>secondary tools grouped</small>
+          </h2>
+          <div class="flyout">
+            <div class="header">
+              <div class="pathbar">
+                <button class="icon-button">Up</button>
+                <div class="path">cocalc-ai / src / packages</div>
+                <button class="icon-button">...</button>
+              </div>
+              <label class="search">
+                <input placeholder="Search files" />
+              </label>
+              <div class="toolbar">
+                <div class="toolbar-left">
+                  <button class="primary">New</button>
+                  <button>Upload</button>
+                </div>
+                <div class="toolbar-right">
+                  <button>Select</button>
+                  <button class="icon-button">...</button>
+                </div>
+              </div>
+            </div>
+            <div class="tag-row">
+              <span class="tag">Type: .ipynb x</span>
+              <span class="tag">Sort: Recent x</span>
+            </div>
+            <div class="list">
+              <div class="row open">
+                <span class="icon notebook"></span>
+                <span class="name"
+                  >analysis<span class="ext">.ipynb</span></span
+                >
+                <span class="meta">8m</span>
+              </div>
+              <div class="row">
+                <span class="icon notebook"></span>
+                <span class="name"
+                  >quick-test<span class="ext">.ipynb</span></span
+                >
+                <span class="meta">2h</span>
+              </div>
+              <div class="row">
+                <span class="icon notebook"></span>
+                <span class="name">scratch<span class="ext">.ipynb</span></span>
+                <span class="meta">May 31</span>
+              </div>
+            </div>
+            <div class="menu more">
+              <div class="menu-section">
+                <p class="menu-title">View and sort</p>
+                <div class="menu-item active">
+                  <span>v</span><span>Sort by recent</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Sort by name</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Filter by type</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Show hidden files</span><span></span>
+                </div>
+              </div>
+              <div class="menu-section">
+                <p class="menu-title">Power tools</p>
+                <div class="menu-item">
+                  <span></span><span>Terminal command</span><span>!</span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Agent prompt</span><span>/</span>
+                </div>
+              </div>
+              <div class="menu-section">
+                <p class="menu-title">Recovery</p>
+                <div class="menu-item">
+                  <span></span><span>Browse snapshots</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Browse backups</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Clone project</span><span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article>
+          <h2 class="scenario-title">
+            Selection
+            <small>actions only after intent</small>
+          </h2>
+          <div class="flyout">
+            <div class="header">
+              <div class="pathbar">
+                <button class="icon-button">Up</button>
+                <div class="path">cocalc-ai / src / packages</div>
+                <button class="icon-button">...</button>
+              </div>
+              <label class="search">
+                <input placeholder="Filter selected files" />
+              </label>
+              <div class="selection-bar">
+                <span class="selection-count">3 selected</span>
+                <button class="primary">Actions</button>
+                <button>Clear</button>
+              </div>
+            </div>
+            <div class="list">
+              <div class="row">
+                <span class="checkbox"></span>
+                <span class="name">frontend</span>
+                <span class="meta">folder</span>
+              </div>
+              <div class="row selected">
+                <span class="checkbox checked"></span>
+                <span class="name"
+                  >pnpm-workspace<span class="ext">.yaml</span></span
+                >
+                <span class="meta">12 KB</span>
+              </div>
+              <div class="row selected">
+                <span class="checkbox checked"></span>
+                <span class="name">package<span class="ext">.json</span></span>
+                <span class="meta">54 KB</span>
+              </div>
+              <div class="row selected focused">
+                <span class="checkbox checked"></span>
+                <span class="name">README<span class="ext">.md</span></span>
+                <span class="actions">
+                  <button class="icon-button">...</button>
+                </span>
+                <span class="meta">18 KB</span>
+              </div>
+              <div class="row">
+                <span class="checkbox"></span>
+                <span class="name"
+                  >analysis<span class="ext">.ipynb</span></span
+                >
+                <span class="meta">420 KB</span>
+              </div>
+              <div class="row">
+                <span class="checkbox"></span>
+                <span class="name">patches</span>
+                <span class="meta">folder</span>
+              </div>
+            </div>
+            <div class="menu actions">
+              <div class="menu-section">
+                <p class="menu-title">Selected files</p>
+                <div class="menu-item active">
+                  <span></span><span>Open</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Download</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Compress</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Move</span><span></span>
+                </div>
+                <div class="menu-item">
+                  <span></span><span>Copy</span><span></span>
+                </div>
+                <div class="menu-item danger">
+                  <span></span><span>Delete</span><span></span>
+                </div>
+              </div>
+            </div>
+            <div class="footer">
+              <span><strong>3 selected</strong> · 84 KB</span>
+              <span>Details</span>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
