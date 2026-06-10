@@ -97,10 +97,6 @@ const ADMIN_GROUPS: Record<AdminGroupKey, { icon: IconName; title: string }> = {
 };
 const ADMIN_GROUP_KEYS = Object.keys(ADMIN_GROUPS) as AdminGroupKey[];
 
-function isAdminGroupKey(key: string): key is AdminGroupKey {
-  return key in ADMIN_GROUPS;
-}
-
 export function AdminPage({
   route = { kind: "index" },
 }: {
@@ -111,7 +107,7 @@ export function AdminPage({
   const isMobile = !screens.md;
   const pageActions = useActions("page");
   const [navCollapsed, setNavCollapsed] = useState(false);
-  const [openKeys, setOpenKeys] = useState<string[]>(Object.keys(ADMIN_GROUPS));
+  const [manualOpenKeys, setManualOpenKeys] = useState<string[] | undefined>();
 
   function navigate(nextRoute: AdminRoute, search = "") {
     pageActions.set_active_tab("admin", false);
@@ -140,6 +136,9 @@ export function AdminPage({
   const navItemByKey = new Map(navigationItems.map((item) => [item.key, item]));
   const activeMenuKey = getActiveMenuKey(route);
   const activeNavItem = navItemByKey.get(activeMenuKey);
+  const activeGroupKey = activeNavItem?.group;
+  const menuOpenKeys =
+    manualOpenKeys ?? (activeGroupKey == null ? [] : [activeGroupKey]);
   const title =
     activeMenuKey === OVERVIEW_MENU_KEY
       ? "Administration"
@@ -148,35 +147,12 @@ export function AdminPage({
   function renderMenuLabel(icon: IconName, title: string) {
     return (
       <span>
-        <Icon name={icon} /> {title}
+        <Icon name={icon} /> {!navCollapsed && title}
       </span>
     );
   }
 
   function renderMenuItems(): MenuProps["items"] {
-    if (navCollapsed) {
-      return ADMIN_GROUP_KEYS.flatMap((groupKey) => {
-        const group = ADMIN_GROUPS[groupKey];
-        const groupItem = {
-          key: groupKey,
-          icon: <Icon name={group.icon} />,
-          label: group.title,
-        };
-        if (!openKeys.includes(groupKey)) {
-          return [groupItem];
-        }
-        return [
-          groupItem,
-          ...navigationItems
-            .filter((item) => item.group === groupKey)
-            .map((item) => ({
-              key: item.key,
-              icon: <Icon name={item.icon} />,
-              label: item.title,
-            })),
-        ];
-      });
-    }
     return ADMIN_GROUP_KEYS.map((groupKey) => ({
       key: groupKey,
       label: renderMenuLabel(
@@ -208,14 +184,6 @@ export function AdminPage({
   }
 
   function handleSelect(key: string) {
-    if (isAdminGroupKey(key)) {
-      setOpenKeys((openKeys) =>
-        openKeys.includes(key)
-          ? openKeys.filter((openKey) => openKey !== key)
-          : [...openKeys, key],
-      );
-      return;
-    }
     if (key === OVERVIEW_MENU_KEY) {
       navigate({ kind: "index" });
       return;
@@ -273,20 +241,25 @@ export function AdminPage({
             {navCollapsed ? "" : "Admin"}
           </Button>
           <Menu
-            inlineCollapsed={navCollapsed}
+            className={
+              navCollapsed ? "account-menu-inline-collapsed" : undefined
+            }
             mode="inline"
             items={renderMenuItems()}
             onClick={(e) => handleSelect(e.key)}
-            openKeys={navCollapsed ? undefined : openKeys}
-            onOpenChange={setOpenKeys}
-            selectedKeys={[activeMenuKey]}
+            openKeys={menuOpenKeys}
+            onOpenChange={setManualOpenKeys}
+            selectedKeys={
+              activeGroupKey ? [activeGroupKey, activeMenuKey] : [activeMenuKey]
+            }
+            inlineIndent={navCollapsed ? 0 : 24}
             style={{
               background: "#00000005",
               borderBottom: `1px solid ${COLORS.GRAY_DDD}`,
               flex: "1 1 auto",
               minHeight: 0,
               overflowY: "auto",
-              width: navCollapsed ? 56 : 250,
+              width: navCollapsed ? 50 : 250,
             }}
           />
           <Button
