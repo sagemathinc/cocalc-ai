@@ -1,6 +1,7 @@
 import type { Element } from "../whiteboard-editor/types";
 
 // TODO: obviously hard coding this is very much a #v0 thing to do!
+export const LEGACY_SLIDE_LEFT = (-3 * 197) / 2;
 export const LEGACY_SLIDE_TOP = -492;
 
 const SLIDE = {
@@ -9,7 +10,7 @@ const SLIDE = {
   w: 3 * 350,
   type: "slide",
   id: "the-slide",
-  x: (-3 * 350) / 2,
+  x: LEGACY_SLIDE_LEFT,
   y: LEGACY_SLIDE_TOP,
   z: -Infinity,
 } as Element;

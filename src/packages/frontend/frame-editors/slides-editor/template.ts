@@ -8,7 +8,7 @@ import type { Element } from "../whiteboard-editor/types";
 type TemplateElement = Omit<Element, "page">;
 
 const TEXT_BOX_WIDTH = 847;
-const TEXT_BOX_X = -TEXT_BOX_WIDTH / 2;
+const TEXT_BOX_X = -200;
 
 export const SLIDE_TEMPLATE_ELEMENTS: ReadonlyArray<TemplateElement> = [
   {

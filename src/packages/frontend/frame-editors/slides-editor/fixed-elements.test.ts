@@ -1,10 +1,13 @@
-import fixedElements, { LEGACY_SLIDE_TOP } from "./fixed-elements";
+import fixedElements, {
+  LEGACY_SLIDE_LEFT,
+  LEGACY_SLIDE_TOP,
+} from "./fixed-elements";
 import { SLIDE_TEMPLATE_ELEMENTS } from "./template";
 
 describe("slides fixed elements", () => {
-  it("keeps the fixed slide background at the legacy CoCalc top", () => {
+  it("keeps the fixed slide background at the legacy CoCalc position", () => {
     const slide = fixedElements["the-slide"];
-    expect(slide.x).toBe(-(slide.w ?? 0) / 2);
+    expect(slide.x).toBe(LEGACY_SLIDE_LEFT);
     expect(slide.y).toBe(LEGACY_SLIDE_TOP);
   });
 

@@ -20,7 +20,6 @@ export interface Props {
   canvasScale: number;
   readOnly?: boolean;
   cursors?: { [account_id: string]: any[] };
-  legacyMarkdown?: boolean;
 }
 
 export default function RenderStatic(props: Props) {
