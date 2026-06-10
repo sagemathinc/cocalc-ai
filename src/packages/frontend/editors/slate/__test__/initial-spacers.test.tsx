@@ -3,7 +3,6 @@ import "../elements/types";
 import { Element } from "slate";
 
 import { markdown_to_slate } from "../markdown-to-slate";
-import { normalizeBlockMarkdown } from "../block-markdown-utils";
 import { withBlockSpacerParagraphs } from "../normalize";
 import { slate_to_markdown } from "../slate-to-markdown";
 
@@ -13,6 +12,10 @@ function isSpacerParagraph(node: any): boolean {
   );
 }
 
+function stripTrailingNewlines(markdown: string): string {
+  return markdown.replace(/\n+$/g, "");
+}
+
 test("fresh markdown parse gets spacer after trailing code block", () => {
   const markdown = "hello\n\n```\nfoo\n```";
   const value = withBlockSpacerParagraphs(markdown_to_slate(markdown, false));
@@ -20,7 +23,7 @@ test("fresh markdown parse gets spacer after trailing code block", () => {
   expect(value[value.length - 2]?.["type"]).toBe("code_block");
   expect(isSpacerParagraph(value[value.length - 1])).toBe(true);
   expect(
-    normalizeBlockMarkdown(
+    stripTrailingNewlines(
       slate_to_markdown(value, { preserveBlankLines: false }),
     ),
   ).toBe(markdown);
@@ -34,7 +37,7 @@ test("fresh markdown parse gets spacer before leading code block", () => {
   expect(value[1]?.["type"]).toBe("code_block");
   expect(isSpacerParagraph(value[2])).toBe(true);
   expect(
-    normalizeBlockMarkdown(
+    stripTrailingNewlines(
       slate_to_markdown(value, { preserveBlankLines: false }),
     ),
   ).toBe(markdown);

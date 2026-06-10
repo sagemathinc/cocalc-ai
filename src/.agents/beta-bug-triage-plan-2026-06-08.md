@@ -15,7 +15,9 @@ Goal: resolve the current beta tester bug set in small, reviewable commits. Prio
 
 ## Priority Order
 
-### P0-A: Project Start EACCES Updating `.ssh/authorized_keys`
+### (done) P0-A: Project Start EACCES Updating `.ssh/authorized_keys`
+
+Solution: wontfix -- it's a 1-off problem to manually fix on a case-by-case basis.
 
 Symptom: project start fails with `EACCES: permission denied, open '/mnt/cocalc/project-.../.ssh/authorized_keys'`.
 
@@ -41,7 +43,7 @@ Validation:
 - Focused server/project-control test.
 - Live start of a disposable project with a pre-created `.ssh/authorized_keys`.
 
-### P0-B: Course Instructor/Student Pay Configuration Missing
+### (done) P0-B: Course Instructor/Student Pay Configuration Missing
 
 Symptom: course UI does not expose instructor/student pay configuration, though backend implementation likely exists.
 
@@ -67,7 +69,9 @@ Validation:
 - Focused course frontend tests.
 - Live course settings smoke with both instructor-pay and student-pay values.
 
-### P0-C: Slate Markdown Duplicate Insertions
+### (done) P0-C: Slate Markdown Duplicate Insertions
+
+NOTE: we *thought* we fixed this yesterday but did not.  It's much better now, but still broken.  It's a lot more obviously broken on ipad, but I've hit this in chrome just now.  The solution absolutely CANNOT be stupid heuristic and "don't merge if upstream matches us". That's so dumb. Take a step back and PROVE THINGS RIGOROUSLY.  Understand the patchflow algorithm.  We will do this right.
 
 Symptom: typing `(done)` once in a single Slate markdown frame can produce `(done) (done)`.
 
@@ -94,7 +98,7 @@ Validation:
 
 ## High-Value UX / Core Workflow
 
-### P1-A: Slate Markdown TOC Jump Then Click Scrolls To Old Selection
+### (done) P1-A: Slate Markdown TOC Jump Then Click Scrolls To Old Selection
 
 Symptom: clicking a table-of-contents entry jumps to the right heading, but clicking that heading scrolls back to the previously selected location if Slate was not focused before the programmatic scroll.
 
@@ -116,7 +120,7 @@ Validation:
 - Browser smoke: TOC jump, click heading, verify no jump back.
 - Focused test for stale selection scroll suppression if feasible.
 
-### P1-B: Workspace / Project-Home Chat Uses `.local/...` As Working Directory
+### (done) P1-B: Workspace / Project-Home Chat Uses `.local/...` As Working Directory
 
 Symptom: workspace and project-home chats stored under `$HOME/.local/...` make the selected tab's working directory `.local/...`, which is confusing for agents.
 
@@ -138,7 +142,7 @@ Validation:
 - Focused current-directory derivation test.
 - Live workspace/project-home chat tab smoke.
 
-### P1-C: Jupyter Slate Markdown Input Cannot Scroll / Is Too Short
+### (done) P1-C: Jupyter Slate Markdown Input Cannot Scroll / Is Too Short
 
 Symptom: Slate markdown editing in Jupyter has a limited vertical input height and cannot scroll, making editing annoying.
 
@@ -159,7 +163,7 @@ Validation:
 - Browser smoke with a long markdown cell in Jupyter.
 - Focused component/style test if practical.
 
-### P1-D: Download File Does Not Require Project Start
+### (done) P1-D: Download File Does Not Require Project Start
 
 Symptom: frontend prompts to start a stopped project before downloading a file, even though download does not require project start.
 
@@ -181,7 +185,7 @@ Validation:
 - Focused file action test.
 - Live stopped-project file download smoke.
 
-### P1-E: Agent Flyout PNG Link Does Not Open
+### (done) P1-E: Agent Flyout PNG Link Does Not Open
 
 Symptom: clicking a PNG link in the left agents flyout does nothing, while the same link works in the main chat file.
 
@@ -204,7 +208,7 @@ Validation:
 
 ## Fast UI Polish / Safety Batch
 
-### P2-A: Host Drawer Access Control Add Button Height Mismatch
+### (done) P2-A: Host Drawer Access Control Add Button Height Mismatch
 
 Symptom: after selecting a user in the host access-control dropdown, the selected item height makes the `Add` button no longer align with the select.
 
@@ -224,7 +228,7 @@ Validation:
 - Browser visual smoke in host drawer.
 - Component snapshot/style test only if existing pattern supports it.
 
-### P2-B: Remove Redundant Docs Cards Below Main TOC
+### (done) P2-B: Remove Redundant Docs Cards Below Main TOC
 
 Symptom: docs page has image cards below the main table of contents that are redundant and make scrolling through docs harder.
 
@@ -244,7 +248,7 @@ Validation:
 - Frontend lint/typecheck.
 - Browser smoke of docs landing page.
 
-### P2-C: Site License Pool Remove Needs Confirmation
+### (done) P2-C: Site License Pool Remove Needs Confirmation
 
 Symptom: removing a site license pool is a red danger button but has no confirmation.
 
@@ -264,7 +268,7 @@ Validation:
 - Focused component test if available.
 - Browser smoke: click remove, cancel, confirm.
 
-### P2-D: Ping Time Layout And Project-Host Latency Visibility
+### (done) P2-D: Ping Time Layout And Project-Host Latency Visibility
 
 Symptom: ping time value is not aligned with label; project-host ping times are not visible where host connection choices are shown.
 
@@ -285,4 +289,8 @@ Validation:
 
 - Browser visual smoke for current ping display.
 - Live host dropdown smoke showing project-host latency when available.
+
+## Closeout - 2026-06-09
+
+All items in this 2026-06-08 beta batch have either been fixed and verified, or explicitly closed as non-code/manual remediation. Keep this file closed; new beta tester reports are tracked in `beta-bug-triage-plan-2026-06-09.md`.
 

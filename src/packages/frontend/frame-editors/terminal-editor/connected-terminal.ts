@@ -28,6 +28,15 @@ import {
   handoffProjectNavigationFromLocalOwner,
   matchProjectNavigationCommand,
 } from "@cocalc/frontend/project/page/keyboard-navigation";
+import {
+  elapsedUxMs,
+  recordUxLatencyEvent,
+  startUxTimer,
+} from "@cocalc/frontend/monitoring/ux-latency";
+import {
+  classifyProjectReadinessUxSegment,
+  ensure_project_running,
+} from "@cocalc/frontend/project/project-start-warning";
 import { close, filename_extension, replace_all } from "@cocalc/util/misc";
 import {
   BaseEditorActions as Actions,
@@ -92,6 +101,14 @@ type TerminalMessageKind = "user" | "auto";
 interface TerminalTransmit {
   data: string;
   kind: TerminalMessageKind;
+}
+
+export interface TerminalOptions {
+  autoStartProjectOnFirstConnect?: boolean;
+}
+
+export interface TerminalConnectOptions {
+  autoStartProject?: boolean;
 }
 
 function normalizeTerminalCommand(command: any): string | undefined {
@@ -258,6 +275,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private projectsStore?;
   private lastProjectState?: string;
   private projectStartingRetryTimer?: ReturnType<typeof setTimeout>;
+  private autoStartProjectOnNextConnect = false;
 
   constructor(
     actions: Actions<T>,
@@ -268,6 +286,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     args?: string[],
     workingDir?: string,
     terminalThemeOverride?: string | null,
+    options?: TerminalOptions,
   ) {
     this.actions = actions;
     this.account_store = redux.getStore("account");
@@ -281,6 +300,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.command = normalizeTerminalCommand(command);
     this.args = normalizeTerminalArgs(args);
     this.workingDir = workingDir;
+    this.autoStartProjectOnNextConnect =
+      options?.autoStartProjectOnFirstConnect === true;
     this.terminalThemeOverride =
       typeof terminalThemeOverride === "string" &&
       terminalThemeOverride.trim().length > 0
@@ -376,8 +397,6 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     });
 
     this.initKeyHandler();
-
-    this.connect();
   }
 
   get is_visible(): boolean {
@@ -689,21 +708,44 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     );
   };
 
-  connect = reuseInFlight(async () => {
+  connect = reuseInFlight(async (options: TerminalConnectOptions = {}) => {
     if (this.isClosed() || this.ptyExited) return;
+    const readyTimer = startUxTimer();
+    const autoStartProject =
+      options.autoStartProject === true || this.autoStartProjectOnNextConnect;
+    this.autoStartProjectOnNextConnect = false;
 
     try {
       const projectState =
         redux.getProjectsStore?.()?.get_state?.(this.project_id) ??
         redux.getStore("projects")?.get_state?.(this.project_id);
+      const readiness = classifyProjectReadinessUxSegment(
+        this.project_id,
+        projectState,
+      );
       if (projectState === "starting") {
         this.set_connection_status("disconnected");
         this.scheduleProjectStartingRetry();
         return;
       }
       if (projectState !== "running") {
-        await this.showManualStartMessage();
-        return;
+        this.set_connection_status("disconnected");
+        if (!autoStartProject) {
+          await this.showManualStartMessage();
+          return;
+        }
+        if (!this.manualStartMessageShown) {
+          this.terminal.reset();
+          await this.handleDataFromProject(
+            connectingTerminalMessage(this.terminal.cols),
+          );
+        }
+        if (
+          !(await ensure_project_running(this.project_id, "use this terminal"))
+        ) {
+          await this.showManualStartMessage();
+          return;
+        }
       }
       this.clearProjectStartingRetry();
       this.manualStartMessageShown = false;
@@ -845,6 +887,19 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         }
         this.setTransientReconnectStyle(false);
         this.ptyInputReady = true;
+        recordUxLatencyEvent({
+          event_type: "project_ready",
+          metric: "project_terminal_ready",
+          duration_ms: elapsedUxMs(readyTimer),
+          project_id: this.project_id,
+          path_ext: filename_extension(this.path ?? ""),
+          segment: readiness.segment,
+          details: {
+            command: this.command ?? "bash",
+            initial_project_state: readiness.initial_state ?? "unknown",
+            provisioned: readiness.provisioned as any,
+          },
+        });
         this.flushWriteBuffer();
         pty.once("ready", () => {
           this.flushWriteBuffer();

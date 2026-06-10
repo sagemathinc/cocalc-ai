@@ -3,13 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import BlockMarkdownEditor from "@cocalc/frontend/editors/slate/block-markdown-editor";
 import { EditableMarkdown as PlainMarkdownEditor } from "@cocalc/frontend/editors/slate/editable-markdown";
 import type { EditorComponentProps } from "@cocalc/frontend/frame-editors/frame-tree/types";
 
-const ENABLE_PAGED_BLOCK_MARKDOWN_EDITOR = false;
-
-function PlainMarkdownFrameEditor(props: EditorComponentProps) {
+export function EditableMarkdown(props: EditorComponentProps) {
   return (
     <PlainMarkdownEditor
       {...(props as any)}
@@ -22,8 +19,3 @@ function PlainMarkdownFrameEditor(props: EditorComponentProps) {
     />
   );
 }
-
-export const EditableMarkdown: typeof BlockMarkdownEditor =
-  ENABLE_PAGED_BLOCK_MARKDOWN_EDITOR
-    ? BlockMarkdownEditor
-    : (PlainMarkdownFrameEditor as typeof BlockMarkdownEditor);

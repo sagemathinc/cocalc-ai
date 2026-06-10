@@ -15,7 +15,10 @@ import {
 } from "antd";
 import { useEffect, useState } from "react";
 
-import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
+import {
+  FreshAuthModal,
+  isFreshAuthRequiredError,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { registerPasskey } from "@cocalc/frontend/auth/passkeys";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { SettingBox } from "@cocalc/frontend/components";
@@ -101,6 +104,7 @@ export default function TwoFactorAuthSetting({ showHeader = true }: Props) {
     | { type: "rotate" }
     | null
   >(null);
+  const hasAuthenticatorApp = status?.factor_type === "totp";
 
   async function loadStatus() {
     setLoading(true);
@@ -139,9 +143,23 @@ export default function TwoFactorAuthSetting({ showHeader = true }: Props) {
       setRecoveryCodes([]);
       await loadStatus();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       setError(`${err}`);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function startSetupWithFreshAuthFallback() {
+    try {
+      await startSetup();
+    } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        setError("");
+        setFreshAction({ type: "setup-totp" });
+      }
     }
   }
 
@@ -399,6 +417,15 @@ export default function TwoFactorAuthSetting({ showHeader = true }: Props) {
           </Flex>
         ) : status?.enabled ? (
           <Space wrap>
+            {!hasAuthenticatorApp ? (
+              <Button
+                type="primary"
+                disabled={busy}
+                onClick={startSetupWithFreshAuthFallback}
+              >
+                {busy ? "Starting..." : "Set up authenticator app"}
+              </Button>
+            ) : undefined}
             <Button onClick={() => setFreshAction({ type: "add-passkey" })}>
               Add passkey
             </Button>

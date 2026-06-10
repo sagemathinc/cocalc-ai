@@ -43,13 +43,27 @@ RUNTIME_SSH_DIR="$RUNTIME_HOME/.ssh"
 RUNTIME_MANAGED_SSH_DIR="$RUNTIME_HOME/${INTERNAL_SSH_CONFIG}"
 RUNTIME_SSHD_DIR="$RUNTIME_HOME/${SSHD_CONFIG}"
 
+if [ "$(id -u)" != "0" ]; then
+  echo "project ssh startup must run as root" >&2
+  exit 1
+fi
+
 mkdir -p /etc/dropbear
 mkdir -p "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"
 
 chmod 700 "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"
 chmod og-rwx -R "$RUNTIME_SSH_DIR"
 
-dropbear -p \${COCALC_SSHD_PORT:=22} -e -s -a -R
+DROPBEAR="$(command -v dropbear || true)"
+if [ -z "$DROPBEAR" ] && [ -x /opt/cocalc/bin2/dropbear ]; then
+  DROPBEAR=/opt/cocalc/bin2/dropbear
+fi
+if [ -z "$DROPBEAR" ]; then
+  echo "dropbear not found" >&2
+  exit 1
+fi
+
+"$DROPBEAR" -p \${COCALC_SSHD_PORT:=22} -e -s -a -R
 
 SFTP_SERVER="$(command -v sftp-server || true)"
 if [ -z "$SFTP_SERVER" ]; then

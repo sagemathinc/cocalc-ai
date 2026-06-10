@@ -17,16 +17,23 @@ function hasBundleMarkers(dir) {
   );
 }
 
-function resolveBundleDir(initialDir, fallbackDir) {
+function addCandidate(candidates, dir) {
+  if (!dir || candidates.includes(dir)) {
+    return;
+  }
+  candidates.push(dir);
+}
+
+function resolveBundleDir(initialDir, fallbackDirs) {
   const candidates = [];
   if (initialDir) {
-    candidates.push(initialDir);
-    candidates.push(join(initialDir, ".."));
+    addCandidate(candidates, initialDir);
+    addCandidate(candidates, join(initialDir, ".."));
   }
-  if (fallbackDir) {
-    candidates.push(fallbackDir);
+  for (const fallbackDir of fallbackDirs ?? []) {
+    addCandidate(candidates, fallbackDir);
   }
-  candidates.push(process.cwd());
+  addCandidate(candidates, process.cwd());
 
   for (const candidate of candidates) {
     if (hasBundleMarkers(candidate)) {
@@ -34,7 +41,7 @@ function resolveBundleDir(initialDir, fallbackDir) {
     }
   }
 
-  return initialDir ?? fallbackDir ?? process.cwd();
+  return initialDir ?? fallbackDirs?.[0] ?? process.cwd();
 }
 
 function prependPath(dir) {
@@ -57,12 +64,14 @@ function prependPath(dir) {
     if (process.env.COCALC_OPEN_BROWSER == null) {
       process.env.COCALC_OPEN_BROWSER = "1";
     }
+    process.env.COCALC_LAUNCHPAD_API_V2_ROUTES = "1";
 
-    const bundledRootCandidate = join(__dirname, "..", "..", "..");
-    const bundleDir = resolveBundleDir(
-      process.env.COCALC_BUNDLE_DIR,
-      bundledRootCandidate,
-    );
+    const bundleDir = resolveBundleDir(process.env.COCALC_BUNDLE_DIR, [
+      // ncc output: build/bundle/bundle/index.js with assets in build/bundle.
+      join(__dirname, ".."),
+      // Source checkout: packages/launchpad/bin/start.js.
+      join(__dirname, "..", "..", ".."),
+    ]);
     process.env.COCALC_BUNDLE_DIR = bundleDir;
     const pgliteBundleCandidates = [
       join(bundleDir, "pglite"),

@@ -886,12 +886,23 @@ describe("membership package managers", () => {
       expect(screen.getByText("Students")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByText("Archive pool"));
+    const clickArchivePoolAction = () =>
+      fireEvent.click(
+        screen.getAllByRole("button", { name: /Archive pool/ })[0],
+      );
+
+    clickArchivePoolAction();
 
     await waitFor(() => {
-      expect(screen.getByText("Archive")).toBeTruthy();
+      expect(screen.getByText("Archive Students?")).toBeTruthy();
     });
-    fireEvent.click(screen.getByText("Archive"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(archiveSiteLicensePool).not.toHaveBeenCalled();
+
+    const archiveButtons = screen.getAllByRole("button", {
+      name: /Archive pool/,
+    });
+    fireEvent.click(archiveButtons[archiveButtons.length - 1]);
 
     await waitFor(() => {
       expect(archiveSiteLicensePool).toHaveBeenCalledWith({
@@ -1414,6 +1425,54 @@ describe("membership package managers", () => {
       });
     });
     expect(await screen.findByText("Ada Lovelace")).toBeTruthy();
+  });
+
+  it("confirms before removing a site-license manager", async () => {
+    isAdmin = true;
+    const overview = makeSiteLicenseOverview({
+      managers: [
+        {
+          id: "manager-1",
+          site_license_id: "license-1",
+          account_id: "manager-1",
+          role: "manager",
+        },
+      ],
+    });
+    listSiteLicenseOverviews
+      .mockResolvedValueOnce([overview])
+      .mockResolvedValueOnce([{ ...overview, managers: [] }]);
+    removeSiteLicenseManager.mockResolvedValue(undefined);
+
+    render(<SiteLicenseAdminPanel tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Campus License")).toBeTruthy();
+    });
+
+    fireEvent.click(getSiteLicenseSummaryRow("Campus License"));
+
+    await waitFor(() => {
+      expect(screen.getByText("manager-1")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Remove manager-1 as a manager?")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(removeSiteLicenseManager).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove manager" }));
+
+    await waitFor(() => {
+      expect(removeSiteLicenseManager).toHaveBeenCalledWith({
+        site_license_id: "license-1",
+        target_account_id: "manager-1",
+      });
+    });
   });
 
   it("requires fresh auth before reviewing site-license pool requests", async () => {

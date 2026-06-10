@@ -3,7 +3,7 @@
 // without having to run that project.
 
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   chmod,
@@ -31,6 +31,7 @@ import {
 } from "@cocalc/conat/files/file-server";
 import { createServer as createReadServer } from "@cocalc/conat/files/read";
 import { PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE } from "@cocalc/conat/files/file-download";
+import { createServer as createWriteServer } from "@cocalc/conat/files/write";
 import {
   ConatError,
   type Client as ConatClient,
@@ -3892,6 +3893,49 @@ export async function ensureFileDownloadReadServer({
         throw err;
       });
     fileDownloadReadServers.set(project_id, server);
+  }
+  await server;
+}
+
+export const PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE = ":project-host";
+
+const fileUploadWriteServers = new Map<string, Promise<void> | undefined>();
+
+export async function ensureFileUploadWriteServer({
+  client,
+  project_id,
+}: {
+  client: ConatClient;
+  project_id: string;
+}) {
+  let server = fileUploadWriteServers.get(project_id);
+  if (server == null) {
+    server = createWriteServer({
+      client,
+      project_id,
+      name: PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
+      createWriteStream: async (containerPath: string) => {
+        const { path: home } = await getVolume(project_id);
+        const fs = createProjectSandboxFilesystem({
+          project_id,
+          home,
+          rootfs: getRootfsMountpoint(project_id),
+          scratch: getScratchMountpoint(project_id),
+          sharedScratch: getSharedScratchMountpoint(),
+          deleteSnapshot: async (name: string) =>
+            await deleteSnapshot({ project_id, name }),
+        });
+        const absPath = await fs.safeAbsPath(containerPath);
+        await mkdir(dirname(absPath), { recursive: true });
+        return createWriteStream(absPath);
+      },
+    })
+      .then(() => undefined)
+      .catch((err) => {
+        fileUploadWriteServers.delete(project_id);
+        throw err;
+      });
+    fileUploadWriteServers.set(project_id, server);
   }
   await server;
 }

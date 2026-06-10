@@ -299,8 +299,9 @@ This should be presented as a simplification:
 ## Open Decisions
 
 1. Should the top navbar balance button show for every signed-in non-Lite user,
-   or only when `stripe_enabled || balanceAlert || balance !== 0`?
+   or only when `stripe_enabled || balanceAlert || balance !== 0`? (ANS: the latter.  It's also configurable in account settings to disable it.)
 2. Should purchase history be in the Billing group even when Stripe is disabled,
-   or under Membership/Credit to avoid implying card billing?
+   or under Membership/Credit to avoid implying card billing?  (ANS: I don't know; it's easy to move later so just select one.  Billing is probably fine for now.)
 3. Should `commercial` survive temporarily as `commercial_analytics_enabled`, or
-   should analytics be controlled only by Google Analytics being configured?
+   should analytics be controlled only by Google Analytics being configured?  (ANS: remove commercial entirely.)
+

@@ -121,6 +121,10 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
 
 export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
   initAuth({ app, AUTH_TOKEN, isHttps });
+  if (isApiV2Enabled()) {
+    const { createApiV2Router } = await import("@cocalc/http-api");
+    app.use("/api/v2", createApiV2Router());
+  }
 
   let pathToStaticAssets;
   if (fs.existsSync(join(STATIC_PATH, "app.html"))) {
@@ -197,6 +201,14 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
     params.set("target", target);
     res.redirect(`${redirectBase}?${params.toString()}`);
   });
+}
+
+export function isApiV2Enabled(): boolean {
+  const value = `${process.env.COCALC_LITE_API_V2 ?? ""}`.trim().toLowerCase();
+  if (value === "0" || value === "false" || value === "no") {
+    return false;
+  }
+  return `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() !== "plus";
 }
 
 function resolvePublicAssetsPath(): string | undefined {

@@ -132,6 +132,8 @@ import { EditorLoadError } from "../../file-editors-error";
 import ViewerFilePreview from "@cocalc/frontend/project/viewer-file-preview";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { workingDirectoryForProjectFile as effectiveWorkingDirectoryForProjectFile } from "@cocalc/frontend/project/workspaces/chat-working-directory";
+import { getRuntimeWorkspaceRecords } from "@cocalc/frontend/project/workspaces/records-runtime";
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
 import { canonicalSyncPath } from "@cocalc/frontend/project/sync-path";
 import {
@@ -834,6 +836,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return isVirtualListingPath(path);
   };
 
+  private workingDirectoryForProjectFile = (path: string): string => {
+    return effectiveWorkingDirectoryForProjectFile(path, {
+      projectHomeDirectory: this.getHomeDirectoryForPaths(),
+      workspaceRecords: getRuntimeWorkspaceRecords(this.project_id),
+    });
+  };
+
   private toAbsoluteCurrentPath = (path: string): string => {
     return toAbsoluteCurrentPath({
       path,
@@ -1171,8 +1180,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         if (opts.change_history) {
           this.push_state(this.toUrlPath(path, false));
         }
-        const fileDir = misc.path_split(path).head;
-        this.set_current_path(fileDir);
+        this.set_current_path(this.workingDirectoryForProjectFile(path));
 
         const info = store.get("open_files").getIn([path, "component"]) as any;
         if (info == null) {

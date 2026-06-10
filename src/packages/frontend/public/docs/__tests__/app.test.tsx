@@ -151,8 +151,8 @@ describe("public/docs", () => {
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText(/Create projects, choose runtime settings/),
-    ).not.toBeNull();
+      screen.queryByText(/Create projects, choose runtime settings/),
+    ).toBeNull();
     expect(screen.getAllByText("Self Hosting").length).toBeGreaterThan(0);
     expect(
       screen
@@ -162,9 +162,7 @@ describe("public/docs", () => {
             link.getAttribute("href") === "/docs/self-hosting/cocalc-star",
         ),
     ).toBe(true);
-    expect(
-      screen.getAllByRole("link", { name: /Start chapter/ })[0],
-    ).toHaveAttribute("href", "/docs/projects/create-project");
+    expect(screen.queryByRole("link", { name: /Start chapter/ })).toBeNull();
     expect(
       screen.getAllByRole("link", { name: /Project secrets/ })[0],
     ).toHaveAttribute("href", "/docs/projects/project-secrets");

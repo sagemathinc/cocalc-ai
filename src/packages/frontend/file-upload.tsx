@@ -19,6 +19,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import { defaults, is_array, merge } from "@cocalc/util/misc";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 // very large upload limit -- should be plenty?
 // there is no cost for ingress, and as cocalc is a data platform
@@ -128,6 +129,12 @@ function postUrl(project_id: string, path: string): string {
   );
 }
 
+function projectHostUploadUrl(project_id: string, path: string): string {
+  return `/${encodeURIComponent(project_id)}/upload?path=${encodeURIComponent(
+    path,
+  )}`;
+}
+
 interface FileUploadProps {
   project_id: string;
   current_path: string;
@@ -220,14 +227,65 @@ export function FileUploadWrapper({
   const zone_ref = useRef<any>(null);
   const dropzone = useRef<Dropzone>(null);
   const mouseEvt = useRef<any>(null);
+  const configuredUrl = (config as { url?: unknown }).url;
+  const hasConfiguredUrl =
+    typeof configuredUrl === "string" || typeof configuredUrl === "function";
+  const [uploadUrl, setUploadUrl] = useState<string | undefined>(() =>
+    project_id && !hasConfiguredUrl
+      ? undefined
+      : postUrl(project_id, dest_path),
+  );
+  const [uploadWithCredentials, setUploadWithCredentials] = useState(false);
+
+  useEffect(() => {
+    let canceled = false;
+    if (hasConfiguredUrl) {
+      setUploadUrl(undefined);
+      setUploadWithCredentials(false);
+      return;
+    }
+    if (!project_id) {
+      setUploadUrl(postUrl(project_id, dest_path));
+      setUploadWithCredentials(false);
+      return;
+    }
+    setUploadUrl(undefined);
+    setUploadWithCredentials(false);
+    void (async () => {
+      try {
+        await webapp_client.conat_client.ensureProjectHostBrowserSessionForProject(
+          {
+            project_id,
+          },
+        );
+        const routedUrl =
+          await webapp_client.conat_client.routeProjectHostHttpUrl({
+            project_id,
+            url: projectHostUploadUrl(project_id, dest_path),
+          });
+        if (canceled) return;
+        setUploadUrl(routedUrl);
+        setUploadWithCredentials(true);
+      } catch {
+        if (canceled) return;
+        setUploadUrl(postUrl(project_id, dest_path));
+        setUploadWithCredentials(false);
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [project_id, dest_path, hasConfiguredUrl]);
 
   function get_djs_config() {
+    const url = hasConfiguredUrl ? configuredUrl : uploadUrl;
     // NOTE: Chunking is absolutely critical to get around hard limits in cloudflare!!
     // See https://github.com/sagemathinc/cocalc/issues/3716
     const with_defaults = defaults(
       config,
       {
-        url: postUrl(project_id, dest_path),
+        url,
+        withCredentials: uploadWithCredentials,
         previewsContainer: preview_ref.current,
         previewTemplate: ReactDOMServer.renderToStaticMarkup(
           preview_template?.() ?? <DropzonePreview />,
@@ -281,6 +339,9 @@ export function FileUploadWrapper({
     } else {
       create_dropzone();
       if (dropzone.current != null) {
+        if (uploadUrl == null && !hasConfiguredUrl) {
+          return;
+        }
         // see https://github.com/sagemathinc/cocalc/issues/2072
         dropzone.current.options = $.extend(
           true,
@@ -351,6 +412,9 @@ export function FileUploadWrapper({
 
   function create_dropzone(): void {
     if (dropzone.current == null && !disabled && zone_ref.current != null) {
+      if (uploadUrl == null && !hasConfiguredUrl) {
+        return;
+      }
       const dropzone_node = zone_ref.current;
       const config = get_djs_config();
       dropzone.current = new Dropzone(dropzone_node, config);

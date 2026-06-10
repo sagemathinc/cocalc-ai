@@ -28,6 +28,7 @@ import { Parallel } from "./parallel";
 import { StudentProjectRootfsConfig } from "./student-project-rootfs";
 import StudentPay from "./student-pay";
 import { COLORS } from "@cocalc/util/theme";
+import { getEmailInviteValidationError } from "./email-invite-validation";
 
 interface Props {
   name: string;
@@ -171,10 +172,23 @@ export function EmailInvitation({ actions, name }) {
   const [error, setError] = useState<string>("");
   const store = useStore<CourseStore>({ name });
 
-  const check_email_body = debounce(() => setError(""), 500, {
-    leading: true,
-    trailing: true,
-  });
+  const check_email_body = debounce(
+    (body: string) => setError(getEmailInviteValidationError(body)),
+    500,
+    {
+      leading: true,
+      trailing: true,
+    },
+  );
+
+  function saveEmailInvite(body: string): void {
+    const nextError = getEmailInviteValidationError(body);
+    setError(nextError);
+    if (nextError) {
+      return;
+    }
+    actions.configuration.set_email_invite(body);
+  }
 
   return (
     <Card
@@ -198,7 +212,7 @@ export function EmailInvitation({ actions, name }) {
           attach_to={name}
           rows={6}
           default_value={store.get_email_invite()}
-          on_save={(body) => actions.configuration.set_email_invite(body)}
+          on_save={saveEmailInvite}
           save_disabled={!!error}
           on_change={check_email_body}
           on_cancel={() => setError("")}

@@ -6,6 +6,16 @@ jest.mock("@cocalc/frontend/alerts", () => ({
 }));
 
 describe("downloadProjectFile", () => {
+  let dateNowSpy: jest.SpyInstance<number, []>;
+
+  beforeEach(() => {
+    dateNowSpy = jest.spyOn(Date, "now").mockReturnValue(1781039539671);
+  });
+
+  afterEach(() => {
+    dateNowSpy.mockRestore();
+  });
+
   it("downloads through the project-host file route without requiring project start", async () => {
     const logAction = jest.fn();
     const routeProjectHostHttpUrl = jest

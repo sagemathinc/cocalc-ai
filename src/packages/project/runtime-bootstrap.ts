@@ -25,7 +25,7 @@ import { getLogger } from "./logger";
 
 const logger = getLogger("runtime-bootstrap");
 
-type RuntimeIdentity = {
+export type RuntimeIdentity = {
   user: string;
   uid: number;
   gid: number;
@@ -608,9 +608,11 @@ async function ensureRuntimeFiles(runtime: RuntimeIdentity): Promise<void> {
   });
 }
 
-export async function maybeActivateRuntimeUser(): Promise<void> {
+export async function prepareRuntimeUser(): Promise<
+  RuntimeIdentity | undefined
+> {
   if (!shouldBootstrapRuntimeUser()) {
-    return;
+    return undefined;
   }
   const runtime = parseRuntimeIdentity();
   runtime.shell = await resolveRuntimeShell(runtime.shell);
@@ -634,6 +636,13 @@ export async function maybeActivateRuntimeUser(): Promise<void> {
   process.env.COCALC_USERNAME = runtime.user;
   process.env.SHELL = runtime.shell;
   process.chdir(runtime.home);
+  return runtime;
+}
+
+export function dropToRuntimeUser(runtime: RuntimeIdentity | undefined): void {
+  if (runtime == null) {
+    return;
+  }
   if (typeof process.setgroups === "function") {
     process.setgroups([runtime.gid]);
   }
@@ -656,4 +665,8 @@ export async function maybeActivateRuntimeUser(): Promise<void> {
     gid: process.getgid?.(),
     home: process.env.HOME,
   });
+}
+
+export async function maybeActivateRuntimeUser(): Promise<void> {
+  dropToRuntimeUser(await prepareRuntimeUser());
 }

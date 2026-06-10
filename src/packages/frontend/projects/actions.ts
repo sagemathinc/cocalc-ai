@@ -33,7 +33,7 @@ import type {
   AccountProjectListWindowRow,
   AccountProjectListWindowSort,
 } from "@cocalc/conat/hub/api/projects";
-import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
+import { defaults, is_valid_uuid_string, uuid } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
 import { switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -65,6 +65,11 @@ import {
   recordProjectionRepairFailure,
 } from "@cocalc/frontend/projection-diagnostics";
 import { writeAndWaitForProjection } from "@cocalc/frontend/projection-ack";
+import {
+  elapsedUxMs,
+  recordUxLatencyEvent,
+  startUxTimer,
+} from "@cocalc/frontend/monitoring/ux-latency";
 
 import type {
   CourseInfo,
@@ -146,6 +151,12 @@ export function buildProjectRecordFromFeedRow(
 type ProjectIndexBootstrapRow = AccountProjectListWindowRow & {
   account_id?: string | null;
 };
+
+type ProjectStartUxSegment =
+  | "warm_provisioned"
+  | "project_restore"
+  | "host_start_or_unknown"
+  | "unknown";
 
 function buildProjectRecordFromProjectIndexRow({
   row,
@@ -1410,6 +1421,55 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const projectedState =
       resp?.query?.account_project_index?.[0]?.state_summary?.state;
     return states.includes(projectedState);
+  }
+
+  private async projectedProjectStopMatches({
+    project_id,
+    requestedAtMs,
+  }: {
+    project_id: string;
+    requestedAtMs: number;
+  }): Promise<boolean> {
+    const account_id = this.getAccountId();
+    if (!account_id || !project_id || !webapp_client.is_signed_in()) {
+      return false;
+    }
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          account_project_index: [
+            {
+              account_id,
+              project_id,
+              state_summary: null,
+              updated_at: null,
+            },
+          ],
+        },
+        options: [{ limit: 1 }],
+      });
+    } catch (err) {
+      console.warn("project stop projection check failed", {
+        project_id,
+        err,
+      });
+      return false;
+    }
+    const row = resp?.query?.account_project_index?.[0];
+    const stateSummary = row?.state_summary;
+    const projectedState = stateSummary?.state;
+    if (projectedState === "opened" || projectedState === "stopped") {
+      return true;
+    }
+    const projectedMs =
+      stateTimeMs(stateSummary) ?? dateValueMs(row?.updated_at);
+    const isFreshTransition =
+      projectedMs != null && projectedMs >= requestedAtMs - 1000;
+    return (
+      isFreshTransition &&
+      (projectedState === "starting" || projectedState === "running")
+    );
   }
 
   private async projectedProjectHostMatches({
@@ -3404,6 +3464,96 @@ export class ProjectsActions extends Actions<ProjectsState> {
     await this.redux.getProjectActions(project_id).log(entry);
   }
 
+  private classifyProjectStartUxSegment({
+    project_id,
+    initialState,
+  }: {
+    project_id: string;
+    initialState?: string;
+  }): ProjectStartUxSegment {
+    if (initialState === "archived") {
+      return "project_restore";
+    }
+    const provisioned = store.getIn(["project_map", project_id, "provisioned"]);
+    if (provisioned === false) {
+      return "project_restore";
+    }
+    const host_id = store.getIn(["project_map", project_id, "host_id"]);
+    if (host_id && provisioned !== false) {
+      return "warm_provisioned";
+    }
+    return "host_start_or_unknown";
+  }
+
+  private recordProjectStartUxLatencyWhenRunning({
+    project_id,
+    timer,
+    client_event_id,
+    segment,
+    op_id,
+    details,
+    deadline_ms = 20 * 60 * 1000,
+  }: {
+    project_id: string;
+    timer: number;
+    client_event_id: string;
+    segment: ProjectStartUxSegment;
+    op_id?: string;
+    details?: Record<string, unknown>;
+    deadline_ms?: number;
+  }): void {
+    const started = Date.now();
+    const poll = () => {
+      const state = store.getIn([
+        "project_map",
+        project_id,
+        "state",
+        "state",
+      ]) as string | undefined;
+      if (state === "running") {
+        const duration_ms = elapsedUxMs(timer);
+        recordUxLatencyEvent({
+          event_type: "project_start",
+          metric: "project_start_running",
+          duration_ms,
+          project_id,
+          client_event_id,
+          segment,
+          details: {
+            ...details,
+            observed_state: state,
+          },
+        });
+        void this.project_log(project_id, {
+          event: "project_started",
+          duration_ms,
+          op_id,
+          stage: segment,
+          ...store.classify_project(project_id),
+        });
+        return;
+      }
+      if (Date.now() - started >= deadline_ms) {
+        recordUxLatencyEvent({
+          event_type: "project_start",
+          metric: "project_start_running_timeout",
+          duration_ms: elapsedUxMs(timer),
+          project_id,
+          client_event_id,
+          segment,
+          details: {
+            ...details,
+            observed_state: state,
+          },
+        });
+        return;
+      }
+      const timerId = setTimeout(poll, state === "starting" ? 250 : 1000);
+      (timerId as any).unref?.();
+    };
+    poll();
+  }
+
   // return true, if it actually started the project
   start_project = reuseInFlight(
     async (
@@ -3463,7 +3613,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
         });
       }
 
-      const t0 = webapp_client.server_time().getTime();
+      const uxTimer = startUxTimer();
+      const uxClientEventId = uuid();
+      const uxSegment = this.classifyProjectStartUxSegment({
+        project_id,
+        initialState: lifecycleState,
+      });
+      const uxDetails = {
+        autostart: opts.autostart === true,
+        initial_state: lifecycleState,
+        host_id:
+          (store.getIn(["project_map", project_id, "host_id"]) as
+            | string
+            | undefined) ?? undefined,
+        provisioned: store.getIn(["project_map", project_id, "provisioned"]),
+      };
       // make an action request:
       this.project_log(project_id, {
         event: "project_start_requested",
@@ -3471,30 +3635,25 @@ export class ProjectsActions extends Actions<ProjectsState> {
       const actions = redux.getProjectActions(project_id);
       try {
         this.optimisticProjectStateUpdate(project_id, "starting");
-        const resp = await writeAndWaitForProjection({
-          consumer: "projects",
-          id: `project:${project_id}:start`,
-          name: "project.start",
-          write: () =>
-            webapp_client.conat_client.hub.projects.start({
-              project_id,
-              ...(opts.autostart ? { autostart: true } : {}),
-              wait: false,
-            }),
-          matchesProjection: () =>
-            this.projectedProjectStateMatches({
-              project_id,
-              states: ["starting", "running"],
-            }),
-          repair: () =>
-            this.repairProjectProjection({
-              kind: "project-ids",
-              project_ids: [project_id],
-              reason: "project-start",
-            }),
+        const resp = await webapp_client.conat_client.hub.projects.start({
+          project_id,
+          ...(opts.autostart ? { autostart: true } : {}),
+          wait: false,
         });
         actions.trackStartOp(resp);
         opts.onStartOp?.(resp);
+        this.recordProjectStartUxLatencyWhenRunning({
+          project_id,
+          timer: uxTimer,
+          client_event_id: uxClientEventId,
+          segment: uxSegment,
+          op_id: resp?.op_id,
+          details: {
+            ...uxDetails,
+            op_id: resp?.op_id,
+          },
+          deadline_ms: opts.waitTimeoutMs,
+        });
         const host_id = store.getIn(["project_map", project_id, "host_id"]) as
           | string
           | undefined;
@@ -3511,6 +3670,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
           }
         }
       } catch (err) {
+        recordUxLatencyEvent({
+          event_type: "project_start",
+          metric: "project_start_request_failed",
+          duration_ms: elapsedUxMs(uxTimer),
+          project_id,
+          client_event_id: uxClientEventId,
+          segment: uxSegment,
+          details: {
+            ...uxDetails,
+            error: `${err}`,
+          },
+        });
         if (extractRuntimeSponsorDenial(err)) {
           actions.setState({ control_error: "" });
         } else {
@@ -3529,12 +3700,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
         project_id,
         optimisticState: "starting",
         reason: "start_project",
-      });
-
-      this.project_log(project_id, {
-        event: "project_started",
-        duration_ms: webapp_client.server_time().getTime() - t0,
-        ...store.classify_project(project_id),
       });
 
       return true;
@@ -3972,9 +4137,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
           write: () =>
             webapp_client.conat_client.hub.projects.stop({ project_id }),
           matchesProjection: () =>
-            this.projectedProjectStateMatches({
+            this.projectedProjectStopMatches({
               project_id,
-              states: ["opened"],
+              requestedAtMs: t0,
             }),
           repair: () =>
             this.repairProjectProjection({

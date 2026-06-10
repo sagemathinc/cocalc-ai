@@ -45,7 +45,11 @@ export interface Actions {
   ensure_syncstring_is_saved?: () => Promise<void>;
   save_editor_state?: (id: string, new_editor_state?: any) => void;
   set_cursor_locs?: (locs: any[]) => void;
-  set_value?: (value: string) => void;
+  set_value?: (
+    value: string,
+    do_not_exit_undo_mode?: boolean,
+    localSource?: string,
+  ) => void;
   set_slate_value?: (value: Descendant[]) => void;
   syncstring_commit?: () => void;
   get_syncstring?: () => SyncString;
@@ -70,7 +74,5 @@ export interface Actions {
     id?: string,
     context?: { selection?: Range | null; slateValue?: Descendant[] },
   ) => void;
-  registerBlockEditorControl?: (id: string, control: any) => void;
-  unregisterBlockEditorControl?: (id: string) => void;
   _syncstring?: any;
 }

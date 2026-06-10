@@ -91,6 +91,7 @@ import {
 } from "@cocalc/server/external-credentials/routing";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { isAiLaunchDisabled } from "@cocalc/server/launch/kill-switches";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { is_valid_email_address } from "@cocalc/util/misc";
@@ -118,6 +119,8 @@ import type {
   SiteSetupStep,
   SiteSetupStepState,
   StarServerInfo,
+  UxLatencyEventInput,
+  UxLatencySummary,
 } from "@cocalc/conat/hub/api/system";
 import {
   bootstrapCloudflareConfiguration as bootstrapCloudflareConfiguration0,
@@ -241,6 +244,10 @@ import {
 } from "@cocalc/server/lro/worker-config";
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-host-defaults";
+import {
+  getUxLatencySummary as getUxLatencySummary0,
+  recordUxLatencyEvent as recordUxLatencyEvent0,
+} from "@cocalc/server/monitoring/ux-latency";
 import { getAccountProjectIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-project-index-maintenance";
 import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-collaborator-index-maintenance";
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
@@ -1490,6 +1497,27 @@ export async function getBayLoad({
       }),
     },
   };
+}
+
+export async function recordUxLatencyEvent({
+  account_id,
+  event,
+}: {
+  account_id?: string;
+  event: UxLatencyEventInput;
+}): Promise<void> {
+  await recordUxLatencyEvent0({ account_id, event });
+}
+
+export async function getUxLatencySummary({
+  account_id,
+  window_minutes,
+}: {
+  account_id?: string;
+  window_minutes?: number;
+} = {}): Promise<UxLatencySummary> {
+  await assertAdmin(account_id);
+  return await getUxLatencySummary0({ window_minutes });
 }
 
 export async function getBayBackups({
@@ -3789,30 +3817,32 @@ export async function getSiteSetupStatus({
         "The first public recipe can start as Ubuntu with Jupyter and LaTeX packages installed.",
       ],
     }),
-    setupStep({
-      id: "smoke-test",
-      title: "Smoke Test",
-      state:
-        healthyProjectHosts > 0 && rootfs.official > 0 ? "manual" : "blocked",
-      summary:
-        healthyProjectHosts > 0 && rootfs.official > 0
-          ? "Create a project, start it on the official RootFS, and verify terminal/Jupyter manually."
-          : "Smoke testing is blocked until a host and official RootFS exist.",
-    }),
+    // TODO: restore this when Site Setup can persist a browser/project smoke-test result.
+    // setupStep({
+    //   id: "smoke-test",
+    //   title: "Smoke Test",
+    //   state:
+    //     healthyProjectHosts > 0 && rootfs.official > 0 ? "manual" : "blocked",
+    //   summary:
+    //     healthyProjectHosts > 0 && rootfs.official > 0
+    //       ? "Create a project, start it on the official RootFS, and verify terminal/Jupyter manually."
+    //       : "Smoke testing is blocked until a host and official RootFS exist.",
+    // }),
   ];
   steps[4] = emailSetupState(settings);
-  steps.push(
-    setupStep({
-      id: "mark-ready",
-      title: "Mark Site Ready",
-      state: "manual",
-      summary:
-        "Explicit completion is not persisted yet; this first implementation only derives setup readiness.",
-      details: [
-        "The follow-up write path should require fresh admin auth and store a small site setup state record.",
-      ],
-    }),
-  );
+  // TODO: restore this when explicit completion is persisted with fresh auth.
+  // steps.push(
+  //   setupStep({
+  //     id: "mark-ready",
+  //     title: "Mark Site Ready",
+  //     state: "manual",
+  //     summary:
+  //       "Explicit completion is not persisted yet; this first implementation only derives setup readiness.",
+  //     details: [
+  //       "The follow-up write path should require fresh admin auth and store a small site setup state record.",
+  //     ],
+  //   }),
+  // );
 
   return buildSiteSetupStatus({ counts, profile, steps });
 }
@@ -5451,6 +5481,7 @@ export async function getCodexPaymentSource({
   const settings = await getServerSettings();
   const hasSiteApiKey =
     to_bool(settings.openai_enabled) &&
+    !(await isAiLaunchDisabled()) &&
     !!`${settings.openai_api_key ?? ""}`.trim();
   const [hasSubscription, hasProjectApiKeyStored, hasAccountApiKeyStored] =
     await Promise.all([

@@ -69,6 +69,8 @@ import {
   rehomeProjectOnOwningBay,
 } from "@cocalc/server/projects/rehome";
 import { assertProjectNotHardDeleting } from "@cocalc/server/projects/hard-delete-state";
+import { mergeStartProjectTimings } from "@cocalc/server/projects/start-timings";
+import { assertFreeProjectStartAllowed } from "@cocalc/server/launch/kill-switches";
 
 const LRO_TERMINAL_STATUSES = new Set<LroStatus>([
   "succeeded",
@@ -127,6 +129,11 @@ async function assertCurrentProjectOwnership({
 export async function handleProjectControlStart(
   req: ProjectControlStartRequest,
 ): Promise<void> {
+  const controlStarted = Date.now();
+  const controlTimings: Record<string, number> = {};
+  const mark = (name: string, started: number) => {
+    controlTimings[`control.${name}`] = Date.now() - started;
+  };
   await assertCurrentProjectOwnership({
     project_id: req.project_id,
     epoch: req.epoch,
@@ -156,9 +163,14 @@ export async function handleProjectControlStart(
     req.managed_egress_override === "admin-host-drain";
   try {
     if (!bypassRuntimeSlotAdmission) {
+      const admissionStarted = Date.now();
       if (req.autostart) {
         assertProjectAutostartEnabled({ sponsor });
       }
+      await assertFreeProjectStartAllowed({
+        actor_account_id: req.account_id,
+        sponsor_account_id: sponsor.sponsor_account_id,
+      });
       await assertCanStartUsingRuntimeSponsor({
         sponsor,
         account_id: req.account_id,
@@ -173,14 +185,18 @@ export async function handleProjectControlStart(
         ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
       });
       reservedSlot = true;
+      mark("admission_and_slot_reserve", admissionStarted);
     }
+    const projectStartStarted = Date.now();
     await project.start({
       account_id: req.account_id,
       lro_op_id: req.lro_op_id,
       managed_egress_override: req.managed_egress_override,
       restore_backup_id: req.restore_backup_id,
     });
+    mark("project_start", projectStartStarted);
     if (!bypassRuntimeSlotAdmission) {
+      const heartbeatStarted = Date.now();
       await heartbeatProjectRuntimeSlot({
         sponsor_account_id: sponsor.sponsor_account_id,
         project_id: req.project_id,
@@ -188,6 +204,7 @@ export async function handleProjectControlStart(
         state: "running",
         ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
       });
+      mark("slot_heartbeat", heartbeatStarted);
     }
   } catch (err) {
     if (reservedSlot) {
@@ -205,11 +222,17 @@ export async function handleProjectControlStart(
     }
     throw err;
   } finally {
+    const stopForwardStarted = Date.now();
     await stopForward();
+    mark("stop_progress_forward", stopForwardStarted);
+    const clearActiveStarted = Date.now();
     await clearProjectActiveOperation({
       project_id: req.project_id,
       op_id: req.lro_op_id,
     });
+    mark("clear_active_operation", clearActiveStarted);
+    controlTimings["control.total"] = Date.now() - controlStarted;
+    mergeStartProjectTimings(req.lro_op_id, controlTimings);
   }
 }
 
@@ -230,6 +253,10 @@ export async function handleProjectControlCheckStartAdmission(
   if (req.autostart) {
     assertProjectAutostartEnabled({ sponsor });
   }
+  await assertFreeProjectStartAllowed({
+    actor_account_id: req.account_id,
+    sponsor_account_id: sponsor.sponsor_account_id,
+  });
   await assertCanStartUsingRuntimeSponsor({
     sponsor,
     account_id: req.account_id,

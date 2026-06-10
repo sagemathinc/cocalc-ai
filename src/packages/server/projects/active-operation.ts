@@ -43,6 +43,10 @@ async function invalidateProjectActiveOperation(
   });
 }
 
+function invalidateProjectActiveOperationBestEffort(project_id: string): void {
+  void invalidateProjectActiveOperation(project_id);
+}
+
 export async function upsertProjectActiveOperation(opts: {
   project_id: string;
   op_id?: string | null;
@@ -91,7 +95,7 @@ export async function upsertProjectActiveOperation(opts: {
       opts.detail ?? null,
     ],
   );
-  await invalidateProjectActiveOperation(opts.project_id);
+  invalidateProjectActiveOperationBestEffort(opts.project_id);
 }
 
 export async function updateProjectActiveOperationProgress(opts: {
@@ -144,7 +148,7 @@ export async function clearProjectActiveOperation(opts: {
     `DELETE FROM project_active_operations WHERE project_id = $1${opIdClause}`,
     values,
   );
-  await invalidateProjectActiveOperation(opts.project_id);
+  invalidateProjectActiveOperationBestEffort(opts.project_id);
 }
 
 export async function getProjectActiveOperation(opts: {

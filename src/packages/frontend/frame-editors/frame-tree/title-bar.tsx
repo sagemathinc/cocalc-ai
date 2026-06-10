@@ -13,6 +13,7 @@ FrameTitleBar - title bar in a frame, in the frame tree
 import { useDraggable } from "@dnd-kit/core";
 import { ButtonGroup } from "@cocalc/frontend/antd-bootstrap";
 import { Button, Dropdown, Input, InputNumber, Popover } from "antd";
+import type * as CodeMirror from "codemirror";
 import type { MenuProps } from "antd/lib";
 import { List } from "immutable";
 import { useMemo, useRef } from "react";
@@ -74,7 +75,11 @@ export interface FrameActions extends Actions {
   export_document?: (id: string) => void | Promise<void>;
   zoom_page_width?: (id: string) => void;
   zoom_page_height?: (id: string) => void;
-  sync?: (id: string, editor_actions: EditorActions) => void;
+  sync?: (
+    id: string,
+    editor_actions: EditorActions,
+    liveCm?: CodeMirror.Editor,
+  ) => void;
   show_table_of_contents?: (id: string) => void;
   build?: (id: string, boolean) => void;
   force_build?: (id: string) => void;

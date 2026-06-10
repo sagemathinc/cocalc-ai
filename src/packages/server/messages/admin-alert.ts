@@ -56,6 +56,7 @@ export default async function adminAlert({
   errorOnFail,
   stackTrace,
   dedupMinutes = 60 * 4,
+  to_ids,
 }: {
   subject: string;
   body?: any;
@@ -63,21 +64,24 @@ export default async function adminAlert({
   stackTrace?: boolean;
   // If you try to send the exact same admin alert more often than this, then it is dropped
   dedupMinutes?: number;
+  // If not given, send to all admins. This is useful for alert categories
+  // where individual admins can opt out.
+  to_ids?: string[];
 }): Promise<number | undefined> {
   const stack = stackTrace
     ? "\n\n---\n" + "```js\n" + getStackTrace() + "\n```\n"
     : "";
   try {
     logger.debug("mesg", { subject, body });
-    const to_ids = await getAdmins();
-    if (to_ids.length == 0) {
+    const targets = to_ids ?? (await getAdmins());
+    if (targets.length == 0) {
       logger.debug("no admins so nothing to do");
       return;
     }
     return await send({
       subject: `Admin Alert - ${subject}`,
       body: toString(body) + stack,
-      to_ids,
+      to_ids: targets,
       dedupMinutes,
     });
   } catch (err) {

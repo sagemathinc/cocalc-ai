@@ -307,13 +307,32 @@ export const LogEntry: React.FC<Props> = React.memo(
       );
     }
 
-    function render_project_started(): React.JSX.Element {
+    function projectStartedStageLabel(stage?: string): string | undefined {
+      switch (stage) {
+        case "project_restore":
+          return "restore/dearchive path";
+        case "warm_provisioned":
+          return "provisioned start path";
+        case "host_start_or_unknown":
+          return "host start or unknown path";
+        default:
+          return undefined;
+      }
+    }
+
+    function render_project_started(
+      event: ProjectControlEvent,
+    ): React.JSX.Element {
+      const stageLabel = projectStartedStageLabel(event.stage);
       return (
         <span>
           <FormattedMessage
             id="project.history.log-entry.project_started"
             defaultMessage={`started this project`}
           />
+          {stageLabel ? (
+            <span style={{ color: COLORS.GRAY_M }}> ({stageLabel})</span>
+          ) : null}
         </span>
       );
     }
@@ -894,7 +913,7 @@ export const LogEntry: React.FC<Props> = React.memo(
         case "project_start_requested":
           return render_project_start_requested();
         case "project_started":
-          return render_project_started();
+          return render_project_started(event);
         case "project_restart_requested":
           return render_project_restart_requested();
         case "open": // open a file
