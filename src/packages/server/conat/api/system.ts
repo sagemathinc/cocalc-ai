@@ -3804,22 +3804,20 @@ export async function getSiteSetupStatus({
         "A project host proves provider credentials, bootstrap, DNS, and host heartbeat are working.",
       ],
     }),
-    // TODO: restore these before treating Site Setup as a complete launch gate.
-    // Official RootFS detection is not reliable enough yet, and the smoke-test
-    // step needs a persisted browser/project result instead of a manual prompt.
-    // setupStep({
-    //   id: "rootfs",
-    //   title: "Official RootFS",
-    //   state: rootfs.official > 0 && rootfs.prepull > 0 ? "done" : "blocked",
-    //   admin_section: "rootfs",
-    //   summary:
-    //     rootfs.official > 0 && rootfs.prepull > 0
-    //       ? `${rootfs.official} official image${rootfs.official === 1 ? "" : "s"} and ${rootfs.prepull} prepull image${rootfs.prepull === 1 ? "" : "s"} are visible.`
-    //       : "Create an official RootFS and mark it for prepull.",
-    //   details: [
-    //     "The first public recipe can start as Ubuntu with Jupyter and LaTeX packages installed.",
-    //   ],
-    // }),
+    setupStep({
+      id: "rootfs",
+      title: "Official RootFS",
+      state: rootfs.official > 0 && rootfs.prepull > 0 ? "done" : "blocked",
+      admin_section: "rootfs",
+      summary:
+        rootfs.official > 0 && rootfs.prepull > 0
+          ? `${rootfs.official} official image${rootfs.official === 1 ? "" : "s"} and ${rootfs.prepull} prepull image${rootfs.prepull === 1 ? "" : "s"} are visible.`
+          : "Create an official RootFS and mark it for prepull.",
+      details: [
+        "The first public recipe can start as Ubuntu with Jupyter and LaTeX packages installed.",
+      ],
+    }),
+    // TODO: restore this when Site Setup can persist a browser/project smoke-test result.
     // setupStep({
     //   id: "smoke-test",
     //   title: "Smoke Test",
@@ -3832,18 +3830,19 @@ export async function getSiteSetupStatus({
     // }),
   ];
   steps[4] = emailSetupState(settings);
-  steps.push(
-    setupStep({
-      id: "mark-ready",
-      title: "Mark Site Ready",
-      state: "manual",
-      summary:
-        "Explicit completion is not persisted yet; this first implementation only derives setup readiness.",
-      details: [
-        "The follow-up write path should require fresh admin auth and store a small site setup state record.",
-      ],
-    }),
-  );
+  // TODO: restore this when explicit completion is persisted with fresh auth.
+  // steps.push(
+  //   setupStep({
+  //     id: "mark-ready",
+  //     title: "Mark Site Ready",
+  //     state: "manual",
+  //     summary:
+  //       "Explicit completion is not persisted yet; this first implementation only derives setup readiness.",
+  //     details: [
+  //       "The follow-up write path should require fresh admin auth and store a small site setup state record.",
+  //     ],
+  //   }),
+  // );
 
   return buildSiteSetupStatus({ counts, profile, steps });
 }
