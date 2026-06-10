@@ -119,7 +119,51 @@ describe("BaseProject local ownership", () => {
 
   it("treats stop for an inactive project as already stopped", async () => {
     getPoolQueryMock = jest.fn(async () => ({
-      rows: [{ host_id: "host-1", state: "opened" }],
+      rows: [
+        {
+          host_deleted: null,
+          host_found: true,
+          host_id: "host-1",
+          host_status: "running",
+          state: "opened",
+        },
+      ],
+    }));
+    const { getProject } = await import("./base");
+    const project = getProject(PROJECT_ID);
+    await expect(project.stop()).resolves.toBeUndefined();
+    expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("treats stop on a deprovisioned host as already stopped", async () => {
+    getPoolQueryMock = jest.fn(async () => ({
+      rows: [
+        {
+          host_deleted: null,
+          host_found: true,
+          host_id: "host-1",
+          host_status: "deprovisioned",
+          state: "running",
+        },
+      ],
+    }));
+    const { getProject } = await import("./base");
+    const project = getProject(PROJECT_ID);
+    await expect(project.stop()).resolves.toBeUndefined();
+    expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("treats stop on a missing assigned host as already stopped", async () => {
+    getPoolQueryMock = jest.fn(async () => ({
+      rows: [
+        {
+          host_deleted: null,
+          host_found: false,
+          host_id: "host-1",
+          host_status: null,
+          state: "running",
+        },
+      ],
     }));
     const { getProject } = await import("./base");
     const project = getProject(PROJECT_ID);
@@ -129,7 +173,15 @@ describe("BaseProject local ownership", () => {
 
   it("stops active projects with an assigned host", async () => {
     getPoolQueryMock = jest.fn(async () => ({
-      rows: [{ host_id: "host-1", state: "running" }],
+      rows: [
+        {
+          host_deleted: null,
+          host_found: true,
+          host_id: "host-1",
+          host_status: "running",
+          state: "running",
+        },
+      ],
     }));
     const { getProject } = await import("./base");
     const project = getProject(PROJECT_ID);

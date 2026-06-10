@@ -10,6 +10,7 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { Actions, redux } from "@cocalc/frontend/app-framework";
 import { set_window_title } from "@cocalc/frontend/browser";
 import api from "@cocalc/frontend/client/api";
+import type { ProjectInviteDeliveryResult } from "@cocalc/frontend/client/project-collaborators";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 import { COCALC_MINIMAL } from "@cocalc/frontend/fullscreen";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
@@ -3348,7 +3349,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     replyto_name?: string,
     invite_role: "collaborator" | "viewer" = "collaborator",
     read_policy?: ProjectViewerReadPolicy | null,
-  ): Promise<void> {
+  ): Promise<ProjectInviteDeliveryResult | void> {
     await this.redux.getProjectActions(project_id).async_log({
       event: "invite_user",
       invitee_account_id: account_id,
@@ -3360,7 +3361,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const email = body != null ? markdown_to_html(body) : undefined;
 
     try {
-      await webapp_client.project_collaborators.invite({
+      const result = await webapp_client.project_collaborators.invite({
         project_id,
         account_id,
         title,
@@ -3374,6 +3375,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         read_policy,
       });
       notifyCollabInvitesChanged(project_id);
+      return result;
     } catch (err) {
       if (!silent) {
         const message = `Error inviting collaborator ${account_id} from ${project_id} -- ${err}`;

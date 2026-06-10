@@ -82,7 +82,7 @@ list spacing collapses.
 /* Prism-style token colors for code blocks. */
 .cocalc-slate-code-block {
   font-family: Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 14px;
+  font-size: inherit;
   line-height: 1.5;
   background: var(--cocalc-slate-code-bg, #fff);
   color: var(--cocalc-slate-code-fg, #24292e);

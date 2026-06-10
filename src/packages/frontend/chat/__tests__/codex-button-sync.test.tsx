@@ -176,31 +176,6 @@ describe("CodexConfigButton", () => {
     );
   });
 
-  it("shows a codex usage link in the payment modal", () => {
-    render(
-      <CodexConfigButton
-        threadKey="thread-1"
-        chatPath="foo.chat"
-        actions={
-          {
-            getCodexConfig: jest.fn(() => undefined),
-            setCodexConfig: jest.fn(),
-          } as any
-        }
-        threadConfig={null}
-      />,
-    );
-
-    fireEvent.click(screen.getByText("ChatGPT"));
-
-    const usageLink = screen.getByRole("link", {
-      name: /codex usage in chatgpt/i,
-    });
-    expect(usageLink.getAttribute("href")).toBe(
-      "https://chatgpt.com/codex/settings/usage",
-    );
-  });
-
   it("prefills the modal session id from the latest live assistant row", async () => {
     const actions = {
       getCodexConfig: jest.fn(() => undefined),
@@ -257,5 +232,28 @@ describe("CodexConfigButton", () => {
         sessionMode: "workspace-write",
       }),
     );
+  });
+
+  it("shows the ChatGPT Codex usage link in payment settings", async () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("ChatGPT")).not.toBeNull();
+    });
+    fireEvent.click(screen.getByText("ChatGPT"));
+
+    expect(screen.getByText("Open ChatGPT Codex Usage")).not.toBeNull();
   });
 });

@@ -1,0 +1,17 @@
+.cocalc-docs-markdown,
+.cocalc-docs-markdown .cocalc-slate-render {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.cocalc-docs-markdown .cocalc-slate-code-block {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overflow-wrap: normal;
+  white-space: pre;
+  -webkit-overflow-scrolling: touch;
+}

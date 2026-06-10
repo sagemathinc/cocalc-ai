@@ -11,10 +11,12 @@ export type DocsAudience =
   | "teams";
 
 export type DocsEntryStatus = "draft" | "ready";
+export type DocsProduct = "cocalc" | "plus";
 export type DocsVisibility = "public" | "signed-in" | "admin";
 export type DocsAccess = {
   includeAdmin?: boolean;
   includeSignedIn?: boolean;
+  product?: DocsProduct;
 };
 export type DocsActionParameterType = "project" | "project-host";
 

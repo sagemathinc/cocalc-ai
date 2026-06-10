@@ -87,6 +87,7 @@ describe("buildRootfsTrivyDbSeedPodmanArgs", () => {
     });
 
     expect(args).toContain("--pull=never");
+    expect(args).toContain("--network=host");
     expect(args).toContain("--read-only");
     expect(args).toContain("--cap-drop=all");
     expect(args).toContain("--entrypoint=trivy");

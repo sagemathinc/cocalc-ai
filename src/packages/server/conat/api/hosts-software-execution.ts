@@ -739,6 +739,9 @@ export async function rolloutHostManagedComponentsInternalHelper({
   hostControlClient,
   waitForHostHeartbeatAfter,
   installedProjectHostArtifactVersion,
+  resolveHostSoftwareBaseUrl,
+  resolveReachableUpgradeBaseUrl,
+  updateProjectHostSoftwareRecord,
   recordProjectHostLocalRollbackInternal,
   project_host_local_rollback_error_code,
   setLastKnownGoodArtifactVersionInternal,
@@ -746,6 +749,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   requestedByForRuntimeDeployments,
   setProjectHostRuntimeDeployments,
   loadEffectiveRuntimeDeployments,
+  base_url,
   projectHostRolloutSettleTimeoutMs = PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS,
   projectHostRolloutPollMs = PROJECT_HOST_ROLLOUT_POLL_MS,
   projectHostRolloutMinObservationMs = PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS,
@@ -769,6 +773,12 @@ export async function rolloutHostManagedComponentsInternalHelper({
       components: HostManagedComponentRolloutRequest["components"];
       reason?: string;
     }) => Promise<HostManagedComponentRolloutResponse>;
+    upgradeSoftware?: (opts: {
+      targets: Array<{ artifact: "project-host"; version: string }>;
+      base_url?: string;
+      restart_project_host: boolean;
+      retention_policy?: HostRuntimeRetentionPolicy;
+    }) => Promise<HostSoftwareUpgradeResponse>;
     getManagedComponentStatus?: () => Promise<HostManagedComponentStatus[]>;
     getHostAgentStatus?: () => Promise<HostAgentStatus>;
   }>;
@@ -777,6 +787,17 @@ export async function rolloutHostManagedComponentsInternalHelper({
     since: number;
   }) => Promise<void>;
   installedProjectHostArtifactVersion: (row: any) => string | undefined;
+  resolveHostSoftwareBaseUrl?: (
+    base_url?: string,
+  ) => Promise<string | undefined>;
+  resolveReachableUpgradeBaseUrl?: (opts: {
+    row: any;
+    baseUrl?: string;
+  }) => Promise<string | undefined>;
+  updateProjectHostSoftwareRecord?: (opts: {
+    row: any;
+    results: NonNullable<HostSoftwareUpgradeResponse["results"]>;
+  }) => Promise<void>;
   recordProjectHostLocalRollbackInternal: (opts: {
     account_id?: string;
     id: string;
@@ -815,6 +836,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   }) => Promise<
     Array<{ target_type: string; target: string; desired_version?: string }>
   >;
+  base_url?: string;
   projectHostRolloutSettleTimeoutMs?: number;
   projectHostRolloutPollMs?: number;
   projectHostRolloutMinObservationMs?: number;
@@ -822,10 +844,65 @@ export async function rolloutHostManagedComponentsInternalHelper({
     update: HostSoftwareRolloutProgressUpdate,
   ) => Promise<void> | void;
 }): Promise<HostManagedComponentRolloutResponse> {
-  const row = await loadHostForStartStop(id, account_id);
+  let row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   const requestedProjectHostRollout = components.includes("project-host");
   const client = await hostControlClient(id, 60_000);
+  const desiredProjectHostVersion = await resolveDesiredProjectHostVersion({
+    row,
+    loadEffectiveRuntimeDeployments,
+  });
+  const installedProjectHostVersion = installedProjectHostArtifactVersion(row);
+  if (
+    desiredProjectHostVersion &&
+    installedProjectHostVersion !== desiredProjectHostVersion
+  ) {
+    if (typeof client.upgradeSoftware !== "function") {
+      throw new Error(
+        `cannot roll out project-host components to ${desiredProjectHostVersion}; host control client does not support software upgrade`,
+      );
+    }
+    if (
+      !resolveHostSoftwareBaseUrl ||
+      !resolveReachableUpgradeBaseUrl ||
+      !updateProjectHostSoftwareRecord
+    ) {
+      throw new Error(
+        `cannot roll out project-host components to ${desiredProjectHostVersion}; artifact upgrade support is not configured`,
+      );
+    }
+    await onProgress?.({
+      rollout_phase: "artifact.installing",
+      rollout_phase_label: "Downloading/installing project-host artifact",
+      rollout_phase_owner: "artifact installation",
+      rollout_target_version: desiredProjectHostVersion,
+      rollout_previous_version: installedProjectHostVersion,
+    });
+    const resolvedBaseUrl = await resolveHostSoftwareBaseUrl(base_url);
+    const effectiveBaseUrl = await resolveReachableUpgradeBaseUrl({
+      row,
+      baseUrl: resolvedBaseUrl,
+    });
+    const upgrade = await client.upgradeSoftware({
+      targets: [
+        {
+          artifact: "project-host",
+          version: desiredProjectHostVersion,
+        },
+      ],
+      base_url: effectiveBaseUrl,
+      restart_project_host: false,
+      retention_policy: await defaultHostRuntimeRetentionPolicy(),
+    });
+    const upgradeResults = upgrade.results ?? [];
+    if (upgradeResults.length > 0) {
+      await updateProjectHostSoftwareRecord({
+        row,
+        results: upgradeResults,
+      });
+      row = await loadHostForStartStop(id, account_id);
+    }
+  }
   const rolloutStartedAt = Date.now();
   let response: HostManagedComponentRolloutResponse;
   try {
@@ -850,10 +927,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
     refreshedRow = await loadHostForStartStop(id, account_id);
   }
   const desiredVersion = requestedProjectHostRollout
-    ? await resolveDesiredProjectHostVersion({
-        row,
-        loadEffectiveRuntimeDeployments,
-      })
+    ? desiredProjectHostVersion
     : undefined;
   let observedProjectHostVersion: string | undefined;
   let fallbackProjectHostVersion: string | undefined;

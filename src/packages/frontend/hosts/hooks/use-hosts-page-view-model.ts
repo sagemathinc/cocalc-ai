@@ -943,6 +943,9 @@ export const useHostsPageViewModel = () => {
           const op = await hub.hosts.rolloutHostManagedComponents({
             id: host.id,
             components: [component],
+            ...(source === "hub" && baseUrl
+              ? { base_url: `${baseUrl}/software` }
+              : {}),
             reason: rollout_reason,
           });
           trackHostOp(host.id, op);

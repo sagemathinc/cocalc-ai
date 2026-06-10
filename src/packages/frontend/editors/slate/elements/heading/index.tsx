@@ -55,13 +55,12 @@ function toText(element) {
   return "";
 }
 
-// We automatically generate id's for headers as follows:
-// We make the underlying text lower case, replace spaces by dashes,
-// and delete all other punctuation.
-// This matches with some other markdown processor we were evidently once using.
 function toId(text: string): string {
-  return text
+  const id = text
     .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[.,\/#!$%\^&\*;:{}=_`~()]/g, "");
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return id || "heading";
 }

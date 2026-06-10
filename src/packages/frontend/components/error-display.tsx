@@ -6,15 +6,34 @@
 // DEPRECATED -- the ShowError component in ./error.tsx is much better.
 
 import { Alert } from "antd";
+import type { CSSProperties, ReactNode } from "react";
+import { COLORS } from "@cocalc/util/theme";
+import { normalizeUserFacingError } from "./user-facing-error";
 
 // use "style" to customize
-const ELEMENT_STYLE: React.CSSProperties = {
+const ELEMENT_STYLE: CSSProperties = {
   overflowY: "auto",
 } as const;
 
 // use "body_style" prop to customize
-const BODY_STYLE: React.CSSProperties = {
+const BODY_STYLE: CSSProperties = {
   marginRight: "10px",
+  whiteSpace: "pre-wrap",
+} as const;
+
+const TECHNICAL_DETAILS_STYLE: CSSProperties = {
+  marginTop: "8px",
+  fontSize: "12px",
+} as const;
+
+const TECHNICAL_PRE_STYLE: CSSProperties = {
+  background: COLORS.GRAY_LLL,
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: "4px",
+  marginTop: "6px",
+  maxHeight: "160px",
+  overflow: "auto",
+  padding: "8px",
   whiteSpace: "pre-wrap",
 } as const;
 
@@ -22,9 +41,9 @@ interface Props {
   error?: string | object;
   error_component?: React.JSX.Element | React.JSX.Element[];
   title?: string;
-  style?: React.CSSProperties;
-  body_style?: React.CSSProperties;
-  componentStyle?: React.CSSProperties;
+  style?: CSSProperties;
+  body_style?: CSSProperties;
+  componentStyle?: CSSProperties;
   bsStyle?: string;
   onClose?: () => void;
   banner?: boolean;
@@ -45,14 +64,20 @@ export function ErrorDisplay({
     return <h4>{title}</h4>;
   }
 
-  function render_error() {
+  function render_error(): ReactNode {
     if (error) {
-      let e = typeof error == "string" ? error : `${error}`;
-      // common prefix with errors due to how they get constructed
-      while (e.startsWith("Error: Error")) {
-        e = e.slice("Error: ".length);
-      }
-      return e;
+      const { message, details } = normalizeUserFacingError(error);
+      return (
+        <>
+          <div>{message}</div>
+          {details && (
+            <details style={TECHNICAL_DETAILS_STYLE}>
+              <summary>Technical details</summary>
+              <pre style={TECHNICAL_PRE_STYLE}>{details}</pre>
+            </details>
+          )}
+        </>
+      );
     } else {
       return error_component;
     }

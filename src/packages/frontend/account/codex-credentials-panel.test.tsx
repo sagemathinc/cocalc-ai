@@ -1,9 +1,16 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
 
 const getCodexPaymentSource = jest.fn();
 const codexDeviceAuthStart = jest.fn();
 const codexDeviceAuthStatus = jest.fn();
+const mockClipboardWriteText = jest.fn();
 
 jest.mock("antd", () => {
   const Button = ({ children, disabled, href, loading, onClick }: any) =>
@@ -147,6 +154,10 @@ describe("CodexCredentialsPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: mockClipboardWriteText },
+    });
   });
 
   it("clears the previous payment source label immediately when the project changes", async () => {
@@ -168,6 +179,9 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(screen.getAllByText("ChatGPT Plan").length).toBeGreaterThan(0);
       expect(screen.getByText("Current Codex payment source:")).toBeTruthy();
+      expect(
+        screen.getAllByText("Open ChatGPT Codex Usage").length,
+      ).toBeGreaterThan(0);
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
@@ -398,6 +412,11 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(screen.getByText("WXYZ-1234")).toBeTruthy();
       expect(screen.getByText("Copy URL")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("1. Copy this one-time code"));
+    await waitFor(() => {
+      expect(mockClipboardWriteText).toHaveBeenCalledWith("WXYZ-1234");
     });
   });
 });

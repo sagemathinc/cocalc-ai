@@ -11,11 +11,17 @@ import {
 } from "@cocalc/util/master-key-lifecycle";
 import { readFile, writeFile } from "node:fs/promises";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
+import type {
+  LaunchHealthStatus,
+  LaunchSmokeResult,
+  LaunchSmokeStepResult,
+} from "@cocalc/conat/hub/api/system";
 
 export type AdminCommandDeps = {
   withContext: any;
   resolveAccountByIdentifier: any;
   isValidUUID: any;
+  waitForLro: any;
 };
 
 type AccountEntitlementOverrideInput = Omit<
@@ -645,6 +651,52 @@ function prometheusLabels(labels: Record<string, unknown>): string {
     .join(",");
 }
 
+function formatLaunchHealthCompact(status: LaunchHealthStatus) {
+  return status.checks.map((check) => ({
+    level: check.level,
+    check: check.label,
+    summary: check.summary,
+  }));
+}
+
+async function runLaunchSmokeStep(
+  steps: LaunchSmokeStepResult[],
+  {
+    id,
+    label,
+    run,
+  }: {
+    id: string;
+    label: string;
+    run: () => Promise<{
+      summary: string;
+      details?: Record<string, unknown>;
+    }>;
+  },
+): Promise<void> {
+  const started = Date.now();
+  try {
+    const result = await run();
+    steps.push({
+      id,
+      label,
+      status: "succeeded",
+      duration_ms: Date.now() - started,
+      summary: result.summary,
+      details: result.details,
+    });
+  } catch (err) {
+    steps.push({
+      id,
+      label,
+      status: "failed",
+      duration_ms: Date.now() - started,
+      summary: `${err}`,
+    });
+    throw err;
+  }
+}
+
 function formatAcpDenialPrometheus(report: any): string {
   const lines = [
     "# HELP cocalc_acp_admission_denials_window_total ACP admission denials in the selected recent time window.",
@@ -799,7 +851,8 @@ export function registerAdminCommand(
   program: Command,
   deps: AdminCommandDeps,
 ): Command {
-  const { withContext, resolveAccountByIdentifier, isValidUUID } = deps;
+  const { withContext, resolveAccountByIdentifier, isValidUUID, waitForLro } =
+    deps;
 
   const admin = program.command("admin").description("site admin operations");
   const adminUser = admin.command("user").description("admin user management");
@@ -895,6 +948,155 @@ export function registerAdminCommand(
             last_active: row.last_active ?? null,
             created: row.created ?? null,
           }));
+        });
+      },
+    );
+
+  admin
+    .command("health")
+    .description("show minimum launch operator health checks (admin-only)")
+    .option(
+      "--window-minutes <n>",
+      "UX latency lookback window in minutes",
+      "60",
+    )
+    .option("--wide", "show full normalized health payload")
+    .action(
+      async (
+        opts: {
+          windowMinutes?: string;
+          wide?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin health", async (ctx) => {
+          const status = await ctx.hub.system.getLaunchHealth({
+            window_minutes: parsePositiveIntegerOption({
+              name: "--window-minutes",
+              value: opts.windowMinutes,
+              fallback: 60,
+              max: 7 * 24 * 60,
+            }),
+          });
+          const wide =
+            opts.wide ||
+            ctx.globals?.json ||
+            ctx.globals?.output === "json" ||
+            ctx.globals?.output === "yaml";
+          if (wide) {
+            return status;
+          }
+          return formatLaunchHealthCompact(status);
+        });
+      },
+    );
+
+  admin
+    .command("smoke")
+    .description(
+      "run and record a minimal launch smoke probe against an existing project (admin-only)",
+    )
+    .requiredOption("--project <project_id>", "project id to smoke test")
+    .action(
+      async (
+        opts: {
+          project: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin smoke", async (ctx) => {
+          const projectId = `${opts.project ?? ""}`.trim();
+          if (!isValidUUID(projectId)) {
+            throw new Error("--project must be a project UUID");
+          }
+          const startedAt = new Date();
+          const startedMs = Date.now();
+          const steps: LaunchSmokeStepResult[] = [];
+          let status: LaunchSmokeResult["status"] = "succeeded";
+          let error: string | null = null;
+
+          try {
+            await runLaunchSmokeStep(steps, {
+              id: "project-start",
+              label: "Project start",
+              run: async () => {
+                const op = await ctx.hub.projects.start({
+                  project_id: projectId,
+                  wait: false,
+                });
+                const summary = await waitForLro(ctx, op.op_id, {
+                  timeoutMs: ctx.timeoutMs,
+                  pollMs: ctx.pollMs,
+                });
+                const ok =
+                  summary.status === "succeeded" ||
+                  (summary.status === "running" && summary.error == null);
+                if (!ok) {
+                  throw new Error(
+                    `project start failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+                  );
+                }
+                return {
+                  summary: `project start reached ${summary.status}`,
+                  details: {
+                    op_id: op.op_id,
+                    status: summary.status,
+                  },
+                };
+              },
+            });
+
+            await runLaunchSmokeStep(steps, {
+              id: "project-exec",
+              label: "Project exec",
+              run: async () => {
+                const marker = `launch-smoke-${Date.now()}`;
+                const output = await ctx.hub.projects.exec({
+                  project_id: projectId,
+                  execOpts: {
+                    command: `mkdir -p .cocalc && printf '%s\\n' '${marker}' > .cocalc/launch-smoke.txt && grep '${marker}' .cocalc/launch-smoke.txt`,
+                    bash: true,
+                    timeout: 30,
+                    err_on_exit: false,
+                  },
+                });
+                if (output.exit_code !== 0) {
+                  throw new Error(
+                    `project exec failed: exit_code=${output.exit_code} stderr=${output.stderr ?? ""}`,
+                  );
+                }
+                return {
+                  summary: "project exec wrote and read a marker file",
+                  details: {
+                    exit_code: output.exit_code,
+                    stdout: output.stdout,
+                    stderr: output.stderr,
+                  },
+                };
+              },
+            });
+          } catch (err) {
+            status = "failed";
+            error = `${err}`;
+          }
+
+          const finishedAt = new Date();
+          const result: LaunchSmokeResult = {
+            project_id: projectId,
+            status,
+            started_at: startedAt.toISOString(),
+            finished_at: finishedAt.toISOString(),
+            duration_ms: Date.now() - startedMs,
+            steps,
+            error,
+          };
+          const recorded = await ctx.hub.system.recordLaunchSmokeResult({
+            result,
+          });
+          if (recorded.status !== "succeeded") {
+            process.exitCode = 1;
+          }
+          return recorded;
         });
       },
     );

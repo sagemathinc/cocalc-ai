@@ -35,6 +35,31 @@ function freshAuthHint(code: string, message: string): string | undefined {
   return "Run `cocalc auth elevate` and complete the browser passkey/TOTP challenge, then retry the command. In local dev with the hub password and database available, `cocalc auth elevate --dev` can bootstrap an equivalent dev fresh-auth cookie. Fresh-auth CLI actions require a cookie-backed session; API keys, bearer tokens, and raw hub-password automation cannot provide human 2FA.";
 }
 
+function cookieAuthHint({
+  code,
+  message,
+  api,
+}: {
+  code: string;
+  message: string;
+  api?: string;
+}): string | undefined {
+  const lower = message.toLowerCase();
+  if (
+    code === "fresh_auth_required" ||
+    lower.includes("fresh auth") ||
+    !(
+      lower.includes("no auth cookie set") ||
+      lower.includes("no remember_me cookie set") ||
+      lower.includes("cookie-backed session")
+    )
+  ) {
+    return undefined;
+  }
+  const apiArg = api ? ` --api ${api}` : "";
+  return `This command needs an interactive cookie-backed CLI login; an API key or bearer token is not enough for this operation. Run \`cocalc${apiArg} auth login\` and complete the browser login, then retry the command.`;
+}
+
 function parseHardDeleteRateLimitDetails(
   code: string,
   message: string,
@@ -271,7 +296,6 @@ export function emitError(
 ): void {
   const message = error instanceof Error ? error.message : `${error}`;
   const code = errorCode(error, message);
-  const hint = freshAuthHint(code, message);
   const details = parseHardDeleteRateLimitDetails(code, message);
   let api = ctx.apiBaseUrl;
   if (!api && ctx.globals?.api) {
@@ -283,6 +307,8 @@ export function emitError(
   }
   const accountId =
     ctx.accountId ?? ctx.globals?.accountId ?? ctx.globals?.account_id;
+  const hint =
+    freshAuthHint(code, message) ?? cookieAuthHint({ code, message, api });
 
   if (ctx.globals?.json || ctx.globals?.output === "json") {
     const payload = {

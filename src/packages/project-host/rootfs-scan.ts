@@ -219,6 +219,7 @@ export function buildRootfsTrivyDbSeedPodmanArgs({
       trivy_cache_dir,
     }),
     "--pull=never",
+    "--network=host",
     "--read-only",
     "--cap-drop=all",
     "--security-opt=no-new-privileges",

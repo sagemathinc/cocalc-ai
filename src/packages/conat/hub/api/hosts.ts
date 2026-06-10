@@ -1821,6 +1821,7 @@ export interface Hosts {
     account_id?: string;
     id: string;
     components: ManagedComponentKind[];
+    base_url?: string;
     reason?: string;
   }) => Promise<HostLroResponse>;
   upgradeHostConnector: (opts: {

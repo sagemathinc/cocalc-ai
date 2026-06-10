@@ -5,8 +5,11 @@
 
 import { Button, Modal, Space, Typography } from "antd";
 import { useMemo, useState } from "react";
-import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
+import {
+  CODEX_USAGE_LABEL,
+  CODEX_USAGE_URL,
+} from "@cocalc/frontend/account/codex-usage";
 
 const { Paragraph, Text } = Typography;
 
@@ -69,7 +72,6 @@ export function CodexQuotaHelp({
   message?: string;
   projectId?: string;
 }) {
-  const [membershipOpen, setMembershipOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const authError = useMemo(
     () => classifyCodexAuthErrorMessage(message),
@@ -103,28 +105,30 @@ export function CodexQuotaHelp({
         ) : (
           <>
             <Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              <Text strong>Need more Codex access?</Text> Upgrade here or switch
-              this chat to your own ChatGPT Plan or OpenAI API key.
+              <Text strong>Need more Codex access?</Text> Connect your ChatGPT
+              Plan or add an OpenAI API key in AI settings. CoCalc shows which
+              source Codex will use; ChatGPT shows your remaining Codex usage.
             </Paragraph>
             <Space wrap>
               <Button
                 size="small"
                 type="primary"
-                onClick={() => setMembershipOpen(true)}
+                onClick={() => setSettingsOpen(true)}
               >
-                Upgrade membership
+                Open AI Settings
               </Button>
-              <Button size="small" onClick={() => setSettingsOpen(true)}>
-                Open AI settings
+              <Button
+                size="small"
+                href={CODEX_USAGE_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {CODEX_USAGE_LABEL}
               </Button>
             </Space>
           </>
         )}
       </div>
-      <MembershipPurchaseModal
-        open={membershipOpen}
-        onClose={() => setMembershipOpen(false)}
-      />
       <Modal
         open={settingsOpen}
         title={

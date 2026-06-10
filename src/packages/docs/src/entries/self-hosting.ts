@@ -8,6 +8,7 @@ import { docsIcon } from "../helpers";
 import {
   COCALC_STAR_BODY,
   COCALC_STAR_LOCAL_VM_BODY,
+  INSTALL_CHROMIUM_BODY,
   REVERSE_SSH_ACCESS_BODY,
 } from "../content";
 
@@ -44,6 +45,26 @@ export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
     summary:
       "Install CoCalc Star inside a local Ubuntu VM for private, fast, offline-friendly work on your own computer.",
     title: "CoCalc Star on a local VM",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: INSTALL_CHROMIUM_BODY.trim(),
+    category: "Self Hosting",
+    id: "self-hosting.install-chromium",
+    image: docsIcon(
+      "/public/docs/project-hosts-684faa4c.webp",
+      "A server terminal installing Chromium for browser automation",
+    ),
+    lastReviewed: "2026-06-10",
+    noActionReason:
+      "System install recipe; the useful action is running the shown apt commands on the target Ubuntu host.",
+    searchKeywords:
+      "how to install Chromium Ubuntu snap chromium-browser xtradeb ppa podman container headless chromedriver",
+    slug: "self-hosting/install-chromium",
+    status: "ready",
+    summary:
+      "Install real apt-managed Chromium on Ubuntu from ppa:xtradeb/apps and prevent Ubuntu's snap transition package from returning.",
+    title: "How to install Chromium",
   },
   {
     audiences: ["agents", "researchers", "teams"],

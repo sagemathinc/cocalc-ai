@@ -7244,11 +7244,13 @@ export async function rolloutHostManagedComponents({
   account_id,
   id,
   components,
+  base_url,
   reason,
 }: {
   account_id?: string;
   id: string;
   components: ManagedComponentKind[];
+  base_url?: string;
   reason?: string;
 }): Promise<HostLroResponse> {
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
@@ -7259,6 +7261,7 @@ export async function rolloutHostManagedComponents({
         account_id,
         id,
         components,
+        base_url,
         reason,
       });
   }
@@ -7268,10 +7271,11 @@ export async function rolloutHostManagedComponents({
     kind: HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND,
     row,
     account_id,
-    input: { id: row.id, account_id, components, reason },
+    input: { id: row.id, account_id, components, base_url, reason },
     dedupe_key: hostManagedComponentRolloutDedupeKey({
       hostId: row.id,
       components,
+      baseUrl: base_url,
       reason,
     }),
   });
@@ -7642,12 +7646,14 @@ export async function rolloutHostManagedComponentsInternal({
   account_id,
   id,
   components,
+  base_url,
   reason,
   onProgress,
 }: {
   account_id?: string;
   id: string;
   components: HostManagedComponentRolloutRequest["components"];
+  base_url?: string;
   reason?: string;
   onProgress?: (
     update: HostSoftwareRolloutProgressUpdate,
@@ -7663,14 +7669,36 @@ export async function rolloutHostManagedComponentsInternal({
     hostControlClient,
     waitForHostHeartbeatAfter,
     installedProjectHostArtifactVersion,
+    resolveHostSoftwareBaseUrl,
+    resolveReachableUpgradeBaseUrl,
     recordProjectHostLocalRollbackInternal,
     project_host_local_rollback_error_code:
       PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE,
+    updateProjectHostSoftwareRecord: async ({ row, results }) => {
+      const metadata = row.metadata ?? {};
+      const software = { ...(metadata.software ?? {}) } as Record<
+        string,
+        string
+      >;
+      for (const result of results) {
+        const key = mapUpgradeArtifact(result.artifact);
+        if (key) {
+          software[key] = result.version;
+        }
+      }
+      const nextMetadata = { ...metadata, software };
+      const nextVersion = software.project_host ?? row.version ?? null;
+      await pool().query(
+        `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+        [row.id, nextMetadata, nextVersion],
+      );
+    },
     setLastKnownGoodArtifactVersionInternal,
     runtimeDeploymentsForComponentRollout,
     requestedByForRuntimeDeployments,
     setProjectHostRuntimeDeployments,
     loadEffectiveRuntimeDeployments: loadEffectiveProjectHostRuntimeDeployments,
+    base_url,
     onProgress,
   });
 }
