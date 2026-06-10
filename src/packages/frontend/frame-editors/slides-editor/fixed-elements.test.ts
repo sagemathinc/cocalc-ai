@@ -1,11 +1,14 @@
-import fixedElements from "./fixed-elements";
+import fixedElements, {
+  LEGACY_SLIDE_LEFT,
+  LEGACY_SLIDE_TOP,
+} from "./fixed-elements";
 import { SLIDE_TEMPLATE_ELEMENTS } from "./template";
 
 describe("slides fixed elements", () => {
-  it("centers the fixed slide background around the origin", () => {
+  it("keeps the fixed slide background at the legacy CoCalc position", () => {
     const slide = fixedElements["the-slide"];
-    expect(slide.x).toBe(-(slide.w ?? 0) / 2);
-    expect(slide.y).toBe(-(slide.h ?? 0) / 2);
+    expect(slide.x).toBe(LEGACY_SLIDE_LEFT);
+    expect(slide.y).toBe(LEGACY_SLIDE_TOP);
   });
 
   it("keeps the default title and subtitle template inside the slide", () => {
@@ -23,12 +26,28 @@ describe("slides fixed elements", () => {
     }
   });
 
-  it("uses plain styled text for editable title and subtitle placeholders", () => {
-    for (const element of SLIDE_TEMPLATE_ELEMENTS) {
-      expect(element.data?.placeholder).not.toContain("#");
-      expect(element.data?.initStr).toBeUndefined();
-      expect(element.data?.color).toBeTruthy();
-      expect(element.data?.fontSize).toBeGreaterThan(20);
-    }
+  it("uses markdown heading placeholders compatible with cocalc.com", () => {
+    expect(SLIDE_TEMPLATE_ELEMENTS[0]).toMatchObject({
+      data: {
+        color: "#252937",
+        fontSize: 24,
+        initStr: "\n# \n",
+        placeholder: "# Click to edit title\n\n",
+      },
+      h: 121,
+      x: -200,
+      y: -492,
+    });
+    expect(SLIDE_TEMPLATE_ELEMENTS[1]).toMatchObject({
+      data: {
+        color: "#525252",
+        fontSize: 18,
+        initStr: "\n## \n",
+        placeholder: "## Click to edit subtitle\n\n",
+      },
+      h: 95,
+      x: -200,
+      y: -393,
+    });
   });
 });
