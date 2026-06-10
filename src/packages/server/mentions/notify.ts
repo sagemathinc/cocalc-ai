@@ -8,6 +8,10 @@ import siteURL from "@cocalc/database/settings/site-url";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import getName from "@cocalc/server/accounts/get-name";
 import sendEmail from "@cocalc/server/email/send-email";
+import {
+  escapeNotificationEmailHtml,
+  normalizeNotificationEmailText,
+} from "@cocalc/server/notifications/email-format";
 import getProjectTitle from "@cocalc/server/projects/get-title";
 import { trunc } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -31,10 +35,13 @@ export default async function sendNotificationIfPossible(
 
   const sourceName = trunc((await getName(source)) ?? "Unknown User", 60);
   const projectTitle = await getProjectTitle(key.project_id);
+  const emailDescription = normalizeNotificationEmailText(description);
 
   const context =
-    description.length > 0
-      ? `<br/><blockquote>${description}</blockquote>`
+    emailDescription.length > 0
+      ? `<br/><blockquote>${escapeNotificationEmailHtml(
+          emailDescription,
+        )}</blockquote>`
       : "";
   const subject = `[${trunc(projectTitle, 40)}] ${key.path}`;
   const url = `${await siteURL()}/projects/${key.project_id}/files/${key.path}${
@@ -56,7 +63,7 @@ ${sourceName} mentioned you in a chat at ${key.path} in ${projectTitle}.
 
     ${url}
 
-${description ? "> " : ""}${description}
+${emailDescription ? "> " : ""}${emailDescription}
 
 ---
 
