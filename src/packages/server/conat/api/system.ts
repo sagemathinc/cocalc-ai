@@ -81,6 +81,7 @@ import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "@cocalc/backend/logger";
 import basePath from "@cocalc/backend/base-path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
+import { getCodexAppServerAccountStatus } from "@cocalc/ai/acp";
 import {
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
@@ -5964,6 +5965,74 @@ export async function getCodexPaymentSource({
     sharedHomeMode,
     project_id,
   };
+}
+
+export async function getCodexUsageStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id?: string;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const checkedAt = new Date().toISOString();
+  const paymentSource = await getCodexPaymentSource({
+    account_id,
+    project_id,
+  });
+  if (paymentSource.source !== "subscription") {
+    return {
+      available: false,
+      checkedAt,
+      paymentSource,
+      project_id,
+      reason:
+        paymentSource.source === "none"
+          ? "Codex is not connected."
+          : "Live ChatGPT Codex usage is only available when Codex is using a ChatGPT Plan.",
+    };
+  }
+  if (!project_id) {
+    return {
+      available: false,
+      checkedAt,
+      paymentSource,
+      reason:
+        "A project context is required to check ChatGPT Codex usage in CoCalc.",
+    };
+  }
+
+  await assertProjectCollaborator(account_id, project_id);
+  try {
+    const status = await getCodexAppServerAccountStatus({
+      projectId: project_id,
+      accountId: account_id,
+    });
+    return {
+      available: !!status.rateLimits,
+      checkedAt,
+      paymentSource,
+      project_id,
+      account: status.account,
+      rateLimits: status.rateLimits,
+      tokenUsage: status.tokenUsage,
+      errors: status.errors,
+      reason:
+        !status.rateLimits && status.errors?.rateLimits
+          ? status.errors.rateLimits
+          : undefined,
+    };
+  } catch (err) {
+    return {
+      available: false,
+      checkedAt,
+      paymentSource,
+      project_id,
+      reason: `${err}`,
+    };
+  }
 }
 
 export async function upsertBrowserSession({

@@ -8,6 +8,7 @@ import {
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
 
 const getCodexPaymentSource = jest.fn();
+const getCodexUsageStatus = jest.fn();
 const codexDeviceAuthStart = jest.fn();
 const codexDeviceAuthStatus = jest.fn();
 const mockClipboardWriteText = jest.fn();
@@ -136,6 +137,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         system: {
           getCodexPaymentSource: (...args: any[]) =>
             getCodexPaymentSource(...args),
+          getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
         },
       },
     },
@@ -166,6 +168,23 @@ describe("CodexCredentialsPanel", () => {
     getCodexPaymentSource
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
+    getCodexUsageStatus.mockResolvedValue({
+      available: true,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      account: {
+        account: {
+          type: "chatgpt",
+          email: "user@example.com",
+          planType: "pro",
+        },
+      },
+      rateLimits: {
+        rateLimits: {
+          primary: { usedPercent: 42 },
+        },
+      },
+    });
 
     const { rerender } = render(
       <CodexCredentialsPanel embedded defaultProjectId="project-1" />,
@@ -182,6 +201,8 @@ describe("CodexCredentialsPanel", () => {
       expect(
         screen.getAllByText("Open ChatGPT Codex Usage").length,
       ).toBeGreaterThan(0);
+      expect(screen.getByText("user@example.com")).toBeTruthy();
+      expect(screen.getByText("42% used")).toBeTruthy();
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);

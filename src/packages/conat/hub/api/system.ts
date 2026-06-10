@@ -122,6 +122,7 @@ export const system = {
   deleteOpenAiApiKey: authFirst,
   getOpenAiApiKeyStatus: authFirst,
   getCodexPaymentSource: authFirst,
+  getCodexUsageStatus: authFirst,
   getFrontendSourceFingerprint: authFirst,
   getRootfsCatalog: authFirst,
   getRootfsCatalogPage: authFirst,
@@ -540,6 +541,22 @@ export interface CodexPaymentSourceInfo {
   hasSiteApiKey: boolean;
   sharedHomeMode: "disabled" | "fallback" | "prefer" | "always";
   project_id?: string;
+}
+
+export interface CodexUsageStatusInfo {
+  available: boolean;
+  checkedAt: string;
+  paymentSource: CodexPaymentSourceInfo;
+  project_id?: string;
+  account?: unknown;
+  rateLimits?: unknown;
+  tokenUsage?: unknown;
+  errors?: {
+    account?: string;
+    rateLimits?: string;
+    tokenUsage?: string;
+  };
+  reason?: string;
 }
 
 export interface FrontendSourceFingerprintInfo {
@@ -2280,6 +2297,11 @@ export interface System {
     account_id?: string;
     project_id?: string;
   }) => Promise<CodexPaymentSourceInfo>;
+
+  getCodexUsageStatus: (opts: {
+    account_id?: string;
+    project_id?: string;
+  }) => Promise<CodexUsageStatusInfo>;
 
   getFrontendSourceFingerprint: (opts?: {
     account_id?: string;
