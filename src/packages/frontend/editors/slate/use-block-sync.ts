@@ -35,6 +35,7 @@ type UseBlockSyncResult = {
   flushPendingRemoteMerge: (force?: boolean) => void;
   markLocalEdit: () => void;
   pendingRemoteIndicator: boolean;
+  replaceBlocksFromSource: (markdown: string) => void;
   saveBlocksDebounced: () => void;
   saveBlocksNow: (force?: boolean) => void;
   lastLocalEditAtRef: React.MutableRefObject<number>;
@@ -371,12 +372,29 @@ export function useBlockSync({
     allowFocusedValueUpdateRef.current = true;
   }, []);
 
+  const replaceBlocksFromSource = useCallback(
+    (markdown: string) => {
+      saveBlocksDebounced.cancel();
+      clearPendingRemoteState("source-replace", markdown);
+      pendingValueRef.current = null;
+      if (pendingValueTimerRef.current != null) {
+        window.clearTimeout(pendingValueTimerRef.current);
+        pendingValueTimerRef.current = null;
+      }
+      lastSetValueRef.current = markdown;
+      mergeHelperRef.current.noteApplied(markdown);
+      setBlocksFromValue(markdown);
+    },
+    [saveBlocksDebounced, setBlocksFromValue],
+  );
+
   return {
     applyBlocksFromValue,
     allowNextValueUpdateWhileFocused,
     flushPendingRemoteMerge,
     markLocalEdit,
     pendingRemoteIndicator,
+    replaceBlocksFromSource,
     saveBlocksDebounced,
     saveBlocksNow,
     lastLocalEditAtRef,
