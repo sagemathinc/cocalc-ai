@@ -51,6 +51,29 @@ describe("cocalc-plus Lite port selection", () => {
     }
   });
 
+  it("treats localhost as occupied when the IPv6 loopback port is occupied", async () => {
+    let server: net.Server;
+    try {
+      server = await listen(0, "::1");
+    } catch (err: any) {
+      if (err?.code === "EAFNOSUPPORT" || err?.code === "EINVAL") {
+        return;
+      }
+      throw err;
+    }
+    try {
+      const occupiedPort = serverPort(server);
+      const selectedPort = await chooseLitePort({
+        preferredPort: occupiedPort,
+        host: "localhost",
+      });
+
+      expect(selectedPort).not.toBe(occupiedPort);
+    } finally {
+      await close(server);
+    }
+  });
+
   it("does not override an explicit PORT", async () => {
     process.env.PORT = "61234";
 
