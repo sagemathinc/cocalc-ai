@@ -746,6 +746,7 @@ describe("processAcpLLM", () => {
 
 describe("queued ACP controls", () => {
   afterEach(() => {
+    jest.restoreAllMocks();
     jest.clearAllMocks();
   });
 
@@ -822,7 +823,7 @@ describe("queued ACP controls", () => {
   });
 
   it("updates local state after resending a not-sent turn", async () => {
-    mockControlAcp.mockResolvedValue({ ok: true });
+    mockControlAcp.mockResolvedValue({ ok: true, state: "queued" });
     const acpState = new FakeAcpState();
     acpState.set("message:user-msg-queued", "not-sent");
     const store: any = {
@@ -834,10 +835,34 @@ describe("queued ACP controls", () => {
       },
       setState: jest.fn(),
     };
-    const actions: any = { store };
+    const staleFailureReply: any = {
+      event: "chat",
+      sender_id: "codex-agent",
+      date: new Date(8200),
+      message_id: "error-reply",
+      thread_id: "thread-queued",
+      parent_message_id: "user-msg-queued",
+      history: [
+        {
+          author_id: "codex-agent",
+          content: "Codex authentication expired.",
+          date: new Date(8200).toISOString(),
+        },
+      ],
+    };
+    const actions: any = {
+      store,
+      syncdb: {
+        set: jest.fn(),
+        commit: jest.fn(),
+      },
+      getMessagesInThread: jest.fn(() => [staleFailureReply]),
+      deleteMessage: jest.fn(() => true),
+    };
     const message: any = {
       message_id: "user-msg-queued",
       thread_id: "thread-queued",
+      history: [{ content: "retry this" }],
     };
 
     await expect(resendCanceledAcpTurn({ actions, message })).resolves.toBe(
@@ -855,5 +880,104 @@ describe("queued ACP controls", () => {
       acpState,
     });
     expect(acpState.get("message:user-msg-queued")).toBe("queue");
+    expect(actions.deleteMessage).toHaveBeenCalledWith(staleFailureReply);
+    expect(actions.syncdb.set).toHaveBeenLastCalledWith({
+      ...message,
+      acp_state: "queue",
+    });
+  });
+
+  it("resubmits the original prompt when the canceled backend job is missing", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(8300);
+    mockControlAcp.mockResolvedValue({ ok: false, state: "missing" });
+    mockStreamAcp.mockResolvedValue(queuedAckStream("queued"));
+    const acpState = new FakeAcpState();
+    acpState.set("message:user-msg-missing", "not-sent");
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+    const staleFailureReply: any = {
+      event: "chat",
+      sender_id: "codex-agent",
+      date: new Date(8301),
+      message_id: "error-reply-missing",
+      thread_id: "thread-missing",
+      parent_message_id: "user-msg-missing",
+      history: [
+        {
+          author_id: "codex-agent",
+          content: "Codex authentication expired.",
+          date: new Date(8301).toISOString(),
+        },
+      ],
+    };
+    const message: any = {
+      event: "chat",
+      sender_id: "user-1",
+      date: new Date(8300),
+      message_id: "user-msg-missing",
+      thread_id: "thread-missing",
+      history: [
+        {
+          author_id: "user-1",
+          content: "@codex retry this",
+          date: new Date(8300).toISOString(),
+        },
+      ],
+    };
+    const actions: any = {
+      store,
+      syncdb: {
+        save: jest.fn().mockResolvedValue(undefined),
+        set: jest.fn(),
+        commit: jest.fn(),
+      },
+      chatStreams: new Set<string>(),
+      getAllMessages: () =>
+        new Map<string, any>([
+          ["8300", message],
+          ["8301", staleFailureReply],
+        ]),
+      getThreadMetadata: jest.fn(() => undefined),
+      getMessagesInThread: jest.fn(() => [message, staleFailureReply]),
+      getCodexConfig: jest.fn(() => ({ model: "codex-agent" })),
+      deleteMessage: jest.fn(() => true),
+      sendReply: jest.fn(),
+    };
+
+    await expect(resendCanceledAcpTurn({ actions, message })).resolves.toBe(
+      true,
+    );
+
+    expect(mockControlAcp).toHaveBeenCalledWith({
+      project_id: "proj",
+      path: "x.chat",
+      thread_id: "thread-missing",
+      user_message_id: "user-msg-missing",
+      action: "resend",
+    });
+    expect(mockStreamAcp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj",
+        prompt: "retry this",
+        chat: expect.objectContaining({
+          user_message_content: "@codex retry this",
+          user_message_date: new Date(8300).toISOString(),
+          user_parent_message_id: undefined,
+          parent_message_id: "user-msg-missing",
+          thread_id: "thread-missing",
+        }),
+      }),
+      { timeout: expect.any(Number) },
+    );
+    expect(actions.deleteMessage).toHaveBeenCalledWith(staleFailureReply);
+    expect(actions.sendReply).not.toHaveBeenCalled();
+    expect(acpState.get("message:user-msg-missing")).toBe("queue");
   });
 });

@@ -27,6 +27,7 @@ import {
   defaultWorkingDirectoryForChat,
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import {
   codexModelSupportsFastMode,
@@ -335,7 +336,11 @@ export function CodexConfigButton({
       modelValue: baseModel,
     });
     const defaults: CodexThreadConfig = {
-      workingDirectory: defaultWorkingDir(chatPath, workspaceWorkingDirectory),
+      workingDirectory: defaultWorkingDir(
+        chatPath,
+        workspaceWorkingDirectory,
+        getProjectHomeDirectory(projectId),
+      ),
       sessionId: "",
       model: baseModel,
       reasoning: baseReasoning,
@@ -384,6 +389,7 @@ export function CodexConfigButton({
     threadConfigKey,
     defaultSessionMode,
     workspaceWorkingDirectory,
+    projectId,
   ]);
 
   const selectedModelValue = Form.useWatch("model", form) ?? value?.model;
@@ -932,6 +938,11 @@ export function codexThreadConfigKey(
 function defaultWorkingDir(
   chatPath: string,
   workspaceWorkingDirectory?: string,
+  projectHomeDirectory?: string,
 ): string {
-  return defaultWorkingDirectoryForChat(chatPath, workspaceWorkingDirectory);
+  return defaultWorkingDirectoryForChat(
+    chatPath,
+    workspaceWorkingDirectory,
+    projectHomeDirectory,
+  );
 }

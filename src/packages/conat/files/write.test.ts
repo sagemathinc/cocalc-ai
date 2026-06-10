@@ -27,6 +27,33 @@ describe("files write explicit routing", () => {
     ).rejects.toThrow("must provide an explicit Conat client");
   });
 
+  it("uses an explicit service name for project-host write servers", async () => {
+    const { close, createServer } = await import("./write");
+    const subscription = {
+      async *[Symbol.asyncIterator]() {},
+      drain: jest.fn(),
+    };
+    const client = {
+      subscribe: jest.fn(async () => subscription),
+    };
+
+    await createServer({
+      client: client as any,
+      project_id: "00000000-1000-4000-8000-000000000001",
+      name: ":project-host",
+      createWriteStream: jest.fn(),
+    });
+
+    expect(client.subscribe).toHaveBeenCalledWith(
+      "project.00000000-1000-4000-8000-000000000001.files:write:project-host.-",
+    );
+
+    await close({
+      project_id: "00000000-1000-4000-8000-000000000001",
+      name: ":project-host",
+    });
+  });
+
   it("rejects writes above the active stream cap", async () => {
     const { close, createServer } = await import("./write");
     let release!: () => void;

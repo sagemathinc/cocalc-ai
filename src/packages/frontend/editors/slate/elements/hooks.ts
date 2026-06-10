@@ -15,6 +15,7 @@ import {
   useFrameContext,
   useRef,
 } from "@cocalc/frontend/app-framework";
+import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { Range } from "slate";
 import { path_split } from "@cocalc/util/misc";
 import { useSlateStatic as useSlateStatic0 } from "../slate-react";
@@ -48,13 +49,16 @@ export const useProcessLinks = (
 ) => {
   // TODO: implementation is very ugly!
   const ref = useRef<any>(null);
-  const { project_id, path } = useFrameContext();
+  const frameContext = useFrameContext();
+  const fileContext = useFileContext();
+  const project_id = frameContext.project_id || fileContext.project_id;
+  const path = frameContext.path || fileContext.path;
   useEffect(() => {
     if (ref.current == null) return;
     const elt = $(ref.current);
     (elt as any).process_smc_links({
       project_id,
-      file_path: path_split(path).head, // TODO: inefficient to compute this every time.
+      file_path: path ? path_split(path).head : undefined, // TODO: inefficient to compute this every time.
       doubleClick,
     });
   }, [project_id, path, doubleClick, ...deps]);

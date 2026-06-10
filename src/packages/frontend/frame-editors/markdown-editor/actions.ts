@@ -230,7 +230,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     if (activeId != null && this._get_frame_type(activeId) == "slate") {
       const markdown = this.getSlateMarkdown(activeId);
       if (markdown != null) {
-        this.set_value(markdown, do_not_exit_undo_mode);
+        this.set_value(markdown, do_not_exit_undo_mode, "slate");
         return;
       }
     }
@@ -339,10 +339,11 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   ): Promise<void> {
     const cm = editor_actions._cm[id];
     if (cm == null) return;
-    const slate_id = this.show_focused_frame_of_type("slate");
-    if (slate_id == null) return;
     // important to get markdown from cm and not syncstring to get latest version.
     const markdown = cm.getValue();
+    this.set_value(markdown, true, "cm");
+    const slate_id = this.show_focused_frame_of_type("slate");
+    if (slate_id == null) return;
     const pos = cm.getDoc().getCursor();
     let blockControl = this.getBlockEditorControl(slate_id);
     if (!blockControl) {
@@ -385,6 +386,10 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   }
 
   private sync_slate_to_cm(id: string) {
+    const markdown = this.getSlateMarkdown(id);
+    if (markdown != null) {
+      this.set_value(markdown, true, "slate");
+    }
     const blockControl = this.getBlockEditorControl(id);
     if (blockControl?.getMarkdownPositionForSelection) {
       const pos = blockControl.getMarkdownPositionForSelection();

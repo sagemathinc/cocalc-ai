@@ -124,6 +124,10 @@ describe("Base editor action structure", () => {
     expect(staleCm.getValue).not.toHaveBeenCalled();
     expect(freshCm.getValue).toHaveBeenCalled();
     expect(sync.from_str).toHaveBeenCalledWith("fresh source");
+    expect(sync.emit).toHaveBeenCalledWith("change", {
+      local: true,
+      source: "cm",
+    });
   });
 
   it("StructuredEditorActions does not touch to_str", () => {

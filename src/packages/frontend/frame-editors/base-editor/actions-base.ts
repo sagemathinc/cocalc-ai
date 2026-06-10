@@ -2452,13 +2452,17 @@ export class BaseEditorActions<
 
   // Sets value of syncstring to the given value.  If there are any
   // codemirror editors, their value also gets sets directly.
-  public set_value(value: string, do_not_exit_undo_mode?: boolean): void {
+  public set_value(
+    value: string,
+    do_not_exit_undo_mode?: boolean,
+    localSource?: string,
+  ): void {
     if (this._state === "closed") return;
     const cm = this._get_cm();
     if (cm != null) {
       cm.setValueNoJump(value);
     }
-    this.set_syncstring(value, do_not_exit_undo_mode);
+    this.set_syncstring(value, do_not_exit_undo_mode, localSource);
   }
 
   set_syncstring_to_codemirror(
@@ -2470,12 +2474,16 @@ export class BaseEditorActions<
       return;
     }
     const localText = cm.getValue();
-    this.set_syncstring(localText, do_not_exit_undo_mode);
+    this.set_syncstring(localText, do_not_exit_undo_mode, "cm");
   }
 
   // Do NOT call this outside of this class to set the value - instead call
   // the public set_value method!
-  private set_syncstring(value: string, do_not_exit_undo_mode?: boolean): void {
+  private set_syncstring(
+    value: string,
+    do_not_exit_undo_mode?: boolean,
+    localSource?: string,
+  ): void {
     // note -- we don't try to set the syncstring if actions are closed
     // or the syncstring isn't initialized yet.  The latter case happens when
     // switching the file that is being edited in a frame, e.g., for latex.
@@ -2510,7 +2518,7 @@ export class BaseEditorActions<
     // NOTE: above is the only place where syncstring is changed, and when *we* change syncstring,
     // no change event is fired.  However, derived classes may want to update some preview when
     // syncstring changes, so we explicitly emit a change here:
-    this._syncstring.emit("change", { local: true });
+    this._syncstring.emit("change", { local: true, source: localSource });
   }
 
   async set_codemirror_to_syncstring(): Promise<void> {

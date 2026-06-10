@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { useLayoutEffect } from "react";
 import { createEditor, Descendant, Range } from "slate";
 
@@ -26,6 +26,40 @@ const renderElement = ({
         : "div";
   return <Tag {...attributes}>{children}</Tag>;
 };
+
+test("ReactEditor.focus does not throw when selection DOM is unavailable", () => {
+  const editor = withReact(createEditor());
+  const value: Descendant[] = [
+    { type: "paragraph", children: [{ text: "hello" }] },
+  ];
+
+  const { container, unmount } = render(
+    <Slate editor={editor} value={value} onChange={() => undefined}>
+      <Editable renderElement={renderElement} />
+    </Slate>,
+  );
+
+  editor.selection = {
+    anchor: { path: [0, 0], offset: 5 },
+    focus: { path: [0, 0], offset: 5 },
+  };
+
+  // Simulate the stale DOM selection mapping from the production crash:
+  // Slate state still has "hello", but the mounted DOM no longer has enough
+  // text for offset 5 to map to a DOM point.
+  const slateString = container.querySelector("[data-slate-string]");
+  if (slateString?.firstChild != null) {
+    slateString.firstChild.textContent = "";
+  }
+
+  expect(() =>
+    act(() => {
+      ReactEditor.focus(editor);
+    }),
+  ).not.toThrow();
+
+  unmount();
+});
 
 function MutateSelectionToNonLeaf({ editor }: { editor: ReactEditor }) {
   useLayoutEffect(() => {

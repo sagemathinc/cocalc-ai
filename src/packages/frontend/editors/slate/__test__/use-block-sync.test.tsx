@@ -44,7 +44,7 @@ test("flushes a pending debounced block-editor save on unmount", () => {
 
   unmount();
 
-  expect(actions.set_value).toHaveBeenCalledWith("new");
+  expect(actions.set_value).toHaveBeenCalledWith("new", undefined, "slate");
   expect(actions.syncstring_commit).toHaveBeenCalled();
 });
 
