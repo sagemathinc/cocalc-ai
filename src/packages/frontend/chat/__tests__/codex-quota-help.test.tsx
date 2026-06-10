@@ -83,6 +83,7 @@ describe("CodexQuotaHelp", () => {
     );
     expect(screen.queryByText("Upgrade membership")).toBeNull();
     expect(screen.getByText("Open AI Settings")).toBeTruthy();
+    expect(screen.getByText("Open ChatGPT Codex Usage")).toBeTruthy();
   });
 
   it("opens the settings modal for usage limits", async () => {
