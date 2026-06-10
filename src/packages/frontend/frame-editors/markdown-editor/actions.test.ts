@@ -64,7 +64,9 @@ describe("markdown editor Actions", () => {
       calls.push("show_focused_frame_of_type");
       return "slate-frame";
     });
+    const setMarkdown = jest.fn(() => calls.push("setMarkdown"));
     actions.getBlockEditorControl = jest.fn(() => ({
+      setMarkdown,
       setSelectionFromMarkdownPosition: jest.fn(() => true),
     }));
     actions.set_active_id = jest.fn();
@@ -76,9 +78,60 @@ describe("markdown editor Actions", () => {
       true,
       "cm",
     );
+    expect(setMarkdown).toHaveBeenCalledWith("new codemirror text");
     expect(actions.show_focused_frame_of_type).toHaveBeenCalledWith("slate");
     expect(actions.set_active_id).toHaveBeenCalledWith("slate-frame", true);
-    expect(calls).toEqual(["set_value", "show_focused_frame_of_type"]);
+    expect(calls).toEqual([
+      "set_value",
+      "show_focused_frame_of_type",
+      "setMarkdown",
+    ]);
+  });
+
+  it("updates a plain Slate editor before selecting after CodeMirror sync", async () => {
+    const actions: any = Object.create(Actions.prototype);
+    const calls: string[] = [];
+    const setMarkdownValueNow = jest.fn(() =>
+      calls.push("setMarkdownValueNow"),
+    );
+    actions._cm = {
+      "cm-frame": {
+        getValue: () => "fresh source",
+        getDoc: () => ({
+          getCursor: () => ({ line: 0, ch: 5 }),
+        }),
+      },
+    };
+    actions.set_value = jest.fn(() => calls.push("set_value"));
+    actions.show_focused_frame_of_type = jest.fn(() => {
+      calls.push("show_focused_frame_of_type");
+      return "slate-frame";
+    });
+    const setSelectionFromMarkdownPosition = jest.fn(() => true);
+    actions.getBlockEditorControl = jest
+      .fn()
+      .mockReturnValueOnce(undefined)
+      .mockReturnValue({
+        setSelectionFromMarkdownPosition,
+      });
+    actions.getSlateEditor = jest.fn(() => ({
+      setMarkdownValueNow,
+    }));
+    actions.set_active_id = jest.fn();
+
+    await actions.sync_cm_to_slate("cm-frame", actions);
+
+    expect(setMarkdownValueNow).toHaveBeenCalledWith("fresh source");
+    expect(setSelectionFromMarkdownPosition).toHaveBeenCalledWith({
+      line: 0,
+      ch: 5,
+    });
+    expect(actions.set_active_id).toHaveBeenCalledWith("slate-frame", true);
+    expect(calls).toEqual([
+      "set_value",
+      "show_focused_frame_of_type",
+      "setMarkdownValueNow",
+    ]);
   });
 
   it("restores the last focused Slate block on refocus instead of jumping to block 0", () => {

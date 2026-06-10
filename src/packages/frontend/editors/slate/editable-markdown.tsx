@@ -2398,6 +2398,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
   };
 
+  editor.setMarkdownValueNow = (nextValue: string) => {
+    allowFocusedValueUpdateRef.current = true;
+    setEditorToValue(nextValue ?? "");
+  };
+
   if ((window as any).cc != null) {
     // This only gets set when running in cc-in-cc dev mode -- i.e., it is for low level
     // interactive debugging and dev work.

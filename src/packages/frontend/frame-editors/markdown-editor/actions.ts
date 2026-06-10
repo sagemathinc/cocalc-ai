@@ -346,9 +346,25 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     if (slate_id == null) return;
     const pos = cm.getDoc().getCursor();
     let blockControl = this.getBlockEditorControl(slate_id);
+    let syncedSlateMarkdown = false;
+    const syncSlateMarkdownNow = () => {
+      if (syncedSlateMarkdown) return;
+      if (typeof blockControl?.setMarkdown === "function") {
+        blockControl.setMarkdown(markdown);
+        syncedSlateMarkdown = true;
+        return;
+      }
+      const editor = this.getSlateEditor(slate_id);
+      if (typeof editor?.setMarkdownValueNow === "function") {
+        editor.setMarkdownValueNow(markdown);
+        syncedSlateMarkdown = true;
+      }
+    };
+    syncSlateMarkdownNow();
     if (!blockControl) {
       await delay(1);
       blockControl = this.getBlockEditorControl(slate_id);
+      syncSlateMarkdownNow();
     }
     if (blockControl?.setSelectionFromMarkdownPosition) {
       blockControl.setSelectionFromMarkdownPosition(pos);
