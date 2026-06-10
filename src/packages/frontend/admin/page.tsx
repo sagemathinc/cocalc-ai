@@ -310,8 +310,8 @@ export function AdminPage({
             style={{ marginBottom: "12px", width: "100%" }}
           />
         )}
-        <Flex align="center" gap="middle" wrap>
-          <Title level={3} style={{ marginBottom: 0 }}>
+        <Flex align="baseline" gap="middle" wrap>
+          <Title level={3} style={{ lineHeight: 1.2, margin: 0 }}>
             {title}
           </Title>
           {activeNavItem?.description && (
