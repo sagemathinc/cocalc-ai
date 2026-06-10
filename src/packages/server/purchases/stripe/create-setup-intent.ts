@@ -10,6 +10,7 @@ flow." -- https://docs.stripe.com/api/setup_intents
 import getConn from "@cocalc/server/stripe/connection";
 import getLogger from "@cocalc/backend/logger";
 import { getStripeCustomerId } from "./util";
+import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 const logger = getLogger("purchases:stripe:create-setup-intent");
 
@@ -21,6 +22,7 @@ export default async function createSetupIntent({
   description?: string;
 }): Promise<{ clientSecret: string }> {
   logger.debug("createSetupIntent", { account_id });
+  await assertPaymentCheckoutAllowed();
 
   const stripe = await getConn();
   const customer = await getStripeCustomerId({ account_id, create: true });

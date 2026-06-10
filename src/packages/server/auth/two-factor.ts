@@ -700,8 +700,10 @@ export async function startTwoFactorSetup({
   otpauth_url: string;
 }> {
   const accountId = ensureAccountId(account_id);
-  if (await hasActiveSecondFactor(accountId)) {
-    throw new Error("two-factor authentication is already enabled");
+  if (await getActiveFactor(accountId)) {
+    throw new Error(
+      "authenticator app two-factor authentication is already enabled",
+    );
   }
   const factor_id = uuid();
   const secret = generateTotpSecret();

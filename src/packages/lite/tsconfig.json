@@ -32,6 +32,7 @@
     { "path": "../backend" },
     { "path": "../chat" },
     { "path": "../conat" },
+    { "path": "../http-api" },
     { "path": "../project" },
     { "path": "../static" },
     { "path": "../util" }

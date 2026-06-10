@@ -1265,6 +1265,26 @@ export default function SiteSettings({ close }) {
                       </span>
                     ) : null}
                   </summary>
+                  {groupName === "System / Advanced" &&
+                    subgroupName === "Launch Emergency Controls" && (
+                      <Alert
+                        showIcon
+                        type="info"
+                        style={{ margin: "8px 0 12px 0" }}
+                        message="Signup incident runbook"
+                        description={
+                          <span>
+                            These switches limit post-signup capabilities. If
+                            the incident is new-account creation, use the{" "}
+                            <a href="/app-docs/admin/signup-emergency-controls">
+                              signup emergency controls runbook
+                            </a>{" "}
+                            for registration-token, email-signup, domain, and
+                            SSO account-creation controls.
+                          </span>
+                        }
+                      />
+                    )}
                   {items
                     .sort((a, b) => {
                       const orderA = a.conf.order ?? 1000;

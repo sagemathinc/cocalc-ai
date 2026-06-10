@@ -10,7 +10,7 @@ import { Alert, Button, Input, Space } from "antd";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 
-import { setVoucherCodeNotes } from "./api";
+import { setVoucherCodeNotes } from "@cocalc/frontend/store/api";
 
 export default function VoucherCodeNotes({
   code,

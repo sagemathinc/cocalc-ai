@@ -213,6 +213,10 @@ import {
   rehomeHost as rehomeHostInternal,
 } from "@cocalc/server/project-host/rehome";
 import {
+  assertUserHostCreateAllowed,
+  isAiLaunchDisabled,
+} from "@cocalc/server/launch/kill-switches";
+import {
   hostManagedComponentRolloutDedupeKey,
   hostUpgradeDedupeKey,
   listHostSoftwareVersions as listHostSoftwareVersionsInternal,
@@ -2630,7 +2634,8 @@ export async function getSiteOpenAiApiKey({
     throw new Error("host_id must be specified");
   }
   const settings = await getServerSettings();
-  const enabled = to_bool(settings.openai_enabled);
+  const enabled =
+    to_bool(settings.openai_enabled) && !(await isAiLaunchDisabled());
   const apiKey = `${settings.openai_api_key ?? ""}`.trim();
   const has_api_key = apiKey.length > 0;
   return {
@@ -2681,6 +2686,13 @@ export async function checkCodexSiteUsageAllowance({
     project_id,
     owner_account_id: account_id,
   });
+  if (await isAiLaunchDisabled()) {
+    return {
+      allowed: false,
+      reason:
+        "AI and Codex are temporarily disabled by the site administrator.",
+    };
+  }
 
   const status = await getAIUsageStatus({ account_id });
   for (const window of status.windows) {
@@ -4724,6 +4736,7 @@ export async function createHost({
 }): Promise<Host> {
   const owner = requireAccount(account_id);
   const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
+  await assertUserHostCreateAllowed({ account_id: owner });
   if (normalizeProviderId(machine?.cloud) === "self-host") {
     if (!(await isAdmin(owner))) {
       throw new Error("self-hosted hosts are limited to admins");

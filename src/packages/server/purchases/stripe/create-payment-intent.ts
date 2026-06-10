@@ -20,6 +20,7 @@ import { RESUME_SUBSCRIPTION } from "@cocalc/util/db-schema/purchases";
 import { resumeSubscriptionSetPaymentIntent } from "./create-subscription-payment";
 import send, { name, support, url } from "@cocalc/server/messages/send";
 import { delay } from "awaiting";
+import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 const logger = getLogger("purchases:stripe:create-payment-intent");
 
@@ -58,6 +59,7 @@ export default async function createPaymentIntent({
   if (!purpose) {
     throw Error("purpose must be set");
   }
+  await assertPaymentCheckoutAllowed();
   assertValidUserMetadata(metadata);
 
   const { lineItemsWithoutCredit, total_excluding_tax_usd } =

@@ -106,6 +106,8 @@ export function FilesBottom({
   const [sync, setSync] = useState<boolean>(true);
   const [requestedTerminalStart, setRequestedTerminalStart] =
     useState<boolean>(false);
+  const [terminalAutoStartAttempted, setTerminalAutoStartAttempted] =
+    useState<boolean>(false);
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const project = useProjectFromMap(project_id);
@@ -116,6 +118,16 @@ export function FilesBottom({
         account_id,
         is_admin: isAdmin,
         autostart: true,
+      }),
+    [project, account_id, isAdmin],
+  );
+  const terminalManualStartPolicyBlock = useMemo(
+    () =>
+      getProjectStartPolicyBlock({
+        project,
+        account_id,
+        is_admin: isAdmin,
+        autostart: false,
       }),
     [project, account_id, isAdmin],
   );
@@ -152,21 +164,20 @@ export function FilesBottom({
   useEffect(() => {
     if (projectIsRunning) {
       setRequestedTerminalStart(false);
-      return;
     }
-    if (!activeKeys.includes("terminal")) {
-      setRequestedTerminalStart(false);
-      return;
-    }
-    if (terminalStartPolicyBlock) {
-      setRequestedTerminalStart(false);
-      return;
-    }
+  }, [projectIsRunning]);
+
+  useEffect(() => {
+    setRequestedTerminalStart(false);
+    setTerminalAutoStartAttempted(false);
+  }, [project_id]);
+
+  function startTerminalProject({ autostart }: { autostart: boolean }) {
     setRequestedTerminalStart(true);
-    void redux
-      .getActions("projects")
-      .start_project(project_id, { autostart: true });
-  }, [activeKeys, projectIsRunning, project_id, terminalStartPolicyBlock]);
+    void Promise.resolve(
+      redux.getActions("projects").start_project(project_id, { autostart }),
+    ).catch(() => setRequestedTerminalStart(false));
+  }
 
   // useEffect(() => {
   //   // if any selected and nothing in state, open "selected".
@@ -207,19 +218,46 @@ export function FilesBottom({
     if (!projectIsRunning) {
       return (
         <div style={{ padding: FLYOUT_PADDING }}>
-          {terminalStartPolicyBlock ? (
+          {terminalManualStartPolicyBlock ? (
             <Alert
               type="warning"
               showIcon
-              message="Terminal cannot start this project automatically"
+              message="Terminal cannot start this project"
               description={formatProjectStartPolicyBlock(
-                terminalStartPolicyBlock,
+                terminalManualStartPolicyBlock,
               )}
             />
+          ) : terminalStartPolicyBlock ? (
+            <Space direction="vertical" size="small">
+              <Alert
+                type="warning"
+                showIcon
+                message="Terminal cannot start this project automatically"
+                description={formatProjectStartPolicyBlock(
+                  terminalStartPolicyBlock,
+                )}
+              />
+              <Button
+                size="small"
+                type="primary"
+                onClick={() => startTerminalProject({ autostart: false })}
+              >
+                Start project
+              </Button>
+            </Space>
           ) : requestedTerminalStart ? (
             "Starting the project so the terminal can connect..."
           ) : (
-            "You have to start the project to be able to run a terminal."
+            <Space direction="vertical" size="small">
+              <div>Project is stopped. Start it to use this terminal.</div>
+              <Button
+                size="small"
+                type="primary"
+                onClick={() => startTerminalProject({ autostart: false })}
+              >
+                Start project
+              </Button>
+            </Space>
           )}
         </div>
       );
@@ -460,6 +498,8 @@ export function FilesBottom({
   }
 
   function setActiveKeyHandler(keys: PanelKey[]) {
+    const openingTerminal =
+      keys.includes("terminal") && !activeKeys.includes("terminal");
     setActiveKeys(keys);
     storeFlyoutState(project_id, "files", {
       files: {
@@ -467,6 +507,15 @@ export function FilesBottom({
         terminal: { show: keys.includes("terminal") },
       },
     });
+    if (
+      openingTerminal &&
+      !projectIsRunning &&
+      !terminalAutoStartAttempted &&
+      !terminalStartPolicyBlock
+    ) {
+      setTerminalAutoStartAttempted(true);
+      startTerminalProject({ autostart: true });
+    }
   }
 
   const style: CSS = {

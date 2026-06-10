@@ -16,6 +16,9 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
         Verify fresh auth
       </button>
     ) : null,
+  isFreshAuthRequiredError: (err: any) =>
+    `${err?.code ?? ""}` === "fresh_auth_required" ||
+    `${err?.message ?? err ?? ""}`.includes("fresh auth"),
 }));
 
 jest.mock("@cocalc/frontend/auth/passkeys", () => ({
@@ -133,5 +136,49 @@ describe("TwoFactorAuthSetting", () => {
         }),
       );
     });
+  });
+
+  it("lets passkey-only accounts start authenticator app setup without a second prompt when already fresh", async () => {
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/2fa/status") {
+        return {
+          enabled: true,
+          factor_type: null,
+          fresh_auth_until: new Date(Date.now() + 60_000).toISOString(),
+          passkeys: [
+            {
+              id: "factor-1",
+              label: "Localhost passkey",
+              credential_id: "credential-1",
+            },
+          ],
+        };
+      }
+      if (endpoint === "auth/2fa/setup/start") {
+        return {
+          factor_id: "totp-1",
+          secret: "SECRET",
+          issuer: "CoCalc",
+          account_label: "user@example.com",
+          otpauth_url: "otpauth://totp/CoCalc:user@example.com?secret=SECRET",
+        };
+      }
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    });
+
+    render(<TwoFactorAuthSetting />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Set up authenticator app",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(postAuthApi).toHaveBeenCalledWith(
+        expect.objectContaining({ endpoint: "auth/2fa/setup/start" }),
+      );
+    });
+    expect(screen.queryByTestId("fresh-auth-modal")).not.toBeInTheDocument();
   });
 });
