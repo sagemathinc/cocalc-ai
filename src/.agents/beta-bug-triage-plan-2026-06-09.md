@@ -503,3 +503,4 @@ Validation:
 ### Done: Ping/Latency Layout And Project-Host Latency
 
 The source list still contains the old ping-time layout and project-host latency report. This was handled in the 2026-06-08 beta plan as `P2-D`; do not create a duplicate task unless a new regression is reported.
+
