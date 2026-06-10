@@ -11,6 +11,7 @@ import {
 } from "@cocalc/util/master-key-lifecycle";
 import { readFile, writeFile } from "node:fs/promises";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
+import type { LaunchHealthStatus } from "@cocalc/conat/hub/api/system";
 
 export type AdminCommandDeps = {
   withContext: any;
@@ -645,6 +646,14 @@ function prometheusLabels(labels: Record<string, unknown>): string {
     .join(",");
 }
 
+function formatLaunchHealthCompact(status: LaunchHealthStatus) {
+  return status.checks.map((check) => ({
+    level: check.level,
+    check: check.label,
+    summary: check.summary,
+  }));
+}
+
 function formatAcpDenialPrometheus(report: any): string {
   const lines = [
     "# HELP cocalc_acp_admission_denials_window_total ACP admission denials in the selected recent time window.",
@@ -895,6 +904,45 @@ export function registerAdminCommand(
             last_active: row.last_active ?? null,
             created: row.created ?? null,
           }));
+        });
+      },
+    );
+
+  admin
+    .command("health")
+    .description("show minimum launch operator health checks (admin-only)")
+    .option(
+      "--window-minutes <n>",
+      "UX latency lookback window in minutes",
+      "60",
+    )
+    .option("--wide", "show full normalized health payload")
+    .action(
+      async (
+        opts: {
+          windowMinutes?: string;
+          wide?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin health", async (ctx) => {
+          const status = await ctx.hub.system.getLaunchHealth({
+            window_minutes: parsePositiveIntegerOption({
+              name: "--window-minutes",
+              value: opts.windowMinutes,
+              fallback: 60,
+              max: 7 * 24 * 60,
+            }),
+          });
+          const wide =
+            opts.wide ||
+            ctx.globals?.json ||
+            ctx.globals?.output === "json" ||
+            ctx.globals?.output === "yaml";
+          if (wide) {
+            return status;
+          }
+          return formatLaunchHealthCompact(status);
         });
       },
     );
