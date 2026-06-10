@@ -55,7 +55,6 @@ import {
 
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
-const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 const CODEX_CONTROLS_COLLAPSED_KEY = "cocalc.chat.codexControlsCollapsed";
 
 type ModeOption = {
@@ -258,11 +257,6 @@ export function CodexPaymentCredentialsModal({
             defaultProjectId={projectId}
             onPaymentSourceChanged={refreshPaymentSource}
           />
-          <Text type="secondary">
-            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-              View Codex usage in ChatGPT
-            </a>
-          </Text>
           <Divider style={{ margin: "8px 0" }} />
           <LiteAISettings onSaved={refreshPaymentSource} showTitle />
         </Space>
@@ -274,11 +268,6 @@ export function CodexPaymentCredentialsModal({
             defaultProjectId={projectId}
             onPaymentSourceChanged={refreshPaymentSource}
           />
-          <Text type="secondary">
-            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-              View Codex usage in ChatGPT
-            </a>
-          </Text>
         </Space>
       )}
     </Modal>

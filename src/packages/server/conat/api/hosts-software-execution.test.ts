@@ -439,6 +439,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         account_id: "account-1",
         id: "host-1",
         components: ["project-host"],
+        base_url: "https://hub.example.test/software",
         reason: "host_software_upgrade",
         loadHostForStartStop,
         assertHostRunningForUpgrade: () => undefined,
@@ -628,6 +629,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         account_id: "account-1",
         id: "host-1",
         components: ["project-host"],
+        base_url: "https://hub.example.test/software",
         reason: "host_software_upgrade",
         loadHostForStartStop,
         assertHostRunningForUpgrade: () => undefined,
@@ -1031,7 +1033,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           },
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
         recordProjectHostLocalRollbackInternal: async () => ({
           host_id: "host-1",
           rollback_version: "ph-v1",
@@ -1051,6 +1054,16 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
 
   it("uses the effective runtime deployment target as the desired project-host version", async () => {
     const runtimeDeploymentsForComponentRollout = jest.fn(() => []);
+    const upgradeSoftware = jest.fn(async () => ({
+      results: [
+        {
+          artifact: "project-host" as const,
+          version: "ph-v2",
+          status: "updated" as const,
+        },
+      ],
+    }));
+    const updateProjectHostSoftwareRecord = jest.fn(async () => undefined);
     const recordProjectHostLocalRollbackInternal = jest.fn(async () => ({
       host_id: "host-1",
       rollback_version: "ph-v1",
@@ -1065,6 +1078,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         account_id: "account-1",
         id: "host-1",
         components: ["project-host"],
+        base_url: "https://hub.example.test/software",
         reason: "host_software_upgrade",
         loadHostForStartStop: jest
           .fn()
@@ -1083,12 +1097,24 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           .mockResolvedValueOnce({
             id: "host-1",
             status: "running",
-            version: "ph-v1",
+            version: "ph-v2",
+            last_seen: "2026-04-25T05:00:00.000Z",
+            metadata: {
+              owner: "account-1",
+              software: {
+                project_host: "ph-v2",
+              },
+            },
+          })
+          .mockResolvedValueOnce({
+            id: "host-1",
+            status: "running",
+            version: "ph-v2",
             last_seen: "2026-04-25T05:00:05.000Z",
             metadata: {
               owner: "account-1",
               software: {
-                project_host: "ph-v1",
+                project_host: "ph-v2",
               },
             },
           }),
@@ -1107,6 +1133,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
               },
             ],
           }),
+          upgradeSoftware,
           getManagedComponentStatus: async () => [
             {
               component: "project-host",
@@ -1123,7 +1150,11 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           ],
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
+        resolveHostSoftwareBaseUrl: async (baseUrl) => baseUrl,
+        resolveReachableUpgradeBaseUrl: async ({ baseUrl }) => baseUrl,
+        updateProjectHostSoftwareRecord,
         recordProjectHostLocalRollbackInternal,
         project_host_local_rollback_error_code: "project_host_local_rollback",
         setLastKnownGoodArtifactVersionInternal,
@@ -1147,6 +1178,23 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
       ],
     });
 
+    expect(upgradeSoftware).toHaveBeenCalledWith({
+      targets: [{ artifact: "project-host", version: "ph-v2" }],
+      base_url: "https://hub.example.test/software",
+      restart_project_host: false,
+      retention_policy: expect.any(Object),
+    });
+    expect(updateProjectHostSoftwareRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        results: [
+          {
+            artifact: "project-host",
+            version: "ph-v2",
+            status: "updated",
+          },
+        ],
+      }),
+    );
     expect(recordProjectHostLocalRollbackInternal).not.toHaveBeenCalled();
     expect(setLastKnownGoodArtifactVersionInternal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1195,7 +1243,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           },
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
         recordProjectHostLocalRollbackInternal: async () => ({
           host_id: "host-1",
           rollback_version: "ph-v1",
@@ -1288,7 +1337,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           ],
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
         recordProjectHostLocalRollbackInternal,
         project_host_local_rollback_error_code: "project_host_local_rollback",
         setLastKnownGoodArtifactVersionInternal,
@@ -1387,7 +1437,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           },
         }),
         waitForHostHeartbeatAfter: async () => undefined,
-        installedProjectHostArtifactVersion: () => "ph-v1",
+        installedProjectHostArtifactVersion: (row) =>
+          row?.metadata?.software?.project_host,
         recordProjectHostLocalRollbackInternal,
         project_host_local_rollback_error_code: "project_host_local_rollback",
         setLastKnownGoodArtifactVersionInternal,

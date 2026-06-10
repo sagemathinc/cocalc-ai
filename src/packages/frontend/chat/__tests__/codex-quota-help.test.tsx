@@ -5,12 +5,6 @@ import {
   isCodexUsageLimitMessage,
 } from "../codex-quota-help";
 
-jest.mock("@cocalc/frontend/account/membership-purchase-modal", () => ({
-  __esModule: true,
-  default: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="membership-purchase-modal" /> : null,
-}));
-
 jest.mock("@cocalc/frontend/account/codex-credentials-panel", () => ({
   CodexCredentialsPanel: ({
     defaultProjectId,
@@ -82,15 +76,16 @@ describe("CodexQuotaHelp", () => {
   it("renders inline actions only for quota messages", () => {
     const { rerender } = render(<CodexQuotaHelp message="Normal reply" />);
     expect(screen.queryByText("Upgrade membership")).toBeNull();
+    expect(screen.queryByText("Open AI Settings")).toBeNull();
 
     rerender(
       <CodexQuotaHelp message="You have reached your 5-hour AI usage limit. Please try again later or upgrade your membership." />,
     );
-    expect(screen.getByText("Upgrade membership")).toBeTruthy();
-    expect(screen.getByText("Open AI settings")).toBeTruthy();
+    expect(screen.queryByText("Upgrade membership")).toBeNull();
+    expect(screen.getByText("Open AI Settings")).toBeTruthy();
   });
 
-  it("opens the membership and settings modals", async () => {
+  it("opens the settings modal for usage limits", async () => {
     render(
       <CodexQuotaHelp
         message="You have reached your 5-hour AI usage limit. Please try again later or upgrade your membership."
@@ -98,10 +93,7 @@ describe("CodexQuotaHelp", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("Upgrade membership"));
-    expect(screen.getByTestId("membership-purchase-modal")).toBeTruthy();
-
-    fireEvent.click(screen.getByText("Open AI settings"));
+    fireEvent.click(screen.getByText("Open AI Settings"));
     expect(screen.getByTestId("codex-credentials-panel").textContent).toContain(
       "project-1",
     );

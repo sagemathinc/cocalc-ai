@@ -1,6 +1,7 @@
 import type { AppRedux } from "@cocalc/util/redux/types";
 import type { PatchId } from "@cocalc/sync";
 import type { SyncString } from "@cocalc/sync/editor/string/sync";
+import { fromJS, Map } from "immutable";
 import { TextEditorActions } from "../actions-text";
 import { StructuredEditorActions } from "../actions-structured";
 import { MergeCoordinator } from "../../code-editor/sync";
@@ -128,6 +129,42 @@ describe("Base editor action structure", () => {
       local: true,
       source: "cm",
     });
+  });
+
+  it("synchronously persists frame tree deletes before refresh can restore stale splits", () => {
+    const actions: any = Object.create(TextEditorActions.prototype);
+    const localViewState = Map({
+      frame_tree: fromJS({
+        type: "node",
+        id: "root",
+        direction: "row",
+        children: [
+          { type: "slate", id: "slate-frame" },
+          { type: "cm", id: "cm-frame" },
+        ],
+        sizes: [0.5, 0.5],
+      }),
+      full_id: "cm-frame",
+    });
+    actions.store = {
+      get: jest.fn((key) =>
+        key === "local_view_state" ? localViewState : undefined,
+      ),
+    };
+    actions.setState = jest.fn();
+    actions._save_local_view_state = jest.fn();
+    actions._save_local_view_state_value = jest.fn();
+
+    actions._tree_op("delete_node", "cm-frame");
+
+    const nextLocal = actions.setState.mock.calls[0][0].local_view_state;
+    expect(nextLocal.getIn(["frame_tree", "type"])).toBe("slate");
+    expect(nextLocal.getIn(["frame_tree", "id"])).toBe("slate-frame");
+    expect(nextLocal.has("full_id")).toBe(false);
+    expect(actions._save_local_view_state_value).toHaveBeenCalledWith(
+      nextLocal,
+    );
+    expect(actions._save_local_view_state).not.toHaveBeenCalled();
   });
 
   it("StructuredEditorActions does not touch to_str", () => {

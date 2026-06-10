@@ -475,6 +475,38 @@ describe("project docs actions", () => {
     );
   });
 
+  it("hides non-Plus docs actions from the Plus flyout", async () => {
+    const actionIds = listDocsAppActions({
+      docsAccess: { product: "plus" },
+      projectId: "project-1",
+    }).map((action) => action.id);
+
+    expect(actionIds).toEqual(
+      expect.arrayContaining([
+        "project.terminal.open",
+        "terminal.open",
+        "project.jupyter.create",
+        "jupyter.open",
+        "files.explorer.open",
+        "files.git.open",
+      ]),
+    );
+    expect(actionIds).not.toContain("settings.people.collaborators");
+    expect(actionIds).not.toContain("hosts.open");
+    expect(actionIds).not.toContain("projects.create.open");
+    expect(actionIds).not.toContain("docs.browser.open");
+
+    await expect(
+      Promise.resolve().then(() =>
+        revealDocsAction({
+          actionId: "hosts.open",
+          docsAccess: { product: "plus" },
+          projectId: "project-1",
+        }),
+      ),
+    ).rejects.toThrow("docs action 'hosts.open' is not available");
+  });
+
   it("opens admin sections for admin docs actions", async () => {
     mockIsAdmin = true;
 

@@ -5,7 +5,6 @@
 
 import { Button, Modal, Space, Typography } from "antd";
 import { useMemo, useState } from "react";
-import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
 
 const { Paragraph, Text } = Typography;
@@ -69,7 +68,6 @@ export function CodexQuotaHelp({
   message?: string;
   projectId?: string;
 }) {
-  const [membershipOpen, setMembershipOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const authError = useMemo(
     () => classifyCodexAuthErrorMessage(message),
@@ -103,28 +101,21 @@ export function CodexQuotaHelp({
         ) : (
           <>
             <Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              <Text strong>Need more Codex access?</Text> Upgrade here or switch
-              this chat to your own ChatGPT Plan or OpenAI API key.
+              <Text strong>Need more Codex access?</Text> Connect your ChatGPT
+              Plan or add an OpenAI API key in AI settings.
             </Paragraph>
             <Space wrap>
               <Button
                 size="small"
                 type="primary"
-                onClick={() => setMembershipOpen(true)}
+                onClick={() => setSettingsOpen(true)}
               >
-                Upgrade membership
-              </Button>
-              <Button size="small" onClick={() => setSettingsOpen(true)}>
-                Open AI settings
+                Open AI Settings
               </Button>
             </Space>
           </>
         )}
       </div>
-      <MembershipPurchaseModal
-        open={membershipOpen}
-        onClose={() => setMembershipOpen(false)}
-      />
       <Modal
         open={settingsOpen}
         title={

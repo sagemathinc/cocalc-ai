@@ -1522,6 +1522,7 @@ async function handleOp(op: LroSummary): Promise<void> {
             account_id,
             id: host_id,
             components: rolloutComponents,
+            base_url: input?.base_url,
             reason: "host_software_upgrade",
             onProgress: async (update) => {
               await progressStep("waiting", update.rollout_phase_label, {
@@ -1778,6 +1779,7 @@ async function handleOp(op: LroSummary): Promise<void> {
         account_id,
         id: host_id,
         components: input?.components ?? [],
+        base_url: input?.base_url,
         reason: input?.reason,
         onProgress: async (update) => {
           await progressStep("waiting", update.rollout_phase_label, {
