@@ -14,7 +14,7 @@ Goal: resolve the current alpha-test bug set in small reviewable commits, priori
 
 ## Priority Order
 
-### P0-A: Codex/ACP Message Stays Queued Forever
+### (done) P0-A: Codex/ACP Message Stays Queued Forever
 
 Symptom: a sent Codex message can remain labeled `queued` indefinitely even while the turn is running and producing output.
 
@@ -40,7 +40,7 @@ Validation:
 - Focused chat tests.
 - Manual live Codex turn in a project, including navigation away/back while the turn runs.
 
-### P0-B: Detect Running HTTP Apps Stops The Project
+### (done) P0-B: Detect Running HTTP Apps Stops The Project
 
 Symptom: clicking `Detect running HTTP apps` on the Apps page stops the project.
 
@@ -62,7 +62,7 @@ Validation:
 - Focused tests for app-server panel/control.
 - Live click test on a disposable project.
 
-### P0-C: CoCalc Plus Project-Home Chat Tries To Make `/home/user`
+### (done) P0-C: CoCalc Plus Project-Home Chat Tries To Make `/home/user`
 
 Symptom: fresh `cocalc-plus` on a laptop shows `permission denied, mkdir '/home/user'` above project-home chat and the chat spinner never finishes.
 
@@ -85,7 +85,7 @@ Validation:
 - Unit tests around HOME derivation where HOME is not `/home/user`.
 - Manual cocalc-plus startup if available.
 
-### P0-D: Project Move Between Regions
+### (done) P0-D: Project Move Between Regions
 
 Symptom: moving projects between regions probably does not work.
 
@@ -112,7 +112,7 @@ Validation:
 
 ## Fast Correctness Batch
 
-### P1-A: Duplicate File Fails With ENOENT
+### (done) P1-A: Duplicate File Fails With ENOENT
 
 Symptom: selecting a file and choosing Actions -> Duplicate fails with `ENOENT`, likely absolute-vs-relative path handling.
 
@@ -129,7 +129,7 @@ Plan:
 2. Normalize source and destination consistently.
 3. Add unit test for duplicate of `/home/user/foo.txt`.
 
-### P1-B: PNG And No-Extension Files Load Forever
+### (done) P1-B: PNG And No-Extension Files Load Forever
 
 Symptom: opening PNG file tabs, or files with no extension, stays stuck at Loading forever. Download works.
 
@@ -146,7 +146,7 @@ Plan:
 3. Fix mapping or fallback editor generation so every association produces a component.
 4. Add tests for `x.png` and `x`.
 
-### P1-C: Drag-And-Drop To Parent Folder Does Nothing
+### (done) P1-C: Drag-And-Drop To Parent Folder Does Nothing
 
 Symptom: from `/home/user/foo`, dropping `bar.txt` onto `/home/user/` silently does nothing.
 
@@ -162,7 +162,7 @@ Plan:
 2. Fix invalid-drop logic so target parent is not mistaken for same-folder/no-op when the source is inside a child folder.
 3. Add DnD helper tests if test harness exists; otherwise isolate path classification into a tested pure helper.
 
-### P1-D: Terminal Mention Side Chat Opens Duplicate Terminal File
+### (done) P1-D: Terminal Mention Side Chat Opens Duplicate Terminal File
 
 Symptom: opening side chat via an `@mention` notification for a terminal also opens a second terminal file.
 
@@ -180,7 +180,7 @@ Plan:
 
 ## UI State Batch
 
-### P1-E: `+New` Filename Must Regenerate On Reveal
+### (done) P1-E: `+New` Filename Must Regenerate On Reveal
 
 Symptom: New page previously relied on mount to generate a fresh filename; retained pages now keep stale generated names.
 
@@ -200,7 +200,7 @@ Validation:
 
 - Component/state tests for reveal, edit, create, reveal.
 
-### P1-F: Invite Multiple Collaborators
+### (done) P1-F: Invite Multiple Collaborators
 
 Symptom: adding a second selected collaborator clears the first pending invitee.
 
@@ -217,7 +217,7 @@ Plan:
 
 ## UI Polish Batch
 
-### P2-A: Flyout Recovery CSS And Background
+### (done) P2-A: Flyout Recovery CSS And Background
 
 Symptom: Recovery snapshot section in flyout settings looks broken; all flyout background gray is too dark.
 
@@ -233,7 +233,7 @@ Plan:
 2. Lighten shared flyout background without harming contrast.
 3. Add/adjust tests if snapshot layout has test coverage.
 
-### P2-B: Skinny Flyout Close Controls Vanish
+### (done) P2-B: Skinny Flyout Close Controls Vanish
 
 Symptom: at narrow flyout widths, fullscreen and close controls disappear.
 
@@ -248,7 +248,7 @@ Plan:
 2. Allow title/path content to truncate first.
 3. Add component test or CSS-level regression if feasible.
 
-### P2-C: Host Resources Disk/Scratch Display
+### (done) P2-C: Host Resources Disk/Scratch Display
 
 Symptoms:
 
@@ -270,7 +270,7 @@ Plan:
 3. Fix text cutoff with layout changes.
 4. Add scratch metric and not-configured popover.
 
-### P2-D: Admin Software Lifecycle Artifact Controls
+### (done) P2-D: Admin Software Lifecycle Artifact Controls
 
 Symptom: no UI way to upgrade project bundle or tools bundle anymore.
 
@@ -316,3 +316,4 @@ Plan:
   - Codex turn state in a live chat thread with navigation away/back.
   - file duplicate/open/DnD in file explorer.
   - project move only after focused tests pass and suitable disposable hosts are available.
+
