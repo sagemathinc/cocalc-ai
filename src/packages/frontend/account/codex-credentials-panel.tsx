@@ -24,6 +24,10 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
+import {
+  CODEX_USAGE_LABEL,
+  CODEX_USAGE_URL,
+} from "@cocalc/frontend/account/codex-usage";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import Password from "@cocalc/frontend/components/password";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
@@ -669,7 +673,8 @@ function CodexCredentialsPanelBody({
           </Space>
           <Text type="secondary">
             Sign in once to use your ChatGPT Codex subscription in CoCalc. No
-            API key is needed.
+            API key is needed. ChatGPT shows your exact plan and remaining Codex
+            usage.
           </Text>
           <Space wrap>
             <Button
@@ -681,6 +686,9 @@ function CodexCredentialsPanelBody({
               {deviceAuthActionPending
                 ? "Getting sign-in code..."
                 : "Sign in with ChatGPT"}
+            </Button>
+            <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+              {CODEX_USAGE_LABEL}
             </Button>
           </Space>
         </Space>
@@ -711,12 +719,21 @@ function CodexCredentialsPanelBody({
             }
             description={
               lite ? (
-                <Text type="secondary">
-                  Codex will prefer your ChatGPT Plan. Use an OpenAI API key
-                  only as a fallback.
-                </Text>
+                <Space orientation="vertical" size={6}>
+                  <Text type="secondary">
+                    Codex will prefer your ChatGPT Plan. Use an OpenAI API key
+                    only as a fallback.
+                  </Text>
+                  <Text type="secondary">
+                    To see the exact ChatGPT plan and remaining Codex usage,{" "}
+                    <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+                      {CODEX_USAGE_LABEL}
+                    </a>
+                    .
+                  </Text>
+                </Space>
               ) : (
-                <>
+                <Space orientation="vertical" size={6}>
                   <Text type="secondary">
                     Order: ChatGPT Plan, Project OpenAI API key, Account OpenAI
                     API key, then Site OpenAI API key.
@@ -750,7 +767,20 @@ function CodexCredentialsPanelBody({
                     </Tag>
                     <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
                   </Space>
-                </>
+                  {paymentSource.hasSubscription ? (
+                    <Text type="secondary">
+                      To see the exact ChatGPT plan and remaining Codex usage,{" "}
+                      <a
+                        href={CODEX_USAGE_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {CODEX_USAGE_LABEL}
+                      </a>
+                      .
+                    </Text>
+                  ) : null}
+                </Space>
               )
             }
           />
