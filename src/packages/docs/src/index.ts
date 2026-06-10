@@ -30,6 +30,7 @@ export type {
   DocsEntry,
   DocsEntryImage,
   DocsEntryStatus,
+  DocsProduct,
   DocsSearchResult,
   DocsVisibility,
 } from "./types";
