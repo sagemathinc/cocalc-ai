@@ -328,7 +328,9 @@ SQL
 }
 
 create_temp_cookie() {
-  [[ -z "$COOKIE_HEADER" ]] || return
+  if [[ -n "$COOKIE_HEADER" ]]; then
+    return 0
+  fi
   resolve_admin_account_id
   TEMP_COOKIE_FILE="$(mktemp)"
   log "Create short-lived CLI auth session for ${ADMIN_ACCOUNT_ID}"
