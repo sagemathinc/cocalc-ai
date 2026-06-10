@@ -217,7 +217,7 @@ Validation:
 - Focused host deploy operation test if feasible.
 - Live host smoke: new version, one click deploy latest, project-host updated.
 
-### P1-B: CoCalc Plus Uses Port 5000 Even When Occupied
+### (done) P1-B: CoCalc Plus Uses Port 5000 Even When Occupied
 
 Status: Fixed. Plus now sets a free Lite `PORT` before loading the Lite server, preferring 5000 only when it can bind it.
 
