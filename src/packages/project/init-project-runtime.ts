@@ -10,7 +10,7 @@ import { getLogger } from "./logger";
 import * as projectSetup from "./project-setup";
 import * as sshd from "./sshd";
 
-export default async function init() {
+export async function initBeforeRuntimeUserDrop() {
   const logger = getLogger("init-project-runtime");
   const options = getOptions();
   logger.info("initializing project runtime");
@@ -25,6 +25,13 @@ export default async function init() {
   if (options.sshd) {
     await sshd.init(envVars);
   }
+}
 
+export async function initAfterRuntimeUserDrop() {
   await initScript.run();
+}
+
+export default async function init() {
+  await initBeforeRuntimeUserDrop();
+  await initAfterRuntimeUserDrop();
 }

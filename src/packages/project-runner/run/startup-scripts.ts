@@ -43,6 +43,11 @@ RUNTIME_SSH_DIR="$RUNTIME_HOME/.ssh"
 RUNTIME_MANAGED_SSH_DIR="$RUNTIME_HOME/${INTERNAL_SSH_CONFIG}"
 RUNTIME_SSHD_DIR="$RUNTIME_HOME/${SSHD_CONFIG}"
 
+if [ "$(id -u)" != "0" ]; then
+  echo "project ssh startup must run as root" >&2
+  exit 1
+fi
+
 mkdir -p /etc/dropbear
 mkdir -p "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"
 
