@@ -845,6 +845,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         setPendingRemoteIndicator(false);
         return;
       }
+      if (event?.local && event.source === "cm") {
+        mergeHelperRef.current.noteApplied(remote);
+        pendingRemoteRef.current = null;
+        setPendingRemoteIndicator(false);
+        setEditorToValue(remote);
+        return;
+      }
       if (ignoreRemoteWhileFocused && isMergeFocused()) {
         updatePendingRemoteIndicator(remote, editor.getMarkdownValue());
         return;
