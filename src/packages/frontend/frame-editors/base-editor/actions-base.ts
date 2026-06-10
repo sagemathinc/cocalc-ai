@@ -1302,9 +1302,12 @@ export class BaseEditorActions<
 
   private __save_local_view_state = (): void => {
     if (!this.store?.get("local_view_state")) return;
-    let value, s;
+    this._save_local_view_state_value(this.store.get("local_view_state"));
+  };
+
+  private _save_local_view_state_value = (s: unknown): void => {
+    let value;
     try {
-      s = this.store.get("local_view_state");
       value = JSON.stringify(s);
     } catch (err) {
       // window.x = s;
@@ -1558,8 +1561,13 @@ export class BaseEditorActions<
           local = local.delete("full_id");
         }
       }
-      this.setState({ local_view_state: local.set("frame_tree", t1) });
-      this._save_local_view_state();
+      const nextLocal = local.set("frame_tree", t1);
+      this.setState({ local_view_state: nextLocal });
+      if (op === "delete_node") {
+        this._save_local_view_state_value(nextLocal);
+      } else {
+        this._save_local_view_state();
+      }
     }
   }
 
