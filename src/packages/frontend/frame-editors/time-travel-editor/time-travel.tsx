@@ -1324,7 +1324,13 @@ export function TimeTravel(props: Props) {
         error={error}
         setError={props.actions.set_error}
       />
-      {body}
+      <div
+        className="smc-vfill"
+        data-testid="timetravel-body"
+        style={{ minHeight: 0 }}
+      >
+        {body}
+      </div>
     </div>
   );
 }
