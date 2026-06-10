@@ -6,24 +6,16 @@
 import { activate as initAutorenice } from "./autorenice";
 import { getOptions } from "./init-program";
 import * as initScript from "./init-script";
-import * as kucalc from "./kucalc";
 import { getLogger } from "./logger";
 import * as projectSetup from "./project-setup";
 import * as sshd from "./sshd";
 
 export default async function init() {
-  const winston = getLogger("init kucalc");
+  const logger = getLogger("init-project-runtime");
   const options = getOptions();
-  winston.info("initializing state related to KuCalc");
-  if (options.kucalc) {
-    winston.info("running in kucalc");
-    kucalc.setInKucalc(true);
-  } else {
-    winston.info("NOT running in kucalc");
-    kucalc.setInKucalc(false);
-  }
+  logger.info("initializing project runtime");
 
-  if (process.env.COCALC_PROJECT_AUTORENICE != null || options.kucalc) {
+  if (process.env.COCALC_PROJECT_AUTORENICE != null) {
     initAutorenice();
   }
 

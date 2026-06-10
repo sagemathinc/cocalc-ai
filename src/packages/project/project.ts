@@ -11,7 +11,7 @@ import daemonizeProcess from "daemonize-process";
 import { init as initBugCounter } from "./bug-counter";
 import { init as initClient, initDEBUG } from "./client";
 import initInfoJson from "./info-json";
-import initKucalc from "./init-kucalc";
+import initProjectRuntime from "./init-project-runtime";
 import { getOptions } from "./init-program";
 import { cleanup as cleanupEnvironmentVariables } from "./project-setup";
 import { maybeActivateRuntimeUser } from "./runtime-bootstrap";
@@ -49,7 +49,7 @@ export async function main() {
   initBugCounter();
   checkEnvVariables();
   cleanupEnvironmentVariables();
-  await initKucalc(); // must be after cleanupEnvironmentVariables, since this *adds* custom environment variables.
+  await initProjectRuntime(); // must be after cleanupEnvironmentVariables, since this *adds* custom environment variables.
   logger.info("main init function");
   logger.info("initialize INFO.json file");
   await initInfoJson();
