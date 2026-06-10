@@ -34,10 +34,13 @@ import {
 } from "@cocalc/frontend/keyboard/boundary";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { AITools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
+import { COLORS } from "@cocalc/util/theme";
 import { JupyterActions } from "./browser-actions";
 import { Cell } from "./cell";
 import HeadingTagComponent from "./heading-tag";
 import { useNotebookMinimap } from "./minimap";
+import { INPUT_PROMPT_COLOR, OUTPUT_STYLE } from "./prompt/base";
+import { getDisplayedCellExecCount } from "./run-cell-overlay";
 
 interface StableHtmlContextType {
   enabled?: boolean;
@@ -466,13 +469,33 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     return `cell ${index + 1}`;
   }
 
-  function dragPreviewTextForCell(id: string, index: number): string {
+  function dragPreviewLinesForCell(id: string, index: number): string[] {
     const cell = cells.get(id);
     const input = cell?.get?.("input");
     if (typeof input === "string" && input.trim()) {
-      return input.split("\n").slice(0, 10).join("\n").slice(0, 1200);
+      const lines = input.split("\n").slice(0, 8);
+      if (input.split("\n").length > lines.length) {
+        lines.push("...");
+      }
+      return lines;
     }
-    return placeholderTextForCell(id, index);
+    return [placeholderTextForCell(id, index)];
+  }
+
+  function dragPreviewPromptForCell(id: string): string {
+    const cell = cells.get(id);
+    if (cell?.get?.("cell_type") !== "code") {
+      return "";
+    }
+    const execCount = getDisplayedCellExecCount(cell, runCellOverlays?.get(id));
+    return `In [${execCount ?? " "}]:`;
+  }
+
+  function dragPreviewHasOutput(id: string): boolean {
+    const cell = cells.get(id);
+    const output = cell?.get?.("output");
+    if (output == null) return false;
+    return typeof output?.size === "number" ? output.size > 0 : true;
   }
 
   function renderDragPreview(id: string): React.JSX.Element {
@@ -480,55 +503,89 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     const cell = cells.get(id);
     const cellType =
       typeof cell?.get?.("cell_type") === "string" ? cell.get("cell_type") : "";
-    const label =
-      cellType === "code"
-        ? "Code"
-        : cellType === "markdown"
-          ? "Markdown"
-          : cellType === "raw"
-            ? "Raw"
-            : "Cell";
-    const number = index >= 0 ? index + 1 : "?";
+    const prompt = dragPreviewPromptForCell(id);
+    const inputLines = dragPreviewLinesForCell(id, Math.max(index, 0));
+    const hasOutput = dragPreviewHasOutput(id);
+    const inputBackground = cellType === "markdown" ? "white" : COLORS.GRAY_LLL;
     return (
       <div
         style={{
-          minWidth: "360px",
-          maxWidth: "720px",
-          padding: "10px 12px",
-          borderRadius: "8px",
+          width: "min(720px, calc(100vw - 48px))",
+          maxHeight: "70vh",
+          overflow: "hidden",
+          borderLeft: `5px solid ${COLORS.BS_BLUE_TEXT}`,
+          borderRadius: "5px",
+          padding: "2px 2px 5px 2px",
           background: "white",
-          border: "1px solid #dbe2ea",
-          boxShadow: "0 10px 28px rgba(15, 23, 42, 0.18)",
-          color: "#1e293b",
+          boxShadow: `0 0 0 2px ${COLORS.BS_BLUE_TEXT}, 0 12px 32px rgba(0, 0, 0, 0.22)`,
+          color: COLORS.GRAY_D,
         }}
       >
         <div
           style={{
-            fontSize: "11px",
-            fontWeight: 600,
-            letterSpacing: "0.02em",
-            textTransform: "uppercase",
-            color: "#64748b",
-            marginBottom: "6px",
+            display: "flex",
+            alignItems: "stretch",
           }}
         >
-          {label} cell {number}
+          <div
+            style={{
+              color: INPUT_PROMPT_COLOR,
+              minWidth: "7em",
+              fontFamily: "monospace",
+              textAlign: "right",
+              paddingRight: "5px",
+              marginTop: "8.5px",
+              flex: "0 0 auto",
+            }}
+          >
+            {prompt}
+          </div>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: `1px solid ${COLORS.GRAY_L0}`,
+              borderRadius: "2px",
+              background: inputBackground,
+              padding: cellType === "markdown" ? "8px 10px" : "7px 10px",
+              fontFamily:
+                cellType === "markdown"
+                  ? undefined
+                  : "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
+              fontSize: `${font_size}px`,
+              lineHeight: 1.35,
+              whiteSpace: "pre-wrap",
+              overflow: "hidden",
+            }}
+          >
+            {inputLines.map((line, i) => (
+              <div key={i}>{line || " "}</div>
+            ))}
+          </div>
         </div>
-        <div
-          style={{
-            fontFamily:
-              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
-            fontSize: `${Math.max(11, Math.floor(font_size * 0.85))}px`,
-            lineHeight: 1.35,
-            whiteSpace: "pre-wrap",
-            overflow: "hidden",
-            display: "-webkit-box",
-            WebkitBoxOrient: "vertical",
-            WebkitLineClamp: 10,
-          }}
-        >
-          {dragPreviewTextForCell(id, Math.max(index, 0))}
-        </div>
+        {hasOutput && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "stretch",
+              marginTop: "3px",
+            }}
+          >
+            <div style={{ ...OUTPUT_STYLE, flex: "0 0 auto" }}>Out:</div>
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                borderTop: `1px solid ${COLORS.GRAY_LL}`,
+                color: COLORS.GRAY,
+                fontSize: "12px",
+                padding: "3px 10px",
+              }}
+            >
+              output
+            </div>
+          </div>
+        )}
       </div>
     );
   }
