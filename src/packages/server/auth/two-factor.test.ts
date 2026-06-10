@@ -60,6 +60,53 @@ beforeAll(async () => {
 afterAll(after);
 
 describe("freshAuthSession", () => {
+  it("allows adding an authenticator app when a passkey is already active", async () => {
+    const account_id = uuid();
+
+    await createAccount({
+      email: `${uuid()}@test.com`,
+      password: "cocalcrulez",
+      firstName: "Passkey",
+      lastName: "Only",
+      account_id,
+    });
+    await getPool().query(
+      `
+        INSERT INTO account_second_factors(
+          id, account_id, type, label, secret_encrypted, status, created,
+          activated_at, disabled_at, last_used_at, metadata
+        ) VALUES(
+          $1::UUID, $2::UUID, 'passkey', 'Localhost passkey', 'unused',
+          'active', NOW(), NOW(), NULL, NULL, $3::JSONB
+        )
+      `,
+      [uuid(), account_id, JSON.stringify({ credential_id: "credential-1" })],
+    );
+
+    const setup = await startTwoFactorSetup({ account_id });
+    const confirmed = await confirmTwoFactorSetup({
+      req: createRequest(),
+      account_id,
+      factor_id: setup.factor_id,
+      code: createTotpCode(setup.secret),
+    });
+
+    expect(confirmed.recovery_codes).toHaveLength(10);
+    const factors = (
+      await getPool().query<{ type: string }>(
+        `
+          SELECT type
+            FROM account_second_factors
+           WHERE account_id = $1::UUID
+             AND status = 'active'
+           ORDER BY type
+        `,
+        [account_id],
+      )
+    ).rows.map((row) => row.type);
+    expect(factors).toEqual(["passkey", "totp"]);
+  });
+
   it("does not consume a recovery code when rejecting extended fresh auth", async () => {
     const account_id = uuid();
     const email = `${uuid()}@test.com`;
