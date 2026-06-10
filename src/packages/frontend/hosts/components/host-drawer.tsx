@@ -2419,6 +2419,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   key={`${host.id}-${accessPickerKey}`}
                   placeholder="Search for users by name, email, or account id..."
                   style={{ width: "100%" }}
+                  compactSelectedLabel
                   onChange={(accountIds) =>
                     setAccessAccountIds(accountIds ?? [])
                   }

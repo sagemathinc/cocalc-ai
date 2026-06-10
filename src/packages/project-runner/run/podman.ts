@@ -97,8 +97,6 @@ const STOP_RM_TIMEOUT_S = 10;
 const STOP_RM_PODMAN_TERM_S = 5;
 const STOP_INSPECT_TIMEOUT_S = 10;
 const STOP_FORCE_KILL_SETTLE_MS = 250;
-const SSH_PREREQUISITE_TIMEOUT_MS = 2 * 60 * 1000;
-const SSH_PREREQUISITE_POLL_MS = 500;
 
 const DEFAULT_PROJECT_SCRIPT = join(
   COCALC_SRC,
@@ -1282,7 +1280,7 @@ export async function start({
       });
     }
 
-    let { home, scratch } = await timings.measure(
+    let { home, scratch, quota_applied } = await timings.measure(
       "resolve_initial_paths",
       async () =>
         await localPath({
@@ -1313,7 +1311,7 @@ export async function start({
       });
     });
 
-    ({ home, scratch } = await timings.measure(
+    ({ home, scratch, quota_applied } = await timings.measure(
       "ensure_local_path",
       async () =>
         await localPath({
@@ -1408,6 +1406,10 @@ export async function start({
       ...(compatLibMount == null ? [] : [COCALC_RUNTIME_LIB]),
       COCALC_LIB,
     ]);
+    env.COCALC_PROJECT_SSH_START_SCRIPT = join(
+      DEFAULT_PROJECT_RUNTIME_HOME,
+      START_PROJECT_SSH,
+    );
 
     report({
       type: "start-project",
@@ -1463,7 +1465,7 @@ export async function start({
       }
     });
 
-    if (config.disk) {
+    if (config.disk && !quota_applied) {
       // TODO: maybe this should be done in parallel with other things
       // to make startup time slightly faster (?) -- could also be incorporated
       // into mount.
@@ -1669,7 +1671,7 @@ export async function start({
 
     args.push("--rootfs", rootfs);
     args.push(nodePath);
-    args.push(projectScript, "--init", PROJECT_STARTUP_SCRIPT_PATH);
+    args.push(projectScript, "--sshd", "--init", PROJECT_STARTUP_SCRIPT_PATH);
 
     logger.debug("start: launching container - ", name);
     await timings.measure("podman_run", async () => await podman(args));
@@ -1680,10 +1682,6 @@ export async function start({
       desc: "launched project container",
     });
 
-    await timings.measure(
-      "init_ssh_server",
-      async () => await initSshServer(name),
-    );
     report({
       type: "start-project",
       progress: 100,
@@ -1936,46 +1934,6 @@ function normalizeImageName(name) {
 export function getImage(config?: Configuration): string {
   const image = config?.image?.trim();
   return normalizeImageName(image ? image : DEFAULT_PROJECT_IMAGE);
-}
-
-export async function initSshServer(name: string) {
-  await waitForSshPrerequisites(name);
-  await podman([
-    "exec",
-    "--user",
-    "0:0",
-    name,
-    "bash",
-    "-c",
-    join(DEFAULT_PROJECT_RUNTIME_HOME, START_PROJECT_SSH),
-  ]);
-}
-
-async function waitForSshPrerequisites(name: string): Promise<void> {
-  const start = Date.now();
-  let lastError: unknown;
-  while (Date.now() - start < SSH_PREREQUISITE_TIMEOUT_MS) {
-    try {
-      await podman([
-        "exec",
-        "--user",
-        "0:0",
-        name,
-        "bash",
-        "-lc",
-        "command -v dropbear >/dev/null",
-      ]);
-      return;
-    } catch (err) {
-      lastError = err;
-      await new Promise((resolve) =>
-        setTimeout(resolve, SSH_PREREQUISITE_POLL_MS),
-      );
-    }
-  }
-  throw new Error(
-    `timed out waiting for project container ssh prerequisites: ${lastError}`,
-  );
 }
 
 // Placeholder: saving is a no-op now that sync sidecars are gone.

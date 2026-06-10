@@ -88,7 +88,7 @@ export async function localPath({
   scratch?: number;
   // if false, resolve paths without creating volumes
   ensure?: boolean;
-}): Promise<{ home: string; scratch?: string }> {
+}): Promise<{ home: string; scratch?: string; quota_applied?: boolean }> {
   logger.debug("localPath: start", {
     project_id,
     ensure,
@@ -131,10 +131,17 @@ export async function localPath({
       return { home, scratch };
     }
 
-    const homeVol = await fs.subvolumes.ensure(homeVolName);
+    const homeVolPromise = fs.subvolumes.ensure(homeVolName);
+    const scratchVolPromise = wantsScratch
+      ? fs.subvolumes.ensure(scratchVolName)
+      : undefined;
+
+    const homeVol = await homeVolPromise;
+    const homeQuotaPromise = hasPositiveQuotaValue(disk)
+      ? homeVol.quota.set(disk)
+      : Promise.resolve();
     if (hasPositiveQuotaValue(disk)) {
       logger.debug("localPath: setting home quota", { project_id, disk });
-      await homeVol.quota.set(disk);
     } else {
       logger.debug("localPath: leaving home quota unchanged", { project_id });
     }
@@ -142,17 +149,18 @@ export async function localPath({
     logger.debug("localPath: ensured home volume", { project_id, home });
 
     let scratch: string | undefined;
-    if (wantsScratch) {
+    if (wantsScratch && scratchVolPromise != null) {
       logger.debug("localPath: ensuring scratch volume", {
         project_id,
         scratchVolName,
       });
-      const scratchVol = await fs.subvolumes.ensure(scratchVolName);
+      const scratchVol = await scratchVolPromise;
       let effectiveScratchQuota = scratchQuota ?? disk;
       let scratchQuotaSource: "scratch" | "disk" | "home" | "unset" =
         scratchQuota != null ? "scratch" : disk != null ? "disk" : "unset";
       if (effectiveScratchQuota == null) {
         try {
+          await homeQuotaPromise;
           const { size } = await homeVol.quota.get();
           if (hasPositiveQuotaValue(size)) {
             effectiveScratchQuota = size;
@@ -166,24 +174,28 @@ export async function localPath({
           });
         }
       }
+      const scratchQuotaPromise = hasPositiveQuotaValue(effectiveScratchQuota)
+        ? scratchVol.quota.set(effectiveScratchQuota)
+        : Promise.resolve();
       if (hasPositiveQuotaValue(effectiveScratchQuota)) {
         logger.debug("localPath: setting scratch quota", {
           project_id,
           effectiveScratchQuota,
           scratchQuotaSource,
         });
-        await scratchVol.quota.set(effectiveScratchQuota);
       } else {
         logger.debug("localPath: leaving scratch quota unchanged", {
           project_id,
         });
       }
+      await Promise.all([homeQuotaPromise, scratchQuotaPromise]);
       scratch = scratchVol.path;
       logger.debug("localPath: ensured scratch volume", {
         project_id,
         scratch,
       });
     } else {
+      await homeQuotaPromise;
       logger.debug("localPath: scratch disabled for this call", {
         project_id,
         scratchQuota,
@@ -194,7 +206,11 @@ export async function localPath({
       home,
       scratch,
     });
-    return { home, scratch };
+    return {
+      home,
+      scratch,
+      quota_applied: hasPositiveQuotaValue(disk),
+    };
   } else if (process.env.COCALC_PROJECT_PATH) {
     const path = join(process.env.COCALC_PROJECT_PATH, project_id);
     logger.debug("localPath: using COCALC_PROJECT_PATH", {
@@ -299,7 +315,11 @@ export async function localPath({
     home,
     scratch,
   });
-  return { home, scratch };
+  return {
+    home,
+    scratch,
+    quota_applied: ensure && hasPositiveQuotaValue(disk),
+  };
 }
 
 // This is the server that we connect to for files and port forwards, which

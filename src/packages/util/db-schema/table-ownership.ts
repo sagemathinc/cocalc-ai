@@ -506,6 +506,21 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  ...adHocEntries(["ux_latency_events"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "stable",
+    secondary_reference_fields: {
+      account_id: "User attribution dimension, not account-home authority.",
+      host_id: "Host attribution dimension, not host placement authority.",
+      project_id: "Project attribution dimension, not project ownership.",
+    },
+    source: "server monitoring schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Bay-local UX latency telemetry used for operational monitoring and launch tuning. It is diagnostic history, not authoritative account/project/host state.",
+  }),
+
   ...adHocEntries(
     [
       "bay_restore_test_pitr_events",

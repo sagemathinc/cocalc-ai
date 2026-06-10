@@ -15,7 +15,7 @@ import {
 import { uuid } from "@cocalc/util/misc";
 import type { ChatMessage } from "./types";
 import type { CodexThreadConfig } from "@cocalc/chat";
-import { dateValue, field } from "./access";
+import { dateValue, field, historyArray, parentMessageId } from "./access";
 import { type ChatActions } from "./actions";
 
 let lastGeneratedAcpMessageMs = 0;
@@ -56,6 +56,105 @@ function getAcpFailureReply(err: unknown): string {
     return "Codex is not configured.";
   }
   return cleaned;
+}
+
+const GENERATED_ACP_FAILURE_REPLIES = new Set([
+  "Codex authentication expired.",
+  "Codex is not configured.",
+]);
+
+function latestMessageContent(message: ChatMessage | undefined): string {
+  return `${historyArray(message)[0]?.content ?? ""}`;
+}
+
+function stripCodexMentions(value: string): string {
+  let stripped = value;
+  for (const name of ["@codex"]) {
+    while (true) {
+      const index = stripped.toLowerCase().indexOf(name);
+      if (index === -1) break;
+      stripped = stripped.slice(0, index) + stripped.slice(index + name.length);
+    }
+  }
+  while (true) {
+    const index = stripped.indexOf('<span class="user-mention"');
+    if (index === -1) break;
+    const end = stripped.indexOf("</span>", index);
+    if (end === -1) break;
+    stripped =
+      stripped.slice(0, index) + stripped.slice(end + "</span>".length);
+  }
+  return stripped.trim();
+}
+
+function getRetryInput(message: ChatMessage): string {
+  return (
+    `${field<string>(message, "acp_prompt") ?? ""}`.trim() ||
+    stripCodexMentions(latestMessageContent(message))
+  );
+}
+
+function setAcpMessageState({
+  actions,
+  message,
+  messageId,
+  state,
+  sendMode,
+}: {
+  actions: ChatActions;
+  message: ChatMessage;
+  messageId: string;
+  state?: "not-sent" | "queue" | "sending" | "sent" | "running";
+  sendMode?: "immediate";
+}): void {
+  const { store } = actions;
+  if (!store) return;
+  let next = store.get("acpState") ?? new Map();
+  if (state) {
+    next = next.set(`message:${messageId}`, state);
+  } else {
+    next = next.delete(`message:${messageId}`);
+  }
+  store.setState({ acpState: next });
+
+  try {
+    const nextMessage = { ...(message as any) };
+    if (state) {
+      nextMessage.acp_state = state;
+    } else {
+      delete nextMessage.acp_state;
+    }
+    if (sendMode) {
+      nextMessage.acp_send_mode = sendMode;
+    } else if (!state || state === "not-sent") {
+      delete nextMessage.acp_send_mode;
+    }
+    actions.syncdb?.set?.(nextMessage);
+    actions.syncdb?.commit?.();
+  } catch {}
+}
+
+function cleanupGeneratedAcpFailureReplies({
+  actions,
+  messageId,
+  threadId,
+}: {
+  actions: ChatActions;
+  messageId: string;
+  threadId: string;
+}): void {
+  const deleteMessage = actions.deleteMessage?.bind(actions);
+  if (!deleteMessage) return;
+  const threadMessages = actions.getMessagesInThread?.(threadId) ?? [];
+  for (const candidate of threadMessages) {
+    if (parentMessageId(candidate) !== messageId) continue;
+    if (!GENERATED_ACP_FAILURE_REPLIES.has(latestMessageContent(candidate))) {
+      continue;
+    }
+    try {
+      deleteMessage(candidate as any);
+    } catch {}
+  }
 }
 
 async function waitForAcpRetryDelay(attempt: number): Promise<void> {
@@ -526,23 +625,69 @@ export async function resendCanceledAcpTurn({
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return false;
-  const result = await webapp_client.conat_client.controlAcp({
-    project_id,
-    path,
-    thread_id: threadId,
-    user_message_id: messageId,
-    action: "resend",
+  setAcpMessageState({
+    actions,
+    message,
+    messageId,
+    state: "sending",
   });
-  if (!result?.ok) {
+  try {
+    const result = await webapp_client.conat_client.controlAcp({
+      project_id,
+      path,
+      thread_id: threadId,
+      user_message_id: messageId,
+      action: "resend",
+    });
+    if (result?.ok) {
+      cleanupGeneratedAcpFailureReplies({ actions, messageId, threadId });
+      setAcpMessageState({
+        actions,
+        message,
+        messageId,
+        state: result.state === "running" ? "running" : "queue",
+      });
+      return true;
+    }
+    if (result?.state !== "missing") {
+      setAcpMessageState({
+        actions,
+        message,
+        messageId,
+        state: "not-sent",
+      });
+      return false;
+    }
+  } catch (err) {
+    setAcpMessageState({
+      actions,
+      message,
+      messageId,
+      state: "not-sent",
+    });
+    console.error("ACP resend failed", err);
     return false;
   }
-  store.setState({
-    acpState: (store.get("acpState") ?? new Map()).set(
-      `message:${messageId}`,
-      "queue",
-    ),
+
+  const input = getRetryInput(message);
+  if (!input) {
+    setAcpMessageState({
+      actions,
+      message,
+      messageId,
+      state: "not-sent",
+    });
+    return false;
+  }
+  cleanupGeneratedAcpFailureReplies({ actions, messageId, threadId });
+  await processAcpLLM({
+    actions,
+    message,
+    model:
+      actions.getCodexConfig?.(threadId)?.model ?? DEFAULT_CODEX_MODEL_NAME,
+    input,
   });
-  return true;
+  return store.get("acpState")?.get?.(`message:${messageId}`) !== "not-sent";
 }
 
 async function automationRequest({

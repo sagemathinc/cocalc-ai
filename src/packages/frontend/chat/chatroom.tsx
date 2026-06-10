@@ -89,6 +89,7 @@ import {
   defaultWorkingDirectoryForChat,
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
   clearWorkspaceNoticeForChatPath,
   setWorkspaceReadyForReviewNotice,
@@ -731,10 +732,20 @@ export function ChatPanel({
         ...baseNewThreadSetup.codexConfig,
         workingDirectory:
           navigatorWorkingDirectory ??
-          defaultWorkingDirectoryForChat(path, workspaceWorkingDirectory),
+          defaultWorkingDirectoryForChat(
+            path,
+            workspaceWorkingDirectory,
+            getProjectHomeDirectory(project_id),
+          ),
       },
     };
-  }, [codexNewChatDefaultsSetting, desc, path, workspaceWorkingDirectory]);
+  }, [
+    codexNewChatDefaultsSetting,
+    desc,
+    path,
+    project_id,
+    workspaceWorkingDirectory,
+  ]);
   const [newThreadSetup, setNewThreadSetup] = useState<NewThreadSetup>(
     defaultNewThreadSetup,
   );

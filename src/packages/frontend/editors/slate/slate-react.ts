@@ -22,7 +22,7 @@ import type {
   RenderChunkProps,
   RenderPlaceholderProps,
 } from "slate-react";
-import { ensurePoint, ensureRange } from "./slate-util";
+import { ensurePoint, ensureRange, slateDebug } from "./slate-util";
 
 type ExtraEditorFields = {
   windowedListRef: { current: any };
@@ -42,6 +42,7 @@ export type ReactEditor = UpstreamReactEditor & ExtraEditorFields;
 
 const baseToSlatePoint = UpstreamReactEditor.toSlatePoint;
 const baseToSlateRange = UpstreamReactEditor.toSlateRange;
+const baseFocus = UpstreamReactEditor.focus;
 
 const ensureEditorExtras = (editor: UpstreamReactEditor): ReactEditor => {
   const e = editor as ReactEditor;
@@ -119,6 +120,27 @@ function normalizeEditorSelection(editor: ReactEditor): void {
 }
 
 export const ReactEditor = Object.assign(UpstreamReactEditor, {
+  focus(editor: ReactEditor): void {
+    try {
+      normalizeEditorSelection(editor);
+      baseFocus(editor);
+      return;
+    } catch (err) {
+      slateDebug("react-editor-focus:retry-after-selection-reset", {
+        error: String(err),
+        selection: editor.selection ?? null,
+      });
+    }
+    try {
+      editor.selection = ensureRange(editor, null);
+      baseFocus(editor);
+    } catch (err) {
+      slateDebug("react-editor-focus:failed", {
+        error: String(err),
+        selection: editor.selection ?? null,
+      });
+    }
+  },
   toSlatePoint(
     editor: ReactEditor,
     domPoint: Parameters<typeof UpstreamReactEditor.toSlatePoint>[1],

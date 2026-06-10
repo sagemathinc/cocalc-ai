@@ -785,7 +785,10 @@ export function KernelSelector({
         onClick={async () => {
           try {
             setRefreshingKernels(true);
-            await actions.fetch_jupyter_kernels({ noCache: true });
+            await actions.fetch_jupyter_kernels({
+              noCache: true,
+              autostart: true,
+            });
           } finally {
             setRefreshingKernels(false);
           }

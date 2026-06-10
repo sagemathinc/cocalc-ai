@@ -3441,6 +3441,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     timer,
     client_event_id,
     segment,
+    op_id,
     details,
     deadline_ms = 20 * 60 * 1000,
   }: {
@@ -3448,6 +3449,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     timer: number;
     client_event_id: string;
     segment: ProjectStartUxSegment;
+    op_id?: string;
     details?: Record<string, unknown>;
     deadline_ms?: number;
   }): void {
@@ -3460,10 +3462,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
         "state",
       ]) as string | undefined;
       if (state === "running") {
+        const duration_ms = elapsedUxMs(timer);
         recordUxLatencyEvent({
           event_type: "project_start",
           metric: "project_start_running",
-          duration_ms: elapsedUxMs(timer),
+          duration_ms,
           project_id,
           client_event_id,
           segment,
@@ -3471,6 +3474,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
             ...details,
             observed_state: state,
           },
+        });
+        void this.project_log(project_id, {
+          event: "project_started",
+          duration_ms,
+          op_id,
+          stage: segment,
+          ...store.classify_project(project_id),
         });
         return;
       }
@@ -3569,7 +3579,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
             | undefined) ?? undefined,
         provisioned: store.getIn(["project_map", project_id, "provisioned"]),
       };
-      const t0 = webapp_client.server_time().getTime();
       // make an action request:
       this.project_log(project_id, {
         event: "project_start_requested",
@@ -3577,27 +3586,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
       const actions = redux.getProjectActions(project_id);
       try {
         this.optimisticProjectStateUpdate(project_id, "starting");
-        const resp = await writeAndWaitForProjection({
-          consumer: "projects",
-          id: `project:${project_id}:start`,
-          name: "project.start",
-          write: () =>
-            webapp_client.conat_client.hub.projects.start({
-              project_id,
-              ...(opts.autostart ? { autostart: true } : {}),
-              wait: false,
-            }),
-          matchesProjection: () =>
-            this.projectedProjectStateMatches({
-              project_id,
-              states: ["starting", "running"],
-            }),
-          repair: () =>
-            this.repairProjectProjection({
-              kind: "project-ids",
-              project_ids: [project_id],
-              reason: "project-start",
-            }),
+        const resp = await webapp_client.conat_client.hub.projects.start({
+          project_id,
+          ...(opts.autostart ? { autostart: true } : {}),
+          wait: false,
         });
         actions.trackStartOp(resp);
         opts.onStartOp?.(resp);
@@ -3606,6 +3598,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           timer: uxTimer,
           client_event_id: uxClientEventId,
           segment: uxSegment,
+          op_id: resp?.op_id,
           details: {
             ...uxDetails,
             op_id: resp?.op_id,
@@ -3658,12 +3651,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
         project_id,
         optimisticState: "starting",
         reason: "start_project",
-      });
-
-      this.project_log(project_id, {
-        event: "project_started",
-        duration_ms: webapp_client.server_time().getTime() - t0,
-        ...store.classify_project(project_id),
       });
 
       return true;

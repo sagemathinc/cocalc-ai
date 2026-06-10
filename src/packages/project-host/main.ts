@@ -31,9 +31,12 @@ import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run"
 import {
   configureProjectHostAcpContainerFileIO,
   ensureFileDownloadReadServer,
+  ensureFileUploadWriteServer,
   initFileServer,
   initFsServer,
+  PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
 } from "./file-server";
+import { handleProjectHostUpload } from "./upload";
 import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
 import {
@@ -581,6 +584,20 @@ export async function main(
       return false;
     }
   };
+  const isProjectUploadRequest = (
+    req: IncomingMessage,
+    project_id: string,
+  ): boolean => {
+    if (!/^(POST|OPTIONS)$/i.test(req.method ?? "GET")) {
+      return false;
+    }
+    try {
+      const parsed = new URL(req.url ?? "/", "http://project-host.local");
+      return parsed.pathname === `/${project_id}/upload`;
+    } catch {
+      return false;
+    }
+  };
   const isExplicitProjectFileDownloadRequest = (
     req: IncomingMessage,
     project_id: string,
@@ -679,6 +696,23 @@ export async function main(
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Expose-Headers", DOWNLOAD_ERROR_HEADER);
+    res.setHeader("Vary", "Origin");
+  };
+  const setProjectUploadCorsHeaders = (
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => {
+    const origin = `${req.headers.origin ?? ""}`.trim();
+    if (!origin) return;
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    const requestedHeaders =
+      `${req.headers["access-control-request-headers"] ?? ""}`.trim();
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      requestedHeaders || "Content-Type, Cache-Control, X-Requested-With",
+    );
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Vary", "Origin");
   };
   const setBrowserSessionCorsHeaders = (
@@ -1157,9 +1191,18 @@ export async function main(
     resolveTarget: async (req, res) => {
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
+      const isProjectUploadRoute = isProjectUploadRequest(req, project_id);
       if (res) {
         if (isProjectFileRequest(req, project_id)) {
           setProjectFileCorsHeaders(req, res);
+        }
+        if (isProjectUploadRoute) {
+          setProjectUploadCorsHeaders(req, res);
+          if (/^OPTIONS$/i.test(req.method ?? "")) {
+            res.statusCode = 204;
+            res.end("");
+            return { handled: true };
+          }
         }
         await httpProxyAuth.authorizeHttpRequest(req, res, project_id);
         if (res.writableEnded) {
@@ -1172,6 +1215,39 @@ export async function main(
       const isProjectFileRoute = `${req.url ?? ""}`.includes(
         `/${project_id}/files/`,
       );
+      if (res && isProjectUploadRoute) {
+        if (authContext?.actor !== "account") {
+          res.statusCode = 403;
+          res.end("permission denied");
+          return { handled: true };
+        }
+        try {
+          const parsed = new URL(req.url ?? "/", "http://project-host.local");
+          await handleProjectHostUpload({
+            req,
+            res,
+            client: conatClient,
+            project_id,
+            path: parsed.searchParams.get("path") ?? "",
+            writeServiceName: PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
+            ensureWriteServer: async () =>
+              await ensureFileUploadWriteServer({
+                client: conatClient,
+                project_id,
+              }),
+          });
+        } catch (err) {
+          logger.warn("project-host upload failed", {
+            project_id,
+            err: `${err}`,
+          });
+          if (!res.writableEnded) {
+            res.statusCode = 500;
+            res.end("upload failed");
+          }
+        }
+        return { handled: true };
+      }
       if (res && isProjectFileRoute) {
         const account_id =
           authContext?.actor === "account" ? authContext.account_id : undefined;

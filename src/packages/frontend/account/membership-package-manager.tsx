@@ -2663,13 +2663,14 @@ function SiteLicenseDashboard({
                                 ) : null}
                                 {canArchivePool ? (
                                   <Popconfirm
-                                    title="Archive this pool?"
-                                    description="The pool will be hidden, but its audit history and past seat records will be preserved."
+                                    title={`Archive ${pool.pool_name}?`}
+                                    description="This removes the pool from active site-license use. Audit history and past seat records will be preserved."
                                     okButtonProps={{
                                       danger: true,
                                       loading: archivingPoolId === pool.id,
                                     }}
-                                    okText="Archive"
+                                    okText="Archive pool"
+                                    cancelText="Cancel"
                                     onConfirm={async () => {
                                       setArchivingPoolId(pool.id);
                                       try {
@@ -3339,14 +3340,25 @@ function SiteLicenseManagersEditor({
                           )
                         }
                       />
-                      <Button
-                        size="small"
-                        danger
-                        loading={working === `remove-${manager.account_id}`}
-                        onClick={() => void removeManager(manager.account_id)}
+                      <Popconfirm
+                        title={`Remove ${identity.name} as a manager?`}
+                        description="This removes their delegated site-license management access."
+                        okText="Remove manager"
+                        cancelText="Cancel"
+                        okButtonProps={{
+                          danger: true,
+                          loading: working === `remove-${manager.account_id}`,
+                        }}
+                        onConfirm={() => void removeManager(manager.account_id)}
                       >
-                        Remove
-                      </Button>
+                        <Button
+                          size="small"
+                          danger
+                          loading={working === `remove-${manager.account_id}`}
+                        >
+                          Remove
+                        </Button>
+                      </Popconfirm>
                     </>
                   ) : null}
                 </Space>

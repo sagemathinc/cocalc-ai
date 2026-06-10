@@ -462,6 +462,11 @@ describe("project-runner podman orphan fallback", () => {
         "127.0.0.1:45123:9000",
         "-e",
         "LD_LIBRARY_PATH=/runtime-lib:/lib",
+        "-e",
+        expect.stringContaining("COCALC_PROJECT_SSH_START_SCRIPT="),
+        "--sshd",
+        "--init",
+        ".local/share/cocalc/startup.sh",
       ]),
     );
     expect(status).toMatchObject({
@@ -469,6 +474,27 @@ describe("project-runner podman orphan fallback", () => {
       ssh_port: 30123,
       http_port: 45123,
     });
+  });
+
+  it("does not set project quota twice when localPath already applied it", async () => {
+    mockPodman.mockResolvedValue({ stdout: "" });
+    const { setQuota } = jest.requireMock("./filesystem");
+
+    await start({
+      project_id: project1,
+      localPath: async () => ({
+        home: `/tmp/project-${project1}`,
+        quota_applied: true,
+      }),
+      config: {
+        disk: 1024,
+        image: "docker.io/library/ubuntu:latest",
+        ssh_port: 30123,
+        http_port: 45123,
+      },
+    });
+
+    expect(setQuota).not.toHaveBeenCalled();
   });
 
   it("bind mounts host shared scratch into started project containers", async () => {

@@ -837,9 +837,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   // hook up to syncstring if available:
   useEffect(() => {
     if (actions._syncstring == null) return;
-    const change = (event?: { local?: boolean }) => {
+    const change = (event?: { local?: boolean; source?: string }) => {
       const remote = actions._syncstring?.to_str() ?? "";
-      if (event?.local) {
+      if (event?.local && event.source !== "cm") {
         mergeHelperRef.current.noteLocalEcho(remote);
         pendingRemoteRef.current = null;
         setPendingRemoteIndicator(false);
@@ -1303,7 +1303,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     const markdown = editor.getMarkdownValue();
     lastSetValueRef.current = markdown;
     mergeHelperRef.current.noteSaved(markdown);
-    actions.set_value?.(markdown);
+    actions.set_value?.(markdown, undefined, "slate");
     actions.syncstring_commit?.();
 
     // Record that the syncstring's value is now equal to ours:
