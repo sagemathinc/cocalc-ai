@@ -26,12 +26,28 @@ describe("slides fixed elements", () => {
     }
   });
 
-  it("uses plain styled text for editable title and subtitle placeholders", () => {
-    for (const element of SLIDE_TEMPLATE_ELEMENTS) {
-      expect(element.data?.placeholder).not.toContain("#");
-      expect(element.data?.initStr).toBeUndefined();
-      expect(element.data?.color).toBeTruthy();
-      expect(element.data?.fontSize).toBeGreaterThan(20);
-    }
+  it("uses markdown heading placeholders compatible with cocalc.com", () => {
+    expect(SLIDE_TEMPLATE_ELEMENTS[0]).toMatchObject({
+      data: {
+        color: "#252937",
+        fontSize: 24,
+        initStr: "\n# \n",
+        placeholder: "# Click to edit title\n\n",
+      },
+      h: 121,
+      x: -200,
+      y: -492,
+    });
+    expect(SLIDE_TEMPLATE_ELEMENTS[1]).toMatchObject({
+      data: {
+        color: "#525252",
+        fontSize: 18,
+        initStr: "\n## \n",
+        placeholder: "## Click to edit subtitle\n\n",
+      },
+      h: 95,
+      x: -200,
+      y: -393,
+    });
   });
 });
