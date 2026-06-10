@@ -339,10 +339,11 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   ): Promise<void> {
     const cm = editor_actions._cm[id];
     if (cm == null) return;
-    const slate_id = this.show_focused_frame_of_type("slate");
-    if (slate_id == null) return;
     // important to get markdown from cm and not syncstring to get latest version.
     const markdown = cm.getValue();
+    this.set_value(markdown, true);
+    const slate_id = this.show_focused_frame_of_type("slate");
+    if (slate_id == null) return;
     const pos = cm.getDoc().getCursor();
     let blockControl = this.getBlockEditorControl(slate_id);
     if (!blockControl) {
