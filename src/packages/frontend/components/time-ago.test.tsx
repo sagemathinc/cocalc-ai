@@ -93,6 +93,24 @@ describe("TimeAgo", () => {
     expect(screen.getByText("less than a minute ago")).toBeInTheDocument();
   });
 
+  it("refreshes stale mounted timestamps when the page becomes visible", () => {
+    render(
+      <TimeAgo
+        date={new Date("2026-04-30T18:17:00.000Z")}
+        click_to_toggle={false}
+      />,
+    );
+
+    expect(screen.getByText("3 minutes ago")).toBeInTheDocument();
+
+    act(() => {
+      jest.setSystemTime(new Date("2026-04-30T19:20:00.000Z"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(screen.getByText("1 hour ago")).toBeInTheDocument();
+  });
+
   it("does not recurse when many live timestamps mount together", () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
 
