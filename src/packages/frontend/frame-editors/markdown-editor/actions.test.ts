@@ -12,7 +12,11 @@ describe("markdown editor Actions", () => {
 
     actions.set_syncstring_to_codemirror(undefined, true);
 
-    expect(actions.set_value).toHaveBeenCalledWith("new slate text", true);
+    expect(actions.set_value).toHaveBeenCalledWith(
+      "new slate text",
+      true,
+      "slate",
+    );
   });
 
   it("flushes Slate markdown before opening the CodeMirror split", () => {
@@ -32,7 +36,7 @@ describe("markdown editor Actions", () => {
 
     actions.sync_slate_to_cm("slate-frame");
 
-    expect(actions.set_value).toHaveBeenCalledWith("foo", true);
+    expect(actions.set_value).toHaveBeenCalledWith("foo", true, "slate");
     expect(actions.programmatically_goto_line).toHaveBeenCalledWith(
       1,
       true,
@@ -67,7 +71,11 @@ describe("markdown editor Actions", () => {
 
     await actions.sync_cm_to_slate("cm-frame", actions);
 
-    expect(actions.set_value).toHaveBeenCalledWith("new codemirror text", true);
+    expect(actions.set_value).toHaveBeenCalledWith(
+      "new codemirror text",
+      true,
+      "cm",
+    );
     expect(actions.show_focused_frame_of_type).toHaveBeenCalledWith("slate");
     expect(actions.set_active_id).toHaveBeenCalledWith("slate-frame", true);
     expect(calls).toEqual(["set_value", "show_focused_frame_of_type"]);

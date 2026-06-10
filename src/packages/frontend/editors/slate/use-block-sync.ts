@@ -220,7 +220,7 @@ export function useBlockSync({
       lastSetValueRef.current = markdown;
       valueRef.current = markdown;
       mergeHelperRef.current.noteSaved(markdown);
-      actions.set_value(markdown);
+      actions.set_value(markdown, undefined, "slate");
       actions.syncstring_commit?.();
     },
     [actions, getFullMarkdown, valueRef],

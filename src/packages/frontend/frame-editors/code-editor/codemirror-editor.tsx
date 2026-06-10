@@ -673,7 +673,11 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
         if (actions != null) {
           // We can't just use save_syncstring(), since if this is
           // the last editor, then editor_actions()._cm may already be empty.
-          editor_actions()?.set_value(cmRef.current.getValue());
+          editor_actions()?.set_value(
+            cmRef.current.getValue(),
+            undefined,
+            "cm",
+          );
           editor_actions()?.syncstring_commit();
         }
         cm_destroy();
