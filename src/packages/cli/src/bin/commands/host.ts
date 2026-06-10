@@ -225,10 +225,10 @@ function formatHostLroProgressDetail(progressSummary: Record<string, any>) {
 }
 
 function createHostLroProgressReporter(
-  ctx: { globals: { json?: boolean; output?: string } },
+  ctx: { globals: { json?: boolean; output?: string; quiet?: boolean } },
   entry: { host_id: string; name?: string | null; op_id: string },
 ) {
-  if (ctx.globals.json || ctx.globals.output === "json") {
+  if (ctx.globals.quiet) {
     return undefined;
   }
   let lastLine = "";
