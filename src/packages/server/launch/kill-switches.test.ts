@@ -70,6 +70,56 @@ describe("launch kill switches", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("blocks write paths in read-mostly maintenance mode while preserving admin diagnosis paths", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      launch_read_mostly_maintenance: true,
+    });
+    const {
+      assertProjectCreationAllowed,
+      assertUserHostCreateAllowed,
+      assertFreeProjectStartAllowed,
+      assertPaymentCheckoutAllowed,
+      assertAiLaunchAllowed,
+      isAiLaunchDisabled,
+      isReadMostlyMaintenanceEnabled,
+    } = await import("./kill-switches");
+
+    await expect(isReadMostlyMaintenanceEnabled()).resolves.toBe(true);
+    await expect(isAiLaunchDisabled()).resolves.toBe(true);
+    await expect(assertProjectCreationAllowed({ account_id })).rejects.toThrow(
+      "read-mostly maintenance mode",
+    );
+    await expect(assertUserHostCreateAllowed({ account_id })).rejects.toThrow(
+      "read-mostly maintenance mode",
+    );
+    await expect(
+      assertFreeProjectStartAllowed({
+        actor_account_id: account_id,
+        sponsor_account_id,
+      }),
+    ).rejects.toThrow("read-mostly maintenance mode");
+    await expect(assertPaymentCheckoutAllowed()).rejects.toThrow(
+      "read-mostly maintenance mode",
+    );
+    await expect(assertAiLaunchAllowed()).rejects.toThrow(
+      "read-mostly maintenance mode",
+    );
+
+    isAdminMock.mockResolvedValue(true);
+    await expect(
+      assertProjectCreationAllowed({ account_id }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertUserHostCreateAllowed({ account_id }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertFreeProjectStartAllowed({
+        actor_account_id: account_id,
+        sponsor_account_id,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("blocks only free project starts when the free-start switch is on", async () => {
     getServerSettingsMock.mockResolvedValue({
       launch_disable_free_project_starts: true,
