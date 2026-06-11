@@ -22,7 +22,7 @@ import {
   message,
   type TableColumnsType,
 } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { React } from "@cocalc/frontend/app-framework";
 import {
@@ -305,6 +305,7 @@ function Catalog({
 }
 
 export function AdminDataExplorer() {
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [datasets, setDatasets] = useState<AdminDataDataset[]>([]);
   const [views, setViews] = useState<AdminDataViewSummary[]>([]);
   const [selectedView, setSelectedView] = useState<AdminDataView | null>(null);
@@ -524,11 +525,11 @@ export function AdminDataExplorer() {
     }
   }
 
-  async function importViews() {
+  async function importViewsFromText(raw: string) {
     setSaving(true);
     setError("");
     try {
-      const parsed = JSON.parse(importJson) as
+      const parsed = JSON.parse(raw) as
         | AdminDataViewInput[]
         | AdminDataViewExport;
       await runFreshAuthAction(async () => {
@@ -547,6 +548,15 @@ export function AdminDataExplorer() {
       setError(`${err}`);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function importViewsFromFile(file: File | null | undefined) {
+    if (!file) return;
+    try {
+      await importViewsFromText(await file.text());
+    } catch (err) {
+      setError(`${err}`);
     }
   }
 
@@ -649,16 +659,37 @@ export function AdminDataExplorer() {
             <Card
               title="Import / Export Views"
               extra={
-                <Button onClick={exportViews} loading={saving}>
-                  Export JSON
-                </Button>
+                <Space>
+                  <Button onClick={exportViews} loading={saving}>
+                    Export JSON
+                  </Button>
+                  <Button
+                    type="primary"
+                    onClick={() => importInputRef.current?.click()}
+                    loading={saving}
+                  >
+                    Upload JSON
+                  </Button>
+                </Space>
               }
             >
               <Space direction="vertical" style={{ width: "100%" }}>
                 <Text type="secondary">
-                  Import accepts the same JSON produced by the CLI or Export
-                  button. Imports use upsert mode.
+                  Upload accepts the same JSON produced by the CLI or Export
+                  button. Paste import is also available for quick operator and
+                  Codex-assisted workflows. Imports use upsert mode.
                 </Text>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  style={{ display: "none" }}
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0] ?? null;
+                    event.currentTarget.value = "";
+                    void importViewsFromFile(file);
+                  }}
+                />
                 <TextArea
                   value={importJson}
                   onChange={(e) => setImportJson(e.target.value)}
@@ -667,12 +698,11 @@ export function AdminDataExplorer() {
                   spellCheck={false}
                 />
                 <Button
-                  type="primary"
-                  onClick={importViews}
+                  onClick={() => importViewsFromText(importJson)}
                   disabled={!importJson.trim()}
                   loading={saving}
                 >
-                  Import JSON
+                  Import Pasted JSON
                 </Button>
               </Space>
             </Card>
