@@ -27,6 +27,8 @@ interface MarkdownTextAdapterProps {
   onUploadEnd?: () => void;
   enableMentions?: boolean;
   onShiftEnter?: (value: string) => void;
+  onCtrlEnter?: (value: string) => void;
+  onFontSizeChange?: (delta: -1 | 1) => void;
   onAltEnter: (value: string, pos: MarkdownPosition) => void;
   placeholder?: string;
   fontSize?: number;
@@ -77,6 +79,8 @@ export function MarkdownTextAdapter({
   onUploadEnd,
   enableMentions,
   onShiftEnter,
+  onCtrlEnter,
+  onFontSizeChange,
   onAltEnter,
   placeholder,
   fontSize,
@@ -127,6 +131,8 @@ export function MarkdownTextAdapter({
       onUploadEnd={onUploadEnd}
       enableMentions={enableMentions}
       onShiftEnter={onShiftEnter}
+      onCtrlEnter={onCtrlEnter}
+      onFontSizeChange={onFontSizeChange}
       onAltEnter={onAltEnter}
       placeholder={placeholder ?? "Type markdown..."}
       fontSize={fontSize}
@@ -177,6 +183,8 @@ interface SlateRichTextAdapterProps {
   getValueRef?: MutableRefObject<() => string>;
   onChange: (value: string) => void;
   onShiftEnter?: (value: string) => void;
+  onCtrlEnter?: (value: string) => void;
+  onFontSizeChange?: (delta: -1 | 1) => void;
   onAltEnter: (value: string) => void;
   onCursors?: (cursors: { x: number; y: number }[]) => void;
   onUndo?: () => void;
@@ -222,6 +230,8 @@ export function SlateRichTextAdapter({
   getValueRef,
   onChange,
   onShiftEnter,
+  onCtrlEnter,
+  onFontSizeChange,
   onAltEnter,
   onCursors,
   onUndo,
@@ -322,6 +332,18 @@ export function SlateRichTextAdapter({
             onChange(value);
             onShiftEnter?.(value);
           },
+          ctrlEnter: (value) => {
+            onChange(value);
+            onCtrlEnter?.(value);
+          },
+          change_font_size:
+            onFontSizeChange == null
+              ? undefined
+              : (delta?: number) => {
+                  if (delta === -1 || delta === 1) {
+                    onFontSizeChange(delta);
+                  }
+                },
           altEnter: onAltEnter,
           set_cursor_locs: onCursors,
           undo: externalUndo,

@@ -29,6 +29,8 @@ import { SubmitMentionsRef } from "./types";
 
 interface Props {
   on_send: (value: string) => void;
+  on_ctrl_enter?: (value: string) => void;
+  on_font_size_change?: (delta: -1 | 1) => void;
   onChange: (value: string, sessionToken?: number) => void;
   syncdb: ImmerDB | undefined;
   date: number;
@@ -85,6 +87,8 @@ export default function ChatInput({
   autoGrowMinHeight,
   input: propsInput,
   on_send,
+  on_ctrl_enter,
+  on_font_size_change,
   onBlur,
   onChange,
   onFocus,
@@ -351,6 +355,21 @@ export default function ChatInput({
         publishNotComposing();
         on_send(value);
       }}
+      onCtrlEnter={
+        on_ctrl_enter == null
+          ? undefined
+          : (value) => {
+              if (!mountedRef.current) return;
+              if (isStaleSessionCallback(sessionToken)) {
+                return;
+              }
+              savePresence.cancel();
+              controlRef.current?.cancelPendingUploads?.();
+              publishNotComposing();
+              on_ctrl_enter(value);
+            }
+      }
+      onFontSizeChange={on_font_size_change}
       undoMode="local"
       redoMode="local"
       height={height}

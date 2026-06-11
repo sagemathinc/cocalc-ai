@@ -47,6 +47,8 @@ describe("DescriptionEditor", () => {
       stop_editing_desc: jest.fn(),
       enable_key_handler: jest.fn(),
       disable_key_handler: jest.fn(),
+      increase_font_size: jest.fn(),
+      decrease_font_size: jest.fn(),
       save: jest.fn(),
       undo: jest.fn(),
       redo: jest.fn(),
@@ -69,5 +71,37 @@ describe("DescriptionEditor", () => {
     expect(actions.set_desc).toHaveBeenCalledWith("task-1", "after", true);
     expect(actions.stop_editing_desc).toHaveBeenCalledWith("task-1");
     expect(actions.enable_key_handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes font-size shortcut deltas to task frame actions", () => {
+    const actions = {
+      set_desc: jest.fn(),
+      stop_editing_desc: jest.fn(),
+      enable_key_handler: jest.fn(),
+      disable_key_handler: jest.fn(),
+      increase_font_size: jest.fn(),
+      decrease_font_size: jest.fn(),
+      save: jest.fn(),
+      undo: jest.fn(),
+      redo: jest.fn(),
+      set_color: jest.fn(),
+    } as any;
+
+    render(
+      <DescriptionEditor
+        actions={actions}
+        task_id="task-1"
+        desc="before"
+        font_size={14}
+      />,
+    );
+
+    act(() => {
+      latestMarkdownEditorProps.onFontSizeChange(-1);
+      latestMarkdownEditorProps.onFontSizeChange(1);
+    });
+
+    expect(actions.decrease_font_size).toHaveBeenCalledTimes(1);
+    expect(actions.increase_font_size).toHaveBeenCalledTimes(1);
   });
 });

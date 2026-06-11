@@ -151,6 +151,8 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps.modeSwitchPlacement).toBe("toolbar");
     expect(lastMarkdownInputProps.hideModeSwitch).toBe(true);
     expect(lastMarkdownInputProps.clampAutoGrowToHost).toBe(true);
+    expect(lastMarkdownInputProps.onCtrlEnter).toBeUndefined();
+    expect(lastMarkdownInputProps.onFontSizeChange).toBeUndefined();
 
     act(() => {
       lastMarkdownInputProps.onChange("hello");
@@ -161,6 +163,62 @@ describe("ChatInput send lifecycle regressions", () => {
       lastMarkdownInputProps.onModeChange("markdown");
     });
     expect(lastMarkdownInputProps.modeSwitchRightContent).toBeTruthy();
+  });
+
+  it("routes ctrl-enter through the immediate callback when provided", () => {
+    const syncdb = {
+      set: jest.fn(),
+      commit: jest.fn(),
+      set_cursor_locs: jest.fn(),
+    } as any;
+    const onSend = jest.fn();
+    const onCtrlEnter = jest.fn();
+
+    render(
+      <ChatInput
+        input="steer this"
+        onChange={() => undefined}
+        on_send={onSend}
+        on_ctrl_enter={onCtrlEnter}
+        syncdb={syncdb}
+        date={0}
+      />,
+    );
+
+    act(() => {
+      lastMarkdownInputProps.onCtrlEnter("steer this");
+    });
+
+    expect(onCtrlEnter).toHaveBeenCalledWith("steer this");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("forwards font-size shortcut deltas to the caller", () => {
+    const syncdb = {
+      set: jest.fn(),
+      commit: jest.fn(),
+      set_cursor_locs: jest.fn(),
+    } as any;
+    const onFontSizeChange = jest.fn();
+
+    render(
+      <ChatInput
+        input=""
+        onChange={() => undefined}
+        on_send={() => undefined}
+        on_font_size_change={onFontSizeChange}
+        syncdb={syncdb}
+        date={0}
+      />,
+    );
+
+    act(() => {
+      lastMarkdownInputProps.onFontSizeChange(-1);
+      lastMarkdownInputProps.onFontSizeChange(1);
+    });
+
+    expect(onFontSizeChange).toHaveBeenNthCalledWith(1, -1);
+    expect(onFontSizeChange).toHaveBeenNthCalledWith(2, 1);
   });
 
   it("ignores stale callbacks from an unmounted input instance", () => {

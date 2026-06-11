@@ -67,4 +67,14 @@ function softBreak({ editor }) {
   return true;
 }
 
-register({ key: "Enter", ctrl: true }, softBreak);
+register({ key: "Enter", ctrl: true }, ({ editor, extra }) => {
+  const ctrlEnter = extra?.actions?.ctrlEnter;
+  if (ctrlEnter != null) {
+    ctrlEnter(editor.getMarkdownValue(), {
+      selection: editor.selection ?? null,
+      slateValue: [...editor.children] as any,
+    });
+    return true;
+  }
+  return softBreak({ editor });
+});
