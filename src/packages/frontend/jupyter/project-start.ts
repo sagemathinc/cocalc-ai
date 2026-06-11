@@ -1,6 +1,8 @@
 import { once, until } from "@cocalc/util/async-utils";
 
+import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import { lite } from "@cocalc/frontend/lite";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   getProjectStartPolicyBlock,
   throwProjectStartPolicyBlock,
@@ -10,6 +12,7 @@ export async function ensureProjectRunningForJupyter({
   redux,
   project_id,
   isClosed,
+  getProjectState,
 }: {
   redux: {
     getStore: (name: string) => {
@@ -26,12 +29,21 @@ export async function ensureProjectRunningForJupyter({
   };
   project_id: string;
   isClosed: () => boolean;
+  getProjectState?: (project_id: string) => Promise<ProjectState | undefined>;
 }): Promise<void> {
   if (lite) {
     return;
   }
   const store = redux.getStore("projects");
-  const state = store.get_state(project_id);
+  const getFreshProjectState = async (): Promise<string | undefined> => {
+    try {
+      return (await (getProjectState ?? defaultGetProjectState)(project_id))
+        ?.state;
+    } catch {
+      return undefined;
+    }
+  };
+  const state = (await getFreshProjectState()) ?? store.get_state(project_id);
   if (state !== "running" && state !== "starting" && !isClosed()) {
     const accountStore = redux.getStore("account");
     const block = getProjectStartPolicyBlock({
@@ -49,12 +61,36 @@ export async function ensureProjectRunningForJupyter({
   }
   await until(
     async () => {
-      if (store.get_state(project_id) == "running" || isClosed()) {
+      const freshState = await getFreshProjectState();
+      if (
+        freshState == "running" ||
+        (freshState == null && store.get_state(project_id) == "running") ||
+        isClosed()
+      ) {
         return true;
       }
-      await once(store as any, "change");
+      await waitForProjectStoreChangeOrTimeout(store);
       return false;
     },
     { min: 500, max: 500 },
   );
+}
+
+async function defaultGetProjectState(
+  project_id: string,
+): Promise<ProjectState | undefined> {
+  return await webapp_client.conat_client.hub.projects.getProjectState({
+    project_id,
+  });
+}
+
+async function waitForProjectStoreChangeOrTimeout(store): Promise<void> {
+  if (store == null || typeof store.once !== "function") {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return;
+  }
+  await Promise.race([
+    once(store as any, "change"),
+    new Promise((resolve) => setTimeout(resolve, 500)),
+  ]);
 }
