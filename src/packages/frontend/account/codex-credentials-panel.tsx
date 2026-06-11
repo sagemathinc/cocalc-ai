@@ -231,7 +231,21 @@ export function CodexUsageMeters({
           key={window.key}
           style={compact ? compactUsageLimitStyle : usageLimitStyle}
         >
-          <Text style={{ fontSize: compact ? 12 : 14 }}>{window.label}</Text>
+          <div
+            style={{
+              alignItems: "baseline",
+              display: "flex",
+              gap: 8,
+              justifyContent: "space-between",
+            }}
+          >
+            <Text style={{ fontSize: compact ? 12 : 14 }}>{window.label}</Text>
+            {compact && window.resetAt ? (
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                <TimeAgo date={window.resetAt} />
+              </Text>
+            ) : null}
+          </div>
           {typeof window.remainingPercent === "number" ? (
             <>
               <div
