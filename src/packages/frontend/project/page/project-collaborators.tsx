@@ -20,16 +20,7 @@ import {
   TimeAgo,
   Title,
 } from "@cocalc/frontend/components";
-import {
-  Alert,
-  Button,
-  Card,
-  List,
-  Modal,
-  Space,
-  Switch,
-  Typography,
-} from "antd";
+import { Alert, Button, Card, Modal, Space, Switch, Typography } from "antd";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
@@ -94,7 +85,7 @@ export function ProjectCollaboratorsContent({
       />
     );
     content = isFlyout ? (
-      <Space direction="vertical" size={12} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={12} style={{ width: "100%" }}>
         <CurrentCollaboratorsPanel
           key="current-collabs"
           project={project}
@@ -343,7 +334,7 @@ function AccessRequestsPanel({
 
   return (
     <SettingBox title="Access Requests" icon="user-plus">
-      <Space direction="vertical" style={{ width: "100%" }}>
+      <Space orientation="vertical" style={{ width: "100%" }}>
         {error && (
           <Alert
             type="error"
@@ -352,92 +343,111 @@ function AccessRequestsPanel({
             description={error}
           />
         )}
-        <List
-          loading={loading}
-          dataSource={requests}
-          locale={{ emptyText: "No pending access requests" }}
-          renderItem={(request) => {
-            const name =
-              request.requester_name ||
-              `${request.requester_first_name ?? ""} ${
-                request.requester_last_name ?? ""
-              }`.trim() ||
-              request.requester_account_id;
-            const approveKey = `${request.request_id}:approve`;
-            const denyKey = `${request.request_id}:deny`;
-            const blockKey = `${request.request_id}:block`;
-            return (
-              <List.Item
-                actions={[
-                  <Button
-                    key="approve"
-                    type="primary"
-                    size="small"
-                    loading={acting === approveKey}
-                    onClick={() =>
-                      void respond(request, "approve", request.requested_role)
-                    }
-                  >
-                    Approve {request.requested_role}
-                  </Button>,
-                  request.requested_role === "collaborator" ? (
-                    <Button
-                      key="approve-viewer"
-                      size="small"
-                      onClick={() => void respond(request, "approve", "viewer")}
-                    >
-                      Approve viewer
-                    </Button>
-                  ) : null,
-                  <Button
-                    key="deny"
-                    size="small"
-                    loading={acting === denyKey}
-                    onClick={() => void respond(request, "deny")}
-                  >
-                    Deny
-                  </Button>,
-                  <Button
-                    key="block"
-                    size="small"
-                    danger
-                    loading={acting === blockKey}
-                    onClick={() => {
-                      Modal.confirm({
-                        title: "Block access requests from this user?",
-                        content:
-                          "This denies the current request and prevents this account from requesting access to this project again.",
-                        okText: "Block",
-                        okButtonProps: { danger: true },
-                        onOk: () => respond(request, "block"),
-                      });
+        {loading ? (
+          <Loading />
+        ) : requests.length === 0 ? (
+          <Text type="secondary">No pending access requests</Text>
+        ) : (
+          <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+            {requests.map((request) => {
+              const name =
+                request.requester_name ||
+                `${request.requester_first_name ?? ""} ${
+                  request.requester_last_name ?? ""
+                }`.trim() ||
+                request.requester_account_id;
+              const approveKey = `${request.request_id}:approve`;
+              const denyKey = `${request.request_id}:deny`;
+              const blockKey = `${request.request_id}:block`;
+              return (
+                <Card
+                  key={request.request_id}
+                  size="small"
+                  styles={{ body: { padding: 10 } }}
+                >
+                  <div
+                    style={{
+                      alignItems: "center",
+                      display: "flex",
+                      gap: 12,
+                      justifyContent: "space-between",
                     }}
                   >
-                    Block
-                  </Button>,
-                ].filter(Boolean)}
-              >
-                <List.Item.Meta
-                  avatar={
-                    <Avatar
-                      account_id={request.requester_account_id}
-                      first_name={request.requester_first_name ?? undefined}
-                      last_name={request.requester_last_name ?? undefined}
-                      size={32}
-                    />
-                  }
-                  title={name}
-                  description={
-                    <Space direction="vertical" size={2}>
-                      <span>Requested {request.requested_role} access</span>
-                      {request.message ? <span>{request.message}</span> : null}
+                    <Space>
+                      <Avatar
+                        account_id={request.requester_account_id}
+                        first_name={request.requester_first_name ?? undefined}
+                        last_name={request.requester_last_name ?? undefined}
+                        size={32}
+                      />
+                      <div>
+                        <div>
+                          <strong>{name}</strong>
+                        </div>
+                        <Space orientation="vertical" size={2}>
+                          <span>Requested {request.requested_role} access</span>
+                          {request.message ? (
+                            <span>{request.message}</span>
+                          ) : null}
+                        </Space>
+                      </div>
                     </Space>
-                  }
-                />
-              </List.Item>
-            );
-          }}
-        />
+                    <Space wrap>
+                      <Button
+                        type="primary"
+                        size="small"
+                        loading={acting === approveKey}
+                        onClick={() =>
+                          void respond(
+                            request,
+                            "approve",
+                            request.requested_role,
+                          )
+                        }
+                      >
+                        Approve {request.requested_role}
+                      </Button>
+                      {request.requested_role === "collaborator" ? (
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            void respond(request, "approve", "viewer")
+                          }
+                        >
+                          Approve viewer
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="small"
+                        loading={acting === denyKey}
+                        onClick={() => void respond(request, "deny")}
+                      >
+                        Deny
+                      </Button>
+                      <Button
+                        size="small"
+                        danger
+                        loading={acting === blockKey}
+                        onClick={() => {
+                          Modal.confirm({
+                            title: "Block access requests from this user?",
+                            content:
+                              "This denies the current request and prevents this account from requesting access to this project again.",
+                            okText: "Block",
+                            okButtonProps: { danger: true },
+                            onOk: () => respond(request, "block"),
+                          });
+                        }}
+                      >
+                        Block
+                      </Button>
+                    </Space>
+                  </div>
+                </Card>
+              );
+            })}
+          </Space>
+        )}
         {blocks.length > 0 && (
           <div>
             <Text strong>Blocked requesters</Text>
