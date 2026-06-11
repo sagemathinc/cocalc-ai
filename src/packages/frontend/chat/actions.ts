@@ -2406,19 +2406,28 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb.commit();
   };
 
-  setCodexConfig = (threadKey: string, config: CodexThreadConfig): void => {
+  setCodexConfig = (
+    threadKey: string,
+    config: Partial<CodexThreadConfig>,
+  ): void => {
     if (this.syncdb == null) return;
     const threadId = this.normalizeThreadId(threadKey);
     if (!threadId) {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
-    const model = config.model ?? DEFAULT_CODEX_MODEL_NAME;
-    const sessionId = normalizeCodexSessionId(config.sessionId);
-    const nextConfig: CodexThreadConfig = {
+    const currentConfig = this.getCodexConfig(threadId) ?? {};
+    const mergedConfig: Partial<CodexThreadConfig> = {
+      ...currentConfig,
       ...config,
-      serviceTier: resolveCodexServiceTier(config),
-      ...(sessionId ? { sessionId } : {}),
     };
+    const model = mergedConfig.model ?? DEFAULT_CODEX_MODEL_NAME;
+    const sessionId = normalizeCodexSessionId(mergedConfig.sessionId);
+    const nextConfig: CodexThreadConfig = {
+      ...mergedConfig,
+      model,
+      serviceTier: resolveCodexServiceTier(mergedConfig),
+      ...(sessionId ? { sessionId } : {}),
+    } as CodexThreadConfig;
     if (!sessionId) {
       delete (nextConfig as any).sessionId;
     }
