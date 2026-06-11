@@ -166,6 +166,14 @@ describe("users table helpers", () => {
     expect(merged.getIn(["acct-new-collab", "collaborator"])).toBe(true);
   });
 
+  it("does not create the collaborators table before account id is known", async () => {
+    const { redux } = await import("../app-framework");
+
+    await import("./table");
+
+    expect(redux.createTable).not.toHaveBeenCalled();
+  });
+
   it("records collaborator feed diagnostics and repairs on history gaps", async () => {
     signedIn = true;
     accountId = "acct-1";

@@ -931,6 +931,9 @@ export function registerAdminCommand(
   const adminDataSql = adminData
     .command("sql")
     .description("Admin Data Explorer restricted SQL");
+  const adminDataAudit = adminData
+    .command("audit")
+    .description("Admin Data Explorer audit trail");
 
   async function resolveTargetAccountId(
     ctx: any,
@@ -1237,6 +1240,30 @@ export function registerAdminCommand(
               value: opts.limit,
               fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
               max: ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
+            }),
+          });
+        });
+      },
+    );
+
+  adminDataAudit
+    .command("list")
+    .description("list recent Admin Data Explorer audit events")
+    .option("--limit <n>", "max audit events", "50")
+    .action(
+      async (
+        opts: {
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data audit list", async (ctx) => {
+          return await ctx.hub.adminData.listAuditEvents({
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: 50,
+              max: 200,
             }),
           });
         });

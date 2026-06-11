@@ -108,4 +108,76 @@ describe("Admin Data Explorer SQL validation", () => {
       errors: ["function 'pg_sleep' is not allowed"],
     });
   });
+
+  it("enforces relation column allowlists", async () => {
+    const { validateSql } = await import("./admin-data-explorer");
+
+    await expect(
+      validateSql({
+        account_id: ACCOUNT_ID,
+        session_hash: "fresh",
+        sql: "select password_hash from accounts",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      errors: ["column 'accounts.password_hash' is not allowed"],
+    });
+
+    await expect(
+      validateSql({
+        account_id: ACCOUNT_ID,
+        session_hash: "fresh",
+        sql: "select accounts.account_id from accounts",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  it("requires column qualification when querying multiple base relations", async () => {
+    const { validateSql } = await import("./admin-data-explorer");
+
+    await expect(
+      validateSql({
+        account_id: ACCOUNT_ID,
+        session_hash: "fresh",
+        sql: "select account_id from accounts join projects on accounts.account_id = projects.project_id",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      errors: [
+        "column 'account_id' must be qualified when querying multiple relations",
+      ],
+    });
+
+    await expect(
+      validateSql({
+        account_id: ACCOUNT_ID,
+        session_hash: "fresh",
+        sql: "select accounts.account_id, projects.project_id from accounts join projects on accounts.account_id = projects.project_id",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  it("validates all bundled starter SQL views", async () => {
+    const { validateSql } = await import("./admin-data-explorer");
+    const { ADMIN_DATA_EXPLORER_STARTER_VIEWS } =
+      await import("@cocalc/conat/hub/api/admin-data-explorer");
+
+    for (const view of ADMIN_DATA_EXPLORER_STARTER_VIEWS) {
+      if (view.query_kind !== "sql") continue;
+      const result = await validateSql({
+        account_id: ACCOUNT_ID,
+        session_hash: "fresh",
+        sql: view.query.sql,
+        limit: view.default_limit ?? undefined,
+      });
+      expect(result.errors).toEqual([]);
+      expect(result.ok).toBe(true);
+    }
+  });
 });

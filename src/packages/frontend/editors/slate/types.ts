@@ -69,6 +69,10 @@ export interface Actions {
     value: string,
     context?: { selection?: Range | null; slateValue?: Descendant[] },
   ) => void;
+  ctrlEnter?: (
+    value: string,
+    context?: { selection?: Range | null; slateValue?: Descendant[] },
+  ) => void;
   altEnter?: (
     value: string,
     id?: string,
