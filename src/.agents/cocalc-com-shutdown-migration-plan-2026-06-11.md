@@ -462,6 +462,11 @@ Replacement design:
 If CUP cannot move immediately, keep them as a temporary legacy island with
 restricted blast radius rather than blocking the whole migration.
 
+Site license tokens:
+
+- a given token provides access to a specific site license membership for a specified amount time
+- rootfs publication instead of public shares.   Scope to be determined.
+
 ### Legacy Software Environment
 
 The old official environment is a major compatibility issue.
@@ -480,6 +485,15 @@ Success criteria:
 - Instructors can disable AI reliably.
 - CUP has either a replacement path or an explicitly isolated legacy exception.
 - Common migrated notebooks have a credible compatibility environment.
+
+Andrey's suggestion:
+
+- require choice of image
+- have focused images on:
+  - data science/ml
+  - sage
+  - R
+  - julia
 
 ## Phase 8: Operations and Observability
 
@@ -807,3 +821,4 @@ only as a locked-down compatibility and restore system. Restore projects lazily.
 Rewrite unsafe legacy workflows instead of preserving them. This protects
 revenue, reduces security exposure, avoids unnecessary GCS costs, and lets the
 team focus on the product that can grow.
+
