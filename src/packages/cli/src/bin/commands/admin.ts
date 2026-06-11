@@ -12,6 +12,11 @@ import {
 import { readFile, writeFile } from "node:fs/promises";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 import type {
+  AdminDataQueryKind,
+  AdminDataViewExport,
+  AdminDataViewInput,
+} from "@cocalc/conat/hub/api/admin-data-explorer";
+import type {
   LaunchHealthStatus,
   LaunchSmokeResult,
   LaunchSmokeStepResult,
@@ -75,6 +80,33 @@ const MEMBERSHIP_TIER_FIELDS = {
   site_license_count: null,
   updated: null,
 } as const;
+
+function parseAdminDataQueryKind(
+  value: string | undefined,
+): AdminDataQueryKind | undefined {
+  if (value == null || value === "") return undefined;
+  if (value === "structured" || value === "sql" || value === "dataset") {
+    return value;
+  }
+  throw new Error("--kind must be one of structured, sql, dataset");
+}
+
+function parseAdminDataImportMode(
+  value: string | undefined,
+): "upsert" | "create_only" {
+  if (value == null || value === "" || value === "upsert") return "upsert";
+  if (value === "create_only" || value === "create-only") return "create_only";
+  throw new Error("--mode must be upsert or create-only");
+}
+
+async function readAdminDataJson(path: string): Promise<unknown> {
+  const raw = await readFile(path, "utf8");
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`failed to parse JSON from ${path}: ${err}`);
+  }
+}
 
 type MembershipTierRow = {
   id?: string | null;
@@ -866,6 +898,12 @@ export function registerAdminCommand(
   const adminMasterKey = admin
     .command("master-key")
     .description("local site master key lifecycle operations");
+  const adminData = admin
+    .command("data")
+    .description("Admin Data Explorer shared views and datasets");
+  const adminDataViews = adminData
+    .command("views")
+    .description("Admin Data Explorer shared view registry");
 
   async function resolveTargetAccountId(
     ctx: any,
@@ -948,6 +986,117 @@ export function registerAdminCommand(
             last_active: row.last_active ?? null,
             created: row.created ?? null,
           }));
+        });
+      },
+    );
+
+  adminData
+    .command("datasets")
+    .description("list Admin Data Explorer datasets (admin fresh-auth)")
+    .action(async (command: Command) => {
+      await withContext(command, "admin data datasets", async (ctx) => {
+        return await ctx.hub.adminData.listDatasets({});
+      });
+    });
+
+  adminDataViews
+    .command("list")
+    .description("list shared Admin Data Explorer views (admin fresh-auth)")
+    .option("--tag <tag>", "filter by tag")
+    .option("--kind <kind>", "filter by query kind: structured, sql, dataset")
+    .action(
+      async (
+        opts: {
+          tag?: string;
+          kind?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data views list", async (ctx) => {
+          return await ctx.hub.adminData.listViews({
+            tag: opts.tag,
+            query_kind: parseAdminDataQueryKind(opts.kind),
+          });
+        });
+      },
+    );
+
+  adminDataViews
+    .command("show <slug>")
+    .description("show one shared Admin Data Explorer view (admin fresh-auth)")
+    .action(async (slug: string, command: Command) => {
+      await withContext(command, "admin data views show", async (ctx) => {
+        return await ctx.hub.adminData.getView({ slug });
+      });
+    });
+
+  adminDataViews
+    .command("save <file>")
+    .description(
+      "create or update one shared Admin Data Explorer view from a JSON file (admin fresh-auth)",
+    )
+    .action(async (file: string, command: Command) => {
+      await withContext(command, "admin data views save", async (ctx) => {
+        const view = (await readAdminDataJson(file)) as AdminDataViewInput;
+        return await ctx.hub.adminData.saveView({ view });
+      });
+    });
+
+  adminDataViews
+    .command("delete <slug>")
+    .description(
+      "delete one shared Admin Data Explorer view (admin fresh-auth)",
+    )
+    .action(async (slug: string, command: Command) => {
+      await withContext(command, "admin data views delete", async (ctx) => {
+        return await ctx.hub.adminData.deleteView({ slug });
+      });
+    });
+
+  adminDataViews
+    .command("export [file]")
+    .description(
+      "export shared Admin Data Explorer views as JSON (admin fresh-auth)",
+    )
+    .action(async (file: string | undefined, command: Command) => {
+      await withContext(command, "admin data views export", async (ctx) => {
+        const exported = await ctx.hub.adminData.exportViews({});
+        if (file) {
+          await writeFile(file, `${JSON.stringify(exported, null, 2)}\n`, {
+            mode: 0o600,
+          });
+          return {
+            path: file,
+            count: exported.views.length,
+            exported_at: exported.exported_at,
+          };
+        }
+        return exported;
+      });
+    });
+
+  adminDataViews
+    .command("import <file>")
+    .description(
+      "import shared Admin Data Explorer views from JSON (admin fresh-auth)",
+    )
+    .option("--mode <mode>", "import mode: upsert or create-only", "upsert")
+    .action(
+      async (
+        file: string,
+        opts: {
+          mode?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data views import", async (ctx) => {
+          const views = (await readAdminDataJson(file)) as
+            | AdminDataViewInput[]
+            | AdminDataViewExport;
+          return await ctx.hub.adminData.importViews({
+            views,
+            mode: parseAdminDataImportMode(opts.mode),
+          });
         });
       },
     );

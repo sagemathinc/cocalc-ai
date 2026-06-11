@@ -14,6 +14,7 @@ import { type Ssh, ssh } from "./ssh";
 import { type ReflectApi, reflect } from "./reflect";
 import { type AgentApi, agent } from "./agent";
 import { type Notifications, notifications } from "./notifications";
+import { type AdminData, adminData } from "./admin-data-explorer";
 
 export interface HubApi {
   system: System;
@@ -30,6 +31,7 @@ export interface HubApi {
   reflect: ReflectApi;
   agent: AgentApi;
   notifications: Notifications;
+  adminData: AdminData;
 }
 
 const HubApiStructure = {
@@ -47,6 +49,7 @@ const HubApiStructure = {
   reflect,
   agent,
   notifications,
+  adminData,
 } as const;
 
 export function transformArgs({
