@@ -2,7 +2,7 @@
 
 Source list: `/home/user/wstein-todo/wstein.tasks.md`.
 
-Goal: turn the newest beta tester reports into a release-focused work queue. Fix one bug per commit unless two reports share a localized root cause. Prioritize data loss, stuck workflows, compatibility regressions, and policy enforcement before polish or admin workflow enhancements.
+Goal: turn the newest beta tester reports into a release-focused work queue. Fix one bug per commit unless two reports share a localized root cause. Prioritize data loss, stuck workflows, compatibility regressions, policy enforcement, and cost-abuse release blockers before polish.
 
 ## Intake Notes
 
@@ -10,10 +10,11 @@ Goal: turn the newest beta tester reports into a release-focused work queue. Fix
 - Active scope below tracks all 11 reports.
 - Several items touch accounts, project lifecycle, project hosts, billing, or control-plane APIs; read `src/.agents/scalable-architecture.md` before changing those code paths.
 - Treat backend enforcement as canonical for verification, project start/create, billing balance edits, and project-host creation. Frontend hints are useful but not sufficient.
+- Admin impersonation should reproduce target-user restrictions exactly, including email-verification blocks, so support can see the same actionable error the user sees.
 - For live validation, use the CoCalc CLI path exactly:
   `"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"`.
 
-## P0: Release Blockers / Data Loss / Stuck Core Workflows
+## P0: Release Blockers / Data Loss / Stuck Core Workflows / Cost Abuse
 
 ### P0-A: Project Compression Can Produce Silently Broken Archives
 
@@ -26,6 +27,7 @@ Likely areas:
 - `src/packages/conat/files/file-server.ts`
 - project file explorer compress/download actions
 - project-host file download route and HTTP download helpers
+- project `/tmp` btrfs subvolume creation/wipe helpers
 - project-side archive command timeouts, progress reporting, and cleanup
 
 Plan:
@@ -35,14 +37,16 @@ Plan:
 3. Generate archives through an incomplete temporary filename, then atomically move to the final name only after `tar` exits successfully.
 4. Surface timeout, disk-space, permission, and quota failures clearly in the frontend; never present a failed archive as complete.
 5. Replace hidden short timeouts with an explicit per-project compression budget similar to disk usage budget logic.
-6. For multi-file download of a running project, prefer creating the temporary tarball under `/tmp` and deleting it after download completion or failure.
-7. Decide the stopped-project path explicitly: either use a safe project-host storage location with clear cleanup, or require project start for `/tmp`-based ephemeral archives.
+6. For multi-file download, prefer creating the temporary tarball under the project's `/tmp` and deleting it after download completion or failure.
+7. Do not require project start. This flow is specifically needed for projects that cannot start due to quota, broken runtime state, or CPU-usage limits.
+8. For stopped projects, ensure the project `/tmp` backing subvolume exists directly before compression. It often already exists, and project start can continue to be the path that wipes `/tmp`.
+9. If `/tmp` creation fails, show a clear error and do not fall back to writing a confusing final archive in project storage.
 
 Validation:
 
 - Focused project file compression test for timeout/failure cleanup if the backend path is testable.
 - Manual smoke with a large selected folder set: archive succeeds and `tar -tzf` is valid, or fails visibly with no final tarball.
-- Manual smoke for multi-file download: temporary tarball is removed after successful download.
+- Manual smoke for stopped project multi-file download: project does not start, `/tmp` is created if needed, archive downloads, and the temporary tarball is removed after successful download.
 
 ### P0-B: Jupyter Evaluate Uses Stale Running Kernel After Project Stop
 
@@ -73,7 +77,7 @@ Validation:
 
 ### P0-C: Email Verification Enforcement Is Incomplete For Project Actions
 
-Symptom: when email verification is enabled, an unverified user can still create or start projects, and may be able to create project hosts. The reporter saw this while impersonating another user, so impersonation behavior must be verified separately.
+Symptom: when email verification is enabled, an unverified user can still create or start projects, and may be able to create project hosts. The reporter saw this while impersonating another user; impersonation should reproduce the target user's restrictions exactly.
 
 Impact: site policy enforcement is inconsistent, especially for self-hosted sites that require verified email before resource creation or runtime use.
 
@@ -83,22 +87,54 @@ Likely areas:
 - project creation APIs and frontend project creation flow
 - project start APIs and `ensure_project_running`
 - project-host creation APIs and admin/user host UI
-- impersonation/fresh-auth/admin bypass semantics
+- impersonation/fresh-auth/admin semantics
 
 Plan:
 
 1. Read `src/.agents/scalable-architecture.md` before changing project, account, or host control-plane APIs.
-2. Reproduce with email verification enabled using a non-admin unverified account, and separately test admin impersonation.
+2. Reproduce with email verification enabled using a non-admin unverified account, then reproduce the same account through admin impersonation.
 3. Enforce the block in backend/control-plane APIs for create project, start project, and create project host; do not rely only on disabled frontend buttons.
 4. Return a user-facing error that explicitly says verification is required and includes a path/action to resend the verification email.
-5. Decide and document the impersonation rule: either admins bypass intentionally while impersonating, or they see the same block with an admin-only explanation.
+5. Ensure impersonation sees the same verification block and call to action, so support can diagnose the user's real issue.
 6. Add frontend handling that turns the backend block into a clear verify-email call to action.
 
 Validation:
 
 - Focused backend/API tests for unverified account blocking each action.
 - Browser smoke: unverified account sees actionable verify-email error; verified account can create/start normally.
-- Impersonation smoke to confirm the intended rule.
+- Impersonation smoke: support/admin acting as an unverified user gets the same verification error.
+
+### P0-D: Admins Need A Supported Customer Balance Adjustment Flow
+
+Symptom: admins need a safe way to add or remove customer account balance directly, with fresh 2FA, audit logging, user-visible notes, admin-only notes, and a central list of edits. Current voucher-based workarounds are operationally risky; recent voucher-related abuse on the legacy site makes this a release blocker because this feature lets us remove voucher functionality.
+
+Impact: billing/support and cost-abuse risk. This is a supported admin-purchase/ledger workflow, not just a convenience UI.
+
+Likely areas:
+
+- admin user detail/purchases panel
+- admin purchase page and recent admin-purchase audit log
+- purchases/billing balance ledger
+- audit log models and admin audit UI
+- fresh-auth/2FA gate components
+- course student payment/membership funding paths
+
+Plan:
+
+1. Read `src/.agents/scalable-architecture.md` before changing account/billing authority paths.
+2. Identify the canonical purchase/balance ledger API and how admin purchases are recorded today.
+3. Add an admin-only balance adjustment action in the admin user panel, requiring fresh 2FA.
+4. Treat the adjustment as a special audited admin purchase: add a clear ledger line item, support positive and negative amounts, include a user-visible note, include an admin-only note, and record actor metadata.
+5. Add or extend an admin purchase/audit page that lists recent admin purchases and balance edits by any admin.
+6. Remove the deprecated `Minimum allowed balance` warning from the admin user panel once this replacement flow exists.
+7. Verify course student membership payment can use available account credit where intended.
+8. Defer deleting voucher functionality until this replacement flow is shipped and validated, then remove vouchers in a follow-up.
+
+Validation:
+
+- Focused backend tests for add/remove balance, fresh-auth failure, audit event, and user-visible line item.
+- Frontend admin test for required notes, positive/negative adjustments, and recent admin-purchase listing.
+- Manual smoke: admin adjusts balance, user sees public note, admin sees both notes and the global audit entry.
 
 ## P1: Compatibility / High-Frequency UX / Core Editing
 
@@ -113,15 +149,17 @@ Likely areas:
 - Jupyter notebook load/import normalization
 - notebook metadata read/write
 - markdown cell migration helpers shared with board/slide compatibility migration
+- `src/packages/frontend/frame-editors/whiteboard-editor` schema-version migration precedent
 - notebook save pipeline
 
 Plan:
 
 1. Detect cocalc.com-origin notebooks using `metadata.kernelspec.metadata.cocalc`.
 2. Add `metadata.cocalc.schemaVersion = 1` after migration, and skip migration when that version is already present.
-3. On first open only, process markdown cells by removing backslashes before parens and square brackets in the same way as the board/slide migration.
-4. Do not add special rendering logic; convert the document data once so copy/paste and future edits behave consistently.
-5. Preserve all non-markdown cells and unrelated notebook metadata.
+3. Reuse the whiteboard/slide schema-version migration helper or factor out a shared helper if needed.
+4. On first open only, process markdown cells by removing backslashes only for `\(`, `\)`, `\[`, and `\]`, in the same way as the board/slide migration.
+5. Do not add special rendering logic; convert the document data once so copy/paste and future edits behave consistently.
+6. Preserve all non-markdown cells and unrelated notebook metadata.
 
 Validation:
 
@@ -254,7 +292,7 @@ Validation:
 - Focused component test if sizing props can be asserted.
 - Browser smoke: long whiteboard note grows during edit and static display height matches content.
 
-## P2: Polish / Operational UX / Admin Workflow
+## P2: Polish / Operational UX
 
 ### P2-A: LaTeX Error Toast Gives No Useful Details
 
@@ -281,32 +319,3 @@ Validation:
 - Focused error formatting tests for generic errors and nested backend errors.
 - Manual smoke with a forced LaTeX open/compile error, confirming the toast includes actionable text and details.
 
-### P2-B: Admins Need A Supported Customer Balance Adjustment Flow
-
-Symptom: admins need a safe way to add or remove customer account balance directly, with fresh 2FA, audit logging, user-visible notes, admin-only notes, and a central list of edits. Current voucher-based workarounds are operationally awkward and error-prone.
-
-Impact: billing/support workflow risk; not a narrow regression, but important for replacing voucher usage.
-
-Likely areas:
-
-- admin users/customer account pages
-- purchases/billing balance ledger
-- audit log models and admin audit UI
-- fresh-auth/2FA gate components
-- course student payment/membership funding paths
-
-Plan:
-
-1. Read `src/.agents/scalable-architecture.md` before changing account/billing authority paths.
-2. Identify the canonical balance ledger API and how existing line items are recorded.
-3. Add an admin-only balance adjustment API requiring fresh 2FA.
-4. Record a clear user-visible line item, an admin-only note, actor metadata, and immutable audit-log event.
-5. Add a central admin page/table listing all manual balance edits.
-6. Verify course student membership payment can use available account credit where intended.
-7. Defer voucher deletion until this replacement flow is shipped and validated.
-
-Validation:
-
-- Focused backend tests for add/remove balance, fresh-auth failure, audit event, and line item visibility.
-- Frontend admin test for required notes and adjustment listing.
-- Manual smoke: admin adjusts balance, user sees public note, admin sees both notes.
