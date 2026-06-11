@@ -32,6 +32,7 @@ import {
 import { ErrorDisplay, Loading } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
+  AdminDataAuditEvent,
   AdminDataDataset,
   AdminDataSqlRunResult,
   AdminDataSqlValidationResult,
@@ -200,6 +201,80 @@ function ResultTable({ result }: { result: AdminDataSqlRunResult | null }) {
   );
 }
 
+function AuditTrail({
+  events,
+  loading,
+  refresh,
+}: {
+  events: AdminDataAuditEvent[];
+  loading: boolean;
+  refresh: () => void;
+}) {
+  const columns: TableColumnsType<AdminDataAuditEvent> = [
+    {
+      title: "Time",
+      dataIndex: "time",
+      key: "time",
+      render: (value: string) => new Date(value).toLocaleString(),
+    },
+    {
+      title: "Operation",
+      dataIndex: "operation",
+      key: "operation",
+      render: (value: string | null) => value ?? "unknown",
+    },
+    {
+      title: "View",
+      dataIndex: "slug",
+      key: "slug",
+      render: (value: string | null) =>
+        value ? <Text code>{value}</Text> : <Text type="secondary">adhoc</Text>,
+    },
+    {
+      title: "Rows",
+      dataIndex: "row_count",
+      key: "row_count",
+      render: (value: number | null) => value ?? "",
+    },
+    {
+      title: "Duration",
+      dataIndex: "duration_ms",
+      key: "duration_ms",
+      render: (value: number | null) => (value == null ? "" : `${value}ms`),
+    },
+    {
+      title: "Details",
+      dataIndex: "details",
+      key: "details",
+      render: (value: Record<string, unknown>) => (
+        <Text code style={{ whiteSpace: "pre-wrap" }}>
+          {JSON.stringify(value)}
+        </Text>
+      ),
+    },
+  ];
+
+  return (
+    <Card
+      title="Recent Audit Events"
+      extra={
+        <Button onClick={refresh} loading={loading}>
+          Refresh
+        </Button>
+      }
+    >
+      <Table
+        columns={columns}
+        dataSource={events}
+        pagination={{ pageSize: 10 }}
+        rowKey="id"
+        scroll={{ x: "max-content" }}
+        size="small"
+      />
+    </Card>
+  );
+}
+
 function Catalog({
   datasets,
   views,
@@ -307,6 +382,7 @@ function Catalog({
 
 export function AdminDataExplorer() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [auditEvents, setAuditEvents] = useState<AdminDataAuditEvent[]>([]);
   const [datasets, setDatasets] = useState<AdminDataDataset[]>([]);
   const [views, setViews] = useState<AdminDataViewSummary[]>([]);
   const [selectedView, setSelectedView] = useState<AdminDataView | null>(null);
@@ -338,12 +414,14 @@ export function AdminDataExplorer() {
       await runFreshAuthAction(async () => {
         const hub = getHub();
         const opts = { browser_id: browserId() };
-        const [nextDatasets, nextViews] = await Promise.all([
+        const [nextDatasets, nextViews, nextAuditEvents] = await Promise.all([
           hub.adminData.listDatasets(opts),
           hub.adminData.listViews(opts),
+          hub.adminData.listAuditEvents({ ...opts, limit: 50 }),
         ]);
         setDatasets(nextDatasets);
         setViews(nextViews);
+        setAuditEvents(nextAuditEvents);
       });
     } catch (err) {
       setError(`${err}`);
@@ -372,6 +450,24 @@ export function AdminDataExplorer() {
       setError(`${err}`);
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function loadAuditEvents() {
+    setLoading(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        const nextAuditEvents = await getHub().adminData.listAuditEvents({
+          browser_id: browserId(),
+          limit: 50,
+        });
+        setAuditEvents(nextAuditEvents);
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -639,6 +735,11 @@ export function AdminDataExplorer() {
               <ValidationSummary validation={validation} />
             </Card>
             <ResultTable result={result} />
+            <AuditTrail
+              events={auditEvents}
+              loading={loading}
+              refresh={() => void loadAuditEvents()}
+            />
           </Space>
         </Col>
         <Col xs={24} xl={8}>

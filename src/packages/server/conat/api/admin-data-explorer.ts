@@ -22,6 +22,7 @@ import {
 import { uuid } from "@cocalc/util/misc";
 import { parse, toSql } from "pgsql-ast-parser";
 import type {
+  AdminDataAuditEvent,
   AdminDataDataset,
   AdminDataQuery,
   AdminDataQueryKind,
@@ -49,6 +50,7 @@ const MAX_TAG_LENGTH = 80;
 const MAX_COLUMNS = 200;
 const MAX_SORTS = 20;
 const MAX_DEFAULT_LIMIT = 10_000;
+const MAX_AUDIT_EVENTS = 200;
 const TABLE = "admin_data_explorer_views";
 
 const ALLOWED_SQL_RELATIONS: Set<string> = new Set(
@@ -424,6 +426,15 @@ function normalizeDefaultLimit(value: unknown): number | null {
   return Math.min(limit, MAX_DEFAULT_LIMIT);
 }
 
+function normalizeAuditLimit(value: unknown): number {
+  if (value == null || value === "") return 50;
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw Error("limit must be a positive integer");
+  }
+  return Math.min(limit, MAX_AUDIT_EVENTS);
+}
+
 function normalizeSqlLimit(value: unknown): number {
   if (value == null || value === "")
     return ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT;
@@ -668,6 +679,26 @@ function summarizeView(view: AdminDataView): AdminDataViewSummary {
     updated_at: view.updated_at,
     version: view.version,
   };
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function optionalBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
+}
+
+function optionalQueryKind(value: unknown): AdminDataQueryKind | null {
+  if (value === "structured" || value === "sql" || value === "dataset") {
+    return value;
+  }
+  return null;
 }
 
 async function recordAudit({
@@ -963,6 +994,50 @@ export async function importViews({
     details: { created, updated, skipped, mode },
   });
   return { created, updated, skipped, views: saved };
+}
+
+type CentralLogRow = {
+  id: string;
+  time: Date | string;
+  value: Record<string, unknown> | null;
+};
+
+export async function listAuditEvents({
+  limit,
+  ...opts
+}: AdminAuthOpts & {
+  limit?: number;
+} = {}): Promise<AdminDataAuditEvent[]> {
+  await requireFreshAdmin(opts);
+  const normalizedLimit = normalizeAuditLimit(limit);
+  const { rows } = await getPool().query<CentralLogRow>(
+    `
+      SELECT id, time, value
+      FROM central_log
+      WHERE event='admin_data_explorer'
+      ORDER BY time DESC
+      LIMIT $1
+    `,
+    [normalizedLimit],
+  );
+  return rows.map((row) => {
+    const value = isObject(row.value) ? row.value : {};
+    return {
+      id: row.id,
+      time: iso(row.time),
+      account_id: optionalString(value.account_id, 80) ?? null,
+      bay_id: optionalString(value.bay_id, 120) ?? null,
+      operation: optionalString(value.operation, 120) ?? null,
+      view_id: optionalString(value.view_id, 80) ?? null,
+      slug: optionalString(value.slug, MAX_SLUG_LENGTH) ?? null,
+      query_kind: optionalQueryKind(value.query_kind),
+      row_count: optionalNumber(value.row_count),
+      response_bytes: optionalNumber(value.response_bytes),
+      duration_ms: optionalNumber(value.duration_ms),
+      truncated: optionalBoolean(value.truncated),
+      details: value,
+    };
+  });
 }
 
 export async function validateSql({
