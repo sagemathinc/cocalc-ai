@@ -20,7 +20,10 @@ import {
 import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { lite } from "@cocalc/frontend/lite";
-import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
+import {
+  CodexCredentialsPanel,
+  CodexUsageMeters,
+} from "@cocalc/frontend/account/codex-credentials-panel";
 import {
   CODEX_USAGE_LABEL,
   CODEX_USAGE_URL,
@@ -32,7 +35,10 @@ import {
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  CodexPaymentSourceInfo,
+  CodexUsageStatusInfo,
+} from "@cocalc/conat/hub/api/system";
 import {
   codexModelSupportsFastMode,
   DEFAULT_CODEX_MODELS,
@@ -314,6 +320,10 @@ export function CodexConfigButton({
   const [controlsCollapsed, setControlsCollapsed] = useState(
     readCodexControlsCollapsed,
   );
+  const [codexUsageStatus, setCodexUsageStatus] = useState<
+    CodexUsageStatusInfo | undefined
+  >(undefined);
+  const [codexUsageLoading, setCodexUsageLoading] = useState(false);
   const lastAppliedThreadRef = React.useRef<string | undefined>(undefined);
 
   useEffect(() => {
@@ -434,6 +444,32 @@ export function CodexConfigButton({
     ? "Checking…"
     : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
+
+  useEffect(() => {
+    if (!open || paymentSource?.source !== "subscription") {
+      setCodexUsageStatus(undefined);
+      setCodexUsageLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCodexUsageLoading(true);
+    const systemApi: any = webapp_client.conat_client.hub.system as any;
+    void systemApi
+      .getCodexUsageStatus({ project_id: projectId || undefined })
+      .then((status: CodexUsageStatusInfo) => {
+        if (!cancelled) setCodexUsageStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setCodexUsageStatus(undefined);
+      })
+      .finally(() => {
+        if (!cancelled) setCodexUsageLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, paymentSource?.source, projectId]);
+
   const modeLabel =
     modeOptions.find((option) => option.value === currentSessionMode)?.label ??
     "Mode";
@@ -655,6 +691,16 @@ export function CodexConfigButton({
                 </Button>
               </Tooltip>
             </Space>
+            {paymentSource?.source === "subscription" ? (
+              <div style={{ flex: "1 0 100%", width: "100%" }}>
+                {codexUsageLoading && !codexUsageStatus ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    Checking ChatGPT Codex usage...
+                  </Text>
+                ) : null}
+                <CodexUsageMeters status={codexUsageStatus} compact />
+              </div>
+            ) : null}
           </div>
           <Form form={form} layout="vertical">
             <Space orientation="vertical" style={{ width: "100%" }} size={12}>

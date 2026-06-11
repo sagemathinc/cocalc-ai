@@ -67,6 +67,11 @@ const usageLimitStyle: CSSProperties = {
   padding: 14,
 };
 
+const compactUsageLimitStyle: CSSProperties = {
+  ...usageLimitStyle,
+  padding: "8px 10px",
+};
+
 function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
   if (lite) {
     if (source === "subscription") return "ChatGPT Plan";
@@ -201,6 +206,76 @@ function getUsageWindows(rateLimit: any): Array<{
       };
     })
     .filter((window) => !!window);
+}
+
+export function CodexUsageMeters({
+  status,
+  compact = false,
+}: {
+  status?: CodexUsageStatusInfo;
+  compact?: boolean;
+}): React.JSX.Element | null {
+  const usageWindows = getUsageWindows(getCodexRateLimit(status));
+  if (!usageWindows.length) return null;
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: compact ? 8 : 12,
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        width: "100%",
+      }}
+    >
+      {usageWindows.map((window) => (
+        <div
+          key={window.key}
+          style={compact ? compactUsageLimitStyle : usageLimitStyle}
+        >
+          <Text style={{ fontSize: compact ? 12 : 14 }}>{window.label}</Text>
+          {typeof window.remainingPercent === "number" ? (
+            <>
+              <div
+                style={{
+                  alignItems: "baseline",
+                  display: "flex",
+                  gap: compact ? 4 : 6,
+                  marginTop: compact ? 2 : 6,
+                }}
+              >
+                <Text
+                  strong
+                  style={{
+                    fontSize: compact ? 18 : 26,
+                    lineHeight: compact ? "22px" : "30px",
+                  }}
+                >
+                  {`${window.remainingPercent}%`}
+                </Text>
+                <Text style={{ fontSize: compact ? 12 : 14 }}>Remaining</Text>
+              </div>
+              <Progress
+                percent={window.remainingPercent}
+                showInfo={false}
+                size="small"
+                strokeColor={COLORS.ANTD_LINK_BLUE}
+                style={{ margin: compact ? "3px 0 0" : "6px 0 2px" }}
+              />
+            </>
+          ) : null}
+          {!compact ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Resets{" "}
+              {window.resetAt ? (
+                <TimeAgo date={window.resetAt} />
+              ) : (
+                "when OpenAI updates this limit"
+              )}
+            </Text>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatCodexUsageReason(reason?: string): string | undefined {
@@ -805,7 +880,6 @@ function CodexCredentialsPanelBody({
     if (paymentSource?.source !== "subscription") return null;
     const chatgptAccount = getChatGptAccount(codexUsageStatus);
     const rateLimit = getCodexRateLimit(codexUsageStatus);
-    const usageWindows = getUsageWindows(rateLimit);
     const planType =
       formatPlanType(chatgptAccount?.planType) ??
       formatPlanType(rateLimit?.planType ?? rateLimit?.plan_type);
@@ -824,54 +898,7 @@ function CodexCredentialsPanelBody({
           ) : null}
           {planType ? <Tag color="green">{planType}</Tag> : null}
         </Space>
-        {usageWindows.length ? (
-          <div
-            style={{
-              display: "grid",
-              gap: 12,
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              width: "100%",
-            }}
-          >
-            {usageWindows.map((window) => (
-              <div key={window.key} style={usageLimitStyle}>
-                <Text style={{ fontSize: 14 }}>{window.label}</Text>
-                {typeof window.remainingPercent === "number" ? (
-                  <>
-                    <div
-                      style={{
-                        alignItems: "baseline",
-                        display: "flex",
-                        gap: 6,
-                        marginTop: 6,
-                      }}
-                    >
-                      <Text strong style={{ fontSize: 26, lineHeight: "30px" }}>
-                        {`${window.remainingPercent}%`}
-                      </Text>
-                      <Text style={{ fontSize: 14 }}>Remaining</Text>
-                    </div>
-                    <Progress
-                      percent={window.remainingPercent}
-                      showInfo={false}
-                      size="small"
-                      strokeColor={COLORS.ANTD_LINK_BLUE}
-                      style={{ margin: "6px 0 2px" }}
-                    />
-                  </>
-                ) : null}
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Resets{" "}
-                  {window.resetAt ? (
-                    <TimeAgo date={window.resetAt} />
-                  ) : (
-                    "when OpenAI updates this limit"
-                  )}
-                </Text>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <CodexUsageMeters status={codexUsageStatus} />
         {reason ? <Text type="secondary">{reason}</Text> : null}
         <Space wrap>
           <Button
