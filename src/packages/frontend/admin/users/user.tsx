@@ -17,10 +17,10 @@ import { Impersonate } from "./impersonate";
 import { PasswordReset } from "./password-reset";
 import { AdminRole } from "./admin-role";
 import { Ban } from "./ban";
-import PayAsYouGoMinBalance from "@cocalc/frontend/frame-editors/crm-editor/users/pay-as-you-go-min-balance";
 import { PurchasesButton } from "@cocalc/frontend/purchases/purchases";
 import { PaymentsButton } from "@cocalc/frontend/purchases/payments";
 import { CreatePaymentButton } from "./create-payment";
+import { AdminBalanceAdjustmentButton } from "../admin-purchase";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import Money from "./money";
 import { AdminMembership } from "./admin-membership";
@@ -240,13 +240,13 @@ export function UserResult({
               <div style={{ margin: "15px 0" }}>
                 <Money account_id={account_id} />
                 <div style={{ height: "15px" }} />
-                <PayAsYouGoMinBalance account_id={account_id} />
-                <div style={{ height: "15px" }} />
                 <PurchasesButton account_id={account_id} />
                 <div style={{ height: "15px" }} />
                 <PaymentsButton account_id={account_id} />
                 <div style={{ height: "15px" }} />
                 <CreatePaymentButton account_id={account_id} />
+                <div style={{ height: "15px" }} />
+                <AdminBalanceAdjustmentButton account_id={account_id} />
               </div>
             </Card>
           )}

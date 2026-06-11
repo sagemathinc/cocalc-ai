@@ -55,10 +55,6 @@ jest.mock("./ban", () => ({
   Ban: () => null,
 }));
 
-jest.mock(
-  "@cocalc/frontend/frame-editors/crm-editor/users/pay-as-you-go-min-balance",
-  () => () => null,
-);
 jest.mock("@cocalc/frontend/purchases/purchases", () => ({
   PurchasesButton: () => null,
 }));
@@ -67,6 +63,9 @@ jest.mock("@cocalc/frontend/purchases/payments", () => ({
 }));
 jest.mock("./create-payment", () => ({
   CreatePaymentButton: () => null,
+}));
+jest.mock("../admin-purchase", () => ({
+  AdminBalanceAdjustmentButton: () => null,
 }));
 jest.mock("./money", () => () => null);
 jest.mock("./admin-membership", () => ({

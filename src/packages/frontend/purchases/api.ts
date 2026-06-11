@@ -134,6 +134,8 @@ interface PurchasesOptions {
   day_statement_id?: number;
   month_statement_id?: number;
   no_statement?: boolean;
+  tag?: string;
+  includeName?: boolean;
 }
 
 function parsePurchaseDates(v) {
@@ -161,7 +163,7 @@ export const getPurchases: PurchasesFunction = shortCache(
 // Admins can get purchases for any specified user -- error if called by non-admin.
 // Same options as getPurchases, but specify the account_id.
 export async function getPurchasesAdmin(
-  opts: PurchasesOptions & { account_id: string },
+  opts: PurchasesOptions & { account_id?: string },
 ): Promise<{ purchases: Purchase[]; balance: MoneyValue }> {
   return parsePurchaseDates(await api("purchases/get-purchases-admin", opts));
 }
