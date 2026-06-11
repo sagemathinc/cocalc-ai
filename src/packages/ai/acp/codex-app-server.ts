@@ -1508,6 +1508,14 @@ function settledValue<T>(result: PromiseSettledResult<T>): {
   return { error: `${result.reason}` };
 }
 
+function isRateLimitsAuthError(error: string | undefined): boolean {
+  const normalized = `${error ?? ""}`.toLowerCase();
+  return (
+    normalized.includes("account/ratelimits/read") &&
+    normalized.includes("auth")
+  );
+}
+
 export async function getCodexAppServerAccountStatus(opts: {
   projectId?: string;
   accountId?: string;
@@ -1542,15 +1550,23 @@ export async function getCodexAppServerAccountStatus(opts: {
   );
   try {
     await client.initialize(timeoutMs);
-    await loginAppServerIfNeeded(
-      client,
-      spawned.appServerLogin ?? opts.appServerLogin,
-      timeoutMs,
-    );
+    const appServerLogin = spawned.appServerLogin ?? opts.appServerLogin;
+    await loginAppServerIfNeeded(client, appServerLogin, timeoutMs);
     const [accountResult, rateLimitsResult] = await Promise.allSettled([
       client.request("account/read", { refreshToken: true }, timeoutMs),
       client.request("account/rateLimits/read", {}, timeoutMs),
     ]);
+    let rateLimits = settledValue(rateLimitsResult);
+    if (isRateLimitsAuthError(rateLimits.error) && appServerLogin) {
+      try {
+        await loginAppServerIfNeeded(client, appServerLogin, timeoutMs);
+        rateLimits = {
+          value: await client.request("account/rateLimits/read", {}, timeoutMs),
+        };
+      } catch (reason) {
+        rateLimits = { error: `${reason}` };
+      }
+    }
     let tokenUsageResult: PromiseSettledResult<any> | undefined;
     if (opts.includeTokenUsage) {
       try {
@@ -1563,7 +1579,6 @@ export async function getCodexAppServerAccountStatus(opts: {
       }
     }
     const account = settledValue(accountResult);
-    const rateLimits = settledValue(rateLimitsResult);
     const tokenUsage = tokenUsageResult
       ? settledValue(tokenUsageResult)
       : { value: undefined };

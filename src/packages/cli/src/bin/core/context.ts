@@ -100,6 +100,7 @@ const HUB_API_GROUPS: HubGroupName[] = [
   "hosts",
   "software",
   "notifications",
+  "adminData",
   "agent",
   "lro",
   "ssh",

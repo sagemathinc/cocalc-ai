@@ -24,4 +24,17 @@ describe("getStartProgressMessage", () => {
       }),
     ).toBe("Making the RootFS image available on this host.");
   });
+
+  it("explains explicit restart requests even if lifecycle is already running", () => {
+    expect(
+      getStartProgressMessage({
+        phase: "queued",
+        rawMessage: "",
+        lifecycleState: "running",
+        startLroActive: false,
+        activeOpStartLike: false,
+        restartRequested: true,
+      }),
+    ).toContain("restart was requested");
+  });
 });

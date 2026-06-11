@@ -72,6 +72,10 @@ class FakeCodexAppServerProc extends EventEmitter {
     this.stdout.write(`${JSON.stringify({ id, result })}\n`);
   }
 
+  sendError(id: number, message: string): void {
+    this.stdout.write(`${JSON.stringify({ id, error: { message } })}\n`);
+  }
+
   sendNotification(method: string, params: any): void {
     this.stdout.write(`${JSON.stringify({ method, params })}\n`);
   }
@@ -4250,6 +4254,89 @@ describe("CodexAppServerAgent", () => {
       "initialized",
       "account/login/start",
       "account/read",
+      "account/rateLimits/read",
+    ]);
+  });
+
+  it("retries rate-limit reads after a stale app-server auth failure", async () => {
+    const seen: Array<{ method: string; params: any }> = [];
+    let rateLimitReads = 0;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      seen.push({ method: message.method, params: message.params });
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, {});
+          break;
+        case "initialized":
+          break;
+        case "account/login/start":
+          fake.sendResponse(message.id, {});
+          break;
+        case "account/read":
+          fake.sendResponse(message.id, {
+            account: {
+              type: "chatgpt",
+              email: "user@example.com",
+              planType: "pro",
+            },
+            requiresOpenaiAuth: false,
+          });
+          break;
+        case "account/rateLimits/read":
+          rateLimitReads += 1;
+          if (rateLimitReads === 1) {
+            fake.sendError(
+              message.id,
+              "codex account authentication required to read rate limits",
+            );
+          } else {
+            fake.sendResponse(message.id, {
+              rateLimits: {
+                limitId: "codex",
+                primary: {
+                  usedPercent: 42,
+                  windowDurationMins: 300,
+                  resetsAt: 1_800_000_000,
+                },
+                planType: "pro",
+              },
+            });
+          }
+          break;
+        default:
+          throw new Error(`unexpected method ${message.method}`);
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: jest.fn() as any,
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        args: ["app-server"],
+        cmd: "codex",
+        appServerLogin: {
+          type: "chatgptAuthTokens" as const,
+          accessToken: "token",
+          chatgptAccountId: "account-1",
+          chatgptPlanType: "pro",
+        },
+      }),
+    });
+
+    const status = await getCodexAppServerAccountStatus({
+      projectId: "project-1",
+      accountId: "account-1",
+    });
+
+    expect(status.errors).toBeUndefined();
+    expect(status.account?.account?.email).toBe("user@example.com");
+    expect(status.rateLimits?.rateLimits?.primary?.usedPercent).toBe(42);
+    expect(seen.map(({ method }) => method)).toEqual([
+      "initialize",
+      "initialized",
+      "account/login/start",
+      "account/read",
+      "account/rateLimits/read",
+      "account/login/start",
       "account/rateLimits/read",
     ]);
   });

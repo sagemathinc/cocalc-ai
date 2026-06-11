@@ -1,167 +1,313 @@
 # Secure Modern Admin Data Explorer Plan
 
-Status: design and implementation plan.
+Status: cleaned-up design plan after deciding to pivot away from a file editor
+and toward a shared admin-page data explorer with CLI parity.
 
 Target: replace the legacy `.cocalc-crm` admin database browser with a secure,
-fresh-auth, multi-bay-aware Admin Data Explorer that preserves the useful
-file-backed view model while removing dependence on generic `user_query` and
-legacy Postgres changefeeds.
+audited, fresh-auth, multi-bay-aware Admin Data Explorer. The new system should
+make operational investigation easy from both the admin UI and `cocalc-cli`,
+including a restricted SQL mode with guardrails.
 
-## Context
+## Core Decision
 
-The existing legacy CRM editor is valuable. It stores table tabs, views,
-filters, sort orders, hidden fields, column widths, and other UI state in a
-`.cocalc-crm` syncdb file. That makes it easy for admins to build operational
-views without hardcoding every dashboard.
+Build Admin Data Explorer as an `/admin` destination, not as a project file
+editor.
 
-The problem is the data access model:
+Saved views should live in the database as shared site-level admin resources,
+not in `.cocalc-admin-data` files. The file-editor model made sharing easy, but
+global DB-backed views are better for:
 
-- The frontend calls `webapp_client.query_client.query` and
-  `webapp_client.async_query`.
-- Reads and writes go through generic `user_query`.
-- Some legacy CRM tables ask for `changes: true`, which depends on a legacy
-  user-query changefeed path that cocalc-ai has removed.
-- The API is admin-gated by schema metadata, but it is not a dedicated
-  fresh-auth admin RPC.
-- It is not explicit about multi-bay ownership, project-host routing, query
-  limits, auditing, or operational intent.
+- discoverability from the admin page,
+- CLI and Codex-assisted incident response,
+- shared operational playbooks,
+- export/import between sites,
+- audit and permission boundaries,
+- avoiding project-collaboration ambiguity.
 
-The Admin Data Explorer should keep the best part of the old system:
-file-backed, shareable, editable views. The query execution layer should be
-replaced.
+The old `.cocalc-crm` files do not require strong backward compatibility.
+Admins can recreate the useful views in the new shared registry.
 
 ## Goals
 
-- Use `.cocalc-admin-data` as the file type for saved admin views.
-- Make the editor explicitly admin-only.
-- Replace generic `user_query` with explicit Admin Data Explorer RPCs.
-- Require fresh auth for Admin Data Explorer access, with stricter requirements
-  for mutations.
-- Make query scopes explicit and multi-bay aware.
-- Add curated project-host/runtime datasets, not just Postgres table views.
-- Enforce hard limits on rows, fields, filters, sort, and execution time.
-- Audit every Admin Data Explorer query and mutation.
-- Make failure modes visible in the UI instead of silent loading states.
-- Provide a migration path for existing `.cocalc-crm` files.
+- Add an Admin Data Explorer section to `/admin`.
+- Store shared saved views in a server-owned registry.
+- Provide full `cocalc-cli` parity for every Admin Data Explorer operation.
+- Support read-only structured queries with nested `AND`/`OR` filters.
+- Support restricted read-only SQL with parser-based validation and execution
+  guardrails.
+- Require admin permission and fresh auth for access.
+- Audit every query, export, and mutation.
+- Make bay, host, freshness, row limits, and partial failures visible.
+- Include data sources beyond Postgres, especially project-host and runtime
+  datasets.
+- Support export/import of saved view definitions as JSON for moving views
+  between sites.
 
 ## Non-Goals
 
-- Do not expose arbitrary SQL in the browser.
-- Do not revive generic `user_query` changefeeds.
-- Do not make the hub proxy project data-plane traffic.
-- Do not make `.cocalc-admin-data` files grant permissions. They are only view
-  state.
-- Do not require full multi-bay production before a useful single-bay MVP.
+- Do not revive generic `user_query`.
+- Do not bring back legacy Postgres changefeeds.
+- Do not proxy project data-plane traffic through the hub.
+- Do not make a new CRM with generic notes/tags/field-editing workflows.
+- Do not support arbitrary unsafe SQL execution.
+- Do not make broad mutations a first milestone.
 
-## Current Architecture Summary
+## Why SQL Must Be Supported
 
-Relevant existing files:
+In practice, if Admin Data Explorer does not support SQL, operators and agents
+will SSH to production Postgres and run live SQL manually. That is worse:
 
-- `packages/frontend/frame-editors/crm-editor/register.ts`
-  registers `.cocalc-crm`.
-- `packages/util/syncdoc-doctypes.ts`
-  declares `.cocalc-crm` as a syncdb document with primary keys
-  `{ table, id }`.
-- `packages/frontend/frame-editors/crm-editor/querydb/use-table.ts`
-  performs reads and changefeed-backed refreshes.
-- `packages/frontend/frame-editors/crm-editor/querydb/set.ts`
-  performs writes.
-- `packages/frontend/frame-editors/crm-editor/tables/*`
-  defines frontend table descriptors using user-query-shaped objects.
-- `packages/util/db-schema/types.ts`
-  forces all `crm_` tables to be admin-only in schema metadata.
-- `packages/database/user-query/methods-impl.ts`
-  now rejects legacy `user_query` changefeeds.
+- no fresh-auth boundary,
+- no query audit trail,
+- no row/timeout/byte limits,
+- no all-bay routing model,
+- no safe saved-view registry,
+- no easy review of what was run,
+- higher chance of accidentally running DML or an expensive query.
 
-The file-backed view model is good. The query transport and authority model
-should be replaced.
+The right answer is not "no SQL". The right answer is controlled SQL with
+server-side parsing, validation, limits, and audit logging.
+
+## Product Model
+
+### Shared View Registry
+
+The registry stores reusable admin views.
+
+Suggested fields:
+
+```ts
+type AdminDataView = {
+  id: string;
+  slug: string;
+  title: string;
+  description?: string;
+  tags: string[];
+  visibility: "admin";
+  query_kind: "structured" | "sql" | "dataset";
+  query: StructuredQuery | SqlQuery | DatasetQuery;
+  scope: AdminDataScope;
+  default_columns?: string[];
+  default_sort?: AdminDataSort[];
+  default_limit?: number;
+  visualization?: "table" | "chart" | "retention" | "summary";
+  owner_account_id: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+};
+```
+
+Views are global to a site. Later, in multi-bay Rocket, view definitions should
+be stored in a site/global metadata location or replicated consistently enough
+that all bays and the CLI see the same catalog.
+
+### CLI Parity
+
+Every UI operation should have a CLI equivalent.
+
+Example commands:
+
+```sh
+cocalc admin data views list
+cocalc admin data views show <slug>
+cocalc admin data views run <slug> --limit 100 --json
+cocalc admin data sql --query 'select ...' --limit 100 --json
+cocalc admin data views export > admin-data-views.json
+cocalc admin data views import admin-data-views.json
+```
+
+This is critical for Codex-assisted investigations. The CLI should call the
+same fresh-auth, audit, query validation, routing, and execution RPCs as the
+browser.
+
+## Query Model
+
+Admin Data Explorer should support three query kinds.
+
+### Structured Queries
+
+Structured queries are the default UI path. They are safe JSON ASTs, not SQL.
+
+They must support nested boolean groups:
+
+```ts
+type AdminDataFilter =
+  | { op: "and"; filters: AdminDataFilter[] }
+  | { op: "or"; filters: AdminDataFilter[] }
+  | { op: "not"; filter: AdminDataFilter }
+  | { op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte"; field: string; value: any }
+  | { op: "contains" | "prefix"; field: string; value: string }
+  | { op: "in"; field: string; values: any[] }
+  | { op: "is_null" | "not_null"; field: string };
+```
+
+This fixes a major legacy CRM limitation: only supporting `AND` filters.
+
+### Dataset Queries
+
+Dataset queries target server-owned datasets such as accounts, projects,
+project hosts, runtime state, backup status, rootfs cache, and latency metrics.
+
+The server owns:
+
+- allowed fields,
+- filter metadata,
+- sort metadata,
+- default columns,
+- limits,
+- scope routing,
+- underlying SQL or RPC calls.
+
+### Restricted SQL Queries
+
+SQL is supported, but only through a safe server-side SQL engine.
+
+This SQL mode is for:
+
+- power admin views,
+- CLI investigations,
+- Codex-assisted incident response,
+- complex reporting such as retention and abuse analysis.
+
+The SQL engine must be read-only and guarded. A parser is necessary but not
+sufficient.
+
+Allowed:
+
+- one statement only,
+- `SELECT`,
+- safe `WITH` queries that resolve to a final `SELECT`,
+- approved schemas, tables, views, and columns,
+- approved stable/immutable functions,
+- bounded joins over allowlisted relations,
+- server-enforced limit, timeout, and row/byte caps.
+
+Rejected:
+
+- `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE`,
+- DDL,
+- `COPY`,
+- `DO`,
+- temp tables,
+- transaction control,
+- multiple statements,
+- unallowlisted functions,
+- unallowlisted schemas such as unrestricted `pg_catalog`,
+- unbounded exports,
+- queries that cannot be parsed and normalized.
+
+Execution guardrails:
+
+- parse to AST before execution,
+- validate all referenced relations, fields, functions, and operators,
+- execute regenerated/normalized SQL where feasible instead of raw input,
+- parameterize all external values,
+- enforce a server-side `LIMIT`,
+- set `statement_timeout`,
+- run in `BEGIN READ ONLY`,
+- use a restricted read-only DB role if feasible,
+- set a safe `search_path`,
+- cap response rows and serialized bytes,
+- audit the original SQL, normalized SQL, validation result, duration, row
+  count, and error.
+
+The SQL engine should also provide a dry-run validation mode:
+
+```sh
+cocalc admin data sql validate --query 'select ...'
+```
 
 ## Security Model
 
-### Permissions
+### Access
 
-Opening a `.cocalc-admin-data` file should require:
+Admin Data Explorer access requires:
 
 - signed-in account,
 - admin group membership,
-- fresh-auth session for active Admin Data Explorer access.
+- fresh-auth session.
 
-The file may live in a project, but project collaboration must not grant Admin
-Data Explorer access. Non-admin collaborators should see a clear access-denied
-state.
-
-### Fresh Auth
-
-Recommended policy:
-
-- Read-only Admin Data Explorer session: require fresh auth at editor
-  activation, then allow reads for a short window, e.g. 15 minutes.
-- Mutations: require fresh auth per mutation or within a shorter window, e.g.
-  5 minutes.
-- Sensitive mutations, such as banning accounts, changing balances, changing
-  site-license state, deleting records, or host operations: require fresh auth
-  and explicit confirmation.
-- Impersonated sessions should be blocked from direct Admin Data Explorer
-  mutations unless there is a deliberate support workflow with separate audit
-  semantics.
-
-Use the existing dangerous/fresh-auth framework:
+Use the existing fresh-auth/dangerous RPC framework:
 
 - `server/conat/api/dangerous-session-auth.ts`
 - `server/conat/api/dangerous-rpc-registry.ts`
 
+Fresh-auth duration can follow existing site policy, e.g. 15 minutes or 8 hours
+depending on what the admin selected.
+
 ### Audit
 
-Every Admin Data Explorer operation should produce a durable audit record:
+Every operation should write an audit record:
 
 - actor account id,
-- session hash or fresh-auth proof identifier,
-- operation type: read, export, mutation, host action,
-- Admin Data Explorer view id or dataset id,
-- query filters, sort, limit, and selected fields,
-- target scope: local bay, all bays, specific bay, account, project, host,
-- row count returned or changed,
+- fresh-auth/session proof,
+- operation type: list, query, SQL validate, SQL run, export, import, mutate,
+- view id or ad-hoc query marker,
+- query kind,
+- query text or structured query summary,
+- scope,
+- target bay/host/project/account,
+- row count,
+- response byte count,
 - duration,
 - success/error,
-- client context: project id and file path for the `.cocalc-admin-data` file.
+- client: browser or CLI,
+- CLI version or browser context when available.
 
-Do not log full row results by default. Some rows include private or regulated
-data.
+Do not log full result rows by default.
+
+### Rate Limits
+
+Rate-limit broad account/project reads per admin account. Apply stricter limits
+to all-bay fanout, SQL, exports, and expensive datasets.
 
 ## Dedicated RPC Model
 
-Add a dedicated hub API namespace, for example:
+Add a dedicated hub API namespace.
 
 ```ts
-hub.adminDataExplorer.listDatasets(opts)
-hub.adminDataExplorer.query(opts)
-hub.adminDataExplorer.export(opts)
-hub.adminDataExplorer.mutate(opts)
-hub.adminDataExplorer.getRecord(opts)
-hub.adminDataExplorer.getFacetCounts(opts)
+hub.adminDataExplorer.listViews(opts);
+hub.adminDataExplorer.getView(opts);
+hub.adminDataExplorer.saveView(opts);
+hub.adminDataExplorer.deleteView(opts);
+hub.adminDataExplorer.importViews(opts);
+hub.adminDataExplorer.exportViews(opts);
+hub.adminDataExplorer.listDatasets(opts);
+hub.adminDataExplorer.query(opts);
+hub.adminDataExplorer.validateSql(opts);
+hub.adminDataExplorer.runSql(opts);
+hub.adminDataExplorer.mutate(opts);
 ```
 
-The corresponding public Conat API wrapper should be explicit:
+Corresponding public Conat wrapper:
 
 ```ts
 // packages/conat/hub/api/admin-data-explorer.ts
 export const adminDataExplorer = {
+  listViews: authFirstRequireAccount,
+  getView: authFirstRequireAccount,
+  saveView: authFirstRequireAccount,
+  deleteView: authFirstRequireAccount,
+  importViews: authFirstRequireAccount,
+  exportViews: authFirstRequireAccount,
   listDatasets: authFirstRequireAccount,
   query: authFirstRequireAccount,
-  export: authFirstRequireAccount,
+  validateSql: authFirstRequireAccount,
+  runSql: authFirstRequireAccount,
   mutate: authFirstRequireAccount,
-  getRecord: authFirstRequireAccount,
-  getFacetCounts: authFirstRequireAccount,
 };
 ```
 
-Server implementations should live under:
+Server implementation should live under:
 
 ```text
 packages/server/conat/api/admin-data-explorer/
 ```
 
-Core server entry points:
+## Scopes And Multi-Bay Routing
+
+Every query must declare scope.
 
 ```ts
 type AdminDataScope =
@@ -171,542 +317,284 @@ type AdminDataScope =
   | { type: "account_home"; account_id: string }
   | { type: "project_owner"; project_id: string }
   | { type: "host"; host_id: string };
-
-type AdminDataQuery = {
-  dataset: string;
-  scope: AdminDataScope;
-  fields?: string[];
-  filters?: AdminDataFilter[];
-  sort?: AdminDataSort[];
-  limit?: number;
-  cursor?: string;
-  session_hash?: string;
-};
 ```
 
-Important: `dataset` is a server-owned identifier, not a raw table name or SQL
-string.
+Routing rules:
 
-## Dataset Registry
+- `local_bay`: execute on the current bay.
+- `account_home`: resolve `account_id -> home_bay_id`, then route.
+- `project_owner`: resolve `project_id -> owning_bay_id`, then route.
+- `all_bays`: fan out, enforce per-bay limits, merge deterministic results,
+  include `bay_id`, and surface partial failures.
+- `host`: use host/project-host APIs when the host is authoritative.
 
-Replace frontend-owned query objects with a server-owned Admin Data Explorer
-dataset registry.
+Do not hide partial failures. Operators need to know when a bay or host is
+missing from an answer.
 
-Example:
+## Project Host And Runtime Data
 
-```ts
-const DATASETS = {
-  accounts: {
-    title: "Accounts",
-    icon: "user",
-    source: { kind: "postgres", table: "accounts" },
-    scopeModes: ["local_bay", "all_bays", "account_home"],
-    fields: {
-      account_id: { type: "uuid", primary: true },
-      email_address: { type: "string", sensitive: true },
-      last_active: { type: "timestamp" },
-      groups: { type: "array" },
-      banned: { type: "boolean", mutable: true, dangerous: true },
-      notes: { type: "string", mutable: true },
-    },
-    defaultFields: ["account_id", "email_address", "last_active", "groups"],
-    defaultSort: [{ field: "last_active", direction: "desc" }],
-    maxLimit: 500,
-  },
-};
-```
+Admin Data Explorer must go beyond Postgres.
 
-Dataset classes:
+Initial operational datasets:
 
-- Postgres datasets: accounts, projects, purchases, vouchers, support tickets.
-- Projection datasets: account project windows, account/project index rows.
-- Project-host datasets: running projects, host runtime state, rootfs cache,
-  project backup state, project start/stop timings.
-- Aggregated datasets: bay summaries, launch health, UX latency, abuse signals.
-- External/system datasets: cloud host state, R2 backup status, release channel
-  state.
-
-The frontend can still define presentation metadata, but the server owns:
-
-- allowed fields,
-- allowed filters,
-- allowed mutations,
-- scope routing,
-- SQL,
-- limits,
-- dangerous/fresh-auth policy.
-
-## Query Language
-
-Use a constrained query language.
-
-Allowed filters:
-
-- equality and inequality,
-- contains / prefix search for selected text fields,
-- timestamp ranges,
-- numeric ranges,
-- array contains for selected fields,
-- boolean values,
-- null/not-null.
-
-Disallowed:
-
-- arbitrary SQL,
-- arbitrary joins from the browser,
-- arbitrary field selection outside the dataset registry,
-- unbounded exports,
-- regex by default.
-
-Sorting:
-
-- only indexed or explicitly approved fields,
-- max sort fields, e.g. 3.
-
-Limits:
-
-- default: 100 rows,
-- normal max: 500 rows,
-- export max: explicit per dataset and fresh-auth required,
-- server-enforced timeout, e.g. 5-15 seconds depending on dataset.
-
-Pagination:
-
-- use cursor pagination, not offset for large tables.
-- cursor should encode server-validated dataset, sort, and last row key.
-
-USER: the current legacy implementation has graphical UI for doing queries: <img src="/blobs/paste-e00kjblm8o4.png?uuid=98036e77-fe37-4757-88e6-5aa63adb8174"   width="760px"  height="214px"  style="object-fit:cover"/>
-
-however, they are only _AND_ queries, and I never implemented _OR_ queries.  This was often a very frustrating limitation, so it would be nice to remove that.      
-
-## Multi-Bay Routing
-
-Admin Data Explorer queries must say where data is authoritative.
-
-### Local Bay
-
-Reads the current bay database. This is the single-bay launchpad/Rocket MVP.
-
-### Account Home Bay
-
-For account-specific operational views:
-
-1. Resolve `account_id -> home_bay_id`.
-2. Route the Admin Data Explorer query to that bay.
-3. Return normalized rows to the current browser session.
-
-### Project Owning Bay
-
-For project-specific views:
-
-1. Resolve `project_id -> owning_bay_id`.
-2. Route the query or project operation to the owning bay.
-3. Data-plane details should still be fetched from project hosts directly when
-   appropriate, using scoped admin capabilities.
-
-### All Bays
-
-For global admin views:
-
-1. Fan out to all active bays.
-2. Enforce per-bay limits.
-3. Merge results deterministically.
-4. Include `bay_id` in each row.
-5. Surface partial failures.
-
-Never hide partial failures in all-bay views. Operators need to know when one
-bay is missing.
-
-## Project Host Awareness
-
-The modern Admin Data Explorer should include first-class host/runtime datasets.
-
-Initial datasets:
-
-- `project_hosts`: host id, bay id, region, provider, status, version, capacity.
-- `host_running_projects`: host id, project id, owner, state, runtime age.
+- `project_hosts`: host id, bay id, region, provider, status, version,
+  capacity.
+- `host_running_projects`: host id, project id, owner, runtime age, resources.
 - `project_runtime`: project id, owning bay, host id, start state, active op.
-- `project_start_log`: observed start duration, provisioned/restored path,
-  terminal-ready/jupyter-ready/exec-ready metrics.
-- `host_rootfs_cache`: image key, size, last used, source, cache health.
-- `project_backup_status`: last backup, backup failures, backup size.
-- `host_software_versions`: project-host, project bundle, tools versions.
+- `project_start_log`: lifecycle duration and observed terminal/Jupyter/exec
+  readiness.
+- `host_rootfs_cache`: image key, size, last used, cache health.
+- `project_backup_status`: last backup, failures, size, restore metadata.
+- `host_software_versions`: project-host, project bundle, tools, bootstrap.
+- `ux_latency`: launch/file/Jupyter/terminal metrics and SLA status.
+- `retention`: cached retention computations and plots.
 
-Host data should come through existing host/project-host APIs where possible,
-not via direct SQL if the host is authoritative for the state.
-
-## Frontend Architecture
-
-Keep the current editor shell concept:
-
-- table tabs,
-- multiple views per table,
-- grid/gallery/kanban/calendar views,
-- filters,
-- sort,
-- hidden fields,
-- column widths,
-- saved state in syncdb.
-
-Replace the data layer:
-
-```text
-crm-editor/querydb/use-table.ts
-crm-editor/querydb/set.ts
-```
-
-with:
-
-```text
-data-explorer-editor/api/use-admin-data-query.ts
-data-explorer-editor/api/admin-data-client.ts
-data-explorer-editor/api/use-admin-data-mutation.ts
-```
-
-The new frontend flow:
-
-1. On editor open, call `adminDataExplorer.listDatasets`.
-2. If not admin or no fresh auth, show a clear access/fresh-auth panel.
-3. Load saved view state from the `.cocalc-admin-data` syncdb file.
-4. Convert saved legacy table names from `.cocalc-crm` files to new dataset ids
-   when possible.
-5. Query via `adminDataExplorer.query`.
-6. Show explicit errors, partial bay failures, and stale data indicators.
-7. Refresh via manual refresh or polling, not database changefeeds.
-
-Polling policy:
-
-- default: manual refresh,
-- optional auto-refresh per view: 15s, 30s, 60s,
-- disable auto-refresh for expensive datasets,
-- show last refresh timestamp.
-
-## File Format
-
-The file should store view state, not query authority.
-
-Stored records should include:
-
-```ts
-{
-  table: "views";
-  id: string;
-  dataset: string;
-  name: string;
-  type: "grid" | "gallery" | "kanban" | "calendar" | "retention";
-  pos: number;
-  scope?: AdminDataScope;
-}
-```
-
-Other saved state:
-
-- hidden fields,
-- field order,
-- widths,
-- sort,
-- filters,
-- limits,
-- auto-refresh interval,
-- selected records.
-
-Migration:
-
-- Old records with `dbtable` should map to `dataset`.
-- Unknown legacy tables should be shown as deprecated/unavailable with a repair
-  action.
-- Keep old data in the file where possible so rollback is not destructive.
-
-## Mutations
-
-Mutations should be dataset-specific operations, not generic set queries.
-
-Examples:
-
-```ts
-adminDataExplorer.mutate({
-  dataset: "accounts",
-  operation: "set_notes",
-  key: { account_id },
-  value: { notes },
-  session_hash,
-});
-```
-
-Mutation classes:
-
-- simple field update,
-- append note,
-- add/remove tag,
-- ban/unban account,
-- annotate abuse incident,
-- stop project,
-- quarantine account resources,
-- host action.
-
-Every mutation needs:
-
-- dataset registry approval,
-- admin check,
-- fresh-auth check,
-- audit log,
-- server-side validation,
-- clear UI confirmation if dangerous.
-
-The Admin Data Explorer should not reimplement operational actions. It should
-call the same authoritative server functions used by admin pages and CLI
-commands.
-
-## Live Updates
-
-Do not bring back generic Postgres changefeeds.
-
-Options, in order:
-
-1. Manual refresh and polling for MVP.
-2. Dataset-specific event streams for high-value small feeds.
-3. Account/bay/host operational streams from existing Conat subjects where they
-   already exist.
-
-For all-bay Admin Data Explorer views, polling is much easier to reason about
-than fanout changefeeds.
+Host data should come through existing host/project-host APIs when those are
+authoritative, not direct SQL.
 
 ## UI Requirements
 
-Admin Data Explorer should make authority and freshness visible.
+Admin page section:
 
-Each view should show:
+- searchable view catalog,
+- tags/categories,
+- favorite/pin views,
+- run view,
+- clone/edit view,
+- create structured view,
+- create SQL view,
+- validate SQL before save,
+- explicit refresh button,
+- optional auto-refresh only for cheap datasets,
+- last refreshed timestamp,
+- row count and limit display,
+- bay/host/scope display,
+- partial failure display,
+- export current result from CLI first; browser export can wait.
 
-- dataset title,
-- scope,
-- bay/host target if applicable,
-- row count,
-- limit,
-- last refresh time,
-- partial failure status,
-- fresh-auth state,
-- audit-friendly query summary.
+No live updates are required for MVP. Manual refresh is preferable and
+predictable.
 
-Failure states:
+Failure states must be explicit:
 
 - not signed in,
 - not admin,
 - fresh auth required,
-- dataset unavailable,
-- field/filter not allowed,
-- query timed out,
+- query rejected by validator,
+- field/filter/sort not allowed,
+- SQL parse error,
+- timeout,
+- result too large,
 - partial bay failure,
 - host unreachable.
 
-The current indefinite “Loading from database...” state should be impossible.
-Every query must have timeout and error UI.
+The old indefinite "Loading from database..." state should be impossible.
+
+## Mutations
+
+Do not build generic CRM-style mutations.
+
+Only expose mutations that already exist as authoritative admin RPCs or CLI
+operations, such as:
+
+- ban/unban account,
+- stop project,
+- host drain,
+- quarantine-style actions if already implemented,
+- other explicit existing admin actions.
+
+Admin Data Explorer should call those existing RPCs. It should not invent new
+generic field updates for notes, tags, or arbitrary row editing.
+
+Every mutation needs:
+
+- fresh auth,
+- explicit confirmation for dangerous operations,
+- audit log,
+- existing authoritative RPC call,
+- no SQL mutation path.
+
+## Import And Export
+
+Saved view definitions should be portable.
+
+```sh
+cocalc admin data views export > views.json
+cocalc admin data views import views.json
+```
+
+Import behavior:
+
+- validate schema,
+- validate datasets/SQL,
+- merge by stable slug or id,
+- preserve local edits unless `--overwrite`,
+- report conflicts,
+- never execute imported SQL before validation.
+
+This replaces the old "share a `.cocalc-crm` file" workflow with a cleaner
+site-level sharing model.
 
 ## Implementation Plan
 
-### Phase 0: Stabilize Existing Editor
+### Phase 1: Registry And CLI Skeleton
 
-Goal: stop the current legacy CRM from hanging while the new API is built.
+Goal: shared views exist and are accessible from CLI/UI APIs.
 
-- Add a visible admin-only gate around the existing legacy CRM editor.
-- Disable `changes: true` for legacy CRM queries or force it off in `useTable`.
-- Add query timeout handling and a clear error if the old query path fails.
-- Keep this as a temporary compatibility mode.
-
-Exit criteria:
-
-- Admin can open a `.cocalc-crm` file and see either data or a clear error.
-- Non-admins see access denied.
-- No view can spin forever without an error.
-
-### Phase 1: Server Dataset Registry
-
-Goal: define the server-owned dataset model.
-
-- Add `packages/server/conat/api/admin-data-explorer/datasets.ts`.
-- Add field metadata, filter metadata, default fields, default sort, limits.
-- Implement local-bay Postgres read datasets for:
-  - accounts,
-  - projects,
-  - purchases,
-  - vouchers,
-  - support tickets,
-  - messages or central log if useful.
-- Add unit tests for dataset validation.
+- Add shared view storage.
+- Add RPCs for list/get/save/delete/export/import.
+- Add CLI commands for view catalog operations.
+- Require admin and fresh auth.
+- Add audit records for catalog changes.
 
 Exit criteria:
 
-- Server can validate an Admin Data Explorer query without executing SQL.
-- Invalid fields, filters, sorts, and limits are rejected.
+- Admin can create/list/export/import view definitions from CLI.
+- Browser can list the view catalog.
 
-### Phase 2: Fresh-Auth RPC
+### Phase 2: Restricted SQL Engine
 
-Goal: expose safe read-only Admin Data Explorer query RPCs.
+Goal: safe read-only SQL exists before operators are tempted to SSH to
+Postgres.
 
-- Add `packages/conat/hub/api/admin-data-explorer.ts`.
-- Add server implementation under
-  `packages/server/conat/api/admin-data-explorer`.
-- Require admin permission.
-- Require fresh-auth for Admin Data Explorer session activation or query.
-- Add audit logging.
-- Register dangerous/fresh-auth decisions.
-- Implement `listDatasets` and `query`.
-
-Exit criteria:
-
-- CLI or browser can list datasets and run a bounded local-bay query.
-- Non-admin and non-fresh-auth requests fail with clear errors.
-- Queries are audited.
-
-### Phase 3: Frontend Data-Layer Migration
-
-Goal: switch Admin Data Explorer reads to the new RPC.
-
-- Add `data-explorer-editor/api/admin-data-client.ts`.
-- Add `useAdminDataQuery`.
-- Convert table descriptors from `query` objects to `dataset` ids.
-- Keep presentation metadata in the frontend.
-- Add legacy `dbtable -> dataset` migration.
-- Remove dependence on `webapp_client.query_client.query` for Admin Data
-  Explorer reads.
+- Choose and integrate a Postgres SQL parser.
+- Add `validateSql`.
+- Add `runSql`.
+- Enforce one-statement read-only SQL.
+- Add allowlists for schemas/tables/columns/functions.
+- Enforce limits, timeout, read-only transaction, and audit.
+- Add CLI `cocalc admin data sql validate/run`.
 
 Exit criteria:
 
-- Existing `.cocalc-crm` files can open against the new read API and migrate to
-  `.cocalc-admin-data`.
-- Saved views still work after mapping old table ids.
+- CLI can run a bounded audited SQL query.
+- Unsafe SQL is rejected before execution.
+- Result size and execution time are capped.
 
-### Phase 4: Mutations
+### Phase 3: Admin UI View Runner
 
-Goal: replace generic legacy CRM writes.
+Goal: make saved SQL and dataset views usable in `/admin`.
 
-- Add dataset-specific mutation definitions.
-- Add `adminDataExplorer.mutate`.
-- Add fresh-auth per mutation.
-- Add audit logging for every mutation.
-- Migrate editable fields to mutation calls.
-- Initially support notes and tags only.
-
-Exit criteria:
-
-- Admin can edit notes/tags through Admin Data Explorer.
-- Dangerous account/project/host actions are not exposed until each has a
-  dedicated operation and confirmation UI.
-
-### Phase 5: Multi-Bay Routing
-
-Goal: make Admin Data Explorer work beyond single-bay.
-
-- Add scope metadata per dataset.
-- Implement `local_bay`, `account_home`, and `project_owner`.
-- Add all-bay fanout for read-only datasets.
-- Include `bay_id` and partial-failure metadata in responses.
-- Add tests for routing and partial failure behavior.
+- Add Admin Data Explorer section to admin page.
+- Show searchable view catalog.
+- Run a saved view.
+- Show explicit errors and last refresh time.
+- Add SQL validate-before-save UI.
 
 Exit criteria:
 
-- A global admin can query accounts/projects across bays with visible bay
-  provenance.
-- Project-specific views route to the owning bay.
+- Admin can run a saved view from the browser.
+- Bad SQL/view definitions show validator errors.
+- No indefinite loading states.
 
-### Phase 6: Project Host Datasets
+### Phase 4: Structured Query Builder
 
-Goal: make Admin Data Explorer useful for operations, not just Postgres
-browsing.
+Goal: support normal non-SQL views with nested boolean filters.
 
-- Add host/project runtime datasets backed by host APIs and hub metadata.
-- Add project start and UX latency datasets.
+- Add structured query AST.
+- Add server validation/compilation.
+- Add UI filter builder with `AND`/`OR` groups.
+- Add dataset registry for core tables.
+
+Initial datasets:
+
+- accounts,
+- projects,
+- purchases,
+- vouchers,
+- support/contact records if useful.
+
+Exit criteria:
+
+- Admin can build and save a view without writing SQL.
+- `OR` filters work.
+
+### Phase 5: Operational Datasets
+
+Goal: make Admin Data Explorer useful for launch operations.
+
+- Add project host datasets.
+- Add runtime datasets.
 - Add backup/rootfs/software-version datasets.
-- Add actions that delegate to existing admin/host/project APIs.
+- Add UX latency and SLA datasets.
+- Add cached retention datasets.
 
 Exit criteria:
 
-- Admin Data Explorer can answer operational questions like:
-  - Which projects are burning resources?
-  - Which hosts have stale software?
-  - Which projects failed backups?
-  - Which account owns running GPU-heavy workloads?
+- Admin Data Explorer can answer launch readiness and incident-response
+  questions without SSH or ad-hoc DB access.
+
+### Phase 6: Multi-Bay Routing
+
+Goal: make views bay-aware.
+
+- Add scope metadata per view/dataset.
+- Implement local bay, account home, project owner, host, and all-bay routing.
+- Add partial failure reporting.
+- Add tests for fanout and routing.
+
+Exit criteria:
+
+- All-bay views work with visible bay provenance.
+- Partial failures are visible and audited.
+
+### Phase 7: Existing RPC Mutations
+
+Goal: expose selected existing admin actions in context.
+
+- Add mutation registry that maps to existing RPCs only.
+- Add confirmation UI.
+- Add CLI commands or links to existing CLI commands.
+- Audit all actions.
+
+Exit criteria:
+
+- Admin can run selected existing operational actions from a result row.
+- No generic SQL or row-edit mutation path exists.
 
 ## Testing
 
-Server tests:
+Server:
 
-- dataset validation,
-- admin-only enforcement,
-- fresh-auth enforcement,
-- field allowlist,
-- filter allowlist,
-- limit enforcement,
-- audit logging,
-- local-bay query execution,
-- multi-bay routing/fanout,
-- partial failure handling.
+- SQL parser rejects unsafe statements,
+- SQL validator enforces allowlists,
+- limits and timeout are enforced,
+- read-only transaction is used,
+- admin/fresh-auth is required,
+- audit records are written,
+- structured `AND`/`OR` filters compile correctly,
+- saved views validate on import,
+- multi-bay fanout surfaces partial failures.
 
-Frontend tests:
+CLI:
 
-- non-admin access denied,
-- fresh-auth required state,
-- dataset list loading,
-- legacy `.cocalc-crm` migration,
-- query error display,
-- no indefinite loading,
-- table/view state persistence.
+- list/get/run views,
+- validate/run SQL,
+- export/import views,
+- JSON output is stable for agents.
 
-Manual smoke:
+Frontend:
 
-- create `.cocalc-admin-data`,
-- add Accounts dataset,
-- filter by email/domain,
-- add Projects dataset,
-- filter by owner/account,
-- refresh manually,
-- edit a note,
-- verify audit log.
+- access denied,
+- fresh auth required,
+- view catalog loading,
+- SQL validation errors,
+- query errors,
+- manual refresh,
+- result table rendering,
+- no indefinite loading.
 
-## Migration Strategy
+## First Useful Milestone
 
-Do not delete the old CRM implementation immediately.
+The first useful milestone is:
 
-Recommended sequence:
+- shared view registry,
+- CLI list/run/export/import,
+- restricted SQL validate/run,
+- admin UI catalog and run view,
+- local-bay only,
+- read-only only,
+- fresh auth and audit enabled.
 
-1. Stabilize old editor enough to avoid hangs.
-2. Add new Admin Data Explorer RPCs.
-3. Add new frontend data client behind a feature flag.
-4. Migrate read-only datasets.
-5. Migrate safe mutations.
-6. Remove generic legacy CRM `user_query` reads/writes.
-7. Delete dead changefeed compatibility code.
-
-Feature flag:
-
-```text
-admin_data_explorer_enabled
-```
-
-If disabled, show a clear message rather than silently falling back to unsafe
-generic queries in production.
-
-## Open Questions
-
-- Should `.cocalc-admin-data` be creatable only inside admin-owned projects?
-- Should Admin Data Explorer files support shared saved views among admins
-  through a central registry instead of project files?
-- What is the fresh-auth duration for read-only Admin Data Explorer sessions?
-- Which datasets are safe for all-bay fanout during launch?
-- Should exports be allowed before launch, or only on the CLI?
-- Should broad account/project Admin Data Explorer reads be rate-limited per
-  admin account?
-- Which Admin Data Explorer mutations should be supported first: notes/tags,
-  account ban, account quarantine, project stop, or host drain?
-
-## Recommendation
-
-Do this in two tracks:
-
-1. Immediate compatibility: disable legacy CRM changefeeds, add
-   admin/fresh-auth/error gates, and make the current editor stop hanging.
-2. Modern replacement: build `adminDataExplorer` RPCs and migrate datasets one
-   by one.
-
-The first useful Admin Data Explorer can be read-only, local-bay only, and
-polling-based. That is enough to restore the incident-response value without
-reintroducing the generic query/changefeed risk.
+That immediately gives operators and Codex a safer alternative to SSHing into
+Postgres and running live SQL by hand.
