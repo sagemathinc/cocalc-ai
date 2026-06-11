@@ -497,6 +497,91 @@ describe("project-runner podman orphan fallback", () => {
     expect(setQuota).not.toHaveBeenCalled();
   });
 
+  it("resets scratch before launching a fresh project container", async () => {
+    mockPodman.mockResolvedValue({ stdout: "" });
+    const localPath = jest.fn(async () => ({
+      home: `/tmp/project-${project1}`,
+      scratch: `/tmp/project-${project1}-scratch`,
+      quota_applied: true,
+    }));
+
+    await start({
+      project_id: project1,
+      localPath,
+      config: {
+        disk: 1024,
+        image: "docker.io/library/ubuntu:latest",
+        ssh_port: 30123,
+        http_port: 45123,
+      },
+    });
+
+    expect(localPath).toHaveBeenNthCalledWith(1, {
+      project_id: project1,
+      disk: 1024,
+      scratch: undefined,
+      ensure: false,
+    });
+    expect(localPath).toHaveBeenNthCalledWith(2, {
+      project_id: project1,
+      disk: 1024,
+      scratch: undefined,
+      ensure: true,
+      resetScratch: true,
+    });
+    expect(mountArg).toHaveBeenCalledWith({
+      source: `/tmp/project-${project1}-scratch`,
+      target: "/tmp",
+    });
+  });
+
+  it("does not reset scratch when a live project container is already running", async () => {
+    mockGetConmonContainerProcessLists.mockResolvedValue(
+      new Map([
+        [
+          `project-${project1}`,
+          [
+            {
+              name: `project-${project1}`,
+              project_id: project1,
+              conmon_pid: 400,
+              child_pids: [401],
+            },
+          ],
+        ],
+      ]),
+    );
+    mockPodman
+      .mockResolvedValueOnce({
+        stdout: `project-${project1} running\n`,
+      })
+      .mockResolvedValue({ stdout: "" });
+    const localPath = jest.fn(async () => ({
+      home: `/tmp/project-${project1}`,
+      scratch: `/tmp/project-${project1}-scratch`,
+      quota_applied: true,
+    }));
+
+    await start({
+      project_id: project1,
+      localPath,
+      config: {
+        disk: 1024,
+        image: "docker.io/library/ubuntu:latest",
+        ssh_port: 30123,
+        http_port: 45123,
+      },
+    });
+
+    expect(localPath).toHaveBeenNthCalledWith(2, {
+      project_id: project1,
+      disk: 1024,
+      scratch: undefined,
+      ensure: true,
+      resetScratch: false,
+    });
+  });
+
   it("bind mounts host shared scratch into started project containers", async () => {
     mockPodman.mockResolvedValue({ stdout: "" });
     process.env.COCALC_SHARED_SCRATCH_ENABLED = "1";
