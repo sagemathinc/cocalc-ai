@@ -54,6 +54,27 @@ const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const healthFailureStreaks = new Map<string, number>();
 
+function timestampedConsole(
+  method: "log" | "warn" | "error",
+  args: unknown[],
+): void {
+  if (process.env.NODE_ENV === "test") {
+    globalThis.console[method](...args);
+    return;
+  }
+  if (args.length === 1 && typeof args[0] === "string") {
+    globalThis.console[method](`${new Date().toISOString()} ${args[0]}`);
+    return;
+  }
+  globalThis.console[method](new Date().toISOString(), ...args);
+}
+
+const console = {
+  log: (...args: unknown[]) => timestampedConsole("log", args),
+  warn: (...args: unknown[]) => timestampedConsole("warn", args),
+  error: (...args: unknown[]) => timestampedConsole("error", args),
+};
+
 function packageRoot(): string {
   const direct = path.join(__dirname, "package.json");
   if (fs.existsSync(direct)) {
