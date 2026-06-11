@@ -43,6 +43,11 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
             scope_type: "project",
             scope_id: "project-1",
           })),
+          restart: jest.fn(async () => ({
+            op_id: "restart-op-1",
+            scope_type: "project",
+            scope_id: "project-1",
+          })),
           createBackup: jest.fn(async () => ({
             op_id: "backup-op-1",
             scope_type: "project",
@@ -707,6 +712,56 @@ describe("ProjectsActions archive flow", () => {
 
       await jest.advanceTimersByTimeAsync(5_000);
       expect(reconcile).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("marks restart requests locally so fast restarts still reset runtime consumers", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "running",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      const { actions, redux, setState, trackStartOp } = makeActions();
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      mockedWebappClient.async_query.mockResolvedValue(
+        projectedState("running"),
+      );
+
+      await actions.restart_project(project_id);
+
+      expect(
+        mockedWebappClient.conat_client.hub.projects.restart,
+      ).toHaveBeenCalledWith({
+        project_id,
+        wait: false,
+      });
+      expect(trackStartOp).toHaveBeenCalledWith(
+        expect.objectContaining({ op_id: "restart-op-1" }),
+      );
+      expect(setState).toHaveBeenCalledWith({
+        restart_request: expect.objectContaining({
+          get: expect.any(Function),
+        }),
+      });
+      expect(
+        redux._set_state.mock.calls.some(
+          ([state]) =>
+            state.projects?.project_map?.getIn?.([
+              project_id,
+              "state",
+              "state",
+            ]) === "starting",
+        ),
+      ).toBe(true);
+
+      jest.advanceTimersByTime(8_000);
+      expect(setState).toHaveBeenCalledWith({ restart_request: undefined });
     } finally {
       jest.useRealTimers();
     }

@@ -89,6 +89,7 @@ export interface ProjectStoreState {
   rootfs_publish_ops?: immutable.Map<string, any>;
   copy_ops?: immutable.Map<string, any>;
   start_lro?: immutable.Map<string, any>;
+  restart_request?: immutable.Map<string, any>;
   move_lro?: immutable.Map<string, any>;
   move_reopen_required?: boolean;
   open_snapshot_schedule?: boolean;
@@ -313,6 +314,7 @@ export class ProjectStore extends Store<ProjectStoreState> {
       rootfs_publish_ops: undefined,
       copy_ops: undefined,
       start_lro: undefined,
+      restart_request: undefined,
       move_lro: undefined,
       open_restore_snapshot: false,
       checked_files: immutable.Set(),
