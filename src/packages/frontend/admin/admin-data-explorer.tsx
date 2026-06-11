@@ -40,6 +40,7 @@ import type {
   AdminDataViewInput,
   AdminDataViewSummary,
 } from "@cocalc/conat/hub/api/admin-data-explorer";
+import { ADMIN_DATA_EXPLORER_STARTER_VIEWS } from "@cocalc/conat/hub/api/admin-data-explorer";
 import { ADMIN_DATA_EXPLORER_SQL_CONSTRAINTS } from "@cocalc/util/admin-data-explorer";
 
 const { Paragraph, Text } = Typography;
@@ -560,6 +561,28 @@ export function AdminDataExplorer() {
     }
   }
 
+  async function installStarterViews() {
+    setSaving(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        const imported = await getHub().adminData.importViews({
+          browser_id: browserId(),
+          views: [...ADMIN_DATA_EXPLORER_STARTER_VIEWS],
+          mode: "upsert",
+        });
+        message.success(
+          `Installed starter views: ${imported.created} created, ${imported.updated} updated, ${imported.skipped} skipped.`,
+        );
+        await loadCatalog();
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const constraints = ADMIN_DATA_EXPLORER_SQL_CONSTRAINTS;
 
   return (
@@ -660,6 +683,9 @@ export function AdminDataExplorer() {
               title="Import / Export Views"
               extra={
                 <Space>
+                  <Button onClick={installStarterViews} loading={saving}>
+                    Install Starters
+                  </Button>
                   <Button onClick={exportViews} loading={saving}>
                     Export JSON
                   </Button>

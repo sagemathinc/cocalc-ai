@@ -16,6 +16,7 @@ import type {
   AdminDataViewExport,
   AdminDataViewInput,
 } from "@cocalc/conat/hub/api/admin-data-explorer";
+import { ADMIN_DATA_EXPLORER_STARTER_VIEWS } from "@cocalc/conat/hub/api/admin-data-explorer";
 import {
   ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
   ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES,
@@ -1180,6 +1181,32 @@ export function registerAdminCommand(
             mode: parseAdminDataImportMode(opts.mode),
           });
         });
+      },
+    );
+
+  adminDataViews
+    .command("install-starters")
+    .description(
+      "install or update bundled starter Admin Data Explorer views (admin fresh-auth)",
+    )
+    .option("--mode <mode>", "import mode: upsert or create-only", "upsert")
+    .action(
+      async (
+        opts: {
+          mode?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "admin data views install-starters",
+          async (ctx) => {
+            return await ctx.hub.adminData.importViews({
+              views: [...ADMIN_DATA_EXPLORER_STARTER_VIEWS],
+              mode: parseAdminDataImportMode(opts.mode),
+            });
+          },
+        );
       },
     );
 

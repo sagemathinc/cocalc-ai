@@ -143,6 +143,74 @@ export interface AdminDataViewImportResult {
   views: AdminDataViewSummary[];
 }
 
+export const ADMIN_DATA_EXPLORER_STARTER_VIEWS = [
+  {
+    slug: "recent-accounts",
+    title: "Recent Accounts",
+    description: "Newest account records for launch and support triage.",
+    tags: ["accounts", "support", "launch"],
+    query_kind: "sql",
+    query: {
+      sql: `select account_id, email_address, created, last_active
+from accounts
+order by created desc
+limit 100`,
+    },
+    scope: { kind: "local" },
+    default_limit: 100,
+    visualization: "table",
+  },
+  {
+    slug: "recent-projects",
+    title: "Recent Projects",
+    description: "Newest project records and current placement metadata.",
+    tags: ["projects", "placement", "launch"],
+    query_kind: "sql",
+    query: {
+      sql: `select project_id, title, host_id, owning_bay_id, created
+from projects
+order by created desc
+limit 100`,
+    },
+    scope: { kind: "local" },
+    default_limit: 100,
+    visualization: "table",
+  },
+  {
+    slug: "project-host-inventory",
+    title: "Project Host Inventory",
+    description: "Project host placement, provider, and rollout state.",
+    tags: ["hosts", "project-hosts", "operations"],
+    query_kind: "sql",
+    query: {
+      sql: `select host_id, name, bay_id, state, provider, updated
+from project_hosts
+order by updated desc
+limit 100`,
+    },
+    scope: { kind: "local" },
+    default_limit: 100,
+    visualization: "table",
+  },
+  {
+    slug: "slow-launch-events",
+    title: "Slow Launch Events",
+    description: "Recent high-latency UX launch observations.",
+    tags: ["latency", "launch", "ux"],
+    query_kind: "sql",
+    query: {
+      sql: `select event_type, metric, duration_ms, project_id, host_id, bay_id, started_at
+from ux_latency_events
+where duration_ms is not null
+order by duration_ms desc, started_at desc
+limit 100`,
+    },
+    scope: { kind: "local" },
+    default_limit: 100,
+    visualization: "table",
+  },
+] satisfies readonly AdminDataViewInput[];
+
 export interface AdminDataSqlValidationResult {
   ok: boolean;
   errors: string[];
