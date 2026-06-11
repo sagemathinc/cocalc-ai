@@ -365,7 +365,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         title={intl.formatMessage({
           id: "frame_editors.frame_tree.title_bar.close",
           defaultMessage:
-            "Close this frame. To restore the default layout, close all frames.",
+            "Close this frame. Closing the last frame closes the file.",
           description: "Click this X button to close the frame",
         })}
       >
