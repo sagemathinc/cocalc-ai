@@ -41,6 +41,24 @@ describe("rolloutComponentsForUpgradeResults", () => {
       }),
     ).toEqual(["project-host", "conat-router", "conat-persist", "acp-worker"]);
   });
+
+  it("does not roll out managed components for explicit project-host noops", () => {
+    expect(
+      rolloutComponentsForUpgradeResults(
+        [
+          {
+            artifact: "project-host",
+            version: "project-host-1",
+            status: "noop",
+          },
+        ],
+        {
+          targets: [{ artifact: "project-host", channel: "latest" }],
+          alignRuntimeStack: true,
+        },
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("runtimeDeploymentsForUpgradeResults", () => {
@@ -170,5 +188,19 @@ describe("runtimeDeploymentsForUpgradeResults", () => {
         desired_version: "tools-7",
       },
     ]);
+  });
+
+  it("ignores explicit noop artifact results", () => {
+    expect(
+      runtimeDeploymentsForUpgradeResults([
+        { artifact: "project", version: "bundle-1", status: "noop" },
+        { artifact: "tools", version: "tools-1", status: "noop" },
+        {
+          artifact: "bootstrap-environment",
+          version: "bootstrap-1",
+          status: "noop",
+        },
+      ]),
+    ).toEqual([]);
   });
 });
