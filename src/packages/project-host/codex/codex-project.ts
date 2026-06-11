@@ -19,7 +19,10 @@ import type {
   CodexAppServerRequest,
   CodexAppServerRequestHandler,
 } from "@cocalc/ai/acp";
-import { setCodexProjectSpawner } from "@cocalc/ai/acp";
+import {
+  codexAuthJsonToAppServerLogin,
+  setCodexProjectSpawner,
+} from "@cocalc/ai/acp";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { which } from "@cocalc/backend/which";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
@@ -492,41 +495,6 @@ function truncateForLog(value: string | undefined, max = 500): string {
   return `${text.slice(0, max)}...`;
 }
 
-function decodeJwtClaims(token: string): Record<string, unknown> | undefined {
-  const parts = token.split(".");
-  if (parts.length < 2 || !parts[1]) return undefined;
-  const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-  const pad = normalized + "=".repeat((4 - (normalized.length % 4 || 4)) % 4);
-  try {
-    const payload = Buffer.from(pad, "base64").toString("utf8");
-    const parsed = JSON.parse(payload);
-    return parsed && typeof parsed === "object" ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function extractChatgptClaims(claims: Record<string, unknown> | undefined): {
-  chatgptAccountId?: string;
-  chatgptPlanType?: string;
-} {
-  if (!claims) return {};
-  const auth = claims["https://api.openai.com/auth"];
-  if (!auth || typeof auth !== "object") return {};
-  const chatgptAccountId =
-    typeof (auth as any).chatgpt_account_id === "string"
-      ? `${(auth as any).chatgpt_account_id}`.trim()
-      : undefined;
-  const chatgptPlanType =
-    typeof (auth as any).chatgpt_plan_type === "string"
-      ? `${(auth as any).chatgpt_plan_type}`.trim()
-      : undefined;
-  return {
-    chatgptAccountId: chatgptAccountId || undefined,
-    chatgptPlanType: chatgptPlanType || undefined,
-  };
-}
-
 async function resolveAppServerLoginHint(
   authRuntime: CodexAuthRuntime,
 ): Promise<CodexAppServerLoginHint | undefined> {
@@ -550,33 +518,7 @@ async function resolveAppServerLoginHint(
   if (!codexHome) return undefined;
   try {
     const raw = await fs.readFile(join(codexHome, "auth.json"), "utf8");
-    if (!raw.trim()) return undefined;
-    const parsed = JSON.parse(raw);
-    const tokens = parsed?.tokens;
-    const accessToken =
-      typeof tokens?.access_token === "string"
-        ? tokens.access_token.trim()
-        : "";
-    if (!accessToken) return undefined;
-    const accessClaims = extractChatgptClaims(decodeJwtClaims(accessToken));
-    const idToken =
-      typeof tokens?.id_token === "string" ? tokens.id_token : undefined;
-    const idClaims = extractChatgptClaims(
-      idToken ? decodeJwtClaims(idToken) : undefined,
-    );
-    const chatgptAccountId =
-      (typeof tokens?.account_id === "string"
-        ? tokens.account_id.trim()
-        : "") ||
-      accessClaims.chatgptAccountId ||
-      idClaims.chatgptAccountId;
-    if (!chatgptAccountId) return undefined;
-    return {
-      type: "chatgptAuthTokens",
-      accessToken,
-      chatgptAccountId,
-      chatgptPlanType: accessClaims.chatgptPlanType ?? idClaims.chatgptPlanType,
-    };
+    return codexAuthJsonToAppServerLogin(raw);
   } catch {
     return undefined;
   }
