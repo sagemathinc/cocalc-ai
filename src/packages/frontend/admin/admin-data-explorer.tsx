@@ -188,10 +188,12 @@ function Catalog({
   datasets,
   views,
   loadView,
+  runView,
 }: {
   datasets: AdminDataDataset[];
   views: AdminDataViewSummary[];
   loadView: (view: AdminDataViewSummary) => void;
+  runView: (view: AdminDataViewSummary) => void;
 }) {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -212,9 +214,20 @@ function Catalog({
                   </Flex>
                 }
                 extra={
-                  <Button size="small" onClick={() => loadView(view)}>
-                    Open
-                  </Button>
+                  <Space>
+                    <Button size="small" onClick={() => loadView(view)}>
+                      Open
+                    </Button>
+                    {view.query_kind === "sql" ? (
+                      <Button
+                        size="small"
+                        type="primary"
+                        onClick={() => runView(view)}
+                      >
+                        Run
+                      </Button>
+                    ) : null}
+                  </Space>
                 }
               >
                 <Space direction="vertical" size={4}>
@@ -343,6 +356,27 @@ export function AdminDataExplorer() {
         });
         setValidation(nextResult.validation);
         setResult(nextResult);
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function runSavedView(view: AdminDataViewSummary) {
+    setRunning(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        const nextRun = await getHub().adminData.runView({
+          browser_id: browserId(),
+          id: view.id,
+          limit,
+        });
+        setValidation(nextRun.result.validation);
+        setResult(nextRun.result);
+        message.success(`Ran view "${nextRun.view.title}".`);
       });
     } catch (err) {
       setError(`${err}`);
@@ -547,7 +581,12 @@ export function AdminDataExplorer() {
                 <Loading />
               </Card>
             ) : (
-              <Catalog datasets={datasets} views={views} loadView={openView} />
+              <Catalog
+                datasets={datasets}
+                views={views}
+                loadView={openView}
+                runView={runSavedView}
+              />
             )}
           </Space>
         </Col>

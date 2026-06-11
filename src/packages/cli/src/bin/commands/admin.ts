@@ -1057,6 +1057,62 @@ export function registerAdminCommand(
     });
 
   adminDataViews
+    .command("run <slug>")
+    .description(
+      "run one shared Admin Data Explorer SQL view (admin fresh-auth)",
+    )
+    .option(
+      "--limit <n>",
+      "server-enforced max rows",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT}`,
+    )
+    .option(
+      "--timeout-ms <n>",
+      "server-side statement timeout",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS}`,
+    )
+    .option(
+      "--max-bytes <n>",
+      "max serialized response bytes",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES}`,
+    )
+    .action(
+      async (
+        slug: string,
+        opts: {
+          limit?: string;
+          timeoutMs?: string;
+          maxBytes?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data views run", async (ctx) => {
+          return await ctx.hub.adminData.runView({
+            slug,
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
+            }),
+            timeout_ms: parsePositiveIntegerOption({
+              name: "--timeout-ms",
+              value: opts.timeoutMs,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_TIMEOUT_MS,
+            }),
+            max_bytes: parsePositiveIntegerOption({
+              name: "--max-bytes",
+              value: opts.maxBytes,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_BYTES,
+            }),
+          });
+        });
+      },
+    );
+
+  adminDataViews
     .command("save <file>")
     .description(
       "create or update one shared Admin Data Explorer view from a JSON file (admin fresh-auth)",

@@ -33,6 +33,7 @@ import type {
   AdminDataViewExport,
   AdminDataViewImportResult,
   AdminDataViewInput,
+  AdminDataViewRunResult,
   AdminDataViewSummary,
   AdminDataVisualization,
 } from "@cocalc/conat/hub/api/admin-data-explorer";
@@ -1071,12 +1072,43 @@ export async function runSql({
   max_bytes?: number;
 }): Promise<AdminDataSqlRunResult> {
   const account_id = await requireFreshAdmin(opts);
+  return await runSqlWithAudit({
+    account_id,
+    sql,
+    limit,
+    timeout_ms,
+    max_bytes,
+    operation: "run_sql",
+    denied_operation: "run_sql_denied",
+  });
+}
+
+async function runSqlWithAudit({
+  account_id,
+  sql,
+  limit,
+  timeout_ms,
+  max_bytes,
+  operation,
+  denied_operation,
+  view,
+}: {
+  account_id: string;
+  sql: string;
+  limit?: number;
+  timeout_ms?: number;
+  max_bytes?: number;
+  operation: string;
+  denied_operation: string;
+  view?: Pick<AdminDataView, "id" | "slug" | "query_kind">;
+}): Promise<AdminDataSqlRunResult> {
   const validation = validateSqlInternal({ sql, limit });
   const { sanitized_sql, ...publicValidation } = validation;
   if (!validation.ok || !sanitized_sql) {
     await recordAudit({
       account_id,
-      operation: "run_sql_denied",
+      operation: denied_operation,
+      view,
       details: {
         errors: validation.errors,
         relations: validation.relations,
@@ -1119,7 +1151,8 @@ export async function runSql({
   };
   await recordAudit({
     account_id,
-    operation: "run_sql",
+    operation,
+    view,
     details: {
       relations: validation.relations,
       functions: validation.functions,
@@ -1130,4 +1163,53 @@ export async function runSql({
     },
   });
   return runResult;
+}
+
+function sqlFromView(view: AdminDataView): string {
+  if (view.query_kind !== "sql") {
+    throw Error(
+      `only sql views can be run in this milestone, not ${view.query_kind}`,
+    );
+  }
+  const sql = (view.query as { sql?: unknown }).sql;
+  if (typeof sql !== "string" || !sql.trim()) {
+    throw Error("view.query.sql must be a non-empty string");
+  }
+  return sql;
+}
+
+export async function runView({
+  id,
+  slug,
+  limit,
+  timeout_ms,
+  max_bytes,
+  ...opts
+}: AdminAuthOpts & {
+  id?: string;
+  slug?: string;
+  limit?: number;
+  timeout_ms?: number;
+  max_bytes?: number;
+}): Promise<AdminDataViewRunResult> {
+  const account_id = await requireFreshAdmin(opts);
+  const view = await loadViewByIdOrSlug({ id, slug });
+  if (!view) {
+    throw Error("view not found");
+  }
+  const sql = sqlFromView(view);
+  const result = await runSqlWithAudit({
+    account_id,
+    sql,
+    limit: limit ?? view.default_limit ?? undefined,
+    timeout_ms,
+    max_bytes,
+    operation: "run_view",
+    denied_operation: "run_view_denied",
+    view,
+  });
+  return {
+    view: summarizeView(view),
+    result,
+  };
 }

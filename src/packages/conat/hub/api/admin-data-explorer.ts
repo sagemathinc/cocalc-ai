@@ -13,6 +13,7 @@ export const adminData = {
   deleteView: authFirstRequireAccount,
   exportViews: authFirstRequireAccount,
   importViews: authFirstRequireAccount,
+  runView: authFirstRequireAccount,
   validateSql: authFirstRequireAccount,
   runSql: authFirstRequireAccount,
 };
@@ -163,6 +164,11 @@ export interface AdminDataSqlRunResult {
   truncated: boolean;
 }
 
+export interface AdminDataViewRunResult {
+  view: AdminDataViewSummary;
+  result: AdminDataSqlRunResult;
+}
+
 export interface AdminData {
   listDatasets(opts?: {
     account_id?: string;
@@ -214,6 +220,17 @@ export interface AdminData {
     views: AdminDataViewInput[] | AdminDataViewExport;
     mode?: "upsert" | "create_only";
   }): Promise<AdminDataViewImportResult>;
+
+  runView(opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    id?: string;
+    slug?: string;
+    limit?: number;
+    timeout_ms?: number;
+    max_bytes?: number;
+  }): Promise<AdminDataViewRunResult>;
 
   validateSql(opts: {
     account_id?: string;
