@@ -125,6 +125,7 @@ export function AdminPage({
 
   const sections = getAdminSections({
     closeSiteSettings: () => navigate({ kind: "index" }),
+    navigateToSection,
   }).filter(
     (section) =>
       !(IS_STAR_SETUP_PROFILE && STAR_HIDDEN_ADMIN_SECTIONS.has(section.key)),
@@ -143,6 +144,9 @@ export function AdminPage({
     activeMenuKey === OVERVIEW_MENU_KEY
       ? "Administration"
       : (activeNavItem?.title ?? "Administration");
+  const showSetupBanner = !(
+    route.kind === "index" && route.section === "site-setup"
+  );
 
   function renderMenuLabel(icon: IconName, title: string) {
     return (
@@ -318,9 +322,11 @@ export function AdminPage({
             <Text type="secondary">{activeNavItem.description}</Text>
           )}
         </Flex>
-        <div style={{ marginTop: "12px" }}>
-          <SiteSetupBanner onOpenSetup={openSetup} />
-        </div>
+        {showSetupBanner ? (
+          <div style={{ marginTop: "12px" }}>
+            <SiteSetupBanner onOpenSetup={openSetup} />
+          </div>
+        ) : null}
         <div style={{ marginTop: "16px" }}>{renderActiveContent()}</div>
       </div>
     </div>
@@ -329,8 +335,10 @@ export function AdminPage({
 
 function getAdminSections({
   closeSiteSettings,
+  navigateToSection,
 }: {
   closeSiteSettings: () => void;
+  navigateToSection: (section: AdminSection) => void;
 }): AdminSectionDefinition[] {
   return [
     {
@@ -339,7 +347,9 @@ function getAdminSections({
       description: "Check launch setup, bootstrap state, and required actions.",
       icon: "check-square",
       group: "launch",
-      component: () => <SiteSetupAdmin />,
+      component: () => (
+        <SiteSetupAdmin onNavigateAdminSection={navigateToSection} />
+      ),
     },
     {
       key: "usage-stats",
