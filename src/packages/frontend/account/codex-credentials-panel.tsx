@@ -811,7 +811,7 @@ function CodexCredentialsPanelBody({
       formatPlanType(rateLimit?.planType ?? rateLimit?.plan_type);
     const reason = formatCodexUsageReason(codexUsageStatus?.reason);
     return (
-      <Space orientation="vertical" size={6}>
+      <Space orientation="vertical" size={6} style={{ width: "100%" }}>
         <Text strong>ChatGPT Codex usage</Text>
         {codexUsageLoading && !codexUsageStatus ? (
           <Text type="secondary">Checking ChatGPT Codex usage...</Text>
@@ -1050,7 +1050,11 @@ function CodexCredentialsPanelBody({
             }
             description={
               lite ? (
-                <Space orientation="vertical" size={6}>
+                <Space
+                  orientation="vertical"
+                  size={6}
+                  style={{ width: "100%" }}
+                >
                   <Text type="secondary">
                     Codex will prefer your ChatGPT Plan. Use an OpenAI API key
                     only as a fallback.
@@ -1065,7 +1069,11 @@ function CodexCredentialsPanelBody({
                   {renderCodexUsageStatusDetails()}
                 </Space>
               ) : (
-                <Space orientation="vertical" size={6}>
+                <Space
+                  orientation="vertical"
+                  size={6}
+                  style={{ width: "100%" }}
+                >
                   <Text type="secondary">
                     Order: ChatGPT Plan, Project OpenAI API key, Account OpenAI
                     API key, then Site OpenAI API key.
