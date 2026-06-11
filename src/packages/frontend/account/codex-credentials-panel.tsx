@@ -143,6 +143,57 @@ function formatResetTime(seconds?: number | null): string | undefined {
   return new Date(seconds * 1000).toLocaleString();
 }
 
+function getUsagePercent(limit?: any): number | undefined {
+  const value = limit?.usedPercent ?? limit?.used_percent;
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.round(value)
+    : undefined;
+}
+
+function getWindowDurationMins(limit?: any): number | undefined {
+  const value = limit?.windowDurationMins ?? limit?.window_duration_mins;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function formatWindowLabel(limit: any, fallback: string): string {
+  const mins = getWindowDurationMins(limit);
+  if (!mins) return fallback;
+  if (mins % (24 * 60) === 0) {
+    const days = mins / (24 * 60);
+    return `${days}-day window`;
+  }
+  if (mins % 60 === 0) {
+    const hours = mins / 60;
+    return `${hours}-hour window`;
+  }
+  return `${mins}-minute window`;
+}
+
+function getUsageWindows(rateLimit: any): Array<{
+  key: "primary" | "secondary";
+  label: string;
+  usedPercent?: number;
+  resetAt?: string;
+}> {
+  return (["primary", "secondary"] as const)
+    .map((key) => {
+      const limit = rateLimit?.[key];
+      if (!limit) return undefined;
+      return {
+        key,
+        label: formatWindowLabel(
+          limit,
+          key === "primary" ? "Short window" : "Long window",
+        ),
+        usedPercent: getUsagePercent(limit),
+        resetAt: formatResetTime(limit?.resetsAt ?? limit?.resets_at),
+      };
+    })
+    .filter((window) => !!window);
+}
+
 function formatCodexUsageReason(reason?: string): string | undefined {
   if (!reason) return undefined;
   if (
@@ -745,8 +796,7 @@ function CodexCredentialsPanelBody({
     if (paymentSource?.source !== "subscription") return null;
     const chatgptAccount = getChatGptAccount(codexUsageStatus);
     const rateLimit = getCodexRateLimit(codexUsageStatus);
-    const primary = rateLimit?.primary;
-    const resetAt = formatResetTime(primary?.resetsAt ?? primary?.resets_at);
+    const usageWindows = getUsageWindows(rateLimit);
     const planType =
       formatPlanType(chatgptAccount?.planType) ??
       formatPlanType(rateLimit?.planType ?? rateLimit?.plan_type);
@@ -764,13 +814,20 @@ function CodexCredentialsPanelBody({
             <Tag color="blue">{chatgptAccount.email}</Tag>
           ) : null}
           {planType ? <Tag color="green">{planType}</Tag> : null}
-          {typeof primary?.usedPercent === "number" ? (
-            <Tag>{primary.usedPercent}% used</Tag>
-          ) : typeof primary?.used_percent === "number" ? (
-            <Tag>{primary.used_percent}% used</Tag>
-          ) : null}
-          {resetAt ? <Tag>resets {resetAt}</Tag> : null}
         </Space>
+        {usageWindows.length ? (
+          <Space orientation="vertical" size={4}>
+            {usageWindows.map((window) => (
+              <Space key={window.key} wrap>
+                <Tag color="blue">{window.label}</Tag>
+                {typeof window.usedPercent === "number" ? (
+                  <Tag>{window.usedPercent}% used</Tag>
+                ) : null}
+                {window.resetAt ? <Tag>resets {window.resetAt}</Tag> : null}
+              </Space>
+            ))}
+          </Space>
+        ) : null}
         {reason ? <Text type="secondary">{reason}</Text> : null}
         <Space wrap>
           <Button

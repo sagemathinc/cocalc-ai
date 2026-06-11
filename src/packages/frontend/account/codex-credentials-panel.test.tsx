@@ -181,7 +181,8 @@ describe("CodexCredentialsPanel", () => {
       },
       rateLimits: {
         rateLimits: {
-          primary: { usedPercent: 42 },
+          primary: { usedPercent: 42, windowDurationMins: 300 },
+          secondary: { usedPercent: 7, windowDurationMins: 10_080 },
         },
       },
     });
@@ -202,7 +203,10 @@ describe("CodexCredentialsPanel", () => {
         screen.getAllByText("Open ChatGPT Codex Usage").length,
       ).toBeGreaterThan(0);
       expect(screen.getByText("user@example.com")).toBeTruthy();
+      expect(screen.getByText("5-hour window")).toBeTruthy();
       expect(screen.getByText("42% used")).toBeTruthy();
+      expect(screen.getByText("7-day window")).toBeTruthy();
+      expect(screen.getByText("7% used")).toBeTruthy();
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
@@ -290,7 +294,8 @@ describe("CodexCredentialsPanel", () => {
         },
         rateLimits: {
           rateLimits: {
-            primary: { usedPercent: 42 },
+            primary: { usedPercent: 42, windowDurationMins: 300 },
+            secondary: { usedPercent: 7, windowDurationMins: 10_080 },
           },
         },
       })
@@ -299,7 +304,10 @@ describe("CodexCredentialsPanel", () => {
     render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
 
     await waitFor(() => {
+      expect(screen.getByText("5-hour window")).toBeTruthy();
       expect(screen.getByText("42% used")).toBeTruthy();
+      expect(screen.getByText("7-day window")).toBeTruthy();
+      expect(screen.getByText("7% used")).toBeTruthy();
     });
     expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
 
@@ -326,7 +334,8 @@ describe("CodexCredentialsPanel", () => {
         },
         rateLimits: {
           rateLimits: {
-            primary: { usedPercent: 43 },
+            primary: { usedPercent: 43, windowDurationMins: 300 },
+            secondary: { usedPercent: 8, windowDurationMins: 10_080 },
           },
         },
       });
@@ -335,6 +344,7 @@ describe("CodexCredentialsPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("43% used")).toBeTruthy();
+      expect(screen.getByText("8% used")).toBeTruthy();
     });
   });
 
