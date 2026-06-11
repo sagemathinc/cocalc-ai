@@ -153,6 +153,23 @@ describe("bootstrap-host shell templates", () => {
     expect(source).toContain(`"libatomic1"`);
   });
 
+  it("installs rootless podman debugging helpers for the runtime user", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      `cat <<'EOF_COCALC_AS_RUNTIME' > "$BOOTSTRAP_ROOT/bin/as-runtime"`,
+    );
+    expect(source).toContain(`exec sudo -Hiu "$RUNTIME_USER" bash -lc`);
+    expect(source).toContain(`> "$BOOTSTRAP_ROOT/bin/podman"`);
+    expect(source).toContain(`> "$BOOTSTRAP_ROOT/bin/project-exec"`);
+    expect(source).toContain(
+      `$HOME/cocalc-host/bin/project-exec <project-id> pwd`,
+    );
+  });
+
   it("supports inlining the rendered bootstrap payload for ssh reconcile", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),

@@ -832,6 +832,21 @@ export async function ensureVolume(project_id: string, scratch?: boolean) {
   return vol;
 }
 
+export async function resetScratchVolume(project_id: string) {
+  if (fs == null) {
+    throw Error("file server not initialized");
+  }
+  const name = scratchVolName(project_id);
+  const vol = await fs.subvolumes.get(name);
+  if (await exists(vol.path)) {
+    await fs.subvolumes.delete(name);
+  }
+  const next = await fs.subvolumes.ensure(name);
+  invalidateProjectFsServer(project_id);
+  invalidateQuotaCache(project_id, true);
+  return next;
+}
+
 export async function deleteVolume(
   project_id: string,
   opts: { reportProvisioned?: boolean } = {},
@@ -4042,6 +4057,9 @@ export async function initFileServer({
     mount: reuseInFlight(mount),
     ensureVolume: reuseInFlight(async ({ project_id, scratch }) => {
       await ensureVolume(project_id, scratch);
+    }),
+    resetScratchVolume: reuseInFlight(async ({ project_id }) => {
+      await resetScratchVolume(project_id);
     }),
     clone,
     getUsage: reuseInFlight(getUsage),

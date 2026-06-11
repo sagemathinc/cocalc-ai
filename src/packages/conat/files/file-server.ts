@@ -82,6 +82,9 @@ export interface Fileserver {
     // if true, ensure the non-backed-up scratch volume
     scratch?: boolean;
   }) => Promise<void>;
+  // Recreate the non-backed-up scratch volume, which project runtimes mount at
+  // /tmp. This must only be called when no project container is using it.
+  resetScratchVolume: (opts: { project_id: string }) => Promise<void>;
 
   // create project_id as an exact lightweight clone of src_project_id
   clone: (opts: {

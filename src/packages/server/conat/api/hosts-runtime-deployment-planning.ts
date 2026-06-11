@@ -356,6 +356,7 @@ export function runtimeDeploymentsForUpgradeResults(
 ): HostRuntimeDeploymentUpsert[] {
   const deployments: HostRuntimeDeploymentUpsert[] = [];
   for (const result of results ?? []) {
+    if (result.status !== "updated") continue;
     const target = normalizeRuntimeArtifactTarget(result.artifact);
     if (!target || !`${result.version ?? ""}`.trim()) continue;
     if (alignRuntimeStack && target === "project-host") {

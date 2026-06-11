@@ -28,6 +28,10 @@ describe("create basic mocked file server and test it out", () => {
       ensureVolume: async ({ project_id }): Promise<void> => {
         volumes.add(project_id);
       },
+      resetScratchVolume: async ({ project_id }): Promise<void> => {
+        volumes.delete(`${project_id}-scratch`);
+        volumes.add(`${project_id}-scratch`);
+      },
 
       // create project_id as an exact lightweight clone of src_project_id
       clone: async (opts: {
