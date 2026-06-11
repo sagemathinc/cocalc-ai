@@ -860,6 +860,19 @@ export function AdminDataExplorer() {
                     <Tag key={fn}>{fn}()</Tag>
                   ))}
                 </Space>
+                <Text strong>Column allowlists</Text>
+                <div style={{ maxHeight: 220, overflow: "auto" }}>
+                  <Space direction="vertical" size={6}>
+                    {Object.entries(constraints.allowed_columns).map(
+                      ([relation, columns]) => (
+                        <div key={relation}>
+                          <Text code>{relation}</Text>{" "}
+                          <Text type="secondary">{columns.join(", ")}</Text>
+                        </div>
+                      ),
+                    )}
+                  </Space>
+                </div>
               </Space>
             </Card>
             {loading ? (

@@ -10,6 +10,7 @@ import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
+  ADMIN_DATA_EXPLORER_ALLOWED_SQL_COLUMNS,
   ADMIN_DATA_EXPLORER_ALLOWED_SQL_FUNCTIONS,
   ADMIN_DATA_EXPLORER_ALLOWED_SQL_RELATIONS,
   ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
@@ -58,6 +59,11 @@ const ALLOWED_SQL_RELATIONS: Set<string> = new Set(
 );
 const ALLOWED_SQL_FUNCTIONS: Set<string> = new Set(
   ADMIN_DATA_EXPLORER_ALLOWED_SQL_FUNCTIONS,
+);
+const ALLOWED_SQL_COLUMNS = new Map<string, Set<string>>(
+  Object.entries(ADMIN_DATA_EXPLORER_ALLOWED_SQL_COLUMNS).map(
+    ([relation, columns]) => [relation, new Set(columns)],
+  ),
 );
 
 type AdminAuthOpts = {
@@ -143,11 +149,18 @@ const DATASETS: AdminDataDataset[] = [
     default_limit: 100,
     max_limit: 1000,
     fields: [
-      { name: "host_id", type: "uuid", filterable: true, sortable: true },
+      { name: "id", type: "uuid", filterable: true, sortable: true },
       { name: "name", type: "string", filterable: true, sortable: true },
+      { name: "region", type: "string", filterable: true, sortable: true },
       { name: "bay_id", type: "string", filterable: true, sortable: true },
-      { name: "state", type: "string", filterable: true },
-      { name: "provider", type: "string", filterable: true },
+      { name: "status", type: "string", filterable: true, sortable: true },
+      {
+        name: "last_seen",
+        type: "timestamp",
+        filterable: true,
+        sortable: true,
+      },
+      { name: "version", type: "string", filterable: true },
       { name: "updated", type: "timestamp", filterable: true, sortable: true },
     ],
   },
@@ -527,6 +540,110 @@ function validateReadOnlyStatement(node: any, errors: string[]): void {
   );
 }
 
+function collectSelectRelationAliases(
+  statement: any,
+  cteNames: Set<string>,
+): {
+  aliasToRelation: Map<string, string>;
+  cteAliases: Set<string>;
+  baseRelations: Set<string>;
+} {
+  const aliasToRelation = new Map<string, string>();
+  const cteAliases = new Set<string>();
+  const baseRelations = new Set<string>();
+  for (const entry of Array.isArray(statement?.from) ? statement.from : []) {
+    if (entry?.type !== "table") continue;
+    const relation = `${entry.name?.name ?? ""}`.trim().toLowerCase();
+    if (!relation) continue;
+    const alias = `${entry.name?.alias ?? relation}`.trim().toLowerCase();
+    if (cteNames.has(relation)) {
+      cteAliases.add(alias);
+      continue;
+    }
+    aliasToRelation.set(alias, relation);
+    aliasToRelation.set(relation, relation);
+    baseRelations.add(relation);
+  }
+  return { aliasToRelation, cteAliases, baseRelations };
+}
+
+function validateColumnReference({
+  column,
+  relation,
+  errors,
+}: {
+  column: string;
+  relation: string;
+  errors: string[];
+}) {
+  const allowed = ALLOWED_SQL_COLUMNS.get(relation);
+  if (!allowed) {
+    errors.push(`relation '${relation}' has no configured column allowlist`);
+    return;
+  }
+  if (!allowed.has(column)) {
+    errors.push(`column '${relation}.${column}' is not allowed`);
+  }
+}
+
+function validateSelectColumns(
+  statement: any,
+  cteNames: Set<string>,
+  errors: string[],
+): void {
+  const { aliasToRelation, cteAliases, baseRelations } =
+    collectSelectRelationAliases(statement, cteNames);
+  walkAst(statement, (node) => {
+    if (node?.type !== "ref") return;
+    const column = `${node.name ?? ""}`.trim().toLowerCase();
+    if (!column || column === "*") return;
+    const qualifier = `${node.table?.name ?? ""}`.trim().toLowerCase();
+    if (qualifier) {
+      const relation = aliasToRelation.get(qualifier);
+      if (!relation) {
+        if (!cteAliases.has(qualifier)) {
+          errors.push(`column qualifier '${qualifier}' is not a known table`);
+        }
+        return;
+      }
+      validateColumnReference({ column, relation, errors });
+      return;
+    }
+    if (baseRelations.size === 0) {
+      return;
+    }
+    if (baseRelations.size > 1) {
+      errors.push(
+        `column '${column}' must be qualified when querying multiple relations`,
+      );
+      return;
+    }
+    validateColumnReference({
+      column,
+      relation: [...baseRelations][0],
+      errors,
+    });
+  });
+}
+
+function validateSqlColumns(
+  statement: any,
+  cteNames: Set<string>,
+  errors: string[],
+): void {
+  if (!statement || typeof statement !== "object") return;
+  if (statement.type === "with") {
+    for (const binding of Array.isArray(statement.bind) ? statement.bind : []) {
+      validateSqlColumns(binding?.statement, cteNames, errors);
+    }
+    validateSqlColumns(statement.in, cteNames, errors);
+    return;
+  }
+  if (statement.type === "select") {
+    validateSelectColumns(statement, cteNames, errors);
+  }
+}
+
 function validateSqlInternal({
   sql,
   limit,
@@ -597,6 +714,7 @@ function validateSqlInternal({
       }
     }
   });
+  validateSqlColumns(statement, cteNames, result.errors);
 
   result.relations = [...relations].sort();
   result.functions = [...functions].sort();

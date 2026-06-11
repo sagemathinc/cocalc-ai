@@ -184,7 +184,7 @@ limit 100`,
     tags: ["hosts", "project-hosts", "operations"],
     query_kind: "sql",
     query: {
-      sql: `select host_id, name, bay_id, state, provider, updated
+      sql: `select id as host_id, name, bay_id, status, region, last_seen, version, updated
 from project_hosts
 order by updated desc
 limit 100`,
