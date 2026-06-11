@@ -24,6 +24,17 @@ import type { JupyterCodeCell } from "../jupyter-code-cell/types";
 import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText, toCodeLines } from "./utils";
 
+export const CODE_BLOCK_TEXTAREA_STYLE: React.CSSProperties = {
+  width: "100%",
+  minHeight: "120px",
+  background: "white",
+  padding: "10px 15px 10px 20px",
+  border: "1px solid #dfdfdf",
+  borderRadius: "8px",
+  fontFamily: "monospace",
+  fontSize: "inherit",
+};
+
 type CodeLikeRenderElementProps = Omit<RenderElementProps, "element"> & {
   element: CodeBlock | JupyterCodeCell;
 };
@@ -388,16 +399,7 @@ function StaticCodeBlockElement({
               save(newValue, true);
             }
           }}
-          style={{
-            width: "100%",
-            minHeight: "120px",
-            background: "white",
-            padding: "10px 15px 10px 20px",
-            border: "1px solid #dfdfdf",
-            borderRadius: "8px",
-            fontFamily: "monospace",
-            fontSize: "13px",
-          }}
+          style={CODE_BLOCK_TEXTAREA_STYLE}
         />
       ) : isCollapsed ? (
         <div
