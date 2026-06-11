@@ -11,44 +11,25 @@ import {
   useState,
 } from "react";
 
-import {
-  Alert,
-  Button,
-  Card,
-  ConfigProvider,
-  Flex,
-  Segmented,
-  Space,
-  Tag,
-  theme,
-  Typography,
-} from "antd";
+import { Alert, Button, Flex, Space, theme, Typography } from "antd";
 
-import type { MembershipTierWithPresentation } from "@cocalc/frontend/account/membership-tier-benefits";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
-  PublicGrid,
-  PublicSection,
-} from "@cocalc/frontend/public/layout/shell";
+  filterMembershipTiersForBillingInterval,
+  MembershipBillingSelector,
+  MembershipPricingTierGrid,
+  MembershipPricingTierTile,
+  type BillingInterval,
+  type MembershipPricingTier,
+} from "@cocalc/frontend/account/membership-pricing-chooser";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { PublicGrid, PublicSection } from "../layout/shell";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
-import { currency, humanSize, round2 } from "@cocalc/util/misc";
+import { humanSize, round2 } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Paragraph, Text, Title } = Typography;
-type BillingInterval = "month" | "year";
 
-export interface PublicMembershipTier extends MembershipTierWithPresentation {
-  disabled?: boolean;
-  id: string;
-  label?: string;
-  price_monthly?: number;
-  price_yearly?: number;
-  trial_days?: number;
-  priority?: number;
-  store_visible?: boolean;
-  store_description?: string;
-  store_highlights?: readonly string[];
-}
+type PublicMembershipTier = MembershipPricingTier;
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -78,13 +59,6 @@ async function loadMembershipTiers(): Promise<
   }
 }
 
-function priceValue(value: unknown): number | undefined {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) && numberValue >= 0
-    ? numberValue
-    : undefined;
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
   return value != null && typeof value === "object"
     ? (value as Record<string, unknown>)
@@ -100,22 +74,6 @@ function asNumber(value: unknown): number | undefined {
     return Number.isFinite(numberValue) ? numberValue : undefined;
   }
   return undefined;
-}
-
-function isFreeTier(tier: PublicMembershipTier): boolean {
-  return (
-    priceValue(tier.price_monthly) === 0 && priceValue(tier.price_yearly) === 0
-  );
-}
-
-function hasPriceForInterval(
-  tier: PublicMembershipTier,
-  billingInterval: BillingInterval,
-): boolean {
-  if (isFreeTier(tier)) return true;
-  return billingInterval === "month"
-    ? priceValue(tier.price_monthly) != null
-    : priceValue(tier.price_yearly) != null;
 }
 
 const EMPTY_COMPARISON_VALUE = <Text type="secondary">—</Text>;
@@ -329,238 +287,6 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
   },
 ];
 
-function annualSavingsPercent(tier: PublicMembershipTier): number | undefined {
-  const monthly = priceValue(tier.price_monthly);
-  const yearly = priceValue(tier.price_yearly);
-  if (!(monthly != null && yearly != null && monthly > 0 && yearly > 0)) {
-    return;
-  }
-  const yearlyEquivalent = monthly * 12;
-  if (yearlyEquivalent <= yearly) return;
-  const savings = Math.round((1 - yearly / yearlyEquivalent) * 100);
-  return savings > 0 ? savings : undefined;
-}
-
-function formatMonthlyDisplayPrice(value: number): {
-  amount: string;
-  suffix: string;
-} {
-  const rounded = Math.round(value);
-  if (Math.abs(value - rounded) < 0.005) {
-    return { amount: currency(rounded, 0), suffix: "/ month" };
-  }
-  return { amount: currency(value), suffix: "/ mo" };
-}
-
-function PricingBillingSelector({
-  billingInterval,
-  setBillingInterval,
-}: {
-  billingInterval: BillingInterval;
-  setBillingInterval: (value: BillingInterval) => void;
-}) {
-  const { token } = theme.useToken();
-  return (
-    <ConfigProvider
-      theme={{
-        components: {
-          Segmented: {
-            itemSelectedBg: token.colorPrimary,
-            itemSelectedColor: token.colorTextLightSolid,
-            trackBg: token.colorBgContainer,
-          },
-        },
-      }}
-    >
-      <Flex justify="center">
-        <Segmented<BillingInterval>
-          onChange={setBillingInterval}
-          options={[
-            { label: "Annual", value: "year" },
-            { label: "Monthly", value: "month" },
-          ]}
-          size="large"
-          value={billingInterval}
-        />
-      </Flex>
-    </ConfigProvider>
-  );
-}
-
-function PricingTierPayment({
-  billingInterval,
-  label,
-  tier,
-}: {
-  billingInterval: BillingInterval;
-  label: string;
-  tier: PublicMembershipTier;
-}) {
-  let price: { amount: string; suffix: string } | undefined;
-  let billingLine = "\u00a0";
-  if (!isFreeTier(tier)) {
-    const savings = annualSavingsPercent(tier);
-    if (billingInterval === "month") {
-      price = formatMonthlyDisplayPrice(priceValue(tier.price_monthly) ?? 0);
-      billingLine =
-        savings != null ? `Save ${savings}% with annual billing` : "\u00a0";
-    } else {
-      const yearly = priceValue(tier.price_yearly) ?? 0;
-      price = formatMonthlyDisplayPrice(yearly / 12);
-      billingLine =
-        savings != null
-          ? `Billed annually, saving ${savings}%`
-          : "Billed annually";
-    }
-  }
-
-  const { token } = theme.useToken();
-  const promotion =
-    typeof tier.trial_days === "number" && tier.trial_days > 0
-      ? `${Math.floor(tier.trial_days)}-day free trial`
-      : undefined;
-  const promotionPlaceholder = "7-day free trial";
-
-  return (
-    <Flex vertical gap={token.marginXS}>
-      <Flex
-        align="center"
-        justify="center"
-        style={{
-          minHeight: token.controlHeightSM,
-        }}
-      >
-        <Tag
-          aria-hidden={promotion == null}
-          color="green"
-          style={{
-            marginInlineEnd: 0,
-            visibility: promotion == null ? "hidden" : undefined,
-          }}
-        >
-          {promotion ?? promotionPlaceholder}
-        </Tag>
-      </Flex>
-      <Flex align="baseline" gap="middle" justify="space-between" wrap>
-        <Title level={3} style={{ margin: 0 }}>
-          {label}
-        </Title>
-        {price != null ? (
-          <Flex align="baseline" gap={token.marginXXS} wrap={false}>
-            <Text
-              strong
-              style={{
-                color: token.colorText,
-                fontSize: token.fontSizeHeading3,
-                lineHeight: token.lineHeightHeading3,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {price.amount}
-            </Text>
-            <Text type="secondary" style={{ whiteSpace: "nowrap" }}>
-              {price.suffix}
-            </Text>
-          </Flex>
-        ) : null}
-      </Flex>
-      <Text
-        type="secondary"
-        style={{
-          display: "block",
-          fontSize: token.fontSize,
-          lineHeight: token.lineHeight,
-          minHeight: token.fontSize * token.lineHeight,
-          textAlign: "center",
-        }}
-      >
-        {billingLine}
-      </Text>
-    </Flex>
-  );
-}
-
-function PricingTierBody({ tier }: { tier: PublicMembershipTier }) {
-  const { token } = theme.useToken();
-  const description =
-    tier.store_description?.trim() || tier.presentation?.tagline;
-  const configuredHighlights = Array.isArray(tier.store_highlights)
-    ? tier.store_highlights.filter(
-        (item): item is string =>
-          typeof item === "string" && item.trim() !== "",
-      )
-    : [];
-
-  return (
-    <Flex vertical gap="middle">
-      {description ? (
-        <Paragraph style={{ margin: 0 }}>{description}</Paragraph>
-      ) : null}
-      {configuredHighlights.length > 0 ? (
-        <ul
-          style={{
-            margin: 0,
-            paddingInlineStart: token.paddingLG,
-          }}
-        >
-          {configuredHighlights.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      ) : null}
-    </Flex>
-  );
-}
-
-function PricingTierTile({
-  billingInterval,
-  isAuthenticated,
-  tier,
-}: {
-  billingInterval: BillingInterval;
-  isAuthenticated?: boolean;
-  tier: PublicMembershipTier;
-}) {
-  const label = tier.label ?? tier.id;
-  const href = isAuthenticated
-    ? appPath("settings/membership")
-    : appPath("auth/sign-up");
-  const { token } = theme.useToken();
-
-  return (
-    <a
-      href={href}
-      style={{
-        color: "inherit",
-        display: "block",
-        height: "100%",
-        textDecoration: "none",
-      }}
-    >
-      <Card
-        className="cocalc-public-card"
-        hoverable
-        styles={{
-          body: { height: "100%" },
-          header: { paddingBlock: token.paddingSM },
-          title: { whiteSpace: "normal" },
-        }}
-        style={{ height: "100%" }}
-        title={
-          <PricingTierPayment
-            billingInterval={billingInterval}
-            label={label}
-            tier={tier}
-          />
-        }
-        variant="outlined"
-      >
-        <PricingTierBody tier={tier} />
-      </Card>
-    </a>
-  );
-}
-
 function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
   const { token } = theme.useToken();
   const tableStyle: CSSProperties = {
@@ -680,30 +406,36 @@ export default function PricingPage({
   const publicTiers = sortMembershipTiersByDisplayOrder(
     (tiers ?? []).filter((tier) => tier.store_visible && !tier.disabled),
   );
-  const visibleTiers = publicTiers.filter((tier) =>
-    hasPriceForInterval(tier, billingInterval),
+  const visibleTiers = filterMembershipTiersForBillingInterval(
+    publicTiers,
+    billingInterval,
   );
 
   return (
     <>
       {publicTiers.length > 0 ? (
         <Flex vertical gap="large">
-          <PricingBillingSelector
+          <MembershipBillingSelector
             billingInterval={billingInterval}
             setBillingInterval={setBillingInterval}
           />
           {visibleTiers.length > 0 ? (
             <>
-              <PublicGrid columns={4}>
+              <MembershipPricingTierGrid>
                 {visibleTiers.map((tier) => (
-                  <PricingTierTile
+                  <MembershipPricingTierTile
                     billingInterval={billingInterval}
-                    isAuthenticated={isAuthenticated}
+                    hoverable
+                    href={
+                      isAuthenticated
+                        ? appPath("settings/membership")
+                        : appPath("auth/sign-up")
+                    }
                     key={tier.id}
                     tier={tier}
                   />
                 ))}
-              </PublicGrid>
+              </MembershipPricingTierGrid>
               <PricingComparisonTable tiers={visibleTiers} />
             </>
           ) : (
