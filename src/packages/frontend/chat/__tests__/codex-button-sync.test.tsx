@@ -302,5 +302,12 @@ describe("CodexConfigButton", () => {
         screen.getByText("compact usage meters usage loaded"),
       ).toBeTruthy();
     });
+    const text = document.body.textContent ?? "";
+    expect(text.indexOf("Codex configuration for this chat")).toBeLessThan(
+      text.indexOf("compact usage meters usage loaded"),
+    );
+    expect(text.indexOf("compact usage meters usage loaded")).toBeLessThan(
+      text.indexOf("Payment & Credentials"),
+    );
   });
 });

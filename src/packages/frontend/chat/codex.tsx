@@ -642,13 +642,11 @@ export function CodexConfigButton({
               background: COLORS.ANTD_BG_BLUE_L,
               borderColor: COLORS.BS_BLUE_BGRND,
               display: "flex",
+              flexDirection: "column",
               gap: 12,
-              alignItems: "flex-start",
-              justifyContent: "space-between",
-              flexWrap: "wrap",
             }}
           >
-            <div style={{ minWidth: 240, flex: "1 1 300px" }}>
+            <div>
               <Text strong style={{ color: COLORS.BS_BLUE_TEXT }}>
                 Codex configuration for this chat
               </Text>
@@ -665,10 +663,24 @@ export function CodexConfigButton({
                 level.
               </div>
             </div>
+            {paymentSource?.source === "subscription" ? (
+              <div style={{ width: "100%" }}>
+                {codexUsageLoading && !codexUsageStatus ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    Checking ChatGPT Codex usage...
+                  </Text>
+                ) : null}
+                <CodexUsageMeters status={codexUsageStatus} compact />
+              </div>
+            ) : null}
             <Space
-              orientation="vertical"
+              wrap
               size={8}
-              style={{ alignItems: "flex-end" }}
+              style={{
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+              }}
             >
               <Space size={6} wrap style={{ justifyContent: "flex-end" }}>
                 <Tag color="blue">{selectedModelValue ?? "Model"}</Tag>
@@ -691,16 +703,6 @@ export function CodexConfigButton({
                 </Button>
               </Tooltip>
             </Space>
-            {paymentSource?.source === "subscription" ? (
-              <div style={{ flex: "1 0 100%", width: "100%" }}>
-                {codexUsageLoading && !codexUsageStatus ? (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    Checking ChatGPT Codex usage...
-                  </Text>
-                ) : null}
-                <CodexUsageMeters status={codexUsageStatus} compact />
-              </div>
-            ) : null}
           </div>
           <Form form={form} layout="vertical">
             <Space orientation="vertical" style={{ width: "100%" }} size={12}>
