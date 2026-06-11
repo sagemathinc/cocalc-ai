@@ -5,7 +5,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { CodexCredentialsPanel } from "./codex-credentials-panel";
+import {
+  CodexCredentialsPanel,
+  CodexUsageMeters,
+} from "./codex-credentials-panel";
 
 const getCodexPaymentSource = jest.fn();
 const getCodexUsageStatus = jest.fn();
@@ -577,5 +580,39 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(mockClipboardWriteText).toHaveBeenCalledWith("WXYZ-1234");
     });
+  });
+});
+
+describe("CodexUsageMeters", () => {
+  it("shows compact reset times in the top-right card row", () => {
+    render(
+      <CodexUsageMeters
+        compact
+        status={
+          {
+            rateLimits: {
+              rateLimits: {
+                primary: {
+                  usedPercent: 42,
+                  windowDurationMins: 300,
+                  resetsAt: 1_800_000_000,
+                },
+                secondary: {
+                  usedPercent: 7,
+                  windowDurationMins: 10_080,
+                  resetsAt: 1_800_000_001,
+                },
+              },
+            },
+          } as any
+        }
+      />,
+    );
+
+    expect(screen.getByText("5-hour limit")).toBeTruthy();
+    expect(screen.getByText("58%")).toBeTruthy();
+    expect(screen.getByText("7-day limit")).toBeTruthy();
+    expect(screen.getByText("93%")).toBeTruthy();
+    expect(screen.getAllByText("time-ago-date")).toHaveLength(2);
   });
 });

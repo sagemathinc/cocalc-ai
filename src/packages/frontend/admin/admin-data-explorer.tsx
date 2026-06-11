@@ -13,6 +13,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Popconfirm,
   Row,
   Space,
   Table,
@@ -21,7 +22,7 @@ import {
   message,
   type TableColumnsType,
 } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { React } from "@cocalc/frontend/app-framework";
 import {
@@ -35,8 +36,11 @@ import type {
   AdminDataSqlRunResult,
   AdminDataSqlValidationResult,
   AdminDataView,
+  AdminDataViewExport,
+  AdminDataViewInput,
   AdminDataViewSummary,
 } from "@cocalc/conat/hub/api/admin-data-explorer";
+import { ADMIN_DATA_EXPLORER_STARTER_VIEWS } from "@cocalc/conat/hub/api/admin-data-explorer";
 import { ADMIN_DATA_EXPLORER_SQL_CONSTRAINTS } from "@cocalc/util/admin-data-explorer";
 
 const { Paragraph, Text } = Typography;
@@ -58,6 +62,18 @@ function getHub() {
 
 function browserId(): string | null {
   return webapp_client.browser_id ?? null;
+}
+
+function downloadJson(filename: string, value: unknown): void {
+  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function formatBytes(bytes: number): string {
@@ -188,10 +204,14 @@ function Catalog({
   datasets,
   views,
   loadView,
+  runView,
+  deleteView,
 }: {
   datasets: AdminDataDataset[];
   views: AdminDataViewSummary[];
   loadView: (view: AdminDataViewSummary) => void;
+  runView: (view: AdminDataViewSummary) => void;
+  deleteView: (view: AdminDataViewSummary) => void;
 }) {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -212,9 +232,31 @@ function Catalog({
                   </Flex>
                 }
                 extra={
-                  <Button size="small" onClick={() => loadView(view)}>
-                    Open
-                  </Button>
+                  <Space>
+                    <Button size="small" onClick={() => loadView(view)}>
+                      Open
+                    </Button>
+                    {view.query_kind === "sql" ? (
+                      <Button
+                        size="small"
+                        type="primary"
+                        onClick={() => runView(view)}
+                      >
+                        Run
+                      </Button>
+                    ) : null}
+                    <Popconfirm
+                      title="Delete shared view?"
+                      description={`Delete "${view.title}" from the shared admin catalog?`}
+                      okText="Delete"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => deleteView(view)}
+                    >
+                      <Button danger size="small">
+                        Delete
+                      </Button>
+                    </Popconfirm>
+                  </Space>
                 }
               >
                 <Space direction="vertical" size={4}>
@@ -264,6 +306,7 @@ function Catalog({
 }
 
 export function AdminDataExplorer() {
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [datasets, setDatasets] = useState<AdminDataDataset[]>([]);
   const [views, setViews] = useState<AdminDataViewSummary[]>([]);
   const [selectedView, setSelectedView] = useState<AdminDataView | null>(null);
@@ -275,6 +318,7 @@ export function AdminDataExplorer() {
   const [viewTitle, setViewTitle] = useState("Recent Accounts");
   const [viewDescription, setViewDescription] = useState("");
   const [viewTags, setViewTags] = useState("accounts");
+  const [importJson, setImportJson] = useState("");
   const [validation, setValidation] =
     useState<AdminDataSqlValidationResult | null>(null);
   const [result, setResult] = useState<AdminDataSqlRunResult | null>(null);
@@ -351,6 +395,27 @@ export function AdminDataExplorer() {
     }
   }
 
+  async function runSavedView(view: AdminDataViewSummary) {
+    setRunning(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        const nextRun = await getHub().adminData.runView({
+          browser_id: browserId(),
+          id: view.id,
+          limit,
+        });
+        setValidation(nextRun.result.validation);
+        setResult(nextRun.result);
+        message.success(`Ran view "${nextRun.view.title}".`);
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setRunning(false);
+    }
+  }
+
   async function openView(view: AdminDataViewSummary) {
     setLoading(true);
     setError("");
@@ -408,6 +473,107 @@ export function AdminDataExplorer() {
         });
         setSelectedView(saved);
         message.success("Saved admin data view.");
+        await loadCatalog();
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteSavedView(view: AdminDataViewSummary) {
+    setLoading(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        const deleted = await getHub().adminData.deleteView({
+          browser_id: browserId(),
+          id: view.id,
+        });
+        if (selectedView?.id === view.id) {
+          setSelectedView(null);
+        }
+        message.success(
+          deleted.deleted
+            ? `Deleted view "${view.title}".`
+            : `View "${view.title}" was already gone.`,
+        );
+        await loadCatalog();
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function exportViews() {
+    setSaving(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        const exported = await getHub().adminData.exportViews({
+          browser_id: browserId(),
+        });
+        downloadJson("admin-data-views.json", exported);
+        message.success(`Exported ${exported.views.length} admin data views.`);
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function importViewsFromText(raw: string) {
+    setSaving(true);
+    setError("");
+    try {
+      const parsed = JSON.parse(raw) as
+        | AdminDataViewInput[]
+        | AdminDataViewExport;
+      await runFreshAuthAction(async () => {
+        const imported = await getHub().adminData.importViews({
+          browser_id: browserId(),
+          views: parsed,
+          mode: "upsert",
+        });
+        message.success(
+          `Imported ${imported.created} created, ${imported.updated} updated, ${imported.skipped} skipped views.`,
+        );
+        setImportJson("");
+        await loadCatalog();
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function importViewsFromFile(file: File | null | undefined) {
+    if (!file) return;
+    try {
+      await importViewsFromText(await file.text());
+    } catch (err) {
+      setError(`${err}`);
+    }
+  }
+
+  async function installStarterViews() {
+    setSaving(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        const imported = await getHub().adminData.importViews({
+          browser_id: browserId(),
+          views: [...ADMIN_DATA_EXPLORER_STARTER_VIEWS],
+          mode: "upsert",
+        });
+        message.success(
+          `Installed starter views: ${imported.created} created, ${imported.updated} updated, ${imported.skipped} skipped.`,
+        );
         await loadCatalog();
       });
     } catch (err) {
@@ -513,6 +679,59 @@ export function AdminDataExplorer() {
                 </Form.Item>
               </Form>
             </Card>
+            <Card
+              title="Import / Export Views"
+              extra={
+                <Space>
+                  <Button onClick={installStarterViews} loading={saving}>
+                    Install Starters
+                  </Button>
+                  <Button onClick={exportViews} loading={saving}>
+                    Export JSON
+                  </Button>
+                  <Button
+                    type="primary"
+                    onClick={() => importInputRef.current?.click()}
+                    loading={saving}
+                  >
+                    Upload JSON
+                  </Button>
+                </Space>
+              }
+            >
+              <Space direction="vertical" style={{ width: "100%" }}>
+                <Text type="secondary">
+                  Upload accepts the same JSON produced by the CLI or Export
+                  button. Paste import is also available for quick operator and
+                  Codex-assisted workflows. Imports use upsert mode.
+                </Text>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  style={{ display: "none" }}
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0] ?? null;
+                    event.currentTarget.value = "";
+                    void importViewsFromFile(file);
+                  }}
+                />
+                <TextArea
+                  value={importJson}
+                  onChange={(e) => setImportJson(e.target.value)}
+                  placeholder='{"schema_version":1,"views":[...]}'
+                  autoSize={{ minRows: 4, maxRows: 12 }}
+                  spellCheck={false}
+                />
+                <Button
+                  onClick={() => importViewsFromText(importJson)}
+                  disabled={!importJson.trim()}
+                  loading={saving}
+                >
+                  Import Pasted JSON
+                </Button>
+              </Space>
+            </Card>
             <Card title="SQL Guardrails">
               <Space direction="vertical" style={{ width: "100%" }}>
                 <Paragraph type="secondary">
@@ -547,7 +766,13 @@ export function AdminDataExplorer() {
                 <Loading />
               </Card>
             ) : (
-              <Catalog datasets={datasets} views={views} loadView={openView} />
+              <Catalog
+                datasets={datasets}
+                views={views}
+                loadView={openView}
+                runView={runSavedView}
+                deleteView={deleteSavedView}
+              />
             )}
           </Space>
         </Col>

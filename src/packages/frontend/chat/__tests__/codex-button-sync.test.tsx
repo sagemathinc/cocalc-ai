@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CodexConfigButton, codexThreadConfigKey } from "../codex";
 
+const getCodexUsageStatus = jest.fn();
 const stableForm = {
   resetFields: jest.fn(),
   setFieldsValue: jest.fn(),
@@ -58,6 +59,12 @@ jest.mock("@cocalc/frontend/lite", () => ({
 
 jest.mock("@cocalc/frontend/account/codex-credentials-panel", () => ({
   CodexCredentialsPanel: () => null,
+  CodexUsageMeters: ({ compact, status }: any) => (
+    <div>
+      {compact ? "compact usage meters" : "usage meters"}
+      {status?.available ? " usage loaded" : ""}
+    </div>
+  ),
 }));
 
 jest.mock("@cocalc/frontend/account/lite-ai-settings", () => () => null);
@@ -66,7 +73,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       hub: {
-        system: {},
+        system: {
+          getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
+        },
       },
     },
   },
@@ -83,6 +92,8 @@ describe("CodexConfigButton", () => {
     stableForm.setFieldsValue.mockClear();
     stableForm.getFieldsValue.mockClear();
     stableForm.getFieldsValue.mockReturnValue({});
+    getCodexUsageStatus.mockReset();
+    getCodexUsageStatus.mockResolvedValue({ available: true });
   });
 
   it("updates the closed top bar when thread config arrives after mount", async () => {
@@ -255,5 +266,48 @@ describe("CodexConfigButton", () => {
     fireEvent.click(screen.getByText("ChatGPT"));
 
     expect(screen.getByText("Open ChatGPT Codex Usage")).not.toBeNull();
+  });
+
+  it("shows compact ChatGPT usage in the settings summary", async () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+
+    await waitFor(() => {
+      expect(getCodexUsageStatus).toHaveBeenCalledWith({
+        project_id: "project-1",
+      });
+      expect(
+        screen.getByText("compact usage meters usage loaded"),
+      ).toBeTruthy();
+    });
+    const text = document.body.textContent ?? "";
+    expect(text.indexOf("Codex configuration for this chat")).toBeLessThan(
+      text.indexOf("compact usage meters usage loaded"),
+    );
+    expect(text.indexOf("compact usage meters usage loaded")).toBeLessThan(
+      text.indexOf("Payment & Credentials"),
+    );
   });
 });

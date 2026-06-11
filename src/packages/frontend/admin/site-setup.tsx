@@ -32,6 +32,7 @@ import type {
   StarServerInfo,
 } from "@cocalc/conat/hub/api/system";
 import { COLORS } from "@cocalc/util/theme";
+import type { AdminSection } from "./routing";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -78,6 +79,7 @@ function stateBorderColor(state: SiteSetupStepState): string {
 
 function actionForStep(step: SiteSetupStep):
   | {
+      adminSection?: AdminSection;
       label: string;
       href?: string;
     }
@@ -88,33 +90,39 @@ function actionForStep(step: SiteSetupStep):
     case "admin-2fa":
       return { label: "Open account security", href: "/settings/profile" };
     case "domain-cloudflare":
-      return { label: "Configure Cloudflare", href: "/admin/site-settings" };
+      return { label: "Configure Cloudflare", adminSection: "site-settings" };
     case "cloud-provider":
-      return { label: "Configure GCP or Nebius", href: "/admin/site-settings" };
+      return {
+        label: "Configure GCP or Nebius",
+        adminSection: "site-settings",
+      };
     case "provider-catalog":
       return {
         label: "Refresh provider catalog",
-        href: "/admin/site-settings",
+        adminSection: "site-settings",
       };
     case "email":
-      return { label: "Configure or skip email", href: "/admin/site-settings" };
+      return {
+        label: "Configure or skip email",
+        adminSection: "site-settings",
+      };
     case "project-host":
       return { label: "Create a project host", href: "/hosts" };
     case "rootfs":
-      return { label: "Manage RootFS images", href: "/admin/rootfs" };
+      return { label: "Manage RootFS images", adminSection: "rootfs" };
     case "custom-rootfs":
-      return { label: "Customize RootFS images", href: "/admin/rootfs" };
+      return { label: "Customize RootFS images", adminSection: "rootfs" };
     case "smoke-test":
       return { label: "Create or open a project", href: "/projects" };
     case "backups":
       return {
         label: "Review project backups",
-        href: "/admin/project-backup-shards",
+        adminSection: "project-backup-shards",
       };
     case "tls-public-url":
-      return { label: "Configure public URL", href: "/admin/site-settings" };
+      return { label: "Configure public URL", adminSection: "site-settings" };
     case "license":
-      return { label: "Review site settings", href: "/admin/site-settings" };
+      return { label: "Review site settings", adminSection: "site-settings" };
     default:
       if (step.admin_section) {
         return {
@@ -156,14 +164,17 @@ function stepIcon(step: SiteSetupStep): ReactNode {
 
 function StepCard({
   index,
+  onNavigateAdminSection,
   onRefresh,
   step,
 }: {
   index: number;
+  onNavigateAdminSection?: (section: AdminSection) => void;
   onRefresh: () => void;
   step: SiteSetupStep;
 }) {
   const action = actionForStep(step);
+  const adminSection = action?.adminSection;
   return (
     <Card
       size="small"
@@ -191,7 +202,24 @@ function StepCard({
         </ul>
       ) : null}
       <Space wrap style={{ marginTop: 12 }}>
-        {action?.href ? (
+        {adminSection ? (
+          <Button
+            size="small"
+            type={step.state === "done" ? "default" : "primary"}
+            href={
+              onNavigateAdminSection == null
+                ? `/admin/${adminSection}`
+                : undefined
+            }
+            onClick={
+              onNavigateAdminSection == null
+                ? undefined
+                : () => onNavigateAdminSection(adminSection)
+            }
+          >
+            {action.label}
+          </Button>
+        ) : action?.href ? (
           <Button
             size="small"
             type={step.state === "done" ? "default" : "primary"}
@@ -528,7 +556,7 @@ export function SiteSetupBanner({ onOpenSetup }: { onOpenSetup: () => void }) {
             <Button type="primary" onClick={onOpenSetup}>
               {isStar ? "Continue Star setup" : "Continue site setup"}
             </Button>
-            <Button href="/admin/site-setup">Open focused setup page</Button>
+            <Button onClick={onOpenSetup}>Open focused setup page</Button>
           </Space>
         </Space>
       }
@@ -536,7 +564,11 @@ export function SiteSetupBanner({ onOpenSetup }: { onOpenSetup: () => void }) {
   );
 }
 
-export function SiteSetupAdmin() {
+export function SiteSetupAdmin({
+  onNavigateAdminSection,
+}: {
+  onNavigateAdminSection?: (section: AdminSection) => void;
+}) {
   const [status, setStatus] = useState<SiteSetupStatus>();
   const [starInfo, setStarInfo] = useState<StarServerInfo>();
   const [loading, setLoading] = useState(false);
@@ -608,6 +640,7 @@ export function SiteSetupAdmin() {
               <StepCard
                 index={i + 1}
                 key={step.id}
+                onNavigateAdminSection={onNavigateAdminSection}
                 onRefresh={() => void load()}
                 step={step}
               />
@@ -627,6 +660,7 @@ export function SiteSetupAdmin() {
                   <StepCard
                     index={hardGateSteps.length + i + 1}
                     key={step.id}
+                    onNavigateAdminSection={onNavigateAdminSection}
                     onRefresh={() => void load()}
                     step={step}
                   />
