@@ -63,9 +63,13 @@ const usageLimitStyle: CSSProperties = {
   background: "white",
   border: `1px solid ${COLORS.GRAY_LL}`,
   borderRadius: 8,
-  flex: "1 1 210px",
   minWidth: 0,
   padding: 14,
+};
+
+const compactUsageLimitStyle: CSSProperties = {
+  ...usageLimitStyle,
+  padding: "8px 10px",
 };
 
 function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
@@ -202,6 +206,90 @@ function getUsageWindows(rateLimit: any): Array<{
       };
     })
     .filter((window) => !!window);
+}
+
+export function CodexUsageMeters({
+  status,
+  compact = false,
+}: {
+  status?: CodexUsageStatusInfo;
+  compact?: boolean;
+}): React.JSX.Element | null {
+  const usageWindows = getUsageWindows(getCodexRateLimit(status));
+  if (!usageWindows.length) return null;
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: compact ? 8 : 12,
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        width: "100%",
+      }}
+    >
+      {usageWindows.map((window) => (
+        <div
+          key={window.key}
+          style={compact ? compactUsageLimitStyle : usageLimitStyle}
+        >
+          <div
+            style={{
+              alignItems: "baseline",
+              display: "flex",
+              gap: 8,
+              justifyContent: "space-between",
+            }}
+          >
+            <Text style={{ fontSize: compact ? 12 : 14 }}>{window.label}</Text>
+            {compact && window.resetAt ? (
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                <TimeAgo date={window.resetAt} />
+              </Text>
+            ) : null}
+          </div>
+          {typeof window.remainingPercent === "number" ? (
+            <>
+              <div
+                style={{
+                  alignItems: "baseline",
+                  display: "flex",
+                  gap: compact ? 4 : 6,
+                  marginTop: compact ? 2 : 6,
+                }}
+              >
+                <Text
+                  strong
+                  style={{
+                    fontSize: compact ? 18 : 26,
+                    lineHeight: compact ? "22px" : "30px",
+                  }}
+                >
+                  {`${window.remainingPercent}%`}
+                </Text>
+                <Text style={{ fontSize: compact ? 12 : 14 }}>Remaining</Text>
+              </div>
+              <Progress
+                percent={window.remainingPercent}
+                showInfo={false}
+                size="small"
+                strokeColor={COLORS.ANTD_LINK_BLUE}
+                style={{ margin: compact ? "3px 0 0" : "6px 0 2px" }}
+              />
+            </>
+          ) : null}
+          {!compact ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Resets{" "}
+              {window.resetAt ? (
+                <TimeAgo date={window.resetAt} />
+              ) : (
+                "when OpenAI updates this limit"
+              )}
+            </Text>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatCodexUsageReason(reason?: string): string | undefined {
@@ -806,13 +894,12 @@ function CodexCredentialsPanelBody({
     if (paymentSource?.source !== "subscription") return null;
     const chatgptAccount = getChatGptAccount(codexUsageStatus);
     const rateLimit = getCodexRateLimit(codexUsageStatus);
-    const usageWindows = getUsageWindows(rateLimit);
     const planType =
       formatPlanType(chatgptAccount?.planType) ??
       formatPlanType(rateLimit?.planType ?? rateLimit?.plan_type);
     const reason = formatCodexUsageReason(codexUsageStatus?.reason);
     return (
-      <Space orientation="vertical" size={6}>
+      <Space orientation="vertical" size={6} style={{ width: "100%" }}>
         <Text strong>ChatGPT Codex usage</Text>
         {codexUsageLoading && !codexUsageStatus ? (
           <Text type="secondary">Checking ChatGPT Codex usage...</Text>
@@ -825,54 +912,7 @@ function CodexCredentialsPanelBody({
           ) : null}
           {planType ? <Tag color="green">{planType}</Tag> : null}
         </Space>
-        {usageWindows.length ? (
-          <div
-            style={{
-              display: "flex",
-              gap: 12,
-              flexWrap: "wrap",
-              width: "100%",
-            }}
-          >
-            {usageWindows.map((window) => (
-              <div key={window.key} style={usageLimitStyle}>
-                <Text style={{ fontSize: 14 }}>{window.label}</Text>
-                {typeof window.remainingPercent === "number" ? (
-                  <>
-                    <div
-                      style={{
-                        alignItems: "baseline",
-                        display: "flex",
-                        gap: 6,
-                        marginTop: 6,
-                      }}
-                    >
-                      <Text strong style={{ fontSize: 26, lineHeight: "30px" }}>
-                        {`${window.remainingPercent}%`}
-                      </Text>
-                      <Text style={{ fontSize: 14 }}>Remaining</Text>
-                    </div>
-                    <Progress
-                      percent={window.remainingPercent}
-                      showInfo={false}
-                      size="small"
-                      strokeColor={COLORS.ANTD_LINK_BLUE}
-                      style={{ margin: "6px 0 2px" }}
-                    />
-                  </>
-                ) : null}
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Resets{" "}
-                  {window.resetAt ? (
-                    <TimeAgo date={window.resetAt} />
-                  ) : (
-                    "when OpenAI updates this limit"
-                  )}
-                </Text>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <CodexUsageMeters status={codexUsageStatus} />
         {reason ? <Text type="secondary">{reason}</Text> : null}
         <Space wrap>
           <Button
@@ -1051,7 +1091,11 @@ function CodexCredentialsPanelBody({
             }
             description={
               lite ? (
-                <Space orientation="vertical" size={6}>
+                <Space
+                  orientation="vertical"
+                  size={6}
+                  style={{ width: "100%" }}
+                >
                   <Text type="secondary">
                     Codex will prefer your ChatGPT Plan. Use an OpenAI API key
                     only as a fallback.
@@ -1066,7 +1110,11 @@ function CodexCredentialsPanelBody({
                   {renderCodexUsageStatusDetails()}
                 </Space>
               ) : (
-                <Space orientation="vertical" size={6}>
+                <Space
+                  orientation="vertical"
+                  size={6}
+                  style={{ width: "100%" }}
+                >
                   <Text type="secondary">
                     Order: ChatGPT Plan, Project OpenAI API key, Account OpenAI
                     API key, then Site OpenAI API key.
