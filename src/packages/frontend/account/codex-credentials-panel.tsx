@@ -60,11 +60,8 @@ const deviceAuthCodeStyle: CSSProperties = {
 };
 
 const usageLimitStyle: CSSProperties = {
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  borderRadius: 8,
-  background: COLORS.GRAY_LLL,
-  padding: "10px 12px",
   width: "100%",
+  maxWidth: 560,
 };
 
 function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
@@ -825,7 +822,7 @@ function CodexCredentialsPanelBody({
           {planType ? <Tag color="green">{planType}</Tag> : null}
         </Space>
         {usageWindows.length ? (
-          <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={12} style={{ width: "100%" }}>
             {usageWindows.map((window) => (
               <div key={window.key} style={usageLimitStyle}>
                 <div
@@ -834,12 +831,14 @@ function CodexCredentialsPanelBody({
                     alignItems: "baseline",
                     justifyContent: "space-between",
                     gap: 12,
-                    marginBottom: 4,
+                    marginBottom: 2,
                   }}
                 >
-                  <Text strong>{window.label}</Text>
+                  <Text style={{ fontSize: 14 }}>{window.label}</Text>
                   {typeof window.usedPercent === "number" ? (
-                    <Text>{`${window.usedPercent}%`}</Text>
+                    <Text
+                      style={{ fontSize: 14 }}
+                    >{`${window.usedPercent}%`}</Text>
                   ) : null}
                 </div>
                 {typeof window.usedPercent === "number" ? (
@@ -847,7 +846,8 @@ function CodexCredentialsPanelBody({
                     percent={window.usedPercent}
                     showInfo={false}
                     size="small"
-                    style={{ marginBottom: 2 }}
+                    strokeColor={COLORS.ANTD_LINK_BLUE}
+                    style={{ margin: 0 }}
                   />
                 ) : null}
                 {window.resetAt ? (
