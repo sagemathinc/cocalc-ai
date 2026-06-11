@@ -13,6 +13,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Popconfirm,
   Row,
   Space,
   Table,
@@ -35,6 +36,8 @@ import type {
   AdminDataSqlRunResult,
   AdminDataSqlValidationResult,
   AdminDataView,
+  AdminDataViewExport,
+  AdminDataViewInput,
   AdminDataViewSummary,
 } from "@cocalc/conat/hub/api/admin-data-explorer";
 import { ADMIN_DATA_EXPLORER_SQL_CONSTRAINTS } from "@cocalc/util/admin-data-explorer";
@@ -58,6 +61,18 @@ function getHub() {
 
 function browserId(): string | null {
   return webapp_client.browser_id ?? null;
+}
+
+function downloadJson(filename: string, value: unknown): void {
+  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function formatBytes(bytes: number): string {
@@ -189,11 +204,13 @@ function Catalog({
   views,
   loadView,
   runView,
+  deleteView,
 }: {
   datasets: AdminDataDataset[];
   views: AdminDataViewSummary[];
   loadView: (view: AdminDataViewSummary) => void;
   runView: (view: AdminDataViewSummary) => void;
+  deleteView: (view: AdminDataViewSummary) => void;
 }) {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -227,6 +244,17 @@ function Catalog({
                         Run
                       </Button>
                     ) : null}
+                    <Popconfirm
+                      title="Delete shared view?"
+                      description={`Delete "${view.title}" from the shared admin catalog?`}
+                      okText="Delete"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => deleteView(view)}
+                    >
+                      <Button danger size="small">
+                        Delete
+                      </Button>
+                    </Popconfirm>
                   </Space>
                 }
               >
@@ -288,6 +316,7 @@ export function AdminDataExplorer() {
   const [viewTitle, setViewTitle] = useState("Recent Accounts");
   const [viewDescription, setViewDescription] = useState("");
   const [viewTags, setViewTags] = useState("accounts");
+  const [importJson, setImportJson] = useState("");
   const [validation, setValidation] =
     useState<AdminDataSqlValidationResult | null>(null);
   const [result, setResult] = useState<AdminDataSqlRunResult | null>(null);
@@ -451,6 +480,76 @@ export function AdminDataExplorer() {
     }
   }
 
+  async function deleteSavedView(view: AdminDataViewSummary) {
+    setLoading(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        const deleted = await getHub().adminData.deleteView({
+          browser_id: browserId(),
+          id: view.id,
+        });
+        if (selectedView?.id === view.id) {
+          setSelectedView(null);
+        }
+        message.success(
+          deleted.deleted
+            ? `Deleted view "${view.title}".`
+            : `View "${view.title}" was already gone.`,
+        );
+        await loadCatalog();
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function exportViews() {
+    setSaving(true);
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        const exported = await getHub().adminData.exportViews({
+          browser_id: browserId(),
+        });
+        downloadJson("admin-data-views.json", exported);
+        message.success(`Exported ${exported.views.length} admin data views.`);
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function importViews() {
+    setSaving(true);
+    setError("");
+    try {
+      const parsed = JSON.parse(importJson) as
+        | AdminDataViewInput[]
+        | AdminDataViewExport;
+      await runFreshAuthAction(async () => {
+        const imported = await getHub().adminData.importViews({
+          browser_id: browserId(),
+          views: parsed,
+          mode: "upsert",
+        });
+        message.success(
+          `Imported ${imported.created} created, ${imported.updated} updated, ${imported.skipped} skipped views.`,
+        );
+        setImportJson("");
+        await loadCatalog();
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const constraints = ADMIN_DATA_EXPLORER_SQL_CONSTRAINTS;
 
   return (
@@ -547,6 +646,36 @@ export function AdminDataExplorer() {
                 </Form.Item>
               </Form>
             </Card>
+            <Card
+              title="Import / Export Views"
+              extra={
+                <Button onClick={exportViews} loading={saving}>
+                  Export JSON
+                </Button>
+              }
+            >
+              <Space direction="vertical" style={{ width: "100%" }}>
+                <Text type="secondary">
+                  Import accepts the same JSON produced by the CLI or Export
+                  button. Imports use upsert mode.
+                </Text>
+                <TextArea
+                  value={importJson}
+                  onChange={(e) => setImportJson(e.target.value)}
+                  placeholder='{"schema_version":1,"views":[...]}'
+                  autoSize={{ minRows: 4, maxRows: 12 }}
+                  spellCheck={false}
+                />
+                <Button
+                  type="primary"
+                  onClick={importViews}
+                  disabled={!importJson.trim()}
+                  loading={saving}
+                >
+                  Import JSON
+                </Button>
+              </Space>
+            </Card>
             <Card title="SQL Guardrails">
               <Space direction="vertical" style={{ width: "100%" }}>
                 <Paragraph type="secondary">
@@ -586,6 +715,7 @@ export function AdminDataExplorer() {
                 views={views}
                 loadView={openView}
                 runView={runSavedView}
+                deleteView={deleteSavedView}
               />
             )}
           </Space>
