@@ -4,15 +4,13 @@
  */
 
 import type { Element } from "./types";
+export { legacyEscapedMathDelimitersToText } from "@cocalc/util/misc";
+import { legacyEscapedMathDelimitersToText } from "@cocalc/util/misc";
 
 export const CURRENT_DOCUMENT_SCHEMA_VERSION = 1;
 
 export function isLegacyDocumentSchemaVersion(version: unknown): boolean {
   return typeof version !== "number" || version < 1;
-}
-
-export function legacyEscapedMathDelimitersToText(value: string): string {
-  return value.replace(/\\([()[\]])/g, "$1");
 }
 
 export function normalizeLegacyTextElement(element: Element): Element {
