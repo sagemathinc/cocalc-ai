@@ -60,11 +60,12 @@ const deviceAuthCodeStyle: CSSProperties = {
 };
 
 const usageLimitStyle: CSSProperties = {
+  background: "white",
   border: `1px solid ${COLORS.GRAY_LL}`,
   borderRadius: 8,
-  background: COLORS.GRAY_LLL,
-  padding: "10px 12px",
-  width: "100%",
+  flex: "1 1 210px",
+  minWidth: 0,
+  padding: 14,
 };
 
 function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
@@ -145,17 +146,17 @@ function formatPlanType(planType?: string): string | undefined {
     .join(" ");
 }
 
-function formatResetTime(seconds?: number | null): string | undefined {
+function getResetDate(seconds?: number | null): Date | undefined {
   if (typeof seconds !== "number" || !Number.isFinite(seconds)) {
     return undefined;
   }
-  return new Date(seconds * 1000).toLocaleString();
+  return new Date(seconds * 1000);
 }
 
-function getUsagePercent(limit?: any): number | undefined {
+function getRemainingPercent(limit?: any): number | undefined {
   const value = limit?.usedPercent ?? limit?.used_percent;
   return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(0, Math.min(100, Math.round(value)))
+    ? Math.max(0, Math.min(100, Math.round(100 - value)))
     : undefined;
 }
 
@@ -183,8 +184,8 @@ function formatWindowLabel(limit: any, fallback: string): string {
 function getUsageWindows(rateLimit: any): Array<{
   key: "primary" | "secondary";
   label: string;
-  usedPercent?: number;
-  resetAt?: string;
+  remainingPercent?: number;
+  resetAt?: Date;
 }> {
   return (["primary", "secondary"] as const)
     .map((key) => {
@@ -196,8 +197,8 @@ function getUsageWindows(rateLimit: any): Array<{
           limit,
           key === "primary" ? "Short window" : "Long window",
         ),
-        usedPercent: getUsagePercent(limit),
-        resetAt: formatResetTime(limit?.resetsAt ?? limit?.resets_at),
+        remainingPercent: getRemainingPercent(limit),
+        resetAt: getResetDate(limit?.resetsAt ?? limit?.resets_at),
       };
     })
     .filter((window) => !!window);
@@ -825,39 +826,52 @@ function CodexCredentialsPanelBody({
           {planType ? <Tag color="green">{planType}</Tag> : null}
         </Space>
         {usageWindows.length ? (
-          <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              width: "100%",
+            }}
+          >
             {usageWindows.map((window) => (
               <div key={window.key} style={usageLimitStyle}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    marginBottom: 4,
-                  }}
-                >
-                  <Text strong>{window.label}</Text>
-                  {typeof window.usedPercent === "number" ? (
-                    <Text>{`${window.usedPercent}%`}</Text>
-                  ) : null}
-                </div>
-                {typeof window.usedPercent === "number" ? (
-                  <Progress
-                    percent={window.usedPercent}
-                    showInfo={false}
-                    size="small"
-                    style={{ marginBottom: 2 }}
-                  />
+                <Text style={{ fontSize: 14 }}>{window.label}</Text>
+                {typeof window.remainingPercent === "number" ? (
+                  <>
+                    <div
+                      style={{
+                        alignItems: "baseline",
+                        display: "flex",
+                        gap: 6,
+                        marginTop: 6,
+                      }}
+                    >
+                      <Text strong style={{ fontSize: 26, lineHeight: "30px" }}>
+                        {`${window.remainingPercent}%`}
+                      </Text>
+                      <Text style={{ fontSize: 14 }}>Remaining</Text>
+                    </div>
+                    <Progress
+                      percent={window.remainingPercent}
+                      showInfo={false}
+                      size="small"
+                      strokeColor={COLORS.ANTD_LINK_BLUE}
+                      style={{ margin: "6px 0 2px" }}
+                    />
+                  </>
                 ) : null}
-                {window.resetAt ? (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    Resets {window.resetAt}
-                  </Text>
-                ) : null}
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  Resets{" "}
+                  {window.resetAt ? (
+                    <TimeAgo date={window.resetAt} />
+                  ) : (
+                    "when OpenAI updates this limit"
+                  )}
+                </Text>
               </div>
             ))}
-          </Space>
+          </div>
         ) : null}
         {reason ? <Text type="secondary">{reason}</Text> : null}
         <Space wrap>
