@@ -35,6 +35,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "Admin Data Explorer SQL execution against operational data",
   },
+  "adminData.runView": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer saved view execution against operational data",
+  },
   "agent.run": {
     decision: "fresh-auth-not-required",
     reason: "agent run is not implemented; normal account auth is sufficient",
