@@ -119,7 +119,9 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   }),
 }));
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
-  TimeAgo: () => null,
+  TimeAgo: ({ date }: any) => (
+    <span>{date instanceof Date ? "time-ago-date" : "time-ago"}</span>
+  ),
 }));
 jest.mock("@cocalc/frontend/lite", () => ({
   lite: true,
@@ -186,7 +188,11 @@ describe("CodexCredentialsPanel", () => {
       rateLimits: {
         rateLimits: {
           primary: { usedPercent: 42, windowDurationMins: 300 },
-          secondary: { usedPercent: 7, windowDurationMins: 10_080 },
+          secondary: {
+            usedPercent: 7,
+            windowDurationMins: 10_080,
+            resetsAt: 1_800_000_000,
+          },
         },
       },
     });
@@ -208,9 +214,11 @@ describe("CodexCredentialsPanel", () => {
       ).toBeGreaterThan(0);
       expect(screen.getByText("user@example.com")).toBeTruthy();
       expect(screen.getByText("5-hour limit")).toBeTruthy();
-      expect(screen.getByText("42%")).toBeTruthy();
+      expect(screen.getByText("58%")).toBeTruthy();
+      expect(screen.getAllByText("Remaining").length).toBeGreaterThan(0);
       expect(screen.getByText("7-day limit")).toBeTruthy();
-      expect(screen.getByText("7%")).toBeTruthy();
+      expect(screen.getByText("93%")).toBeTruthy();
+      expect(screen.getByText("time-ago-date")).toBeTruthy();
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
@@ -309,9 +317,9 @@ describe("CodexCredentialsPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("5-hour limit")).toBeTruthy();
-      expect(screen.getByText("42%")).toBeTruthy();
+      expect(screen.getByText("58%")).toBeTruthy();
       expect(screen.getByText("7-day limit")).toBeTruthy();
-      expect(screen.getByText("7%")).toBeTruthy();
+      expect(screen.getByText("93%")).toBeTruthy();
     });
     expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
 
@@ -322,7 +330,7 @@ describe("CodexCredentialsPanel", () => {
 
     expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("loading")).toBeNull();
-    expect(screen.getByText("42%")).toBeTruthy();
+    expect(screen.getByText("58%")).toBeTruthy();
 
     await act(async () => {
       refreshedUsage.resolve({
@@ -347,8 +355,8 @@ describe("CodexCredentialsPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("43%")).toBeTruthy();
-      expect(screen.getByText("8%")).toBeTruthy();
+      expect(screen.getByText("57%")).toBeTruthy();
+      expect(screen.getByText("92%")).toBeTruthy();
     });
   });
 
