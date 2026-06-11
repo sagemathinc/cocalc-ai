@@ -46,18 +46,21 @@ const ROLLOUT_DIAGNOSTIC_LINES = 25;
 const PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS = 150_000;
 const PROJECT_HOST_ROLLOUT_POLL_MS = 5_000;
 const PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS = 30_000;
+const HOST_UPGRADE_CONTROL_PREFLIGHT_TIMEOUT_MS = 8_000;
 
 export type HostSoftwareRolloutProgressUpdate = {
   rollout_phase: string;
   rollout_phase_label: string;
   rollout_phase_owner:
     | "artifact installation"
+    | "host-control preflight"
     | "project-host activation"
     | "managed component alignment";
   rollout_target_version?: string;
   rollout_observed_version?: string;
   rollout_previous_version?: string;
   rollout_deadline_at?: string;
+  rollout_elapsed_ms?: number;
 };
 
 const RUNTIME_LOG_SOURCE_BY_COMPONENT: Partial<
@@ -547,6 +550,9 @@ export async function upgradeHostSoftwareInternalHelper({
     id: string,
     timeout_ms: number,
   ) => Promise<{
+    conat?: {
+      waitFor?: (opts?: { maxWait?: number }) => Promise<any>;
+    };
     upgradeSoftware: (opts: {
       targets: DirectHostSoftwareUpgradeTarget[];
       base_url?: string;
@@ -642,6 +648,33 @@ export async function upgradeHostSoftwareInternalHelper({
   const client = await hostControlClient(id, HOST_UPGRADE_RPC_TIMEOUT_MS);
   let response: HostSoftwareUpgradeResponse;
   try {
+    if (
+      directTargets.length > 0 &&
+      typeof client.conat?.waitFor === "function"
+    ) {
+      await onProgress?.({
+        rollout_phase: "host_control.preflight",
+        rollout_phase_label: "Checking project-host control service",
+        rollout_phase_owner: "host-control preflight",
+      });
+      const preflightStarted = Date.now();
+      try {
+        await client.conat.waitFor({
+          maxWait: HOST_UPGRADE_CONTROL_PREFLIGHT_TIMEOUT_MS,
+        });
+      } catch (err) {
+        const elapsedMs = Date.now() - preflightStarted;
+        throw new Error(
+          `host-control service unavailable after ${elapsedMs}ms: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+      await onProgress?.({
+        rollout_phase: "host_control.ready",
+        rollout_phase_label: "Project-host control service reachable",
+        rollout_phase_owner: "host-control preflight",
+        rollout_elapsed_ms: Date.now() - preflightStarted,
+      });
+    }
     response =
       directTargets.length > 0
         ? await client.upgradeSoftware({
