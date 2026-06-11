@@ -36,6 +36,7 @@ import { SiteSetupAdmin, SiteSetupBanner } from "./site-setup";
 import { SiteLicensesAdmin } from "./site-licenses";
 import { AdminPurchaseAdmin } from "./admin-purchase";
 import { UsageStatistics } from "./stats/page";
+import { AdminDataExplorer } from "./admin-data-explorer";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -400,6 +401,14 @@ function getAdminSections({
       icon: "server",
       group: "operations",
       component: () => <BayOpsAdmin />,
+    },
+    {
+      key: "admin-data-explorer",
+      title: "Admin Data Explorer",
+      description: "Run audited restricted SQL and manage shared admin views.",
+      icon: "database",
+      group: "operations",
+      component: () => <AdminDataExplorer />,
     },
     {
       key: "project-backup-shards",
