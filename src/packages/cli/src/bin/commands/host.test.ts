@@ -1051,6 +1051,58 @@ test("host upgrade --all-online --wait returns all successful hosts", async () =
   assert.equal(capture.data.hosts.length, 2);
 });
 
+test("host upgrade --wait emits progress on stderr in json output mode", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(
+    program,
+    makeDeps(capture, {
+      waitForLro: async (_ctx, op_id, opts) => {
+        await opts?.onUpdate?.({
+          op_id,
+          status: "running",
+          progress_summary: {
+            phase: "waiting",
+            message: "running upgrade",
+            progress: 75,
+          },
+          error: null,
+        });
+        return {
+          op_id,
+          status: "succeeded",
+          timedOut: false,
+          error: undefined,
+        };
+      },
+    }),
+  );
+
+  const stderr = await withStderrCapture(async () => {
+    await program.parseAsync([
+      "node",
+      "test",
+      "host",
+      "upgrade",
+      "host-1",
+      "--wait",
+    ]);
+  });
+
+  assert.match(stderr, /host host-host-1/);
+  assert.match(stderr, /op=op-host-1/);
+  assert.match(stderr, /status=running/);
+  assert.match(stderr, /message="running upgrade"/);
+  assert.equal(capture.data.status, "succeeded");
+});
+
 test("host metrics returns current metrics and history", async () => {
   const capture: Capture = {
     upgrades: [],
