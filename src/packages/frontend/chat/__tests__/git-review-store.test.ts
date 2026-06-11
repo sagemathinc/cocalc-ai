@@ -3,6 +3,7 @@
 import {
   loadReviewDraft,
   loadReviewRecord,
+  loadReviewRecords,
   saveReviewDraft,
   saveReviewRecord,
   deleteAllReviewRecords,
@@ -143,6 +144,59 @@ describe("git review import/export", () => {
       note: "persisted v2 review",
     });
     expect(akvMock).toHaveBeenCalled();
+  });
+
+  it("bulk loads review records from one dkv snapshot", async () => {
+    const store = getStore("acct-1", "cocalc-git-review-v2");
+    store.set("commit:abc1234", {
+      version: 2,
+      account_id: "acct-1",
+      commit_sha: "abc1234",
+      reviewed: true,
+      note: "persisted review",
+      comments: {},
+      created_at: 10,
+      updated_at: 100,
+      revision: 2,
+    });
+
+    saveReviewDraft(
+      "def5678",
+      {
+        reviewed: true,
+        note: "draft-only review",
+        comments: {},
+      },
+      "acct-1",
+    );
+
+    const records = await loadReviewRecords({
+      accountId: "acct-1",
+      commitShas: ["abc1234", "def5678", "999aaaa", "abc1234"],
+    });
+
+    expect(records).toHaveLength(3);
+    expect(records[0]).toMatchObject([
+      "abc1234",
+      {
+        account_id: "acct-1",
+        commit_sha: "abc1234",
+        reviewed: true,
+        note: "persisted review",
+      },
+    ]);
+    expect(records[1]).toMatchObject([
+      "def5678",
+      {
+        account_id: "acct-1",
+        commit_sha: "def5678",
+        reviewed: true,
+        note: "draft-only review",
+      },
+    ]);
+    expect(records[2]).toEqual(["999aaaa", undefined]);
+    expect(dkvMock).toHaveBeenCalledTimes(1);
+    expect(akvMock).not.toHaveBeenCalled();
   });
 
   it("imports newer review records and rewrites them to the current account", async () => {

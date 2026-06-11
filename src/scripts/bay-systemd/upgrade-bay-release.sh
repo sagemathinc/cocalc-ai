@@ -36,6 +36,7 @@ REMOTE_SCRIPT_DIR=""
 TEMP_COOKIE_FILE=""
 TEMP_COOKIE_HASH_B64=""
 CREATED_TEMP_COOKIE=0
+TEMP_COOKIE_TTL="2 hours"
 
 usage() {
   cat <<'EOF'
@@ -327,7 +328,9 @@ SQL
 }
 
 create_temp_cookie() {
-  [[ -z "$COOKIE_HEADER" ]] || return
+  if [[ -n "$COOKIE_HEADER" ]]; then
+    return 0
+  fi
   resolve_admin_account_id
   TEMP_COOKIE_FILE="$(mktemp)"
   log "Create short-lived CLI auth session for ${ADMIN_ACCOUNT_ID}"
@@ -367,7 +370,7 @@ NODE
 INSERT INTO remember_me(hash, expire, account_id)
 VALUES (
   convert_from(decode('${TEMP_COOKIE_HASH_B64}', 'base64'), 'UTF8')::TEXT,
-  NOW() + INTERVAL '20 minutes',
+  NOW() + INTERVAL '${TEMP_COOKIE_TTL}',
   '${ADMIN_ACCOUNT_ID}'::UUID
 );
 SQL
@@ -381,6 +384,80 @@ process.stdout.write(cookie.value);
 NODE
   )"
   COOKIE_HEADER="remember_me=${cookie_value}"
+}
+
+auth_refresh_command() {
+  local cmd
+  cmd="$(q "$CLI_PATH") --api $(q "$API_URL") auth login"
+  if [[ -n "$ADMIN_EMAIL" ]]; then
+    cmd+=" --email $(q "$ADMIN_EMAIL")"
+  fi
+  printf "%s" "$cmd"
+}
+
+print_cli_auth_failure() {
+  local status="$1"
+  local output="$2"
+  cat >&2 <<EOF
+
+========================================================================
+ERROR: CLI authentication preflight failed for ${API_URL}
+========================================================================
+
+The bay release was not built or deployed. This check runs before the
+expensive upgrade steps because the later project-host upgrade would fail
+with the same credentials.
+
+Probe:
+  $(q "$CLI_PATH") --api $(q "$API_URL") --disable-env-auth-defaults --cookie '<redacted>' --output json host list --admin-view --limit 1
+
+Exit status:
+  ${status}
+
+Output:
+${output}
+
+Suggested auth refresh:
+  $(auth_refresh_command)
+
+Then rerun this upgrade command. If you used --cookie, replace it with a
+fresh remember_me cookie or use --admin-email/--admin-account-id so this
+script can create a short-lived session directly on the bay.
+========================================================================
+
+EOF
+}
+
+preflight_cli_auth() {
+  if [[ "$SKIP_HOST_UPGRADE" -ne 0 ]]; then
+    log "Skip CLI auth preflight for project host upgrade"
+    return 0
+  fi
+  [[ -x "$CLI_PATH" || -f "$CLI_PATH" ]] || die "cocalc CLI not found: $CLI_PATH"
+  create_temp_cookie
+
+  log "Preflight CLI auth for project host upgrade"
+  local output
+  local status
+  set +e
+  output="$(
+    "$CLI_PATH" \
+      --api "$API_URL" \
+      --disable-env-auth-defaults \
+      --cookie "$COOKIE_HEADER" \
+      --output json \
+      host list \
+      --admin-view \
+      --limit 1 \
+      2>&1
+  )"
+  status=$?
+  set -e
+  printf "%s\n" "$output" >"${REPORT_DIR}/auth-preflight.json"
+  if [[ "$status" -ne 0 ]] || grep -q '"ok"[[:space:]]*:[[:space:]]*false' <<<"$output"; then
+    print_cli_auth_failure "$status" "$output"
+    exit 1
+  fi
 }
 
 upgrade_project_hosts() {
@@ -434,6 +511,7 @@ main() {
     require_cmd pnpm
   fi
   mkdir -p "$REPORT_DIR"
+  preflight_cli_auth
 
   if [[ "$BUILD_BUNDLE" -eq 1 ]]; then
     build_bundle

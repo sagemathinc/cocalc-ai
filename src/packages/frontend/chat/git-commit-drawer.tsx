@@ -30,6 +30,7 @@ import {
   exportReviewBundle,
   importReviewBundle,
   loadReviewRecord,
+  loadReviewRecords,
   loadReviewDraft,
   mergeRecordWithDraft,
   type GitReviewCommentV2,
@@ -1217,12 +1218,10 @@ export function GitCommitDrawer({
     let cancelled = false;
     (async () => {
       try {
-        const entries = await Promise.all(
-          hashes.map(async (hash) => {
-            const rec = await loadReviewRecord({ accountId, commitSha: hash });
-            return [hash, rec] as const;
-          }),
-        );
+        const entries = await loadReviewRecords({
+          accountId,
+          commitShas: hashes,
+        });
         if (cancelled) return;
         setReviewedByCommit((prev) =>
           applyGitReviewedByCommitEntries({

@@ -323,6 +323,17 @@ type SpawnedCodexAppServer = {
   runtimeEnv?: Record<string, string>;
 };
 
+export type CodexAppServerAccountStatus = {
+  account?: any;
+  rateLimits?: any;
+  tokenUsage?: any;
+  errors?: {
+    account?: string;
+    rateLimits?: string;
+    tokenUsage?: string;
+  };
+};
+
 type RpcResponse = {
   id?: number;
   result?: any;
@@ -1463,6 +1474,73 @@ export async function forkCodexAppServerSession(opts: {
       throw new Error("thread/fork did not return a thread id");
     }
     return { sessionId };
+  } finally {
+    if (spawned.proc.exitCode == null && !spawned.proc.killed) {
+      spawned.proc.kill("SIGKILL");
+    }
+  }
+}
+
+function settledValue<T>(result: PromiseSettledResult<T>): {
+  value?: T;
+  error?: string;
+} {
+  if (result.status === "fulfilled") {
+    return { value: result.value };
+  }
+  return { error: `${result.reason}` };
+}
+
+export async function getCodexAppServerAccountStatus(opts: {
+  projectId?: string;
+  accountId?: string;
+  binaryPath?: string;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<CodexAppServerAccountStatus> {
+  const projectSpawner = getCodexProjectSpawner();
+  const spawned =
+    projectSpawner && opts.projectId && projectSpawner.spawnCodexAppServer
+      ? await projectSpawner.spawnCodexAppServer({
+          projectId: opts.projectId,
+          accountId: opts.accountId,
+          cwd: opts.cwd,
+          env: opts.env,
+          touchReason: false,
+        })
+      : await spawnStandaloneAppServer(
+          {
+            binaryPath: opts.binaryPath,
+            cwd: opts.cwd,
+          },
+          opts.env,
+        );
+  const client = new AppServerClient(
+    spawned.proc,
+    spawned.handleAppServerRequest,
+  );
+  try {
+    await client.initialize();
+    await loginAppServerIfNeeded(client, spawned.appServerLogin);
+    const [accountResult, rateLimitsResult, tokenUsageResult] =
+      await Promise.allSettled([
+        client.request("account/read", { refreshToken: true }),
+        client.request("account/rateLimits/read"),
+        client.request("account/usage/read"),
+      ]);
+    const account = settledValue(accountResult);
+    const rateLimits = settledValue(rateLimitsResult);
+    const tokenUsage = settledValue(tokenUsageResult);
+    const errors: CodexAppServerAccountStatus["errors"] = {};
+    if (account.error) errors.account = account.error;
+    if (rateLimits.error) errors.rateLimits = rateLimits.error;
+    if (tokenUsage.error) errors.tokenUsage = tokenUsage.error;
+    return {
+      account: account.value,
+      rateLimits: rateLimits.value,
+      tokenUsage: tokenUsage.value,
+      errors: Object.keys(errors).length ? errors : undefined,
+    };
   } finally {
     if (spawned.proc.exitCode == null && !spawned.proc.killed) {
       spawned.proc.kill("SIGKILL");

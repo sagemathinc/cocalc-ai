@@ -437,6 +437,55 @@ export async function loadReviewRecord({
   return mergeRecordWithDraft(migrated, draft);
 }
 
+export async function loadReviewRecords({
+  accountId,
+  commitShas,
+}: {
+  accountId: string;
+  commitShas: readonly string[];
+}): Promise<readonly (readonly [string, GitReviewRecordV2 | undefined])[]> {
+  const normalizedAccountId = `${accountId ?? ""}`.trim();
+  if (!normalizedAccountId) return [];
+  const commits = Array.from(
+    new Set(
+      commitShas
+        .map((commitSha) => normalizeCommitSha(commitSha))
+        .filter((commitSha): commitSha is string => commitSha != null),
+    ),
+  );
+  if (commits.length === 0) return [];
+  const kv = await getReviewBulkStore(normalizedAccountId);
+  const all = kv.getAll();
+  const now = Date.now();
+  return commits.map((commitSha) => {
+    const key = makeReviewKey(commitSha);
+    const current = key
+      ? sanitizeReviewRecord(all[key], {
+          accountId: normalizedAccountId,
+          commitSha,
+        })
+      : undefined;
+    const draft = loadReviewDraft(commitSha, normalizedAccountId);
+    if (current) {
+      return [commitSha, mergeRecordWithDraft(current, draft)] as const;
+    }
+    if (!draft) {
+      return [commitSha, undefined] as const;
+    }
+    return [
+      commitSha,
+      mergeRecordWithDraft(
+        emptyRecord({
+          accountId: normalizedAccountId,
+          commitSha,
+          now: draft.updated_at ?? now,
+        }),
+        draft,
+      ),
+    ] as const;
+  });
+}
+
 export async function saveReviewRecord(
   record: GitReviewRecordV2,
   opts?: {

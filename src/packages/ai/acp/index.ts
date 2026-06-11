@@ -22,6 +22,8 @@ export { EchoAgent, echoAgent } from "./echo";
 export {
   CodexAppServerAgent,
   forkCodexAppServerSession,
+  getCodexAppServerAccountStatus,
+  type CodexAppServerAccountStatus,
 } from "./codex-app-server";
 export {
   findSessionFile,

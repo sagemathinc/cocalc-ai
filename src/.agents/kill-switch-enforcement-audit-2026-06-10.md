@@ -83,3 +83,4 @@ Payment checkout:
 - Audit project-host-side Codex endpoints once all project-host route files are in scope; the hub gates site key and usage allowance, but project-host direct routes should still fail closed if they receive stale credentials.
 - Decide whether `launch_disable_payment_checkout` should also block payment-method mutations such as setting default payment method or editing Stripe customer metadata. Current behavior blocks new checkout/session/payment-intent creation, but still allows cleanup and user payment-method management.
 - Add a CLI/admin smoke command that toggles each launch switch and exercises one failing path.
+
