@@ -11,6 +11,25 @@ import {
   vacuumChatStore,
 } from "../../sqlite/chat-offload";
 
+const tempDirs: string[] = [];
+
+async function mkTempDir(prefix: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((dir) =>
+      fs.rm(dir, {
+        recursive: true,
+        force: true,
+      }),
+    ),
+  );
+});
+
 function makeChatRow({
   date,
   message_id,
@@ -43,7 +62,7 @@ function makeChatRow({
 
 describe("chat offload sqlite store", () => {
   it("rotates old rows, supports read/search/delete/vacuum", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "chat-offload-"));
+    const tmp = await mkTempDir("chat-offload-");
     const chatPath = path.join(tmp, "test.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const rows = [
@@ -200,9 +219,7 @@ describe("chat offload sqlite store", () => {
   });
 
   it("resumes pending rotate rewrite after transient rename failure", async () => {
-    const tmp = await fs.mkdtemp(
-      path.join(os.tmpdir(), "chat-offload-resume-"),
-    );
+    const tmp = await mkTempDir("chat-offload-resume-");
     const chatPath = path.join(tmp, "resume.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const rows = [
@@ -258,9 +275,7 @@ describe("chat offload sqlite store", () => {
   });
 
   it("keeps thread root anchor when a reply remains in head", async () => {
-    const tmp = await fs.mkdtemp(
-      path.join(os.tmpdir(), "chat-offload-anchor-"),
-    );
+    const tmp = await mkTempDir("chat-offload-anchor-");
     const chatPath = path.join(tmp, "anchor.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const threadId = "thread-anchor-1";
@@ -327,9 +342,7 @@ describe("chat offload sqlite store", () => {
   });
 
   it("preserves thread-config rows and records archived message counts", async () => {
-    const tmp = await fs.mkdtemp(
-      path.join(os.tmpdir(), "chat-offload-threadcfg-"),
-    );
+    const tmp = await mkTempDir("chat-offload-threadcfg-");
     const chatPath = path.join(tmp, "threadcfg.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const threadId = "thread-cfg-1";
@@ -382,9 +395,7 @@ describe("chat offload sqlite store", () => {
   });
 
   it("can apply rotated head changes through a callback instead of rewriting the file", async () => {
-    const tmp = await fs.mkdtemp(
-      path.join(os.tmpdir(), "chat-offload-live-head-"),
-    );
+    const tmp = await mkTempDir("chat-offload-live-head-");
     const chatPath = path.join(tmp, "live-head.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const threadId = "thread-live-1";
@@ -450,9 +461,7 @@ describe("chat offload sqlite store", () => {
   });
 
   it("resumes pending live head application through the callback path", async () => {
-    const tmp = await fs.mkdtemp(
-      path.join(os.tmpdir(), "chat-offload-live-resume-"),
-    );
+    const tmp = await mkTempDir("chat-offload-live-resume-");
     const chatPath = path.join(tmp, "live-resume.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const rows = [
@@ -531,9 +540,7 @@ describe("chat offload sqlite store", () => {
   });
 
   it("does not fall back to raw file rewrite for pending live head apply", async () => {
-    const tmp = await fs.mkdtemp(
-      path.join(os.tmpdir(), "chat-offload-live-no-fallback-"),
-    );
+    const tmp = await mkTempDir("chat-offload-live-no-fallback-");
     const chatPath = path.join(tmp, "live-no-fallback.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const rows = [

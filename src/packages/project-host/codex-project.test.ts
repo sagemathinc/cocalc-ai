@@ -114,6 +114,25 @@ class FakeProc extends EventEmitter {
   stdin = new PassThrough();
 }
 
+const tempDirs: string[] = [];
+
+async function mkTempDir(prefix: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((dir) =>
+      fs.rm(dir, {
+        recursive: true,
+        force: true,
+      }),
+    ),
+  );
+});
+
 function jwt(payload: Record<string, unknown>): string {
   const enc = (obj: Record<string, unknown>) =>
     Buffer.from(JSON.stringify(obj))
@@ -167,7 +186,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const bin = path.join(tmp, "bin");
     await fs.mkdir(bin, { recursive: true });
     await fs.writeFile(path.join(bin, "codex"), "");
@@ -276,7 +295,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const bin = path.join(tmp, "bin");
     await fs.mkdir(bin, { recursive: true });
     await fs.writeFile(path.join(bin, "codex"), "");
@@ -333,7 +352,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const bin = path.join(tmp, "bin");
     await fs.mkdir(bin, { recursive: true });
     await fs.writeFile(path.join(bin, "codex"), "");
@@ -398,7 +417,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const bin = path.join(tmp, "bin");
     await fs.mkdir(bin, { recursive: true });
     await fs.writeFile(path.join(bin, "codex"), "");
@@ -442,7 +461,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const bin = path.join(tmp, "bin");
     const cliDir = path.join(tmp, "cli");
     await fs.mkdir(bin, { recursive: true });
@@ -499,7 +518,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const home = path.join(tmp, "home");
     await fs.mkdir(home, { recursive: true });
     const codexHome = path.join(tmp, "subscription-home");
@@ -574,7 +593,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const bin = path.join(tmp, "bin");
     await fs.mkdir(bin, { recursive: true });
     await fs.writeFile(path.join(bin, "codex"), "");
@@ -624,7 +643,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const bin = path.join(tmp, "bin");
     await fs.mkdir(bin, { recursive: true });
     await fs.writeFile(path.join(bin, "codex"), "");
@@ -666,7 +685,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const home = path.join(tmp, "home");
     await fs.mkdir(home, { recursive: true });
     const codexHome = path.join(tmp, "subscription-home");
@@ -760,7 +779,7 @@ describe("initCodexProjectRunner", () => {
       state: "opened",
       run_quota: {},
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const home = path.join(tmp, "home");
     await fs.mkdir(home, { recursive: true });
     filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
@@ -804,7 +823,7 @@ describe("initCodexProjectRunner", () => {
       state: "running",
       run_quota: {},
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const home = path.join(tmp, "home");
     await fs.mkdir(home, { recursive: true });
     filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
@@ -850,7 +869,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const home = path.join(tmp, "home");
     await fs.mkdir(home, { recursive: true });
     filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
@@ -883,7 +902,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const home = path.join(tmp, "home");
     const sharedHome = path.join(tmp, "shared-home");
     await fs.mkdir(home, { recursive: true });
@@ -920,7 +939,7 @@ describe("initCodexProjectRunner", () => {
       }
       cb(null, "", "");
     });
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const tmp = await mkTempDir("codex-project-test-");
     const home = path.join(tmp, "home");
     await fs.mkdir(home, { recursive: true });
     filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
@@ -965,7 +984,7 @@ describe("getBuiltinLaunchpadSkillMounts", () => {
   });
 
   it("injects the built-in cocalc skill when the project does not already have it", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-skill-test-"));
+    const tmp = await mkTempDir("codex-skill-test-");
     const hostHome = path.join(tmp, "host-home");
     const projectHome = path.join(tmp, "project-home");
     const hostSkill = path.join(hostHome, ".codex", "skills", "cocalc");
@@ -988,7 +1007,7 @@ describe("getBuiltinLaunchpadSkillMounts", () => {
   });
 
   it("does not override a project-local cocalc skill", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-skill-test-"));
+    const tmp = await mkTempDir("codex-skill-test-");
     const hostHome = path.join(tmp, "host-home");
     const projectHome = path.join(tmp, "project-home");
     const hostSkill = path.join(hostHome, ".codex", "skills", "cocalc");

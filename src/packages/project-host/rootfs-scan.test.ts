@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,6 +21,20 @@ const target = {
   runtime_image: "cocalc.local/rootfs/content-1",
   size_bytes: 1024,
 };
+
+const tempDirs: string[] = [];
+
+async function mkTempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
+});
 
 function mountDestination(args: string[], destination: string): string {
   const prefix = `dst=${destination}`;
@@ -102,7 +116,7 @@ describe("buildRootfsTrivyDbSeedPodmanArgs", () => {
 
 describe("ensureRootfsTrivyScannerPrepared", () => {
   it("pulls a missing scanner image and seeds the Trivy cache", async () => {
-    const base = await mkdtemp(join(tmpdir(), "rootfs-scan-setup-test-"));
+    const base = await mkTempDir("rootfs-scan-setup-test-");
     const cache = join(base, "trivy-cache");
     const calls: Array<{ command: string; args: string[] }> = [];
     const runner: CommandRunner = async (command, args) => {
@@ -131,7 +145,7 @@ describe("ensureRootfsTrivyScannerPrepared", () => {
   });
 
   it("skips database seeding when the cache is already present", async () => {
-    const base = await mkdtemp(join(tmpdir(), "rootfs-scan-setup-test-"));
+    const base = await mkTempDir("rootfs-scan-setup-test-");
     const cache = join(base, "trivy-cache");
     await mkdir(join(cache, "db"), { recursive: true });
     await writeFile(join(cache, "db", "metadata.json"), "{}");
@@ -153,7 +167,7 @@ describe("ensureRootfsTrivyScannerPrepared", () => {
   });
 
   it("refreshes scanner image and database cache when requested", async () => {
-    const base = await mkdtemp(join(tmpdir(), "rootfs-scan-setup-test-"));
+    const base = await mkTempDir("rootfs-scan-setup-test-");
     const cache = join(base, "trivy-cache");
     await mkdir(join(cache, "db"), { recursive: true });
     await writeFile(join(cache, "db", "metadata.json"), "{}");
@@ -184,7 +198,7 @@ describe("ensureRootfsTrivyScannerPrepared", () => {
 
 describe("runRootfsTrivyScan", () => {
   it("runs podman and parses the report from the output mount", async () => {
-    const base = await mkdtemp(join(tmpdir(), "rootfs-scan-test-"));
+    const base = await mkTempDir("rootfs-scan-test-");
     const rootfs = join(base, "rootfs");
     const cache = join(base, "trivy-cache");
     await mkdir(rootfs);
