@@ -1,44 +1,46 @@
-# Secure Modern CoCalc CRM Plan
+# Secure Modern Admin Data Explorer Plan
 
 Status: design and implementation plan.
 
 Target: replace the legacy `.cocalc-crm` admin database browser with a secure,
-fresh-auth, multi-bay-aware admin CRM that preserves the useful file-backed view
-model while removing dependence on generic `user_query` and legacy Postgres
-changefeeds.
+fresh-auth, multi-bay-aware Admin Data Explorer that preserves the useful
+file-backed view model while removing dependence on generic `user_query` and
+legacy Postgres changefeeds.
 
 ## Context
 
-The existing CRM editor is valuable. It stores table tabs, views, filters, sort
-orders, hidden fields, column widths, and other UI state in a `.cocalc-crm`
-syncdb file. That makes it easy for admins to build operational views without
-hardcoding every dashboard.
+The existing legacy CRM editor is valuable. It stores table tabs, views,
+filters, sort orders, hidden fields, column widths, and other UI state in a
+`.cocalc-crm` syncdb file. That makes it easy for admins to build operational
+views without hardcoding every dashboard.
 
 The problem is the data access model:
 
 - The frontend calls `webapp_client.query_client.query` and
   `webapp_client.async_query`.
 - Reads and writes go through generic `user_query`.
-- Some CRM tables ask for `changes: true`, which depends on a legacy user-query
-  changefeed path that cocalc-ai has removed.
+- Some legacy CRM tables ask for `changes: true`, which depends on a legacy
+  user-query changefeed path that cocalc-ai has removed.
 - The API is admin-gated by schema metadata, but it is not a dedicated
   fresh-auth admin RPC.
 - It is not explicit about multi-bay ownership, project-host routing, query
   limits, auditing, or operational intent.
 
-The modern CRM should keep the best part of the old system: file-backed,
-shareable, editable views. The query execution layer should be replaced.
+The Admin Data Explorer should keep the best part of the old system:
+file-backed, shareable, editable views. The query execution layer should be
+replaced.
 
 ## Goals
 
-- Keep `.cocalc-crm` as a file type for saved admin views.
+- Use `.cocalc-admin-data` as the file type for saved admin views.
 - Make the editor explicitly admin-only.
-- Replace generic `user_query` with explicit admin CRM RPCs.
-- Require fresh auth for CRM access, with stricter requirements for mutations.
+- Replace generic `user_query` with explicit Admin Data Explorer RPCs.
+- Require fresh auth for Admin Data Explorer access, with stricter requirements
+  for mutations.
 - Make query scopes explicit and multi-bay aware.
 - Add curated project-host/runtime datasets, not just Postgres table views.
 - Enforce hard limits on rows, fields, filters, sort, and execution time.
-- Audit every CRM query and mutation.
+- Audit every Admin Data Explorer query and mutation.
 - Make failure modes visible in the UI instead of silent loading states.
 - Provide a migration path for existing `.cocalc-crm` files.
 
@@ -47,7 +49,8 @@ shareable, editable views. The query execution layer should be replaced.
 - Do not expose arbitrary SQL in the browser.
 - Do not revive generic `user_query` changefeeds.
 - Do not make the hub proxy project data-plane traffic.
-- Do not make `.cocalc-crm` files grant permissions. They are only view state.
+- Do not make `.cocalc-admin-data` files grant permissions. They are only view
+  state.
 - Do not require full multi-bay production before a useful single-bay MVP.
 
 ## Current Architecture Summary
@@ -77,28 +80,30 @@ should be replaced.
 
 ### Permissions
 
-Opening a `.cocalc-crm` file should require:
+Opening a `.cocalc-admin-data` file should require:
 
 - signed-in account,
 - admin group membership,
-- fresh-auth session for active CRM access.
+- fresh-auth session for active Admin Data Explorer access.
 
-The file may live in a project, but project collaboration must not grant CRM
-access. Non-admin collaborators should see a clear access-denied state.
+The file may live in a project, but project collaboration must not grant Admin
+Data Explorer access. Non-admin collaborators should see a clear access-denied
+state.
 
 ### Fresh Auth
 
 Recommended policy:
 
-- Read-only CRM session: require fresh auth at editor activation, then allow
-  reads for a short window, e.g. 15 minutes.
+- Read-only Admin Data Explorer session: require fresh auth at editor
+  activation, then allow reads for a short window, e.g. 15 minutes.
 - Mutations: require fresh auth per mutation or within a shorter window, e.g.
   5 minutes.
 - Sensitive mutations, such as banning accounts, changing balances, changing
   site-license state, deleting records, or host operations: require fresh auth
   and explicit confirmation.
-- Impersonated sessions should be blocked from direct CRM mutations unless there
-  is a deliberate support workflow with separate audit semantics.
+- Impersonated sessions should be blocked from direct Admin Data Explorer
+  mutations unless there is a deliberate support workflow with separate audit
+  semantics.
 
 Use the existing dangerous/fresh-auth framework:
 
@@ -107,18 +112,18 @@ Use the existing dangerous/fresh-auth framework:
 
 ### Audit
 
-Every CRM operation should produce a durable audit record:
+Every Admin Data Explorer operation should produce a durable audit record:
 
 - actor account id,
 - session hash or fresh-auth proof identifier,
 - operation type: read, export, mutation, host action,
-- CRM view id or dataset id,
+- Admin Data Explorer view id or dataset id,
 - query filters, sort, limit, and selected fields,
 - target scope: local bay, all bays, specific bay, account, project, host,
 - row count returned or changed,
 - duration,
 - success/error,
-- client context: project id and file path for the `.cocalc-crm` file.
+- client context: project id and file path for the `.cocalc-admin-data` file.
 
 Do not log full row results by default. Some rows include private or regulated
 data.
@@ -128,19 +133,19 @@ data.
 Add a dedicated hub API namespace, for example:
 
 ```ts
-hub.adminCrm.listDatasets(opts)
-hub.adminCrm.query(opts)
-hub.adminCrm.export(opts)
-hub.adminCrm.mutate(opts)
-hub.adminCrm.getRecord(opts)
-hub.adminCrm.getFacetCounts(opts)
+hub.adminDataExplorer.listDatasets(opts)
+hub.adminDataExplorer.query(opts)
+hub.adminDataExplorer.export(opts)
+hub.adminDataExplorer.mutate(opts)
+hub.adminDataExplorer.getRecord(opts)
+hub.adminDataExplorer.getFacetCounts(opts)
 ```
 
 The corresponding public Conat API wrapper should be explicit:
 
 ```ts
-// packages/conat/hub/api/admin-crm.ts
-export const adminCrm = {
+// packages/conat/hub/api/admin-data-explorer.ts
+export const adminDataExplorer = {
   listDatasets: authFirstRequireAccount,
   query: authFirstRequireAccount,
   export: authFirstRequireAccount,
@@ -153,13 +158,13 @@ export const adminCrm = {
 Server implementations should live under:
 
 ```text
-packages/server/conat/api/admin-crm/
+packages/server/conat/api/admin-data-explorer/
 ```
 
 Core server entry points:
 
 ```ts
-type CrmScope =
+type AdminDataScope =
   | { type: "local_bay" }
   | { type: "all_bays" }
   | { type: "bay"; bay_id: string }
@@ -167,12 +172,12 @@ type CrmScope =
   | { type: "project_owner"; project_id: string }
   | { type: "host"; host_id: string };
 
-type CrmQuery = {
+type AdminDataQuery = {
   dataset: string;
-  scope: CrmScope;
+  scope: AdminDataScope;
   fields?: string[];
-  filters?: CrmFilter[];
-  sort?: CrmSort[];
+  filters?: AdminDataFilter[];
+  sort?: AdminDataSort[];
   limit?: number;
   cursor?: string;
   session_hash?: string;
@@ -184,7 +189,8 @@ string.
 
 ## Dataset Registry
 
-Replace frontend-owned query objects with a server-owned CRM dataset registry.
+Replace frontend-owned query objects with a server-owned Admin Data Explorer
+dataset registry.
 
 Example:
 
@@ -269,9 +275,13 @@ Pagination:
 - use cursor pagination, not offset for large tables.
 - cursor should encode server-validated dataset, sort, and last row key.
 
+USER: the current legacy implementation has graphical UI for doing queries: <img src="/blobs/paste-e00kjblm8o4.png?uuid=98036e77-fe37-4757-88e6-5aa63adb8174"   width="760px"  height="214px"  style="object-fit:cover"/>
+
+however, they are only _AND_ queries, and I never implemented _OR_ queries.  This was often a very frustrating limitation, so it would be nice to remove that.      
+
 ## Multi-Bay Routing
 
-CRM queries must say where data is authoritative.
+Admin Data Explorer queries must say where data is authoritative.
 
 ### Local Bay
 
@@ -282,7 +292,7 @@ Reads the current bay database. This is the single-bay launchpad/Rocket MVP.
 For account-specific operational views:
 
 1. Resolve `account_id -> home_bay_id`.
-2. Route the CRM query to that bay.
+2. Route the Admin Data Explorer query to that bay.
 3. Return normalized rows to the current browser session.
 
 ### Project Owning Bay
@@ -309,7 +319,7 @@ bay is missing.
 
 ## Project Host Awareness
 
-The modern CRM should include first-class host/runtime datasets.
+The modern Admin Data Explorer should include first-class host/runtime datasets.
 
 Initial datasets:
 
@@ -348,18 +358,19 @@ crm-editor/querydb/set.ts
 with:
 
 ```text
-crm-editor/api/use-crm-query.ts
-crm-editor/api/crm-client.ts
-crm-editor/api/use-crm-mutation.ts
+data-explorer-editor/api/use-admin-data-query.ts
+data-explorer-editor/api/admin-data-client.ts
+data-explorer-editor/api/use-admin-data-mutation.ts
 ```
 
 The new frontend flow:
 
-1. On editor open, call `adminCrm.listDatasets`.
+1. On editor open, call `adminDataExplorer.listDatasets`.
 2. If not admin or no fresh auth, show a clear access/fresh-auth panel.
-3. Load saved view state from the `.cocalc-crm` syncdb file.
-4. Convert saved legacy table names to new dataset ids when possible.
-5. Query via `adminCrm.query`.
+3. Load saved view state from the `.cocalc-admin-data` syncdb file.
+4. Convert saved legacy table names from `.cocalc-crm` files to new dataset ids
+   when possible.
+5. Query via `adminDataExplorer.query`.
 6. Show explicit errors, partial bay failures, and stale data indicators.
 7. Refresh via manual refresh or polling, not database changefeeds.
 
@@ -384,7 +395,7 @@ Stored records should include:
   name: string;
   type: "grid" | "gallery" | "kanban" | "calendar" | "retention";
   pos: number;
-  scope?: CrmScope;
+  scope?: AdminDataScope;
 }
 ```
 
@@ -413,7 +424,7 @@ Mutations should be dataset-specific operations, not generic set queries.
 Examples:
 
 ```ts
-adminCrm.mutate({
+adminDataExplorer.mutate({
   dataset: "accounts",
   operation: "set_notes",
   key: { account_id },
@@ -442,8 +453,9 @@ Every mutation needs:
 - server-side validation,
 - clear UI confirmation if dangerous.
 
-The CRM should not reimplement operational actions. It should call the same
-authoritative server functions used by admin pages and CLI commands.
+The Admin Data Explorer should not reimplement operational actions. It should
+call the same authoritative server functions used by admin pages and CLI
+commands.
 
 ## Live Updates
 
@@ -456,12 +468,12 @@ Options, in order:
 3. Account/bay/host operational streams from existing Conat subjects where they
    already exist.
 
-For all-bay CRM views, polling is much easier to reason about than fanout
-changefeeds.
+For all-bay Admin Data Explorer views, polling is much easier to reason about
+than fanout changefeeds.
 
 ## UI Requirements
 
-Admin CRM should make authority and freshness visible.
+Admin Data Explorer should make authority and freshness visible.
 
 Each view should show:
 
@@ -493,10 +505,10 @@ Every query must have timeout and error UI.
 
 ### Phase 0: Stabilize Existing Editor
 
-Goal: stop the current CRM from hanging while the new API is built.
+Goal: stop the current legacy CRM from hanging while the new API is built.
 
-- Add a visible admin-only gate around the existing CRM editor.
-- Disable `changes: true` for CRM queries or force it off in `useTable`.
+- Add a visible admin-only gate around the existing legacy CRM editor.
+- Disable `changes: true` for legacy CRM queries or force it off in `useTable`.
 - Add query timeout handling and a clear error if the old query path fails.
 - Keep this as a temporary compatibility mode.
 
@@ -510,7 +522,7 @@ Exit criteria:
 
 Goal: define the server-owned dataset model.
 
-- Add `packages/server/conat/api/admin-crm/datasets.ts`.
+- Add `packages/server/conat/api/admin-data-explorer/datasets.ts`.
 - Add field metadata, filter metadata, default fields, default sort, limits.
 - Implement local-bay Postgres read datasets for:
   - accounts,
@@ -523,17 +535,18 @@ Goal: define the server-owned dataset model.
 
 Exit criteria:
 
-- Server can validate a CRM query without executing SQL.
+- Server can validate an Admin Data Explorer query without executing SQL.
 - Invalid fields, filters, sorts, and limits are rejected.
 
 ### Phase 2: Fresh-Auth RPC
 
-Goal: expose safe read-only CRM query RPCs.
+Goal: expose safe read-only Admin Data Explorer query RPCs.
 
-- Add `packages/conat/hub/api/admin-crm.ts`.
-- Add server implementation under `packages/server/conat/api/admin-crm`.
+- Add `packages/conat/hub/api/admin-data-explorer.ts`.
+- Add server implementation under
+  `packages/server/conat/api/admin-data-explorer`.
 - Require admin permission.
-- Require fresh-auth for CRM session activation or query.
+- Require fresh-auth for Admin Data Explorer session activation or query.
 - Add audit logging.
 - Register dangerous/fresh-auth decisions.
 - Implement `listDatasets` and `query`.
@@ -546,26 +559,28 @@ Exit criteria:
 
 ### Phase 3: Frontend Data-Layer Migration
 
-Goal: switch CRM reads to the new RPC.
+Goal: switch Admin Data Explorer reads to the new RPC.
 
-- Add `crm-editor/api/crm-client.ts`.
-- Add `useCrmQuery`.
+- Add `data-explorer-editor/api/admin-data-client.ts`.
+- Add `useAdminDataQuery`.
 - Convert table descriptors from `query` objects to `dataset` ids.
 - Keep presentation metadata in the frontend.
 - Add legacy `dbtable -> dataset` migration.
-- Remove dependence on `webapp_client.query_client.query` for CRM reads.
+- Remove dependence on `webapp_client.query_client.query` for Admin Data
+  Explorer reads.
 
 Exit criteria:
 
-- Existing `.cocalc-crm` files can open against the new read API.
+- Existing `.cocalc-crm` files can open against the new read API and migrate to
+  `.cocalc-admin-data`.
 - Saved views still work after mapping old table ids.
 
 ### Phase 4: Mutations
 
-Goal: replace generic CRM writes.
+Goal: replace generic legacy CRM writes.
 
 - Add dataset-specific mutation definitions.
-- Add `adminCrm.mutate`.
+- Add `adminDataExplorer.mutate`.
 - Add fresh-auth per mutation.
 - Add audit logging for every mutation.
 - Migrate editable fields to mutation calls.
@@ -573,13 +588,13 @@ Goal: replace generic CRM writes.
 
 Exit criteria:
 
-- Admin can edit notes/tags through CRM.
+- Admin can edit notes/tags through Admin Data Explorer.
 - Dangerous account/project/host actions are not exposed until each has a
   dedicated operation and confirmation UI.
 
 ### Phase 5: Multi-Bay Routing
 
-Goal: make CRM work beyond single-bay.
+Goal: make Admin Data Explorer work beyond single-bay.
 
 - Add scope metadata per dataset.
 - Implement `local_bay`, `account_home`, and `project_owner`.
@@ -595,7 +610,8 @@ Exit criteria:
 
 ### Phase 6: Project Host Datasets
 
-Goal: make CRM useful for operations, not just Postgres browsing.
+Goal: make Admin Data Explorer useful for operations, not just Postgres
+browsing.
 
 - Add host/project runtime datasets backed by host APIs and hub metadata.
 - Add project start and UX latency datasets.
@@ -604,7 +620,7 @@ Goal: make CRM useful for operations, not just Postgres browsing.
 
 Exit criteria:
 
-- CRM can answer operational questions like:
+- Admin Data Explorer can answer operational questions like:
   - Which projects are burning resources?
   - Which hosts have stale software?
   - Which projects failed backups?
@@ -637,7 +653,7 @@ Frontend tests:
 
 Manual smoke:
 
-- create `.cocalc-crm`,
+- create `.cocalc-admin-data`,
 - add Accounts dataset,
 - filter by email/domain,
 - add Projects dataset,
@@ -653,17 +669,17 @@ Do not delete the old CRM implementation immediately.
 Recommended sequence:
 
 1. Stabilize old editor enough to avoid hangs.
-2. Add new admin CRM RPCs.
+2. Add new Admin Data Explorer RPCs.
 3. Add new frontend data client behind a feature flag.
 4. Migrate read-only datasets.
 5. Migrate safe mutations.
-6. Remove generic CRM `user_query` reads/writes.
+6. Remove generic legacy CRM `user_query` reads/writes.
 7. Delete dead changefeed compatibility code.
 
 Feature flag:
 
 ```text
-admin_crm_modern_api_enabled
+admin_data_explorer_enabled
 ```
 
 If disabled, show a clear message rather than silently falling back to unsafe
@@ -671,24 +687,26 @@ generic queries in production.
 
 ## Open Questions
 
-- Should `.cocalc-crm` be creatable only inside admin-owned projects?
-- Should CRM files support shared saved views among admins through a central
-  registry instead of project files?
-- What is the fresh-auth duration for read-only CRM sessions?
+- Should `.cocalc-admin-data` be creatable only inside admin-owned projects?
+- Should Admin Data Explorer files support shared saved views among admins
+  through a central registry instead of project files?
+- What is the fresh-auth duration for read-only Admin Data Explorer sessions?
 - Which datasets are safe for all-bay fanout during launch?
 - Should exports be allowed before launch, or only on the CLI?
-- Should broad account/project CRM reads be rate-limited per admin account?
-- Which CRM mutations should be supported first: notes/tags, account ban,
-  account quarantine, project stop, or host drain?
+- Should broad account/project Admin Data Explorer reads be rate-limited per
+  admin account?
+- Which Admin Data Explorer mutations should be supported first: notes/tags,
+  account ban, account quarantine, project stop, or host drain?
 
 ## Recommendation
 
 Do this in two tracks:
 
-1. Immediate compatibility: disable CRM changefeeds, add admin/fresh-auth/error
-   gates, and make the current editor stop hanging.
-2. Modern replacement: build `adminCrm` RPCs and migrate datasets one by one.
+1. Immediate compatibility: disable legacy CRM changefeeds, add
+   admin/fresh-auth/error gates, and make the current editor stop hanging.
+2. Modern replacement: build `adminDataExplorer` RPCs and migrate datasets one
+   by one.
 
-The first useful modern CRM can be read-only, local-bay only, and polling-based.
-That is enough to restore the incident-response value without reintroducing the
-generic query/changefeed risk.
+The first useful Admin Data Explorer can be read-only, local-bay only, and
+polling-based. That is enough to restore the incident-response value without
+reintroducing the generic query/changefeed risk.
