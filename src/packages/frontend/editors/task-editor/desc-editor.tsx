@@ -87,6 +87,13 @@ export default function DescriptionEditor({
           setLocalValue(desc);
           commit();
         }}
+        onFontSizeChange={(delta) => {
+          if (delta < 0) {
+            actions.decrease_font_size();
+          } else {
+            actions.increase_font_size();
+          }
+        }}
         getValueRef={getValueRef}
         fontSize={font_size}
         onShiftEnter={saveAndClose}

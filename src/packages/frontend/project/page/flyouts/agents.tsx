@@ -1965,6 +1965,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 project_id={project_id}
                 path={inlineSession.chat_path}
                 fontSize={fontSize}
+                onIncreaseFontSize={increaseFontSize}
+                onDecreaseFontSize={decreaseFontSize}
                 hideSidebar
                 desc={inlineDesc}
               />
@@ -2018,6 +2020,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 setGitBrowserThreadKey(undefined);
               }}
               fontSize={fontSize}
+              onIncreaseFontSize={increaseFontSize}
+              onDecreaseFontSize={decreaseFontSize}
               onRequestAgentTurn={(prompt) => {
                 const trimmed = `${prompt ?? ""}`.trim();
                 const threadId =

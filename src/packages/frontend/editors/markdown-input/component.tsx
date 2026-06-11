@@ -87,6 +87,8 @@ interface Props {
   submitMentionsRef?: SubmitMentionsRef;
   style?: CSSProperties;
   onShiftEnter?: (value: string) => void; // also ctrl/alt/cmd-enter call this; see https://github.com/sagemathinc/cocalc/issues/1914
+  onCtrlEnter?: (value: string) => void;
+  onFontSizeChange?: (delta: -1 | 1) => void;
   onAltEnter?: (value: string, pos: { line: number; ch: number }) => void;
   onEscape?: () => void;
   onBlur?: (value: string) => void;
@@ -160,6 +162,8 @@ export function MarkdownInput(props: Props) {
     onFocus,
     onSelectionReady,
     onAltEnter,
+    onCtrlEnter,
+    onFontSizeChange,
     onRedo,
     onSave,
     onShiftEnter,
@@ -218,7 +222,17 @@ export function MarkdownInput(props: Props) {
   const upload_close_preview_ref = useRef<Function | null>(null);
   const current_uploads_ref = useRef<{ [name: string]: boolean } | null>(null);
   const [isFocusedStyle, setIsFocusedStyle] = useState<boolean>(!!autoFocus);
+  const onCtrlEnterRef = useRef<typeof onCtrlEnter>(onCtrlEnter);
+  const onFontSizeChangeRef = useRef<typeof onFontSizeChange>(onFontSizeChange);
   const isFocusedRef = useRef<boolean>(!!autoFocus);
+
+  useEffect(() => {
+    onCtrlEnterRef.current = onCtrlEnter;
+  }, [onCtrlEnter]);
+
+  useEffect(() => {
+    onFontSizeChangeRef.current = onFontSizeChange;
+  }, [onFontSizeChange]);
 
   const [mentions, set_mentions] = useState<undefined | Item[]>(undefined);
   const [mentions_offset, set_mentions_offset] = useState<
@@ -602,6 +616,19 @@ export function MarkdownInput(props: Props) {
       const extraKeys: CodeMirror.KeyMap = {};
       const shiftEnterHandler =
         onShiftEnter != null ? (cm) => onShiftEnter(cm.getValue()) : undefined;
+      const ctrlEnterHandler: EventHandlerFunction = (cm) => {
+        const handler = onCtrlEnterRef.current;
+        if (handler != null) {
+          handler(cm.getValue());
+          return;
+        }
+        shiftEnterHandler?.(cm);
+      };
+      const fontSizeHandler =
+        (delta: -1 | 1): EventHandlerFunction =>
+        (_cm) => {
+          onFontSizeChangeRef.current?.(delta);
+        };
       const altEnterHandler =
         onAltEnter != null
           ? (cm) => {
@@ -611,15 +638,27 @@ export function MarkdownInput(props: Props) {
           : undefined;
       if (shiftEnterHandler != null) {
         extraKeys["Shift-Enter"] = shiftEnterHandler;
-        extraKeys["Ctrl-Enter"] = shiftEnterHandler;
+        extraKeys["Ctrl-Enter"] = ctrlEnterHandler;
         if (altEnterHandler == null) {
           extraKeys["Alt-Enter"] = shiftEnterHandler;
           extraKeys["Cmd-Enter"] = shiftEnterHandler;
         }
+      } else if (onCtrlEnter != null) {
+        extraKeys["Ctrl-Enter"] = ctrlEnterHandler;
       }
       if (altEnterHandler != null) {
         extraKeys["Alt-Enter"] = altEnterHandler;
         extraKeys["Cmd-Enter"] = altEnterHandler;
+      }
+      if (onFontSizeChangeRef.current != null) {
+        extraKeys["Ctrl-Shift-,"] = fontSizeHandler(-1);
+        extraKeys["Cmd-Shift-,"] = fontSizeHandler(-1);
+        extraKeys["Ctrl-Shift-<"] = fontSizeHandler(-1);
+        extraKeys["Cmd-Shift-<"] = fontSizeHandler(-1);
+        extraKeys["Ctrl-Shift-."] = fontSizeHandler(1);
+        extraKeys["Cmd-Shift-."] = fontSizeHandler(1);
+        extraKeys["Ctrl-Shift->"] = fontSizeHandler(1);
+        extraKeys["Cmd-Shift->"] = fontSizeHandler(1);
       }
       if (onEscape != null) {
         extraKeys["Esc"] = () => {

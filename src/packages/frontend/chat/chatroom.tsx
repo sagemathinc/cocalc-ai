@@ -511,6 +511,8 @@ export interface ChatPanelProps {
     control: ChatInputControl | null,
     root: ParentNode | null,
   ) => void;
+  onIncreaseFontSize?: () => void;
+  onDecreaseFontSize?: () => void;
   readOnly?: boolean;
 }
 
@@ -557,6 +559,8 @@ export function ChatPanel({
   isVisible = true,
   tabIsVisible = true,
   onComposerReady,
+  onIncreaseFontSize,
+  onDecreaseFontSize,
   readOnly = false,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
@@ -2240,6 +2244,8 @@ export function ChatPanel({
             setInput={setComposerInput}
             on_send={on_send}
             on_send_immediately={on_send_immediately}
+            onIncreaseFontSize={onIncreaseFontSize}
+            onDecreaseFontSize={onDecreaseFontSize}
             submitMentionsRef={submitMentionsRef}
             hasInput={hasInput}
             isSelectedThreadAI={isSelectedThreadAI}
@@ -2377,6 +2383,8 @@ export function ChatPanel({
               setGitBrowserThreadKey(undefined);
             }}
             fontSize={fontSize}
+            onIncreaseFontSize={onIncreaseFontSize}
+            onDecreaseFontSize={onDecreaseFontSize}
             onRequestAgentTurn={sendGitBrowserAgentPrompt}
             onDirectCommitLogged={logGitBrowserDirectCommit}
             onFindInChat={findCommitInCurrentChat}
@@ -2390,6 +2398,8 @@ export function ChatPanel({
 
 function ChatRoomInner({
   actions,
+  editor_actions,
+  id,
   project_id,
   path,
   font_size,
@@ -2414,6 +2424,8 @@ function ChatRoomInner({
       docVersion={version}
       readStateVersion={readStateVersion}
       fontSize={font_size}
+      onIncreaseFontSize={() => editor_actions?.increase_font_size?.(id)}
+      onDecreaseFontSize={() => editor_actions?.decrease_font_size?.(id)}
       desc={desc}
       variant="default"
       onFocus={onFocus}
