@@ -102,6 +102,36 @@ function normalizeObservedVersion(value: unknown): string | undefined {
   return undefined;
 }
 
+function observedInstalledBootstrapVersionFromRow(
+  row: any,
+): string | undefined {
+  const lifecycleInstalled = Array.isArray(
+    row?.metadata?.bootstrap_lifecycle?.items,
+  )
+    ? row.metadata.bootstrap_lifecycle.items.find(
+        (item: any) => `${item?.key ?? ""}`.trim() === "bootstrap",
+      )?.installed
+    : undefined;
+  return normalizeObservedVersion(lifecycleInstalled);
+}
+
+function versionsMatch({
+  desired,
+  installed,
+}: {
+  desired?: string;
+  installed?: string;
+}): boolean {
+  const normalizedDesired = normalizeObservedVersion(desired);
+  const normalizedInstalled = normalizeObservedVersion(installed);
+  if (!normalizedDesired || !normalizedInstalled) return false;
+  return (
+    normalizedDesired === normalizedInstalled ||
+    normalizedDesired.startsWith(normalizedInstalled) ||
+    normalizedInstalled.startsWith(normalizedDesired)
+  );
+}
+
 async function fetchTextWithTimeout(
   url: string,
   timeoutMs: number,
@@ -623,15 +653,27 @@ export async function upgradeHostSoftwareInternalHelper({
       rollout_target_version: explicitProjectHostTargetVersion,
     });
   }
+  const installedBootstrapVersion =
+    observedInstalledBootstrapVersionFromRow(row);
   const bootstrapRuntimeDeployments = await Promise.all(
-    bootstrapTargets.map(async (target) => ({
-      target_type: "artifact" as const,
-      target: "bootstrap-environment" as const,
-      desired_version: await resolveBootstrapUpgradeVersion({
+    bootstrapTargets.map(async (target) => {
+      const desired_version = await resolveBootstrapUpgradeVersion({
         target,
         resolvedBaseUrl,
-      }),
-    })),
+      });
+      const status = versionsMatch({
+        desired: desired_version,
+        installed: installedBootstrapVersion,
+      })
+        ? ("noop" as const)
+        : ("updated" as const);
+      return {
+        target_type: "artifact" as const,
+        target: "bootstrap-environment" as const,
+        desired_version,
+        status,
+      };
+    }),
   );
   if (!availability.online && supportsBootstrapFallback) {
     logWarn(
@@ -701,11 +743,14 @@ export async function upgradeHostSoftwareInternalHelper({
     ...bootstrapRuntimeDeployments.map((deployment) => ({
       artifact: deployment.target,
       version: deployment.desired_version,
-      status: "updated" as const,
+      status: deployment.status,
     })),
   ];
-  if (results.length) {
-    await updateProjectHostSoftwareRecord({ row, results });
+  const updatedResults = results.filter(
+    (result) => result.status === "updated",
+  );
+  if (updatedResults.length) {
+    await updateProjectHostSoftwareRecord({ row, results: updatedResults });
   }
   const explicitProjectHostTarget = targets.find(
     (target) =>
@@ -756,7 +801,11 @@ export async function upgradeHostSoftwareInternalHelper({
       replace: false,
     });
   }
-  if (bootstrapRuntimeDeployments.length > 0) {
+  if (
+    bootstrapRuntimeDeployments.some(
+      (deployment) => deployment.status === "updated",
+    )
+  ) {
     await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
   }
   return { results };
