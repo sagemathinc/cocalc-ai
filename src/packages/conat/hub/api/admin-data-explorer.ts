@@ -13,6 +13,7 @@ export const adminData = {
   deleteView: authFirstRequireAccount,
   exportViews: authFirstRequireAccount,
   importViews: authFirstRequireAccount,
+  listAuditEvents: authFirstRequireAccount,
   runView: authFirstRequireAccount,
   validateSql: authFirstRequireAccount,
   runSql: authFirstRequireAccount,
@@ -183,7 +184,7 @@ limit 100`,
     tags: ["hosts", "project-hosts", "operations"],
     query_kind: "sql",
     query: {
-      sql: `select host_id, name, bay_id, state, provider, updated
+      sql: `select id as host_id, name, bay_id, status, region, last_seen, version, updated
 from project_hosts
 order by updated desc
 limit 100`,
@@ -237,6 +238,22 @@ export interface AdminDataViewRunResult {
   result: AdminDataSqlRunResult;
 }
 
+export interface AdminDataAuditEvent {
+  id: string;
+  time: string;
+  account_id?: string | null;
+  bay_id?: string | null;
+  operation?: string | null;
+  view_id?: string | null;
+  slug?: string | null;
+  query_kind?: AdminDataQueryKind | null;
+  row_count?: number | null;
+  response_bytes?: number | null;
+  duration_ms?: number | null;
+  truncated?: boolean | null;
+  details: Record<string, unknown>;
+}
+
 export interface AdminData {
   listDatasets(opts?: {
     account_id?: string;
@@ -288,6 +305,13 @@ export interface AdminData {
     views: AdminDataViewInput[] | AdminDataViewExport;
     mode?: "upsert" | "create_only";
   }): Promise<AdminDataViewImportResult>;
+
+  listAuditEvents(opts?: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    limit?: number;
+  }): Promise<AdminDataAuditEvent[]>;
 
   runView(opts: {
     account_id?: string;
