@@ -43,9 +43,18 @@ const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
   await action();
   return true;
 });
+const sendVerificationEmail = jest.fn();
 
 let accountId = "owner-1";
+let emailAddress = "ada@example.edu";
+let emailVerified = true;
 let isAdmin = false;
+
+function emailAddressVerified() {
+  return {
+    get: (address: string) => emailVerified && address === emailAddress,
+  };
+}
 
 function getSiteLicenseSummaryRow(name: string): HTMLElement {
   const row = screen
@@ -70,8 +79,20 @@ function expectTextNotVisible(text: string): void {
 }
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: (_store: string, key: string) =>
-    key === "is_admin" ? isAdmin : accountId,
+  useTypedRedux: (_store: string, key: string) => {
+    switch (key) {
+      case "account_id":
+        return accountId;
+      case "email_address":
+        return emailAddress;
+      case "email_address_verified":
+        return emailAddressVerified();
+      case "is_admin":
+        return isAdmin;
+      default:
+        return accountId;
+    }
+  },
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
@@ -149,6 +170,10 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    account_client: {
+      send_verification_email: (...args: any[]) =>
+        sendVerificationEmail(...args),
+    },
     browser_id: "browser-1",
     users_client: {
       user_search: (...args: any[]) => userSearch(...args),
@@ -286,8 +311,11 @@ describe("membership package managers", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     accountId = "owner-1";
+    emailAddress = "ada@example.edu";
+    emailVerified = true;
     isAdmin = false;
     getClaimableMembershipPackages.mockResolvedValue([]);
+    sendVerificationEmail.mockResolvedValue(undefined);
     listSiteLicenseOverviews.mockResolvedValue([]);
     processPaymentIntents.mockResolvedValue({ count: 0 });
     runFreshAuthAction.mockClear();
@@ -1653,6 +1681,9 @@ describe("ClaimableMembershipPackagesPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     accountId = "account-1";
+    emailAddress = "ada@example.edu";
+    emailVerified = true;
+    sendVerificationEmail.mockResolvedValue(undefined);
   });
 
   it("promotes the compact claim button when a site-license seat is claimable", async () => {
@@ -1724,6 +1755,30 @@ describe("ClaimableMembershipPackagesPanel", () => {
     });
 
     expect(claimButton).not.toHaveClass("ant-btn-primary");
+  });
+
+  it("shows a resend verification callout when compact claiming is blocked by unverified email", async () => {
+    emailVerified = false;
+    getClaimableMembershipPackages.mockResolvedValue([]);
+
+    render(<ClaimableMembershipPackagesPanel compact />);
+
+    expect(
+      await screen.findByText(
+        "Verify your email to claim site-license memberships",
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Resend verification" }),
+    );
+
+    await waitFor(() => {
+      expect(sendVerificationEmail).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      await screen.findByText("Verification email sent to ada@example.edu."),
+    ).toBeTruthy();
   });
 
   it("claims a package for the signed-in account", async () => {

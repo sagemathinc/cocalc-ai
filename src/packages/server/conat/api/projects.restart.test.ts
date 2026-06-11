@@ -14,6 +14,7 @@ let resolveProjectBayMock: jest.Mock;
 let interBayCheckStartAdmissionMock: jest.Mock;
 let interBayRestartMock: jest.Mock;
 let projectControlBridgeMock: jest.Mock;
+let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
 
 jest.setTimeout(15_000);
 
@@ -91,6 +92,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  __esModule: true,
+  assertClusterAccountTrustedForProductAccess: (...args: any[]) =>
+    assertClusterAccountTrustedForProductAccessMock(...args),
+}));
+
 projectControlBridgeMock = jest.fn(() => ({
   checkStartAdmission: (...args: any[]) =>
     interBayCheckStartAdmissionMock(...args),
@@ -149,6 +156,9 @@ describe("projects.restart", () => {
   beforeEach(() => {
     jest.resetModules();
     assertCollabMock = jest.fn(async () => undefined);
+    assertClusterAccountTrustedForProductAccessMock = jest.fn(
+      async () => undefined,
+    );
     createLroMock = jest.fn(async () => ({
       op_id: "op-2",
       kind: "project-start",
@@ -224,5 +234,22 @@ describe("projects.restart", () => {
       project_id: "proj-1",
       keep_op_id: "op-2",
     });
+  });
+
+  it("blocks project restarts when email verification is required", async () => {
+    assertClusterAccountTrustedForProductAccessMock = jest.fn(async () => {
+      throw new Error("Verify your email address before you restart projects.");
+    });
+    const { restart } = await import("./projects");
+
+    await expect(
+      restart({
+        account_id: "acct-1",
+        project_id: "proj-1",
+      }),
+    ).rejects.toThrow("Verify your email address before you restart projects.");
+
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(interBayCheckStartAdmissionMock).not.toHaveBeenCalled();
   });
 });

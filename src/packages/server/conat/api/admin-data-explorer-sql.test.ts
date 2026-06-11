@@ -87,7 +87,7 @@ describe("Admin Data Explorer SQL validation", () => {
       validateSql({
         account_id: ACCOUNT_ID,
         session_hash: "fresh",
-        sql: "select * from pg_catalog.pg_tables",
+        sql: "select relname from pg_catalog.pg_tables",
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -106,6 +106,46 @@ describe("Admin Data Explorer SQL validation", () => {
     ).resolves.toMatchObject({
       ok: false,
       errors: ["function 'pg_sleep' is not allowed"],
+    });
+  });
+
+  it("rejects wildcard projections but allows count(*)", async () => {
+    const { validateSql } = await import("./admin-data-explorer");
+
+    await expect(
+      validateSql({
+        account_id: ACCOUNT_ID,
+        session_hash: "fresh",
+        sql: "select * from accounts",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      errors: ["SELECT * is not allowed; choose allowed columns explicitly"],
+    });
+
+    await expect(
+      validateSql({
+        account_id: ACCOUNT_ID,
+        session_hash: "fresh",
+        sql: "select accounts.* from accounts",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      errors: [
+        "SELECT * is not allowed; choose allowed columns explicitly",
+        "wildcard column reference 'accounts.*' is not allowed",
+      ],
+    });
+
+    await expect(
+      validateSql({
+        account_id: ACCOUNT_ID,
+        session_hash: "fresh",
+        sql: "select count(*) from accounts",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      errors: [],
     });
   });
 

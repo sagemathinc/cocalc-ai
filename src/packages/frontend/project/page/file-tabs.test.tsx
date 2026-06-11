@@ -20,8 +20,10 @@ let storedMode: string | null = null;
 let recentFiles: any[] = [];
 
 jest.mock("antd", () => ({
-  Button: ({ children, onClick }: any) => (
-    <button onClick={onClick}>{children}</button>
+  Button: ({ children, onClick, type: _antdType, ...props }: any) => (
+    <button {...props} onClick={onClick} type="button">
+      {children}
+    </button>
   ),
   Divider: () => <hr />,
   Select: ({ options = [], onChange, dropdownRender, placeholder }: any) => (
@@ -223,6 +225,23 @@ describe("FileTabs keyboard navigation", () => {
       foreground: true,
       foreground_project: true,
     });
+  });
+
+  it("closes open files from dropdown mode without activating the row", () => {
+    storedMode = "dropdown";
+
+    render(
+      <FileTabs
+        activeTab="editor-a.ts"
+        openFiles={List(["a.ts", "b.ts"])}
+        project_id="project-1"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Close b.ts" }));
+
+    expect(mockActions.close_tab).toHaveBeenCalledWith("b.ts");
+    expect(mockActions.set_active_tab).not.toHaveBeenCalled();
   });
 
   it("opens the new-file page from the editable tabs add button", () => {

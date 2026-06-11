@@ -142,6 +142,33 @@ describe("admin purchase/refund fresh auth", () => {
     );
   });
 
+  it("passes admin balance adjustment fields after fresh auth", async () => {
+    mockGetParams.mockReturnValue({
+      balance_admin_note: "support ticket 123",
+      balance_user_note: "Goodwill credit",
+      price: 25,
+      product: "balance",
+      source: "free",
+      user_account_id: "user-1",
+    });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./purchases/admin-purchase");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({ purchase_id: 456 });
+    expect(mockAdminPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        admin_account_id: "admin-1",
+        balance_admin_note: "support ticket 123",
+        balance_user_note: "Goodwill credit",
+        price: 25,
+        product: "balance",
+        user_account_id: "user-1",
+      }),
+    );
+  });
+
   it("allows admin refund after fresh auth", async () => {
     const { req, res } = createMocks({ method: "POST" });
 

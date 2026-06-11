@@ -576,6 +576,9 @@ function validateColumnReference({
   relation: string;
   errors: string[];
 }) {
+  if (!ALLOWED_SQL_RELATIONS.has(relation)) {
+    return;
+  }
   const allowed = ALLOWED_SQL_COLUMNS.get(relation);
   if (!allowed) {
     errors.push(`relation '${relation}' has no configured column allowlist`);
@@ -586,18 +589,38 @@ function validateColumnReference({
   }
 }
 
+function validateSelectProjectionWildcards(statement: any, errors: string[]) {
+  for (const column of Array.isArray(statement?.columns)
+    ? statement.columns
+    : []) {
+    const expr = column?.expr;
+    if (expr?.type === "ref" && `${expr.name ?? ""}`.trim() === "*") {
+      errors.push("SELECT * is not allowed; choose allowed columns explicitly");
+    }
+  }
+}
+
 function validateSelectColumns(
   statement: any,
   cteNames: Set<string>,
   errors: string[],
 ): void {
+  validateSelectProjectionWildcards(statement, errors);
   const { aliasToRelation, cteAliases, baseRelations } =
     collectSelectRelationAliases(statement, cteNames);
   walkAst(statement, (node) => {
     if (node?.type !== "ref") return;
     const column = `${node.name ?? ""}`.trim().toLowerCase();
-    if (!column || column === "*") return;
     const qualifier = `${node.table?.name ?? ""}`.trim().toLowerCase();
+    if (!column) return;
+    if (column === "*") {
+      if (qualifier) {
+        errors.push(
+          `wildcard column reference '${qualifier}.*' is not allowed`,
+        );
+      }
+      return;
+    }
     if (qualifier) {
       const relation = aliasToRelation.get(qualifier);
       if (!relation) {

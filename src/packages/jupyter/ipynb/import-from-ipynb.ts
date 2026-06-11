@@ -11,6 +11,7 @@ import * as misc from "@cocalc/util/misc";
 import { JUPYTER_MIMETYPES } from "@cocalc/jupyter/util/misc";
 import { type Message } from "@cocalc/jupyter/execute/output-handler";
 import { close } from "@cocalc/util/misc";
+import { migrateLegacyCocalcMarkdownNotebook } from "./migrate";
 
 export const DEFAULT_IPYNB = {
   cells: [
@@ -67,6 +68,7 @@ export class IPynbImporter {
     // must come before sanity checks, as old versions are "insane". -- see https://github.com/sagemathinc/cocalc/issues/1937
     this._handle_old_versions();
     this._sanity_improvements();
+    migrateLegacyCocalcMarkdownNotebook(this._ipynb);
     this._import_settings();
     this._import_metadata();
     this._read_in_cells();
