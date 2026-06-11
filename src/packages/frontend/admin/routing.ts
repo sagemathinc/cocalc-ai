@@ -4,6 +4,7 @@
  */
 
 export type AdminSection =
+  | "admin-data-explorer"
   | "admin-purchase"
   | "bay-ops"
   | "managed-cpu"
@@ -21,6 +22,7 @@ export type AdminSection =
   | "user-search";
 
 const ADMIN_SECTIONS = new Set<AdminSection>([
+  "admin-data-explorer",
   "admin-purchase",
   "bay-ops",
   "managed-cpu",
