@@ -629,13 +629,31 @@ export function CodexConfigButton({
                 level.
               </div>
             </div>
-            <Space size={6} wrap>
-              <Tag color="blue">{selectedModelValue ?? "Model"}</Tag>
-              <Tag color={selectedModeOption?.warning ? "red" : "green"}>
-                {modeLabel}
-              </Tag>
-              {reasoningLabel ? <Tag>{reasoningLabel}</Tag> : null}
-              {serviceTierLabel ? <Tag color="orange">Fast</Tag> : null}
+            <Space
+              orientation="vertical"
+              size={8}
+              style={{ alignItems: "flex-end" }}
+            >
+              <Space size={6} wrap style={{ justifyContent: "flex-end" }}>
+                <Tag color="blue">{selectedModelValue ?? "Model"}</Tag>
+                <Tag color={selectedModeOption?.warning ? "red" : "green"}>
+                  {modeLabel}
+                </Tag>
+                {reasoningLabel ? <Tag>{reasoningLabel}</Tag> : null}
+                {serviceTierLabel ? <Tag color="orange">Fast</Tag> : null}
+              </Space>
+              <Tooltip
+                title={`Current source: ${
+                  paymentSourceLoading ? "Checking..." : sourceShortLabel
+                }. ${sourceTooltip}`}
+              >
+                <Button
+                  icon={<Icon name="credit-card" />}
+                  onClick={() => setPaymentOpen(true)}
+                >
+                  Payment & Credentials
+                </Button>
+              </Tooltip>
             </Space>
           </div>
           <Form form={form} layout="vertical">
@@ -825,42 +843,6 @@ export function CodexConfigButton({
                     </div>
                   </Radio.Group>
                 </Form.Item>
-              </div>
-              <div
-                style={{
-                  ...sectionStyle,
-                  background: COLORS.GRAY_LLL,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 10,
-                  flexWrap: "wrap",
-                  padding: "10px 12px",
-                }}
-              >
-                <div style={{ flex: "1 1 300px", minWidth: 240 }}>
-                  <SectionTitle>Payment & credentials</SectionTitle>
-                  <div
-                    style={{
-                      color: COLORS.GRAY_M,
-                      fontSize: 12,
-                      marginTop: 4,
-                      lineHeight: 1.35,
-                    }}
-                  >
-                    Current source:{" "}
-                    <Text strong>
-                      {paymentSourceLoading ? "Checking..." : sourceShortLabel}
-                    </Text>
-                    . {sourceTooltip}
-                  </div>
-                </div>
-                <Button
-                  icon={<Icon name="credit-card" />}
-                  onClick={() => setPaymentOpen(true)}
-                >
-                  Payment & Credentials
-                </Button>
               </div>
             </Space>
           </Form>

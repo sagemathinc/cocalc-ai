@@ -63,7 +63,6 @@ const usageLimitStyle: CSSProperties = {
   background: "white",
   border: `1px solid ${COLORS.GRAY_LL}`,
   borderRadius: 8,
-  flex: "1 1 210px",
   minWidth: 0,
   padding: 14,
 };
@@ -828,9 +827,9 @@ function CodexCredentialsPanelBody({
         {usageWindows.length ? (
           <div
             style={{
-              display: "flex",
+              display: "grid",
               gap: 12,
-              flexWrap: "wrap",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
               width: "100%",
             }}
           >
