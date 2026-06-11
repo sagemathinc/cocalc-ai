@@ -13,6 +13,7 @@ import {
 } from "@cocalc/conat/hub/api/account-feed";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { getLogger } from "@cocalc/frontend/logger";
+import { parse_query } from "@cocalc/sync/table/util";
 import { once } from "@cocalc/util/async-utils";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
@@ -111,7 +112,9 @@ function getKioskProjectId(): string | undefined {
 }
 
 function shouldHaveUsersTable(): boolean {
-  return !COCALC_MINIMAL || getKioskProjectId() != null;
+  return (
+    getKioskProjectId() != null || (!COCALC_MINIMAL && getAccountId() != null)
+  );
 }
 
 class UsersTable extends Table {
@@ -124,7 +127,12 @@ class UsersTable extends Table {
       query.collaborators_one_project[0].project_id = kiosk_project_id;
       return query;
     }
-    return "collaborators";
+    const query = parse_query("collaborators");
+    // The virtual collaborators query can provide the account alias name, but
+    // the underlying accounts schema has no corresponding type metadata. The
+    // realtime feed still supplies aliases when available.
+    delete query.collaborators[0].name;
+    return query;
   }
 
   no_changefeed() {
@@ -341,6 +349,7 @@ function initRealtime(): void {
     void ensureRealtimeFeedForCurrentAccount();
   };
   accountStoreReadyListener = () => {
+    void refreshUsersTable();
     void ensureRealtimeFeedForCurrentAccount();
   };
   webapp_client.on("signed_in", signedInListener);

@@ -185,9 +185,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   );
 
   useEffect(() => {
+    if (!open) {
+      return;
+    }
     form.setFieldsValue({ title: draft.title });
     setTitlePreview(draft.title);
-  }, [draft.title, form]);
+  }, [draft.title, form, open]);
 
   const is_mounted_ref = useIsMountedRef();
 
