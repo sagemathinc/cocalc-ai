@@ -46,6 +46,7 @@ import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from 
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { assertClusterAccountTrustedForProductAccess } from "@cocalc/server/inter-bay/accounts";
@@ -3135,6 +3136,21 @@ export async function getProjectAddress({
     account_id,
     epoch: ownership.epoch,
   });
+}
+
+export async function ensureProjectScratchVolume({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  const fileServer = await getProjectFileServerClient({
+    project_id,
+    account_id,
+  });
+  await fileServer.ensureVolume({ project_id, scratch: true });
 }
 
 export async function getProjectActiveOperation({
