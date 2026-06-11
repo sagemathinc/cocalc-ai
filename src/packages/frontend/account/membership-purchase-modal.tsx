@@ -3,19 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Alert,
-  Button,
-  Card,
-  Flex,
-  Divider,
-  Modal,
-  Radio,
-  Space,
-  Spin,
-  Tag,
-  Typography,
-} from "antd";
+import { Alert, Button, Flex, Modal, Space, Spin, Typography } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -33,18 +21,18 @@ import {
   type MembershipChangeQuote,
 } from "@cocalc/frontend/purchases/api";
 import {
-  MembershipTierBenefits,
-  type MembershipTierWithPresentation,
-} from "./membership-tier-benefits";
+  filterMembershipTiersForBillingInterval,
+  isFreeMembershipTier,
+  MembershipBillingSelector,
+  MembershipPricingTierGrid,
+  MembershipPricingTierTile,
+  type BillingInterval,
+  type MembershipPricingTier,
+} from "./membership-pricing-chooser";
 import { MEMBERSHIP_CHANGE } from "@cocalc/util/db-schema/purchases";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { currency } from "@cocalc/util/misc";
-import {
-  moneyRound2Up,
-  moneyToCurrency,
-  toDecimal,
-  type MoneyValue,
-} from "@cocalc/util/money";
+import { moneyRound2Up, toDecimal, type MoneyValue } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
 import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -52,7 +40,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Text, Title } = Typography;
 
-interface MembershipTier extends MembershipTierWithPresentation {
+interface MembershipTier extends MembershipPricingTier {
   id: string;
   label?: string;
   store_visible?: boolean;
@@ -69,6 +57,7 @@ interface MembershipTiersResponse {
 
 interface Props {
   currentClassOverride?: string;
+  currentIntervalOverride?: BillingInterval;
   open: boolean;
   onClose: () => void;
   onChanged?: () => void;
@@ -76,6 +65,7 @@ interface Props {
 
 export default function MembershipPurchaseModal({
   currentClassOverride,
+  currentIntervalOverride,
   open,
   onClose,
   onChanged,
@@ -84,7 +74,7 @@ export default function MembershipPurchaseModal({
     null,
   );
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
-  const [interval, setInterval] = useState<"month" | "year">("month");
+  const [interval, setInterval] = useState<BillingInterval>("year");
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [selectedTierId, setSelectedTierId] = useState<string | null>(null);
@@ -92,9 +82,9 @@ export default function MembershipPurchaseModal({
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [quoteError, setQuoteError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
-  const [place, setPlace] = useState<"checkout" | "processing" | "done">(
-    "checkout",
-  );
+  const [place, setPlace] = useState<
+    "choose" | "checkout" | "processing" | "done"
+  >("choose");
   const numPaymentsRef = useRef<number | null>(null);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setQuoteError(`${err}`),
@@ -122,28 +112,33 @@ export default function MembershipPurchaseModal({
     setSelectedTierId(null);
     setQuote(null);
     setQuoteError("");
-    setPlace("checkout");
+    setInterval("year");
+    setPlace("choose");
     load();
   }, [open]);
 
-  const visibleTiers = useMemo(() => {
+  const availableTiers = useMemo(() => {
     return sortMembershipTiersByDisplayOrder(
       tiers.filter((tier) => tier.store_visible && !tier.disabled),
     );
   }, [tiers]);
+  const visibleTiers = useMemo(
+    () => filterMembershipTiersForBillingInterval(availableTiers, interval),
+    [availableTiers, interval],
+  );
 
   const tierById = useMemo(() => {
-    return visibleTiers.reduce(
+    return availableTiers.reduce(
       (acc, tier) => {
         acc[tier.id] = tier;
         return acc;
       },
       {} as Record<string, MembershipTier>,
     );
-  }, [visibleTiers]);
+  }, [availableTiers]);
 
   useEffect(() => {
-    if (!open || !selectedTierId) return;
+    if (!open || !selectedTierId || place === "choose") return;
     const loadQuote = async () => {
       setQuote(null);
       setQuoteError("");
@@ -162,9 +157,18 @@ export default function MembershipPurchaseModal({
       }
     };
     loadQuote();
-  }, [open, selectedTierId, interval]);
+  }, [open, selectedTierId, interval, place]);
 
-  const currentClass = currentClassOverride ?? membership?.class ?? "free";
+  const currentPersonalClass =
+    currentClassOverride ??
+    (membership?.source === "subscription" || membership?.source === "free"
+      ? membership.class
+      : undefined);
+  const currentPersonalInterval =
+    currentIntervalOverride ??
+    (membership?.source === "subscription"
+      ? membership.subscription_interval
+      : undefined);
   const selectedTier = selectedTierId ? tierById[selectedTierId] : undefined;
   const selectedLabel = selectedTier?.label ?? selectedTier?.id ?? "";
 
@@ -202,7 +206,28 @@ export default function MembershipPurchaseModal({
         : "Start";
   const canProceed = quote?.allowed !== false || paymentRequired;
 
-  const isCurrent = selectedTierId != null && selectedTierId === currentClass;
+  function isCurrentChoice(tier: MembershipTier): boolean {
+    if (tier.id !== currentPersonalClass) return false;
+    if (isFreeMembershipTier(tier)) return true;
+    return (
+      currentPersonalInterval == null || currentPersonalInterval === interval
+    );
+  }
+
+  function selectTier(tier: MembershipTier) {
+    if (isCurrentChoice(tier)) return;
+    setSelectedTierId(tier.id);
+    setQuote(null);
+    setQuoteError("");
+    setPlace("checkout");
+  }
+
+  function backToChooser() {
+    setSelectedTierId(null);
+    setQuote(null);
+    setQuoteError("");
+    setPlace("choose");
+  }
 
   const directChange = async () => {
     if (!selectedTierId) return;
@@ -234,12 +259,16 @@ export default function MembershipPurchaseModal({
     onChanged?.();
   };
 
+  const modalWidth = place === "choose" ? 1180 : 900;
+
   return (
     <Modal
+      footer={null}
       open={open}
       onCancel={onClose}
       onOk={onClose}
-      width={900}
+      style={{ maxWidth: "calc(100vw - 32px)" }}
+      width={modalWidth}
       title={
         <Flex align="center" gap="small">
           <Icon name="user" />
@@ -255,104 +284,53 @@ export default function MembershipPurchaseModal({
         </div>
       )}
       {error && <Alert type="error" title={error} />}
-      {!loading && !error && (
-        <>
-          <div style={{ marginBottom: "12px" }}>
-            <Text type="secondary">
-              Current{" "}
-              {currentClassOverride ? "personal membership" : "membership"}:{" "}
-              <Tag color={currentClass === "free" ? "default" : "blue"}>
-                {currentClass}
-              </Tag>
-            </Text>
-          </div>
-          <div style={{ marginBottom: "16px" }}>
-            <Radio.Group
-              value={interval}
-              onChange={(e) => setInterval(e.target.value)}
-              optionType="button"
-              buttonStyle="solid"
+      {!loading && !error && place === "choose" && (
+        <Space vertical size="large" style={{ width: "100%" }}>
+          <MembershipBillingSelector
+            billingInterval={interval}
+            setBillingInterval={setInterval}
+          />
+          {visibleTiers.length === 0 ? (
+            <Alert
+              showIcon
+              type="info"
+              title={`No ${interval === "month" ? "monthly" : "annual"} membership tiers are currently available.`}
+            />
+          ) : (
+            <MembershipPricingTierGrid>
+              {visibleTiers.map((tier) => {
+                const current = isCurrentChoice(tier);
+                return (
+                  <MembershipPricingTierTile
+                    billingInterval={interval}
+                    current={current}
+                    key={tier.id}
+                    onClick={current ? undefined : () => selectTier(tier)}
+                    tier={tier}
+                  />
+                );
+              })}
+            </MembershipPricingTierGrid>
+          )}
+          <Flex justify="center">
+            <Button
+              href={joinUrlPath(appBasePath, "pricing")}
+              rel="noreferrer"
+              target="_blank"
             >
-              <Radio.Button value="month">Monthly</Radio.Button>
-              <Radio.Button value="year">Yearly</Radio.Button>
-            </Radio.Group>
-          </div>
-          <Flex gap="large" wrap={false} style={{ overflowX: "auto" }}>
-            {visibleTiers.length === 0 && (
-              <Alert
-                type="info"
-                title="No membership tiers are currently available."
-              />
-            )}
-            {visibleTiers.map((tier) => {
-              const price =
-                interval === "month" ? tier.price_monthly : tier.price_yearly;
-              const priceValue = price != null ? toDecimal(price) : null;
-              const trialDays =
-                typeof tier.trial_days === "number" && tier.trial_days > 0
-                  ? Math.floor(tier.trial_days)
-                  : 0;
-              const isCurrentTier = tier.id === currentClass;
-              const tierPriority = tier.priority ?? 0;
-              const currentPriority = tierById[currentClass]?.priority ?? 0;
-              const actionLabel = isCurrentTier
-                ? "Current plan"
-                : tierPriority > currentPriority
-                  ? `Upgrade to ${tier.label ?? tier.id}`
-                  : `Downgrade to ${tier.label ?? tier.id}`;
-              return (
-                <Card
-                  key={tier.id}
-                  style={{
-                    minWidth: "320px",
-                    flex: "1 1 0",
-                    borderColor:
-                      selectedTierId === tier.id ? "#1677ff" : undefined,
-                  }}
-                >
-                  <Title level={4}>{tier.label ?? tier.id}</Title>
-                  <div style={{ marginBottom: "8px" }}>
-                    {priceValue != null ? (
-                      <Text strong>{moneyToCurrency(priceValue)}</Text>
-                    ) : (
-                      <Text type="secondary">Pricing not configured</Text>
-                    )}{" "}
-                    <Text type="secondary">/ {interval}</Text>
-                  </div>
-                  {trialDays > 0 && (
-                    <div style={{ marginBottom: "8px" }}>
-                      <Tag color="green">{trialDays}-day free trial</Tag>
-                    </div>
-                  )}
-                  <div style={{ marginBottom: "12px" }}>
-                    <MembershipTierBenefits
-                      compact
-                      showBilling={false}
-                      tier={tier}
-                    />
-                  </div>
-                  <Button
-                    type={selectedTierId === tier.id ? "primary" : "default"}
-                    disabled={isCurrentTier || priceValue == null}
-                    onClick={() => {
-                      if (!isCurrentTier) {
-                        setSelectedTierId(tier.id);
-                        setPlace("checkout");
-                      }
-                    }}
-                  >
-                    {actionLabel}
-                  </Button>
-                </Card>
-              );
-            })}
+              Compare membership details <Icon name="external-link" />
+            </Button>
           </Flex>
-        </>
+        </Space>
       )}
 
-      {selectedTierId && !isCurrent && (
-        <div style={{ marginTop: "20px" }}>
-          <Divider />
+      {!loading && !error && selectedTierId && place !== "choose" && (
+        <Space vertical size="middle" style={{ width: "100%" }}>
+          {place === "checkout" && (
+            <div>
+              <Button onClick={backToChooser}>Back</Button>
+            </div>
+          )}
           {quoteLoading && <Spin />}
           {quoteError && <Alert type="error" title={quoteError} />}
           {quote && quote.allowed === false && quote.reason && (
@@ -480,7 +458,7 @@ export default function MembershipPurchaseModal({
               style={{ marginTop: "12px" }}
             />
           )}
-        </div>
+        </Space>
       )}
       <FreshAuthModal {...freshAuthModalProps} />
     </Modal>

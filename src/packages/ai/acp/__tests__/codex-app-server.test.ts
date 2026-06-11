@@ -28,6 +28,7 @@ jest.mock("@cocalc/backend/logger", () => () => loggerMock);
 import {
   CodexAppServerAgent,
   forkCodexAppServerSession,
+  getCodexAppServerAccountStatus,
   setCodexProjectSpawner,
 } from "..";
 
@@ -4086,6 +4087,171 @@ describe("CodexAppServerAgent", () => {
         sessionId: "thr-shared-1",
       }),
     ).resolves.toEqual({ sessionId: "thr-forked-2" });
+  });
+
+  it("reads account usage status through the project app-server", async () => {
+    const seen: Array<{ method: string; params: any }> = [];
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      seen.push({ method: message.method, params: message.params });
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, {});
+          break;
+        case "initialized":
+          break;
+        case "account/login/start":
+          fake.sendResponse(message.id, {});
+          break;
+        case "account/read":
+          fake.sendResponse(message.id, {
+            account: {
+              type: "chatgpt",
+              email: "user@example.com",
+              planType: "pro",
+            },
+            requiresOpenaiAuth: false,
+          });
+          break;
+        case "account/rateLimits/read":
+          fake.sendResponse(message.id, {
+            rateLimits: {
+              limitId: "codex",
+              primary: {
+                usedPercent: 42,
+                windowDurationMins: 300,
+                resetsAt: 1_800_000_000,
+              },
+              planType: "pro",
+            },
+          });
+          break;
+        case "account/usage/read":
+          fake.sendResponse(message.id, {
+            summary: {
+              lifetimeTokens: 12345,
+            },
+          });
+          break;
+        default:
+          throw new Error(`unexpected method ${message.method}`);
+      }
+    });
+    const spawnCodexAppServer = jest.fn(async () => ({
+      proc: proc as any,
+      args: ["app-server"],
+      cmd: "codex",
+      appServerLogin: {
+        type: "chatgptAuthTokens" as const,
+        accessToken: "token",
+        chatgptAccountId: "account-1",
+        chatgptPlanType: "pro",
+      },
+    }));
+    setCodexProjectSpawner({
+      spawnCodexExec: jest.fn() as any,
+      spawnCodexAppServer,
+    });
+
+    const status = await getCodexAppServerAccountStatus({
+      projectId: "project-1",
+      accountId: "account-1",
+      includeTokenUsage: true,
+    });
+
+    expect(spawnCodexAppServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        accountId: "account-1",
+        touchReason: false,
+      }),
+    );
+    expect(status.errors).toBeUndefined();
+    expect(status.account?.account?.email).toBe("user@example.com");
+    expect(status.rateLimits?.rateLimits?.primary?.usedPercent).toBe(42);
+    expect(status.tokenUsage?.summary?.lifetimeTokens).toBe(12345);
+    expect(seen.map(({ method }) => method)).toEqual([
+      "initialize",
+      "initialized",
+      "account/login/start",
+      "account/read",
+      "account/rateLimits/read",
+      "account/usage/read",
+    ]);
+  });
+
+  it("does not read token usage during the default account status check", async () => {
+    const seen: Array<{ method: string; params: any }> = [];
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      seen.push({ method: message.method, params: message.params });
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, {});
+          break;
+        case "initialized":
+          break;
+        case "account/login/start":
+          fake.sendResponse(message.id, {});
+          break;
+        case "account/read":
+          fake.sendResponse(message.id, {
+            account: {
+              type: "chatgpt",
+              email: "user@example.com",
+              planType: "pro",
+            },
+            requiresOpenaiAuth: false,
+          });
+          break;
+        case "account/rateLimits/read":
+          fake.sendResponse(message.id, {
+            rateLimits: {
+              limitId: "codex",
+              primary: {
+                usedPercent: 42,
+                windowDurationMins: 300,
+                resetsAt: 1_800_000_000,
+              },
+              planType: "pro",
+            },
+          });
+          break;
+        case "account/usage/read":
+          throw new Error("account/usage/read should not be requested");
+        default:
+          throw new Error(`unexpected method ${message.method}`);
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: jest.fn() as any,
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        args: ["app-server"],
+        cmd: "codex",
+        appServerLogin: {
+          type: "chatgptAuthTokens" as const,
+          accessToken: "token",
+          chatgptAccountId: "account-1",
+          chatgptPlanType: "pro",
+        },
+      }),
+    });
+
+    const status = await getCodexAppServerAccountStatus({
+      projectId: "project-1",
+      accountId: "account-1",
+    });
+
+    expect(status.errors).toBeUndefined();
+    expect(status.account?.account?.email).toBe("user@example.com");
+    expect(status.rateLimits?.rateLimits?.primary?.usedPercent).toBe(42);
+    expect(status.tokenUsage).toBeUndefined();
+    expect(seen.map(({ method }) => method)).toEqual([
+      "initialize",
+      "initialized",
+      "account/login/start",
+      "account/read",
+      "account/rateLimits/read",
+    ]);
   });
 
   it("reports site-key usage for app-server turns", async () => {

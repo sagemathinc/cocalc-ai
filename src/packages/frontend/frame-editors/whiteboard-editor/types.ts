@@ -68,6 +68,7 @@ export interface Data {
   start?: number;
   placeholder?: string; // use as placeholder text whenever this element is empty
   initStr?: string; // initial string when focused to edit and nothing set.
+  schemaVersion?: number; // document schema version; currently stored on page elements
 }
 
 /*

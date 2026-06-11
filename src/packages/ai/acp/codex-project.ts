@@ -50,6 +50,7 @@ export type CodexProjectSpawner = {
     accountId?: string;
     cwd?: string;
     env?: NodeJS.ProcessEnv;
+    touchReason?: string | false;
   }) => Promise<{
     proc: ChildProcess;
     cmd: string;

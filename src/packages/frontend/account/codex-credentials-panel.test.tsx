@@ -8,6 +8,7 @@ import {
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
 
 const getCodexPaymentSource = jest.fn();
+const getCodexUsageStatus = jest.fn();
 const codexDeviceAuthStart = jest.fn();
 const codexDeviceAuthStatus = jest.fn();
 const mockClipboardWriteText = jest.fn();
@@ -136,6 +137,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         system: {
           getCodexPaymentSource: (...args: any[]) =>
             getCodexPaymentSource(...args),
+          getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
         },
       },
     },
@@ -166,6 +168,23 @@ describe("CodexCredentialsPanel", () => {
     getCodexPaymentSource
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
+    getCodexUsageStatus.mockResolvedValue({
+      available: true,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      account: {
+        account: {
+          type: "chatgpt",
+          email: "user@example.com",
+          planType: "pro",
+        },
+      },
+      rateLimits: {
+        rateLimits: {
+          primary: { usedPercent: 42 },
+        },
+      },
+    });
 
     const { rerender } = render(
       <CodexCredentialsPanel embedded defaultProjectId="project-1" />,
@@ -182,6 +201,8 @@ describe("CodexCredentialsPanel", () => {
       expect(
         screen.getAllByText("Open ChatGPT Codex Usage").length,
       ).toBeGreaterThan(0);
+      expect(screen.getByText("user@example.com")).toBeTruthy();
+      expect(screen.getByText("42% used")).toBeTruthy();
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
@@ -198,6 +219,99 @@ describe("CodexCredentialsPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Codex is not connected yet.")).toBeTruthy();
+    });
+  });
+
+  it("shows connected copy instead of the sign-in CTA for ChatGPT subscriptions", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      reason:
+        "account/rateLimits/read: codex account authentication required to read rate limits",
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("ChatGPT is connected")).toBeTruthy();
+      expect(screen.getByText("Connected")).toBeTruthy();
+      expect(screen.queryByText("Connect Codex with ChatGPT")).toBeNull();
+      expect(screen.queryByText("Sign in with ChatGPT")).toBeNull();
+      expect(
+        screen.getByText((text) =>
+          text.includes("live rate-limit details are not available"),
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText((text) => text.includes("account/rateLimits/read")),
+      ).toBeNull();
+    });
+  });
+
+  it("refreshes Codex usage without reloading the whole payment panel", async () => {
+    const refreshedUsage = deferred<any>();
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus
+      .mockResolvedValueOnce({
+        available: true,
+        checkedAt: "2026-06-10T00:00:00.000Z",
+        paymentSource: { source: "subscription" },
+        account: {
+          account: {
+            type: "chatgpt",
+            email: "user@example.com",
+            planType: "pro",
+          },
+        },
+        rateLimits: {
+          rateLimits: {
+            primary: { usedPercent: 42 },
+          },
+        },
+      })
+      .mockReturnValueOnce(refreshedUsage.promise);
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("42% used")).toBeTruthy();
+    });
+    expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      screen.getByText("Refresh usage").click();
+      await Promise.resolve();
+    });
+
+    expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("loading")).toBeNull();
+    expect(screen.getByText("42% used")).toBeTruthy();
+
+    await act(async () => {
+      refreshedUsage.resolve({
+        available: true,
+        checkedAt: "2026-06-10T00:00:01.000Z",
+        paymentSource: { source: "subscription" },
+        account: {
+          account: {
+            type: "chatgpt",
+            email: "user@example.com",
+            planType: "pro",
+          },
+        },
+        rateLimits: {
+          rateLimits: {
+            primary: { usedPercent: 43 },
+          },
+        },
+      });
+      await refreshedUsage.promise;
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("43% used")).toBeTruthy();
     });
   });
 
