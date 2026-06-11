@@ -20,18 +20,21 @@ export async function adminPurchase(opts: {
   membership_class?: string;
   price: number;
   pricing_note?: string;
-  product: "membership" | "voucher";
+  product: "balance" | "membership" | "voucher";
   source: "credit" | "free";
   user_account_id: string;
   voucher_amount?: number;
   voucher_count?: number;
   voucher_title?: string;
+  balance_user_note?: string;
+  balance_admin_note?: string;
 }): Promise<{
   purchase_id: number;
   credit_id?: number;
   expires_at?: Date | null;
   voucher_codes?: string[];
   voucher_id?: number;
+  adjustment_amount?: number;
 }> {
   return await api("purchases/admin-purchase", opts);
 }

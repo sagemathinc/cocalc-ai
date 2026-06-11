@@ -10,10 +10,13 @@ import { path_split, plural } from "@cocalc/util/misc";
 import CheckedFiles from "./checked-files";
 import { join } from "path";
 import { OUCH_FORMATS } from "@cocalc/conat/files/fs";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 export const defaultFormat = OUCH_FORMATS.includes("tar.gz")
   ? "tar.gz"
   : OUCH_FORMATS[0];
+export const ARCHIVE_TIMEOUT_MS = 10 * 60_000;
+const DOWNLOAD_ARCHIVE_PATH = "/tmp";
 
 const ARCHIVE_SUFFIXES = ["tar", ...OUCH_FORMATS].sort(
   (a, b) => b.length - a.length,
@@ -135,14 +138,73 @@ export default function CreateArchive({
 export async function createArchive({ path, files, target, format, actions }) {
   const fs = actions.fs();
   const archiveName = getArchiveTargetName(target, format);
-  const { code, stderr } = await fs.ouch([
-    "compress",
-    ...files,
-    join(path, archiveName),
-  ]);
-  if (code) {
-    throw Error(Buffer.from(stderr).toString());
+  const finalPath = join(path, archiveName);
+  const tmpPath = join(
+    path,
+    `.cocalc-archive-${Date.now()}-${Math.random().toString(36).slice(2)}-${archiveName}`,
+  );
+  try {
+    await fs.rm(tmpPath, { force: true });
+    const output = await fs.ouch(["compress", ...files, tmpPath], {
+      timeout: ARCHIVE_TIMEOUT_MS,
+    });
+    const stderr = Buffer.from(output.stderr ?? Buffer.alloc(0)).toString();
+    if (output.truncated) {
+      throw Error(
+        stderr ||
+          `Archive creation exceeded the ${Math.round(
+            ARCHIVE_TIMEOUT_MS / 60_000,
+          )} minute timeout.`,
+      );
+    }
+    if (output.code) {
+      throw Error(
+        stderr || `Archive creation failed with code ${output.code}.`,
+      );
+    }
+    await fs.rename(tmpPath, finalPath);
+    return finalPath;
+  } catch (err) {
+    try {
+      await fs.rm(tmpPath, { force: true });
+    } catch {
+      // Best effort cleanup; preserve the original archive error.
+    }
+    throw err;
   }
+}
+
+export async function createDownloadArchive({
+  files,
+  target,
+  format,
+  actions,
+}) {
+  await ensureProjectScratchVolume(actions.project_id);
+  return await createArchive({
+    path: DOWNLOAD_ARCHIVE_PATH,
+    files,
+    target,
+    format,
+    actions,
+  });
+}
+
+export async function removeDownloadArchive({
+  path,
+  actions,
+}: {
+  path: string;
+  actions: any;
+}) {
+  const fs = actions.fs();
+  await fs.rm(path, { force: true });
+}
+
+async function ensureProjectScratchVolume(project_id: string) {
+  await webapp_client.conat_client.hub.projects.ensureProjectScratchVolume({
+    project_id,
+  });
 }
 
 export function getArchiveTargetName(target: string, format: string): string {

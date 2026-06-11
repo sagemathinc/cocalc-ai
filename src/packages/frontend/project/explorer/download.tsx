@@ -10,8 +10,11 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { path_split, plural } from "@cocalc/util/misc";
 import { PRE_STYLE } from "./action-box";
 import CheckedFiles from "./checked-files";
-import { SelectFormat, createArchive } from "./create-archive";
-import { join } from "path";
+import {
+  SelectFormat,
+  createDownloadArchive,
+  removeDownloadArchive,
+} from "./create-archive";
 
 export default function Download({
   clear,
@@ -80,19 +83,15 @@ export default function Download({
     if (actions == null || loading) {
       return;
     }
-    const store = actions.get_store();
-    if (store == null) {
-      return;
-    }
     let success = false;
+    let temporaryArchivePath: string | undefined;
     try {
       setLoading(true);
       const files = checked_files.toArray();
       let dest;
       if (archiveMode) {
-        const path = store.get("current_path_abs") ?? "/";
-        dest = join(path, target + "." + format);
-        await createArchive({ path, files, target, format, actions });
+        dest = await createDownloadArchive({ files, target, format, actions });
+        temporaryArchivePath = dest;
       } else {
         dest = files[0];
       }
@@ -101,6 +100,18 @@ export default function Download({
     } catch (err) {
       setError(`${err}`);
     } finally {
+      if (temporaryArchivePath != null) {
+        try {
+          await removeDownloadArchive({
+            path: temporaryArchivePath,
+            actions,
+          });
+        } catch (err) {
+          setError((prev) =>
+            prev ? `${prev}\nCleanup failed: ${err}` : `Cleanup failed: ${err}`,
+          );
+        }
+      }
       setLoading(false);
     }
 
