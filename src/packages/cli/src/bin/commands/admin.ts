@@ -108,6 +108,21 @@ async function readAdminDataJson(path: string): Promise<unknown> {
   }
 }
 
+async function readAdminDataSqlInput({
+  query,
+  file,
+}: {
+  query?: string;
+  file?: string;
+}): Promise<string> {
+  const sql =
+    query != null ? `${query}` : file ? await readFile(file, "utf8") : "";
+  if (!sql.trim()) {
+    throw new Error("provide SQL with --query or --file");
+  }
+  return sql;
+}
+
 type MembershipTierRow = {
   id?: string | null;
   label?: string | null;
@@ -904,6 +919,9 @@ export function registerAdminCommand(
   const adminDataViews = adminData
     .command("views")
     .description("Admin Data Explorer shared view registry");
+  const adminDataSql = adminData
+    .command("sql")
+    .description("Admin Data Explorer restricted SQL");
 
   async function resolveTargetAccountId(
     ctx: any,
@@ -1096,6 +1114,80 @@ export function registerAdminCommand(
           return await ctx.hub.adminData.importViews({
             views,
             mode: parseAdminDataImportMode(opts.mode),
+          });
+        });
+      },
+    );
+
+  adminDataSql
+    .command("validate")
+    .description("validate restricted read-only SQL (admin fresh-auth)")
+    .option("--query <sql>", "SQL query text")
+    .option("--file <path>", "read SQL from a file")
+    .option("--limit <n>", "server-enforced max rows", "100")
+    .action(
+      async (
+        opts: {
+          query?: string;
+          file?: string;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data sql validate", async (ctx) => {
+          return await ctx.hub.adminData.validateSql({
+            sql: await readAdminDataSqlInput(opts),
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: 100,
+              max: 5000,
+            }),
+          });
+        });
+      },
+    );
+
+  adminDataSql
+    .command("run")
+    .description("run restricted read-only SQL (admin fresh-auth)")
+    .option("--query <sql>", "SQL query text")
+    .option("--file <path>", "read SQL from a file")
+    .option("--limit <n>", "server-enforced max rows", "100")
+    .option("--timeout-ms <n>", "server-side statement timeout", "5000")
+    .option("--max-bytes <n>", "max serialized response bytes", "4194304")
+    .action(
+      async (
+        opts: {
+          query?: string;
+          file?: string;
+          limit?: string;
+          timeoutMs?: string;
+          maxBytes?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data sql run", async (ctx) => {
+          return await ctx.hub.adminData.runSql({
+            sql: await readAdminDataSqlInput(opts),
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: 100,
+              max: 5000,
+            }),
+            timeout_ms: parsePositiveIntegerOption({
+              name: "--timeout-ms",
+              value: opts.timeoutMs,
+              fallback: 5000,
+              max: 30000,
+            }),
+            max_bytes: parsePositiveIntegerOption({
+              name: "--max-bytes",
+              value: opts.maxBytes,
+              fallback: 4 * 1024 * 1024,
+              max: 32 * 1024 * 1024,
+            }),
           });
         });
       },

@@ -4,16 +4,20 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import type { PoolClient } from "@cocalc/database/pool";
 import centralLog from "@cocalc/database/postgres/central-log";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { uuid } from "@cocalc/util/misc";
+import { parse, toSql } from "pgsql-ast-parser";
 import type {
   AdminDataDataset,
   AdminDataQuery,
   AdminDataQueryKind,
   AdminDataScope,
+  AdminDataSqlRunResult,
+  AdminDataSqlValidationResult,
   AdminDataSort,
   AdminDataView,
   AdminDataViewExport,
@@ -34,7 +38,61 @@ const MAX_TAG_LENGTH = 80;
 const MAX_COLUMNS = 200;
 const MAX_SORTS = 20;
 const MAX_DEFAULT_LIMIT = 10_000;
+const DEFAULT_SQL_LIMIT = 100;
+const MAX_SQL_LIMIT = 5_000;
+const DEFAULT_SQL_TIMEOUT_MS = 5_000;
+const MAX_SQL_TIMEOUT_MS = 30_000;
+const DEFAULT_SQL_MAX_BYTES = 4 * 1024 * 1024;
+const MAX_SQL_MAX_BYTES = 32 * 1024 * 1024;
 const TABLE = "admin_data_explorer_views";
+
+const ALLOWED_SQL_RELATIONS = new Set([
+  "account_cpu_usage_events",
+  "account_managed_egress_events",
+  "account_security_state",
+  "account_usage_windows",
+  "accounts",
+  "admin_data_explorer_views",
+  "ai_usage_log",
+  "central_log",
+  "launch_smoke_results",
+  "project_hosts",
+  "project_runtime_slots",
+  "projects",
+  "purchases",
+  "statements",
+  "usage_info",
+  "ux_latency_events",
+  "voucher_codes",
+  "vouchers",
+]);
+
+const ALLOWED_SQL_FUNCTIONS = new Set([
+  "abs",
+  "avg",
+  "ceil",
+  "coalesce",
+  "count",
+  "date_trunc",
+  "floor",
+  "greatest",
+  "jsonb_array_length",
+  "jsonb_extract_path_text",
+  "least",
+  "left",
+  "length",
+  "lower",
+  "max",
+  "min",
+  "now",
+  "right",
+  "round",
+  "split_part",
+  "substring",
+  "sum",
+  "to_char",
+  "upper",
+]);
 
 type AdminAuthOpts = {
   account_id?: string;
@@ -402,6 +460,178 @@ function normalizeDefaultLimit(value: unknown): number | null {
   return Math.min(limit, MAX_DEFAULT_LIMIT);
 }
 
+function normalizeSqlLimit(value: unknown): number {
+  if (value == null || value === "") return DEFAULT_SQL_LIMIT;
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw Error("limit must be a positive integer");
+  }
+  return Math.min(limit, MAX_SQL_LIMIT);
+}
+
+function normalizeSqlTimeoutMs(value: unknown): number {
+  if (value == null || value === "") return DEFAULT_SQL_TIMEOUT_MS;
+  const timeout = Number(value);
+  if (!Number.isInteger(timeout) || timeout <= 0) {
+    throw Error("timeout_ms must be a positive integer");
+  }
+  return Math.min(timeout, MAX_SQL_TIMEOUT_MS);
+}
+
+function normalizeSqlMaxBytes(value: unknown): number {
+  if (value == null || value === "") return DEFAULT_SQL_MAX_BYTES;
+  const maxBytes = Number(value);
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0) {
+    throw Error("max_bytes must be a positive integer");
+  }
+  return Math.min(maxBytes, MAX_SQL_MAX_BYTES);
+}
+
+function normalizeSql(sql: unknown): string {
+  return requiredString({
+    value: sql,
+    name: "sql",
+    maxLength: 200_000,
+  }).replace(/;\s*$/, "");
+}
+
+function walkAst(value: unknown, visit: (node: any) => void): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      walkAst(item, visit);
+    }
+    return;
+  }
+  if (!isObject(value)) {
+    return;
+  }
+  visit(value);
+  for (const item of Object.values(value)) {
+    walkAst(item, visit);
+  }
+}
+
+function collectCteNames(statement: any): Set<string> {
+  const names = new Set<string>();
+  walkAst(statement, (node) => {
+    if (node?.type !== "with" || !Array.isArray(node.bind)) {
+      return;
+    }
+    for (const binding of node.bind) {
+      const name = `${binding?.alias?.name ?? ""}`.trim().toLowerCase();
+      if (name) {
+        names.add(name);
+      }
+    }
+  });
+  return names;
+}
+
+function validateReadOnlyStatement(node: any, errors: string[]): void {
+  if (!node || typeof node !== "object") {
+    errors.push("SQL did not parse to a statement");
+    return;
+  }
+  if (node.type === "select") {
+    return;
+  }
+  if (node.type === "with") {
+    if (Array.isArray(node.bind)) {
+      for (const binding of node.bind) {
+        validateReadOnlyStatement(binding?.statement, errors);
+      }
+    }
+    validateReadOnlyStatement(node.in, errors);
+    return;
+  }
+  errors.push(
+    `only SELECT and read-only WITH statements are allowed, not ${node.type}`,
+  );
+}
+
+function validateSqlInternal({
+  sql,
+  limit,
+}: {
+  sql: string;
+  limit?: number;
+}): AdminDataSqlValidationResult & { sanitized_sql?: string } {
+  const enforcedLimit = normalizeSqlLimit(limit);
+  const result: AdminDataSqlValidationResult & { sanitized_sql?: string } = {
+    ok: false,
+    errors: [],
+    warnings: [],
+    relations: [],
+    functions: [],
+    enforced_limit: enforcedLimit,
+  };
+  let sanitized: string;
+  try {
+    sanitized = normalizeSql(sql);
+  } catch (err) {
+    result.errors.push(`${err}`);
+    return result;
+  }
+  result.sanitized_sql = sanitized;
+
+  let statements: any[];
+  try {
+    statements = parse(sanitized) as any[];
+  } catch (err) {
+    result.errors.push(`SQL parse failed: ${err}`);
+    return result;
+  }
+  if (statements.length !== 1) {
+    result.errors.push("exactly one SQL statement is allowed");
+    return result;
+  }
+  const statement = statements[0];
+  validateReadOnlyStatement(statement, result.errors);
+  const cteNames = collectCteNames(statement);
+  const relations = new Set<string>();
+  const functions = new Set<string>();
+
+  walkAst(statement, (node) => {
+    if (node?.type === "table") {
+      const schema = `${node.name?.schema ?? ""}`.trim().toLowerCase();
+      const relation = `${node.name?.name ?? ""}`.trim().toLowerCase();
+      if (schema && schema !== "public") {
+        result.errors.push(`schema '${schema}' is not allowed`);
+      }
+      if (relation && !cteNames.has(relation)) {
+        relations.add(relation);
+        if (!ALLOWED_SQL_RELATIONS.has(relation)) {
+          result.errors.push(`relation '${relation}' is not allowed`);
+        }
+      }
+    }
+    if (node?.type === "call") {
+      const schema = `${node.function?.schema ?? ""}`.trim().toLowerCase();
+      const name = `${node.function?.name ?? ""}`.trim().toLowerCase();
+      if (schema) {
+        result.errors.push(`function schema '${schema}' is not allowed`);
+      }
+      if (name) {
+        functions.add(name);
+        if (!ALLOWED_SQL_FUNCTIONS.has(name)) {
+          result.errors.push(`function '${name}' is not allowed`);
+        }
+      }
+    }
+  });
+
+  result.relations = [...relations].sort();
+  result.functions = [...functions].sort();
+  try {
+    result.normalized_sql = toSql.statement(statement);
+  } catch (err) {
+    result.warnings.push(`could not normalize SQL: ${err}`);
+  }
+  result.errors = Array.from(new Set(result.errors));
+  result.ok = result.errors.length === 0;
+  return result;
+}
+
 function normalizeViewInput(view: AdminDataViewInput): AdminDataViewInput {
   if (!isObject(view)) {
     throw Error("view must be an object");
@@ -766,4 +996,172 @@ export async function importViews({
     details: { created, updated, skipped, mode },
   });
   return { created, updated, skipped, views: saved };
+}
+
+export async function validateSql({
+  sql,
+  limit,
+  ...opts
+}: AdminAuthOpts & {
+  sql: string;
+  limit?: number;
+}): Promise<AdminDataSqlValidationResult> {
+  const account_id = await requireFreshAdmin(opts);
+  const validation = validateSqlInternal({ sql, limit });
+  await recordAudit({
+    account_id,
+    operation: "validate_sql",
+    details: {
+      ok: validation.ok,
+      errors: validation.errors,
+      relations: validation.relations,
+      functions: validation.functions,
+      enforced_limit: validation.enforced_limit,
+    },
+  });
+  const { sanitized_sql: _sanitized, ...publicValidation } = validation;
+  return publicValidation;
+}
+
+async function runReadOnlySql({
+  sql,
+  limit,
+  timeout_ms,
+}: {
+  sql: string;
+  limit: number;
+  timeout_ms: number;
+}): Promise<{
+  executed_sql: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  duration_ms: number;
+}> {
+  const client: PoolClient = await getPool().connect();
+  const executed_sql = `SELECT * FROM (${sql}) AS admin_data_explorer_query LIMIT ${
+    limit + 1
+  }`;
+  const started = Date.now();
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query(`SET LOCAL statement_timeout = '${timeout_ms}ms'`);
+    await client.query("SET LOCAL search_path = public");
+    const result = await client.query(executed_sql);
+    await client.query("COMMIT");
+    return {
+      executed_sql,
+      columns: result.fields.map((field) => field.name),
+      rows: result.rows,
+      duration_ms: Date.now() - started,
+    };
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // ignore rollback errors
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+function truncateRowsToByteLimit({
+  rows,
+  max_bytes,
+}: {
+  rows: Record<string, unknown>[];
+  max_bytes: number;
+}): {
+  rows: Record<string, unknown>[];
+  response_bytes: number;
+  truncated: boolean;
+} {
+  let output = rows;
+  let encoded = JSON.stringify(output);
+  let truncated = false;
+  while (encoded.length > max_bytes && output.length > 0) {
+    truncated = true;
+    output = output.slice(0, -1);
+    encoded = JSON.stringify(output);
+  }
+  return {
+    rows: output,
+    response_bytes: Buffer.byteLength(encoded, "utf8"),
+    truncated,
+  };
+}
+
+export async function runSql({
+  sql,
+  limit,
+  timeout_ms,
+  max_bytes,
+  ...opts
+}: AdminAuthOpts & {
+  sql: string;
+  limit?: number;
+  timeout_ms?: number;
+  max_bytes?: number;
+}): Promise<AdminDataSqlRunResult> {
+  const account_id = await requireFreshAdmin(opts);
+  const validation = validateSqlInternal({ sql, limit });
+  const { sanitized_sql, ...publicValidation } = validation;
+  if (!validation.ok || !sanitized_sql) {
+    await recordAudit({
+      account_id,
+      operation: "run_sql_denied",
+      details: {
+        errors: validation.errors,
+        relations: validation.relations,
+        functions: validation.functions,
+      },
+    });
+    throw Object.assign(
+      new Error(`SQL validation failed: ${validation.errors.join("; ")}`),
+      {
+        code: "admin_data_sql_validation_failed",
+        validation: publicValidation,
+      },
+    );
+  }
+  const enforcedLimit = validation.enforced_limit;
+  const timeoutMs = normalizeSqlTimeoutMs(timeout_ms);
+  const maxBytes = normalizeSqlMaxBytes(max_bytes);
+  const result = await runReadOnlySql({
+    sql: sanitized_sql,
+    limit: enforcedLimit,
+    timeout_ms: timeoutMs,
+  });
+  const overLimit = result.rows.length > enforcedLimit;
+  const limitedRows = overLimit
+    ? result.rows.slice(0, enforcedLimit)
+    : result.rows;
+  const truncated = truncateRowsToByteLimit({
+    rows: limitedRows,
+    max_bytes: maxBytes,
+  });
+  const runResult: AdminDataSqlRunResult = {
+    validation: publicValidation,
+    executed_sql: result.executed_sql,
+    columns: result.columns,
+    rows: truncated.rows,
+    row_count: truncated.rows.length,
+    duration_ms: result.duration_ms,
+    response_bytes: truncated.response_bytes,
+    truncated: overLimit || truncated.truncated,
+  };
+  await recordAudit({
+    account_id,
+    operation: "run_sql",
+    details: {
+      relations: validation.relations,
+      functions: validation.functions,
+      row_count: runResult.row_count,
+      response_bytes: runResult.response_bytes,
+      duration_ms: runResult.duration_ms,
+      truncated: runResult.truncated,
+    },
+  });
+  return runResult;
 }

@@ -13,6 +13,8 @@ export const adminData = {
   deleteView: authFirstRequireAccount,
   exportViews: authFirstRequireAccount,
   importViews: authFirstRequireAccount,
+  validateSql: authFirstRequireAccount,
+  runSql: authFirstRequireAccount,
 };
 
 export type AdminDataViewVisibility = "admin";
@@ -140,6 +142,27 @@ export interface AdminDataViewImportResult {
   views: AdminDataViewSummary[];
 }
 
+export interface AdminDataSqlValidationResult {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  relations: string[];
+  functions: string[];
+  normalized_sql?: string;
+  enforced_limit: number;
+}
+
+export interface AdminDataSqlRunResult {
+  validation: AdminDataSqlValidationResult;
+  executed_sql: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  duration_ms: number;
+  response_bytes: number;
+  truncated: boolean;
+}
+
 export interface AdminData {
   listDatasets(opts?: {
     account_id?: string;
@@ -191,4 +214,22 @@ export interface AdminData {
     views: AdminDataViewInput[] | AdminDataViewExport;
     mode?: "upsert" | "create_only";
   }): Promise<AdminDataViewImportResult>;
+
+  validateSql(opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    sql: string;
+    limit?: number;
+  }): Promise<AdminDataSqlValidationResult>;
+
+  runSql(opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    sql: string;
+    limit?: number;
+    timeout_ms?: number;
+    max_bytes?: number;
+  }): Promise<AdminDataSqlRunResult>;
 }
