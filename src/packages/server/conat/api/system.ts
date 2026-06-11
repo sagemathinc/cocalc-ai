@@ -81,7 +81,10 @@ import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "@cocalc/backend/logger";
 import basePath from "@cocalc/backend/base-path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { getCodexAppServerAccountStatus } from "@cocalc/ai/acp";
+import {
+  codexAuthJsonToAppServerLogin,
+  getCodexAppServerAccountStatus,
+} from "@cocalc/ai/acp";
 import {
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
@@ -6166,21 +6169,33 @@ export async function getCodexUsageStatus({
           : "Live ChatGPT Codex usage is only available when Codex is using a ChatGPT Plan.",
     };
   }
-  if (!project_id) {
-    return {
-      available: false,
-      checkedAt,
-      paymentSource,
-      reason:
-        "A project context is required to check ChatGPT Codex usage in CoCalc.",
-    };
-  }
 
-  await assertProjectCollaborator(account_id, project_id);
+  if (project_id) {
+    await assertProjectCollaborator(account_id, project_id);
+  }
   try {
+    const credential = await getExternalCredentialRouted({
+      selector: {
+        provider: "openai",
+        kind: CODEX_SUBSCRIPTION_KIND,
+        scope: "account",
+        owner_account_id: account_id,
+      },
+      touchLastUsed: true,
+    });
+    const appServerLogin = codexAuthJsonToAppServerLogin(credential?.payload);
+    if (!appServerLogin) {
+      return {
+        available: false,
+        checkedAt,
+        paymentSource,
+        project_id,
+        reason: "ChatGPT Codex credentials are missing or incomplete.",
+      };
+    }
     const status = await getCodexAppServerAccountStatus({
-      projectId: project_id,
       accountId: account_id,
+      appServerLogin,
     });
     return {
       available: !!status.rateLimits,

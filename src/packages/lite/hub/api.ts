@@ -4,7 +4,11 @@ This is a very lightweight small subset of the hub's API for browser clients.
 
 import getLogger from "@cocalc/backend/logger";
 import { getFrontendSourceFingerprint } from "@cocalc/backend/frontend-build-fingerprint";
-import { getCodexAppServerAccountStatus } from "@cocalc/ai/acp";
+import {
+  codexAuthJsonToAppServerLogin,
+  getCodexAppServerAccountStatus,
+  type CodexAppServerLoginHint,
+} from "@cocalc/ai/acp";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import type {
   AccountBayLocation,
@@ -655,6 +659,17 @@ async function hasLocalSubscriptionAuth(codexHome: string): Promise<boolean> {
   }
 }
 
+async function getLiteSubscriptionAppServerLogin(
+  codexHome: string,
+): Promise<CodexAppServerLoginHint | undefined> {
+  try {
+    const raw = await readFile(join(codexHome, "auth.json"), "utf8");
+    return codexAuthJsonToAppServerLogin(raw);
+  } catch {
+    return undefined;
+  }
+}
+
 function getEnvOpenAiApiKey(): string | undefined {
   const candidates = [
     process.env.OPENAI_API_KEY,
@@ -738,7 +753,10 @@ async function getCodexUsageStatus(opts?: {
     };
   }
   try {
-    const status = await getCodexAppServerAccountStatus({});
+    const codexHome = resolveLiteCodexHome();
+    const status = await getCodexAppServerAccountStatus({
+      appServerLogin: await getLiteSubscriptionAppServerLogin(codexHome),
+    });
     return {
       available: !!status.rateLimits,
       checkedAt,
