@@ -30,6 +30,7 @@ import {
   exportReviewBundle,
   importReviewBundle,
   loadReviewRecord,
+  loadReviewRecords,
   loadReviewDraft,
   mergeRecordWithDraft,
   type GitReviewCommentV2,
@@ -232,7 +233,6 @@ const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
 const HEAD_REF = "HEAD";
 const DEFAULT_CONTEXT_LINES = 3;
 const GIT_LOG_WINDOW_SIZE = 250;
-export const GIT_REVIEW_RECORD_LOAD_BATCH_SIZE = 25;
 const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
   value,
   label: `Context ${value}`,
@@ -375,18 +375,6 @@ export function applyGitReviewedByCommitEntries({
     next[hash] = Boolean(record.reviewed);
   }
   return next;
-}
-
-export function getGitReviewRecordLoadBatch(
-  hashes: readonly string[],
-  start: number,
-  batchSize = GIT_REVIEW_RECORD_LOAD_BATCH_SIZE,
-): string[] {
-  return hashes.slice(start, start + Math.max(1, Math.floor(batchSize)));
-}
-
-function waitForNextGitReviewRecordBatch(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 export function applyGitReviewedByCommitResetEntry({
@@ -1230,32 +1218,17 @@ export function GitCommitDrawer({
     let cancelled = false;
     (async () => {
       try {
-        for (
-          let start = 0;
-          start < hashes.length && !cancelled;
-          start += GIT_REVIEW_RECORD_LOAD_BATCH_SIZE
-        ) {
-          const batch = getGitReviewRecordLoadBatch(hashes, start);
-          const entries = await Promise.all(
-            batch.map(async (hash) => {
-              const rec = await loadReviewRecord({
-                accountId,
-                commitSha: hash,
-              });
-              return [hash, rec] as const;
-            }),
-          );
-          if (cancelled) return;
-          setReviewedByCommit((prev) =>
-            applyGitReviewedByCommitEntries({
-              previous: prev,
-              entries,
-            }),
-          );
-          if (start + GIT_REVIEW_RECORD_LOAD_BATCH_SIZE < hashes.length) {
-            await waitForNextGitReviewRecordBatch();
-          }
-        }
+        const entries = await loadReviewRecords({
+          accountId,
+          commitShas: hashes,
+        });
+        if (cancelled) return;
+        setReviewedByCommit((prev) =>
+          applyGitReviewedByCommitEntries({
+            previous: prev,
+            entries,
+          }),
+        );
       } catch {
         // ignore transient dropdown review indicator failures
       }

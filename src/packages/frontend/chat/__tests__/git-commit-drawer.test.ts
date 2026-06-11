@@ -20,7 +20,6 @@ import {
   getNextRenderedDiffLineLimit,
   getRenderedDiffLineLimit,
   getCommitReviewIndicatorState,
-  getGitReviewRecordLoadBatch,
   isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
   ReviewNoteEditor,
@@ -65,7 +64,6 @@ import {
   shouldCaptureGitDrawerFindShortcut,
   shouldApplyIncomingGitCommitSelectionRequest,
   shouldFallbackToFirstVisibleGitCommit,
-  GIT_REVIEW_RECORD_LOAD_BATCH_SIZE,
 } from "../git-commit-drawer";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
@@ -465,21 +463,6 @@ describe("git commit drawer merge commit formatting", () => {
         fallback: true,
       }),
     ).toBe(false);
-  });
-
-  it("batches git review record loads for large repositories", () => {
-    const hashes = Array.from(
-      { length: GIT_REVIEW_RECORD_LOAD_BATCH_SIZE + 3 },
-      (_, index) => `hash-${index}`,
-    );
-
-    expect(getGitReviewRecordLoadBatch(hashes, 0)).toHaveLength(
-      GIT_REVIEW_RECORD_LOAD_BATCH_SIZE,
-    );
-    const tail = hashes.slice(GIT_REVIEW_RECORD_LOAD_BATCH_SIZE);
-    expect(
-      getGitReviewRecordLoadBatch(hashes, GIT_REVIEW_RECORD_LOAD_BATCH_SIZE),
-    ).toEqual(tail);
   });
 
   it("disables git review submission when review persistence or target context is unavailable", () => {
