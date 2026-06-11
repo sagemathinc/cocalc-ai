@@ -66,12 +66,16 @@ jest.mock("antd", () => {
     );
   };
   const TextArea = ({ value }: any) => <div>{value}</div>;
+  const Progress = ({ percent }: any) => (
+    <div role="progressbar" aria-valuenow={percent} />
+  );
   return {
     Alert: Div,
     Button,
     Collapse,
     Input: { TextArea },
     Popconfirm: Div,
+    Progress,
     Space: Div,
     Table: Div,
     Tag: Div,
@@ -203,10 +207,10 @@ describe("CodexCredentialsPanel", () => {
         screen.getAllByText("Open ChatGPT Codex Usage").length,
       ).toBeGreaterThan(0);
       expect(screen.getByText("user@example.com")).toBeTruthy();
-      expect(screen.getByText("5-hour window")).toBeTruthy();
-      expect(screen.getByText("42% used")).toBeTruthy();
-      expect(screen.getByText("7-day window")).toBeTruthy();
-      expect(screen.getByText("7% used")).toBeTruthy();
+      expect(screen.getByText("5-hour limit")).toBeTruthy();
+      expect(screen.getByText("42%")).toBeTruthy();
+      expect(screen.getByText("7-day limit")).toBeTruthy();
+      expect(screen.getByText("7%")).toBeTruthy();
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
@@ -304,10 +308,10 @@ describe("CodexCredentialsPanel", () => {
     render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("5-hour window")).toBeTruthy();
-      expect(screen.getByText("42% used")).toBeTruthy();
-      expect(screen.getByText("7-day window")).toBeTruthy();
-      expect(screen.getByText("7% used")).toBeTruthy();
+      expect(screen.getByText("5-hour limit")).toBeTruthy();
+      expect(screen.getByText("42%")).toBeTruthy();
+      expect(screen.getByText("7-day limit")).toBeTruthy();
+      expect(screen.getByText("7%")).toBeTruthy();
     });
     expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
 
@@ -318,7 +322,7 @@ describe("CodexCredentialsPanel", () => {
 
     expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("loading")).toBeNull();
-    expect(screen.getByText("42% used")).toBeTruthy();
+    expect(screen.getByText("42%")).toBeTruthy();
 
     await act(async () => {
       refreshedUsage.resolve({
@@ -343,8 +347,8 @@ describe("CodexCredentialsPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("43% used")).toBeTruthy();
-      expect(screen.getByText("8% used")).toBeTruthy();
+      expect(screen.getByText("43%")).toBeTruthy();
+      expect(screen.getByText("8%")).toBeTruthy();
     });
   });
 

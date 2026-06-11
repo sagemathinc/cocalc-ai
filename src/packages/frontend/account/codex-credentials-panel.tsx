@@ -13,6 +13,7 @@ import {
   Input,
   message,
   Popconfirm,
+  Progress,
   Space,
   Table,
   Tag,
@@ -56,6 +57,14 @@ const deviceAuthCodeStyle: CSSProperties = {
   borderRadius: 8,
   background: COLORS.GRAY_LLL,
   padding: 12,
+};
+
+const usageLimitStyle: CSSProperties = {
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 8,
+  background: COLORS.GRAY_LLL,
+  padding: "10px 12px",
+  width: "100%",
 };
 
 function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
@@ -146,7 +155,7 @@ function formatResetTime(seconds?: number | null): string | undefined {
 function getUsagePercent(limit?: any): number | undefined {
   const value = limit?.usedPercent ?? limit?.used_percent;
   return typeof value === "number" && Number.isFinite(value)
-    ? Math.round(value)
+    ? Math.max(0, Math.min(100, Math.round(value)))
     : undefined;
 }
 
@@ -162,13 +171,13 @@ function formatWindowLabel(limit: any, fallback: string): string {
   if (!mins) return fallback;
   if (mins % (24 * 60) === 0) {
     const days = mins / (24 * 60);
-    return `${days}-day window`;
+    return `${days}-day limit`;
   }
   if (mins % 60 === 0) {
     const hours = mins / 60;
-    return `${hours}-hour window`;
+    return `${hours}-hour limit`;
   }
-  return `${mins}-minute window`;
+  return `${mins}-minute limit`;
 }
 
 function getUsageWindows(rateLimit: any): Array<{
@@ -816,15 +825,37 @@ function CodexCredentialsPanelBody({
           {planType ? <Tag color="green">{planType}</Tag> : null}
         </Space>
         {usageWindows.length ? (
-          <Space orientation="vertical" size={4}>
+          <Space orientation="vertical" size={8} style={{ width: "100%" }}>
             {usageWindows.map((window) => (
-              <Space key={window.key} wrap>
-                <Tag color="blue">{window.label}</Tag>
+              <div key={window.key} style={usageLimitStyle}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    marginBottom: 4,
+                  }}
+                >
+                  <Text strong>{window.label}</Text>
+                  {typeof window.usedPercent === "number" ? (
+                    <Text>{`${window.usedPercent}%`}</Text>
+                  ) : null}
+                </div>
                 {typeof window.usedPercent === "number" ? (
-                  <Tag>{window.usedPercent}% used</Tag>
+                  <Progress
+                    percent={window.usedPercent}
+                    showInfo={false}
+                    size="small"
+                    style={{ marginBottom: 2 }}
+                  />
                 ) : null}
-                {window.resetAt ? <Tag>resets {window.resetAt}</Tag> : null}
-              </Space>
+                {window.resetAt ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    Resets {window.resetAt}
+                  </Text>
+                ) : null}
+              </div>
             ))}
           </Space>
         ) : null}
