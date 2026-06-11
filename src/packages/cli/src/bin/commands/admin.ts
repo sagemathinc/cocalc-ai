@@ -16,6 +16,14 @@ import type {
   AdminDataViewExport,
   AdminDataViewInput,
 } from "@cocalc/conat/hub/api/admin-data-explorer";
+import {
+  ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
+  ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES,
+  ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS,
+  ADMIN_DATA_EXPLORER_SQL_MAX_BYTES,
+  ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
+  ADMIN_DATA_EXPLORER_SQL_MAX_TIMEOUT_MS,
+} from "@cocalc/util/admin-data-explorer";
 import type {
   LaunchHealthStatus,
   LaunchSmokeResult,
@@ -1124,7 +1132,11 @@ export function registerAdminCommand(
     .description("validate restricted read-only SQL (admin fresh-auth)")
     .option("--query <sql>", "SQL query text")
     .option("--file <path>", "read SQL from a file")
-    .option("--limit <n>", "server-enforced max rows", "100")
+    .option(
+      "--limit <n>",
+      "server-enforced max rows",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT}`,
+    )
     .action(
       async (
         opts: {
@@ -1140,8 +1152,8 @@ export function registerAdminCommand(
             limit: parsePositiveIntegerOption({
               name: "--limit",
               value: opts.limit,
-              fallback: 100,
-              max: 5000,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
             }),
           });
         });
@@ -1153,9 +1165,21 @@ export function registerAdminCommand(
     .description("run restricted read-only SQL (admin fresh-auth)")
     .option("--query <sql>", "SQL query text")
     .option("--file <path>", "read SQL from a file")
-    .option("--limit <n>", "server-enforced max rows", "100")
-    .option("--timeout-ms <n>", "server-side statement timeout", "5000")
-    .option("--max-bytes <n>", "max serialized response bytes", "4194304")
+    .option(
+      "--limit <n>",
+      "server-enforced max rows",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT}`,
+    )
+    .option(
+      "--timeout-ms <n>",
+      "server-side statement timeout",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS}`,
+    )
+    .option(
+      "--max-bytes <n>",
+      "max serialized response bytes",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES}`,
+    )
     .action(
       async (
         opts: {
@@ -1173,20 +1197,20 @@ export function registerAdminCommand(
             limit: parsePositiveIntegerOption({
               name: "--limit",
               value: opts.limit,
-              fallback: 100,
-              max: 5000,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
             }),
             timeout_ms: parsePositiveIntegerOption({
               name: "--timeout-ms",
               value: opts.timeoutMs,
-              fallback: 5000,
-              max: 30000,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_TIMEOUT_MS,
             }),
             max_bytes: parsePositiveIntegerOption({
               name: "--max-bytes",
               value: opts.maxBytes,
-              fallback: 4 * 1024 * 1024,
-              max: 32 * 1024 * 1024,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_BYTES,
             }),
           });
         });

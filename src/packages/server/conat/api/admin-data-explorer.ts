@@ -9,6 +9,16 @@ import centralLog from "@cocalc/database/postgres/central-log";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  ADMIN_DATA_EXPLORER_ALLOWED_SQL_FUNCTIONS,
+  ADMIN_DATA_EXPLORER_ALLOWED_SQL_RELATIONS,
+  ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
+  ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES,
+  ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS,
+  ADMIN_DATA_EXPLORER_SQL_MAX_BYTES,
+  ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
+  ADMIN_DATA_EXPLORER_SQL_MAX_TIMEOUT_MS,
+} from "@cocalc/util/admin-data-explorer";
 import { uuid } from "@cocalc/util/misc";
 import { parse, toSql } from "pgsql-ast-parser";
 import type {
@@ -38,61 +48,14 @@ const MAX_TAG_LENGTH = 80;
 const MAX_COLUMNS = 200;
 const MAX_SORTS = 20;
 const MAX_DEFAULT_LIMIT = 10_000;
-const DEFAULT_SQL_LIMIT = 100;
-const MAX_SQL_LIMIT = 5_000;
-const DEFAULT_SQL_TIMEOUT_MS = 5_000;
-const MAX_SQL_TIMEOUT_MS = 30_000;
-const DEFAULT_SQL_MAX_BYTES = 4 * 1024 * 1024;
-const MAX_SQL_MAX_BYTES = 32 * 1024 * 1024;
 const TABLE = "admin_data_explorer_views";
 
-const ALLOWED_SQL_RELATIONS = new Set([
-  "account_cpu_usage_events",
-  "account_managed_egress_events",
-  "account_security_state",
-  "account_usage_windows",
-  "accounts",
-  "admin_data_explorer_views",
-  "ai_usage_log",
-  "central_log",
-  "launch_smoke_results",
-  "project_hosts",
-  "project_runtime_slots",
-  "projects",
-  "purchases",
-  "statements",
-  "usage_info",
-  "ux_latency_events",
-  "voucher_codes",
-  "vouchers",
-]);
-
-const ALLOWED_SQL_FUNCTIONS = new Set([
-  "abs",
-  "avg",
-  "ceil",
-  "coalesce",
-  "count",
-  "date_trunc",
-  "floor",
-  "greatest",
-  "jsonb_array_length",
-  "jsonb_extract_path_text",
-  "least",
-  "left",
-  "length",
-  "lower",
-  "max",
-  "min",
-  "now",
-  "right",
-  "round",
-  "split_part",
-  "substring",
-  "sum",
-  "to_char",
-  "upper",
-]);
+const ALLOWED_SQL_RELATIONS: Set<string> = new Set(
+  ADMIN_DATA_EXPLORER_ALLOWED_SQL_RELATIONS,
+);
+const ALLOWED_SQL_FUNCTIONS: Set<string> = new Set(
+  ADMIN_DATA_EXPLORER_ALLOWED_SQL_FUNCTIONS,
+);
 
 type AdminAuthOpts = {
   account_id?: string;
@@ -461,30 +424,33 @@ function normalizeDefaultLimit(value: unknown): number | null {
 }
 
 function normalizeSqlLimit(value: unknown): number {
-  if (value == null || value === "") return DEFAULT_SQL_LIMIT;
+  if (value == null || value === "")
+    return ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT;
   const limit = Number(value);
   if (!Number.isInteger(limit) || limit <= 0) {
     throw Error("limit must be a positive integer");
   }
-  return Math.min(limit, MAX_SQL_LIMIT);
+  return Math.min(limit, ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT);
 }
 
 function normalizeSqlTimeoutMs(value: unknown): number {
-  if (value == null || value === "") return DEFAULT_SQL_TIMEOUT_MS;
+  if (value == null || value === "")
+    return ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS;
   const timeout = Number(value);
   if (!Number.isInteger(timeout) || timeout <= 0) {
     throw Error("timeout_ms must be a positive integer");
   }
-  return Math.min(timeout, MAX_SQL_TIMEOUT_MS);
+  return Math.min(timeout, ADMIN_DATA_EXPLORER_SQL_MAX_TIMEOUT_MS);
 }
 
 function normalizeSqlMaxBytes(value: unknown): number {
-  if (value == null || value === "") return DEFAULT_SQL_MAX_BYTES;
+  if (value == null || value === "")
+    return ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES;
   const maxBytes = Number(value);
   if (!Number.isInteger(maxBytes) || maxBytes <= 0) {
     throw Error("max_bytes must be a positive integer");
   }
-  return Math.min(maxBytes, MAX_SQL_MAX_BYTES);
+  return Math.min(maxBytes, ADMIN_DATA_EXPLORER_SQL_MAX_BYTES);
 }
 
 function normalizeSql(sql: unknown): string {
