@@ -2652,6 +2652,10 @@ async function runProjectStartLikeAction({
   stream_name: string;
 }> {
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  await assertClusterAccountTrustedForProductAccess({
+    account_id,
+    action: kind === "restart" ? "restart projects" : "start projects",
+  });
   await assertProjectNotHardDeleting({ project_id });
   if (
     managed_egress_override != null &&
