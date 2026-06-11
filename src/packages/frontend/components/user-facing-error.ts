@@ -9,6 +9,11 @@ export interface UserFacingError {
 }
 
 const CALL_HUB_SUFFIX = /\s*-\s*callHub:[\s\S]*$/i;
+const GENERIC_ERROR_MESSAGES = new Set([
+  "an error occurred",
+  "error occurred",
+  "something went wrong",
+]);
 
 export function normalizeUserFacingError(error: unknown): UserFacingError {
   const raw = stringifyError(error).trim();
@@ -16,18 +21,26 @@ export function normalizeUserFacingError(error: unknown): UserFacingError {
     return { message: "An error occurred." };
   }
 
-  const message = readableErrorMessage(raw);
+  const message = readableErrorMessage(raw, error);
   const normalizedRaw = normalizeWhitespace(raw);
   const normalizedMessage = normalizeWhitespace(message);
   const hasTechnicalWrapper =
     CALL_HUB_SUFFIX.test(raw) || raw.toLowerCase().includes("callhub:");
+  const hasStructuredWrapper = looksLikeStructuredErrorString(raw);
+  const structuredDetails = structuredErrorDetails(error, raw);
+  const normalizedStructuredDetails = normalizeWhitespace(structuredDetails);
 
   return {
     message,
     details:
-      hasTechnicalWrapper && normalizedRaw !== normalizedMessage
-        ? raw
-        : undefined,
+      (hasTechnicalWrapper ||
+        hasStructuredWrapper ||
+        normalizedStructuredDetails !== normalizedRaw) &&
+      normalizedStructuredDetails !== normalizedMessage
+        ? structuredDetails
+        : hasTechnicalWrapper && normalizedRaw !== normalizedMessage
+          ? raw
+          : undefined,
   };
 }
 
@@ -50,9 +63,16 @@ export function stringifyError(error: unknown): string {
   return `${error}`;
 }
 
-function readableErrorMessage(raw: string): string {
+function readableErrorMessage(raw: string, source?: unknown): string {
   if (/^callHub:/i.test(raw.trim())) {
     return "The server request failed.";
+  }
+  const extractedFromSource =
+    source != null && typeof source === "object" && !(source instanceof Error)
+      ? extractErrorMessageFromValue(source)
+      : undefined;
+  if (extractedFromSource && !isGenericErrorMessage(extractedFromSource)) {
+    return stripLeadingErrorPrefixes(extractedFromSource);
   }
   const withoutCallHub = stripCallHubSuffix(raw);
   const withoutPrefixes = stripLeadingErrorPrefixes(withoutCallHub);
@@ -67,6 +87,14 @@ function readableErrorMessage(raw: string): string {
     return "The server request failed.";
   }
   return "An error occurred.";
+}
+
+function structuredErrorDetails(error: unknown, raw: string): string {
+  if (!error || typeof error !== "object" || error instanceof Error) {
+    return raw;
+  }
+  const encoded = safeJsonStringify(error);
+  return encoded && encoded !== "{}" ? encoded : raw;
 }
 
 function stripCallHubSuffix(value: string): string {
@@ -95,17 +123,25 @@ function extractErrorMessageFromValue(value: unknown): string | undefined {
     }
     return trimmed || undefined;
   }
+  if (value instanceof Error) {
+    return extractErrorMessageFromValue(value.message);
+  }
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
+  const genericCandidates: string[] = [];
   for (const key of ["message", "error", "reason", "stderr"]) {
     const extracted = extractErrorMessageFromValue(record[key]);
-    if (extracted) return extracted;
+    if (!extracted) continue;
+    if (!isGenericErrorMessage(extracted)) return extracted;
+    genericCandidates.push(extracted);
   }
-  for (const key of ["event", "detail", "result"]) {
+  for (const key of ["event", "detail", "details", "result"]) {
     const extracted = extractErrorMessageFromValue(record[key]);
-    if (extracted) return extracted;
+    if (!extracted) continue;
+    if (!isGenericErrorMessage(extracted)) return extracted;
+    genericCandidates.push(extracted);
   }
-  return undefined;
+  return genericCandidates[0];
 }
 
 function parseMaybeJson(value: string): unknown | undefined {
@@ -128,4 +164,15 @@ function safeJsonStringify(value: unknown): string | undefined {
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function looksLikeStructuredErrorString(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
+}
+
+function isGenericErrorMessage(value: string): boolean {
+  return GENERIC_ERROR_MESSAGES.has(
+    stripLeadingErrorPrefixes(value).replace(/\.+$/, "").toLowerCase(),
+  );
 }

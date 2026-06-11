@@ -31,6 +31,29 @@ describe("normalizeUserFacingError", () => {
     ).toBe("directory already exists");
   });
 
+  it("prefers actionable nested fields over generic wrapper messages", () => {
+    const normalized = normalizeUserFacingError({
+      message: "An error occurred.",
+      stderr: "latexmk: command not found",
+      code: "ENOENT",
+    });
+
+    expect(normalized.message).toBe("latexmk: command not found");
+    expect(normalized.details).toContain('"message":"An error occurred."');
+    expect(normalized.details).toContain('"code":"ENOENT"');
+  });
+
+  it("extracts actionable fields from encoded backend errors", () => {
+    const raw = JSON.stringify({
+      error: "An error occurred.",
+      details: { stderr: "pdflatex failed with exit code 1" },
+    });
+    const normalized = normalizeUserFacingError(raw);
+
+    expect(normalized.message).toBe("pdflatex failed with exit code 1");
+    expect(normalized.details).toBe(raw);
+  });
+
   it("preserves plain actionable validation text", () => {
     const normalized = normalizeUserFacingError(
       "cannot delete a tier with active subscriptions",
