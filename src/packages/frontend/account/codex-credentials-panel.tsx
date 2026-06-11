@@ -13,6 +13,7 @@ import {
   Input,
   message,
   Popconfirm,
+  Progress,
   Space,
   Table,
   Tag,
@@ -56,6 +57,14 @@ const deviceAuthCodeStyle: CSSProperties = {
   borderRadius: 8,
   background: COLORS.GRAY_LLL,
   padding: 12,
+};
+
+const usageLimitStyle: CSSProperties = {
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 8,
+  background: COLORS.GRAY_LLL,
+  padding: "10px 12px",
+  width: "100%",
 };
 
 function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
@@ -143,6 +152,57 @@ function formatResetTime(seconds?: number | null): string | undefined {
   return new Date(seconds * 1000).toLocaleString();
 }
 
+function getUsagePercent(limit?: any): number | undefined {
+  const value = limit?.usedPercent ?? limit?.used_percent;
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, Math.round(value)))
+    : undefined;
+}
+
+function getWindowDurationMins(limit?: any): number | undefined {
+  const value = limit?.windowDurationMins ?? limit?.window_duration_mins;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function formatWindowLabel(limit: any, fallback: string): string {
+  const mins = getWindowDurationMins(limit);
+  if (!mins) return fallback;
+  if (mins % (24 * 60) === 0) {
+    const days = mins / (24 * 60);
+    return `${days}-day limit`;
+  }
+  if (mins % 60 === 0) {
+    const hours = mins / 60;
+    return `${hours}-hour limit`;
+  }
+  return `${mins}-minute limit`;
+}
+
+function getUsageWindows(rateLimit: any): Array<{
+  key: "primary" | "secondary";
+  label: string;
+  usedPercent?: number;
+  resetAt?: string;
+}> {
+  return (["primary", "secondary"] as const)
+    .map((key) => {
+      const limit = rateLimit?.[key];
+      if (!limit) return undefined;
+      return {
+        key,
+        label: formatWindowLabel(
+          limit,
+          key === "primary" ? "Short window" : "Long window",
+        ),
+        usedPercent: getUsagePercent(limit),
+        resetAt: formatResetTime(limit?.resetsAt ?? limit?.resets_at),
+      };
+    })
+    .filter((window) => !!window);
+}
+
 function formatCodexUsageReason(reason?: string): string | undefined {
   if (!reason) return undefined;
   if (
@@ -152,6 +212,26 @@ function formatCodexUsageReason(reason?: string): string | undefined {
     return "ChatGPT Codex usage is connected, but live rate-limit details are not available from Codex right now. Use the ChatGPT usage page for the latest limits.";
   }
   return reason;
+}
+
+function isCodexUsageAuthProblem(status?: CodexUsageStatusInfo): boolean {
+  const text = [
+    status?.reason,
+    status?.errors?.account,
+    status?.errors?.rateLimits,
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  return (
+    text.includes("auth") ||
+    text.includes("credential") ||
+    text.includes("expired") ||
+    text.includes("incomplete") ||
+    text.includes("sign in") ||
+    text.includes("sign-in") ||
+    text.includes("token")
+  );
 }
 
 export function CodexCredentialsPanel(props: CodexCredentialsPanelProps = {}) {
@@ -725,8 +805,7 @@ function CodexCredentialsPanelBody({
     if (paymentSource?.source !== "subscription") return null;
     const chatgptAccount = getChatGptAccount(codexUsageStatus);
     const rateLimit = getCodexRateLimit(codexUsageStatus);
-    const primary = rateLimit?.primary;
-    const resetAt = formatResetTime(primary?.resetsAt ?? primary?.resets_at);
+    const usageWindows = getUsageWindows(rateLimit);
     const planType =
       formatPlanType(chatgptAccount?.planType) ??
       formatPlanType(rateLimit?.planType ?? rateLimit?.plan_type);
@@ -744,13 +823,42 @@ function CodexCredentialsPanelBody({
             <Tag color="blue">{chatgptAccount.email}</Tag>
           ) : null}
           {planType ? <Tag color="green">{planType}</Tag> : null}
-          {typeof primary?.usedPercent === "number" ? (
-            <Tag>{primary.usedPercent}% used</Tag>
-          ) : typeof primary?.used_percent === "number" ? (
-            <Tag>{primary.used_percent}% used</Tag>
-          ) : null}
-          {resetAt ? <Tag>resets {resetAt}</Tag> : null}
         </Space>
+        {usageWindows.length ? (
+          <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+            {usageWindows.map((window) => (
+              <div key={window.key} style={usageLimitStyle}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    marginBottom: 4,
+                  }}
+                >
+                  <Text strong>{window.label}</Text>
+                  {typeof window.usedPercent === "number" ? (
+                    <Text>{`${window.usedPercent}%`}</Text>
+                  ) : null}
+                </div>
+                {typeof window.usedPercent === "number" ? (
+                  <Progress
+                    percent={window.usedPercent}
+                    showInfo={false}
+                    size="small"
+                    style={{ marginBottom: 2 }}
+                  />
+                ) : null}
+                {window.resetAt ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    Resets {window.resetAt}
+                  </Text>
+                ) : null}
+              </div>
+            ))}
+          </Space>
+        ) : null}
         {reason ? <Text type="secondary">{reason}</Text> : null}
         <Space wrap>
           <Button
@@ -829,16 +937,43 @@ function CodexCredentialsPanelBody({
           {paymentSource?.source === "subscription" ? (
             <>
               <Space wrap>
-                <Tag color="green">Connected</Tag>
+                <Tag
+                  color={
+                    isCodexUsageAuthProblem(codexUsageStatus)
+                      ? "orange"
+                      : "green"
+                  }
+                >
+                  {isCodexUsageAuthProblem(codexUsageStatus)
+                    ? "Sign-in needs refresh"
+                    : "Connected"}
+                </Tag>
                 <Text strong style={{ fontSize: 18 }}>
-                  ChatGPT is connected
+                  {isCodexUsageAuthProblem(codexUsageStatus)
+                    ? "Refresh your ChatGPT sign-in"
+                    : "ChatGPT is connected"}
                 </Text>
               </Space>
               <Text type="secondary">
-                CoCalc is using your ChatGPT subscription for Codex. ChatGPT
-                shows your exact plan and remaining Codex usage.
+                {isCodexUsageAuthProblem(codexUsageStatus)
+                  ? "Your ChatGPT plan is selected for Codex, but the stored sign-in needs to be refreshed before Codex can use it."
+                  : "CoCalc is using your ChatGPT subscription for Codex. ChatGPT shows your exact plan and remaining Codex usage."}
               </Text>
               <Space wrap>
+                <Button
+                  type={
+                    isCodexUsageAuthProblem(codexUsageStatus)
+                      ? "primary"
+                      : undefined
+                  }
+                  onClick={() => void startDeviceAuth()}
+                  loading={deviceAuthActionPending}
+                  disabled={!authProjectId || deviceAuth?.state === "pending"}
+                >
+                  {deviceAuthActionPending
+                    ? "Getting sign-in code..."
+                    : "Sign in again with ChatGPT"}
+                </Button>
                 <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
                   {CODEX_USAGE_LABEL}
                 </Button>

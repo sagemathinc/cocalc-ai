@@ -66,12 +66,16 @@ jest.mock("antd", () => {
     );
   };
   const TextArea = ({ value }: any) => <div>{value}</div>;
+  const Progress = ({ percent }: any) => (
+    <div role="progressbar" aria-valuenow={percent} />
+  );
   return {
     Alert: Div,
     Button,
     Collapse,
     Input: { TextArea },
     Popconfirm: Div,
+    Progress,
     Space: Div,
     Table: Div,
     Tag: Div,
@@ -181,7 +185,8 @@ describe("CodexCredentialsPanel", () => {
       },
       rateLimits: {
         rateLimits: {
-          primary: { usedPercent: 42 },
+          primary: { usedPercent: 42, windowDurationMins: 300 },
+          secondary: { usedPercent: 7, windowDurationMins: 10_080 },
         },
       },
     });
@@ -202,7 +207,10 @@ describe("CodexCredentialsPanel", () => {
         screen.getAllByText("Open ChatGPT Codex Usage").length,
       ).toBeGreaterThan(0);
       expect(screen.getByText("user@example.com")).toBeTruthy();
-      expect(screen.getByText("42% used")).toBeTruthy();
+      expect(screen.getByText("5-hour limit")).toBeTruthy();
+      expect(screen.getByText("42%")).toBeTruthy();
+      expect(screen.getByText("7-day limit")).toBeTruthy();
+      expect(screen.getByText("7%")).toBeTruthy();
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
@@ -222,7 +230,7 @@ describe("CodexCredentialsPanel", () => {
     });
   });
 
-  it("shows connected copy instead of the sign-in CTA for ChatGPT subscriptions", async () => {
+  it("shows a visible reauth CTA for stale ChatGPT subscriptions", async () => {
     getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
     getCodexUsageStatus.mockResolvedValue({
       available: false,
@@ -231,14 +239,26 @@ describe("CodexCredentialsPanel", () => {
       reason:
         "account/rateLimits/read: codex account authentication required to read rate limits",
     });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "pending",
+      verificationUrl: "https://chatgpt.com/device",
+      userCode: "ABCD-EFGH",
+      output: "",
+      startedAt: 1,
+      updatedAt: 1,
+    });
 
     render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("ChatGPT is connected")).toBeTruthy();
-      expect(screen.getByText("Connected")).toBeTruthy();
+      expect(screen.getByText("Refresh your ChatGPT sign-in")).toBeTruthy();
+      expect(screen.getByText("Sign-in needs refresh")).toBeTruthy();
       expect(screen.queryByText("Connect Codex with ChatGPT")).toBeNull();
-      expect(screen.queryByText("Sign in with ChatGPT")).toBeNull();
+      expect(screen.getByText("Sign in again with ChatGPT")).toBeTruthy();
       expect(
         screen.getByText((text) =>
           text.includes("live rate-limit details are not available"),
@@ -247,6 +267,17 @@ describe("CodexCredentialsPanel", () => {
       expect(
         screen.queryByText((text) => text.includes("account/rateLimits/read")),
       ).toBeNull();
+    });
+
+    await act(async () => {
+      screen.getByText("Sign in again with ChatGPT").click();
+    });
+
+    expect(codexDeviceAuthStart).toHaveBeenCalledWith({
+      project_id: "project-1",
+    });
+    await waitFor(() => {
+      expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
     });
   });
 
@@ -267,7 +298,8 @@ describe("CodexCredentialsPanel", () => {
         },
         rateLimits: {
           rateLimits: {
-            primary: { usedPercent: 42 },
+            primary: { usedPercent: 42, windowDurationMins: 300 },
+            secondary: { usedPercent: 7, windowDurationMins: 10_080 },
           },
         },
       })
@@ -276,7 +308,10 @@ describe("CodexCredentialsPanel", () => {
     render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("42% used")).toBeTruthy();
+      expect(screen.getByText("5-hour limit")).toBeTruthy();
+      expect(screen.getByText("42%")).toBeTruthy();
+      expect(screen.getByText("7-day limit")).toBeTruthy();
+      expect(screen.getByText("7%")).toBeTruthy();
     });
     expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
 
@@ -287,7 +322,7 @@ describe("CodexCredentialsPanel", () => {
 
     expect(getCodexPaymentSource).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("loading")).toBeNull();
-    expect(screen.getByText("42% used")).toBeTruthy();
+    expect(screen.getByText("42%")).toBeTruthy();
 
     await act(async () => {
       refreshedUsage.resolve({
@@ -303,7 +338,8 @@ describe("CodexCredentialsPanel", () => {
         },
         rateLimits: {
           rateLimits: {
-            primary: { usedPercent: 43 },
+            primary: { usedPercent: 43, windowDurationMins: 300 },
+            secondary: { usedPercent: 8, windowDurationMins: 10_080 },
           },
         },
       });
@@ -311,7 +347,8 @@ describe("CodexCredentialsPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("43% used")).toBeTruthy();
+      expect(screen.getByText("43%")).toBeTruthy();
+      expect(screen.getByText("8%")).toBeTruthy();
     });
   });
 

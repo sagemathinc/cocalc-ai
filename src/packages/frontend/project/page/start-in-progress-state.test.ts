@@ -11,6 +11,18 @@ describe("isStartInProgressActive", () => {
     ).toBe(false);
   });
 
+  it("keeps restart progress visible even when the project is already running again", () => {
+    expect(
+      isStartInProgressActive({
+        lifecycleState: "running",
+        restartRequest: {
+          token: "restart-1",
+          requested_at: "2026-06-11T03:00:00.000Z",
+        },
+      }),
+    ).toBe(true);
+  });
+
   it("still shows active start progress before the project reaches running", () => {
     expect(
       isStartInProgressActive({
