@@ -21,7 +21,7 @@ import type {
   PaymentIntentSecret,
   CustomerSessionSecret,
 } from "@cocalc/util/stripe/types";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   createPaymentIntent,
   createSetupIntent,
@@ -46,7 +46,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { join } from "path";
 import { moneyToStripe, stripeToMoney } from "@cocalc/util/money";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { LineItemsTable } from "./line-items";
+import { LineItemsTable, moneyToString } from "./line-items";
 import { AddressButton } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
@@ -58,7 +58,9 @@ export default function StripePayment({
   purpose = "add-credit",
   metadata,
   onFinished,
+  summaryMode = "full",
   style,
+  title = description,
   disabled,
 }: {
   description?: string;
@@ -70,7 +72,9 @@ export default function StripePayment({
   //   - if total = 0, this means user confirmed "I want to make this purchase using credit"; the
   //     caller then needs to actually allocate the thing they want to purchase.
   onFinished?: (total: number) => void;
+  summaryMode?: "full" | "total-only";
   style?;
+  title?: ReactNode | null;
   disabled?: boolean;
 }) {
   const [error, setError] = useState<string>("");
@@ -118,19 +122,36 @@ export default function StripePayment({
     !requiresPayment &&
     totalStripe > 0;
 
+  const amountDue = stripeToMoney(totalStripe).toNumber();
+  const amountDueLineItem: LineItem = {
+    description: "Amount due (excluding tax)",
+    amount: amountDue,
+    extra: true,
+    bold: true,
+  };
+  const displayedLineItems = safeLineItems.concat(amountDueLineItem);
+
   return (
     <Card style={{ textAlign: "left" }}>
-      <div style={{ margin: "0 0 5px 15px" }}>
-        <b>{description}</b>
-      </div>
-      <LineItemsTable
-        lineItems={safeLineItems.concat({
-          description: "Amount due (excluding tax)",
-          amount: stripeToMoney(totalStripe).toNumber(),
-          extra: true,
-          bold: true,
-        })}
-      />
+      {title != null && title !== "" && (
+        <div style={{ margin: "0 0 5px 15px" }}>
+          <b>{title}</b>
+        </div>
+      )}
+      {summaryMode === "total-only" ? (
+        <div
+          style={{
+            fontSize: "12pt",
+            fontWeight: "bold",
+            marginBottom: "12px",
+            textAlign: "center",
+          }}
+        >
+          Amount due (excluding tax) {moneyToString(amountDue)}
+        </div>
+      ) : (
+        <LineItemsTable lineItems={displayedLineItems} />
+      )}
       <div>
         <div style={{ textAlign: "center" }}>
           <Space>
