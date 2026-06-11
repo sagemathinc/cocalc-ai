@@ -222,7 +222,7 @@ describe("CodexCredentialsPanel", () => {
     });
   });
 
-  it("shows connected copy instead of the sign-in CTA for ChatGPT subscriptions", async () => {
+  it("shows a visible reauth CTA for stale ChatGPT subscriptions", async () => {
     getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
     getCodexUsageStatus.mockResolvedValue({
       available: false,
@@ -231,14 +231,26 @@ describe("CodexCredentialsPanel", () => {
       reason:
         "account/rateLimits/read: codex account authentication required to read rate limits",
     });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "pending",
+      verificationUrl: "https://chatgpt.com/device",
+      userCode: "ABCD-EFGH",
+      output: "",
+      startedAt: 1,
+      updatedAt: 1,
+    });
 
     render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("ChatGPT is connected")).toBeTruthy();
-      expect(screen.getByText("Connected")).toBeTruthy();
+      expect(screen.getByText("Refresh your ChatGPT sign-in")).toBeTruthy();
+      expect(screen.getByText("Sign-in needs refresh")).toBeTruthy();
       expect(screen.queryByText("Connect Codex with ChatGPT")).toBeNull();
-      expect(screen.queryByText("Sign in with ChatGPT")).toBeNull();
+      expect(screen.getByText("Sign in again with ChatGPT")).toBeTruthy();
       expect(
         screen.getByText((text) =>
           text.includes("live rate-limit details are not available"),
@@ -247,6 +259,17 @@ describe("CodexCredentialsPanel", () => {
       expect(
         screen.queryByText((text) => text.includes("account/rateLimits/read")),
       ).toBeNull();
+    });
+
+    await act(async () => {
+      screen.getByText("Sign in again with ChatGPT").click();
+    });
+
+    expect(codexDeviceAuthStart).toHaveBeenCalledWith({
+      project_id: "project-1",
+    });
+    await waitFor(() => {
+      expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
     });
   });
 

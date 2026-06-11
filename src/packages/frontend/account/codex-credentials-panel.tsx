@@ -154,6 +154,26 @@ function formatCodexUsageReason(reason?: string): string | undefined {
   return reason;
 }
 
+function isCodexUsageAuthProblem(status?: CodexUsageStatusInfo): boolean {
+  const text = [
+    status?.reason,
+    status?.errors?.account,
+    status?.errors?.rateLimits,
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  return (
+    text.includes("auth") ||
+    text.includes("credential") ||
+    text.includes("expired") ||
+    text.includes("incomplete") ||
+    text.includes("sign in") ||
+    text.includes("sign-in") ||
+    text.includes("token")
+  );
+}
+
 export function CodexCredentialsPanel(props: CodexCredentialsPanelProps = {}) {
   return <CodexCredentialsPanelBody {...props} />;
 }
@@ -829,16 +849,43 @@ function CodexCredentialsPanelBody({
           {paymentSource?.source === "subscription" ? (
             <>
               <Space wrap>
-                <Tag color="green">Connected</Tag>
+                <Tag
+                  color={
+                    isCodexUsageAuthProblem(codexUsageStatus)
+                      ? "orange"
+                      : "green"
+                  }
+                >
+                  {isCodexUsageAuthProblem(codexUsageStatus)
+                    ? "Sign-in needs refresh"
+                    : "Connected"}
+                </Tag>
                 <Text strong style={{ fontSize: 18 }}>
-                  ChatGPT is connected
+                  {isCodexUsageAuthProblem(codexUsageStatus)
+                    ? "Refresh your ChatGPT sign-in"
+                    : "ChatGPT is connected"}
                 </Text>
               </Space>
               <Text type="secondary">
-                CoCalc is using your ChatGPT subscription for Codex. ChatGPT
-                shows your exact plan and remaining Codex usage.
+                {isCodexUsageAuthProblem(codexUsageStatus)
+                  ? "Your ChatGPT plan is selected for Codex, but the stored sign-in needs to be refreshed before Codex can use it."
+                  : "CoCalc is using your ChatGPT subscription for Codex. ChatGPT shows your exact plan and remaining Codex usage."}
               </Text>
               <Space wrap>
+                <Button
+                  type={
+                    isCodexUsageAuthProblem(codexUsageStatus)
+                      ? "primary"
+                      : undefined
+                  }
+                  onClick={() => void startDeviceAuth()}
+                  loading={deviceAuthActionPending}
+                  disabled={!authProjectId || deviceAuth?.state === "pending"}
+                >
+                  {deviceAuthActionPending
+                    ? "Getting sign-in code..."
+                    : "Sign in again with ChatGPT"}
+                </Button>
                 <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
                   {CODEX_USAGE_LABEL}
                 </Button>
