@@ -12,6 +12,7 @@ const mockAssertValidUserMetadata = jest.fn();
 const mockGetStripeLineItems = jest.fn();
 const mockIsReadyToProcess = jest.fn();
 const mockProcessPaymentIntent = jest.fn();
+const mockAlertUncreditedSucceededPayment = jest.fn();
 const mockDelay = jest.fn();
 
 jest.mock("@cocalc/server/launch/kill-switches", () => ({
@@ -34,6 +35,8 @@ jest.mock("./util", () => ({
 }));
 
 jest.mock("./process-payment-intents", () => ({
+  alertUncreditedSucceededPayment: (...args: any[]) =>
+    mockAlertUncreditedSucceededPayment(...args),
   isReadyToProcess: (...args: any[]) => mockIsReadyToProcess(...args),
   processPaymentIntent: (...args: any[]) => mockProcessPaymentIntent(...args),
 }));
@@ -354,5 +357,32 @@ describe("createPaymentIntent", () => {
         lineItems,
       }),
     ).rejects.toThrow("membership update failed");
+    expect(mockAlertUncreditedSucceededPayment).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      err: expect.any(Error),
+      paymentIntent: {
+        id: "pi_123",
+        status: "succeeded",
+      },
+      stage: "process",
+    });
+  });
+
+  it("requires customer name and address for interactive tax-enabled payments", async () => {
+    stripe.invoices.finalizeInvoice.mockRejectedValueOnce(
+      new Error("customer address is missing"),
+    );
+
+    await expect(
+      createPaymentIntent({
+        account_id: "acct-1",
+        purpose: "membership-change",
+        description: "Basic membership, annual",
+        lineItems,
+        requireAddress: true,
+      }),
+    ).rejects.toThrow("Name and address are required");
+
+    expect(stripe.invoices.update).not.toHaveBeenCalled();
   });
 });

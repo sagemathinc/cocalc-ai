@@ -281,8 +281,14 @@ export async function createPaymentIntent(opts: {
   return await api("purchases/stripe/create-payment-intent", opts);
 }
 
-export async function processPaymentIntents(): Promise<{ count: number }> {
-  return await api("purchases/stripe/process-payment-intents");
+export async function processPaymentIntents(
+  opts: {
+    checkout_session_id?: string;
+    payment_intent_id?: string;
+    strict?: boolean;
+  } = {},
+): Promise<{ count: number }> {
+  return await api("purchases/stripe/process-payment-intents", opts);
 }
 
 export async function createSetupIntent(opts: {

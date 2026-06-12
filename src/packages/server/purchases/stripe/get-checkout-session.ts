@@ -87,7 +87,7 @@ export default async function getCheckoutSession({
       } else {
         logger.debug("getCheckoutSession: using existing checkout session");
         // we use it -- same line items
-        return { clientSecret: session.client_secret };
+        return { clientSecret: session.client_secret, sessionId: session.id };
       }
     }
   }
@@ -148,5 +148,5 @@ export default async function getCheckoutSession({
     throw Error("unable to create session");
   }
 
-  return { clientSecret: session.client_secret };
+  return { clientSecret: session.client_secret, sessionId: session.id };
 }

@@ -12,6 +12,7 @@ import type {
   PaymentIntentCancelReason,
 } from "@cocalc/util/stripe/types";
 import {
+  alertUncreditedSucceededPayment,
   isReadyToProcess,
   processPaymentIntent,
 } from "./process-payment-intents";
@@ -33,6 +34,7 @@ export default async function createPaymentIntent({
   return_url,
   metadata,
   force,
+  requireAddress = false,
 }: {
   account_id: string;
   purpose: string;
@@ -48,6 +50,9 @@ export default async function createPaymentIntent({
   // do not bother with sanity checking the amount, e.g., it can be below the
   // min payg setting.
   force?: boolean;
+  // For interactive checkout, require a customer address so automatic tax can
+  // be computed before we attempt to charge the user.
+  requireAddress?: boolean;
 }): Promise<{ payment_intent: string; hosted_invoice_url: string }> {
   logger.debug("createPaymentIntent", {
     account_id,
@@ -137,6 +142,11 @@ export default async function createPaymentIntent({
       expand: INVOICE_PAYMENT_EXPAND,
     });
   } catch (err) {
+    if (requireAddress) {
+      throw Error(
+        `Name and address are required before checkout so CoCalc can calculate tax. Please add your name and address and try again. ${err}`,
+      );
+    }
     logger.debug(`creating invoice with automatic_tax enabled failed: ${err}`);
     logger.debug("creating invoice WITHOUT automatic_tax enabled");
     // failed, so do without tax enabled.  If a user has NO INFO in stripe, then
@@ -239,7 +249,17 @@ ${await support()}
   // periodic polling of Stripe, or maybe a webhook.
   const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
   if (isReadyToProcess(paymentIntent)) {
-    await processPaymentIntent(paymentIntent);
+    try {
+      await processPaymentIntent(paymentIntent);
+    } catch (err) {
+      await alertUncreditedSucceededPayment({
+        account_id,
+        err,
+        paymentIntent,
+        stage: "process",
+      });
+      throw err;
+    }
   }
   return invoiceWithPaymentIntent(invoice, paymentIntentId) as any;
 }

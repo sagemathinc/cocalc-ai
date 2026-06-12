@@ -17,8 +17,8 @@ import {
   useElements,
 } from "@stripe/react-stripe-js";
 import type {
+  CheckoutSessionSecret,
   LineItem,
-  PaymentIntentSecret,
   CustomerSessionSecret,
 } from "@cocalc/util/stripe/types";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -51,7 +51,7 @@ import {
   VerifyEmailRequiredPanel,
 } from "@cocalc/frontend/app/verify-email-banner";
 import { LineItemsTable, moneyToString } from "./line-items";
-import { AddressButton } from "./address";
+import { AddressButton, StripeAddressElement } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
 const PAYMENT_UPDATE_DEBOUNCE = 2000;
@@ -301,7 +301,7 @@ function StripeCheckout({
   totalStripe,
   hasPaymentMethods,
 }) {
-  const [secret, setSecret] = useState<PaymentIntentSecret | null>(null);
+  const [secret, setSecret] = useState<CheckoutSessionSecret | null>(null);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -395,8 +395,20 @@ function StripeCheckout({
       <EmbeddedCheckoutProvider
         options={{
           fetchClientSecret: async () => secret.clientSecret,
-          onComplete: () => {
-            onFinished?.(stripeToMoney(totalStripe).toNumber());
+          onComplete: async () => {
+            try {
+              setError("");
+              setLoading(true);
+              await processPaymentIntents({
+                checkout_session_id: secret.sessionId,
+                strict: true,
+              });
+              onFinished?.(stripeToMoney(totalStripe).toNumber());
+            } catch (err) {
+              setError(`${err}`);
+            } finally {
+              setLoading(false);
+            }
           },
         }}
         stripe={loadStripe()}
@@ -520,7 +532,10 @@ function PaymentForm({ style, onFinished, paymentIntent }) {
       });
 
       try {
-        await processPaymentIntents();
+        await processPaymentIntents({
+          payment_intent_id: paymentIntent.id,
+          strict: true,
+        });
       } catch (err) {
         console.warn("issue processing payment", err);
         // would usually be due to throttling, but could be network went down or
@@ -528,11 +543,14 @@ function PaymentForm({ style, onFinished, paymentIntent }) {
         console.log("try again in 15s...");
         await delay(15000);
         try {
-          await processPaymentIntents();
+          await processPaymentIntents({
+            payment_intent_id: paymentIntent.id,
+            strict: true,
+          });
         } catch (err) {
-          console.warn("still failing to processing payment", err);
+          console.warn("still failing to process payment", err);
           setMessage(
-            `Your payment appears to have went through, but CoCalc has not yet received the funds.  Please close this dialog and check the payment status panel. ${err}`,
+            `Your payment appears to have gone through, but CoCalc has not yet recorded it. Please close this dialog and check the payment status panel. ${err}`,
           );
           return;
           // still failing -- a backend maintenance task does
@@ -740,6 +758,7 @@ export function AddPaymentMethodModal({
   onCancel: () => void;
   onFinished?: () => void;
 }) {
+  const [addressSaved, setAddressSaved] = useState<boolean>(false);
   return (
     <Modal
       open
@@ -748,7 +767,22 @@ export function AddPaymentMethodModal({
       onOk={onCancel}
       footer={[]}
     >
-      <CollectPaymentMethod onFinished={onFinished} />
+      {!addressSaved ? (
+        <Space vertical size="middle" style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="info"
+            message="Enter your billing name and address first."
+            description="CoCalc uses this for receipts, invoices, and tax calculation."
+          />
+          <StripeAddressElement
+            onFinished={() => setAddressSaved(true)}
+            showCancel={false}
+          />
+        </Space>
+      ) : (
+        <CollectPaymentMethod onFinished={onFinished} />
+      )}
     </Modal>
   );
 }

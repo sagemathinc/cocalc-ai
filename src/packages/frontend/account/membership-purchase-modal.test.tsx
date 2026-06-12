@@ -16,7 +16,6 @@ import api from "@cocalc/frontend/client/api";
 import {
   applyMembershipChange,
   getMembershipChangeQuote,
-  processPaymentIntents,
 } from "@cocalc/frontend/purchases/api";
 
 import MembershipPurchaseModal from "./membership-purchase-modal";
@@ -89,7 +88,6 @@ jest.mock("@cocalc/frontend/purchases/payments", () => () => null);
 jest.mock("@cocalc/frontend/purchases/api", () => ({
   applyMembershipChange: jest.fn(),
   getMembershipChangeQuote: jest.fn(),
-  processPaymentIntents: jest.fn(),
 }));
 
 jest.mock("@cocalc/frontend/purchases/stripe-payment", () => ({
@@ -165,7 +163,6 @@ describe("MembershipPurchaseModal", () => {
     mockEmailVerificationRequired = false;
     currentMembership = { class: "free", source: "free" };
     mockFinishStripePayment = undefined;
-    jest.mocked(processPaymentIntents).mockResolvedValue({ count: 1 });
     mockGetMembershipDetails.mockResolvedValue({
       candidates: [
         {
@@ -313,7 +310,6 @@ describe("MembershipPurchaseModal", () => {
     await waitFor(() => {
       expect(screen.getByText("Membership updated.")).toBeTruthy();
     });
-    expect(processPaymentIntents).toHaveBeenCalled();
     expect(onChanged).toHaveBeenCalled();
     expect(screen.queryByText("Refresh membership")).toBeNull();
     expect(screen.queryByText("Payment is processing.")).toBeNull();

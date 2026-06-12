@@ -24,7 +24,6 @@ import {
 import {
   applyMembershipChange,
   getMembershipChangeQuote,
-  processPaymentIntents,
   type MembershipChangeQuote,
 } from "@cocalc/frontend/purchases/api";
 import {
@@ -464,7 +463,6 @@ function MembershipPurchaseModalInner({
     setQuoteError("");
     setPlace("processing");
     try {
-      await processPaymentIntents();
       await load({ showLoading: false });
       onChanged?.();
       if (await waitForSelectedPersonalMembership()) {
