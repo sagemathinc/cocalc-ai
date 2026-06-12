@@ -150,7 +150,6 @@ export function FreshAuthModal({
       setCode("");
       setUsePasskey(false);
       setExtended(false);
-      onCancel();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -324,6 +323,7 @@ export function useFreshAuthAction({
     const action = pendingActionRef.current;
     pendingActionRef.current = null;
     if (!action) {
+      setOpen(false);
       return;
     }
     if (closeBeforeRetry) {
@@ -331,6 +331,9 @@ export function useFreshAuthAction({
     }
     try {
       await action();
+      if (!closeBeforeRetry) {
+        setOpen(false);
+      }
     } catch (err) {
       onUnhandledError?.(err);
       throw err;

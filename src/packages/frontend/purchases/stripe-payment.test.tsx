@@ -93,7 +93,6 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
         <button
           onClick={async () => {
             await onSuccess();
-            onCancel();
           }}
           type="button"
         >

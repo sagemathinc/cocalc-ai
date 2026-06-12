@@ -21,13 +21,7 @@ import type {
   PaymentIntentSecret,
   CustomerSessionSecret,
 } from "@cocalc/util/stripe/types";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   createPaymentIntent,
   createSetupIntent,
@@ -712,7 +706,6 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
   const [waitingForFreshAuth, setWaitingForFreshAuth] =
     useState<boolean>(false);
   const [freshAuthCanceled, setFreshAuthCanceled] = useState<boolean>(false);
-  const freshAuthSucceededRef = useRef<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
   });
@@ -743,18 +736,12 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
     <FreshAuthModal
       {...freshAuthModalProps}
       onCancel={() => {
-        if (freshAuthSucceededRef.current) {
-          freshAuthSucceededRef.current = false;
-          freshAuthModalProps.onCancel();
-          return;
-        }
         setWaitingForFreshAuth(false);
         setFreshAuthCanceled(true);
         freshAuthModalProps.onCancel();
       }}
       onSuccess={async () => {
         await freshAuthModalProps.onSuccess();
-        freshAuthSucceededRef.current = true;
         setWaitingForFreshAuth(false);
         setFreshAuthCanceled(false);
       }}
