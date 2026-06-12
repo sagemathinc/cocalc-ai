@@ -220,6 +220,12 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
       target: { value: "correct horse battery staple 12345!" },
     });
+    fireEvent.change(
+      screen.getByPlaceholderText("Enter the same password again"),
+      {
+        target: { value: "correct horse battery staple 12345!" },
+      },
+    );
     fireEvent.change(screen.getByPlaceholderText("First name"), {
       target: { value: "New" },
     });
@@ -233,11 +239,54 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
       target: { value: "new-user@example.edu" },
     });
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: /I accept the Terms of Service and Privacy Policy/,
-      }),
+    expect(
+      screen.getByRole("button", { name: "Create account" }),
+    ).not.toBeDisabled();
+  });
+
+  it("requires matching sign-up password confirmation", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
     );
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@example.edu" },
+    });
+    const password = screen.getByPlaceholderText("At least 8 characters");
+    expect(password).toHaveAttribute("name", "new-password");
+    expect(password).toHaveAttribute("autocomplete", "new-password");
+    fireEvent.change(password, {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    const confirmPassword = screen.getByPlaceholderText(
+      "Enter the same password again",
+    );
+    expect(confirmPassword).toHaveAttribute("name", "confirm-password");
+    expect(confirmPassword).toHaveAttribute("autocomplete", "new-password");
+    fireEvent.change(confirmPassword, {
+      target: { value: "different horse battery staple 12345!" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("First name"), {
+      target: { value: "New" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Last name"), {
+      target: { value: "User" },
+    });
+
+    expect(screen.getByText("Passwords do not match.")).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Create account" }),
+    ).toBeDisabled();
+
+    fireEvent.change(confirmPassword, {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    expect(screen.queryByText("Passwords do not match.")).toBeNull();
     expect(
       screen.getByRole("button", { name: "Create account" }),
     ).not.toBeDisabled();
@@ -259,7 +308,9 @@ describe("PublicAuthApp", () => {
       name: "Terms of Service",
     });
     expect(link.getAttribute("href")).toBe("https://example.com/terms");
-    expect(screen.getByRole("link", { name: "Privacy Policy" })).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Privacy Policy" }),
+    ).toHaveAttribute("href", "https://example.com/terms");
     expect(
       (
         screen.getByRole("checkbox", {
@@ -267,6 +318,53 @@ describe("PublicAuthApp", () => {
         }) as HTMLInputElement
       ).checked,
     ).toBe(false);
+  });
+
+  it("does not require Terms of Service acceptance when policies are not configured", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+
+    render(
+      <PublicAuthApp
+        config={config({ policy_pages: "none" })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    ).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@example.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("Enter the same password again"),
+      {
+        target: { value: "correct horse battery staple 12345!" },
+      },
+    );
+    fireEvent.change(screen.getByPlaceholderText("First name"), {
+      target: { value: "New" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Last name"), {
+      target: { value: "User" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Create account" }),
+    ).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    await waitFor(() => {
+      expect(mockedPostAuthApi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "auth/sign-up",
+          body: expect.objectContaining({ terms: true }),
+        }),
+      );
+    });
   });
 
   it("shows registration-token issues on sign-up", async () => {
@@ -297,17 +395,18 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
       target: { value: "correct horse battery staple 12345!" },
     });
+    fireEvent.change(
+      screen.getByPlaceholderText("Enter the same password again"),
+      {
+        target: { value: "correct horse battery staple 12345!" },
+      },
+    );
     fireEvent.change(screen.getByPlaceholderText("First name"), {
       target: { value: "New" },
     });
     fireEvent.change(screen.getByPlaceholderText("Last name"), {
       target: { value: "User" },
     });
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: /I accept the Terms of Service and Privacy Policy/,
-      }),
-    );
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
@@ -340,17 +439,18 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
       target: { value: "correct horse battery staple 12345!" },
     });
+    fireEvent.change(
+      screen.getByPlaceholderText("Enter the same password again"),
+      {
+        target: { value: "correct horse battery staple 12345!" },
+      },
+    );
     fireEvent.change(screen.getByPlaceholderText("First name"), {
       target: { value: "New" },
     });
     fireEvent.change(screen.getByPlaceholderText("Last name"), {
       target: { value: "User" },
     });
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: /I accept the Terms of Service and Privacy Policy/,
-      }),
-    );
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
@@ -386,15 +486,21 @@ describe("PublicAuthApp", () => {
 
     render(
       <PublicAuthApp
-        config={config()}
+        config={config({ terms_of_service_url: "https://example.com/terms" })}
         initialRoute={{ kind: "auth-form", view: "sign-in" }}
       />,
     );
 
-    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+    const emailInput = screen.getByPlaceholderText("you@example.com");
+    expect(emailInput).toHaveAttribute("name", "email");
+    expect(emailInput).toHaveAttribute("autocomplete", "username");
+    fireEvent.change(emailInput, {
       target: { value: "ada@cornell.edu" },
     });
-    fireEvent.change(screen.getByPlaceholderText("Password"), {
+    const passwordInput = screen.getByPlaceholderText("Password");
+    expect(passwordInput).toHaveAttribute("name", "password");
+    expect(passwordInput).toHaveAttribute("autocomplete", "current-password");
+    fireEvent.change(passwordInput, {
       target: { value: "correct horse battery staple" },
     });
 
@@ -411,11 +517,53 @@ describe("PublicAuthApp", () => {
         }) as HTMLInputElement
       ).checked,
     ).toBe(false);
+    expect(
+      screen.getByRole("link", { name: "Continue with Cornell SSO" }),
+    ).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Sign In" })).toHaveProperty(
       "disabled",
       true,
     );
     expect(mockedPostAuthApi).not.toHaveBeenCalled();
+  });
+
+  it("does not require SSO policy acceptance when policies are not configured", async () => {
+    mockedApi.mockResolvedValueOnce({
+      email: "ada@cornell.edu",
+      password_allowed: false,
+      sso_required: true,
+      sso_strategy: {
+        name: "cornell",
+        display: "Cornell SSO",
+      },
+      reason: "domain_sso_required",
+    });
+
+    render(
+      <PublicAuthApp
+        config={config({ policy_pages: "none" })}
+        initialRoute={{ kind: "auth-form", view: "sign-in" }}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "ada@cornell.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Password"), {
+      target: { value: "correct horse battery staple" },
+    });
+
+    expect(
+      await screen.findByText("This email domain uses single sign-on."),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Continue with Cornell SSO" }),
+    ).toHaveAttribute("aria-disabled", "false");
   });
 
   it("keeps passkey selection visually separate from passkey submission", async () => {

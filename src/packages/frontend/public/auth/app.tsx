@@ -86,8 +86,10 @@ function subtitleForRoute(
   route: PublicAuthRoute,
   siteName: string,
   isAuthenticated?: boolean,
-): string {
+): string | undefined {
   switch (route.kind) {
+    case "auth-form":
+      return undefined;
     case "sso-detail":
     case "sso-index":
       return `Single sign-on for ${siteName}`;
@@ -107,7 +109,7 @@ function subtitleForRoute(
       }
       return `Sign in or create an account to accept this ${siteName} project invite.`;
     default:
-      return siteName;
+      return undefined;
   }
 }
 
