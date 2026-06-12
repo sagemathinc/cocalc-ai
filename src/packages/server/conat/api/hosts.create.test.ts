@@ -18,6 +18,47 @@ let requireFreshAuthForSessionHashMock: jest.Mock;
 
 const ACCOUNT_ID = "81e787c4-8705-46c5-86df-9d07bc424a01";
 
+function maybeHandleAccountDirectoryQuery(sql: string, params: any[]) {
+  if (
+    sql.includes("CREATE TABLE IF NOT EXISTS cluster_account_directory") ||
+    sql.includes("CREATE INDEX IF NOT EXISTS cluster_account_directory_")
+  ) {
+    return { rows: [], rowCount: 0 };
+  }
+  if (
+    sql.includes("FROM cluster_account_directory") &&
+    sql.includes("WHERE account_id=$1")
+  ) {
+    expect(params[0]).toBe(ACCOUNT_ID);
+    return { rows: [] };
+  }
+  if (
+    sql.includes("FROM accounts") &&
+    sql.includes("email_address_verified") &&
+    sql.includes("WHERE account_id=$1")
+  ) {
+    expect(params[0]).toBe(ACCOUNT_ID);
+    return {
+      rows: [
+        {
+          account_id: ACCOUNT_ID,
+          first_name: "Test",
+          last_name: "User",
+          email_address: "test@example.com",
+          home_bay_id: "bay-0",
+          created: new Date("2026-01-01T00:00:00.000Z"),
+          last_active: new Date("2026-01-02T00:00:00.000Z"),
+          banned: false,
+          email_address_verified: {
+            "test@example.com": "2026-01-01T00:00:00.000Z",
+          },
+        },
+      ],
+    };
+  }
+  return undefined;
+}
+
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
@@ -165,6 +206,10 @@ describe("hosts.createHost", () => {
     );
     requireFreshAuthForSessionHashMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const accountResult = maybeHandleAccountDirectoryQuery(sql, params);
+      if (accountResult != null) {
+        return accountResult;
+      }
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.pricing_model).toBe("spot");
         expect(params[4]?.interruption_restore_policy).toBe("immediate");
@@ -251,6 +296,10 @@ describe("hosts.createHost", () => {
 
   it("can create a managed cloud host without starting it", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const accountResult = maybeHandleAccountDirectoryQuery(sql, params);
+      if (accountResult != null) {
+        return accountResult;
+      }
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[3]).toBe("off");
         expect(params[4]?.desired_state).toBe("stopped");
@@ -332,6 +381,10 @@ describe("hosts.createHost", () => {
       },
     }));
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const accountResult = maybeHandleAccountDirectoryQuery(sql, params);
+      if (accountResult != null) {
+        return accountResult;
+      }
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.billing).toEqual({
           funding_mode: "site-funded",
@@ -476,6 +529,10 @@ describe("hosts.createHost", () => {
 
   it("normalizes Nebius shared scratch fields on create", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const accountResult = maybeHandleAccountDirectoryQuery(sql, params);
+      if (accountResult != null) {
+        return accountResult;
+      }
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.machine).toMatchObject({
           cloud: "nebius",
@@ -606,6 +663,10 @@ describe("hosts.createHost", () => {
     }));
     selectDedicatedHostFundingLaneMock = jest.fn(() => "credit");
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const accountResult = maybeHandleAccountDirectoryQuery(sql, params);
+      if (accountResult != null) {
+        return accountResult;
+      }
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.billing).toEqual({
           funding_mode: "account-postpaid",

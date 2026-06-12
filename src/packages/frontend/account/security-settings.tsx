@@ -29,9 +29,7 @@ export function SecuritySettings({
   first_name,
   last_name,
 }: Readonly<Props>) {
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: ugly_error,
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   if (lite) {
     return null;
@@ -53,11 +51,15 @@ export function SecuritySettings({
             ) : undefined}
           </Flex>
           <DeleteAccountButton
-            confirm={() =>
-              runFreshAuthAction(async () => {
-                await actions().delete_account();
-              })
-            }
+            confirm={async () => {
+              try {
+                await runFreshAuthAction(async () => {
+                  await actions().delete_account();
+                });
+              } catch (err) {
+                ugly_error(err);
+              }
+            }}
             requiredText={userName}
           />
         </Flex>

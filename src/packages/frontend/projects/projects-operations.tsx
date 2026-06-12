@@ -137,13 +137,7 @@ export function ProjectsOperations({
   const [bulkLeaveDeleteProgress, setBulkLeaveDeleteProgress] =
     useState<BulkLeaveOrDeleteProgress | null>(null);
   const deleteQueue = useProjectDeleteQueue();
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) =>
-      Modal.error({
-        title: "Unable to leave or delete projects",
-        content: `${err}`,
-      }),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const hidden = useTypedRedux("projects", "hidden");
   const search: string = useTypedRedux("projects", "search");

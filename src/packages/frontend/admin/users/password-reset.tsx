@@ -36,11 +36,7 @@ export function PasswordReset({ account_id, email_address }: Props) {
   const [twoFactorMessage, setTwoFactorMessage] = useState<string | undefined>(
     undefined,
   );
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      setError(`${err}`);
-    },
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function requestPasswordReset(): Promise<void> {
     setRunning(true);

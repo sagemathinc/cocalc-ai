@@ -10,7 +10,6 @@ import {
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
   MEMBERSHIP_PACKAGE_PURCHASE,
-  VOUCHER_PURCHASE,
 } from "@cocalc/util/db-schema/purchases";
 import {
   processSubscriptionRenewal,
@@ -30,9 +29,7 @@ import type { MoneyValue } from "@cocalc/util/money";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import getPool from "@cocalc/database/pool";
-import { getTransactionClient } from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
-import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 
@@ -446,33 +443,6 @@ ${await support()}`;
           product,
           amount,
         });
-      } else if (paymentIntent.metadata.purpose == VOUCHER_PURCHASE) {
-        const amountEach = Number(paymentIntent.metadata.voucher_amount ?? 0);
-        const count = Number(paymentIntent.metadata.voucher_count ?? 0);
-        const title = `${paymentIntent.metadata.voucher_title ?? ""}`.trim();
-        reason = `purchase ${count} voucher${count === 1 ? "" : "s"}`;
-        const client = await getTransactionClient();
-        try {
-          await createVouchers({
-            account_id,
-            active: new Date(),
-            amount: amountEach,
-            cancelBy: null,
-            client,
-            credit_id,
-            expire: null,
-            numVouchers: count,
-            paymentAmount: amount,
-            title,
-            whenPay: "now",
-          });
-          await client.query("COMMIT");
-        } catch (err) {
-          await client.query("ROLLBACK");
-          throw err;
-        } finally {
-          client.release();
-        }
       } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
         const statement_id = parseInt(
           paymentIntent.metadata.purpose.split("-")[1],

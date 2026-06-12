@@ -22,7 +22,6 @@ describe("settings-navigation", () => {
   });
 
   it("keeps menu grouping separate from page identity", () => {
-    expect(getSettingsNavigationGroupKey("vouchers")).toBe("billing");
     expect(getSettingsNavigationGroupKey("team-licenses")).toBe("licenses");
     expect(getSettingsNavigationGroupKey("ai")).toBe("preferences");
     const licenses = ACCOUNT_SETTINGS_NAVIGATION.find(
@@ -40,9 +39,7 @@ describe("settings-navigation", () => {
     if (licenses?.type === "group") {
       expect(licenses.pages.map(({ page }) => page)).toContain("team-licenses");
     }
-    if (billing?.type === "group") {
-      expect(billing.pages.map(({ page }) => page)).toContain("vouchers");
-    }
+    expect(billing?.type).toBe("group");
     if (preferences?.type === "group") {
       expect(preferences.pages.map(({ page }) => page)).toContain("ai");
     }
@@ -112,7 +109,6 @@ describe("settings-navigation", () => {
       "payments",
       "payment-methods",
       "statements",
-      "vouchers",
     ]);
     expect(
       overview.sections.find((section) => section.key === "support")?.pages,
@@ -145,7 +141,6 @@ describe("settings-navigation", () => {
       expect(billing.pages.map(({ page }) => page)).toEqual([
         "purchases",
         "statements",
-        "vouchers",
       ]);
     }
   });
@@ -166,7 +161,6 @@ describe("settings-navigation", () => {
         "payments",
         "payment-methods",
         "statements",
-        "vouchers",
       ]);
     }
   });

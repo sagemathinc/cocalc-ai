@@ -25,7 +25,6 @@ import { PURCHASES_SETTINGS_PAGE } from "@cocalc/frontend/purchases/purchases-pa
 import { STATEMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/statements-page";
 import { SUBSCRIPTIONS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/subscriptions-page";
 import { USAGE_LIMITS_SETTINGS_PAGE } from "./usage-limits-page";
-import { VOUCHERS_SETTINGS_PAGE } from "@cocalc/frontend/account/vouchers/vouchers-page";
 import { SUPPORT_TICKETS_SETTINGS_PAGE } from "@cocalc/frontend/support/tickets";
 import type { SettingsPageDefinition } from "./settings-page";
 
@@ -51,7 +50,6 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   "site-licenses": SITE_LICENSES_SETTINGS_PAGE,
   "software-licenses": SOFTWARE_LICENSES_SETTINGS_PAGE,
   "usage-limits": USAGE_LIMITS_SETTINGS_PAGE,
-  vouchers: VOUCHERS_SETTINGS_PAGE,
 } satisfies Record<RegisteredSettingsPageType, SettingsPageDefinition>;
 
 export type RegisteredSettingsPage = keyof typeof SETTINGS_PAGE_DEFINITIONS;

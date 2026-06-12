@@ -313,9 +313,7 @@ function StudentCoursePurchaseModal({
     "checkout",
   );
   const numPaymentsRef = useRef<number | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setActionError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     if (!open) {

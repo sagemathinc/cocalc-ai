@@ -35,15 +35,14 @@ import {
 import { currency, is_valid_uuid_string } from "@cocalc/util/misc";
 import { toDecimal } from "@cocalc/util/money";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
-import { MAX_VOUCHERS, MAX_VOUCHER_VALUE } from "@cocalc/util/vouchers";
-import type { Purchase } from "@cocalc/util/db-schema/purchases";
+import { MAX_COST, type Purchase } from "@cocalc/util/db-schema/purchases";
 
 import { adminPurchase } from "@cocalc/frontend/store/api";
 import { getPurchasesAdmin } from "@cocalc/frontend/purchases/api";
 
 const { Paragraph, Text } = Typography;
 
-type Product = "balance" | "membership" | "voucher";
+type Product = "balance" | "membership";
 
 interface MembershipTier extends MembershipTierWithPresentation {
   disabled?: boolean;
@@ -66,9 +65,6 @@ export function AdminPurchaseAdmin() {
   const [membershipClass, setMembershipClass] = useState<string>("");
   const [interval, setInterval] = useState<"month" | "year">("month");
 
-  const [voucherAmount, setVoucherAmount] = useState<number>(25);
-  const [voucherCount, setVoucherCount] = useState<number>(1);
-  const [voucherTitle, setVoucherTitle] = useState<string>("CoCalc voucher");
   const [balanceAdjustment, setBalanceAdjustment] = useState<number>(25);
   const [balanceUserNote, setBalanceUserNote] = useState<string>(
     "Admin balance adjustment",
@@ -83,15 +79,12 @@ export function AdminPurchaseAdmin() {
   const [actionError, setActionError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [resultMessage, setResultMessage] = useState<string>("");
-  const [voucherCodes, setVoucherCodes] = useState<string[]>([]);
   const [recentAdminPurchases, setRecentAdminPurchases] = useState<
     Purchase[] | null
   >(null);
   const [recentAdminPurchasesError, setRecentAdminPurchasesError] =
     useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setActionError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     let canceled = false;
@@ -174,16 +167,8 @@ export function AdminPurchaseAdmin() {
         ? Number(tier.price_yearly ?? 0)
         : Number(tier.price_monthly ?? 0);
     }
-    return toDecimal(voucherAmount).mul(voucherCount).toNumber();
-  }, [
-    product,
-    tierById,
-    membershipClass,
-    interval,
-    voucherAmount,
-    voucherCount,
-    balanceAdjustment,
-  ]);
+    return 0;
+  }, [product, tierById, membershipClass, interval, balanceAdjustment]);
 
   const finalPrice = useMemo(() => {
     const base = toDecimal(basePrice ?? 0);
@@ -249,7 +234,6 @@ export function AdminPurchaseAdmin() {
     if (!targetUser) return;
     setActionError("");
     setResultMessage("");
-    setVoucherCodes([]);
     try {
       await runFreshAuthAction(async () => {
         setActionLoading(true);
@@ -272,15 +256,8 @@ export function AdminPurchaseAdmin() {
             product,
             source,
             user_account_id: targetUser.account_id,
-            voucher_amount: product === "voucher" ? voucherAmount : undefined,
-            voucher_count: product === "voucher" ? voucherCount : undefined,
-            voucher_title:
-              product === "voucher" ? voucherTitle.trim() : undefined,
           });
-          if (product === "voucher") {
-            setVoucherCodes(result.voucher_codes ?? []);
-            setResultMessage("Voucher purchase created.");
-          } else if (product === "balance") {
+          if (product === "balance") {
             setResultMessage(
               `Balance adjusted by ${currency(result.adjustment_amount ?? balanceAdjustment)}.`,
             );
@@ -413,8 +390,8 @@ export function AdminPurchaseAdmin() {
             options={[
               { label: "Balance adjustment", value: "balance" },
               { label: "Membership", value: "membership" },
-              { label: "Credit voucher", value: "voucher" },
             ]}
+            style={{ maxWidth: "100%", width: 260 }}
             value={product}
             onChange={(value) => setProduct(value)}
           />
@@ -451,47 +428,6 @@ export function AdminPurchaseAdmin() {
           </Space>
         )}
 
-        {product === "voucher" && (
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            <Text strong>Voucher details</Text>
-            <Flex gap="middle" wrap="wrap">
-              <Space.Compact>
-                <Button disabled tabIndex={-1}>
-                  $
-                </Button>
-                <InputNumber
-                  max={MAX_VOUCHER_VALUE}
-                  min={1}
-                  precision={2}
-                  step={5}
-                  value={voucherAmount}
-                  onChange={(value) =>
-                    setVoucherAmount(typeof value === "number" ? value : 25)
-                  }
-                />
-              </Space.Compact>
-              <Space.Compact>
-                <InputNumber
-                  max={MAX_VOUCHERS.admin}
-                  min={1}
-                  value={voucherCount}
-                  onChange={(value) =>
-                    setVoucherCount(typeof value === "number" ? value : 1)
-                  }
-                />
-                <Button disabled tabIndex={-1}>
-                  {`voucher${voucherCount === 1 ? "" : "s"}`}
-                </Button>
-              </Space.Compact>
-            </Flex>
-            <Input
-              placeholder="Voucher title"
-              value={voucherTitle}
-              onChange={(e) => setVoucherTitle(e.target.value)}
-            />
-          </Space>
-        )}
-
         {product === "balance" && (
           <Space orientation="vertical" size="small" style={{ width: "100%" }}>
             <Text strong>Balance adjustment</Text>
@@ -505,8 +441,8 @@ export function AdminPurchaseAdmin() {
                 $
               </Button>
               <InputNumber
-                max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
-                min={-MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
+                max={MAX_COST}
+                min={-MAX_COST}
                 precision={2}
                 step={5}
                 value={balanceAdjustment}
@@ -546,7 +482,7 @@ export function AdminPurchaseAdmin() {
                   $
                 </Button>
                 <InputNumber
-                  max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
+                  max={MAX_COST}
                   min={0}
                   value={discountAmount}
                   onChange={(value) =>
@@ -559,7 +495,7 @@ export function AdminPurchaseAdmin() {
                   $
                 </Button>
                 <InputNumber
-                  max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
+                  max={MAX_COST}
                   min={0}
                   placeholder="Custom price"
                   value={customPrice ?? undefined}
@@ -602,13 +538,6 @@ export function AdminPurchaseAdmin() {
 
         {actionError && <Alert title={actionError} type="error" />}
         {resultMessage && <Alert title={resultMessage} type="success" />}
-        {voucherCodes.length > 0 && (
-          <Alert
-            description={voucherCodes.join(", ")}
-            title="Voucher codes"
-            type="success"
-          />
-        )}
 
         <Button
           disabled={!canSubmit}
@@ -638,34 +567,34 @@ export function AdminBalanceAdjustment({
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function submit() {
     setError("");
     setSuccess("");
-    await runFreshAuthAction(async () => {
-      setLoading(true);
-      try {
-        const result = await adminPurchase({
-          balance_admin_note: adminNote.trim() || undefined,
-          balance_user_note: userNote.trim() || undefined,
-          price: amount,
-          product: "balance",
-          source: "free",
-          user_account_id: account_id,
-        });
-        setSuccess(
-          `Balance adjusted by ${currency(result.adjustment_amount ?? amount)}.`,
-        );
-        onAdjusted?.();
-      } catch (err) {
-        setError(`${err}`);
-      } finally {
-        setLoading(false);
-      }
-    });
+    try {
+      await runFreshAuthAction(async () => {
+        setLoading(true);
+        try {
+          const result = await adminPurchase({
+            balance_admin_note: adminNote.trim() || undefined,
+            balance_user_note: userNote.trim() || undefined,
+            price: amount,
+            product: "balance",
+            source: "free",
+            user_account_id: account_id,
+          });
+          setSuccess(
+            `Balance adjusted by ${currency(result.adjustment_amount ?? amount)}.`,
+          );
+          onAdjusted?.();
+        } finally {
+          setLoading(false);
+        }
+      });
+    } catch (err) {
+      setError(`${err}`);
+    }
   }
 
   return (
@@ -680,8 +609,8 @@ export function AdminBalanceAdjustment({
             $
           </Button>
           <InputNumber
-            max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
-            min={-MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
+            max={MAX_COST}
+            min={-MAX_COST}
             precision={2}
             step={5}
             value={amount}

@@ -57,6 +57,8 @@ type DnsRecord = {
   type?: string;
 };
 
+const CNAME_CONFLICT_RECORD_TYPES = new Set(["A", "AAAA"]);
+
 type TunnelResponse = {
   id?: string;
   name?: string;
@@ -295,6 +297,36 @@ async function listDnsRecordsByName(
   );
 }
 
+async function deleteAddressRecordsConflictingWithCname(opts: {
+  token: string;
+  zoneId: string;
+  hostname: string;
+  keepRecordId?: string;
+}): Promise<void> {
+  const records = await listDnsRecordsByName(
+    opts.token,
+    opts.zoneId,
+    opts.hostname,
+  );
+  for (const record of records) {
+    if (!record.id) continue;
+    if (record.id === opts.keepRecordId) continue;
+    const type = `${record.type ?? ""}`.trim().toUpperCase();
+    if (!CNAME_CONFLICT_RECORD_TYPES.has(type)) continue;
+    try {
+      await cloudflareRequest(
+        opts.token,
+        "DELETE",
+        `zones/${opts.zoneId}/dns_records/${record.id}`,
+      );
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        throw err;
+      }
+    }
+  }
+}
+
 async function ensureTunnelDns(opts: {
   token: string;
   zoneId: string;
@@ -359,6 +391,11 @@ async function ensureTunnelDns(opts: {
 
   if (!record_id) {
     if (!recordIds.length) {
+      await deleteAddressRecordsConflictingWithCname({
+        token: opts.token,
+        zoneId: opts.zoneId,
+        hostname: opts.hostname,
+      });
       record_id = await createRecord();
       records = [];
       recordIds = [];
@@ -385,27 +422,12 @@ async function ensureTunnelDns(opts: {
     }
   }
 
-  const otherRecords = await listDnsRecordsByName(
-    opts.token,
-    opts.zoneId,
-    opts.hostname,
-  );
-  for (const record of otherRecords) {
-    if (!record.id) continue;
-    if (record.id === record_id) continue;
-    if (record.type?.toUpperCase() === "CNAME") continue;
-    try {
-      await cloudflareRequest(
-        opts.token,
-        "DELETE",
-        `zones/${opts.zoneId}/dns_records/${record.id}`,
-      );
-    } catch (err) {
-      if (!isNotFoundError(err)) {
-        throw err;
-      }
-    }
-  }
+  await deleteAddressRecordsConflictingWithCname({
+    token: opts.token,
+    zoneId: opts.zoneId,
+    hostname: opts.hostname,
+    keepRecordId: record_id,
+  });
 
   if (record_id) {
     try {

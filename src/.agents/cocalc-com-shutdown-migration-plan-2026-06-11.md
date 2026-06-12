@@ -2,823 +2,851 @@
 
 Date: 2026-06-11
 
-Status: planning draft for team review
+Status: tightened plan after team review
 
 ## Executive Summary
 
-CoCalc should move the primary product surface from `cocalc.com` to
-`cocalc.ai` as soon as possible, but "shut down cocalc.com" must not mean
-"bulk migrate every historical project before cutover."
-
-The practical target is:
-
-- `cocalc.ai` becomes the place for new signups, new purchases, new projects,
-  GPU usage, memberships, and all new product development.
-- `cocalc.com` becomes a compatibility, migration, and cold-archive access
-  layer with no new economic attack surface.
-- Active users and paying customers get bridged into `cocalc.ai` quickly.
-- Project data is restored lazily and on demand, with targeted batch migration
-  for high-value active customers.
-- Old Google Cloud / Kubernetes infrastructure is reduced to the minimum needed
-  to support snapshots, exports, and emergency access during the migration
-  window.
-
-This approach minimizes security risk, avoids massive GCS Nearline egress, and
-lets us protect current revenue without trying to perfectly reproduce ten years
-of legacy behavior.
-
-## Why This Is Urgent
-
-The voucher abuse incident showed that `cocalc.com` has a large, old, and
-economically dangerous attack surface. Attackers found a way to mint value and
-convert it into expensive GPU usage. The cocalc-ai codebase has already had
-multiple targeted security and abuse-control passes around exactly this kind of
-failure mode: checkout, credits, vouchers, throttling, abuse switches, launch
-readiness controls, and admin observability.
-
-The old site also has compounding operational risk:
-
-- It costs more than $10K/month to run.
-- Deploying small fixes takes too long and can destabilize production.
-- The code and Kubernetes deployment are legacy and not receiving the same
-  systematic hardening.
-- AI-assisted vulnerability discovery makes "unknown old exploit surface" a
-  near-term business risk, not a theoretical concern.
-- Running both products at once consumes engineering focus and delays the
-  product that can actually grow.
-
-Summer is the best window to move because usage is roughly 25% of normal.
-
-## Core Recommendation
-
-Do a security-first product cutover, not a full historical migration.
-
-The cutover should disable or redirect every cocalc.com capability that can
-create new cost, new paid value, or new support burden. Existing users should
-still be able to find their data, claim entitlements, and restore projects, but
-the default forward path should be `cocalc.ai`.
-
-The migration should be lazy and entitlement-first:
-
-- Migrate account identities, account links, paid entitlements, collaborators,
-  and project metadata before bulk file data.
-- Restore project files only for active projects, explicit user requests, or
-  high-priority institutional customers.
-- Keep legacy archives in place until we know which data is actually demanded.
-- Preserve enough URL compatibility that old links can lead users to the new
-  system or to a restore request.
-
-## Non-Goals
-
-These are intentionally not required before cutover:
-
-- Migrating all 4M accounts.
-- Migrating all 4M projects.
-- Downloading all GCS Nearline archives.
-- Preserving all old bup and ZFS snapshot history in the new system.
-- Recreating the old license/quota model exactly.
-- Preserving unsafe anonymous "secret URL gives paid license" flows.
-- Making every old notebook work without package/environment friction.
-
-## Definition of "cocalc.com Is Shut Down"
-
-The phrase "shut down cocalc.com" should mean the following operational state:
-
-- No new cocalc.com account creation except migration/claim flows.
-- No new cocalc.com purchases.
-- No voucher creation or redemption.
-- No new GPU spend initiated from cocalc.com.
-- No new projects created on cocalc.com.
-- Existing project URLs either redirect to cocalc.ai or show a restore request.
-- Existing login works only to identify the user, migrate the account, download
-  data, or request project restoration.
-- Admin access remains available for migration, incident response, and customer
-  support.
-
-This is materially safer than running the full old product, even if some legacy
-infrastructure remains online for months.
-
-## Current System Inventory
-
-### Legacy cocalc.com
-
-Relevant code and deployment paths:
-
-- `/home/user/cocalc`
-- `/home/user/kucalc/cluster2`
-
-Important legacy assets:
-
-- A large Postgres database with accounts, projects, collaborators,
-  subscriptions, purchases, credits, preferences, licenses, and operational
-  metadata.
-- More than 4M accounts and more than 4M projects accumulated over about ten
-  years.
-- Live project storage for recently touched projects on network-mounted ZFS
-  pools, sparse images, and daily bup backups.
-- Cold archived projects in a GCS Nearline bucket, stored as tarballs containing
-  bup backups and ZFS streams.
-- Legacy license, site-license, subscription, voucher, and quota systems.
-- A very large official software environment that many notebooks implicitly
-  depend on.
-
-### cocalc.ai
-
-Relevant target architecture facts:
-
-- Launchpad is the one-bay special case of the bay architecture.
-- Accounts have `home_bay_id`.
-- Projects have `owning_bay_id`.
-- Project data-plane traffic should go directly to project hosts.
-- The control plane should route, authorize, and record metadata, not proxy
-  steady-state project work.
-
-Useful migration bridge pieces already exist or are in progress:
-
-- Memberships, membership tiers, grants, packages, and assignments.
-- Project-host placement and lifecycle APIs.
-- RootFS publication and project-host software distribution.
-- Admin launch readiness controls, kill switches, and operator health.
-- Admin Data Explorer for audited investigation and migration inventory work.
-- Backup/restore concepts in the new project-host model.
-
-Missing or incomplete pieces:
-
-- No complete cocalc.com account/project/entitlement importer.
-- No compatibility URL router for old cocalc.com project links.
-- No legacy project restore worker for GCS Nearline tarball to cocalc.ai
-  project data.
-- No final policy audit for "turn off all AI" in course/instructor contexts.
-- No cocalc-ai replacement for the Cambridge University Press flow.
-- No legacy 24.04 software/rootfs compatibility image.
-
-## Migration Principles
-
-- Stop new risk first. Do not wait for perfect migration before removing the
-  old economic attack surface.
-- Preserve revenue through entitlements. Do not force active paying customers to
-  repurchase.
-- Migrate metadata before bytes. Metadata is cheap, file archives are not.
-- Prefer lazy restore over bulk restore. Demand for ten-year-old projects is
-  likely highly skewed.
-- Preserve user trust. Old links and paid access should lead somewhere useful.
-- Do not reproduce unsafe flows. Rewrite them with explicit capability,
-  expiration, rate limits, and audit logs.
-- Keep the old system available for rollback and investigation, but not for new
-  product activity.
-- Make every migration action observable, replayable, and auditable.
-
-## Phased Plan
-
-## Phase 0: Emergency Containment
-
-Target: immediate to 48 hours
-
-Goal: remove the most dangerous old-site attack surfaces before any large
-migration work.
-
-Tasks:
-
-- Keep voucher creation and redemption disabled on `cocalc.com`.
-- Disable new GPU purchase/spend paths on `cocalc.com`, or require manual admin
-  approval for every GPU-related transition.
-- Disable cocalc.com credits-to-compute flows that can turn forged value into
-  cloud spend.
-- Disable new paid purchases on `cocalc.com` except carefully reviewed renewal
-  paths if absolutely necessary.
-- Disable new cocalc.com project creation for normal users.
-- Add a prominent banner that cocalc.com is entering migration mode and that
-  new work should happen on cocalc.ai.
-- Snapshot the old Postgres database and record the exact deployment state.
-- Export current active subscriptions, site licenses, purchases, account
-  balances, and recent project activity into immutable migration input files.
-- Identify top active customers and institutional accounts for manual review.
-
-Success criteria:
-
-- Attackers can no longer mint value on cocalc.com and convert it into compute.
-- New legitimate users are directed to cocalc.ai.
-- We have a reliable migration snapshot for reconciliation.
-
-## Phase 1: Product Cutover
-
-Target: 2 to 7 days
-
-Goal: make cocalc.ai the default product without requiring full data migration.
-
-Tasks:
-
-- Route marketing, pricing, signup, new project, and docs entry points from
-  cocalc.com to cocalc.ai.
-- Keep cocalc.com login only for migration, account linking, support, and data
-  restore.
-- Add cocalc.com pages for "Move to cocalc.ai", "Restore a legacy project", and
-  "Contact support".
-- Add a cocalc.ai landing flow for users arriving from legacy links.
-- Decide whether cocalc.com DNS stays on the old app, a new compatibility app,
-  or a reverse proxy that routes selected paths to cocalc.ai.
-- Freeze old deployment except for security containment and migration support
-  fixes.
-
-Success criteria:
-
-- A new visitor to cocalc.com ends up on cocalc.ai.
-- An existing cocalc.com user can discover the migration path.
-- Old high-risk product operations are no longer reachable through the normal
-  UI.
-
-## Phase 2: Identity and Account Migration
-
-Target: 1 to 2 weeks for the first usable version
-
-Goal: let legacy users claim or link cocalc.com identity in cocalc.ai.
-
-Recommended model:
-
-- Use cocalc.ai accounts as the primary identity.
-- Preserve legacy account IDs in mapping tables.
-- Link old accounts to existing cocalc.ai accounts when there is a verified
-  email match or explicit proof through old login.
-- Do not blindly merge unverified or anonymous accounts by email.
-- Require proof of possession for sensitive account migration actions.
-
-Implementation tasks:
-
-- Create a `legacy_cocalc_accounts` or equivalent mapping table in cocalc.ai.
-- Import account shell data for active users first: account ID, email, name,
-  created timestamp, last active timestamp, verification status, and selected
-  preferences.
-- Add an account claim flow from cocalc.com to cocalc.ai using signed short-lived
-  migration tokens.
-- Support old-login proof for users who no longer control the old email address.
-- Resolve collisions where one cocalc.ai account and one cocalc.com account use
-  the same verified email.
-- Build admin tools to manually link, unlink, or mark legacy accounts as
-  disputed.
-
-Security requirements:
-
-- Migration tokens must be single-use and short-lived.
-- Claims must be audit logged.
-- Unverified legacy emails must not grant ownership of paid entitlements without
-  additional proof.
-- Anonymous accounts must only migrate through old-session proof or manual
-  support.
-
-Success criteria:
-
-- A legacy user can sign into cocalc.ai and see that legacy account data has
-  been linked.
-- Support can resolve identity disputes without direct database edits.
-
-## Phase 3: Billing and Entitlement Bridge
-
-Target: 1 to 3 weeks
-
-Goal: protect current MRR and annual/course revenue while moving authorization
-to cocalc.ai.
-
-Recommended model:
-
-- Do not recreate the legacy license system.
-- Map legacy rights into cocalc.ai membership grants, packages, or assignments.
-- Keep existing Stripe subscriptions in place initially if moving them is risky.
-- Mirror their entitlement into cocalc.ai with enough metadata to reconcile.
-
-Migration mappings:
-
-- Active individual subscriptions become membership grants with expiration and
-  source metadata.
-- Active course purchases become course or package grants with expiration and
-  possibly project/class scope.
-- Active site licenses become organization/package grants with seat or domain
-  policy metadata.
-- Remaining positive credit balances become cocalc.ai credits only after fraud
-  review and clear accounting rules.
-- Voucher-derived balances should be quarantined until the voucher incident is
-  fully reconciled.
-
-Implementation tasks:
-
-- Export active subscriptions, purchases, site licenses, vouchers, and balances
-  from old Postgres.
-- Create a deterministic import that can be rerun without duplicating grants.
-- Store source IDs for every imported entitlement.
-- Add admin views for legacy entitlement import status.
-- Add a customer-facing page that explains the converted entitlement.
-- Keep Stripe billing receipts and subscription metadata traceable to the old
-  records.
-
-Success criteria:
-
-- Active paying users retain access on cocalc.ai.
-- The finance/support team can explain why a user has a given membership.
-- Fraudulent or suspicious voucher-derived value is not imported automatically.
-
-## Phase 4: Project Metadata Migration
-
-Target: 1 to 3 weeks
-
-Goal: users can see their legacy projects in cocalc.ai before all file data has
-been restored.
-
-Recommended model:
-
-- Import project rows and collaborator relationships for active users.
-- Mark each project with a legacy migration state.
-- Preserve legacy project IDs where feasible, but always maintain an explicit
-  mapping table.
-- Do not start or restore project data until requested or prioritized.
-
-Suggested states:
-
-- `metadata_imported`
-- `restore_requested`
-- `restore_running`
-- `restored`
-- `restore_failed`
-- `archived_remote_only`
-- `manual_review_required`
-
-Implementation tasks:
-
-- Create a legacy project mapping table.
-- Import active project metadata: title, description, owner, collaborators,
-  last edited time, deleted/hidden flags, quotas, and old URL components.
-- Import collaborators using migrated account mappings.
-- Add a cocalc.ai project-list section or filter for legacy projects needing
-  restore.
-- Add a restore button with clear expectations around time and software
-  compatibility.
-- Add admin tooling to prioritize restore queues.
-
-Success criteria:
-
-- A migrated user can see a list of legacy projects.
-- The system knows which legacy storage location is needed for each project.
-- Users can request restore without support manually searching old databases.
-
-## Phase 5: Project Data Restore
-
-Target: prototype in 1 to 2 weeks, production in 3 to 6 weeks
-
-Goal: restore project files economically and reliably without bulk-downloading
-the entire archive.
-
-Recommended model:
-
-- Restore active projects from live ZFS/bup storage first.
-- Restore archived projects from GCS Nearline only when requested or prioritized.
-- Convert restored data into the cocalc.ai project-host storage/backup format.
-- Avoid importing all old snapshots unless explicitly needed.
-- Prefer restoring the current working tree plus selected recent history.
-
-Restore worker design:
-
-- Run restore workers close to the GCS bucket or old storage when possible.
-- Read old Postgres metadata to locate storage artifacts.
-- Extract only the needed project content.
-- Produce a normalized project data bundle for cocalc.ai project hosts.
-- Upload to cocalc.ai object storage or directly seed a project host.
-- Record byte counts, cost estimates, duration, errors, and source artifact IDs.
-
-Cost controls:
-
-- Require explicit user/admin request for cold archive restore.
-- Rate limit restore requests per account and per site.
-- Queue large restores for background processing.
-- Show users that very old projects may take time to restore.
-- Avoid repeated GCS egress by caching converted restore bundles when practical.
-
-Success criteria:
-
-- Restore succeeds for representative live ZFS projects.
-- Restore succeeds for representative GCS Nearline archived projects.
-- Restore cost and duration are visible before scaling the queue.
-
-## Phase 6: Domain and URL Compatibility
-
-Target: parallel with phases 1 through 5
-
-Goal: old links remain useful even after the old product is no longer active.
-
-URL behavior:
-
-- Old account URLs redirect to cocalc.ai account or migration claim pages.
-- Old project URLs redirect to the migrated project if restored.
-- Old project URLs show a restore request if metadata exists but data is not
-  restored.
-- Unknown old URLs show support/contact guidance.
-- Public-share URLs need separate handling because they may not map to a signed
-  in user.
-
-Implementation tasks:
-
-- Inventory the most common old URL patterns.
-- Build a compatibility router or route table.
-- Store old-to-new project/account URL mappings.
-- Add telemetry for legacy URL hits so we know which paths matter.
-- Keep search engine behavior intentional: avoid exposing private migration
-  state and avoid indexing restore pages for private projects.
-
-Success criteria:
-
-- A user clicking an old class/project link gets a meaningful migration path.
-- Support can diagnose a broken old URL from logs.
-
-## Phase 7: Feature Gap Closures
-
-Target: before broad institutional migration
-
-Goal: remove blockers that would cause major customer regressions.
-
-### Turn Off All AI
-
-This is a must-have for instructors.
-
-Requirements:
-
-- Policy must be enforceable at account, project, course/package, and
-  site-license or organization scope.
-- The enforcement point must be server-side for all LLM/Codex/agent APIs.
-- UI hiding alone is not sufficient.
-- Project-host services must honor scoped tokens or policy claims.
-- The admin UI must show why AI is disabled for a user/project.
-- The policy must be testable with a small suite of negative tests.
-
-### Cambridge University Press Flow
-
-The old anonymous secret-URL flow should not be preserved as-is.
-
-Replacement design:
-
-- Customer-owned content templates.
-- Signed invitation links with expiration, rate limits, and revocation.
-- Optional anonymous access only if sandboxed and explicitly scoped.
-- Per-link and per-customer audit logs.
-- Abuse controls for clone volume and compute usage.
-- A support/admin console to revoke leaked links.
-
-If CUP cannot move immediately, keep them as a temporary legacy island with
-restricted blast radius rather than blocking the whole migration.
-
-Site license tokens:
-
-- a given token provides access to a specific site license membership for a specified amount time
-- rootfs publication instead of public shares.   Scope to be determined.
-
-### Legacy Software Environment
-
-The old official environment is a major compatibility issue.
-
-Recommended approach:
-
-- Publish a "Legacy CoCalc 24.04" rootfs image.
-- Do not make it the default for new cocalc.ai users.
-- Offer it for migrated projects and selected classes.
-- Document differences clearly.
-- Prefer letting advanced users install packages with sudo/rootfs publication
-  instead of growing one huge default image forever.
-
-Success criteria:
-
-- Instructors can disable AI reliably.
-- CUP has either a replacement path or an explicitly isolated legacy exception.
-- Common migrated notebooks have a credible compatibility environment.
-
-Andrey's suggestion:
-
-- require choice of image
-- have focused images on:
-  - data science/ml
-  - sage
-  - R
-  - julia
-
-## Phase 8: Operations and Observability
-
-Target: before large-scale rollout
-
-Goal: make migration measurable and recoverable.
-
-Required dashboards:
-
-- Active legacy accounts imported.
-- Active paid entitlements imported.
-- Projects with metadata imported.
-- Restore requests by state.
-- Restore failures by cause.
-- Restore cost and bytes transferred.
-- Legacy URL hits by route type.
-- cocalc.com blocked purchase/voucher/GPU attempts.
-- Support tickets linked to migration state.
-
-Required admin tools:
-
-- Link or unlink legacy account mapping.
-- Re-run entitlement import for a single account or customer.
-- Grant temporary membership while investigating migration issues.
-- Prioritize or cancel project restore.
-- Mark a project as manual review.
-- Export a user-facing migration summary for support.
-
-Required audit logs:
-
-- Account claim.
-- Entitlement import.
-- Entitlement manual override.
-- Project restore request.
-- Project restore completion/failure.
-- Legacy URL redirect/restore decisions for private resources.
-- Admin migration actions.
-
-## Rollout Strategy
-
-### Canary 0: Internal Accounts
-
-Scope:
-
-- Staff accounts.
-- A mix of old active projects, archived projects, subscriptions, and purchases.
-
-Exit criteria:
-
-- Account link works.
-- Entitlement import works.
-- At least one active project restore works.
-- At least one archived project restore works.
-- Old URL redirect works.
-
-### Canary 1: Friendly Active Users
-
-Scope:
-
-- 25 to 50 known users during summer.
-- Include at least one course-like use case and one paid individual subscriber.
-
-Exit criteria:
-
-- No support-blocking identity issues.
-- Restores complete within acceptable time.
-- Billing entitlements are understandable.
-
-### Canary 2: High-Value Customers
-
-Scope:
-
-- Annual institutional customers.
-- Customers with known support contacts.
-- CUP only if replacement flow is ready or isolated.
-
-Exit criteria:
-
-- Customer-specific migration checklist signed off.
-- Support and billing can answer entitlement questions.
-
-### Broad Active User Cutover
-
-Scope:
-
-- Users active in the last 6 to 12 months.
-- Projects touched in the last 6 to 12 months.
-
-Exit criteria:
-
-- cocalc.com no longer accepts normal new work.
-- cocalc.ai handles normal active-user demand.
-- Restore backlog is bounded.
-
-### Long Tail Archive
-
-Scope:
-
-- Inactive users and old projects.
+CoCalc should move the active product from `cocalc.com` to `cocalc.ai` before
+the July travel window. The plan is not a perfect historical migration. It is a
+deadline-driven cutover that preserves paid users, lets users import the
+projects they care about, and removes the old cocalc.com security and cost
+surface as fast as possible.
+
+The revised strategy is:
+
+- Keep cocalc.com in containment mode immediately.
+- Launch cocalc.ai as the forward product for new work.
+- Migrate standard legacy licenses to standard cocalc.ai memberships.
+- Handle special licenses and meaningful credit balances manually from reports.
+- Let users import legacy project metadata from inside cocalc.ai.
+- Copy project data as one normalized "latest files only" artifact per project.
+- Use R2 as the shared migration artifact store for every data source.
+- Run a one-time GCS Nearline conversion for `kucalc-prod2-archived-projects`
+  so the old GCP bucket and old Kubernetes storage can be deleted.
+- Replace Cambridge University Press special handling with signed
+  site-license claim tokens plus rootfs landing pages.
+
+This should be managed as a launch project with hard cut lines. If a feature is
+not required for UCLA, CUP, standard paid licenses, or user-selected project
+imports, it should be deferred.
+
+## Hard Dates
+
+Current date: 2026-06-11
+
+Critical dates:
+
+- 2026-06-20: cocalc.ai must be usable for UCLA pre-class setup.
+- 2026-06-23: UCLA class starts.
+- 2026-07-01: transition must be operationally stable before travel.
+- 2026-07-02 to 2026-07-18: travel/vacation window.
+- 2027-01-01: proposed end date for allowing new legacy project migration
+  requests.
+
+Deadline implication:
+
+- The migration plan must optimize for working vertical slices, not complete
+  generality.
+- Ancient project restore must be designed now, but the first UCLA-ready system
+  can prioritize recent projects and paying customers.
+- Long-tail project access can be available for up to one year through R2
+  artifacts instead of keeping the old GCP/Kubernetes stack alive.
+
+## Product Cutover Definition
+
+"Shut down cocalc.com" means removing the old product surface, not immediately
+destroying all old data.
+
+Target cocalc.com state:
+
+- No new vouchers.
+- No voucher redemption.
+- No new purchases.
+- No new GPU spend.
+- No new normal projects.
+- No new normal signups except migration/claim paths.
+- Existing login only supports migration, project export, support, and account
+  verification.
+- Old project URLs route to cocalc.ai migration, restore, or support pages.
+- Admin access remains only for containment, audit, and migration support.
+
+Target cocalc.ai state:
+
+- New signups happen on cocalc.ai.
+- New projects happen on cocalc.ai.
+- Standard paid users receive standard memberships.
+- Site-license style customers receive memberships through cocalc.ai-native
+  site licenses.
+- Legacy projects appear in cocalc.ai after metadata import.
+- Project files restore from R2 artifacts, regardless of original source.
+
+## Scope Cuts
+
+These are explicit cuts to make the deadline:
+
+- Do not migrate all 4M accounts.
+- Do not import every old entitlement automatically.
+- Do not recreate the old license system.
+- Do not transfer old bup history or ZFS snapshots.
+- Do not build one giant "CoCalc 2024" compatibility image.
+- Do not preserve the old CUP anonymous secret-URL flow.
+- Do not require the old GCS bucket to stay online for a year.
+- Do not block launch on long-tail ancient projects if the R2 artifact pipeline
+  is underway.
+
+## Minimum Viable Launch
+
+The minimum viable launch before UCLA requires:
+
+- cocalc.com containment remains in place.
+- cocalc.ai standard memberships are production-ready.
+- Standard old licenses can be converted to standard memberships.
+- UCLA users can create accounts, get the right membership/access, create
+  projects, and use the required image.
+- Instructors can disable AI where required.
+- Users can list their old projects from cocalc.ai and select projects to
+  import.
+- Selected project metadata is imported immediately.
+- Opening a selected project starts or prioritizes latest-file data restore.
+- The restore path from one normalized R2 artifact format works.
+- At least one recent bup-backed project can be exported into that format.
+
+Everything else is important but secondary.
+
+## Cambridge University Press Replacement
+
+CUP should not be a custom legacy exception. It should become the first customer
+of a generic signed site-license claim mechanism.
+
+### Site-License Claim Tokens
+
+Use site licenses as the entitlement primitive.
+
+Flow:
+
+- CUP has a paying customer Alice.
+- CUP mints a signed one-time token for Alice.
+- Alice visits a cocalc.ai URL with that token.
+- Alice signs up or signs in with her own email and account.
+- cocalc.ai verifies the token and grants Alice a membership seat from CUP's
+  site license.
+- The token is consumed and cannot be reused.
+
+This works because Alice's identity does not need to match CUP email, SSO, or
+domain policy. The token proves CUP authorized Alice.
+
+### Token Authority Model
+
+Recommended design:
+
+- Each site license can have one or more external claim pools.
+- Each pool stores a public verification key.
+- CUP either generates the keypair or CoCalc generates it and gives CUP the
+  private key once.
+- CUP signs compact claim records offline or from their backend.
+- cocalc.ai verifies the signature using the pool public key.
+- CUP does not need an authenticated cocalc.ai API integration just to mint
+  claims.
+
+Token fields:
+
+- `iss`: publisher or site-license issuer identifier.
+- `aud`: `cocalc.ai.site-license-claim`.
+- `site_license_id`: target cocalc.ai site license.
+- `pool_id`: target claim pool.
+- `jti`: unique one-time token ID.
+- `exp`: token expiration.
+- `nbf`: optional not-before timestamp.
+- `membership_class`: optional if not fixed by the pool.
+- `membership_expires_at`: optional if not fixed by the pool.
+- `rootfs_id`: optional content/image landing target.
+- `label`: optional human-readable publisher label.
+
+Validation rules:
+
+- Signature must verify against an active pool key.
+- `aud` must match exactly.
+- `exp` must be in the future.
+- `jti` must not have been consumed.
+- Site license and pool must be active.
+- Pool seat limits and membership limits must be enforced atomically.
+- Consumption must be audited.
+
+Admin controls:
+
+- Disable pool.
+- Rotate public key.
+- Revoke a key.
+- Revoke unused token IDs if CUP provides a list.
+- View consumed claims.
+- View claim failures.
+- Set pool membership class and duration.
+- Set pool max claims and rate limits.
+
+Why this is better than secret URLs:
+
+- One-time use.
+- Signed.
+- Scoped.
+- Expiring.
+- Audited.
+- Revocable by key or pool.
+- Useful for customers beyond CUP.
+
+### CUP Content Delivery
+
+CUP's second need is content delivery. Rootfs landing pages are the right
+replacement.
+
+Desired flow:
+
+- CUP publishes or sponsors a trusted rootfs for a publication.
+- A user visits a publication/rootfs landing URL.
+- The page explains the content, publisher, image, and membership requirement.
+- The user signs up or signs in.
+- The user optionally redeems a signed site-license claim token.
+- The user creates a project using that rootfs.
+- The project starts with the publication content available.
+
+This is isomorphic to the old CUP flow:
+
+- Display content.
+- Create or sign in.
+- Grant access.
+- Give the user a working copy.
+
+But the new flow uses safe primitives:
+
+- Site-license claim tokens for access.
+- Rootfs trust/publishing for content.
+- Normal cocalc.ai accounts.
+- Normal cocalc.ai projects.
+- Normal audit logs.
+
+CUP migration scope:
+
+- CUP likely has around 20 publications.
+- Each publication should become a rootfs or rootfs-backed content template.
+- CUP can have separate claim pools for customers, editors, authors, or other
+  roles.
+
+## Legacy License Migration
+
+The old entitlement migration should be intentionally narrow.
 
 Policy:
 
-- Restore on request.
-- Consider eventual archival retention policy and deletion policy after the
-  business and legal review.
+- Standard cocalc.com licenses, roughly the old $9/month license, map to
+  standard cocalc.ai $8/month memberships.
+- All non-standard or one-off licenses are handled manually.
+- Do not build a complete old-license compatibility engine.
+- Do not automatically trust voucher-derived value without review.
 
-## Data Migration Details
+Implementation:
 
-### Account Mapping
+- Run a DB query that lists active standard licenses.
+- Import those as standard membership grants or subscriptions in cocalc.ai.
+- Store source legacy license IDs for audit.
+- Generate a second report of non-standard licenses for manual handling.
+- Generate a report of accounts with meaningful credit balances.
+- Andrey reviews the roughly 400 accounts with nontrivial credit.
+- Approved credit balances are imported manually or with a reviewed one-shot
+  import.
 
-Suggested table fields:
+This is much simpler and safer than general license migration.
 
-- `legacy_account_id`
-- `cocalc_ai_account_id`
-- `legacy_email`
-- `legacy_email_verified`
-- `claim_method`
-- `claim_time`
-- `migration_state`
-- `last_error`
-- `created_at`
-- `updated_at`
+## Identity Migration
 
-### Project Mapping
+Many legacy users may know their cocalc.com password but no longer control
+their university email.
 
-Suggested table fields:
+Policy:
+
+- If a user has a verified email on cocalc.com and successfully logs in with
+  their cocalc.com password, cocalc.ai may create or link that email and mark it
+  verified.
+- This is a grandfathering rule for verified legacy identities only.
+- Anything else requires support review.
+
+Allowed automatic cases:
+
+- Verified legacy email plus successful legacy password login.
+- Existing cocalc.ai account with same verified email and successful legacy
+  claim.
+- Active legacy session converted into a short-lived migration claim token.
+
+Support-required cases:
+
+- Unverified legacy email.
+- Anonymous legacy account.
+- User cannot log into cocalc.com.
+- User no longer controls email and legacy email was not verified.
+- Account collision or disputed claim.
+
+Audit requirements:
+
+- Log every legacy account claim.
+- Log source legacy account ID.
+- Log target cocalc.ai account ID.
+- Log claim method.
+- Log verified-email grandfathering.
+
+## Project Migration UX
+
+Project import should happen inside cocalc.ai.
+
+Flow:
+
+- User opens "Import projects from cocalc.com".
+- User proves legacy identity if not already linked.
+- cocalc.ai shows a list of legacy projects similar to cocalc.com.
+- Hidden projects are hidden by default.
+- User can filter by hidden status, recent activity, ownership, and
+  collaborator status.
+- User can select ranges.
+- User can select all visible.
+- User can select all recently active.
+- User chooses a default image for selected projects.
+- User can override image per project.
+- User clicks import.
+- Import creates cocalc.ai project metadata only.
+- File data is copied later when opened or by background workers.
+
+Default image choices:
+
+- Python
+- R
+- Julia
+- Sage
+- LaTeX
+- Minimal
+
+User messaging:
+
+- Images can be changed later.
+- Packages can be installed later.
+- Coding agents can help install missing software.
+- Only the latest project files are migrated by default.
+- Old backups and snapshots are not migrated.
+
+## Project Ownership and Collaborators
+
+Old cocalc.com ownership and collaboration were closer to symmetric. New
+cocalc.ai ownership matters more because it determines billing responsibility.
+
+Policy:
+
+- The first legacy collaborator or owner who imports a project becomes the new
+  cocalc.ai owner.
+- If another legacy collaborator or the old owner later imports the same legacy
+  project, they are added to the existing target project.
+- The system should not create duplicate target projects for the same legacy
+  project.
+- Ownership can be changed later through normal cocalc.ai mechanisms or support.
+
+This avoids disputes in the common case. The important invariant is one legacy
+project maps to one cocalc.ai project.
+
+Required mapping:
 
 - `legacy_project_id`
-- `cocalc_ai_project_id`
-- `legacy_owner_account_id`
-- `owning_bay_id`
-- `legacy_storage_kind`
-- `legacy_storage_locator`
-- `last_edited`
-- `restore_state`
-- `restore_requested_by`
-- `restore_requested_at`
-- `restore_completed_at`
-- `restore_bytes`
-- `restore_error`
+- `target_project_id`
+- `first_imported_by_account_id`
+- `current_owner_account_id`
+- `imported_at`
+- `legacy_collaborator_account_ids`
+- `migration_state`
 
-### Entitlement Mapping
+## Project Data Migration Strategy
 
-Suggested table fields:
+The project data strategy should use one normalized artifact format in R2.
 
-- `legacy_source_type`
-- `legacy_source_id`
-- `cocalc_ai_grant_id`
-- `account_id`
-- `project_id`
-- `organization_id`
-- `starts_at`
-- `expires_at`
-- `amount`
-- `currency`
-- `fraud_review_state`
+Invariant:
+
+- cocalc.ai restore code only needs to understand one artifact format.
+- Every legacy source is converted into that format before cocalc.ai restores
+  it.
+- The artifact contains only the latest file tree, not old bup history or ZFS
+  streams.
+
+Suggested artifact:
+
+- `legacy-project-latest-v1.tar.zst`
+- Includes project files at the root or under a stable `files/` prefix.
+- Includes a small `manifest.json`.
+- Excludes bup internals.
+- Excludes ZFS streams.
+- Excludes historical snapshots.
+- Has checksum and byte size metadata in R2 object metadata or sidecar JSON.
+
+Manifest fields:
+
+- `format_version`
+- `legacy_project_id`
+- `source_kind`
+- `source_snapshot_time`
 - `created_at`
-- `updated_at`
+- `file_count`
+- `uncompressed_bytes`
+- `compressed_bytes`
+- `content_sha256`
+- `exporter_version`
 
-## Business Rules to Decide
+R2 object layout:
 
-These should be decided explicitly before broad migration:
+- `legacy-projects/v1/<legacy_project_id>/latest.tar.zst`
+- `legacy-projects/v1/<legacy_project_id>/manifest.json`
+- Optional `legacy-projects/v1/<legacy_project_id>/export.log`
 
-- Which users count as "active" for the first migration wave.
-- Whether to preserve old account IDs directly when there is no collision.
-- Whether old project IDs should be reused as cocalc.ai project IDs or only
-  stored in mapping tables.
-- Which legacy credit balances are trusted enough to import.
-- How to handle voucher-derived balances from the incident window.
-- Whether old free users get a temporary membership trial on cocalc.ai.
-- How much old snapshot history is restored by default.
-- How long cocalc.com remains available as a restore portal.
-- What public announcement timeline is acceptable.
+## Source 1: Recent Bup Backup Disk
 
-## Immediate Technical Work Items
+Most likely migration demand comes from projects active in the last six months.
 
-Recommended first vertical slice:
+Current facts:
 
-- Build a migration inventory report from old Postgres for active accounts,
-  active projects, active subscriptions, active site licenses, purchases, and
-  balances.
-- Create cocalc-ai mapping tables for legacy accounts, projects, and
-  entitlements.
-- Implement one account claim flow.
-- Import one active paid account into cocalc.ai with a membership grant.
-- Import that account's project metadata and collaborators.
-- Restore one live recent project.
-- Restore one GCS Nearline archived project.
-- Redirect one old cocalc.com project URL to the new migration/restore flow.
+- Projects active in the last six months exist in recent live storage.
+- If not touched in the last 24 hours, there is an up-to-date bup backup.
+- These backups sit on one large roughly 13TB disk in the Kubernetes cluster.
+- The disk has roughly 5.9TB used.
+- There are about 45,000 such project bup archives.
+- Around 1,500 projects are touched each day, so some backups are stale.
 
-This slice is the highest-value next step because it tests identity, billing,
-metadata, file restore, and URL compatibility without committing to bulk
-migration.
+Plan:
 
-## Customer Communication Plan
+- Snapshot and clone the 13TB disk to avoid disturbing live cocalc.com.
+- Run an exporter over the cloned disk.
+- For each project bup archive, export the latest bup commit.
+- Create the normalized latest-file tarball.
+- Upload the tarball and manifest to R2.
+- Delete the cloned disk when done.
 
-Public messaging should be direct and operational:
+Benefits:
 
-- CoCalc is moving to cocalc.ai.
-- Existing paid access will be honored.
-- Existing projects remain available.
-- Some very old projects may require restore time.
-- New projects should be created on cocalc.ai.
-- Legacy software compatibility options are being provided.
-- Instructors will have AI-off controls.
+- Covers the highest-probability migration set.
+- Avoids interacting with live projects.
+- Produces clean R2 artifacts before users ask for them.
+- Makes cocalc.ai restore fast and simple.
 
-Support should have canned answers for:
+This should be one of the first implementation efforts.
 
-- "Where is my project?"
-- "Why is my old project not restored yet?"
-- "What happened to my license?"
-- "Can I disable AI for my class?"
-- "My notebook package is missing."
-- "I have an old public/share link."
-- "I no longer control my old email."
+## Source 2: Recently Modified Live Projects
 
-## Risks
+Some projects will be newer than their last bup backup.
 
-### Security Risk
+Plan:
 
-Risk: cocalc.com remains exploitable during migration.
+- Add a special cocalc.com migration API protected by an API key.
+- cocalc.ai calls this API only after a user explicitly selects a project for
+  migration or opens an imported metadata-only project.
+- cocalc.com locks the project so users cannot continue editing it there.
+- cocalc.com exports the latest project files.
+- cocalc.com writes the same normalized tarball format.
+- cocalc.com uploads directly to the same R2 bucket.
+- cocalc.ai restores from R2.
 
-Mitigation: remove new economic activity immediately, keep vouchers disabled,
-disable GPU spend, and freeze high-risk flows.
+Lock policy:
 
-### Revenue Risk
+- Once live export begins, the old project is no longer openable for normal
+  users on cocalc.com.
+- The user is directed to the cocalc.ai project.
+- Failed exports should unlock only if the project was not successfully
+  imported, or require admin review.
 
-Risk: paid users lose access or lose confidence.
+This handles the "touched today" case without requiring cocalc.ai to understand
+old live storage.
 
-Mitigation: import entitlements before file data, preserve Stripe subscriptions
-initially, and manually review top customers.
+## Source 3: GCS Nearline Bucket
 
-### Data Restore Cost Risk
+The bucket `kucalc-prod2-archived-projects` should not remain a long-term
+dependency.
 
-Risk: GCS Nearline egress and huge tarballs create unacceptable cost.
+Current facts:
 
-Mitigation: lazy restore, restore near the bucket, avoid full history by
-default, and measure sample projects first.
+- The bucket stores one tarball per archived project.
+- Each tarball contains a bup archive and ZFS streams.
+- ZFS streams should be ignored for migration.
+- The latest bup version is what matters.
+- The bucket costs roughly $537/month to store.
+- Reading from GCS is roughly estimated at $0.01/GB.
+- A full or cutoff-limited conversion is probably much cheaper than keeping the
+  bucket for many months.
 
-### Compatibility Risk
+Recommended plan:
 
-Risk: notebooks fail in the new smaller environment.
+- Run a one-time conversion for ancient archived projects.
+- Use a small GCP VM or spot VM in the appropriate region.
+- Download each legacy archive tarball from GCS to the VM.
+- Extract the bup archive.
+- Restore the latest bup version.
+- Create the normalized latest-file tarball.
+- Upload the normalized tarball and manifest to R2.
+- Delete temporary local data.
+- After verification and retention review, delete converted objects from GCS or
+  delete the bucket.
 
-Mitigation: provide a legacy rootfs option and support sudo/rootfs publication
-for self-service fixes.
+Estimated cost model:
 
-### Identity Risk
+- Worst-case old archive read: 50TB at $0.01/GB is about $500.
+- More likely cutoff-limited read: 20TB is about $200.
+- Processing on GCP spot instances: rough estimate $200.
+- GCP egress/upload path to R2: rough estimate $500.
+- Total expected one-time cost: likely under $1K, subject to real measurement.
+- Resulting normalized R2 data may be about 5TB.
+- R2 standard storage at $0.015/GB-month is about $75/month for 5TB.
+- R2 infrequent access at $0.01/GB-month is about $50/month for 5TB.
 
-Risk: users claim the wrong account or lose access to old unverified accounts.
+This is likely better than keeping a $537/month GCS bucket and the operational
+burden of old restore infrastructure.
 
-Mitigation: use verified-email matching only where safe, require old-session
-proof or support review for ambiguous accounts, and audit every claim.
+Important caveat:
 
-### Institutional Workflow Risk
+- These estimates must be validated with a sample of real project archives.
+- The plan should start with a statistically useful sample before processing
+  the full bucket.
 
-Risk: CUP and course workflows do not map cleanly to cocalc.ai.
+Recommended sampling:
 
-Mitigation: build explicit replacements for high-value workflows and keep
-temporary legacy islands only where necessary.
+- 100 tiny archives.
+- 100 medium archives.
+- 20 large archives.
+- 5 pathological huge archives.
+- Include archives from different years.
+- Measure download bytes, extracted latest-file size, processing time, failure
+  rate, and R2 compressed size.
 
-## Decision Points for the Team Meeting
+## One-Year Migration Window
 
-- Do we agree that product cutover should happen before full project data
-  migration?
-- What exact date should cocalc.com stop new signups, purchases, projects, and
-  GPU spend?
-- Which active-user window should drive the first import: 3 months, 6 months,
-  or 12 months?
-- Do we mirror existing Stripe subscriptions into cocalc.ai first, instead of
-  trying to migrate Stripe billing objects immediately?
-- Which legacy credit balances are imported automatically, and which require
-  fraud review?
-- Is preserving old project IDs worth making a hard requirement?
-- Who owns the CUP replacement design and customer conversation?
-- What is the minimum acceptable "turn off all AI" implementation before course
-  migration?
-- Do we announce a firm migration date publicly or start with targeted customer
-  outreach?
+Proposed policy:
+
+- Users have until 2027-01-01 to request/import legacy projects.
+- Projects selected for migration before the cutoff remain available from R2.
+- After the cutoff, unsupported legacy migration paths are shut down.
+- The old GCP bucket should not be kept until 2027 if the R2 conversion
+  succeeds.
+
+This gives users a clear deadline while still allowing old infrastructure to be
+retired much sooner.
+
+## Focused Software Images
+
+Do not build one huge legacy compatibility image.
+
+Instead build focused images:
+
+- Python
+- R
+- Julia
+- Sage
+- LaTeX
+- Minimal
+
+Reasons:
+
+- Huge rootfs images are hard to build, publish, cache, and manage.
+- Users usually need one or two ecosystems, not everything.
+- Smaller images are easier for users to republish.
+- sudo and rootfs publication make missing software fixable.
+- Coding agents make "install package X" much easier for users.
+- Documentation can cover common installs such as Chromium or system libraries.
+
+Launch requirement:
+
+- The Python image must be strong.
+- The uv-based approach used for CoCalc Star is the right model.
+- Sage, R, Julia, and LaTeX images should be good enough for major course use.
+- The project import UI should make image selection clear and reversible.
+
+## AI-Off Requirement
+
+Instructor "turn off all AI" is a launch blocker for courses.
+
+Requirements:
+
+- Server-side enforcement.
+- Applies to accounts, projects, course/site-license contexts, and relevant
+  project-host agent services.
+- UI hiding is not enough.
+- Admin/support can see why AI is disabled.
+- Tests prove blocked users cannot reach LLM/Codex/agent APIs.
+
+This should be handled as a separate focused implementation/audit workstream.
+
+## Operational Reports
+
+The migration should start from concrete reports, not generalized assumptions.
+
+Immediate reports:
+
+- Active standard licenses that map to standard memberships.
+- Non-standard licenses requiring manual handling.
+- Accounts with meaningful credit balances.
+- Active users in the last 3, 6, and 12 months.
+- Projects active in the last 3, 6, and 12 months.
+- Projects owned by paying customers.
+- Projects with recent edits newer than latest bup backup.
+- Size distribution of recent bup exports.
+- Size distribution of GCS archive conversions.
+- Top institutional customers and their project counts.
+
+These reports can be generated from old Postgres and reviewed before automation
+is trusted.
+
+## Admin and Audit Requirements
+
+Required admin tools:
+
+- View legacy account mapping.
+- Manually link a legacy account to a cocalc.ai account.
+- Import a standard license as a membership.
+- Manually grant or adjust membership for special cases.
+- View reviewed credit balances.
+- View legacy project mapping.
+- Prioritize a project data export.
+- Retry a failed export.
+- Mark a project as support-required.
+- View CUP/site-license claim token consumption.
+- Disable a site-license claim pool.
+
+Required audit events:
+
+- Legacy login proof accepted.
+- Verified legacy email grandfathered.
+- Standard license imported.
+- Manual license grant created.
+- Credit balance imported.
+- Project metadata imported.
+- Project artifact exported.
+- Project artifact restored.
+- Live cocalc.com project locked for migration.
+- Site-license claim token consumed.
+- Site-license claim token rejected.
+
+## Implementation Workstreams
+
+### Workstream A: Containment
+
+Owner: immediate operations/security
+
+Deliverables:
+
+- cocalc.com vouchers remain disabled.
+- cocalc.com new purchases disabled or sharply limited.
+- cocalc.com GPU spend disabled or manual-approved.
+- cocalc.com new project creation disabled for normal users when ready.
+- Migration banner and redirect paths.
+
+### Workstream B: Entitlements
+
+Owner: billing/membership
+
+Deliverables:
+
+- Standard license report.
+- Standard membership import.
+- Non-standard license report.
+- Credit balance report for Andrey review.
+- Manual special-case tooling.
+
+### Workstream C: Identity
+
+Owner: auth/accounts
+
+Deliverables:
+
+- Legacy account mapping table.
+- Legacy login proof flow.
+- Verified email grandfathering.
+- Support path for all other cases.
+
+### Workstream D: Project Metadata Import
+
+Owner: frontend/projects/control plane
+
+Deliverables:
+
+- cocalc.ai import page.
+- Legacy project list.
+- Hidden/recent filters.
+- Range/select-all controls.
+- Default image selection.
+- Per-project image override.
+- Metadata-only project creation.
+- Legacy project to target project mapping.
+- Subsequent collaborator import adds user to existing target project.
+
+### Workstream E: R2 Artifact Restore
+
+Owner: project-host/storage
+
+Deliverables:
+
+- Normalized artifact spec.
+- R2 credentials/config.
+- cocalc.ai restore from R2.
+- Manifest validation.
+- Restore progress state.
+- Restore failure diagnostics.
+
+### Workstream F: Recent Bup Export
+
+Owner: legacy storage/migration
+
+Deliverables:
+
+- Clone/snapshot 13TB bup disk.
+- Export latest bup commit per project.
+- Normalize to tarball.
+- Upload to R2.
+- Progress and failure report.
+
+### Workstream G: Live Project Export
+
+Owner: legacy cocalc.com
+
+Deliverables:
+
+- Protected migration API.
+- Project lock.
+- Latest file export.
+- R2 upload.
+- State update for cocalc.ai restore.
+
+### Workstream H: GCS Nearline Conversion
+
+Owner: migration/storage
+
+Deliverables:
+
+- GCP VM conversion worker.
+- Sample conversion report.
+- Full or cutoff-limited conversion.
+- R2 upload.
+- Verification.
+- GCS delete plan.
+
+### Workstream I: CUP and External Claims
+
+Owner: site licenses/rootfs
+
+Deliverables:
+
+- Site-license claim pools.
+- Public key storage.
+- Token verification and consumption.
+- Claim audit logs.
+- CUP sample token generator.
+- Rootfs landing page.
+- Create project from rootfs landing flow.
+
+### Workstream J: Focused Images
+
+Owner: rootfs/software
+
+Deliverables:
+
+- Python image.
+- R image.
+- Julia image.
+- Sage image.
+- LaTeX image.
+- Minimal image.
+- Install docs for common missing packages.
 
 ## Proposed Timeline
 
-### First 48 Hours
+### 2026-06-11 to 2026-06-13
 
-- Lock down cocalc.com economic attack surfaces.
-- Snapshot old DB and deployment state.
-- Produce migration inventory reports.
-- Identify top customers and active project volume.
+- Finalize this plan.
+- Keep cocalc.com containment in place.
+- Generate standard license report.
+- Generate credit balance report.
+- Generate active project/user reports.
+- Define normalized R2 artifact spec.
+- Start recent bup exporter prototype.
+- Start cocalc.ai project metadata import UI.
 
-### First Week
+### 2026-06-14 to 2026-06-16
 
-- Build account/entitlement/project mapping tables.
-- Implement first account claim and entitlement import.
-- Add cocalc.com migration banner and redirect new-user paths.
-- Prototype active project restore.
+- Implement standard license to membership import.
+- Implement verified legacy email grandfathering design.
+- Implement project metadata mapping.
+- Implement R2 restore from normalized artifact.
+- Export and restore first real bup-backed project.
+- Sample GCS Nearline archives and validate cost assumptions.
+- Begin focused Python image work if not already ready.
 
-### Weeks 2 to 3
+### 2026-06-17 to 2026-06-20
 
-- Canary staff and friendly active users.
-- Prototype GCS Nearline restore.
-- Add admin migration dashboard.
-- Implement or audit AI-off enforcement.
-- Start legacy rootfs image work.
+- UCLA-ready path works end-to-end.
+- AI-off enforcement audited or implemented.
+- Import UI usable by real users.
+- Recent bup disk export is running or ready to run.
+- Standard paid users can receive memberships.
+- First rootfs/image selection flow is usable.
 
-### Weeks 4 to 6
+### 2026-06-21 to 2026-06-23
 
-- Migrate broad active-user cohort.
-- Move normal product traffic to cocalc.ai.
-- Keep cocalc.com as compatibility and restore portal.
-- Reduce old infrastructure to migration-critical services.
+- Support UCLA onboarding.
+- Monitor import/restore failures.
+- Fix high-impact launch bugs only.
+- Keep old cocalc.com economic paths disabled.
 
-### After Broad Cutover
+### 2026-06-24 to 2026-07-01
 
-- Migrate long-tail projects on request.
-- Convert or retire remaining old customer-specific flows.
-- Establish retention policy for inactive archives.
-- Decommission old Kubernetes components progressively.
+- Run broad recent-project bup export to R2.
+- Implement live project export for too-recent projects.
+- Start or complete GCS Nearline conversion depending on sample results.
+- Add CUP signed site-license claim MVP if needed before July.
+- Reduce old cocalc.com services to migration-critical paths.
+
+### 2026-07-02 and After
+
+- No fragile old cocalc.com operations should depend on unavailable personnel.
+- R2 artifacts should be the main long-tail migration source.
+- Old GCP bucket deletion proceeds after verification and business signoff.
+
+## Open Decisions
+
+- What active-project cutoff should be preconverted to R2: 6 months, 1 year, 2
+  years, all paying-customer-owned projects, or some combination?
+- What is the exact standard license query?
+- What is the exact standard membership class in cocalc.ai?
+- Do we convert all selected recent bup projects immediately or only those
+  linked to active users and paying customers?
+- How aggressively do we delete converted objects from GCS?
+- What support policy applies after 2027-01-01?
+- Does CUP need the signed claim flow before UCLA, or can it follow after the
+  course launch?
+- Which focused images are launch blockers for UCLA?
+
+## Recommended Decisions
+
+- Preconvert all projects active in the last 6 months.
+- Also preconvert all projects owned by currently paying customers.
+- Also estimate 1-year and 2-year active cutoffs before deciding whether to
+  preconvert more.
+- Convert the GCS Nearline bucket to R2 artifacts if the sample confirms the
+  cost is under a few thousand dollars.
+- Use 2027-01-01 as the public legacy migration request deadline.
+- Do not keep the old GCP bucket merely to preserve bup/ZFS history.
+- Do not build a giant compatibility image.
+- Treat site-license claim tokens as the CUP replacement and a reusable
+  product primitive.
 
 ## Bottom Line
 
-The safest path is to separate the business/product cutover from the historical
-data migration.
+The revised plan is more aggressive and more realistic.
 
-Move users, billing rights, and new work to cocalc.ai quickly. Keep cocalc.com
-only as a locked-down compatibility and restore system. Restore projects lazily.
-Rewrite unsafe legacy workflows instead of preserving them. This protects
-revenue, reduces security exposure, avoids unnecessary GCS costs, and lets the
-team focus on the product that can grow.
+The most important simplification is the normalized R2 project artifact. If all
+legacy sources become the same "latest files only" artifact, then cocalc.ai only
+needs one restore path. That makes it feasible to preconvert recent projects,
+paying-customer projects, and even the old GCS Nearline bucket quickly enough to
+retire the expensive old GCP storage and reduce cocalc.com to a migration shell.
 
+The second most important simplification is entitlement scope. Standard old
+licenses become standard memberships. Everything unusual is manual. That avoids
+spending the launch window rebuilding legacy licensing complexity.
+
+The third most important simplification is CUP. Signed site-license claim tokens
+and rootfs landing pages solve CUP's current flow using general cocalc.ai
+primitives instead of preserving a dangerous anonymous secret-URL system.

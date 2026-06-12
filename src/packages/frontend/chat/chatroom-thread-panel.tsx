@@ -20,12 +20,13 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useProjectFromMap,
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
-import { humanSize } from "@cocalc/util/misc";
+import { containingPath, humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   codexModelSupportsFastMode,
@@ -107,6 +108,99 @@ const ARCHIVED_HISTORY_LIMIT = 50;
 const ARCHIVED_INLINE_PREVIEW_LIMIT = 6;
 const CHAT_ARCHIVE_DEBUG_STORAGE_KEY = "cocalc.debug.chatArchive";
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
+const gitRepoCheckCache = new Map<string, boolean>();
+const gitRepoCheckInFlight = new Map<string, Promise<boolean>>();
+
+function gitRepoCheckKey(
+  projectId: string | undefined,
+  path: string | undefined,
+): string | undefined {
+  if (!projectId || !path) {
+    return undefined;
+  }
+  return `${projectId}:${path}`;
+}
+
+async function checkPathIsInGitRepo({
+  projectId,
+  path,
+}: {
+  projectId: string;
+  path: string;
+}): Promise<boolean> {
+  const key = gitRepoCheckKey(projectId, path);
+  if (key == null) {
+    return false;
+  }
+  const cached = gitRepoCheckCache.get(key);
+  if (cached != null) {
+    return cached;
+  }
+  const inflight = gitRepoCheckInFlight.get(key);
+  if (inflight != null) {
+    return await inflight;
+  }
+  const cwd = containingPath(path) || ".";
+  const promise = webapp_client.project_client
+    .exec({
+      project_id: projectId,
+      path: cwd,
+      command: "git",
+      args: ["rev-parse", "--show-toplevel"],
+      err_on_exit: false,
+      max_output: 1024,
+      timeout: 10,
+    })
+    .then((result) => result.exit_code === 0)
+    .catch(() => false)
+    .then((isGitRepo) => {
+      gitRepoCheckCache.set(key, isGitRepo);
+      gitRepoCheckInFlight.delete(key);
+      return isGitRepo;
+    });
+  gitRepoCheckInFlight.set(key, promise);
+  return await promise;
+}
+
+function useShowGitBrowserButton({
+  project_id,
+  path,
+}: {
+  project_id?: string;
+  path?: string;
+}): boolean {
+  const project = useProjectFromMap(project_id);
+  const projectIsRunning = project?.getIn?.(["state", "state"]) === "running";
+  const [showGitButton, setShowGitButton] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setShowGitButton(false);
+    if (!projectIsRunning || !project_id || !path) {
+      return;
+    }
+    const key = gitRepoCheckKey(project_id, path);
+    const cached = key != null ? gitRepoCheckCache.get(key) : undefined;
+    if (cached != null) {
+      setShowGitButton(cached);
+      return;
+    }
+    (async () => {
+      const isGitRepo = await checkPathIsInGitRepo({
+        projectId: project_id,
+        path,
+      });
+      if (!cancelled) {
+        setShowGitButton(isGitRepo);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [path, project_id, projectIsRunning]);
+
+  return showGitButton;
+}
 
 function isActiveAcpState(state: unknown): boolean {
   if (typeof state !== "string") return false;
@@ -337,7 +431,7 @@ interface ChatRoomThreadPanelProps {
   onOpenGitBrowser?: (request: {
     threadKey: string;
     cwdOverride?: string;
-    commitHash: string;
+    commitHash?: string;
   }) => void;
   readOnly?: boolean;
 }
@@ -383,6 +477,7 @@ export function ChatRoomThreadPanel({
   readOnly = false,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
+  const showGitBrowserButton = useShowGitBrowserButton({ project_id, path });
   const codexNewChatDefaultsSetting = useAccountOtherSetting(
     OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
   );
@@ -1719,6 +1814,25 @@ export function ChatRoomThreadPanel({
           gap: 6,
         }}
       >
+        {!readOnly &&
+        onOpenGitBrowser != null &&
+        showGitBrowserButton &&
+        selectedThreadKey ? (
+          <Tooltip title="Open git browser">
+            <Button
+              size="small"
+              onClick={() => {
+                if (!selectedThreadKey) {
+                  return;
+                }
+                onOpenGitBrowser({ threadKey: selectedThreadKey });
+              }}
+              icon={<Icon name="git" />}
+            >
+              Git
+            </Button>
+          </Tooltip>
+        ) : null}
         <Tooltip title="Search thread (Ctrl/Cmd+F)">
           <Button
             size="small"

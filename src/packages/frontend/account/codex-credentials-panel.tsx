@@ -410,9 +410,7 @@ function CodexCredentialsPanelBody({
   } | null>(null);
   const authFileInputRef = useRef<HTMLInputElement | null>(null);
   const previousProjectKeyRef = useRef(selectedProjectId.trim());
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const refresh = useCallback(() => {
     setRefreshToken((x) => x + 1);

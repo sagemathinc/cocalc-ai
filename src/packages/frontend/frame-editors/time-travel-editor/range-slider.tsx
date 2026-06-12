@@ -82,11 +82,11 @@ function RangeSliderNoMarks({
   return (
     <div
       style={{
-        height: "80px",
-        paddingTop: "48px",
-        paddingBottom: "20px",
+        height: "46px",
+        paddingTop: "24px",
+        paddingBottom: "4px",
         width: "90%",
-        margin: "10px 15px",
+        margin: "0 15px",
       }}
     >
       <Slider
@@ -166,11 +166,11 @@ function RangeSliderMarks({
   return (
     <div
       style={{
-        height: "80px",
-        paddingTop: "48px",
-        paddingBottom: "20px",
+        height: "46px",
+        paddingTop: "24px",
+        paddingBottom: "4px",
         width: "90%",
-        margin: "10px 15px",
+        margin: "0 15px",
       }}
     >
       <Slider

@@ -706,6 +706,7 @@ COCALC_BAY_HUB_HEALTH_PATH=/alive
 COCALC_BAY_MIN_HEALTHY_WORKERS=1
 COCALC_BAY_HEALTH_TIMEOUT_S=15
 COCALC_BAY_MIN_FREE_MB=1024
+COCALC_BAY_CLOUDFLARED_SYSTEMD=1
 
 COCALC_PRODUCT=launchpad
 COCALC_CLUSTER_ROLE=standalone
@@ -736,6 +737,7 @@ EOF
   if [[ -n "$PROJECT_HOST_SOFTWARE_BASE_URL" ]]; then
     set_env_var "${ENV_DIR}/bay.env" "COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE" "${PROJECT_HOST_SOFTWARE_BASE_URL%/}"
   fi
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_CLOUDFLARED_SYSTEMD" "1"
 
   render_if_missing_or_forced "${ENV_DIR}/bay-workers.env" "$BAY_WORKERS_ENV_EXAMPLE" <<EOF
 COCALC_BAY_WORKER_COUNT=${WORKER_COUNT}
@@ -780,6 +782,7 @@ EOF
   fi
 
   run systemctl enable cocalc-bay.target
+  run systemctl enable cocalc-bay-cloudflared.service
   if [[ "$ENABLE_WORKERS" -eq 1 ]]; then
     for worker_id in $(seq 1 "$WORKER_COUNT"); do
       run systemctl enable "cocalc-bay-hub@${worker_id}.service"

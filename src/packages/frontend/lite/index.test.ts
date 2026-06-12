@@ -120,7 +120,7 @@ describe("lite init", () => {
   });
 
   it("keeps explicit settings routes in the foreground", async () => {
-    mockTarget = "settings/vouchers";
+    mockTarget = "settings/purchases";
 
     const open_project = jest.fn(async () => {});
     const redux = {

@@ -21,6 +21,8 @@ const mockSendEmailVerification = jest.fn();
 const mockRecordSignUpTokenFail = jest.fn();
 const mockSignUpTokenCheck = jest.fn();
 const mockGetEnabledSsoDomainPolicyForEmail = jest.fn();
+const mockSelectSignupHomeBay = jest.fn();
+const mockIssueHomeBayRetryToken = jest.fn();
 const mockPoolQuery = jest.fn();
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -64,6 +66,7 @@ jest.mock("@cocalc/database/settings/sso-policies", () => ({
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   createClusterAccount: (...args) => mockCreateClusterAccount(...args),
+  sendClusterEmailVerification: (...args) => mockSendEmailVerification(...args),
 }));
 
 jest.mock("./sign-in", () => ({
@@ -81,7 +84,7 @@ jest.mock("@cocalc/server/auth/throttle", () => ({
 }));
 
 jest.mock("@cocalc/server/accounts/select-home-bay", () => ({
-  selectSignupHomeBay: jest.fn().mockResolvedValue("bay-0"),
+  selectSignupHomeBay: (...args) => mockSelectSignupHomeBay(...args),
 }));
 
 jest.mock("@cocalc/server/bay-config", () => ({
@@ -94,9 +97,8 @@ jest.mock("@cocalc/server/bay-public-origin", () => ({
     .mockResolvedValue("https://bay-0.example.test"),
 }));
 
-jest.mock("@cocalc/server/accounts/send-email-verification", () => ({
-  __esModule: true,
-  default: (...args) => mockSendEmailVerification(...args),
+jest.mock("@cocalc/server/auth/home-bay-retry-token", () => ({
+  issueHomeBayRetryToken: (...args) => mockIssueHomeBayRetryToken(...args),
 }));
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -126,6 +128,10 @@ describe("/api/v2/auth/sign-up", () => {
     mockGetEnabledSsoDomainPolicyForEmail
       .mockReset()
       .mockResolvedValue(undefined);
+    mockSelectSignupHomeBay.mockReset().mockResolvedValue("bay-0");
+    mockIssueHomeBayRetryToken.mockReset().mockReturnValue({
+      token: "retry-token",
+    });
     mockPoolQuery.mockReset().mockResolvedValue({ rows: [] });
   });
 
@@ -594,10 +600,11 @@ describe("/api/v2/auth/sign-up", () => {
         trusted_product_access_reason: undefined,
       }),
     );
-    expect(mockSendEmailVerification).toHaveBeenCalledWith(
-      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-      true,
-    );
+    expect(mockSendEmailVerification).toHaveBeenCalledWith({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      home_bay_id: "bay-0",
+      only_verify: true,
+    });
     expect(mockSignUserIn).toHaveBeenCalledWith(
       req,
       res,
@@ -633,10 +640,47 @@ describe("/api/v2/auth/sign-up", () => {
         trusted_product_access_reason: "registration_token",
       }),
     );
-    expect(mockSendEmailVerification).toHaveBeenCalledWith(
-      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-      false,
-    );
+    expect(mockSendEmailVerification).toHaveBeenCalledWith({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      home_bay_id: "bay-0",
+      only_verify: false,
+    });
+  });
+
+  it("routes signup verification email through the selected account home bay", async () => {
+    mockGetRequiresRegistrationToken.mockResolvedValue(false);
+    mockSelectSignupHomeBay.mockResolvedValue("bay-remote");
+    mockCreateClusterAccount.mockResolvedValue({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      home_bay_id: "bay-remote",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(mockSendEmailVerification).toHaveBeenCalledWith({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      home_bay_id: "bay-remote",
+      only_verify: true,
+    });
+    expect(res._getJSONData()).toEqual({
+      wrong_bay: true,
+      home_bay_id: "bay-remote",
+      home_bay_url: "https://bay-0.example.test",
+      retry_token: "retry-token",
+    });
+    expect(mockSignUserIn).not.toHaveBeenCalled();
   });
 
   it("persists explicit marketing consent for password signup", async () => {

@@ -71,7 +71,6 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
       path: "settings/payment-methods",
     },
     { page: "statements", path: "settings/statements" },
-    { page: "vouchers", path: "settings/vouchers" },
     { page: "support", path: "settings/support" },
   ] as const;
 

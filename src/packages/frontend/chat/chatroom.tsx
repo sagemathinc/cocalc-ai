@@ -1842,7 +1842,7 @@ export function ChatPanel({
     }: {
       threadKey: string;
       cwdOverride?: string;
-      commitHash: string;
+      commitHash?: string;
     }) => {
       const normalizedThreadKey = `${threadKey ?? ""}`.trim();
       if (!normalizedThreadKey) return;

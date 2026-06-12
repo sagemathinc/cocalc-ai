@@ -271,8 +271,6 @@ export const TABLE_OWNERSHIP = {
       "software_licenses",
       "sso_domain_policies",
       "sso_providers",
-      "voucher_codes",
-      "vouchers",
       "whitelabeling",
     ],
     {

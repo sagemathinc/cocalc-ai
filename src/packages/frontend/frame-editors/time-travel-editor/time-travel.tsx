@@ -16,11 +16,10 @@ import { Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { lite } from "@cocalc/frontend/lite";
 import type { Document } from "@cocalc/sync/editor/generic/types";
-import json_stable from "json-stable-stringify";
-import { to_ipynb } from "../../jupyter/history-viewer";
 import { TimeTravelActions, TimeTravelState } from "./actions";
 import { GitAuthors, TimeTravelAuthors } from "./authors";
 import { Diff } from "./diff";
+import { timeTravelDocumentSource } from "./document-source";
 import { LoadMoreHistory } from "./load-more-history";
 import { LogView } from "./log-view";
 import { NavigationButtons } from "./navigation-buttons";
@@ -377,18 +376,11 @@ export function TimeTravel(props: Props) {
       const doc1 = (await getDoc(version1))?.();
       if (doc1 == null) return; // something is wrong
 
-      let v0, v1;
-      if (docext == "ipynb") {
-        v0 = json_stable(to_ipynb(doc0), { space: 1 });
-        v1 = json_stable(to_ipynb(doc1), { space: 1 });
-        setUseJson(true);
-      } else {
-        v0 = doc0.to_str();
-        v1 = doc1.to_str();
-        setUseJson(doc0["value"] == null);
-      }
-      setDoc0(v0);
-      setDoc1(v1);
+      const source0 = timeTravelDocumentSource(doc0, docext);
+      const source1 = timeTravelDocumentSource(doc1, docext);
+      setUseJson(source0.useJson || source1.useJson);
+      setDoc0(source0.text);
+      setDoc1(source1.text);
     }
   }, [version, version0, version1, changesMode, source, activeVersions]);
 

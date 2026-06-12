@@ -21,6 +21,7 @@ describe("BaseEditorActions.close_frame", () => {
     expect(emit).toHaveBeenCalledWith("close-frame", {
       id: "frame-1",
       type: "cm",
+      closingFile: true,
     });
     expect(closeTab).toHaveBeenCalledWith("/home/user/test.md");
   });
@@ -42,5 +43,33 @@ describe("BaseEditorActions.close_frame", () => {
 
     expect(closeChat).toHaveBeenCalled();
     expect(closeTab).toHaveBeenCalledWith("/home/user/test.chat");
+  });
+
+  it("closes the terminal instance before closing the file tab for a lone terminal frame", () => {
+    const closeTab = jest.fn();
+    const closeTerminal = jest.fn();
+    const emit = jest.fn();
+    const target: any = {
+      path: "/home/user/test.term",
+      _tree_is_single_leaf: () => true,
+      _get_frame_node: () => fromJS({ type: "terminal" }),
+      reset_local_view_state: jest.fn(),
+      terminals: { close_terminal: closeTerminal },
+      store: { emit },
+      _get_project_actions: () => ({ close_tab: closeTab }),
+    };
+
+    BaseEditorActions.prototype.close_frame.call(target, "frame-1");
+
+    expect(closeTerminal).toHaveBeenCalledWith("frame-1");
+    expect(emit).toHaveBeenCalledWith("close-frame", {
+      id: "frame-1",
+      type: "terminal",
+      closingFile: true,
+    });
+    expect(closeTab).toHaveBeenCalledWith("/home/user/test.term");
+    expect(closeTerminal.mock.invocationCallOrder[0]).toBeLessThan(
+      closeTab.mock.invocationCallOrder[0],
+    );
   });
 });

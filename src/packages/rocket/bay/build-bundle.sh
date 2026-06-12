@@ -221,6 +221,16 @@ pnpm --filter @cocalc/project-host exec ncc build "$ROOT/packages/rocket/bin/bay
 copy_native_pkg "bufferutil" "$OUT/runtime/migrate-schema"
 copy_native_pkg "utf-8-validate" "$OUT/runtime/migrate-schema"
 
+echo "- Bundle cloudflared systemd helper with @vercel/ncc"
+pnpm --filter @cocalc/project-host exec ncc build "$ROOT/packages/rocket/bin/bay-cloudflared.js" \
+  -o "$OUT/runtime/cloudflared" \
+  --external bufferutil \
+  --external utf-8-validate \
+  --license licenses.txt
+
+copy_native_pkg "bufferutil" "$OUT/runtime/cloudflared"
+copy_native_pkg "utf-8-validate" "$OUT/runtime/cloudflared"
+
 echo "- Copy bay systemd scaffold"
 mkdir -p "$OUT/scripts"
 cp -a "$ROOT/scripts/bay-systemd" "$OUT/scripts/"
@@ -262,6 +272,7 @@ const manifest = {
     projectHost: "runtime/project-host/index.js",
     hub: "runtime/control-plane/bundle/index.js",
     migrateSchema: "runtime/migrate-schema/index.js",
+    cloudflared: "runtime/cloudflared/index.js",
     apiV2Routes: "runtime/control-plane/api-v2-routes/index.js",
   },
   scaffold: "scripts/bay-systemd",
@@ -275,6 +286,7 @@ validate_file "$OUT/runtime/project-host/index.js"
 validate_file "$OUT/runtime/control-plane/bundle/index.js"
 validate_file "$OUT/runtime/control-plane/api-v2-routes/index.js"
 validate_file "$OUT/runtime/migrate-schema/index.js"
+validate_file "$OUT/runtime/cloudflared/index.js"
 validate_file "$OUT/runtime/packages/project-host/build/bundle-linux.tar.xz"
 validate_file "$OUT/runtime/packages/project/build/bundle-linux.tar.xz"
 validate_file "$OUT/runtime/packages/server/cloud/bootstrap/bootstrap.py"

@@ -222,6 +222,50 @@ describe("cloud dns", () => {
     expect(record.proxied).toBe(true);
   });
 
+  it("preserves non-address records when replacing a hostname with an app cname", async () => {
+    fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/zones?")) {
+        return zoneResponse;
+      }
+      if (init?.method === "GET" && url.includes("/dns_records?")) {
+        if (url.includes("type=CNAME")) {
+          return responseWith([]);
+        }
+        return responseWith([
+          { id: "record-a", name: "demo-app.example.com", type: "A" },
+          { id: "record-aaaa", name: "demo-app.example.com", type: "AAAA" },
+          { id: "record-txt", name: "demo-app.example.com", type: "TXT" },
+          { id: "record-caa", name: "demo-app.example.com", type: "CAA" },
+        ]);
+      }
+      if (init?.method === "DELETE") {
+        return responseWith({});
+      }
+      if (init?.method === "POST" && url.includes("/dns_records")) {
+        return responseWith({ id: "record-cname" });
+      }
+      if (init?.method === "PUT" && url.includes("/dns_records/record-cname")) {
+        return responseWith({ id: "record-cname" });
+      }
+      return responseWith({});
+    });
+
+    const { ensureAppSubdomainDns } = await import("./dns");
+    await ensureAppSubdomainDns({
+      hostname: "demo-app.example.com",
+      target_hostname: "host-abc.example.com",
+    });
+
+    const deletedIds = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === "DELETE")
+      .map(([url]) => String(url).split("/dns_records/")[1]);
+    expect(deletedIds).toContain("record-a");
+    expect(deletedIds).toContain("record-aaaa");
+    expect(deletedIds).not.toContain("record-txt");
+    expect(deletedIds).not.toContain("record-caa");
+  });
+
   it("recreates an app cname when the stored record id is stale", async () => {
     fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
       const url = String(input);

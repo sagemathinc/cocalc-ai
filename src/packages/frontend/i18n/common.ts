@@ -156,11 +156,6 @@ export const labels = defineMessages({
     defaultMessage: "Billing",
     description: "Billing and payment related settings",
   },
-  vouchers: {
-    id: "labels.vouchers",
-    defaultMessage: "Vouchers",
-    description: "Settings page for managing and redeeming credit vouchers.",
-  },
   email_address: {
     id: "labels.email_address",
     defaultMessage: "Email Address",

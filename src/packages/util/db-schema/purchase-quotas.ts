@@ -75,13 +75,6 @@ export const QUOTA_SPEC: QuotaSpec = {
     category: "money",
     description: "Charge for a course fee paid by a student.",
   },
-  voucher: {
-    display: "Voucher",
-    color: "#00238b",
-    noSet: true,
-    category: "money",
-    description: "Charge for purchasing a voucher.",
-  },
 } as const;
 
 export function serviceToDisplay(service: Service): string {
