@@ -116,14 +116,7 @@ export function ActionBox({
   const [deleteWithSudo, setDeleteWithSudo] = useState<boolean>(false);
   const [deleteFromSnapshots, setDeleteFromSnapshots] =
     useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    closeBeforeRetry: true,
-    onUnhandledError: (err) =>
-      alert_message({
-        type: "error",
-        message: `Error deleting files -- ${err}`,
-      }),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const bodyStyle =
     display === "modal"
       ? undefined

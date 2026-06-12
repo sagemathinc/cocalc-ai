@@ -533,9 +533,7 @@ function needsAttention(paymentIntent) {
 function AdminCancelPayment({ id, onFinished }) {
   const [reason, setReason] = useState<string>("");
   const [error, setError] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const doCancel = async () => {
     try {

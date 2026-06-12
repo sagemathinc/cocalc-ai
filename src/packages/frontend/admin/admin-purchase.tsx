@@ -84,9 +84,7 @@ export function AdminPurchaseAdmin() {
   >(null);
   const [recentAdminPurchasesError, setRecentAdminPurchasesError] =
     useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setActionError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     let canceled = false;
@@ -569,34 +567,34 @@ export function AdminBalanceAdjustment({
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function submit() {
     setError("");
     setSuccess("");
-    await runFreshAuthAction(async () => {
-      setLoading(true);
-      try {
-        const result = await adminPurchase({
-          balance_admin_note: adminNote.trim() || undefined,
-          balance_user_note: userNote.trim() || undefined,
-          price: amount,
-          product: "balance",
-          source: "free",
-          user_account_id: account_id,
-        });
-        setSuccess(
-          `Balance adjusted by ${currency(result.adjustment_amount ?? amount)}.`,
-        );
-        onAdjusted?.();
-      } catch (err) {
-        setError(`${err}`);
-      } finally {
-        setLoading(false);
-      }
-    });
+    try {
+      await runFreshAuthAction(async () => {
+        setLoading(true);
+        try {
+          const result = await adminPurchase({
+            balance_admin_note: adminNote.trim() || undefined,
+            balance_user_note: userNote.trim() || undefined,
+            price: amount,
+            product: "balance",
+            source: "free",
+            user_account_id: account_id,
+          });
+          setSuccess(
+            `Balance adjusted by ${currency(result.adjustment_amount ?? amount)}.`,
+          );
+          onAdjusted?.();
+        } finally {
+          setLoading(false);
+        }
+      });
+    } catch (err) {
+      setError(`${err}`);
+    }
   }
 
   return (

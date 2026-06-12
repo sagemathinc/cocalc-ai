@@ -411,6 +411,10 @@ export class Ban extends Component<Props, State> {
             } else {
               await this.do_request({ fromFreshAuth: true });
             }
+            this.setState({
+              freshAuthOpen: false,
+              freshAuthAction: undefined,
+            });
           }}
         />
         <b>

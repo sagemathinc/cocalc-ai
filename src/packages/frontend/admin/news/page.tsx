@@ -419,9 +419,7 @@ function NewsEditorPage({
   const [loading, setLoading] = useState<boolean>(!isNew);
   const [saveMessage, setSaveMessage] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     if (adminAccess !== "allowed") {

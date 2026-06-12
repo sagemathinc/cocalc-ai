@@ -226,9 +226,7 @@ export function AdminMembership({ account_id }: { account_id: string }) {
   const [selectedTier, setSelectedTier] = useState<string | undefined>();
   const [expiresAt, setExpiresAt] = useState<dayjs.Dayjs | null>(null);
   const [notes, setNotes] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const tierOptions = useMemo(() => {
     return [...tiers]

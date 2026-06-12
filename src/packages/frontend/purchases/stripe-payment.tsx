@@ -21,7 +21,7 @@ import type {
   PaymentIntentSecret,
   CustomerSessionSecret,
 } from "@cocalc/util/stripe/types";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   createPaymentIntent,
   createSetupIntent,
@@ -46,7 +46,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { join } from "path";
 import { moneyToStripe, stripeToMoney } from "@cocalc/util/money";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { LineItemsTable } from "./line-items";
+import { LineItemsTable, moneyToString } from "./line-items";
 import { AddressButton } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
@@ -58,7 +58,9 @@ export default function StripePayment({
   purpose = "add-credit",
   metadata,
   onFinished,
+  summaryMode = "full",
   style,
+  title = description,
   disabled,
 }: {
   description?: string;
@@ -70,7 +72,9 @@ export default function StripePayment({
   //   - if total = 0, this means user confirmed "I want to make this purchase using credit"; the
   //     caller then needs to actually allocate the thing they want to purchase.
   onFinished?: (total: number) => void;
+  summaryMode?: "full" | "total-only";
   style?;
+  title?: ReactNode | null;
   disabled?: boolean;
 }) {
   const [error, setError] = useState<string>("");
@@ -80,9 +84,7 @@ export default function StripePayment({
     null,
   );
   const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const safeLineItems = lineItems ?? [];
 
   useEffect(() => {
@@ -118,19 +120,36 @@ export default function StripePayment({
     !requiresPayment &&
     totalStripe > 0;
 
+  const amountDue = stripeToMoney(totalStripe).toNumber();
+  const amountDueLineItem: LineItem = {
+    description: "Amount due (excluding tax)",
+    amount: amountDue,
+    extra: true,
+    bold: true,
+  };
+  const displayedLineItems = safeLineItems.concat(amountDueLineItem);
+
   return (
     <Card style={{ textAlign: "left" }}>
-      <div style={{ margin: "0 0 5px 15px" }}>
-        <b>{description}</b>
-      </div>
-      <LineItemsTable
-        lineItems={safeLineItems.concat({
-          description: "Amount due (excluding tax)",
-          amount: stripeToMoney(totalStripe).toNumber(),
-          extra: true,
-          bold: true,
-        })}
-      />
+      {title != null && title !== "" && (
+        <div style={{ margin: "0 0 5px 15px" }}>
+          <b>{title}</b>
+        </div>
+      )}
+      {summaryMode === "total-only" ? (
+        <div
+          style={{
+            fontSize: "12pt",
+            fontWeight: "bold",
+            marginBottom: "12px",
+            textAlign: "center",
+          }}
+        >
+          Amount due (excluding tax) {moneyToString(amountDue)}
+        </div>
+      ) : (
+        <LineItemsTable lineItems={displayedLineItems} />
+      )}
       <div>
         <div style={{ textAlign: "center" }}>
           <Space>
@@ -374,9 +393,7 @@ export function FinishStripePayment({
   const [error, setError] = useState<string>("");
   const [customerSession, setCustomerSession] =
     useState<CustomerSessionSecret | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     (async () => {
@@ -659,22 +676,35 @@ export function AddPaymentMethodButton({
     >
       {button}
       {show && (
-        <Modal
-          open
-          title={"Add Payment Method"}
+        <AddPaymentMethodModal
           onCancel={() => setShow(false)}
-          onOk={() => setShow(false)}
-          footer={[]}
-        >
-          <CollectPaymentMethod
-            onFinished={() => {
-              setShow(false);
-              onFinished?.();
-            }}
-          />
-        </Modal>
+          onFinished={() => {
+            setShow(false);
+            onFinished?.();
+          }}
+        />
       )}
     </div>
+  );
+}
+
+export function AddPaymentMethodModal({
+  onCancel,
+  onFinished,
+}: {
+  onCancel: () => void;
+  onFinished?: () => void;
+}) {
+  return (
+    <Modal
+      open
+      title={"Add Payment Method"}
+      onCancel={onCancel}
+      onOk={onCancel}
+      footer={[]}
+    >
+      <CollectPaymentMethod onFinished={onFinished} />
+    </Modal>
   );
 }
 
@@ -682,20 +712,23 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
   const [error, setError] = useState<string>("");
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const [freshAuthCanceled, setFreshAuthCanceled] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const load = async () => {
     try {
       setLoading(true);
+      setFreshAuthCanceled(false);
       setError("");
-      await runFreshAuthAction(async () => {
+      const completed = await runFreshAuthAction(async () => {
         const intent = await createSetupIntent({
           description: "Add a new payment method.",
         });
         setSecret(intent);
       });
+      if (!completed) {
+        setFreshAuthCanceled(true);
+      }
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -703,12 +736,31 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
     }
   };
 
+  const freshAuthModal = (
+    <FreshAuthModal
+      {...freshAuthModalProps}
+      onCancel={() => {
+        setFreshAuthCanceled(true);
+        freshAuthModalProps.onCancel();
+      }}
+      onSuccess={async () => {
+        await freshAuthModalProps.onSuccess();
+        setFreshAuthCanceled(false);
+      }}
+    />
+  );
+
   useEffect(() => {
     load();
   }, []);
 
   if (loading) {
-    return <BigSpin style={style} />;
+    return (
+      <>
+        <BigSpin style={style} />
+        {freshAuthModal}
+      </>
+    );
   }
 
   if (error) {
@@ -722,13 +774,34 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
             load();
           }}
         />
-        <FreshAuthModal {...freshAuthModalProps} />
+        {freshAuthModal}
+      </>
+    );
+  }
+
+  if (freshAuthCanceled) {
+    return (
+      <>
+        <Space vertical style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="info"
+            message="Adding a payment method requires security confirmation."
+          />
+          <Button onClick={load}>Confirm security action</Button>
+        </Space>
+        {freshAuthModal}
       </>
     );
   }
 
   if (secret == null) {
-    return <BigSpin style={style} />;
+    return (
+      <>
+        <BigSpin style={style} />
+        {freshAuthModal}
+      </>
+    );
   }
 
   return (
@@ -749,7 +822,7 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
           setError={setError}
         />
       </Elements>
-      <FreshAuthModal {...freshAuthModalProps} />
+      {freshAuthModal}
     </>
   );
 }

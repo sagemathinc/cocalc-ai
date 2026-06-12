@@ -42,9 +42,7 @@ export default function MoveProject({
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   const [detailsLoading, setDetailsLoading] = useState<boolean>(false);
   const [detailHost, setDetailHost] = useState<Host | undefined>();
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const actions = useActions("projects");
   const currentHostId = useProjectMapField<string>(project_id, "host_id");
   const hostInfo = useHostInfo(currentHostId);
