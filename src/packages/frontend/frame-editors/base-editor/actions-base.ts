@@ -238,6 +238,40 @@ export interface BaseEditorInitOptions {
   readOnlyPreview?: boolean;
 }
 
+function getActiveDisplayPathForEditor(actions: {
+  path: string;
+  project_id: string;
+  redux?: any;
+}): string {
+  const projectStore = actions.redux?.getProjectStore?.(actions.project_id);
+  const activeProjectTab = projectStore?.get?.("active_project_tab");
+  if (typeof activeProjectTab === "string") {
+    const activeDisplayPath = tab_to_path(activeProjectTab);
+    if (typeof activeDisplayPath === "string") {
+      const activeSyncPath = projectStore?.getIn?.([
+        "open_files",
+        activeDisplayPath,
+        "sync_path",
+      ]);
+      if (activeSyncPath === actions.path) {
+        return activeDisplayPath;
+      }
+    }
+  }
+
+  const openFiles = projectStore?.get?.("open_files");
+  let displayPath: string | undefined;
+  openFiles?.forEach?.((_obj, path) => {
+    if (displayPath != null) {
+      return;
+    }
+    if (openFiles.getIn?.([path, "sync_path"]) === actions.path) {
+      displayPath = path;
+    }
+  });
+  return displayPath ?? actions.path;
+}
+
 export class BaseEditorActions<
   T extends CodeEditorState = CodeEditorState,
 > extends BaseActions<T | CodeEditorState> {
@@ -1805,7 +1839,9 @@ export class BaseEditorActions<
         this.terminals.close_terminal(id);
       }
       this.store.emit("close-frame", { id, type, closingFile: true });
-      this._get_project_actions()?.close_tab?.(this.path);
+      this._get_project_actions()?.close_tab?.(
+        getActiveDisplayPathForEditor(this),
+      );
       return;
     }
     const node = this._get_frame_node(id);
