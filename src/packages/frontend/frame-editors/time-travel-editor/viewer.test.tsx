@@ -6,8 +6,18 @@
 import { render, screen } from "@testing-library/react";
 import { Viewer } from "./viewer";
 
+const mockToIpynb = jest.fn((doc: any) => doc.toIpynb());
+
 const mockEditableMarkdown = jest.fn((props: any) => (
   <div data-testid="editable-markdown" data-props={JSON.stringify(props)} />
+));
+
+const mockTextDocument = jest.fn((props: any) => (
+  <div
+    data-testid="text-document"
+    data-syntax={props.syntaxHighlightExtension ?? ""}
+    data-value={typeof props.value === "function" ? props.value() : props.value}
+  />
 ));
 
 jest.mock("@cocalc/frontend/editors/slate/editable-markdown", () => ({
@@ -36,10 +46,11 @@ jest.mock(
 
 jest.mock("@cocalc/frontend/jupyter/history-viewer", () => ({
   HistoryViewer: () => <div data-testid="jupyter-viewer" />,
+  to_ipynb: (doc: any) => mockToIpynb(doc),
 }));
 
 jest.mock("./document", () => ({
-  TextDocument: () => <div data-testid="text-document" />,
+  TextDocument: (props: any) => mockTextDocument(props),
 }));
 
 jest.mock("./view-document", () => ({
@@ -86,5 +97,43 @@ describe("TimeTravel Viewer", () => {
         autoMinHeight: 0,
       }),
     );
+  });
+
+  it("renders ipynb source as notebook JSON instead of internal object-doc text", () => {
+    const doc = {
+      to_str: () => "internal-jsonl",
+      toIpynb: () => ({
+        cells: [
+          {
+            cell_type: "code",
+            source: ["2+3"],
+            metadata: {},
+            outputs: [],
+          },
+        ],
+        metadata: {},
+        nbformat: 4,
+        nbformat_minor: 5,
+      }),
+    };
+
+    render(
+      <Viewer
+        {...baseProps}
+        ext="ipynb"
+        path="/home/user/history.ipynb"
+        textMode
+        doc={() => doc as any}
+      />,
+    );
+
+    const textDocument = screen.getByTestId("text-document");
+    expect(textDocument).toHaveAttribute("data-syntax", "js");
+    expect(textDocument.getAttribute("data-value")).toContain('"cells"');
+    expect(textDocument.getAttribute("data-value")).toContain("2+3");
+    expect(textDocument.getAttribute("data-value")).not.toContain(
+      "internal-jsonl",
+    );
+    expect(mockToIpynb).toHaveBeenCalledWith(doc);
   });
 });
