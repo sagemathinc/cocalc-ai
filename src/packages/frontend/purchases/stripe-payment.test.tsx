@@ -14,6 +14,7 @@ import {
 } from "./api";
 
 let mockStripeEnabled = false;
+let mockEmailVerificationRequired = false;
 
 jest.mock("antd", () => {
   const Box = ({
@@ -111,6 +112,16 @@ jest.mock("@cocalc/frontend/components", () => ({
 
 jest.mock("@cocalc/frontend/components/error", () => () => null);
 
+jest.mock("@cocalc/frontend/app/verify-email-banner", () => ({
+  useEmailVerificationRequired: () => mockEmailVerificationRequired,
+  VerifyEmailRequiredPanel: ({ description, title }: any) => (
+    <section>
+      <h2>{title}</h2>
+      <div>{description}</div>
+    </section>
+  ),
+}));
+
 jest.mock("./api", () => ({
   createPaymentIntent: jest.fn(),
   createSetupIntent: jest.fn(),
@@ -123,9 +134,28 @@ jest.mock("./api", () => ({
 describe("StripePayment", () => {
   beforeEach(() => {
     mockStripeEnabled = false;
+    mockEmailVerificationRequired = false;
     jest.mocked(createPaymentIntent).mockReset();
     jest.mocked(createSetupIntent).mockReset();
     jest.mocked(getPaymentMethods).mockReset();
+  });
+
+  it("requires email verification before rendering purchase controls", () => {
+    mockEmailVerificationRequired = true;
+
+    render(
+      <StripePayment
+        description="Membership change"
+        lineItems={[{ description: "Basic membership, annual", amount: 72 }]}
+        purpose="membership-change"
+      />,
+    );
+
+    expect(
+      screen.getByText("Verify your email before purchasing"),
+    ).toBeTruthy();
+    expect(screen.queryByText("Basic membership, annual")).toBeNull();
+    expect(getPaymentMethods).not.toHaveBeenCalled();
   });
 
   it("renders the description and full line-item table by default", () => {
@@ -202,12 +232,23 @@ describe("StripePayment", () => {
     await waitFor(() => {
       expect(screen.getByText("Confirm security action")).toBeTruthy();
     });
-    expect(
-      screen.getByText("Confirm security action"),
-    ).toBeTruthy();
+    expect(screen.getByText("Confirm security action")).toBeTruthy();
     expect(createSetupIntent).toHaveBeenCalledWith({
       description: "Add a new payment method.",
     });
+  });
+
+  it("requires email verification before adding a payment method", async () => {
+    mockEmailVerificationRequired = true;
+
+    render(<AddPaymentMethodButton />);
+
+    fireEvent.click(screen.getByText(/Add Payment Method/));
+
+    expect(
+      screen.getByText("Verify your email before adding a payment method"),
+    ).toBeTruthy();
+    expect(createSetupIntent).not.toHaveBeenCalled();
   });
 
   it("continues to Stripe setup after successful fresh auth while adding a payment method", async () => {

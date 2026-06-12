@@ -16,6 +16,10 @@ import { Icon } from "@cocalc/frontend/components";
 import StripePayment, {
   AddPaymentMethodModal,
 } from "@cocalc/frontend/purchases/stripe-payment";
+import {
+  useEmailVerificationRequired,
+  VerifyEmailRequiredPanel,
+} from "@cocalc/frontend/app/verify-email-banner";
 import Payments from "@cocalc/frontend/purchases/payments";
 import {
   applyMembershipChange,
@@ -125,7 +129,30 @@ interface Props {
   onChanged?: () => void;
 }
 
-export default function MembershipPurchaseModal({
+export default function MembershipPurchaseModal(props: Props) {
+  const emailVerificationRequired = useEmailVerificationRequired();
+  if (emailVerificationRequired) {
+    return (
+      <Modal
+        footer={null}
+        open={props.open}
+        onCancel={props.onClose}
+        onOk={props.onClose}
+        width={620}
+        title="Change Membership"
+      >
+        <VerifyEmailRequiredPanel
+          compact
+          title="Verify your email before upgrading membership"
+          description="Please verify your email address before upgrading or changing your membership."
+        />
+      </Modal>
+    );
+  }
+  return <MembershipPurchaseModalInner {...props} />;
+}
+
+function MembershipPurchaseModalInner({
   currentClassOverride,
   currentIntervalOverride,
   open,

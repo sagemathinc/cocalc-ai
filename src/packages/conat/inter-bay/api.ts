@@ -894,6 +894,11 @@ export interface AccountLocalRedeemVerifyEmailRequest {
   token: string;
 }
 
+export interface AccountLocalSendEmailVerificationRequest {
+  account_id: string;
+  only_verify?: boolean;
+}
+
 export interface AccountLocalAdminVerifyEmailAddressRequest {
   account_id: string;
 }
@@ -1804,6 +1809,7 @@ export type AccountLocalMethod =
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
   | "redeem-verify-email"
+  | "send-email-verification"
   | "admin-verify-email-address"
   | "admin-disable-two-factor"
   | "admin-grant-admin-role"
@@ -2757,6 +2763,9 @@ export interface InterBayAccountLocalApi {
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
   ) => Promise<void>;
+  sendEmailVerification: (
+    opts: AccountLocalSendEmailVerificationRequest,
+  ) => Promise<string | undefined>;
   adminVerifyEmailAddress: (
     opts: AccountLocalAdminVerifyEmailAddressRequest,
   ) => Promise<AccountLocalAdminVerifyEmailAddressResult>;
@@ -4606,6 +4615,15 @@ export function createInterBayAccountLocalClient({
       method: "redeem-verify-email",
     }),
   });
+  const sendEmailVerificationClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "sendEmailVerification">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "send-email-verification",
+    }),
+  });
   const adminVerifyEmailAddressClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "adminVerifyEmailAddress">
   >({
@@ -5165,6 +5183,8 @@ export function createInterBayAccountLocalClient({
       await verifySignInPasswordClient.verifySignInPassword(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
+    sendEmailVerification: async (opts) =>
+      await sendEmailVerificationClient.sendEmailVerification(opts),
     adminVerifyEmailAddress: async (opts) =>
       await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
     adminDisableTwoFactor: async (opts) =>
@@ -5449,6 +5469,20 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         redeemVerifyEmail: async (opts) => await impl.redeemVerifyEmail(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "sendEmailVerification">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "send-email-verification",
+      }),
+      impl: {
+        sendEmailVerification: async (opts) =>
+          await impl.sendEmailVerification(opts),
       },
     }),
     createServiceHandler<

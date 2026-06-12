@@ -32,6 +32,7 @@ import {
 } from "@cocalc/conat/inter-bay/api";
 import getPool from "@cocalc/database/pool";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
+import sendEmailVerificationLocal from "@cocalc/server/accounts/send-email-verification";
 import {
   grantAdminRole as grantAdminRoleLocal,
   revokeAdminRole as revokeAdminRoleLocal,
@@ -392,6 +393,40 @@ export async function adminVerifyClusterAccountEmailAddress({
     client: getInterBayFabricClient(),
     dest_bay: homeBayId,
   }).adminVerifyEmailAddress({ account_id });
+}
+
+export async function sendClusterEmailVerification({
+  account_id,
+  home_bay_id,
+  only_verify,
+}: {
+  account_id: string;
+  home_bay_id?: string | null;
+  only_verify?: boolean;
+}): Promise<string | undefined> {
+  const normalizedAccountId = `${account_id ?? ""}`.trim();
+  if (!isValidUUID(normalizedAccountId)) {
+    return "account_id must be a valid UUID";
+  }
+  try {
+    let targetBay = `${home_bay_id ?? ""}`.trim();
+    if (!targetBay) {
+      const account = await getClusterAccountById(normalizedAccountId);
+      targetBay = `${account?.home_bay_id ?? ""}`.trim();
+    }
+    if (!targetBay || targetBay === currentBayId()) {
+      return await sendEmailVerificationLocal(normalizedAccountId, only_verify);
+    }
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: targetBay,
+    }).sendEmailVerification({
+      account_id: normalizedAccountId,
+      only_verify,
+    });
+  } catch (err) {
+    return err instanceof Error ? err.message : `${err}`;
+  }
 }
 
 export async function adminDisableClusterAccountTwoFactor({

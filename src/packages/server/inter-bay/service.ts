@@ -73,6 +73,7 @@ import {
   redeemResetLocal as redeemPasswordResetLocal,
 } from "@cocalc/server/auth/password-reset";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
+import sendEmailVerificationLocal from "@cocalc/server/accounts/send-email-verification";
 import {
   grantAdminRole as grantAdminRoleLocal,
   revokeAdminRole as revokeAdminRoleLocal,
@@ -743,6 +744,8 @@ async function startAccountLocalService(): Promise<void> {
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
     },
+    sendEmailVerification: async ({ account_id, only_verify }) =>
+      await sendEmailVerificationLocal(account_id, only_verify),
     adminVerifyEmailAddress: async ({ account_id }) =>
       await adminVerifyEmailAddressLocal({ account_id }),
     adminDisableTwoFactor: async ({ account_id }) =>

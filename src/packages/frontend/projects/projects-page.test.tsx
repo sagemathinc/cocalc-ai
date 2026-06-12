@@ -13,6 +13,7 @@ let mockProjectListWindow: any;
 let mockHidden = false;
 let mockSearch = "";
 let mockSelectedHashtags: any = mockEmptyMap;
+let mockEmailVerificationRequired = false;
 const mockLoadProjectListWindow = jest.fn();
 
 jest.mock("./actions", () => ({}));
@@ -156,6 +157,16 @@ jest.mock("@cocalc/frontend/file-use/button", () => ({
   RecentDocumentActivityButton: () => <button type="button">Recent</button>,
 }));
 
+jest.mock("@cocalc/frontend/app/verify-email-banner", () => ({
+  useEmailVerificationRequired: () => mockEmailVerificationRequired,
+  VerifyEmailRequiredPanel: ({ description, title }: any) => (
+    <section>
+      <h2>{title}</h2>
+      <div>{description}</div>
+    </section>
+  ),
+}));
+
 jest.mock("./filename-search", () => ({
   FilenameSearch: () => <input aria-label="Filename search" />,
 }));
@@ -174,6 +185,7 @@ beforeEach(() => {
   mockHidden = false;
   mockSearch = "";
   mockSelectedHashtags = mockEmptyMap;
+  mockEmailVerificationRequired = false;
   mockLoadProjectListWindow.mockClear();
   (globalThis as any).ResizeObserver = class {
     observe() {}
@@ -191,6 +203,22 @@ beforeEach(() => {
       return mockProjectListWindow;
     return undefined;
   });
+});
+
+test("projects page is replaced by email verification when required", () => {
+  mockEmailVerificationRequired = true;
+
+  render(<ProjectsPage />);
+
+  expect(screen.getByText("Verify your email to use projects")).toBeTruthy();
+  expect(
+    screen.getByText(
+      "Please verify your email address before creating, opening, or running projects.",
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /create/i })).toBeNull();
+  expect(screen.queryByTestId("projects-table")).toBeNull();
+  expect(screen.queryByTestId("project-drawer")).toBeNull();
 });
 
 test("project creation modal does not auto-open for an empty project list", () => {
