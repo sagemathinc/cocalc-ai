@@ -18,8 +18,6 @@ const mockGetUnpaidInvoices = jest.fn();
 const mockGetChargesThisMonthByService = jest.fn();
 const mockEmailStatement = jest.fn();
 const mockGetCostPerDay = jest.fn();
-const mockGetLastClosingDate = jest.fn();
-const mockGetNextClosingDate = jest.fn();
 const mockGetAIUsageStatus = jest.fn();
 const mockResolveMembershipForAccount = jest.fn();
 const mockGetMinBalance = jest.fn();
@@ -93,11 +91,6 @@ jest.mock("@cocalc/server/purchases/get-cost-per-day", () => ({
   default: (...args) => mockGetCostPerDay(...args),
 }));
 
-jest.mock("@cocalc/server/purchases/closing-date", () => ({
-  getLastClosingDate: (...args) => mockGetLastClosingDate(...args),
-  getNextClosingDate: (...args) => mockGetNextClosingDate(...args),
-}));
-
 jest.mock("@cocalc/server/ai/usage-status", () => ({
   getAIUsageStatus: (...args) => mockGetAIUsageStatus(...args),
 }));
@@ -144,8 +137,6 @@ describe("billing account read routes API-key scope", () => {
     mockGetChargesThisMonthByService.mockReset().mockResolvedValue({});
     mockEmailStatement.mockReset().mockResolvedValue(undefined);
     mockGetCostPerDay.mockReset().mockResolvedValue([]);
-    mockGetLastClosingDate.mockReset().mockResolvedValue(new Date(0));
-    mockGetNextClosingDate.mockReset().mockResolvedValue(new Date(1));
     mockGetAIUsageStatus.mockReset().mockResolvedValue({ used: 1 });
     mockResolveMembershipForAccount.mockReset().mockResolvedValue({
       tier_id: "tier-1",
@@ -172,7 +163,6 @@ describe("billing account read routes API-key scope", () => {
     ["./purchases/get-charges-by-service", mockGetChargesThisMonthByService],
     ["./purchases/email-statement", mockEmailStatement],
     ["./purchases/get-cost-per-day", mockGetCostPerDay],
-    ["./purchases/get-closing-dates", mockGetLastClosingDate],
     ["./purchases/get-llm-usage", mockGetAIUsageStatus],
     ["./purchases/get-membership", mockResolveMembershipForAccount],
     ["./purchases/get-min-balance", mockGetMinBalance],

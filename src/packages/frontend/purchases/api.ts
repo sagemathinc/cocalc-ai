@@ -103,14 +103,6 @@ export async function getBalanceAdmin(account_id: string): Promise<MoneyValue> {
   return await api("purchases/get-balance-admin", { account_id });
 }
 
-export async function getClosingDates(): Promise<{ last: Date; next: Date }> {
-  return await api("purchases/get-closing-dates");
-}
-
-export async function resetClosingDate() {
-  return await api("purchases/reset-closing-date");
-}
-
 export async function isPurchaseAllowed(
   service: Service,
   cost?: MoneyValue,

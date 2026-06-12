@@ -40,7 +40,7 @@ PAYMENT FOLLOW-UP:
     anything and it just happens. There is no danger of abuse due to edits or refunds
     involving a subscription. At this point, when processing the canceled payment
     intent we *do* also cancel the subscription, thus putting it in the right state
-    to be resumed with a new closing date, etc., and avoiding any further automated
+    to be resumed with a new renewal period, and avoiding any further automated
     attempts to collect money. If the user wants to resume membership, they just click
     a button to resume it and they are back to work.
 
