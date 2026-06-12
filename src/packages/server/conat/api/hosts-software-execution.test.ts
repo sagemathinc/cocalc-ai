@@ -1227,6 +1227,140 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
     );
   });
 
+  it("verifies project-host convergence when the managed rollout RPC is disrupted by restart", async () => {
+    const desiredVersion = "ph-v2";
+    const onProgress = jest.fn();
+    const loadHostForStartStop = jest
+      .fn()
+      .mockResolvedValueOnce({
+        id: "host-1",
+        status: "running",
+        version: desiredVersion,
+        last_seen: "2026-04-25T05:00:00.000Z",
+        metadata: {
+          owner: "account-1",
+          software: {
+            project_host: desiredVersion,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        id: "host-1",
+        status: "running",
+        version: desiredVersion,
+        last_seen: "2026-04-25T05:00:10.000Z",
+        metadata: {
+          owner: "account-1",
+          software: {
+            project_host: desiredVersion,
+          },
+          host_agent: {
+            project_host: {
+              last_known_good_version: desiredVersion,
+            },
+          },
+        },
+      });
+    const hostControlClient = jest
+      .fn()
+      .mockResolvedValueOnce({
+        getRuntimeLog: async ({ source }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => new Promise(() => undefined),
+      })
+      .mockResolvedValueOnce({
+        getManagedComponentStatus: async () => [
+          {
+            component: "project-host",
+            artifact: "project-host",
+            upgrade_policy: "restart_now",
+            enabled: true,
+            managed: true,
+            desired_version: desiredVersion,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: [desiredVersion],
+            running_pids: [456],
+          },
+        ],
+        getHostAgentStatus: async () => ({
+          project_host: {
+            last_known_good_version: desiredVersion,
+          },
+        }),
+      });
+    const setLastKnownGoodArtifactVersionInternal = jest.fn(
+      async () => undefined,
+    );
+
+    await expect(
+      rolloutHostManagedComponentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        components: ["project-host", "conat-router", "conat-persist"],
+        reason: "host_software_upgrade",
+        loadHostForStartStop,
+        assertHostRunningForUpgrade: () => undefined,
+        hostControlClient,
+        waitForHostHeartbeatAfter: async () => undefined,
+        installedProjectHostArtifactVersion: (row) =>
+          `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
+          undefined,
+        recordProjectHostLocalRollbackInternal: async () => ({
+          host_id: "host-1",
+          rollback_version: "ph-v1",
+          source: "host-agent",
+        }),
+        project_host_local_rollback_error_code: "PROJECT_HOST_LOCAL_ROLLBACK",
+        setLastKnownGoodArtifactVersionInternal,
+        runtimeDeploymentsForComponentRollout: () => [],
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
+        managedComponentRolloutRpcTimeoutMs: 1,
+        onProgress,
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          component: "project-host",
+          action: "restart_scheduled",
+          message:
+            "project-host rollout RPC timed out; verifying host convergence",
+        },
+        {
+          component: "conat-router",
+          action: "restarted",
+          message:
+            "managed component rollout RPC timed out; verifying host convergence",
+        },
+        {
+          component: "conat-persist",
+          action: "restarted",
+          message:
+            "managed component rollout RPC timed out; verifying host convergence",
+        },
+      ],
+    });
+
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rollout_phase: "managed_components.rpc_timeout",
+        rollout_phase_label:
+          "Managed component rollout request timed out; verifying host state",
+      }),
+    );
+    expect(setLastKnownGoodArtifactVersionInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host_id: "host-1",
+        version: desiredVersion,
+      }),
+    );
+  });
+
   it("appends recent host diagnostics when managed component rollout fails", async () => {
     await expect(
       rolloutHostManagedComponentsInternalHelper({
