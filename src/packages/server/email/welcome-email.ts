@@ -38,13 +38,13 @@ export default async function sendWelcomeEmail(
 }
 
 const WELCOMES = [
-  "Begin Your CoCalc Adventure: Discover a New World of Collaborative Computation",
-  "Welcome to CoCalc: Your Gateway to Collaborative Calculations!",
-  "Dive Into the World of CoCalc: Collaborative Computation Made Easy",
-  "CoCalc: Unleash the Power of Collaborative Mathematics",
-  "Get Started with CoCalc: Collaborative Online Calculations & More Awaits",
-  "CoCalc Welcomes You: Start Exploring Infinite Mathematical Possibilities",
-  "Welcome Aboard! Your CoCalc Account Is Ready for Liftoff",
+  "Welcome to CoCalc AI: Your Workspace for Humans and Agents",
+  "Start in CoCalc AI: Notebooks, Terminals, Files, and Codex Together",
+  "Your CoCalc AI Account Is Ready for Durable Project Work",
+  "Welcome to CoCalc AI: Bring Codex Into Your Technical Projects",
+  "CoCalc AI Is Ready: Collaborate with Files, Notebooks, and Agents",
+  "Begin with CoCalc AI: A Project Workspace for Computational Workflows",
+  "Welcome to CoCalc AI: Keep Code, Context, and Agent Threads Together",
 ];
 
 export function randomOnboardingSubject(): string {
