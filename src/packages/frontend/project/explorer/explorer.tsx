@@ -116,6 +116,8 @@ const ERROR_STYLE: CSSProperties = {
   boxShadow: "5px 5px 5px grey",
 } as const;
 
+const LIFECYCLE_LISTING_REFRESH_DELAYS_MS = [0, 1000, 2000, 5000] as const;
+
 function isMissingProjectVolumeError(error: unknown): boolean {
   const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
   return text.includes("project volume does not exist");
@@ -200,6 +202,9 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   );
   const host_id = useProjectMapField<string>(project_id, "host_id");
   const projectStateValue = useProjectMapField(project_id, "state");
+  const projectStateName = `${projectStateValue?.get?.("state") ?? ""}`
+    .trim()
+    .toLowerCase();
   const lastBackup = useProjectMapField(project_id, "last_backup");
   const hostInfo = useHostInfo(host_id);
   const hostOperational = useMemo(
@@ -538,6 +543,49 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     const timer = setTimeout(() => refresh(), 1200);
     return () => clearTimeout(timer);
   }, [listingError, moveLro, effective_current_path, refresh]);
+
+  useEffect(() => {
+    if (!isVisible) return;
+    if (listing != null || listingError != null) return;
+    if (projectStateName !== "running" && projectStateName !== "opened") {
+      return;
+    }
+
+    let canceled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const refreshAfterDelay = (attempt: number): void => {
+      const delay =
+        LIFECYCLE_LISTING_REFRESH_DELAYS_MS[
+          Math.min(attempt, LIFECYCLE_LISTING_REFRESH_DELAYS_MS.length - 1)
+        ];
+      timer = setTimeout(() => {
+        if (canceled) return;
+        refresh();
+        refreshFs();
+        if (attempt + 1 < LIFECYCLE_LISTING_REFRESH_DELAYS_MS.length) {
+          refreshAfterDelay(attempt + 1);
+        }
+      }, delay);
+    };
+
+    refreshAfterDelay(0);
+
+    return () => {
+      canceled = true;
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [
+    isVisible,
+    listing,
+    listingError,
+    projectStateName,
+    effective_current_path,
+    refresh,
+    refreshFs,
+  ]);
 
   const clearedTransientProjectErrorRef = useRef<string>("");
   useEffect(() => {
