@@ -58,6 +58,21 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText("Open page")).toBeNull();
     expect(
       screen
+        .getByRole("link", { name: "Compare workspace model" })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      screen
+        .getByRole("link", { name: "Compare product paths" })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      screen
+        .getByRole("link", { name: "Pricing and licensing" })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(
+      screen
         .getAllByRole("link", { name: /Jupyter Notebooks/i })[0]
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
@@ -94,6 +109,27 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("One AI path")).not.toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
+    expect(
+      screen.getByText("Connect this feature to a product path."),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Compare product paths" })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      screen
+        .getByRole("link", { name: "Pricing and licensing" })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(
+      screen
+        .getByRole("link", { name: "Compare workspace model" })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      screen.getByRole("link", { name: "Feature map" }).getAttribute("href"),
+    ).toBe("/features");
   });
 
   it("uses projects as the ai CTA for authenticated users", () => {
@@ -466,5 +502,16 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("AI-native work changes the comparison"),
     ).not.toBeNull();
+    expect(
+      screen.getByText("Connect this feature to a product path."),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Compare product paths" })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      screen.queryByRole("link", { name: "Compare workspace model" }),
+    ).toBeNull();
   });
 });

@@ -27,7 +27,11 @@ import JuliaFeaturePage from "./julia-page";
 import LatexEditorFeaturePage from "./latex-editor-page";
 import LinuxFeaturePage from "./linux-page";
 import OctaveFeaturePage from "./octave-page";
-import { FeatureImage, featureAppPath as appPath } from "./page-components";
+import {
+  FeatureImage,
+  featureAppPath as appPath,
+  LinkButton,
+} from "./page-components";
 import RStatisticalSoftwareFeaturePage from "./r-statistical-software-page";
 import type { PublicFeaturesRoute } from "./routes";
 import { featurePath } from "./routes";
@@ -401,17 +405,19 @@ function FeaturesIndex() {
                   margin: 0,
                 }}
               >
-                CoCalc features make the most sense when viewed together:
-                documents, compute, AI agents, teaching, and platform operations
-                share the same files, collaborators, history, and project
-                environment.
+                CoCalc features make the most sense when viewed through the
+                shared workspace story: documents, compute, AI agents, teaching,
+                and platform operations share the same files, collaborators,
+                history, and project environment.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button href={featurePath("jupyter-notebook")} type="primary">
-                  Jupyter
+                <Button href={featurePath("compare")} type="primary">
+                  Compare workspace model
                 </Button>
-                <Button href={featurePath("ai")}>AI agents</Button>
-                <Button href={featurePath("terminal")}>Terminal</Button>
+                <Button href={appPath("products")}>
+                  Compare product paths
+                </Button>
+                <Button href={appPath("pricing")}>Pricing and licensing</Button>
               </Flex>
             </Flex>
           </Col>
@@ -467,7 +473,7 @@ function FeaturesIndex() {
                 </Flex>
                 <Paragraph style={{ margin: 0 }}>
                   Files, compute, documents, chat, agents, history, snapshots,
-                  backups, and collaborators stay together.
+                  backups, and collaborators stay together across product paths.
                 </Paragraph>
                 <Flex gap={8} wrap>
                   {["Files", "Runtime", "History", "People", "Agents"].map(
@@ -520,7 +526,8 @@ function FeaturesIndex() {
               }}
             >
               Prefer the alphabetical view? Every feature page is still one
-              click away.
+              click away. Product paths and pricing explain where the shared
+              workspace should run.
             </Paragraph>
           </div>
         </Flex>
@@ -575,31 +582,48 @@ function FeaturesIndex() {
   );
 }
 
-function FeatureDetail({
+function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
+  return (
+    <PublicSection>
+      <Title level={3} style={{ margin: 0 }}>
+        Connect this feature to a product path.
+      </Title>
+      <Paragraph style={{ margin: 0 }}>
+        The feature pages describe one shared CoCalc workspace model: files,
+        compute, collaboration, history, and agents in a project. Next, decide
+        where that workspace should run and how your group should buy or deploy
+        it.
+      </Paragraph>
+      <Flex wrap gap={12}>
+        <Button href={appPath("products")} type="primary">
+          Compare product paths
+        </Button>
+        <Button href={appPath("pricing")}>Pricing and licensing</Button>
+        {currentSlug !== "compare" ? (
+          <LinkButton href={featurePath("compare")}>
+            Compare workspace model
+          </LinkButton>
+        ) : null}
+        <LinkButton href={featurePath()}>Feature map</LinkButton>
+      </Flex>
+    </PublicSection>
+  );
+}
+
+function FeatureDetailContent({
   helpEmail,
   isAuthenticated,
+  page,
   slug,
 }: {
   helpEmail?: string;
   isAuthenticated?: boolean;
+  page: FeaturePage;
   slug: string;
 }) {
-  const page = getFeaturePage(slug);
-  if (!page) {
-    return (
-      <PublicSection>
-        <Empty description="Feature page not found" />
-        <div>
-          <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
-            Back to features
-          </Button>
-        </div>
-      </PublicSection>
-    );
-  }
-
   const CustomPage =
     FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
+
   if (slug === "ai") {
     return (
       <AIFeaturePage helpEmail={helpEmail} isAuthenticated={isAuthenticated} />
@@ -775,6 +799,42 @@ function FeatureDetail({
         </PublicSection>
       ))}
     </Flex>
+  );
+}
+
+function FeatureDetail({
+  helpEmail,
+  isAuthenticated,
+  slug,
+}: {
+  helpEmail?: string;
+  isAuthenticated?: boolean;
+  slug: string;
+}) {
+  const page = getFeaturePage(slug);
+  if (!page) {
+    return (
+      <PublicSection>
+        <Empty description="Feature page not found" />
+        <div>
+          <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
+            Back to features
+          </Button>
+        </div>
+      </PublicSection>
+    );
+  }
+
+  return (
+    <>
+      <FeatureDetailContent
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+        page={page}
+        slug={slug}
+      />
+      <FeatureProductPathLinks currentSlug={slug} />
+    </>
   );
 }
 
