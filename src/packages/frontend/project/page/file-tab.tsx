@@ -27,6 +27,11 @@ import { Icon, IconName, Tooltip, r_join } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
 import { ICON_USERS } from "@cocalc/frontend/project/servers/consts";
+import {
+  ProjectStatusAlertDetails,
+  projectStatusAlertKey,
+  visibleProjectStatusAlerts,
+} from "@cocalc/frontend/project/project-status-alerts";
 
 import { filename_extension, path_split, path_to_tab } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -245,12 +250,9 @@ export function FileTab(props: Readonly<Props>) {
   // this is @cocalc/comm/project-status/types::ProjectStatus
   const project_status = useTypedRedux({ project_id }, "status");
   // alerts only work on non-docker projects (for now) -- #7077
-  const status_alerts: string[] =
+  const statusAlerts =
     !onCoCalcDocker && name === "info"
-      ? (project_status
-          ?.get("alerts")
-          ?.map((a) => a.get("type"))
-          .toJS() ?? [])
+      ? visibleProjectStatusAlerts(project_status)
       : [];
 
   const tabAccentMode =
@@ -321,7 +323,7 @@ export function FileTab(props: Readonly<Props>) {
     style = {};
   } else {
     // highlight info tab if there is at least one alert
-    if (status_alerts.length > 0) {
+    if (statusAlerts.length > 0) {
       style = { backgroundColor: COLORS.ANTD_BG_RED_L };
     } else {
       style = { flex: "none" };
@@ -360,22 +362,36 @@ export function FileTab(props: Readonly<Props>) {
   const workspaceAccentColor = workspaceRecord?.theme.color ?? null;
 
   const tags =
-    status_alerts.length > 0 ? (
-      <div>
+    statusAlerts.length > 0 ? (
+      <div onClick={(event) => event.stopPropagation()}>
         {r_join(
-          status_alerts.map((a) => (
-            <Tag
-              key={a}
-              style={{
-                display: "inline",
-                fontSize: "85%",
-                paddingInline: "2px",
-                marginInlineEnd: "4px",
-              }}
-              color={COLORS.ANTD_BG_RED_M}
+          statusAlerts.map((alert) => (
+            <Popover
+              key={projectStatusAlertKey(alert)}
+              placement="right"
+              trigger={["hover", "click"]}
+              content={
+                <ProjectStatusAlertDetails
+                  alerts={[alert]}
+                  onOpenInfo={(event) => {
+                    event.stopPropagation();
+                    setActiveTab("info");
+                  }}
+                />
+              }
             >
-              {getAlertName(a)}
-            </Tag>
+              <Tag
+                style={{
+                  display: "inline",
+                  fontSize: "85%",
+                  paddingInline: "2px",
+                  marginInlineEnd: "4px",
+                }}
+                color={COLORS.ANTD_BG_RED_M}
+              >
+                {getAlertName(alert.type)}
+              </Tag>
+            </Popover>
           )),
           <br />,
         )}
