@@ -116,6 +116,19 @@ describe("BaseProject.start RootFS sealing", () => {
       ) {
         return { rows: [{ host_id: HOST_ID, state: "running" }] };
       }
+      if (sql.includes("project_hosts.id IS NOT NULL AS host_found")) {
+        return {
+          rows: [
+            {
+              host_deleted: null,
+              host_found: true,
+              host_id: HOST_ID,
+              host_status: "running",
+              state: "running",
+            },
+          ],
+        };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     queryTableMock = jest.fn(async () => ({}));

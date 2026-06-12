@@ -8,6 +8,9 @@ export type LocalPathFunction = (opts: {
   scratch?: number;
   // if false, only resolve paths without creating volumes
   ensure?: boolean;
+  // if true and scratch is enabled, recreate the non-backed-up temporary
+  // storage volume before returning its path.
+  resetScratch?: boolean;
 }) => Promise<{ home: string; scratch?: string; quota_applied?: boolean }>;
 
 export interface SshServer {

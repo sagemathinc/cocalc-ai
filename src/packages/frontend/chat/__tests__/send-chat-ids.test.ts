@@ -859,6 +859,51 @@ describe("thread-config by thread_id", () => {
     expect(row?.agent_mode).toBe("interactive");
   });
 
+  it("preserves Codex notify setting when saving partial config", () => {
+    const threadId = "37333333-3333-4333-8333-333333333333";
+    const existing = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: "2026-02-21T18:40:00.000Z",
+      thread_id: threadId,
+      agent_kind: "acp",
+      agent_model: "gpt-5.4",
+      agent_mode: "interactive",
+      acp_config: {
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+        notifyOnTurnFinish: true,
+      },
+    };
+    const actions = makeActions();
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === threadId
+      ) {
+        return existing;
+      }
+      return undefined;
+    });
+
+    actions.setCodexConfig(threadId, {
+      model: "gpt-5.4",
+      sessionMode: "full-access",
+    });
+
+    const row = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (x: any) =>
+          x?.event === "chat-thread-config" && x?.thread_id === threadId,
+      );
+    expect(row?.acp_config).toMatchObject({
+      model: "gpt-5.4",
+      sessionMode: "full-access",
+      notifyOnTurnFinish: true,
+    });
+  });
+
   it("creates a canonical thread-config row when updating by thread_id", () => {
     const threadId = "44444444-4444-4444-8444-444444444444";
     const actions = makeActions();

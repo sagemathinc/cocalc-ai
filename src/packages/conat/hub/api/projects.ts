@@ -731,6 +731,7 @@ export const projects = {
   archiveProject: authFirstRequireAccount,
   getProjectState: authFirstRequireAccount,
   getProjectAddress: authFirstRequireAccount,
+  ensureProjectScratchVolume: authFirstRequireAccount,
   getProjectActiveOperation: authFirstRequireAccount,
   updateAuthorizedKeysOnHost: authFirstRequireAccount,
   hardDeleteProject: authFirstRequireAccount,
@@ -1434,6 +1435,10 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectAddress>;
+  ensureProjectScratchVolume: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<void>;
   getProjectActiveOperation: (opts: {
     account_id?: string;
     project_id: string;

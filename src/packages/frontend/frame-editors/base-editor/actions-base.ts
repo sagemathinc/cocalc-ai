@@ -1794,7 +1794,8 @@ export class BaseEditorActions<
     if (this._tree_is_single_leaf()) {
       const node = this._get_frame_node(id);
       if (node == null) return; // does not exist.
-      // closing the only node, so reset to default
+      // Closing the only frame closes the file. Reset saved layout first so the
+      // next open starts from the default frame tree.
       this.reset_local_view_state();
       // Also emit so that the fact it closed is known.
       const type = node.get("type");
@@ -1802,6 +1803,7 @@ export class BaseEditorActions<
         this.closeChat();
       }
       this.store.emit("close-frame", { id, type });
+      this._get_project_actions()?.close_tab?.(this.path);
       return;
     }
     const node = this._get_frame_node(id);

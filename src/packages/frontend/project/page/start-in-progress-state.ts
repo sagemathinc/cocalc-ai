@@ -5,6 +5,11 @@ export type ActiveStartOperation = {
   status?: string;
 } | null;
 
+export type RestartRequest = {
+  token?: string;
+  requested_at?: string;
+} | null;
+
 export function isStartActive(startLro?: StartLroState): boolean {
   return (
     startLro != null &&
@@ -24,15 +29,21 @@ export function isActiveOpStartLike(activeOp?: ActiveStartOperation): boolean {
 export function isStartInProgressActive({
   startLro,
   activeOp,
+  restartRequest,
   lifecycleState,
 }: {
   startLro?: StartLroState;
   activeOp?: ActiveStartOperation;
+  restartRequest?: RestartRequest;
   lifecycleState?: string;
 }): boolean {
   const normalizedLifecycleState = `${lifecycleState ?? ""}`
     .trim()
     .toLowerCase();
+
+  if (restartRequest?.token) {
+    return true;
+  }
 
   if (normalizedLifecycleState === "running") {
     return false;

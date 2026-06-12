@@ -10,6 +10,7 @@ import {
 import { runtimeDeploymentsForUpgradeResults } from "./hosts-runtime-deployment-planning";
 
 let getServerSettingsMock: jest.Mock;
+let originalFetch: typeof globalThis.fetch | undefined;
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   __esModule: true,
@@ -19,10 +20,173 @@ jest.mock("@cocalc/database/settings/server-settings", () => ({
 describe("upgradeHostSoftwareInternalHelper", () => {
   beforeEach(() => {
     getServerSettingsMock = jest.fn(async () => ({}));
+    originalFetch = global.fetch;
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
+    if (originalFetch) {
+      global.fetch = originalFetch;
+    } else {
+      delete (global as any).fetch;
+    }
+  });
+
+  it("preflights host-control before running direct artifact upgrades", async () => {
+    const waitFor = jest.fn(async () => ["pong"]);
+    const upgradeSoftware = jest.fn(async () => ({
+      results: [
+        {
+          artifact: "project" as const,
+          version: "project-v1",
+          status: "noop" as const,
+        },
+      ],
+    }));
+    const onProgress = jest.fn();
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project", channel: "latest" }],
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh: async () => undefined,
+        hostControlClient: async () => ({
+          conat: { waitFor },
+          upgradeSoftware,
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => [],
+        onProgress,
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          artifact: "project",
+          version: "project-v1",
+          status: "noop",
+        },
+      ],
+    });
+
+    expect(waitFor).toHaveBeenCalledWith({ maxWait: 8000 });
+    expect(upgradeSoftware).toHaveBeenCalled();
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rollout_phase: "host_control.preflight",
+      }),
+    );
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rollout_phase: "host_control.ready",
+      }),
+    );
+  });
+
+  it("fails direct non-project-host upgrades quickly when host-control preflight fails", async () => {
+    const reconcileCloudHostBootstrapOverSsh = jest.fn(async () => undefined);
+    const upgradeSoftware = jest.fn();
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project", channel: "latest" }],
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh,
+        hostControlClient: async () => ({
+          conat: {
+            waitFor: async () => {
+              throw new Error("no services matching");
+            },
+          },
+          upgradeSoftware,
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => [],
+      }),
+    ).rejects.toThrow(/host-control service unavailable/);
+
+    expect(upgradeSoftware).not.toHaveBeenCalled();
+    expect(reconcileCloudHostBootstrapOverSsh).not.toHaveBeenCalled();
+  });
+
+  it("uses bootstrap reconcile fallback for latest project-host preflight failures", async () => {
+    const reconcileCloudHostBootstrapOverSsh = jest.fn(async () => undefined);
+    const logWarn = jest.fn();
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project-host", channel: "latest" }],
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn,
+        reconcileCloudHostBootstrapOverSsh,
+        hostControlClient: async () => ({
+          conat: {
+            waitFor: async () => {
+              throw new Error("no services matching");
+            },
+          },
+          upgradeSoftware: async () => {
+            throw new Error("should not call upgrade after failed preflight");
+          },
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => [],
+      }),
+    ).resolves.toEqual({ results: [] });
+
+    expect(reconcileCloudHostBootstrapOverSsh).toHaveBeenCalledWith({
+      host_id: "host-1",
+      row: expect.objectContaining({ id: "host-1" }),
+    });
+    expect(logWarn).toHaveBeenCalledWith(
+      "host upgrade: host control upgrade failed; retry via ssh",
+      expect.objectContaining({
+        host_id: "host-1",
+      }),
+    );
   });
 
   it("realigns the full runtime stack on noop project-host upgrades when requested", async () => {
@@ -327,10 +491,10 @@ describe("upgradeHostSoftwareInternalHelper", () => {
     const upgradeSoftware = jest.fn(async () => ({ results: [] }));
     const reconcileCloudHostBootstrapOverSsh = jest.fn(async () => undefined);
     const setProjectHostRuntimeDeployments = jest.fn(async () => []);
-    jest.spyOn(global, "fetch").mockResolvedValue({
+    global.fetch = jest.fn(async () => ({
       ok: true,
       text: async () => "bootstrap-sha-20260430  bootstrap.py\n",
-    } as Response);
+    })) as any;
 
     await expect(
       upgradeHostSoftwareInternalHelper({
@@ -387,6 +551,70 @@ describe("upgradeHostSoftwareInternalHelper", () => {
       host_id: "host-1",
       row: expect.objectContaining({ id: "host-1" }),
     });
+  });
+
+  it("does not reconcile bootstrap-environment when the installed bootstrap already matches", async () => {
+    const upgradeSoftware = jest.fn(async () => ({ results: [] }));
+    const reconcileCloudHostBootstrapOverSsh = jest.fn(async () => undefined);
+    const setProjectHostRuntimeDeployments = jest.fn(async () => []);
+    const updateProjectHostSoftwareRecord = jest.fn(async () => undefined);
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      text: async () =>
+        "365e2c415f1fbed7eec7c12fd8d79db4c6c0f6ea64e8f599ca2f673557d8cd28  bootstrap.py\n",
+    })) as any;
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "bootstrap-environment", channel: "latest" }],
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+            bootstrap_lifecycle: {
+              items: [
+                {
+                  key: "bootstrap",
+                  installed: "365e2c415f1f",
+                },
+              ],
+            },
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () =>
+          "https://software.example.invalid/software",
+        resolveReachableUpgradeBaseUrl: async () =>
+          "https://software.example.invalid/software",
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh,
+        hostControlClient: async () => ({
+          upgradeSoftware,
+        }),
+        updateProjectHostSoftwareRecord,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments,
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          artifact: "bootstrap-environment",
+          version:
+            "365e2c415f1fbed7eec7c12fd8d79db4c6c0f6ea64e8f599ca2f673557d8cd28",
+          status: "noop",
+        },
+      ],
+    });
+
+    expect(upgradeSoftware).not.toHaveBeenCalled();
+    expect(updateProjectHostSoftwareRecord).not.toHaveBeenCalled();
+    expect(setProjectHostRuntimeDeployments).not.toHaveBeenCalled();
+    expect(reconcileCloudHostBootstrapOverSsh).not.toHaveBeenCalled();
   });
 });
 

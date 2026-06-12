@@ -316,7 +316,11 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     }
   }
 
-  function renderFileRow(path: string, label: string) {
+  function renderFileRow(
+    path: string,
+    label: string,
+    close?: (path: string) => void,
+  ) {
     const info = file_options(path);
     const { head } = path_split(path);
     return (
@@ -354,6 +358,26 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
             {head || "/"}
           </div>
         </div>
+        {close != null && (
+          <Tooltip title={`Close ${label}`}>
+            <Button
+              aria-label={`Close ${label}`}
+              size="small"
+              type="text"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                close(path);
+              }}
+            >
+              <Icon name="times" />
+            </Button>
+          </Tooltip>
+        )}
       </div>
     );
   }
@@ -460,7 +484,11 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
                         setSearchValue("");
                       }}
                     >
-                      {renderFileRow(path, labelMap.get(path) ?? path)}
+                      {renderFileRow(
+                        path,
+                        labelMap.get(path) ?? path,
+                        closeVisibleTab,
+                      )}
                     </div>
                   ))
                 ) : (

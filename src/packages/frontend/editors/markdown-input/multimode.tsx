@@ -54,6 +54,8 @@ export default function MultiMarkdownInput({
   onCursors,
   onCursorTop,
   onFocus,
+  onCtrlEnter,
+  onFontSizeChange,
   onModeChange,
   onRedo,
   onSave,
@@ -96,6 +98,10 @@ export default function MultiMarkdownInput({
   useEffect(() => {
     onShiftEnterRef.current = onShiftEnter;
   }, [onShiftEnter]);
+  const onCtrlEnterRef = useRef<any>(onCtrlEnter);
+  useEffect(() => {
+    onCtrlEnterRef.current = onCtrlEnter;
+  }, [onCtrlEnter]);
   const onChangeRef = useRef<any>(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -328,6 +334,15 @@ export default function MultiMarkdownInput({
               if (!isActiveCallback("markdown")) return;
               onShiftEnterRef.current?.(value);
             }}
+            onCtrlEnter={
+              onCtrlEnter == null
+                ? undefined
+                : (value) => {
+                    if (!isActiveCallback("markdown")) return;
+                    onCtrlEnterRef.current?.(value);
+                  }
+            }
+            onFontSizeChange={onFontSizeChange}
             onAltEnter={(value, pos) => {
               onChangeRef.current?.(value);
               if (pos) {
@@ -393,6 +408,16 @@ export default function MultiMarkdownInput({
               onChangeRef.current?.(value);
               onShiftEnterRef.current?.(value);
             }}
+            onCtrlEnter={
+              onCtrlEnter == null
+                ? undefined
+                : (value) => {
+                    if (!isActiveCallback("editor")) return;
+                    onChangeRef.current?.(value);
+                    onCtrlEnterRef.current?.(value);
+                  }
+            }
+            onFontSizeChange={onFontSizeChange}
             onAltEnter={(value) => {
               onChangeRef.current?.(value);
               const pos = getMarkdownPositionForSelection();

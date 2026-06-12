@@ -42,6 +42,7 @@ export default function Text(props: Props) {
         },
         placeholder: props.element.data?.placeholder ?? PLACEHOLDER,
         noVfill: true,
+        unboundedAutoGrow: true,
         minimal: true,
         compact: true,
         hideHelp: true,

@@ -1,14 +1,28 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { rmSync, symlinkSync } from "node:fs";
 import { __test__, runPrivilegedRmHelper } from "./privileged-rm-helper";
 
+const tempDirs: string[] = [];
+
+async function mkTempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
 describe("privileged-rm-helper", () => {
-  it("removes a file beneath the specified root", async () => {
-    const root = await mkdtemp(
-      path.join(os.tmpdir(), "project-host-privileged-rm-helper-"),
+  afterEach(async () => {
+    await Promise.all(
+      tempDirs
+        .splice(0)
+        .map((dir) => rm(dir, { recursive: true, force: true })),
     );
+  });
+
+  it("removes a file beneath the specified root", async () => {
+    const root = await mkTempDir("project-host-privileged-rm-helper-");
     await mkdir(path.join(root, "dir"), { recursive: true });
     await writeFile(path.join(root, "dir", "file.txt"), "x");
 
@@ -27,9 +41,7 @@ describe("privileged-rm-helper", () => {
   });
 
   it("does not remove data outside the root when the target is swapped to a symlink", async () => {
-    const base = await mkdtemp(
-      path.join(os.tmpdir(), "project-host-privileged-rm-helper-race-"),
-    );
+    const base = await mkTempDir("project-host-privileged-rm-helper-race-");
     const root = path.join(base, "root");
     const outside = path.join(base, "outside");
     await mkdir(root, { recursive: true });

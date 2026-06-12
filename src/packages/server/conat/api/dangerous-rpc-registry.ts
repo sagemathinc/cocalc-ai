@@ -23,6 +23,22 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "adminData.deleteView": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer shared view deletion",
+  },
+  "adminData.saveView": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer shared view mutation",
+  },
+  "adminData.runSql": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer SQL execution against operational data",
+  },
+  "adminData.runView": {
+    decision: "fresh-auth-required",
+    reason: "Admin Data Explorer saved view execution against operational data",
+  },
   "agent.run": {
     decision: "fresh-auth-not-required",
     reason: "agent run is not implemented; normal account auth is sufficient",

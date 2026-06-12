@@ -10,7 +10,7 @@ export default function Note(props: Props) {
     (props.readOnly || !props.focused || props.element.locked) &&
     props.cursors == null
   ) {
-    return <NoteStatic element={element} />;
+    return <NoteStatic {...props} />;
   }
   const data = {
     ...element.data,

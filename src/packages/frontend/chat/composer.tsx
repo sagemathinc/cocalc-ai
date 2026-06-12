@@ -42,6 +42,8 @@ export interface ChatRoomComposerProps {
   setInput: (value: string, sessionToken?: number) => void;
   on_send: (value?: string) => void;
   on_send_immediately?: (value?: string) => void;
+  onIncreaseFontSize?: () => void;
+  onDecreaseFontSize?: () => void;
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
   isSelectedThreadAI: boolean;
@@ -70,6 +72,8 @@ export function ChatRoomComposer({
   setInput,
   on_send,
   on_send_immediately,
+  onIncreaseFontSize,
+  onDecreaseFontSize,
   submitMentionsRef,
   hasInput,
   isSelectedThreadAI,
@@ -349,6 +353,18 @@ export function ChatRoomComposer({
       toggleZenMode,
     ],
   );
+  const handleFontSizeChange = useMemo(() => {
+    if (onDecreaseFontSize == null && onIncreaseFontSize == null) {
+      return undefined;
+    }
+    return (delta: -1 | 1) => {
+      if (delta < 0) {
+        onDecreaseFontSize?.();
+      } else {
+        onIncreaseFontSize?.();
+      }
+    };
+  }, [onDecreaseFontSize, onIncreaseFontSize]);
 
   const composerStyle: CSSProperties = {
     display: "flex",
@@ -448,6 +464,12 @@ export function ChatRoomComposer({
             input={input}
             presenceThreadKey={presenceThreadKey}
             on_send={handleSend}
+            on_ctrl_enter={
+              hasActiveAcpTurn && isSelectedThreadAI
+                ? handleSendImmediately
+                : undefined
+            }
+            on_font_size_change={handleFontSizeChange}
             height={chatInputHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             onChange={(value) => {

@@ -82,6 +82,7 @@ export type { Datastore, EnvVars, EnvVarsRecord };
 
 const PROJECTION_ONLY_FIELD = "__projection_only";
 const PROJECTED_PROJECT_BOOTSTRAP_LIMIT = 2000;
+const PROJECT_RESTART_REQUEST_VISIBLE_MS = 8_000;
 type ProjectListWindowDirtyReason =
   | "feed-upsert"
   | "feed-remove"
@@ -4538,7 +4539,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
         event: "project_restart_requested",
       });
       const actions = redux.getProjectActions(project_id);
+      const previousLifecycleState = store.getIn([
+        "project_map",
+        project_id,
+        "state",
+        "state",
+      ]) as string | undefined;
+      actions?.setState({
+        restart_request: Map({
+          token: uuid(),
+          requested_at: new Date().toISOString(),
+        }),
+      });
+      const clearRestartRequest = () =>
+        actions?.setState({ restart_request: undefined });
       try {
+        this.optimisticProjectStateUpdate(project_id, "starting");
         const resp = await writeAndWaitForProjection({
           consumer: "projects",
           id: `project:${project_id}:restart`,
@@ -4561,7 +4577,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
             }),
         });
         actions.trackStartOp(resp);
+        setTimeout(clearRestartRequest, PROJECT_RESTART_REQUEST_VISIBLE_MS);
+        this.scheduleProjectLifecycleReconcile({
+          project_id,
+          optimisticState: "starting",
+          reason: "restart_project",
+        });
       } catch (err) {
+        clearRestartRequest();
+        this.optimisticProjectStateUpdate(
+          project_id,
+          previousLifecycleState ?? "running",
+        );
         actions.setState({
           control_error: `Error restarting project -- ${err}`,
         });

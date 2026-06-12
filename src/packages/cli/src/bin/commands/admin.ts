@@ -12,6 +12,20 @@ import {
 import { readFile, writeFile } from "node:fs/promises";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 import type {
+  AdminDataQueryKind,
+  AdminDataViewExport,
+  AdminDataViewInput,
+} from "@cocalc/conat/hub/api/admin-data-explorer";
+import { ADMIN_DATA_EXPLORER_STARTER_VIEWS } from "@cocalc/conat/hub/api/admin-data-explorer";
+import {
+  ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
+  ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES,
+  ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS,
+  ADMIN_DATA_EXPLORER_SQL_MAX_BYTES,
+  ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
+  ADMIN_DATA_EXPLORER_SQL_MAX_TIMEOUT_MS,
+} from "@cocalc/util/admin-data-explorer";
+import type {
   LaunchHealthStatus,
   LaunchSmokeResult,
   LaunchSmokeStepResult,
@@ -75,6 +89,48 @@ const MEMBERSHIP_TIER_FIELDS = {
   site_license_count: null,
   updated: null,
 } as const;
+
+function parseAdminDataQueryKind(
+  value: string | undefined,
+): AdminDataQueryKind | undefined {
+  if (value == null || value === "") return undefined;
+  if (value === "structured" || value === "sql" || value === "dataset") {
+    return value;
+  }
+  throw new Error("--kind must be one of structured, sql, dataset");
+}
+
+function parseAdminDataImportMode(
+  value: string | undefined,
+): "upsert" | "create_only" {
+  if (value == null || value === "" || value === "upsert") return "upsert";
+  if (value === "create_only" || value === "create-only") return "create_only";
+  throw new Error("--mode must be upsert or create-only");
+}
+
+async function readAdminDataJson(path: string): Promise<unknown> {
+  const raw = await readFile(path, "utf8");
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`failed to parse JSON from ${path}: ${err}`);
+  }
+}
+
+async function readAdminDataSqlInput({
+  query,
+  file,
+}: {
+  query?: string;
+  file?: string;
+}): Promise<string> {
+  const sql =
+    query != null ? `${query}` : file ? await readFile(file, "utf8") : "";
+  if (!sql.trim()) {
+    throw new Error("provide SQL with --query or --file");
+  }
+  return sql;
+}
 
 type MembershipTierRow = {
   id?: string | null;
@@ -866,6 +922,18 @@ export function registerAdminCommand(
   const adminMasterKey = admin
     .command("master-key")
     .description("local site master key lifecycle operations");
+  const adminData = admin
+    .command("data")
+    .description("Admin Data Explorer shared views and datasets");
+  const adminDataViews = adminData
+    .command("views")
+    .description("Admin Data Explorer shared view registry");
+  const adminDataSql = adminData
+    .command("sql")
+    .description("Admin Data Explorer restricted SQL");
+  const adminDataAudit = adminData
+    .command("audit")
+    .description("Admin Data Explorer audit trail");
 
   async function resolveTargetAccountId(
     ctx: any,
@@ -948,6 +1016,313 @@ export function registerAdminCommand(
             last_active: row.last_active ?? null,
             created: row.created ?? null,
           }));
+        });
+      },
+    );
+
+  adminData
+    .command("datasets")
+    .description("list Admin Data Explorer datasets (admin fresh-auth)")
+    .action(async (command: Command) => {
+      await withContext(command, "admin data datasets", async (ctx) => {
+        return await ctx.hub.adminData.listDatasets({});
+      });
+    });
+
+  adminDataViews
+    .command("list")
+    .description("list shared Admin Data Explorer views (admin fresh-auth)")
+    .option("--tag <tag>", "filter by tag")
+    .option("--kind <kind>", "filter by query kind: structured, sql, dataset")
+    .action(
+      async (
+        opts: {
+          tag?: string;
+          kind?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data views list", async (ctx) => {
+          return await ctx.hub.adminData.listViews({
+            tag: opts.tag,
+            query_kind: parseAdminDataQueryKind(opts.kind),
+          });
+        });
+      },
+    );
+
+  adminDataViews
+    .command("show <slug>")
+    .description("show one shared Admin Data Explorer view (admin fresh-auth)")
+    .action(async (slug: string, command: Command) => {
+      await withContext(command, "admin data views show", async (ctx) => {
+        return await ctx.hub.adminData.getView({ slug });
+      });
+    });
+
+  adminDataViews
+    .command("run <slug>")
+    .description(
+      "run one shared Admin Data Explorer SQL view (admin fresh-auth)",
+    )
+    .option(
+      "--limit <n>",
+      "server-enforced max rows",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT}`,
+    )
+    .option(
+      "--timeout-ms <n>",
+      "server-side statement timeout",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS}`,
+    )
+    .option(
+      "--max-bytes <n>",
+      "max serialized response bytes",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES}`,
+    )
+    .action(
+      async (
+        slug: string,
+        opts: {
+          limit?: string;
+          timeoutMs?: string;
+          maxBytes?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data views run", async (ctx) => {
+          return await ctx.hub.adminData.runView({
+            slug,
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
+            }),
+            timeout_ms: parsePositiveIntegerOption({
+              name: "--timeout-ms",
+              value: opts.timeoutMs,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_TIMEOUT_MS,
+            }),
+            max_bytes: parsePositiveIntegerOption({
+              name: "--max-bytes",
+              value: opts.maxBytes,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_BYTES,
+            }),
+          });
+        });
+      },
+    );
+
+  adminDataViews
+    .command("save <file>")
+    .description(
+      "create or update one shared Admin Data Explorer view from a JSON file (admin fresh-auth)",
+    )
+    .action(async (file: string, command: Command) => {
+      await withContext(command, "admin data views save", async (ctx) => {
+        const view = (await readAdminDataJson(file)) as AdminDataViewInput;
+        return await ctx.hub.adminData.saveView({ view });
+      });
+    });
+
+  adminDataViews
+    .command("delete <slug>")
+    .description(
+      "delete one shared Admin Data Explorer view (admin fresh-auth)",
+    )
+    .action(async (slug: string, command: Command) => {
+      await withContext(command, "admin data views delete", async (ctx) => {
+        return await ctx.hub.adminData.deleteView({ slug });
+      });
+    });
+
+  adminDataViews
+    .command("export [file]")
+    .description(
+      "export shared Admin Data Explorer views as JSON (admin fresh-auth)",
+    )
+    .action(async (file: string | undefined, command: Command) => {
+      await withContext(command, "admin data views export", async (ctx) => {
+        const exported = await ctx.hub.adminData.exportViews({});
+        if (file) {
+          await writeFile(file, `${JSON.stringify(exported, null, 2)}\n`, {
+            mode: 0o600,
+          });
+          return {
+            path: file,
+            count: exported.views.length,
+            exported_at: exported.exported_at,
+          };
+        }
+        return exported;
+      });
+    });
+
+  adminDataViews
+    .command("import <file>")
+    .description(
+      "import shared Admin Data Explorer views from JSON (admin fresh-auth)",
+    )
+    .option("--mode <mode>", "import mode: upsert or create-only", "upsert")
+    .action(
+      async (
+        file: string,
+        opts: {
+          mode?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data views import", async (ctx) => {
+          const views = (await readAdminDataJson(file)) as
+            | AdminDataViewInput[]
+            | AdminDataViewExport;
+          return await ctx.hub.adminData.importViews({
+            views,
+            mode: parseAdminDataImportMode(opts.mode),
+          });
+        });
+      },
+    );
+
+  adminDataViews
+    .command("install-starters")
+    .description(
+      "install or update bundled starter Admin Data Explorer views (admin fresh-auth)",
+    )
+    .option("--mode <mode>", "import mode: upsert or create-only", "upsert")
+    .action(
+      async (
+        opts: {
+          mode?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "admin data views install-starters",
+          async (ctx) => {
+            return await ctx.hub.adminData.importViews({
+              views: [...ADMIN_DATA_EXPLORER_STARTER_VIEWS],
+              mode: parseAdminDataImportMode(opts.mode),
+            });
+          },
+        );
+      },
+    );
+
+  adminDataSql
+    .command("validate")
+    .description("validate restricted read-only SQL (admin fresh-auth)")
+    .option("--query <sql>", "SQL query text")
+    .option("--file <path>", "read SQL from a file")
+    .option(
+      "--limit <n>",
+      "server-enforced max rows",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT}`,
+    )
+    .action(
+      async (
+        opts: {
+          query?: string;
+          file?: string;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data sql validate", async (ctx) => {
+          return await ctx.hub.adminData.validateSql({
+            sql: await readAdminDataSqlInput(opts),
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
+            }),
+          });
+        });
+      },
+    );
+
+  adminDataAudit
+    .command("list")
+    .description("list recent Admin Data Explorer audit events")
+    .option("--limit <n>", "max audit events", "50")
+    .action(
+      async (
+        opts: {
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data audit list", async (ctx) => {
+          return await ctx.hub.adminData.listAuditEvents({
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: 50,
+              max: 200,
+            }),
+          });
+        });
+      },
+    );
+
+  adminDataSql
+    .command("run")
+    .description("run restricted read-only SQL (admin fresh-auth)")
+    .option("--query <sql>", "SQL query text")
+    .option("--file <path>", "read SQL from a file")
+    .option(
+      "--limit <n>",
+      "server-enforced max rows",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT}`,
+    )
+    .option(
+      "--timeout-ms <n>",
+      "server-side statement timeout",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS}`,
+    )
+    .option(
+      "--max-bytes <n>",
+      "max serialized response bytes",
+      `${ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES}`,
+    )
+    .action(
+      async (
+        opts: {
+          query?: string;
+          file?: string;
+          limit?: string;
+          timeoutMs?: string;
+          maxBytes?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin data sql run", async (ctx) => {
+          return await ctx.hub.adminData.runSql({
+            sql: await readAdminDataSqlInput(opts),
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_LIMIT,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_LIMIT,
+            }),
+            timeout_ms: parsePositiveIntegerOption({
+              name: "--timeout-ms",
+              value: opts.timeoutMs,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_TIMEOUT_MS,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_TIMEOUT_MS,
+            }),
+            max_bytes: parsePositiveIntegerOption({
+              name: "--max-bytes",
+              value: opts.maxBytes,
+              fallback: ADMIN_DATA_EXPLORER_SQL_DEFAULT_MAX_BYTES,
+              max: ADMIN_DATA_EXPLORER_SQL_MAX_BYTES,
+            }),
+          });
         });
       },
     );

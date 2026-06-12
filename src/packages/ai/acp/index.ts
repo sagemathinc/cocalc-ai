@@ -22,6 +22,8 @@ export { EchoAgent, echoAgent } from "./echo";
 export {
   CodexAppServerAgent,
   forkCodexAppServerSession,
+  getCodexAppServerAccountStatus,
+  type CodexAppServerAccountStatus,
 } from "./codex-app-server";
 export {
   findSessionFile,
@@ -49,3 +51,4 @@ export {
   type CodexSiteKeyUsage,
   type CodexSiteKeyCheckPhase,
 } from "./codex-site-key-governor";
+export { codexAuthJsonToAppServerLogin } from "./codex-auth-json";

@@ -46,6 +46,7 @@ async function get(req) {
     day_statement_id,
     month_statement_id,
     no_statement,
+    tag,
     includeName,
   } = getParams(req);
 
@@ -61,6 +62,7 @@ async function get(req) {
     day_statement_id,
     month_statement_id,
     no_statement,
+    tag,
     includeName,
   });
 }

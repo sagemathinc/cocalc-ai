@@ -82,6 +82,10 @@ import getLogger from "@cocalc/backend/logger";
 import basePath from "@cocalc/backend/base-path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
+  codexAuthJsonToAppServerLogin,
+  getCodexAppServerAccountStatus,
+} from "@cocalc/ai/acp";
+import {
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
   listAccountExternalCredentialsRouted,
@@ -6136,6 +6140,86 @@ export async function getCodexPaymentSource({
     sharedHomeMode,
     project_id,
   };
+}
+
+export async function getCodexUsageStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id?: string;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const checkedAt = new Date().toISOString();
+  const paymentSource = await getCodexPaymentSource({
+    account_id,
+    project_id,
+  });
+  if (paymentSource.source !== "subscription") {
+    return {
+      available: false,
+      checkedAt,
+      paymentSource,
+      project_id,
+      reason:
+        paymentSource.source === "none"
+          ? "Codex is not connected."
+          : "Live ChatGPT Codex usage is only available when Codex is using a ChatGPT Plan.",
+    };
+  }
+
+  if (project_id) {
+    await assertProjectCollaborator(account_id, project_id);
+  }
+  try {
+    const credential = await getExternalCredentialRouted({
+      selector: {
+        provider: "openai",
+        kind: CODEX_SUBSCRIPTION_KIND,
+        scope: "account",
+        owner_account_id: account_id,
+      },
+      touchLastUsed: true,
+    });
+    const appServerLogin = codexAuthJsonToAppServerLogin(credential?.payload);
+    if (!appServerLogin) {
+      return {
+        available: false,
+        checkedAt,
+        paymentSource,
+        project_id,
+        reason: "ChatGPT Codex credentials are missing or incomplete.",
+      };
+    }
+    const status = await getCodexAppServerAccountStatus({
+      accountId: account_id,
+      appServerLogin,
+    });
+    return {
+      available: !!status.rateLimits,
+      checkedAt,
+      paymentSource,
+      project_id,
+      account: status.account,
+      rateLimits: status.rateLimits,
+      tokenUsage: status.tokenUsage,
+      errors: status.errors,
+      reason:
+        !status.rateLimits && status.errors?.rateLimits
+          ? status.errors.rateLimits
+          : undefined,
+    };
+  } catch (err) {
+    return {
+      available: false,
+      checkedAt,
+      paymentSource,
+      project_id,
+      reason: `${err}`,
+    };
+  }
 }
 
 export async function upsertBrowserSession({

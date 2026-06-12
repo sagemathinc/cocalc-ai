@@ -20,7 +20,10 @@ import {
 import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { lite } from "@cocalc/frontend/lite";
-import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
+import {
+  CodexCredentialsPanel,
+  CodexUsageMeters,
+} from "@cocalc/frontend/account/codex-credentials-panel";
 import {
   CODEX_USAGE_LABEL,
   CODEX_USAGE_URL,
@@ -32,7 +35,10 @@ import {
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  CodexPaymentSourceInfo,
+  CodexUsageStatusInfo,
+} from "@cocalc/conat/hub/api/system";
 import {
   codexModelSupportsFastMode,
   DEFAULT_CODEX_MODELS,
@@ -314,6 +320,10 @@ export function CodexConfigButton({
   const [controlsCollapsed, setControlsCollapsed] = useState(
     readCodexControlsCollapsed,
   );
+  const [codexUsageStatus, setCodexUsageStatus] = useState<
+    CodexUsageStatusInfo | undefined
+  >(undefined);
+  const [codexUsageLoading, setCodexUsageLoading] = useState(false);
   const lastAppliedThreadRef = React.useRef<string | undefined>(undefined);
 
   useEffect(() => {
@@ -434,6 +444,32 @@ export function CodexConfigButton({
     ? "Checking…"
     : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
+
+  useEffect(() => {
+    if (!open || paymentSource?.source !== "subscription") {
+      setCodexUsageStatus(undefined);
+      setCodexUsageLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCodexUsageLoading(true);
+    const systemApi: any = webapp_client.conat_client.hub.system as any;
+    void systemApi
+      .getCodexUsageStatus({ project_id: projectId || undefined })
+      .then((status: CodexUsageStatusInfo) => {
+        if (!cancelled) setCodexUsageStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setCodexUsageStatus(undefined);
+      })
+      .finally(() => {
+        if (!cancelled) setCodexUsageLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, paymentSource?.source, projectId]);
+
   const modeLabel =
     modeOptions.find((option) => option.value === currentSessionMode)?.label ??
     "Mode";
@@ -606,13 +642,11 @@ export function CodexConfigButton({
               background: COLORS.ANTD_BG_BLUE_L,
               borderColor: COLORS.BS_BLUE_BGRND,
               display: "flex",
+              flexDirection: "column",
               gap: 12,
-              alignItems: "flex-start",
-              justifyContent: "space-between",
-              flexWrap: "wrap",
             }}
           >
-            <div style={{ minWidth: 240, flex: "1 1 300px" }}>
+            <div>
               <Text strong style={{ color: COLORS.BS_BLUE_TEXT }}>
                 Codex configuration for this chat
               </Text>
@@ -629,13 +663,45 @@ export function CodexConfigButton({
                 level.
               </div>
             </div>
-            <Space size={6} wrap>
-              <Tag color="blue">{selectedModelValue ?? "Model"}</Tag>
-              <Tag color={selectedModeOption?.warning ? "red" : "green"}>
-                {modeLabel}
-              </Tag>
-              {reasoningLabel ? <Tag>{reasoningLabel}</Tag> : null}
-              {serviceTierLabel ? <Tag color="orange">Fast</Tag> : null}
+            {paymentSource?.source === "subscription" ? (
+              <div style={{ width: "100%" }}>
+                {codexUsageLoading && !codexUsageStatus ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    Checking ChatGPT Codex usage...
+                  </Text>
+                ) : null}
+                <CodexUsageMeters status={codexUsageStatus} compact />
+              </div>
+            ) : null}
+            <Space
+              wrap
+              size={8}
+              style={{
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+              }}
+            >
+              <Space size={6} wrap style={{ justifyContent: "flex-end" }}>
+                <Tag color="blue">{selectedModelValue ?? "Model"}</Tag>
+                <Tag color={selectedModeOption?.warning ? "red" : "green"}>
+                  {modeLabel}
+                </Tag>
+                {reasoningLabel ? <Tag>{reasoningLabel}</Tag> : null}
+                {serviceTierLabel ? <Tag color="orange">Fast</Tag> : null}
+              </Space>
+              <Tooltip
+                title={`Current source: ${
+                  paymentSourceLoading ? "Checking..." : sourceShortLabel
+                }. ${sourceTooltip}`}
+              >
+                <Button
+                  icon={<Icon name="credit-card" />}
+                  onClick={() => setPaymentOpen(true)}
+                >
+                  Payment & Credentials
+                </Button>
+              </Tooltip>
             </Space>
           </div>
           <Form form={form} layout="vertical">
@@ -825,42 +891,6 @@ export function CodexConfigButton({
                     </div>
                   </Radio.Group>
                 </Form.Item>
-              </div>
-              <div
-                style={{
-                  ...sectionStyle,
-                  background: COLORS.GRAY_LLL,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 10,
-                  flexWrap: "wrap",
-                  padding: "10px 12px",
-                }}
-              >
-                <div style={{ flex: "1 1 300px", minWidth: 240 }}>
-                  <SectionTitle>Payment & credentials</SectionTitle>
-                  <div
-                    style={{
-                      color: COLORS.GRAY_M,
-                      fontSize: 12,
-                      marginTop: 4,
-                      lineHeight: 1.35,
-                    }}
-                  >
-                    Current source:{" "}
-                    <Text strong>
-                      {paymentSourceLoading ? "Checking..." : sourceShortLabel}
-                    </Text>
-                    . {sourceTooltip}
-                  </div>
-                </div>
-                <Button
-                  icon={<Icon name="credit-card" />}
-                  onClick={() => setPaymentOpen(true)}
-                >
-                  Payment & Credentials
-                </Button>
               </div>
             </Space>
           </Form>

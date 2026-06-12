@@ -96,6 +96,14 @@ export class TaskActions extends Actions<TaskState> {
     this.frameActions.set_frame_data({ ...obj, id: this.frameId });
   }
 
+  public increase_font_size(): void {
+    this.frameActions?.increase_font_size?.(this.frameId);
+  }
+
+  public decrease_font_size(): void {
+    this.frameActions?.decrease_font_size?.(this.frameId);
+  }
+
   public getFrameData(key: string) {
     return this.frameActions._get_frame_data(this.frameId, key);
   }

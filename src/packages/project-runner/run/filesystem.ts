@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { FILE_SERVER_NAME } from "@cocalc/conat/project/runner/constants";
 import { filesystem, type Filesystem } from "@cocalc/file-server/btrfs";
+import { exists } from "@cocalc/backend/misc/async-utils-node";
 
 const logger = getLogger("project-runner:filesystem");
 
@@ -77,6 +78,7 @@ export async function localPath({
   disk,
   scratch: scratchQuota,
   ensure = true,
+  resetScratch = false,
 }: {
   project_id: string;
   // if given, this quota will be set in case of btrfs
@@ -88,12 +90,16 @@ export async function localPath({
   scratch?: number;
   // if false, resolve paths without creating volumes
   ensure?: boolean;
+  // if true and scratch is enabled, recreate the scratch volume before
+  // returning it. Project runtimes mount this volume at /tmp.
+  resetScratch?: boolean;
 }): Promise<{ home: string; scratch?: string; quota_applied?: boolean }> {
   logger.debug("localPath: start", {
     project_id,
     ensure,
     disk,
     scratchQuota,
+    resetScratch,
     hasProjectRunnerMountpoint: !!projectRunnerMountpoint,
     hasProjectPathEnv: !!process.env.COCALC_PROJECT_PATH,
   });
@@ -116,6 +122,7 @@ export async function localPath({
       homeVolName,
       scratchVolName,
       wantsScratch,
+      resetScratch,
       scratchDisabled: scratchQuota === 0,
     });
     if (!ensure) {
@@ -132,6 +139,16 @@ export async function localPath({
     }
 
     const homeVolPromise = fs.subvolumes.ensure(homeVolName);
+    if (wantsScratch && resetScratch) {
+      logger.debug("localPath: resetting scratch volume", {
+        project_id,
+        scratchVolName,
+      });
+      const scratchVol = await fs.subvolumes.get(scratchVolName);
+      if (await exists(scratchVol.path)) {
+        await fs.subvolumes.delete(scratchVolName);
+      }
+    }
     const scratchVolPromise = wantsScratch
       ? fs.subvolumes.ensure(scratchVolName)
       : undefined;
@@ -237,6 +254,7 @@ export async function localPath({
     project_id,
     ensure,
     wantsScratch,
+    resetScratch,
     scratchDisabled: scratchQuota === 0,
   });
   const c = getFsClient();
@@ -255,8 +273,17 @@ export async function localPath({
       });
     }
     if (wantsScratch) {
-      logger.debug("localPath: ensuring remote scratch volume", { project_id });
-      await c.ensureVolume({ project_id, scratch: true });
+      if (resetScratch) {
+        logger.debug("localPath: resetting remote scratch volume", {
+          project_id,
+        });
+        await c.resetScratchVolume({ project_id });
+      } else {
+        logger.debug("localPath: ensuring remote scratch volume", {
+          project_id,
+        });
+        await c.ensureVolume({ project_id, scratch: true });
+      }
       let effectiveScratchQuota = scratchQuota ?? disk;
       let scratchQuotaSource: "scratch" | "disk" | "home" | "unset" =
         scratchQuota != null ? "scratch" : disk != null ? "disk" : "unset";

@@ -28,6 +28,7 @@ import {
   cancelSubscription,
   resumeSubscription,
 } from "@cocalc/frontend/purchases/api";
+import type { BillingInterval } from "./membership-pricing-chooser";
 import type {
   MembershipCandidate,
   MembershipResolution,
@@ -103,6 +104,9 @@ function MembershipSettingsContent() {
   const [purchaseCurrentClass, setPurchaseCurrentClass] = useState<
     string | undefined
   >(undefined);
+  const [purchaseCurrentInterval, setPurchaseCurrentInterval] = useState<
+    BillingInterval | undefined
+  >(undefined);
 
   if (!account_id) return null;
   if (loading && !membership) return <Loading />;
@@ -123,8 +127,12 @@ function MembershipSettingsContent() {
     window.dispatchEvent(new Event("cocalc:membership-changed"));
     refresh();
   };
-  const openPurchase = (currentClassOverride?: string) => {
+  const openPurchase = (
+    currentClassOverride?: string,
+    currentIntervalOverride?: BillingInterval,
+  ) => {
     setPurchaseCurrentClass(currentClassOverride);
+    setPurchaseCurrentInterval(currentIntervalOverride);
     setPurchaseOpen(true);
   };
 
@@ -220,7 +228,10 @@ function MembershipSettingsContent() {
           <Space wrap>
             <Button
               onClick={() => {
-                openPurchase(personalMembership?.class ?? "free");
+                openPurchase(
+                  personalMembership?.class ?? "free",
+                  personalMembership?.subscription_interval,
+                );
               }}
             >
               Configure personal membership
@@ -249,10 +260,12 @@ function MembershipSettingsContent() {
 
       <MembershipPurchaseModal
         currentClassOverride={purchaseCurrentClass}
+        currentIntervalOverride={purchaseCurrentInterval}
         open={purchaseOpen}
         onClose={() => {
           setPurchaseOpen(false);
           setPurchaseCurrentClass(undefined);
+          setPurchaseCurrentInterval(undefined);
         }}
         onChanged={refresh}
       />

@@ -382,6 +382,7 @@ function adHocEntries(
 export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
   ...adHocEntries(
     [
+      "admin_data_explorer_views",
       "cluster_account_api_key_directory",
       "cluster_account_directory",
       "cluster_bay_registry",
