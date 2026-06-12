@@ -77,7 +77,12 @@ export function Diff(props: Props) {
   return (
     <div
       className="smc-vfill"
-      style={{ fontSize: `${props.font_size}px`, overflow: "auto" }}
+      style={{
+        fontSize: `${props.font_size}px`,
+        height: "100%",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
     >
       <textarea ref={textAreaRef} style={{ display: "none" }} />
     </div>

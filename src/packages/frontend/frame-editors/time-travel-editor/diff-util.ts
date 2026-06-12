@@ -15,6 +15,14 @@ export function set_cm_line_diff(
   v1: string,
 ): void {
   const { lines, types, gutters, chunkBoundaries } = computeLineDiff(v0, v1);
+  if (lines.length === 0) {
+    cm.setValue("No changes.");
+    cm.setOption("theme", "default");
+    cm.setOption("lineNumbers", false);
+    cm.setOption("showTrailingSpace" as any, false);
+    cm.setOption("gutters", []);
+    return;
+  }
   const s = lines.join("\n");
   cm.setValue(s);
 
