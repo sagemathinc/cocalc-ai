@@ -9,6 +9,7 @@ const getSnapshotQuota = jest.fn(async () => ({
   manual: { limit: 6, current: 1, rolling_reserved: 2 },
 }));
 const setState = jest.fn();
+const mockUseTypedRedux = jest.fn(() => false);
 const originalGetComputedStyle = window.getComputedStyle;
 
 jest.mock("@cocalc/frontend/project/context", () => ({
@@ -21,7 +22,7 @@ jest.mock("@cocalc/frontend/project/context", () => ({
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: () => false,
+  useTypedRedux: (...args: any[]) => mockUseTypedRedux(...args),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -58,6 +59,8 @@ describe("CreateSnapshot", () => {
     createSnapshot.mockClear();
     getSnapshotQuota.mockClear();
     setState.mockClear();
+    mockUseTypedRedux.mockReset();
+    mockUseTypedRedux.mockReturnValue(false);
     createSnapshot.mockResolvedValue(undefined);
     getSnapshotQuota.mockResolvedValue({
       limit: 8,
@@ -161,5 +164,53 @@ describe("CreateSnapshot", () => {
     expect(
       screen.getByPlaceholderText("Name of snapshot to create..."),
     ).toBeInTheDocument();
+  });
+
+  it("closes every open create snapshot modal after one successful create", async () => {
+    render(
+      <>
+        <CreateSnapshot />
+        <CreateSnapshot />
+      </>,
+    );
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Create Snapshot/i })[0],
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Create Snapshot/i })[1],
+    );
+
+    const inputs = await screen.findAllByPlaceholderText(
+      "Name of snapshot to create...",
+    );
+    expect(inputs).toHaveLength(1);
+    fireEvent.change(inputs[0], { target: { value: "snapshot-1" } });
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Create Snapshot/i }).slice(-1)[0],
+    );
+
+    await waitFor(() => expect(createSnapshot).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.queryByPlaceholderText("Name of snapshot to create..."),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("opens only one modal for a shared global create trigger", async () => {
+    mockUseTypedRedux.mockReturnValue(true);
+    render(
+      <>
+        <CreateSnapshot />
+        <CreateSnapshot />
+      </>,
+    );
+
+    const inputs = await screen.findAllByPlaceholderText(
+      "Name of snapshot to create...",
+    );
+    expect(inputs).toHaveLength(1);
+    expect(setState).toHaveBeenCalledWith({ open_create_snapshot: false });
   });
 });
