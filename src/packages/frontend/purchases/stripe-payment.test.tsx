@@ -3,10 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
-import StripePayment from "./stripe-payment";
+import StripePayment, { AddPaymentMethodButton } from "./stripe-payment";
+import { createSetupIntent } from "./api";
+
+let mockFreshAuthOpen = false;
+let mockFreshAuthOnCancel = jest.fn();
+let mockFreshAuthOnSuccess = jest.fn();
+let mockRunFreshAuthAction = jest.fn(async (fn: () => Promise<void>) => {
+  await fn();
+  return true;
+});
 
 jest.mock("antd", () => {
   const Box = ({
@@ -64,9 +73,9 @@ jest.mock("@stripe/react-stripe-js", () => ({
     <>{children}</>
   ),
   Elements: ({ children }: { children?: ReactNode }) => <>{children}</>,
-  PaymentElement: () => null,
-  useElements: () => null,
-  useStripe: () => null,
+  PaymentElement: () => <div>Stripe payment element</div>,
+  useElements: () => ({}),
+  useStripe: () => ({ confirmSetup: jest.fn() }),
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -74,10 +83,31 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
-  FreshAuthModal: () => null,
+  FreshAuthModal: ({ onCancel, onSuccess, open }: any) =>
+    open ? (
+      <section>
+        <div>Confirm security action</div>
+        <button onClick={onCancel} type="button">
+          Cancel fresh auth
+        </button>
+        <button
+          onClick={async () => {
+            await onSuccess();
+            onCancel();
+          }}
+          type="button"
+        >
+          Verify fresh auth
+        </button>
+      </section>
+    ) : null,
   useFreshAuthAction: () => ({
-    freshAuthModalProps: {},
-    runFreshAuthAction: (fn: () => Promise<void>) => fn(),
+    freshAuthModalProps: {
+      open: mockFreshAuthOpen,
+      onCancel: mockFreshAuthOnCancel,
+      onSuccess: mockFreshAuthOnSuccess,
+    },
+    runFreshAuthAction: mockRunFreshAuthAction,
   }),
 }));
 
@@ -101,6 +131,21 @@ jest.mock("./api", () => ({
 }));
 
 describe("StripePayment", () => {
+  beforeEach(() => {
+    mockFreshAuthOpen = false;
+    mockFreshAuthOnCancel = jest.fn(() => {
+      mockFreshAuthOpen = false;
+    });
+    mockFreshAuthOnSuccess = jest.fn(async () => {
+      mockFreshAuthOpen = false;
+    });
+    mockRunFreshAuthAction = jest.fn(async (fn: () => Promise<void>) => {
+      await fn();
+      return true;
+    });
+    jest.mocked(createSetupIntent).mockReset();
+  });
+
   it("renders the description and full line-item table by default", () => {
     render(
       <StripePayment
@@ -131,5 +176,113 @@ describe("StripePayment", () => {
     expect(
       screen.getByText(/Amount due \(excluding tax\) \$72\.00/),
     ).toBeTruthy();
+  });
+
+  it("shows fresh auth prompt when adding a payment method requires it", async () => {
+    const freshAuthError: any = new Error("fresh auth is required");
+    freshAuthError.code = "fresh_auth_required";
+    jest.mocked(createSetupIntent).mockRejectedValueOnce(freshAuthError);
+    mockRunFreshAuthAction = jest.fn(async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+        return true;
+      } catch (err: any) {
+        if (err?.code !== "fresh_auth_required") {
+          throw err;
+        }
+        mockFreshAuthOpen = true;
+        return false;
+      }
+    });
+
+    render(<AddPaymentMethodButton />);
+
+    fireEvent.click(screen.getByText(/Add Payment Method/));
+
+    await waitFor(() => {
+      expect(screen.getByText("Confirm security action")).toBeTruthy();
+    });
+    expect(
+      screen.getByText("Confirm this security action to add a payment method."),
+    ).toBeTruthy();
+    expect(createSetupIntent).toHaveBeenCalledWith({
+      description: "Add a new payment method.",
+    });
+  });
+
+  it("continues to Stripe setup after successful fresh auth while adding a payment method", async () => {
+    const freshAuthError: any = new Error("fresh auth is required");
+    freshAuthError.code = "fresh_auth_required";
+    jest
+      .mocked(createSetupIntent)
+      .mockRejectedValueOnce(freshAuthError)
+      .mockResolvedValueOnce({ clientSecret: "seti_test_secret" });
+    mockRunFreshAuthAction = jest.fn(async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+        return true;
+      } catch (err: any) {
+        if (err?.code !== "fresh_auth_required") {
+          throw err;
+        }
+        mockFreshAuthOpen = true;
+        mockFreshAuthOnSuccess = jest.fn(async () => {
+          mockFreshAuthOpen = false;
+          await fn();
+        });
+        return false;
+      }
+    });
+
+    render(<AddPaymentMethodButton />);
+
+    fireEvent.click(screen.getByText(/Add Payment Method/));
+    await waitFor(() => {
+      expect(screen.getByText("Confirm security action")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("Verify fresh auth"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Stripe payment element")).toBeTruthy();
+    });
+    expect(
+      screen.queryByText("Security confirmation was canceled."),
+    ).toBeNull();
+    expect(createSetupIntent).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a retryable state when fresh auth is canceled while adding a payment method", async () => {
+    const freshAuthError: any = new Error("fresh auth is required");
+    freshAuthError.code = "fresh_auth_required";
+    jest.mocked(createSetupIntent).mockRejectedValueOnce(freshAuthError);
+    mockRunFreshAuthAction = jest.fn(async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+        return true;
+      } catch (err: any) {
+        if (err?.code !== "fresh_auth_required") {
+          throw err;
+        }
+        mockFreshAuthOpen = true;
+        return false;
+      }
+    });
+
+    render(<AddPaymentMethodButton />);
+
+    fireEvent.click(screen.getByText(/Add Payment Method/));
+    await waitFor(() => {
+      expect(screen.getByText("Confirm security action")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("Cancel fresh auth"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Adding a payment method requires security confirmation.",
+        ),
+      ).toBeTruthy();
+    });
+    expect(screen.getByText("Confirm security action")).toBeTruthy();
   });
 });

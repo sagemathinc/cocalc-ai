@@ -21,7 +21,13 @@ import type {
   PaymentIntentSecret,
   CustomerSessionSecret,
 } from "@cocalc/util/stripe/types";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   createPaymentIntent,
   createSetupIntent,
@@ -703,6 +709,10 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
   const [error, setError] = useState<string>("");
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [waitingForFreshAuth, setWaitingForFreshAuth] =
+    useState<boolean>(false);
+  const [freshAuthCanceled, setFreshAuthCanceled] = useState<boolean>(false);
+  const freshAuthSucceededRef = useRef<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
   });
@@ -710,13 +720,18 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
   const load = async () => {
     try {
       setLoading(true);
+      setWaitingForFreshAuth(false);
+      setFreshAuthCanceled(false);
       setError("");
-      await runFreshAuthAction(async () => {
+      const completed = await runFreshAuthAction(async () => {
         const intent = await createSetupIntent({
           description: "Add a new payment method.",
         });
         setSecret(intent);
       });
+      if (!completed) {
+        setWaitingForFreshAuth(true);
+      }
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -724,12 +739,39 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
     }
   };
 
+  const freshAuthModal = (
+    <FreshAuthModal
+      {...freshAuthModalProps}
+      onCancel={() => {
+        if (freshAuthSucceededRef.current) {
+          freshAuthSucceededRef.current = false;
+          freshAuthModalProps.onCancel();
+          return;
+        }
+        setWaitingForFreshAuth(false);
+        setFreshAuthCanceled(true);
+        freshAuthModalProps.onCancel();
+      }}
+      onSuccess={async () => {
+        await freshAuthModalProps.onSuccess();
+        freshAuthSucceededRef.current = true;
+        setWaitingForFreshAuth(false);
+        setFreshAuthCanceled(false);
+      }}
+    />
+  );
+
   useEffect(() => {
     load();
   }, []);
 
   if (loading) {
-    return <BigSpin style={style} />;
+    return (
+      <>
+        <BigSpin style={style} />
+        {freshAuthModal}
+      </>
+    );
   }
 
   if (error) {
@@ -743,13 +785,47 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
             load();
           }}
         />
-        <FreshAuthModal {...freshAuthModalProps} />
+        {freshAuthModal}
+      </>
+    );
+  }
+
+  if (waitingForFreshAuth) {
+    return (
+      <>
+        <Alert
+          showIcon
+          type="info"
+          message="Confirm this security action to add a payment method."
+        />
+        {freshAuthModal}
+      </>
+    );
+  }
+
+  if (freshAuthCanceled) {
+    return (
+      <>
+        <Space vertical style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="info"
+            message="Adding a payment method requires security confirmation."
+          />
+          <Button onClick={load}>Confirm security action</Button>
+        </Space>
+        {freshAuthModal}
       </>
     );
   }
 
   if (secret == null) {
-    return <BigSpin style={style} />;
+    return (
+      <>
+        <BigSpin style={style} />
+        {freshAuthModal}
+      </>
+    );
   }
 
   return (
@@ -770,7 +846,7 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
           setError={setError}
         />
       </Elements>
-      <FreshAuthModal {...freshAuthModalProps} />
+      {freshAuthModal}
     </>
   );
 }
