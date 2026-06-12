@@ -137,6 +137,10 @@ import {
   registerRootfsCommand,
   type RootfsCommandDeps,
 } from "./commands/rootfs";
+import {
+  registerRocketCommand,
+  type RocketCommandDeps,
+} from "./commands/rocket";
 import { registerHostCommand, type HostCommandDeps } from "./commands/host";
 import {
   registerProjectCommand,
@@ -2563,6 +2567,15 @@ const bayCommandDeps = {
 } satisfies BayCommandDeps;
 
 registerBayCommand(program, bayCommandDeps);
+
+const rocketCommandDeps = {
+  runCommand,
+  commandExists,
+  cwd: process.cwd(),
+  env: process.env,
+} satisfies RocketCommandDeps;
+
+registerRocketCommand(program, rocketCommandDeps);
 
 const notificationsCommandDeps = {
   withContext,
