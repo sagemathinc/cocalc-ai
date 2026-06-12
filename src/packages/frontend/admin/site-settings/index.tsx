@@ -471,13 +471,18 @@ export default function SiteSettings({ close }) {
       width: 700,
       content,
       async onOk() {
-        const completed = await runFreshAuthAction(async () => {
-          await store();
-          setState("edit");
-          await load();
-        });
-        if (!completed) {
-          setState("edit");
+        try {
+          const completed = await runFreshAuthAction(async () => {
+            await store();
+            setState("edit");
+            await load();
+          });
+          if (!completed) {
+            setState("edit");
+          }
+        } catch (err) {
+          setState("error");
+          setError(`${err}`);
         }
       },
       onCancel() {

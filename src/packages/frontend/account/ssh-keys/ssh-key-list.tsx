@@ -24,6 +24,7 @@ import { CancelText } from "@cocalc/frontend/i18n/components";
 import { cmp } from "@cocalc/util/misc";
 import SSHKeyAdder from "./ssh-key-adder";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
+import { ugly_error } from "../util";
 
 interface SSHKeyListProps {
   ssh_keys?: Map<string, any>;
@@ -209,12 +210,16 @@ function OneSSHKey({
   async function delete_key(): Promise<void> {
     const fingerprint = ssh_key.get("fingerprint");
     if (project_id) {
-      await runFreshAuthAction(async () => {
-        await redux.getActions("projects").delete_ssh_key_from_project({
-          fingerprint,
-          project_id: project_id,
+      try {
+        await runFreshAuthAction(async () => {
+          await redux.getActions("projects").delete_ssh_key_from_project({
+            fingerprint,
+            project_id: project_id,
+          });
         });
-      });
+      } catch (err) {
+        ugly_error(err);
+      }
     } else {
       redux.getActions("account").delete_ssh_key(fingerprint);
     }

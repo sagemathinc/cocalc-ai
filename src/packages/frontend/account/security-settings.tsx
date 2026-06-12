@@ -16,6 +16,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { DeleteAccountButton } from "./delete-account";
 import { PasswordSetting } from "./settings/password-setting";
 import TwoFactorAuthSetting from "./settings/two-factor-auth";
+import { ugly_error } from "./util";
 
 interface Props {
   email_address?: string;
@@ -50,11 +51,15 @@ export function SecuritySettings({
             ) : undefined}
           </Flex>
           <DeleteAccountButton
-            confirm={() =>
-              runFreshAuthAction(async () => {
-                await actions().delete_account();
-              })
-            }
+            confirm={async () => {
+              try {
+                await runFreshAuthAction(async () => {
+                  await actions().delete_account();
+                });
+              } catch (err) {
+                ugly_error(err);
+              }
+            }}
             requiredText={userName}
           />
         </Flex>

@@ -3317,14 +3317,26 @@ function SiteLicenseManagersEditor({
   async function addOrUpdateManager() {
     const target = selectedAccountId.trim();
     if (!target) return;
+    const ok = await updateManagerRole(target, role);
+    if (!ok) {
+      return;
+    }
+    setSelectedAccountId("");
+    setSearchResults([]);
+  }
+
+  async function updateManagerRole(
+    target: string,
+    nextRole: SiteLicenseManagerRole,
+  ) {
     setWorking(`set-${target}`);
     setError("");
     try {
-      await onSetManager(overview.site_license.id, target, role);
-      setSelectedAccountId("");
-      setSearchResults([]);
+      await onSetManager(overview.site_license.id, target, nextRole);
+      return true;
     } catch (err) {
       setError(`${err}`);
+      return false;
     } finally {
       setWorking("");
     }
@@ -3381,11 +3393,7 @@ function SiteLicenseManagersEditor({
                           { label: "Viewer", value: "viewer" },
                         ]}
                         onChange={(nextRole) =>
-                          void onSetManager(
-                            overview.site_license.id,
-                            manager.account_id,
-                            nextRole,
-                          )
+                          void updateManagerRole(manager.account_id, nextRole)
                         }
                       />
                       <Popconfirm
