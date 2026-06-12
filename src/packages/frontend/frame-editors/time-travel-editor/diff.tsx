@@ -49,10 +49,13 @@ export function Diff(props: Props) {
     options.readOnly = true;
     cmRef.current = CodeMirror.fromTextArea(textarea, options);
     init_style_hacks(cmRef.current);
+    $(cmRef.current.getWrapperElement()).css({ height: "100%" });
     set_cm_line_diff(cmRef.current, props.v0, props.v1);
+    requestAnimationFrame(() => cmRef.current?.refresh());
     const f = (v0: string, v1: string): void => {
       if (cmRef.current == null) return;
       set_cm_line_diff(cmRef.current, v0, v1);
+      requestAnimationFrame(() => cmRef.current?.refresh());
     };
     updateRef.current = debounce(f, 300);
   };
