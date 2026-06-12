@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,24 +16,117 @@ type CapturedRun = {
 function createProgram({
   runs,
   gitStatus = "",
+  onRun,
 }: {
   runs: CapturedRun[];
   gitStatus?: string;
+  onRun?: (command: string, args: string[]) => void | Promise<void>;
 }): Command {
   const program = new Command();
   program.exitOverride();
   registerRocketCommand(program, {
     cwd: join(__dirname, "../../../../../.."),
     env: {},
-    commandExists: (command) => command === "bash",
+    commandExists: (command) => command === "bash" || command === "pnpm",
     gitStatus: () => gitStatus,
     runCommand: async (command, args) => {
       runs.push({ command, args });
+      await onRun?.(command, args);
       return 0;
     },
   } satisfies RocketCommandDeps);
   return program;
 }
+
+test("rocket release build --kind bay-static builds and reports a local artifact", async () => {
+  const runs: CapturedRun[] = [];
+  const dir = mkdtempSync(join(tmpdir(), "rocket-release-build-"));
+  const outDir = join(dir, "bay-static");
+  const bundle = join(dir, "cocalc-bay-static-linux-x64.tar.xz");
+  const manifest = join(outDir, "bay-static-manifest.json");
+  const program = createProgram({
+    runs,
+    onRun: async () => {
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(bundle, "static artifact");
+      writeFileSync(
+        manifest,
+        JSON.stringify({
+          kind: "cocalc-bay-static",
+          created: "2026-06-12T00:00:00.000Z",
+          git: {
+            commit: "abc123",
+            branch: "lite4",
+            dirty: false,
+          },
+        }),
+      );
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "release",
+    "build",
+    "--kind",
+    "bay-static",
+    "--out-dir",
+    outDir,
+    "--bundle",
+    bundle,
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].command, "pnpm");
+  assert.equal(runs[0].args[0], "-C");
+  assert.equal(runs[0].args[1].endsWith("/src/packages"), true);
+  assert.deepEqual(runs[0].args.slice(2, 4), ["--filter", "@cocalc/rocket"]);
+  assert.equal(runs[0].args.includes("build:bay-static-bundle"), true);
+  assert.deepEqual(runs[0].args.slice(-3), ["--", outDir, bundle]);
+});
+
+test("rocket release build dry-run does not execute the build", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({ runs });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "release",
+    "build",
+    "--kind",
+    "bay-runtime",
+    "--dry-run",
+  ]);
+
+  assert.equal(runs.length, 0);
+});
+
+test("rocket release build refuses dirty worktree by default", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({
+    runs,
+    gitStatus: " M packages/cli/src/x.ts",
+  });
+
+  await assert.rejects(
+    () =>
+      program.parseAsync([
+        "node",
+        "test",
+        "rocket",
+        "release",
+        "build",
+        "--kind",
+        "bay-static",
+      ]),
+    /dirty git worktree/,
+  );
+  assert.equal(runs.length, 0);
+});
 
 test("rocket deploy --scope bay wraps upgrade-bay-release with host upgrade skipped", async () => {
   const runs: CapturedRun[] = [];

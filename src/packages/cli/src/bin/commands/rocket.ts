@@ -1,10 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  createReadStream,
+  existsSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { Command } from "commander";
 
 type DeployScope = "static" | "bay" | "hosts" | "all";
+type ReleaseBuildKind = "bay-runtime" | "bay-static";
 
 type RocketConfig = {
   clusters?: Record<string, RocketClusterConfig>;
@@ -73,6 +81,36 @@ type CommandPlan = {
   display_command: string;
 };
 
+type ReleaseBuildOptions = {
+  kind?: string;
+  outDir?: string;
+  bundle?: string;
+  tarball?: string;
+  allowDirty?: boolean;
+  dryRun?: boolean;
+};
+
+type ReleaseBuildPlan = {
+  kind: ReleaseBuildKind;
+  command: string;
+  args: string[];
+  out_dir: string;
+  artifact: string;
+  manifest: string;
+  display_command: string;
+};
+
+type ReleaseBuildSummary = ReleaseBuildPlan & {
+  size_bytes: number;
+  size: string;
+  sha256: string;
+  manifest_kind?: string;
+  manifest_created?: string;
+  git_commit?: string;
+  git_branch?: string;
+  git_dirty?: boolean;
+};
+
 export type RocketCommandDeps = {
   runCommand: (
     command: string,
@@ -96,6 +134,51 @@ export function registerRocketCommand(
     .command("rocket")
     .description("Rocket operator operations")
     .option("--config <path>", "rocket config path");
+
+  const release = rocket
+    .command("release")
+    .description("Rocket release artifact operations");
+
+  release
+    .command("build")
+    .description("build a Rocket release artifact without deploying it")
+    .requiredOption("--kind <bay-runtime|bay-static>", "artifact kind to build")
+    .option("--out-dir <path>", "output directory for unpacked artifact")
+    .option("--bundle <path>", "output tarball path")
+    .option("--tarball <path>", "alias for --bundle")
+    .option("--allow-dirty", "allow building from a dirty git worktree")
+    .option("--dry-run", "print the resolved build command without running it")
+    .action(async (opts: ReleaseBuildOptions, command: Command) => {
+      const globals = command.optsWithGlobals() as Record<string, any>;
+      const plan = buildReleaseBuildPlan({
+        opts,
+        deps,
+      });
+
+      if (opts.dryRun) {
+        printReleaseBuildPlan(plan, globals);
+        return;
+      }
+      maybeCheckCleanWorktree({
+        build: true,
+        allowDirty: opts.allowDirty === true,
+        requireCleanWorktree: true,
+        cwd: deps.cwd ?? process.cwd(),
+        gitStatus: deps.gitStatus,
+      });
+      requireCommand(deps, "pnpm");
+      const code = await deps.runCommand(plan.command, plan.args, {
+        stdio: "inherit",
+        env: deps.env ?? process.env,
+      });
+      if (code !== 0) {
+        throw new Error(
+          `rocket release build ${plan.kind} failed with exit status ${code}`,
+        );
+      }
+      const summary = await summarizeReleaseBuild(plan);
+      printReleaseBuildSummary(summary, globals);
+    });
 
   rocket
     .command("deploy [cluster]")
@@ -183,6 +266,46 @@ export function registerRocketCommand(
     );
 
   return rocket;
+}
+
+function buildReleaseBuildPlan({
+  opts,
+  deps,
+}: {
+  opts: ReleaseBuildOptions;
+  deps: RocketCommandDeps;
+}): ReleaseBuildPlan {
+  const kind = normalizeReleaseBuildKind(opts.kind);
+  const cwd = deps.cwd ?? process.cwd();
+  const srcRoot = findSrcRoot(cwd);
+  const paths = releaseBuildPaths({
+    srcRoot,
+    kind,
+    outDir: opts.outDir,
+    bundle: opts.bundle ?? opts.tarball,
+  });
+  const scriptName =
+    kind === "bay-runtime" ? "build:bay-bundle" : "build:bay-static-bundle";
+  const args = [
+    "-C",
+    join(srcRoot, "packages"),
+    "--filter",
+    "@cocalc/rocket",
+    "run",
+    scriptName,
+  ];
+  if (opts.outDir || opts.bundle || opts.tarball) {
+    args.push("--", paths.out_dir, paths.artifact);
+  }
+  return {
+    kind,
+    command: "pnpm",
+    args,
+    out_dir: paths.out_dir,
+    artifact: paths.artifact,
+    manifest: paths.manifest,
+    display_command: ["pnpm", ...args].map(shellQuote).join(" "),
+  };
 }
 
 function mergeGlobalDeployOptions(
@@ -291,7 +414,6 @@ function buildDeployPlan({
     );
   }
   maybeCheckCleanWorktree({
-    scope,
     build: opts.build === true,
     allowDirty: opts.allowDirty === true,
     requireCleanWorktree: cluster?.bay?.require_clean_worktree,
@@ -606,26 +728,19 @@ function findSrcRoot(cwd: string): string {
 }
 
 function maybeCheckCleanWorktree({
-  scope,
   build,
   allowDirty,
   requireCleanWorktree,
   cwd,
   gitStatus,
 }: {
-  scope: DeployScope;
   build: boolean;
   allowDirty: boolean;
   requireCleanWorktree?: boolean;
   cwd: string;
   gitStatus?: (cwd: string) => string;
 }) {
-  if (
-    !build ||
-    allowDirty ||
-    requireCleanWorktree === false ||
-    scope === "hosts"
-  ) {
+  if (!build || allowDirty || requireCleanWorktree === false) {
     return;
   }
   const status = gitStatus ? gitStatus(cwd) : defaultGitStatus(cwd);
@@ -645,6 +760,110 @@ function defaultGitStatus(cwd: string): string {
     throw new Error(`git status failed: ${result.stderr || result.stdout}`);
   }
   return result.stdout;
+}
+
+function normalizeReleaseBuildKind(kind: string | undefined): ReleaseBuildKind {
+  const value = stringOption(kind)?.toLowerCase();
+  if (value === "bay-runtime" || value === "runtime") {
+    return "bay-runtime";
+  }
+  if (value === "bay-static" || value === "static") {
+    return "bay-static";
+  }
+  throw new Error("--kind must be one of: bay-runtime, bay-static");
+}
+
+function releaseBuildPaths({
+  srcRoot,
+  kind,
+  outDir,
+  bundle,
+}: {
+  srcRoot: string;
+  kind: ReleaseBuildKind;
+  outDir?: string;
+  bundle?: string;
+}) {
+  const buildRoot = join(srcRoot, "packages", "rocket", "build");
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const defaultOutDir = join(
+    buildRoot,
+    kind === "bay-runtime" ? "bay-runtime" : "bay-static",
+  );
+  const defaultArtifact = join(
+    buildRoot,
+    `cocalc-${kind}-linux-${arch}.tar.xz`,
+  );
+  const resolvedOutDir = expandPath(outDir ?? defaultOutDir);
+  const resolvedArtifact = expandPath(bundle ?? defaultArtifact);
+  const manifest = join(
+    resolvedOutDir,
+    kind === "bay-runtime"
+      ? "bay-runtime-manifest.json"
+      : "bay-static-manifest.json",
+  );
+  return {
+    out_dir: resolvedOutDir,
+    artifact: resolvedArtifact,
+    manifest,
+  };
+}
+
+async function summarizeReleaseBuild(
+  plan: ReleaseBuildPlan,
+): Promise<ReleaseBuildSummary> {
+  if (!existsSync(plan.artifact)) {
+    throw new Error(`build did not produce artifact: ${plan.artifact}`);
+  }
+  const stat = statSync(plan.artifact);
+  const manifest = readReleaseManifest(plan.manifest);
+  return {
+    ...plan,
+    size_bytes: stat.size,
+    size: formatBytes(stat.size),
+    sha256: await sha256File(plan.artifact),
+    manifest_kind: stringOption(manifest?.kind),
+    manifest_created: stringOption(manifest?.created),
+    git_commit: stringOption(manifest?.git?.commit),
+    git_branch: stringOption(manifest?.git?.branch),
+    git_dirty:
+      typeof manifest?.git?.dirty === "boolean"
+        ? manifest.git.dirty
+        : undefined,
+  };
+}
+
+function readReleaseManifest(path: string): Record<string, any> | undefined {
+  if (!existsSync(path)) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as Record<string, any>;
+  } catch {
+    return undefined;
+  }
+}
+
+async function sha256File(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(path);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve());
+  });
+  return hash.digest("hex");
+}
+
+function formatBytes(bytes: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
 }
 
 function normalizeHostChannel(channel: string | undefined): string {
@@ -735,6 +954,49 @@ function printDeployPlan(plan: CommandPlan, globals: Record<string, any>) {
   if (plan.remote) console.log(`remote: ${plan.remote}`);
   console.log("");
   console.log(plan.display_command);
+}
+
+function printReleaseBuildPlan(
+  plan: ReleaseBuildPlan,
+  globals: Record<string, any>,
+) {
+  if (globals.json || globals.output === "json") {
+    console.log(JSON.stringify({ ok: true, dry_run: true, plan }, null, 2));
+    return;
+  }
+  console.log("Rocket release build dry run");
+  console.log(`kind: ${plan.kind}`);
+  console.log(`artifact: ${plan.artifact}`);
+  console.log(`out_dir: ${plan.out_dir}`);
+  console.log(`manifest: ${plan.manifest}`);
+  console.log("");
+  console.log(plan.display_command);
+}
+
+function printReleaseBuildSummary(
+  summary: ReleaseBuildSummary,
+  globals: Record<string, any>,
+) {
+  if (globals.json || globals.output === "json") {
+    console.log(JSON.stringify({ ok: true, artifact: summary }, null, 2));
+    return;
+  }
+  console.log("Rocket release build complete");
+  console.log(`kind: ${summary.kind}`);
+  console.log(`artifact: ${summary.artifact}`);
+  console.log(`size: ${summary.size} (${summary.size_bytes} bytes)`);
+  console.log(`sha256: ${summary.sha256}`);
+  console.log(`out_dir: ${summary.out_dir}`);
+  console.log(`manifest: ${summary.manifest}`);
+  if (summary.git_commit) {
+    console.log(
+      `git: ${summary.git_commit}${summary.git_branch ? ` (${summary.git_branch})` : ""}${summary.git_dirty ? " dirty" : ""}`,
+    );
+  }
+  console.log("");
+  console.log(
+    `Deploy this exact artifact with: cocalc rocket deploy --scope ${summary.kind === "bay-static" ? "static" : "bay"} --bundle ${shellQuote(summary.artifact)} ...`,
+  );
 }
 
 function requireCommand(deps: RocketCommandDeps, command: string) {
