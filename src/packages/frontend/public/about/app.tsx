@@ -13,7 +13,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   EmptySection,
   fetchJson,
-  getSiteName,
+  getPublicMarketingSiteName,
   LinkButton,
   LoadingSection,
   MUTED_STYLE,
@@ -322,7 +322,7 @@ export default function PublicAboutApp({
   config?: PublicConfig;
   initialRoute: PublicAboutRoute;
 }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
   const title = titleForRoute(initialRoute, siteName);
 
   useEffect(() => {

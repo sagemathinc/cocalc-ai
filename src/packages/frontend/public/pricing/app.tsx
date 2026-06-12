@@ -5,7 +5,7 @@
 
 import { useEffect } from "react";
 
-import { getSiteName, type PublicConfig, PublicSectionShell } from "../common";
+import { type PublicConfig, PublicSectionShell } from "../common";
 import PricingPage from "./page";
 
 export default function PublicPricingApp({
@@ -13,8 +13,7 @@ export default function PublicPricingApp({
 }: {
   config?: PublicConfig;
 }) {
-  const siteName = getSiteName(config);
-  const title = `Choose Your ${siteName} Membership`;
+  const title = "CoCalc.ai Pricing and Licensing";
 
   useEffect(() => {
     document.title = title;

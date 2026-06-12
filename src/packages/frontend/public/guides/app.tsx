@@ -10,7 +10,7 @@ import { Button, Flex, Tag, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import {
   appPath,
-  getSiteName,
+  getPublicMarketingSiteName,
   type PublicConfig,
   PublicSectionShell,
 } from "@cocalc/frontend/public/common";
@@ -123,7 +123,7 @@ function GuideCard({
 }
 
 export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
   const title = `Guides - ${siteName}`;
 
   useEffect(() => {

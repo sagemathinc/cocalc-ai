@@ -274,8 +274,8 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
           maxWidth: "34ch",
         }}
       >
-        Collaborative computation, teaching, and technical work in one
-        browser-based workspace.
+        AI-native technical workspaces for engineering teams, research labs,
+        technical courses, and agent-assisted computational work.
       </Paragraph>
       {defaultBrand ? (
         <Text style={{ color: PUBLIC_COLORS.footerText }}>

@@ -15,12 +15,14 @@ export interface PublicConfig {
   account_display_name?: string;
   account_email_address?: string;
   account_id?: string;
+  cocalc_product?: string;
   cookie_banner_enabled?: boolean;
   cookie_banner_text?: string;
   help_email?: string;
   imprint?: string;
   is_admin?: boolean;
   is_authenticated?: boolean;
+  is_launchpad?: boolean;
   logo_square?: string;
   on_cocalc_com?: boolean;
   policies?: string;
@@ -64,6 +66,29 @@ export function getSiteName(config?: PublicConfig): string {
   return config?.site_name ?? SITE_NAME;
 }
 
+function hasCustomPublicLogo(config?: PublicConfig): boolean {
+  return !!config?.logo_square?.trim();
+}
+
+function usesDefaultLaunchpadPublicBrand(config?: PublicConfig): boolean {
+  return (
+    !hasCustomPublicLogo(config) &&
+    config?.site_name === "CoCalc Launchpad" &&
+    (config.cocalc_product === "launchpad" || config.is_launchpad === true)
+  );
+}
+
+export function getPublicMarketingConfig(
+  config?: PublicConfig,
+): PublicConfig | undefined {
+  if (!usesDefaultLaunchpadPublicBrand(config)) return config;
+  return { ...config, site_name: SITE_NAME };
+}
+
+export function getPublicMarketingSiteName(config?: PublicConfig): string {
+  return getSiteName(getPublicMarketingConfig(config));
+}
+
 export function getLogoSquare(config?: PublicConfig): string {
   return (
     config?.logo_square?.trim() ||
@@ -72,7 +97,7 @@ export function getLogoSquare(config?: PublicConfig): string {
 }
 
 export function usesDefaultCoCalcBranding(config?: PublicConfig): boolean {
-  return !config?.logo_square?.trim() && getSiteName(config) === SITE_NAME;
+  return !hasCustomPublicLogo(config) && getSiteName(config) === SITE_NAME;
 }
 
 export function getPublicPolicyPages(config?: PublicConfig): PublicPolicyPages {

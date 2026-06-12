@@ -8,7 +8,12 @@ import { Suspense, lazy } from "react";
 
 import { Button, Empty, Flex, Spin, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { getSiteName, type PublicConfig } from "@cocalc/frontend/public/config";
+import {
+  getPublicMarketingConfig,
+  getPublicMarketingSiteName,
+  getSiteName,
+  type PublicConfig,
+} from "@cocalc/frontend/public/config";
 import {
   PublicPage,
   PublicSection,
@@ -20,7 +25,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
 const { Text } = Typography;
 
-export { getSiteName };
+export { getPublicMarketingSiteName, getSiteName };
 export type { PublicConfig };
 
 export const MUTED_STYLE: CSSProperties = {
@@ -100,7 +105,7 @@ export function PublicSectionShell({
     <PublicPage
       active={active}
       beforeTitle={beforeTitle}
-      config={config}
+      config={getPublicMarketingConfig(config)}
       sider={sider}
       siderLabel={siderLabel}
       title={title}

@@ -414,7 +414,7 @@ describe("PublicApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Choose Your Launchpad Membership",
+        name: "CoCalc.ai Pricing and Licensing",
       }),
     ).not.toBeNull();
     expect(screen.getAllByText("Member").length).toBeGreaterThan(0);
@@ -426,10 +426,10 @@ describe("PublicApp", () => {
     expect(screen.getByText("/ mo")).not.toBeNull();
     expect(screen.getAllByText("Billed annually, saving 25%").length).toBe(2);
     expect(
-      screen.getByRole("table", { name: "Membership comparison" }),
+      screen.getByRole("table", { name: "Hosted CoCalc.ai plan comparison" }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Compare Memberships" }),
+      screen.getByRole("heading", { name: "Compare hosted plans" }),
     ).not.toBeNull();
     expect(screen.getByText("Project Limits")).not.toBeNull();
     expect(screen.getByText("Global Limits")).not.toBeNull();
@@ -451,11 +451,13 @@ describe("PublicApp", () => {
     expect(screen.getAllByText("/ month").length).toBe(2);
     expect(screen.getAllByText("Save 25% with annual billing").length).toBe(2);
     expect(
-      screen.getByRole("heading", { name: "For Teams and Organizations" }),
+      screen.getByRole("heading", {
+        name: "Buying paths beyond hosted plans",
+      }),
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Organization licenses" }),
+      screen.getByRole("heading", { name: "Site licensing" }),
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", { name: "Dedicated project hosts" }),
@@ -934,7 +936,30 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
-    expect(screen.getByText("Hosted CoCalc")).not.toBeNull();
+    expect(screen.getByText("CoCalc.ai")).not.toBeNull();
+  });
+
+  it("uses CoCalc marketing branding on public product pages for default Launchpad installs", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{
+          cocalc_product: "launchpad",
+          is_launchpad: true,
+          site_name: "CoCalc Launchpad",
+        }}
+        initialRoute={productsRoute({ view: "products" })}
+      />,
+    );
+
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", {
+        name: "CoCalc home",
+      }),
+    ).not.toBeNull();
+    expect(screen.getByText("Choose the product path first.")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Explore shared features" }),
+    ).toHaveAttribute("href", "/features");
   });
 
   it("renders the cocalc launchpad page", async () => {

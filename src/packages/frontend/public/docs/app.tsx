@@ -15,7 +15,7 @@ import {
 import { downloadStandaloneDocsHtml } from "@cocalc/frontend/docs/download-html";
 import {
   appPath,
-  getSiteName,
+  getPublicMarketingSiteName,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
@@ -30,7 +30,7 @@ interface PublicDocsAppProps {
 }
 
 function DocsIndex({ config }: { config?: PublicConfig }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
   const [downloadHtmlBusy, setDownloadHtmlBusy] = useState(false);
 
   useEffect(() => {
@@ -86,7 +86,7 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
 }
 
 function DocsPrint({ config }: { config?: PublicConfig }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
   const [downloadHtmlBusy, setDownloadHtmlBusy] = useState(false);
 
   useEffect(() => {
@@ -122,7 +122,7 @@ function DocsDetail({
   config?: PublicConfig;
   entry: DocsEntry;
 }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
 
   useEffect(() => {
     document.title = `${entry.title} - Documentation - ${siteName}`;
@@ -138,7 +138,7 @@ function DocsDetail({
 }
 
 function DocsNotFound({ config }: { config?: PublicConfig }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
 
   useEffect(() => {
     document.title = `Documentation page not found - ${siteName}`;

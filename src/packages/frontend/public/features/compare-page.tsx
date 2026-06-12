@@ -15,7 +15,7 @@ const COMPARISON_GROUPS = [
     bestAt:
       "Quick notebook startup, lightweight sharing, and easy access to hosted compute.",
     cocalc:
-      "Choose CoCalc when the notebook is only one part of the workflow and you also need terminals, files, LaTeX, course management, shared history, or self-hosted options.",
+      "Choose CoCalc when notebooks are part of a broader technical workspace with terminals, files, LaTeX, courses, AI agents, history, recovery, and deployment options.",
     key: "colab",
     title: "Google Colab and quick notebook hosts",
   },
@@ -23,7 +23,7 @@ const COMPARISON_GROUPS = [
     bestAt:
       "Warehouse-connected analytics, dashboards, and SQL-heavy collaborative data work.",
     cocalc:
-      "Choose CoCalc when the center of gravity is a technical project rather than a BI or data-app surface: notebooks, Linux tools, reproducible documents, teaching, and broader engineering workflows.",
+      "Choose CoCalc when the center of gravity is an engineering or research workspace rather than a BI surface: notebooks, Linux tools, reproducible documents, teaching, agents, and operational control.",
     key: "analytics",
     title: "Deepnote and analytics-first notebook platforms",
   },
@@ -31,7 +31,7 @@ const COMPARISON_GROUPS = [
     bestAt:
       "Building-block flexibility for organizations that want to assemble and operate their own notebook stack.",
     cocalc:
-      "Choose CoCalc when you want the integrated product instead of stitching together Jupyter interfaces, terminals, collaboration, support, grading, and user-facing operations yourself.",
+      "Choose CoCalc when you want the integrated workspace instead of assembling notebooks, terminals, collaboration, support, grading, AI agents, and deployment operations from separate systems.",
     key: "jupyter-stack",
     title: "JupyterHub, JupyterLab, and VS Code notebook workflows",
   },
@@ -39,7 +39,7 @@ const COMPARISON_GROUPS = [
     bestAt:
       "IDE-first application development, app shipping, and product-style coding workflows.",
     cocalc:
-      "Choose CoCalc when the team also needs notebook-native work, technical teaching, mathematical documents, or shared Linux/project workflows beyond a single app editor.",
+      "Choose CoCalc when the team also needs notebook-native research, mathematical documents, shared Linux environments, teaching workflows, or agent-assisted work beyond an IDE.",
     key: "ide",
     title: "Replit and other IDE-first coding platforms",
   },
@@ -48,7 +48,7 @@ const COMPARISON_GROUPS = [
 const DECISION_ROWS = [
   {
     cocalc:
-      "The whole technical project: notebooks, terminals, files, documents, whiteboards, support, and AI work in one shared place.",
+      "The shared technical workspace: notebooks, terminals, files, documents, whiteboards, support, AI agents, history, and recovery in one project.",
     key: "unit",
     question: "What is the unit of work?",
     typical:
@@ -72,7 +72,7 @@ const DECISION_ROWS = [
   },
   {
     cocalc:
-      "The same user model can start hosted and later move to CoCalc Plus, CoCalc Star, Launchpad, Rocket, or custom deployment.",
+      "Teams can start on CoCalc.ai, use CoCalc Plus locally, run CoCalc Star on a public VM, or move to Launchpad, Rocket, and site licensing without changing the core workspace model.",
     key: "deployment",
     question: "Do deployment options matter?",
     typical:
@@ -80,7 +80,7 @@ const DECISION_ROWS = [
   },
   {
     cocalc:
-      "Agent workflows increasingly live inside the same collaborative project, especially with Codex integration, so the model can help with real files, notebooks, terminals, and chat context.",
+      "Agent workflows live inside the same collaborative project, so Codex can work with real files, notebooks, terminals, screenshots, and team chat context.",
     key: "agents",
     question: "How agent-native is the AI story?",
     typical:
@@ -105,19 +105,16 @@ export default function CompareFeaturePage({
     <Flex vertical gap={18}>
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          Compare CoCalc by workflow, not by one checkbox
+          Compare CoCalc by workspace model
         </Title>
         <Paragraph style={{ fontSize: 18, margin: 0 }}>
-          CoCalc is strongest when your team needs more than a notebook host,
-          more than an IDE, and more than a dashboard surface. It is built for
-          technical work that spills across notebooks, terminals, documents,
-          teaching, and collaboration.
+          CoCalc is strongest when engineering teams, research labs, and courses
+          need more than a notebook host, IDE, or dashboard surface.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          The most useful comparison is not feature-counting. It is asking
-          whether you want one integrated technical workspace, or a narrower
-          product that is excellent at one slice and expects the rest of the
-          workflow to live elsewhere.
+          The useful comparison is whether you want one integrated technical
+          workspace, or a narrower product that is excellent at one slice and
+          expects the rest of the workflow to live elsewhere.
         </Paragraph>
         <Flex wrap gap={12}>
           <Button type="primary" href={featureAppPath("auth/sign-up")}>
@@ -142,20 +139,19 @@ export default function CompareFeaturePage({
       />
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          AI agents now change the comparison
+          AI-native work changes the comparison
         </Title>
         <Paragraph style={{ margin: 0 }}>
           A lot of products now have some version of AI help. What matters is
-          whether that help is just a prompt box next to your work, or whether
-          it can participate in the real workspace where the files, notebooks,
-          shell commands, and conversations already live.
+          whether that help sits next to your work, or whether it can
+          participate inside the workspace where files, notebooks, shell
+          commands, screenshots, and conversations already live.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          CoCalc AI&apos;s current direction is increasingly agent-first,
-          especially around Codex. The goal is not only to answer questions, but
-          to help inspect code, patch files, reason about failures, and move
-          technical work forward inside the same collaborative environment as
-          the rest of the team.
+          CoCalc AI&apos;s direction is agent-first, especially around Codex.
+          The goal is not only to answer questions, but to help inspect code,
+          patch files, reason about failures, and move technical work forward
+          inside the same collaborative environment as the rest of the team.
         </Paragraph>
         <BulletList
           items={[
@@ -181,11 +177,11 @@ export default function CompareFeaturePage({
             </Title>
             <BulletList
               items={[
-                "One place for notebooks, Linux tools, files, technical documents, whiteboards, and collaboration.",
+                "One workspace for notebooks, Linux tools, files, technical documents, whiteboards, and collaboration.",
                 "Realtime editing that extends beyond notebook cells, backed by Patchflow.",
-                "Coding agents that work inside the shared workspace instead of only in a detached prompt box.",
-                "A product that works for classes, research groups, and engineering teams without assembling a stack.",
-                "Hosted and self-hosted deployment options that still feel like the same product.",
+                "AI agents that work inside shared projects instead of detached prompt boxes.",
+                "A fit for research labs, engineering teams, technical courses, and advanced support workflows.",
+                "A product ladder from CoCalc.ai to Plus, Star, Launchpad, Rocket, and site licensing.",
               ]}
             />
           </PublicSection>
@@ -268,9 +264,9 @@ export default function CompareFeaturePage({
         </Title>
         <BulletList
           items={[
-            "Technical courses where notebooks, grading, student support, and shared infrastructure all need to work together.",
-            "Research or engineering teams that want notebooks, terminals, and technical documents in the same collaborative environment.",
-            "Organizations that may start hosted and later want CoCalc Plus, CoCalc Star, Launchpad, Rocket, or a custom deployment without changing the user model.",
+            "Research labs and engineering teams that need notebooks, terminals, files, agents, and technical documents in one collaborative environment.",
+            "Technical courses and labs where grading, support, shared infrastructure, and student work need to live together.",
+            "Organizations that may start hosted and later need CoCalc Plus, CoCalc Star, Launchpad, Rocket, or site licensing without changing the user model.",
           ]}
         />
       </PublicSection>

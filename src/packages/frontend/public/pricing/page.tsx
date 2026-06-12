@@ -319,7 +319,7 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
           ),
       },
       {
-        label: "Launchpad license",
+        label: "Private deployment rights",
         value: ({ tier }) =>
           formatBooleanValue(
             tierFeatures(tier).launchpad_license === true || tier.id === "pro",
@@ -599,10 +599,10 @@ function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
   return (
     <PublicSection>
       <Title level={2} style={{ margin: 0 }}>
-        Compare Memberships
+        Compare hosted plans
       </Title>
       <div style={{ overflowX: "auto" }}>
-        <table aria-label="Membership comparison" style={tableStyle}>
+        <table aria-label="Hosted CoCalc.ai plan comparison" style={tableStyle}>
           <thead>
             <tr>
               <th style={headerCellStyle} />
@@ -686,50 +686,79 @@ export default function PricingPage({
 
   return (
     <>
-      {publicTiers.length > 0 ? (
-        <Flex vertical gap="large">
-          <PricingBillingSelector
-            billingInterval={billingInterval}
-            setBillingInterval={setBillingInterval}
-          />
-          {visibleTiers.length > 0 ? (
-            <>
-              <PublicGrid columns={4}>
-                {visibleTiers.map((tier) => (
-                  <PricingTierTile
-                    billingInterval={billingInterval}
-                    isAuthenticated={isAuthenticated}
-                    key={tier.id}
-                    tier={tier}
-                  />
-                ))}
-              </PublicGrid>
-              <PricingComparisonTable tiers={visibleTiers} />
-            </>
-          ) : (
-            <PublicSection>
-              <Alert
-                title={`No ${billingInterval === "month" ? "monthly" : "annual"} membership tiers are currently configured.`}
-                showIcon
-                type="info"
-              />
-            </PublicSection>
-          )}
-        </Flex>
-      ) : loaded ? (
+      <Flex vertical gap="large">
         <PublicSection>
-          <Alert
-            title="No public membership tiers are currently configured."
-            showIcon
-            type="info"
-          />
+          <Title level={2} style={{ margin: 0 }}>
+            CoCalc.ai self-service plans
+          </Title>
+          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+            Use these plans for managed hosted CoCalc.ai accounts, team seats,
+            and hosted project limits. If you need procurement, governance,
+            support, rollout, or deployment rights for a group, use site
+            licensing instead.
+          </Paragraph>
+          <Flex gap={12} wrap>
+            <Button href={appPath("products")}>Compare product paths</Button>
+            <Button
+              href={supportPurchasePath(
+                "Site license",
+                "I want to discuss a CoCalc site license.",
+              )}
+            >
+              Discuss site licensing
+            </Button>
+          </Flex>
         </PublicSection>
-      ) : null}
+        {publicTiers.length > 0 ? (
+          <>
+            <PricingBillingSelector
+              billingInterval={billingInterval}
+              setBillingInterval={setBillingInterval}
+            />
+            {visibleTiers.length > 0 ? (
+              <>
+                <PublicGrid columns={4}>
+                  {visibleTiers.map((tier) => (
+                    <PricingTierTile
+                      billingInterval={billingInterval}
+                      isAuthenticated={isAuthenticated}
+                      key={tier.id}
+                      tier={tier}
+                    />
+                  ))}
+                </PublicGrid>
+                <PricingComparisonTable tiers={visibleTiers} />
+              </>
+            ) : (
+              <PublicSection>
+                <Alert
+                  title={`No ${billingInterval === "month" ? "monthly" : "annual"} membership tiers are currently configured.`}
+                  showIcon
+                  type="info"
+                />
+              </PublicSection>
+            )}
+          </>
+        ) : loaded ? (
+          <PublicSection>
+            <Alert
+              title="No public hosted plans are currently configured."
+              showIcon
+              type="info"
+            />
+          </PublicSection>
+        ) : null}
+      </Flex>
 
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          For Teams and Organizations
+          Buying paths beyond hosted plans
         </Title>
+        <Paragraph style={{ margin: 0 }}>
+          These options do not replace the five product paths. They explain how
+          groups buy hosted access, dedicated hosted compute, private deployment
+          rights, and organizational support.
+        </Paragraph>
         <PublicGrid columns={2}>
           <PublicSection>
             <Space orientation="vertical" size="middle">
@@ -737,9 +766,9 @@ export default function PricingPage({
                 Team seats
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Buy membership seats for a group, then assign them to the people
-                who need access. One account manages payment while each person
-                works from their own CoCalc account.
+                Add hosted CoCalc.ai seats for a group, then assign them to
+                people who need managed access. Team seats stay inside the
+                self-service hosted plan model.
               </Paragraph>
               <Button href={appPath("settings/team-licenses")}>
                 Manage team seats
@@ -750,19 +779,20 @@ export default function PricingPage({
           <PublicSection>
             <Space orientation="vertical" size="middle">
               <Title level={3} style={{ margin: 0 }}>
-                Organization licenses
+                Site licensing
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Departments, universities, labs, companies, and research groups
-                can arrange access for many people under one license.
+                Use site licensing when an organization needs one agreement for
+                access, procurement, governance, support, rollout, or deployment
+                rights across CoCalc.ai, Star, Launchpad, or Rocket.
               </Paragraph>
               <Button
                 href={supportPurchasePath(
-                  "Organization license",
-                  "I want to discuss a CoCalc organization license.",
+                  "Site license",
+                  "I want to discuss a CoCalc site license.",
                 )}
               >
-                Contact sales
+                Discuss site licensing
               </Button>
             </Space>
           </PublicSection>
@@ -773,9 +803,9 @@ export default function PricingPage({
                 Dedicated project hosts
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Run projects on dedicated compute when shared resources are not
-                enough. Memberships determine which dedicated host options are
-                available to your account.
+                Use dedicated hosts when hosted CoCalc.ai projects need more
+                isolated or larger compute. This is hosted infrastructure, not a
+                private deployment path.
               </Paragraph>
               <Button href={appPath("hosts")}>Open project hosts</Button>
             </Space>
@@ -787,14 +817,14 @@ export default function PricingPage({
                 Quotes and customized invoices
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                For purchases above $100 or billing workflows that do not fit
-                self-service checkout, contact us for a quote or customized
-                invoice.
+                Request a quote when checkout is not enough: larger hosted
+                purchases, procurement workflows, site licensing, deployment
+                rights, or invoices above $100.
               </Paragraph>
               <Button
                 href={supportPurchasePath(
-                  "Quote or customized invoice",
-                  "I want to request a quote or customized invoice for CoCalc.",
+                  "Quote, site license, or customized invoice",
+                  "I want to request a quote, site license, or customized invoice for CoCalc.",
                 )}
               >
                 Request a quote

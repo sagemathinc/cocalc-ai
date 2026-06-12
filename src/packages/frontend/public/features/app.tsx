@@ -8,12 +8,12 @@ import { useEffect } from "react";
 import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import { getPublicMarketingConfig } from "@cocalc/frontend/public/config";
 import {
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
 import {
@@ -41,7 +41,9 @@ import WhiteboardFeaturePage from "./whiteboard-page";
 const { Paragraph, Text, Title } = Typography;
 
 interface FeaturesConfig {
+  cocalc_product?: string;
   help_email?: string;
+  is_launchpad?: boolean;
   is_authenticated?: boolean;
   logo_square?: string;
   site_name?: string;
@@ -156,11 +158,11 @@ function featureMeta(slug: string) {
   );
 }
 
-function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
+function titleForRoute(route: PublicFeaturesRoute): string {
   if (route.view === "detail" && route.slug) {
-    return `${getFeaturePage(route.slug)?.title ?? "Features"} – ${siteName}`;
+    return `${getFeaturePage(route.slug)?.title ?? "Features"} – CoCalc`;
   }
-  return `${siteName} Features`;
+  return "CoCalc Features";
 }
 
 function FeatureLinkCard({ page }: { page: FeaturePage }) {
@@ -357,7 +359,7 @@ function FeatureGroupSection({
   );
 }
 
-function FeaturesIndex({ siteName }: { siteName: string }) {
+function FeaturesIndex() {
   const priorities = new Map<string, number>(
     FEATURE_INDEX_PRIORITY.map((slug, index) => [slug, index]),
   );
@@ -399,9 +401,9 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
                   margin: 0,
                 }}
               >
-                {siteName} features make the most sense when viewed together:
+                CoCalc features make the most sense when viewed together:
                 documents, compute, AI agents, teaching, and platform operations
-                all share the same files, collaborators, history, and project
+                share the same files, collaborators, history, and project
                 environment.
               </Paragraph>
               <Flex wrap gap={12}>
@@ -780,8 +782,8 @@ export default function PublicFeaturesApp({
   config,
   initialRoute,
 }: PublicFeaturesAppProps) {
-  const siteName = config?.site_name ?? SITE_NAME;
-  const title = titleForRoute(initialRoute, siteName);
+  const marketingConfig = getPublicMarketingConfig(config);
+  const title = titleForRoute(initialRoute);
 
   useEffect(() => {
     document.title = title;
@@ -794,7 +796,7 @@ export default function PublicFeaturesApp({
   return (
     <PublicPage
       active="features"
-      config={config}
+      config={marketingConfig}
       title={
         initialRoute.view === "index"
           ? undefined
@@ -808,7 +810,7 @@ export default function PublicFeaturesApp({
           slug={initialRoute.slug}
         />
       ) : (
-        <FeaturesIndex siteName={siteName} />
+        <FeaturesIndex />
       )}
     </PublicPage>
   );

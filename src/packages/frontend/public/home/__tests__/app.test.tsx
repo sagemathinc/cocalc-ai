@@ -58,7 +58,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "Use the tools you already understand, together.",
+        name: "Start where the work begins.",
       }),
     ).not.toBeNull();
     await waitFor(() =>
@@ -68,22 +68,22 @@ describe("PublicHomeApp", () => {
     );
     expect(
       screen
-        .getByRole("link", { name: "Get CoCalc Plus" })
-        .getAttribute("href"),
-    ).toBe("/products/cocalc-plus");
-    expect(
-      screen
-        .getByRole("link", { name: "Download CoCalc Plus" })
-        .getAttribute("href"),
-    ).toBe("https://software.cocalc.ai/software/cocalc-plus/index.html");
+        .getAllByRole("link", { name: "Install CoCalc Plus" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "/products/cocalc-plus",
+      "https://software.cocalc.ai/software/cocalc-plus/index.html",
+    ]);
     expect(
       screen
         .getByRole("link", { name: "Install CoCalc Star" })
         .getAttribute("href"),
     ).toBe("/products/cocalc-star");
     expect(
-      screen.getByRole("link", { name: "CoCalc Star" }).getAttribute("href"),
-    ).toBe("/products/cocalc-star");
+      screen
+        .getByRole("link", { name: "Explore shared features" })
+        .getAttribute("href"),
+    ).toBe("/features");
     expect(screen.queryByText("Open page")).toBeNull();
     expect(
       screen
@@ -91,6 +91,33 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
     expect(screen.getByRole("link", { name: "All news" })).not.toBeNull();
+  });
+
+  it("uses CoCalc marketing branding for the default hosted Launchpad preview", async () => {
+    global.fetch = jest.fn(
+      () => new Promise<Response>(() => undefined),
+    ) as typeof fetch;
+    render(
+      <PublicHomeApp
+        config={{
+          cocalc_product: "launchpad",
+          is_launchpad: true,
+          site_name: "CoCalc Launchpad",
+        }}
+      />,
+    );
+
+    expect(document.title).toBe("CoCalc.ai");
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", {
+        name: "CoCalc home",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(screen.getByRole("banner")).queryByRole("link", {
+        name: "CoCalc Launchpad home",
+      }),
+    ).toBeNull();
   });
 
   it("shows direct app actions when authenticated", () => {

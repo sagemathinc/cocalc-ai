@@ -18,7 +18,7 @@ import {
   appPath,
   EmptySection,
   fetchJson,
-  getSiteName,
+  getPublicMarketingSiteName,
   LinkButton,
   LoadingSection,
   type PublicConfig,
@@ -282,7 +282,7 @@ export default function PublicNewsApp({
   config?: PublicConfig;
   initialRoute: PublicNewsRoute;
 }) {
-  const siteName = getSiteName(config);
+  const siteName = getPublicMarketingSiteName(config);
   const title = `${siteName} News`;
 
   useEffect(() => {

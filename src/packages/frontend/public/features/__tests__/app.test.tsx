@@ -45,6 +45,10 @@ describe("PublicFeaturesApp", () => {
         name: "Everything starts in a project.",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByText(/^CoCalc features make the most sense/),
+    ).not.toBeNull();
+    expect(screen.queryByText(/Launchpad features make/)).toBeNull();
     expect(screen.getByText("Durable collaborative projects")).not.toBeNull();
     expect(screen.getByText("Documents")).not.toBeNull();
     expect(screen.getByText("Compute")).not.toBeNull();
@@ -81,7 +85,7 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Codex Agent Chat",
+        name: "AI Agents in Project Chat",
         level: 1,
       }),
     ).not.toBeNull();
@@ -453,14 +457,14 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("Compare CoCalc by workflow, not by one checkbox"),
+      screen.getByText("Compare CoCalc by workspace model"),
     ).not.toBeNull();
     expect(screen.getByText("How CoCalc compares by category")).not.toBeNull();
     expect(
       screen.getByText("Google Colab and quick notebook hosts"),
     ).not.toBeNull();
     expect(
-      screen.getByText("AI agents now change the comparison"),
+      screen.getByText("AI-native work changes the comparison"),
     ).not.toBeNull();
   });
 });

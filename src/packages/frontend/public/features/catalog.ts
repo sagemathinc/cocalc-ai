@@ -29,15 +29,15 @@ export const FEATURE_PAGES: FeaturePage[] = [
     tagline:
       "Collaborative notebooks with shared kernels and full edit history.",
     summary:
-      "Run Jupyter notebooks directly in the browser with collaboration, synchronized output, time travel, and course workflows built in.",
+      "Run Jupyter notebooks inside a shared CoCalc project with collaboration, synchronized output, history, recovery, course workflows, terminals, files, and AI agent context nearby.",
     image: "/public/features/cocalc-jupyter2-20170508.png",
     index: true,
     sections: [
       {
         title: "Why it matters",
         paragraphs: [
-          "CoCalc notebooks stay compatible with the Jupyter ecosystem while adding the collaboration, teaching, and operational features that are awkward to bolt on later.",
-          "Kernel state, output, and widgets can be shared across collaborators, which makes notebooks practical for classes, pair work, and support sessions.",
+          "CoCalc notebooks stay compatible with the Jupyter ecosystem while adding collaboration, teaching, recovery, terminals, files, and AI agent context that are awkward to bolt on later.",
+          "Kernel state, output, and widgets can be shared across collaborators, which makes notebooks practical for classes, research groups, engineering teams, and support sessions.",
         ],
       },
       {
@@ -45,7 +45,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
         bullets: [
           "Real-time collaborative editing with visible cursors and shared kernel sessions",
           "Built-in TimeTravel and recovery tools for recovering earlier notebook states",
-          "Course workflows for distributing, collecting, and grading notebook assignments",
+          "Course and lab workflows for distributing, collecting, and grading notebook assignments",
           "Managed kernels with many languages and preinstalled scientific software",
         ],
       },
@@ -63,10 +63,10 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "ai",
     aliases: ["openai-chatgpt"],
-    title: "Codex Agent Chat",
-    tagline: "Use Codex in durable project chat threads.",
+    title: "AI Agents in Project Chat",
+    tagline: "Use Codex where the technical work already lives.",
     summary:
-      "Work with Codex inside collaborative chat threads that stay close to project files, notebooks, terminals, images, and review context.",
+      "Work with Codex inside collaborative project threads that stay close to files, notebooks, terminals, screenshots, patches, review notes, and live notebook state.",
     image: "/public/features/chatgpt-fix-code.png",
     docsUrl: "https://sagemathinc.github.io/cocalc-guides/codex-agent-chat/",
     index: true,
@@ -74,11 +74,11 @@ export const FEATURE_PAGES: FeaturePage[] = [
       {
         title: "Codex in project threads",
         paragraphs: [
-          "CoCalc-AI uses AI through Codex chat threads. Human @mentions notify collaborators; they do not invoke models.",
+          "CoCalc-AI uses Codex through project chat threads. Human @mentions notify collaborators; they do not invoke models.",
         ],
         bullets: [
           "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
-          "Keep prompts, images, patches, and review notes in one durable thread",
+          "Keep prompts, screenshots, patches, and review notes in one durable thread",
           "Let Codex work with files, terminals, and live notebook state",
           "Run other command-line agents in project terminals as normal Linux tools",
         ],
@@ -179,16 +179,16 @@ export const FEATURE_PAGES: FeaturePage[] = [
   },
   {
     slug: "teaching",
-    title: "Teaching a Course",
+    title: "Technical Courses and Labs",
     tagline:
-      "Run technical courses with shared infrastructure and grading tools.",
+      "Run technical courses and labs with shared infrastructure and grading tools.",
     summary:
-      "Organize assignments, distribute files, collect work, and grade notebooks or other project files with a workflow built for technical classes.",
+      "Organize assignments, distribute files, collect work, and grade notebooks or other project files with a workflow built for technical courses, labs, and training environments.",
     image: "/public/features/cocalc-course-assignments-2019.png",
     index: true,
     sections: [
       {
-        title: "Designed for technical classes",
+        title: "Designed for technical classes and labs",
         bullets: [
           "Course management for assignments and shared course resources",
           "Notebook grading workflows including nbgrader support",
@@ -219,9 +219,9 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "compare",
     title: "Compare CoCalc",
-    tagline: "A concise view of what CoCalc bundles into one environment.",
+    tagline: "A concise view of what CoCalc bundles into one workspace.",
     summary:
-      "CoCalc combines notebooks, terminals, documents, course tools, sharing, and collaborative editing in one web-based technical workspace.",
+      "CoCalc combines notebooks, terminals, documents, AI agents, course tools, sharing, recovery, and collaborative editing in one web-based technical workspace.",
     index: true,
   },
   {
