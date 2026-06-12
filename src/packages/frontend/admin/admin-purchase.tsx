@@ -415,6 +415,7 @@ export function AdminPurchaseAdmin() {
               { label: "Membership", value: "membership" },
               { label: "Credit voucher", value: "voucher" },
             ]}
+            style={{ maxWidth: "100%", width: 260 }}
             value={product}
             onChange={(value) => setProduct(value)}
           />
