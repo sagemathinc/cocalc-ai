@@ -39,9 +39,9 @@ export default async function sendWelcomeEmail(
 
 const WELCOMES = [
   "Welcome to CoCalc AI: Your Workspace for Humans and Agents",
-  "Start in CoCalc AI: Notebooks, Terminals, Files, and Codex Together",
+  "Start in CoCalc AI: Notebooks, Terminals, Files, and Agents Together",
   "Your CoCalc AI Account Is Ready for Durable Project Work",
-  "Welcome to CoCalc AI: Bring Codex Into Your Technical Projects",
+  "Welcome to CoCalc AI: Bring Agents Into Your Technical Projects",
   "CoCalc AI Is Ready: Collaborate with Files, Notebooks, and Agents",
   "Begin with CoCalc AI: A Project Workspace for Computational Workflows",
   "Welcome to CoCalc AI: Keep Code, Context, and Agent Threads Together",
