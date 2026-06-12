@@ -719,6 +719,7 @@ export async function provisionLocalClusterAccount(
   await createAccountLocal({
     email: opts.email_address,
     password: opts.password,
+    displayName: opts.display_name,
     firstName: opts.first_name,
     lastName: opts.last_name,
     account_id,
@@ -736,6 +737,7 @@ export async function provisionLocalClusterAccount(
     (await getClusterAccountByIdDirect(account_id)) ?? {
       account_id,
       email_address: opts.email_address,
+      display_name: opts.display_name,
       first_name: opts.first_name,
       last_name: opts.last_name,
       home_bay_id: currentBayId(),
@@ -759,6 +761,7 @@ async function createClusterAccountDirect(
   await reserveClusterAccountDirectoryEntry({
     account_id,
     email_address,
+    display_name: opts.display_name,
     first_name: opts.first_name,
     last_name: opts.last_name,
     home_bay_id,
@@ -785,6 +788,7 @@ async function createClusterAccountDirect(
     await markClusterAccountProvisioned({
       account_id,
       email_address,
+      display_name: entry.display_name ?? opts.display_name,
       first_name: entry.first_name ?? opts.first_name,
       last_name: entry.last_name ?? opts.last_name,
       home_bay_id: entry.home_bay_id ?? home_bay_id,

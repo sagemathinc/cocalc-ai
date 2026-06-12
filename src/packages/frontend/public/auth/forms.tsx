@@ -44,6 +44,7 @@ import {
 } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { legacyNamePartsFromDisplayName } from "@cocalc/util/accounts/display-name";
 
 const STACK_STYLE: CSSProperties = {
   display: "flex",
@@ -753,8 +754,7 @@ export function PublicSignUpForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
   const [signingUp, setSigningUp] = useState(false);
@@ -804,7 +804,7 @@ export function PublicSignUpForm({
     if (password !== confirmPassword) {
       return false;
     }
-    if (!firstName.trim() || !lastName.trim()) {
+    if (!displayName.trim()) {
       return false;
     }
     if (requiresToken && !registrationToken.trim()) {
@@ -818,10 +818,9 @@ export function PublicSignUpForm({
     acceptedTerms,
     confirmPassword,
     cookieConsentReady,
+    displayName,
     email,
     emailAllowedByDomainPolicy,
-    firstName,
-    lastName,
     password,
     policiesVisible,
     registrationToken,
@@ -843,6 +842,7 @@ export function PublicSignUpForm({
     setError("");
     setSigningUp(true);
     try {
+      const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
@@ -850,8 +850,9 @@ export function PublicSignUpForm({
           marketing_consent: marketingConsent,
           email,
           password,
-          firstName,
-          lastName,
+          displayName,
+          firstName: legacyNameParts.first_name,
+          lastName: legacyNameParts.last_name,
           registrationToken: registrationToken.trim(),
         },
       });
@@ -977,22 +978,13 @@ export function PublicSignUpForm({
         ) : null}
       </div>
       <div style={FIELD_STYLE}>
-        <div style={LABEL_STYLE}>First name</div>
+        <div style={LABEL_STYLE}>Name</div>
         <TextInput
-          name="given-name"
-          placeholder="First name"
-          value={firstName}
-          onChange={setFirstName}
-          onPressEnter={signUp}
-        />
-      </div>
-      <div style={FIELD_STYLE}>
-        <div style={LABEL_STYLE}>Last name</div>
-        <TextInput
-          name="family-name"
-          placeholder="Last name"
-          value={lastName}
-          onChange={setLastName}
+          autoComplete="name"
+          name="name"
+          placeholder="Your name"
+          value={displayName}
+          onChange={setDisplayName}
           onPressEnter={signUp}
         />
       </div>

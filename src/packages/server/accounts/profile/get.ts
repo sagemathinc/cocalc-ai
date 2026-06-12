@@ -3,6 +3,7 @@ Get the *PUBLIC* profile of a user.
 */
 
 import getPool from "@cocalc/database/pool";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { Profile } from "./types";
 
 export default async function getProfile(
@@ -12,7 +13,7 @@ export default async function getProfile(
   const pool = getPool(noCache ? undefined : "long");
   // Do not put anything private in this query!!!!
   const { rows } = await pool.query(
-    "SELECT first_name, last_name, profile FROM accounts WHERE account_id=$1",
+    "SELECT display_name, first_name, last_name, profile FROM accounts WHERE account_id=$1",
     [account_id],
   );
   if (rows.length == 0) {
@@ -20,6 +21,7 @@ export default async function getProfile(
   }
   return {
     account_id,
+    display_name: displayNameFromAccount(rows[0]) || "Anonymous User",
     first_name: rows[0].first_name ?? "Anonymous",
     last_name: rows[0].last_name ?? "User",
     image: rows[0].profile?.image,

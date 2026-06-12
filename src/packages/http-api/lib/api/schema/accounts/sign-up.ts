@@ -16,8 +16,12 @@ export const SignUpInputSchema = z
         "Email address of new user. TIP: If you want to pass in an email like jd+1@example.com, use '%2B' in place of '+'",
       ),
     password: z.string().describe("Initial password of new user."),
-    firstName: z.string().describe("First name"),
-    lastName: z.string().describe("Last name"),
+    displayName: z
+      .string()
+      .optional()
+      .describe("Name to display for this account."),
+    firstName: z.string().optional().describe("Legacy first name"),
+    lastName: z.string().optional().describe("Legacy last name"),
     terms: z
       .boolean()
       .describe("Must be set to 'true' to indicate acceptance of ToS."),

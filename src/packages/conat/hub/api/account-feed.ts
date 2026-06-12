@@ -14,6 +14,7 @@ export interface AccountFeedAccountRow {
   email_address_problem?: Record<string, any> | null;
   editor_settings?: Record<string, any> | null;
   other_settings?: Record<string, any> | null;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   terminal?: Record<string, any> | null;
@@ -61,6 +62,7 @@ export interface AccountFeedProjectRow {
 
 export interface AccountFeedCollaboratorRow {
   account_id: string;
+  display_name: string | null;
   first_name: string | null;
   last_name: string | null;
   name: string | null;

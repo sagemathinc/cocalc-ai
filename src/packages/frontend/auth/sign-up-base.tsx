@@ -19,6 +19,7 @@ import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
 import { appUrl } from "./util";
 import { COLORS } from "@cocalc/util/theme";
+import { legacyNamePartsFromDisplayName } from "@cocalc/util/accounts/display-name";
 
 const PolicyPrivacyPageUrl = joinUrlPath(appBasePath, "policies/privacy");
 const PolicyTOSPageUrl = joinUrlPath(appBasePath, "policies/terms");
@@ -48,8 +49,7 @@ export default function SignUpFormBase({
   );
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
-  const [firstName, setFirstName] = useState<string>("");
-  const [lastName, setLastName] = useState<string>("");
+  const [displayName, setDisplayName] = useState<string>("");
   const [acceptedTerms, setAcceptedTerms] = useState<boolean>(false);
   const [marketingConsent, setMarketingConsent] = useState<boolean>(false);
   const [signingUp, setSigningUp] = useState<boolean>(false);
@@ -96,7 +96,7 @@ export default function SignUpFormBase({
     if (password.length < MIN_PASSWORD_LENGTH) {
       return false;
     }
-    if (!firstName.trim() || !lastName.trim()) {
+    if (!displayName.trim()) {
       return false;
     }
     if (requiresToken && !registrationToken.trim()) {
@@ -111,8 +111,7 @@ export default function SignUpFormBase({
     email,
     emailAllowedByDomainPolicy,
     password,
-    firstName,
-    lastName,
+    displayName,
     requiresToken,
     registrationToken,
     signingUp,
@@ -126,6 +125,7 @@ export default function SignUpFormBase({
     setError("");
     setSigningUp(true);
     try {
+      const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
@@ -133,8 +133,9 @@ export default function SignUpFormBase({
           marketing_consent: marketingConsent,
           email,
           password,
-          firstName,
-          lastName,
+          displayName,
+          firstName: legacyNameParts.first_name,
+          lastName: legacyNameParts.last_name,
           registrationToken: registrationToken.trim(),
         },
       });
@@ -243,20 +244,12 @@ export default function SignUpFormBase({
         />
       </div>
       <div>
-        <div>First name</div>
+        <div>Name</div>
         <Input
-          value={firstName}
-          placeholder="First name"
-          onChange={(e) => setFirstName(e.target.value)}
-          onPressEnter={signUp}
-        />
-      </div>
-      <div>
-        <div>Last name</div>
-        <Input
-          value={lastName}
-          placeholder="Last name"
-          onChange={(e) => setLastName(e.target.value)}
+          autoComplete="name"
+          value={displayName}
+          placeholder="Your name"
+          onChange={(e) => setDisplayName(e.target.value)}
           onPressEnter={signUp}
         />
       </div>

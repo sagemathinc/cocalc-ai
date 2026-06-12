@@ -20,6 +20,7 @@ function toFeedRow(
 ): AccountFeedCollaboratorRow {
   return {
     account_id: row.collaborator_account_id,
+    display_name: row.display_name,
     first_name: row.first_name,
     last_name: row.last_name,
     name: row.name,

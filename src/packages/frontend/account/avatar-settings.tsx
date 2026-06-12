@@ -66,6 +66,7 @@ function AvatarPreview({
 
 export function AvatarSettings({ email_address }: Props) {
   const account_id: string = useTypedRedux("account", "account_id");
+  const displayName = useTypedRedux("account", "display_name");
   const firstName = useTypedRedux("account", "first_name");
   const profile = useTypedRedux("account", "profile");
   const profileColor = profile?.get("color") ?? DEFAULT_COLOR;
@@ -99,7 +100,7 @@ export function AvatarSettings({ email_address }: Props) {
         avatarPreview={
           <AvatarPreview
             color={previewColor}
-            firstName={firstName}
+            firstName={displayName || firstName}
             image={previewImage}
           />
         }

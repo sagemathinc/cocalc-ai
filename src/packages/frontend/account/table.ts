@@ -92,6 +92,7 @@ export class AccountTable extends Table {
           email_address_problem: null,
           editor_settings: null,
           other_settings: null,
+          display_name: null,
           first_name: null,
           last_name: null,
           terminal: null,
