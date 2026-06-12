@@ -569,6 +569,10 @@ export function replace_all_function(
   return w.join("");
 }
 
+export function legacyEscapedMathDelimitersToText(value: string): string {
+  return value.replace(/\\([()[\]])/g, "$1");
+}
+
 export function path_to_title(path: string): string {
   const subtitle = separate_file_extension(path_split(path).tail).name;
   return capitalize(replace_all(replace_all(subtitle, "-", " "), "_", " "));

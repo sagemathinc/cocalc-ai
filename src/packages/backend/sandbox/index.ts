@@ -140,6 +140,7 @@ interface OpenAt2SandboxRoot {
 // max time code can run (in safe mode), e.g., for find,
 // ripgrep, fd, and dust.
 const MAX_TIMEOUT = 5_000;
+const OUCH_MAX_TIMEOUT = 10 * 60_000;
 
 // Maximum amount of memory for the "last value on disk" data, which
 // supports a much better "sync with file state on disk" algorithm.
@@ -1791,7 +1792,7 @@ export class SandboxedFilesystem {
       [args[0]].concat(
         await Promise.all(args.slice(1).map(this.resolveSandboxPath)),
       ),
-      capTimeout(options, 6 * MAX_TIMEOUT),
+      capTimeout(options, OUCH_MAX_TIMEOUT),
     );
   };
 

@@ -113,10 +113,7 @@ import {
 } from "./run-batch-order";
 import { ensureProjectRunningForJupyter } from "./project-start";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
-import {
-  classifyProjectReadinessUxSegment,
-  ensure_project_running,
-} from "@cocalc/frontend/project/project-start-warning";
+import { classifyProjectReadinessUxSegment } from "@cocalc/frontend/project/project-start-warning";
 import {
   elapsedUxMs,
   recordUxLatencyEvent,
@@ -2857,9 +2854,8 @@ export class JupyterActions extends JupyterActions0 {
     try {
       this.runningNow = true;
       this.runDebug("runCells.start", { runId });
-      if (
-        !(await ensure_project_running(this.project_id, "run notebook cells"))
-      ) {
+      await this.waitUntilProjectIsRunning();
+      if (this.isClosed()) {
         return;
       }
       const cells: InputCell[] = [];

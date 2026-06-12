@@ -58,9 +58,14 @@ describe("CreateSnapshot", () => {
     createSnapshot.mockClear();
     getSnapshotQuota.mockClear();
     setState.mockClear();
+    createSnapshot.mockResolvedValue(undefined);
+    getSnapshotQuota.mockResolvedValue({
+      limit: 8,
+      manual: { limit: 6, current: 1, rolling_reserved: 2 },
+    });
   });
 
-  it("calls onCreated after a successful snapshot create", async () => {
+  it("closes and calls onCreated after a successful snapshot create", async () => {
     const onCreated = jest.fn();
     render(<CreateSnapshot onCreated={onCreated} />);
 
@@ -94,5 +99,67 @@ describe("CreateSnapshot", () => {
       }),
     );
     await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        screen.queryByPlaceholderText("Name of snapshot to create..."),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("prevents duplicate submits while creating a snapshot", async () => {
+    let resolveCreate: (() => void) | undefined;
+    createSnapshot.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    render(<CreateSnapshot />);
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Create Snapshot/i })[0],
+    );
+
+    const input = await screen.findByPlaceholderText(
+      "Name of snapshot to create...",
+    );
+    fireEvent.change(input, { target: { value: "snapshot-1" } });
+    const createButton = screen
+      .getAllByRole("button", { name: /Create Snapshot/i })
+      .slice(-1)[0];
+    fireEvent.click(createButton);
+    fireEvent.click(createButton);
+
+    expect(createSnapshot).toHaveBeenCalledTimes(1);
+    expect(createButton).toBeDisabled();
+
+    resolveCreate?.();
+    await waitFor(() =>
+      expect(
+        screen.queryByPlaceholderText("Name of snapshot to create..."),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps the modal open and shows the error when snapshot creation fails", async () => {
+    createSnapshot.mockRejectedValue(new Error("snapshot limit reached"));
+    render(<CreateSnapshot />);
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Create Snapshot/i })[0],
+    );
+
+    const input = await screen.findByPlaceholderText(
+      "Name of snapshot to create...",
+    );
+    fireEvent.change(input, { target: { value: "snapshot-1" } });
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Create Snapshot/i }).slice(-1)[0],
+    );
+
+    expect(await screen.findByText(/snapshot limit reached/)).toBeVisible();
+    expect(
+      screen.getByPlaceholderText("Name of snapshot to create..."),
+    ).toBeInTheDocument();
   });
 });

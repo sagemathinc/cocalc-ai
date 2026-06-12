@@ -114,6 +114,9 @@ describe("users table loading recovery", () => {
     mockCurrentTable = undefined;
     mockRedux.createTable.mockClear();
     mockRedux.removeTable.mockClear();
+    mockAccountStore.get.mockImplementation((key: string) =>
+      key === "account_id" ? "account-1" : undefined,
+    );
 
     recreate_users_table();
 

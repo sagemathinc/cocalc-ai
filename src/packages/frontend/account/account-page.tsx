@@ -59,6 +59,7 @@ type MenuKey =
 type SettingsNavigation = {
   contentComponents: Partial<Record<SettingsPageType, React.ComponentType>>;
   menuItems: any[];
+  mobileGroupLabels: Record<string, string>;
   titles: Partial<Record<SettingsPageType, string>>;
 };
 
@@ -129,6 +130,7 @@ export const AccountPage: React.FC = () => {
 
   function getNavigation(): SettingsNavigation {
     const menuItems: any[] = [];
+    const mobileGroupLabels: Record<string, string> = {};
     const contentComponents: Partial<
       Record<SettingsPageType, React.ComponentType>
     > = {};
@@ -153,19 +155,27 @@ export const AccountPage: React.FC = () => {
         .map(({ page }) => addPage(page))
         .filter((item): item is any => item != null);
       if (childItems.length === 0) continue;
+      mobileGroupLabels[node.key] = intl.formatMessage(node.label);
       menuItems.push({
         key: node.key,
-        mobilePrefix: intl.formatMessage(node.label),
         label: renderLabel(node),
         children: childItems,
       });
     }
 
-    return { contentComponents, menuItems, titles };
+    return { contentComponents, menuItems, mobileGroupLabels, titles };
   }
 
-  const { contentComponents, menuItems: tabs, titles } = getNavigation();
-  const mobileNavigationOptions = getMobileNavigationOptions(tabs);
+  const {
+    contentComponents,
+    menuItems: tabs,
+    mobileGroupLabels,
+    titles,
+  } = getNavigation();
+  const mobileNavigationOptions = getMobileNavigationOptions(
+    tabs,
+    mobileGroupLabels,
+  );
   const menuOpenKeys = manualOpenKeys ?? activeGroupOpenKeys;
 
   function renderTitle() {
@@ -352,11 +362,14 @@ export const AccountPage: React.FC = () => {
   );
 };
 
-function getMobileNavigationOptions(tabs: any[]) {
+function getMobileNavigationOptions(
+  tabs: any[],
+  mobileGroupLabels: Record<string, string>,
+) {
   const options: { label: React.ReactNode; value: string }[] = [];
   for (const tab of tabs) {
     if (Array.isArray(tab.children)) {
-      const prefix = tab.mobilePrefix;
+      const prefix = mobileGroupLabels[tab.key];
       for (const subTab of tab.children) {
         options.push({
           value: subTab.key,

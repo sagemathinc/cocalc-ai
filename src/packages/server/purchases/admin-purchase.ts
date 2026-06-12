@@ -14,13 +14,14 @@ import {
 } from "@cocalc/server/membership/tiers";
 import createCredit from "@cocalc/server/purchases/create-credit";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
+import getBalance from "@cocalc/server/purchases/get-balance";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import { moneyRound2Up, moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import { MAX_VOUCHERS, MAX_VOUCHER_VALUE } from "@cocalc/util/vouchers";
 
-type Product = "membership" | "voucher";
+type Product = "balance" | "membership" | "voucher";
 type Source = "credit" | "free";
 
 export interface AdminPurchaseOptions {
@@ -36,6 +37,8 @@ export interface AdminPurchaseOptions {
   voucher_amount?: number;
   voucher_count?: number;
   voucher_title?: string;
+  balance_user_note?: string;
+  balance_admin_note?: string;
 }
 
 export interface AdminPurchaseResult {
@@ -44,6 +47,7 @@ export interface AdminPurchaseResult {
   expires_at?: Date | null;
   voucher_codes?: string[];
   voucher_id?: number;
+  adjustment_amount?: number;
 }
 
 function buildNotes({
@@ -55,12 +59,14 @@ function buildNotes({
   admin_account_id: string;
   comment?: string;
   pricing_note?: string;
-  source: Source;
+  source?: Source;
 }): string {
   const lines = [
     `Admin-assisted purchase created by account \`${admin_account_id}\`.`,
-    `Source of funds: **${source}**.`,
   ];
+  if (source != null) {
+    lines.push(`Source of funds: **${source}**.`);
+  }
   if (pricing_note?.trim()) {
     lines.push(`Pricing note: ${pricing_note.trim()}`);
   }
@@ -166,6 +172,8 @@ export default async function adminPurchase({
   voucher_amount,
   voucher_count,
   voucher_title,
+  balance_user_note,
+  balance_admin_note,
 }: AdminPurchaseOptions): Promise<AdminPurchaseResult> {
   if (!(await userIsInGroup(admin_account_id, "admin"))) {
     throw Error("must be an admin");
@@ -175,10 +183,16 @@ export default async function adminPurchase({
   }
 
   const priceValue = moneyRound2Up(toDecimal(price ?? 0));
-  if (!Number.isFinite(priceValue.toNumber()) || priceValue.lt(0)) {
+  if (!Number.isFinite(priceValue.toNumber())) {
+    throw Error("price must be a finite number");
+  }
+  if (product !== "balance" && priceValue.lt(0)) {
     throw Error("price must be a finite nonnegative number");
   }
-  if (priceValue.gt(MAX_COST)) {
+  if (product === "balance" && priceValue.eq(0)) {
+    throw Error("balance adjustment amount must be nonzero");
+  }
+  if (priceValue.abs().gt(MAX_COST)) {
     throw Error(
       `price exceeds the maximum allowed cost of ${moneyToCurrency(MAX_COST)}`,
     );
@@ -193,6 +207,58 @@ export default async function adminPurchase({
 
   const client = await getTransactionClient();
   try {
+    if (product === "balance") {
+      const adjustmentAmount = priceValue;
+      const absoluteAmount = adjustmentAmount.abs();
+      const userNote =
+        balance_user_note?.trim() ||
+        (adjustmentAmount.gt(0)
+          ? "Admin balance credit"
+          : "Admin balance debit");
+      const adjustmentNotes = buildNotes({
+        admin_account_id,
+        comment: balance_admin_note?.trim() || comment,
+        pricing_note: `Balance adjustment: ${moneyToCurrency(
+          adjustmentAmount.toNumber(),
+        )}`,
+      });
+      let purchase_id: number;
+      if (adjustmentAmount.gt(0)) {
+        purchase_id = await createCredit({
+          account_id: user_account_id,
+          amount: absoluteAmount.toNumber(),
+          client,
+          description: {
+            description: userNote,
+            purpose: "admin-balance-adjustment",
+          },
+          notes: adjustmentNotes,
+          tag: "admin-purchase",
+        });
+      } else {
+        purchase_id = await createPurchase({
+          account_id: user_account_id,
+          client,
+          cost: absoluteAmount.toNumber(),
+          description: {
+            type: "credit",
+            description: userNote,
+            purpose: "admin-balance-adjustment",
+          },
+          notes: adjustmentNotes,
+          service: "credit",
+          tag: "admin-purchase",
+        });
+        await getBalance({ account_id: user_account_id, client });
+      }
+      await client.query("COMMIT");
+      return {
+        adjustment_amount: adjustmentAmount.toNumber(),
+        credit_id: adjustmentAmount.gt(0) ? purchase_id : undefined,
+        purchase_id,
+      };
+    }
+
     let credit_id: number | undefined;
     if (source === "free") {
       credit_id = await maybeCreateFundingCredit({

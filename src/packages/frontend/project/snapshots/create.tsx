@@ -18,10 +18,11 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 export default function CreateSnapshot({
   onCreated,
 }: {
-  onCreated?: () => void;
+  onCreated?: () => void | Promise<void>;
 }) {
   const { actions, project_id } = useProjectContext();
   const [loading, setLoading] = useState<boolean>(false);
+  const [creating, setCreating] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
   const [name, setName] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -88,8 +89,11 @@ export default function CreateSnapshot({
   }
 
   async function createSnapshot() {
+    if (creating) {
+      return;
+    }
     try {
-      setLoading(true);
+      setCreating(true);
       setError("");
       if (!name.trim()) {
         throw Error("name must be nonempty");
@@ -98,13 +102,13 @@ export default function CreateSnapshot({
         project_id,
         name,
       });
-      onCreated?.();
       setName("");
       setOpen(false);
+      await onCreated?.();
     } catch (err) {
-      setError(err);
+      setError(`${err}`);
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   }
 
@@ -136,12 +140,13 @@ export default function CreateSnapshot({
               {loading && (
                 <Spin style={{ float: "right", marginRight: "15px" }} />
               )}
+              {creating && (
+                <Spin style={{ float: "right", marginRight: "15px" }} />
+              )}
             </>
           }
           open={open}
-          onOk={() => {
-            setOpen(false);
-          }}
+          onOk={createSnapshot}
           onCancel={() => {
             setOpen(false);
           }}
@@ -152,6 +157,7 @@ export default function CreateSnapshot({
                 setOpen(false);
                 setName("");
               }}
+              disabled={creating}
             >
               Cancel
             </Button>,
@@ -160,11 +166,13 @@ export default function CreateSnapshot({
               type="primary"
               onClick={createSnapshot}
               disabled={
+                creating ||
                 !name.trim() ||
                 (manualLimit != null &&
                   manualCurrent != null &&
                   manualCurrent >= manualLimit)
               }
+              loading={creating}
             >
               Create Snapshot
             </Button>,
@@ -205,7 +213,7 @@ export default function CreateSnapshot({
             onChange={(e) => setName(e.target.value)}
             placeholder="Name of snapshot to create..."
             onPressEnter={() => {
-              if (name.trim()) {
+              if (name.trim() && !creating) {
                 createSnapshot();
               }
             }}

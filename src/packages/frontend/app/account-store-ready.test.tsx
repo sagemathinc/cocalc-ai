@@ -35,6 +35,7 @@ jest.mock("@cocalc/frontend/app-framework", () => {
       },
     },
     useEffect: React.useEffect,
+    useRef: React.useRef,
     useState: React.useState,
     useTypedRedux: (_store: string, field: string) => {
       if (field === "account_id") return currentAccountId;
@@ -59,37 +60,43 @@ describe("useAccountStoreReady", () => {
     subscribers.clear();
   });
 
-  it("resets readiness when the account changes and waits for the new store to be ready", () => {
+  it("resets readiness when the account changes and waits for the new store to be ready", async () => {
     const view = render(<Probe />);
     expect(screen.getByText("waiting")).toBeTruthy();
 
     currentReady = true;
-    act(() => {
+    await act(async () => {
       store.emit("is_ready");
+      await Promise.resolve();
     });
     expect(screen.getByText("ready")).toBeTruthy();
 
     currentAccountId = "account-2";
     currentReady = false;
     view.rerender(<Probe />);
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(screen.getByText("waiting")).toBeTruthy();
 
     currentReady = true;
-    act(() => {
+    await act(async () => {
       store.emit("is_ready");
+      await Promise.resolve();
     });
     expect(screen.getByText("ready")).toBeTruthy();
   });
 
-  it("becomes ready when the account store appears after mount", () => {
+  it("becomes ready when the account store appears after mount", async () => {
     storeExists = false;
     render(<Probe />);
     expect(screen.getByText("waiting")).toBeTruthy();
 
     storeExists = true;
     currentReady = true;
-    act(() => {
+    await act(async () => {
       for (const cb of subscribers) cb();
+      await Promise.resolve();
     });
 
     expect(screen.getByText("ready")).toBeTruthy();

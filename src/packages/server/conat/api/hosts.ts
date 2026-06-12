@@ -184,7 +184,10 @@ import {
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
-import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
+import {
+  assertClusterAccountTrustedForProductAccess,
+  getClusterAccountByEmail,
+} from "@cocalc/server/inter-bay/accounts";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -4735,6 +4738,10 @@ export async function createHost({
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
+  await assertClusterAccountTrustedForProductAccess({
+    account_id: owner,
+    action: "create project hosts",
+  });
   const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
   await assertUserHostCreateAllowed({ account_id: owner });
   if (normalizeProviderId(machine?.cloud) === "self-host") {

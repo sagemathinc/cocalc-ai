@@ -829,6 +829,9 @@ export function ClaimableMembershipPackagesPanel({
   const [requestingPackageId, setRequestingPackageId] = useState<string>("");
   const [releasingPackageId, setReleasingPackageId] = useState<string>("");
   const [cancelingRequestId, setCancelingRequestId] = useState<string>("");
+  const [sendingVerification, setSendingVerification] =
+    useState<boolean>(false);
+  const [verificationSent, setVerificationSent] = useState<boolean>(false);
   const [replacementClaimTarget, setReplacementClaimTarget] = useState<{
     claimablePackage: ClaimableMembershipPackage;
     accepted_terms: boolean;
@@ -865,6 +868,20 @@ export function ClaimableMembershipPackagesPanel({
   useEffect(() => {
     void refreshClaimables();
   }, [account_id]);
+
+  async function resendVerificationEmail(): Promise<void> {
+    setError("");
+    setSendingVerification(true);
+    try {
+      await webapp_client.account_client.send_verification_email();
+      setVerificationSent(true);
+    } catch (err) {
+      setVerificationSent(false);
+      setError(`Problem sending email verification: ${err}`);
+    } finally {
+      setSendingVerification(false);
+    }
+  }
 
   async function claimPackage(
     claimablePackage: ClaimableMembershipPackage,
@@ -1009,6 +1026,52 @@ export function ClaimableMembershipPackagesPanel({
       (claimablePackage) =>
         getClaimableSeatStatus(claimablePackage) === "claimable",
     );
+  const showVerifyEmailClaimCallout =
+    !loading && !emailVerified && claimables.length === 0;
+
+  function renderVerifyEmailClaimCallout({ compact }: { compact: boolean }) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title="Verify your email to claim site-license memberships"
+        description={
+          <Space orientation="vertical" size="small">
+            <span>
+              Verify your signed-in email address{" "}
+              <Text code>{email_address}</Text> to claim reserved seats or
+              matching site-license memberships.
+            </span>
+            {verificationSent ? (
+              <Text type="success">
+                Verification email sent to {email_address}.
+              </Text>
+            ) : null}
+            <Space wrap>
+              <Button
+                type="primary"
+                size="small"
+                loading={sendingVerification}
+                disabled={verificationSent}
+                onClick={() => void resendVerificationEmail()}
+              >
+                {verificationSent ? "Verification sent" : "Resend verification"}
+              </Button>
+              {compact ? (
+                <Button
+                  size="small"
+                  onClick={() => openAccountSettings({ page: "profile" })}
+                >
+                  Open Profile
+                </Button>
+              ) : null}
+            </Space>
+          </Space>
+        }
+        style={{ marginTop: compact ? 12 : undefined, marginBottom: 12 }}
+      />
+    );
+  }
 
   function renderClaimablePackages() {
     return (
@@ -1212,6 +1275,9 @@ export function ClaimableMembershipPackagesPanel({
           </span>
         </Tooltip>
         {error ? <Alert type="error" message={error} showIcon /> : null}
+        {showVerifyEmailClaimCallout
+          ? renderVerifyEmailClaimCallout({ compact: true })
+          : null}
         <Modal
           open={compactModalOpen}
           title="Claim site license membership"
@@ -1240,34 +1306,22 @@ export function ClaimableMembershipPackagesPanel({
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
       ) : null}
       {!loading && !error && claimables.length === 0 ? (
-        <Alert
-          type="info"
-          showIcon
-          title="No claimable memberships right now"
-          description={
-            emailVerified ? (
+        emailVerified ? (
+          <Alert
+            type="info"
+            showIcon
+            title="No claimable memberships right now"
+            description={
               <span>
                 Your signed-in email address <Text code>{email_address}</Text>{" "}
                 is verified, but no reserved seats or matching site-license
                 pools are available for it right now.
               </span>
-            ) : (
-              <Space orientation="vertical" size="small">
-                <span>
-                  Verify your signed-in email address{" "}
-                  <Text code>{email_address}</Text> to claim reserved seats or
-                  matching site-license memberships.
-                </span>
-                <Button
-                  size="small"
-                  onClick={() => openAccountSettings({ page: "profile" })}
-                >
-                  Open Profile email verification
-                </Button>
-              </Space>
-            )
-          }
-        />
+            }
+          />
+        ) : (
+          renderVerifyEmailClaimCallout({ compact: false })
+        )
       ) : null}
       {!loading && claimables.length > 0 ? renderClaimablePackages() : null}
       {termsModal}
