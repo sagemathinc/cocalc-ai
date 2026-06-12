@@ -342,7 +342,7 @@ export async function applyMembershipChange(opts: {
   interval: "month" | "year";
   allow_downgrade?: boolean;
 }): Promise<
-  MembershipChangeQuote & { subscription_id: number; purchase_id: number }
+  MembershipChangeQuote & { subscription_id: number; purchase_id?: number }
 > {
   return await api("purchases/membership-change", opts);
 }

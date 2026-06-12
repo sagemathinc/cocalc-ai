@@ -279,4 +279,80 @@ describe("createPaymentIntent", () => {
       expand: ["payments.data.payment.payment_intent"],
     });
   });
+
+  it("awaits processing when the payment intent is immediately paid", async () => {
+    let processed = false;
+    stripe.invoices.finalizeInvoice.mockResolvedValue({
+      id: "in_123",
+      hosted_invoice_url: "https://stripe.example/invoice",
+      payments: {
+        data: [
+          {
+            is_default: true,
+            payment: {
+              type: "payment_intent",
+              payment_intent: "pi_123",
+            },
+          },
+        ],
+      },
+    });
+    stripe.paymentIntents.retrieve.mockResolvedValue({
+      id: "pi_123",
+      status: "succeeded",
+    });
+    mockIsReadyToProcess.mockReturnValue(true);
+    mockProcessPaymentIntent.mockImplementation(async () => {
+      await Promise.resolve();
+      processed = true;
+    });
+
+    await createPaymentIntent({
+      account_id: "acct-1",
+      purpose: "membership-change",
+      description: "Basic membership, annual",
+      lineItems,
+    });
+
+    expect(mockProcessPaymentIntent).toHaveBeenCalledWith({
+      id: "pi_123",
+      status: "succeeded",
+    });
+    expect(processed).toBe(true);
+  });
+
+  it("surfaces processing failures instead of reporting checkout success", async () => {
+    stripe.invoices.finalizeInvoice.mockResolvedValue({
+      id: "in_123",
+      hosted_invoice_url: "https://stripe.example/invoice",
+      payments: {
+        data: [
+          {
+            is_default: true,
+            payment: {
+              type: "payment_intent",
+              payment_intent: "pi_123",
+            },
+          },
+        ],
+      },
+    });
+    stripe.paymentIntents.retrieve.mockResolvedValue({
+      id: "pi_123",
+      status: "succeeded",
+    });
+    mockIsReadyToProcess.mockReturnValue(true);
+    mockProcessPaymentIntent.mockRejectedValue(
+      new Error("membership update failed"),
+    );
+
+    await expect(
+      createPaymentIntent({
+        account_id: "acct-1",
+        purpose: "membership-change",
+        description: "Basic membership, annual",
+        lineItems,
+      }),
+    ).rejects.toThrow("membership update failed");
+  });
 });

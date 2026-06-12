@@ -30,6 +30,9 @@ describe("settings-routing", () => {
     expect(parseAccountSettingsRoute("settings/subscriptions")).toEqual({
       page: "subscriptions",
     });
+    expect(parseAccountSettingsRoute("settings/balance")).toEqual({
+      page: "balance",
+    });
     expect(parseAccountSettingsRoute("settings/editor")).toEqual({
       page: "editor",
     });
@@ -48,6 +51,7 @@ describe("settings-routing", () => {
     expect(getSettingsTargetPath({ page: "subscriptions" })).toBe(
       "settings/subscriptions",
     );
+    expect(getSettingsTargetPath({ page: "balance" })).toBe("settings/balance");
     expect(getSettingsTargetPath({ page: "membership" })).toBe(
       "settings/membership",
     );

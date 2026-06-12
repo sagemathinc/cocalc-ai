@@ -239,7 +239,7 @@ ${await support()}
   // periodic polling of Stripe, or maybe a webhook.
   const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
   if (isReadyToProcess(paymentIntent)) {
-    processPaymentIntent(paymentIntent);
+    await processPaymentIntent(paymentIntent);
   }
   return invoiceWithPaymentIntent(invoice, paymentIntentId) as any;
 }

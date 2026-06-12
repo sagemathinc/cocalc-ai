@@ -51,7 +51,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const { Text } = Typography;
-const MEMBERSHIP_FINALIZATION_TIMEOUT_MS = 12_000;
+const MEMBERSHIP_FINALIZATION_TIMEOUT_MS = 30_000;
 const MEMBERSHIP_FINALIZATION_POLL_MS = 1_000;
 
 interface MembershipTier extends MembershipPricingTier {
@@ -462,19 +462,22 @@ function MembershipPurchaseModalInner({
   const finalizePaidChange = async () => {
     setActionLoading(true);
     setQuoteError("");
+    setPlace("processing");
     try {
-      const { count } = await processPaymentIntents();
+      await processPaymentIntents();
       await load({ showLoading: false });
       onChanged?.();
-      if (count > 0 || (await waitForSelectedPersonalMembership())) {
+      if (await waitForSelectedPersonalMembership()) {
         setPlace("done");
         return;
       }
-      setPlace("processing");
-    } catch {
+      setQuoteError(
+        "Payment was submitted, but CoCalc could not confirm the membership update. Please check again shortly or contact support if the membership does not update.",
+      );
+    } catch (err) {
       await load({ showLoading: false });
       onChanged?.();
-      setPlace("processing");
+      setQuoteError(`${err}`);
     } finally {
       setActionLoading(false);
     }
@@ -624,13 +627,29 @@ function MembershipPurchaseModalInner({
   }
 
   function renderProcessingStep() {
+    if (quoteError) {
+      return (
+        <Space align="center" vertical size="middle" style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="error"
+            message="Membership update not confirmed"
+            description={quoteError}
+          />
+          <Button type="primary" onClick={onClose}>
+            Close
+          </Button>
+        </Space>
+      );
+    }
     return (
       <Space align="center" vertical size="middle" style={{ width: "100%" }}>
         <Alert
           type="info"
-          title="Payment received. We are finalizing your membership change."
-          description="Your membership should update shortly. You can close this window."
+          message="Finalizing membership change"
+          description="Payment was submitted. CoCalc is updating your membership and confirming the new state."
         />
+        <Spin />
         <Button type="primary" onClick={onClose}>
           Close
         </Button>
@@ -643,7 +662,9 @@ function MembershipPurchaseModalInner({
     return (
       <Space vertical size="middle" style={{ width: "100%" }}>
         {quoteLoading && <Spin />}
-        {quoteError && <Alert type="error" title={quoteError} />}
+        {quoteError && place !== "processing" && (
+          <Alert type="error" title={quoteError} />
+        )}
         {quote &&
           quote.allowed === false &&
           quote.reason &&

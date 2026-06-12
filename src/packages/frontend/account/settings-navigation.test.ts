@@ -105,6 +105,7 @@ describe("settings-navigation", () => {
       overview.sections.find((section) => section.key === "billing")?.pages,
     ).toEqual([
       "subscriptions",
+      "balance",
       "purchases",
       "payments",
       "payment-methods",
@@ -139,6 +140,7 @@ describe("settings-navigation", () => {
     expect(billing?.type).toBe("group");
     if (billing?.type === "group") {
       expect(billing.pages.map(({ page }) => page)).toEqual([
+        "balance",
         "purchases",
         "statements",
       ]);
@@ -157,6 +159,7 @@ describe("settings-navigation", () => {
     if (billing?.type === "group") {
       expect(billing.pages.map(({ page }) => page)).toEqual([
         "subscriptions",
+        "balance",
         "purchases",
         "payments",
         "payment-methods",

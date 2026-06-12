@@ -35,7 +35,7 @@ export async function applyMembershipChange({
   paymentAmount,
   client,
 }: MembershipChangeOptions): Promise<
-  MembershipChangeResult & { subscription_id: number; purchase_id: number }
+  MembershipChangeResult & { subscription_id: number; purchase_id?: number }
 > {
   const transaction = client ?? (await getTransactionClient());
   const useTransaction = client == null;
@@ -113,7 +113,6 @@ export async function applyMembershipChange({
         interval,
         current_period_start: start,
         current_period_end: end,
-        latest_purchase_id: 0,
         status: "active",
         metadata: {
           type: "membership",
@@ -131,28 +130,31 @@ export async function applyMembershipChange({
       transaction,
     );
 
-    const purchase_id = await createPurchase({
-      account_id,
-      cost: chargeValue,
-      unrounded_cost: chargeValue,
-      service: "membership",
-      description: {
-        type: "membership",
-        subscription_id,
-        class: targetClass,
-        interval,
-        ...(isTrial ? { trial_days: trialDays } : {}),
-      },
-      tag: "membership-change",
-      period_start: start,
-      period_end: end,
-      client: transaction,
-    });
+    let purchase_id: number | undefined = undefined;
+    if (chargeValue.gt(0)) {
+      purchase_id = await createPurchase({
+        account_id,
+        cost: chargeValue,
+        unrounded_cost: chargeValue,
+        service: "membership",
+        description: {
+          type: "membership",
+          subscription_id,
+          class: targetClass,
+          interval,
+          ...(isTrial ? { trial_days: trialDays } : {}),
+        },
+        tag: "membership-change",
+        period_start: start,
+        period_end: end,
+        client: transaction,
+      });
 
-    await transaction.query(
-      "UPDATE subscriptions SET latest_purchase_id=$1 WHERE id=$2",
-      [purchase_id, subscription_id],
-    );
+      await transaction.query(
+        "UPDATE subscriptions SET latest_purchase_id=$1 WHERE id=$2",
+        [purchase_id, subscription_id],
+      );
+    }
 
     if (isTrial) {
       await claimMembershipTrial({
