@@ -8,9 +8,6 @@ import { COLORS } from "@cocalc/util/theme";
 export const PUBLIC_DISPLAY_FONT_FAMILY =
   '"Space Grotesk", "Helvetica Neue", Arial, sans-serif';
 
-// Warm paper tone from the public-site mock; no matching global COLORS token.
-const PUBLIC_PAPER_BACKGROUND = "#fbf8f3";
-
 export const PUBLIC_COLORS = {
   accent: COLORS.YELL_L,
   accentActive: COLORS.YELL_D,
@@ -27,7 +24,13 @@ export const PUBLIC_COLORS = {
   link: COLORS.BLUE_D,
   linkHover: COLORS.BLUE_DD,
   mutedText: COLORS.GRAY_M,
-  pageBackground: PUBLIC_PAPER_BACKGROUND,
-  paperBackground: PUBLIC_PAPER_BACKGROUND,
+  pageBackground: COLORS.GRAY_LLL,
+  paperBackground: COLORS.GRAY_LLL,
+  success: COLORS.RUN,
+  surface: COLORS.TOP_BAR.ACTIVE,
+  surfaceMuted: COLORS.BLUE_LLLL,
   text: COLORS.GRAY_D,
+  warning: COLORS.YELL_D,
+  warningBorder: COLORS.YELL_LL,
+  warningTint: COLORS.YELL_LLL,
 } as const;

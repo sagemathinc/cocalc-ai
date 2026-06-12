@@ -21,6 +21,7 @@ import {
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { COLORS } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
 import type { NewsItem } from "@cocalc/util/types/news";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -42,6 +43,21 @@ interface HomeConfig {
 }
 
 const PRIMARY_WORKFLOWS = ["jupyter-notebook", "terminal", "ai"] as const;
+const HERO_IMAGE_URL = "/public/landing/home-hero.jpg";
+const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
+const PANEL_RADIUS = 8;
+
+function alpha(hexColor: string, opacity: number): string {
+  if (hexColor === COLORS.TOP_BAR.ACTIVE) {
+    return `rgba(255, 255, 255, ${opacity})`;
+  }
+  const hex = hexColor.replace("#", "");
+  if (hex.length !== 6) return hexColor;
+  const red = parseInt(hex.slice(0, 2), 16);
+  const green = parseInt(hex.slice(2, 4), 16);
+  const blue = parseInt(hex.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
+}
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -102,38 +118,14 @@ function GlassPanel({ children }: { children: ReactNode }) {
   return (
     <div
       style={{
-        background: "rgba(255, 255, 255, 0.72)",
+        background: alpha(PUBLIC_COLORS.surface, 0.88),
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 24,
-        boxShadow: "0 22px 70px rgba(33, 49, 57, 0.10)",
+        borderRadius: PANEL_RADIUS,
+        boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.08)}`,
         padding: 24,
       }}
     >
       {children}
-    </div>
-  );
-}
-
-function HeroImage() {
-  return (
-    <div
-      style={{
-        aspectRatio: "16 / 9",
-        borderRadius: 14,
-        overflow: "hidden",
-      }}
-    >
-      <img
-        alt="CoCalc-AI workspace with notebook, terminal, Codex chat, files, snapshots, and RootFS panels"
-        src="/public/landing/home-hero.jpg"
-        style={{
-          height: "100%",
-          objectFit: "cover",
-          transform: "scale(1.1)",
-          transformOrigin: "center top",
-          width: "100%",
-        }}
-      />
     </div>
   );
 }
@@ -145,8 +137,8 @@ function HomeInfographic({ alt, src }: { alt: string; src: string }) {
       src={src}
       style={{
         aspectRatio: "16 / 9",
-        background: "#fff",
-        borderRadius: 14,
+        background: PUBLIC_COLORS.surface,
+        borderRadius: PANEL_RADIUS,
         objectFit: "contain",
         width: "100%",
       }}
@@ -157,71 +149,193 @@ function HomeInfographic({ alt, src }: { alt: string; src: string }) {
 function Hero({ config }: { config?: HomeConfig }) {
   const authenticated = !!config?.is_authenticated;
   return (
-    <section>
-      <Row align="middle" gutter={[40, 40]}>
-        <Col lg={10} xs={24}>
-          <Flex vertical gap={22}>
-            <Eyebrow>CoCalc.ai</Eyebrow>
+    <section
+      aria-label="CoCalc.ai technical workspace"
+      style={{
+        alignItems: "center",
+        backgroundImage: `linear-gradient(90deg, ${alpha(
+          PUBLIC_COLORS.brandDark,
+          0.93,
+        )} 0%, ${alpha(PUBLIC_COLORS.brandActive, 0.78)} 46%, ${alpha(
+          PUBLIC_COLORS.brandDark,
+          0.2,
+        )} 100%), url("${HERO_IMAGE_URL}")`,
+        backgroundPosition: "center",
+        backgroundSize: "cover",
+        color: PUBLIC_COLORS.surface,
+        display: "flex",
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        minHeight: "66vh",
+        padding: `56px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <div style={{ maxWidth: 720 }}>
+        <Flex vertical gap={22}>
+          <Eyebrow>
+            <span style={{ color: PUBLIC_COLORS.accent }}>
+              Persistent projects for people and AI agents
+            </span>
+          </Eyebrow>
+          <div>
             <Title
               level={1}
               style={{
-                fontSize: 54,
+                color: PUBLIC_COLORS.surface,
+                fontSize: 58,
                 letterSpacing: 0,
-                lineHeight: 1,
+                lineHeight: 1.02,
                 margin: 0,
               }}
             >
-              AI-Native Technical Workspace for Humans and Agents
+              CoCalc.ai
             </Title>
             <Paragraph
               style={{
-                color: PUBLIC_COLORS.mutedText,
-                fontSize: 20,
+                color: alpha(PUBLIC_COLORS.surface, 0.9),
+                fontSize: 21,
                 lineHeight: 1.45,
-                margin: 0,
+                margin: "16px 0 0",
+                maxWidth: 640,
               }}
             >
-              A persistent project workspace where notebooks, terminals, files,
-              chat, and Codex agent work stay together.
+              An AI-native technical workspace where notebooks, terminals,
+              files, chat, and Codex agent work stay together in one durable
+              project.
             </Paragraph>
-            <Flex gap={12} wrap>
-              {authenticated ? (
-                <>
-                  <Button
-                    href={appPath("projects")}
-                    size="large"
-                    type="primary"
-                  >
-                    Open projects
-                  </Button>
-                  <Button href={appPath("features")} size="large">
-                    Explore features
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    href={appPath("auth/sign-up")}
-                    size="large"
-                    type="primary"
-                  >
-                    Start on CoCalc.ai
-                  </Button>
-                  <Button href={appPath("products")} size="large">
-                    Compare product paths
-                  </Button>
-                </>
-              )}
-              <Button href={appPath("products/cocalc-plus")} size="large">
-                Install CoCalc Plus
-              </Button>
-            </Flex>
+          </div>
+          <Flex gap={12} wrap>
+            {authenticated ? (
+              <>
+                <Button href={appPath("projects")} size="large" type="primary">
+                  Open projects
+                </Button>
+                <Button ghost href={appPath("features")} size="large">
+                  Explore features
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  href={appPath("auth/sign-up")}
+                  size="large"
+                  type="primary"
+                >
+                  Start on CoCalc.ai
+                </Button>
+                <Button ghost href={appPath("products")} size="large">
+                  Compare product paths
+                </Button>
+              </>
+            )}
+            <Button ghost href={appPath("products/cocalc-plus")} size="large">
+              Install CoCalc Plus
+            </Button>
           </Flex>
-        </Col>
-        <Col lg={14} xs={24}>
-          <HeroImage />
-        </Col>
-      </Row>
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+              marginTop: 8,
+              maxWidth: 680,
+            }}
+          >
+            {[
+              { icon: "project-outlined", label: "Project context" },
+              { icon: "terminal", label: "Real Linux" },
+              { icon: "robot", label: "Agent threads" },
+              { icon: "history", label: "Recoverable work" },
+            ].map((item) => (
+              <div
+                key={item.label}
+                style={{
+                  alignItems: "center",
+                  background: alpha(PUBLIC_COLORS.surface, 0.14),
+                  border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.28)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: PUBLIC_COLORS.surface,
+                  display: "flex",
+                  gap: 10,
+                  padding: "10px 12px",
+                }}
+              >
+                <Icon name={item.icon as IconName} />
+                <Text strong style={{ color: "inherit" }}>
+                  {item.label}
+                </Text>
+              </div>
+            ))}
+          </div>
+        </Flex>
+      </div>
+    </section>
+  );
+}
+
+function OperatingModelSection() {
+  const items = [
+    {
+      body: "Files, compute, collaborators, chat, snapshots, and backups move as one project.",
+      icon: "project-outlined",
+      title: "Project first",
+    },
+    {
+      body: "Notebooks, terminals, editors, and AI agents share the same working directory.",
+      icon: "layout",
+      title: "Tools together",
+    },
+    {
+      body: "Long-running sessions and review context survive browser refreshes and handoffs.",
+      icon: "clock",
+      title: "Durable state",
+    },
+  ] satisfies { body: string; icon: IconName; title: string }[];
+
+  return (
+    <section
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `22px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gap: 16,
+          gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+        }}
+      >
+        {items.map((item) => (
+          <Flex align="start" gap={12} key={item.title}>
+            <div
+              style={{
+                alignItems: "center",
+                background: PUBLIC_COLORS.surfaceMuted,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                color: PUBLIC_COLORS.brand,
+                display: "flex",
+                flex: "0 0 42px",
+                fontSize: 20,
+                height: 42,
+                justifyContent: "center",
+                width: 42,
+              }}
+            >
+              <Icon name={item.icon} />
+            </div>
+            <div>
+              <Title level={4} style={{ margin: "0 0 6px" }}>
+                {item.title}
+              </Title>
+              <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+            </div>
+          </Flex>
+        ))}
+      </div>
     </section>
   );
 }
@@ -283,20 +397,28 @@ function WorkflowsSection() {
       "Use a browser-based Linux shell for scripts, packages, services, and debugging.",
   } satisfies Record<(typeof PRIMARY_WORKFLOWS)[number], string>;
   const workflowMeta = {
-    ai: { accent: "#7c3aed", icon: "robot", label: "AI agents" },
+    ai: { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot", label: "AI agents" },
     "jupyter-notebook": {
-      accent: "#2f6fda",
+      accent: COLORS.RUN,
       icon: "jupyter",
       label: "Compute",
     },
-    "latex-editor": { accent: "#ad6800", icon: "tex", label: "Writing" },
+    "latex-editor": {
+      accent: PUBLIC_COLORS.warning,
+      icon: "tex",
+      label: "Writing",
+    },
     teaching: {
-      accent: "#389e0d",
+      accent: COLORS.RUN,
       icon: "graduation-cap",
       label: "Courses",
     },
-    terminal: { accent: "#096dd9", icon: "terminal", label: "Linux" },
-    whiteboard: { accent: "#d4380d", icon: "layout", label: "Visual work" },
+    terminal: {
+      accent: COLORS.ANTD_LINK_BLUE_DARK,
+      icon: "terminal",
+      label: "Linux",
+    },
+    whiteboard: { accent: COLORS.BG_RED, icon: "layout", label: "Visual work" },
   } satisfies Record<string, { accent: string; icon: IconName; label: string }>;
   const pages = PRIMARY_WORKFLOWS.map((slug) => {
     const page = getFeaturePage(slug);
@@ -325,11 +447,10 @@ function WorkflowsSection() {
         <Col lg={6} xs={24}>
           <div
             style={{
-              background:
-                "linear-gradient(145deg, #f4f9ff 0%, #ffffff 54%, #fff8e8 100%)",
+              background: `linear-gradient(145deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 54%, ${PUBLIC_COLORS.warningTint} 100%)`,
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 28,
-              boxShadow: "0 18px 50px rgba(33, 49, 57, 0.08)",
+              borderRadius: PANEL_RADIUS,
+              boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.08)}`,
               height: "100%",
               padding: 22,
             }}
@@ -339,9 +460,9 @@ function WorkflowsSection() {
                 <div
                   style={{
                     alignItems: "center",
-                    background: "#e9f2ff",
+                    background: PUBLIC_COLORS.surfaceMuted,
                     border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: 18,
+                    borderRadius: PANEL_RADIUS,
                     color: PUBLIC_COLORS.brand,
                     display: "flex",
                     fontSize: 26,
@@ -379,9 +500,9 @@ function WorkflowsSection() {
                     key={item.label}
                     style={{
                       alignItems: "center",
-                      background: "#fff",
+                      background: PUBLIC_COLORS.surface,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
+                      borderRadius: PANEL_RADIUS,
                       color: PUBLIC_COLORS.brand,
                       display: "flex",
                       gap: 8,
@@ -409,10 +530,10 @@ function WorkflowsSection() {
                 href={appPath(`features/${page.slug}`)}
                 key={page.slug}
                 style={{
-                  background: "#fff",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 22,
-                  boxShadow: "0 14px 38px rgba(33, 49, 57, 0.07)",
+                  borderRadius: PANEL_RADIUS,
+                  boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
                   color: "inherit",
                   minHeight: 178,
                   padding: 18,
@@ -426,7 +547,7 @@ function WorkflowsSection() {
                         alignItems: "center",
                         background: `${accent}14`,
                         border: `1px solid ${accent}33`,
-                        borderRadius: 16,
+                        borderRadius: PANEL_RADIUS,
                         color: accent,
                         display: "flex",
                         fontSize: 24,
@@ -525,11 +646,10 @@ function ProductOptionsSection() {
         <Col lg={14} xs={24}>
           <div
             style={{
-              background:
-                "linear-gradient(135deg, #ffffff 0%, #f7fbff 55%, #fff8e8 100%)",
+              background: `linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 55%, ${PUBLIC_COLORS.warningTint} 100%)`,
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 28,
-              boxShadow: "0 18px 54px rgba(33, 49, 57, 0.08)",
+              borderRadius: PANEL_RADIUS,
+              boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.08)}`,
               padding: 24,
             }}
           >
@@ -551,9 +671,9 @@ function ProductOptionsSection() {
                   <div
                     key={option.title}
                     style={{
-                      background: "#fff",
+                      background: PUBLIC_COLORS.surface,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
+                      borderRadius: PANEL_RADIUS,
                       minHeight: 132,
                       padding: 14,
                     }}
@@ -562,13 +682,19 @@ function ProductOptionsSection() {
                       <div
                         style={{
                           alignItems: "center",
-                          background: index === 2 ? "#fff7e6" : "#eef5ff",
+                          background:
+                            index === 2
+                              ? PUBLIC_COLORS.warningTint
+                              : PUBLIC_COLORS.surfaceMuted,
                           border:
                             index === 2
-                              ? "1px solid #ffd591"
+                              ? `1px solid ${PUBLIC_COLORS.warningBorder}`
                               : `1px solid ${PUBLIC_COLORS.border}`,
-                          borderRadius: 14,
-                          color: index === 2 ? "#ad6800" : PUBLIC_COLORS.brand,
+                          borderRadius: PANEL_RADIUS,
+                          color:
+                            index === 2
+                              ? PUBLIC_COLORS.warning
+                              : PUBLIC_COLORS.brand,
                           display: "flex",
                           fontSize: 20,
                           height: 44,
@@ -609,8 +735,7 @@ function ProductOptionsSection() {
                 <Text type="secondary">Individual</Text>
                 <div
                   style={{
-                    background:
-                      "linear-gradient(90deg, #4b7bd8 0%, #68b36b 50%, #d48806 100%)",
+                    background: `linear-gradient(90deg, ${COLORS.BLUE_D} 0%, ${PUBLIC_COLORS.success} 50%, ${PUBLIC_COLORS.warning} 100%)`,
                     borderRadius: 999,
                     height: 4,
                   }}
@@ -665,11 +790,12 @@ function DifferenceSection() {
   return (
     <section
       style={{
-        background: "#f7fbff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        background: PUBLIC_COLORS.surfaceMuted,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
         overflow: "hidden",
-        padding: "40px 42px",
+        padding: `42px ${PUBLIC_PAGE_GUTTER}`,
       }}
     >
       <Row align="middle" gutter={[36, 36]}>
@@ -695,9 +821,9 @@ function DifferenceSection() {
             <div
               aria-hidden="true"
               style={{
-                background: "#fff",
+                background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 22,
+                borderRadius: PANEL_RADIUS,
                 padding: 18,
               }}
             >
@@ -707,7 +833,7 @@ function DifferenceSection() {
                     <div
                       style={{
                         alignItems: "center",
-                        background: "#eef5ff",
+                        background: PUBLIC_COLORS.surfaceMuted,
                         borderRadius: 999,
                         color: PUBLIC_COLORS.brand,
                         display: "flex",
@@ -738,10 +864,10 @@ function DifferenceSection() {
               <div
                 key={item.title}
                 style={{
-                  background: "#fff",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 22,
-                  boxShadow: "0 18px 44px rgba(33, 49, 57, 0.08)",
+                  borderRadius: PANEL_RADIUS,
+                  boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.08)}`,
                   minHeight: 190,
                   padding: 24,
                 }}
@@ -750,9 +876,9 @@ function DifferenceSection() {
                   <div
                     style={{
                       alignItems: "center",
-                      background: "#eef5ff",
+                      background: PUBLIC_COLORS.surfaceMuted,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
+                      borderRadius: PANEL_RADIUS,
                       color: PUBLIC_COLORS.brand,
                       display: "flex",
                       fontSize: 24,
@@ -857,110 +983,112 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
     title: string;
   }[];
   return (
-    <section>
-      <div
-        style={{
-          background:
-            "linear-gradient(135deg, #eef6ff 0%, #ffffff 46%, #fff8e8 100%)",
-          border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: 24,
-          overflow: "hidden",
-          padding: "34px",
-        }}
-      >
-        <Flex vertical gap={22}>
-          <Row align="bottom" gutter={[32, 24]}>
-            <Col xs={24}>
-              <Eyebrow>Self-service entry points</Eyebrow>
-              <Title level={2} style={{ margin: "8px 0 0" }}>
-                Start with the simplest path.
-              </Title>
-              <Paragraph
-                style={{
-                  color: PUBLIC_COLORS.mutedText,
-                  fontSize: 18,
-                  margin: "12px 0 0",
-                  maxWidth: 760,
-                }}
-              >
-                Use CoCalc.ai, CoCalc Plus, or CoCalc Star when you want to try
-                or run CoCalc without planning a private deployment. Launchpad,
-                Rocket, and site licensing stay available as needs grow.
-              </Paragraph>
-            </Col>
-          </Row>
-          <div
-            style={{
-              display: "grid",
-              gap: 12,
-              gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
-            }}
-          >
-            {paths.map((path, index) => (
-              <div
-                key={path.title}
-                style={{
-                  background: "#fff",
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 16,
-                  display: "flex",
-                  flexDirection: "column",
-                  minHeight: 160,
-                  padding: 18,
-                }}
-              >
-                <Flex align="start" gap={12}>
-                  <div
-                    style={{
-                      alignItems: "center",
-                      background: index === 2 ? "#fff7e6" : "#eef5ff",
-                      border:
-                        index === 2
-                          ? "1px solid #ffd591"
-                          : `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 14,
-                      color: index === 2 ? "#ad6800" : PUBLIC_COLORS.brand,
-                      display: "flex",
-                      flex: "0 0 44px",
-                      fontSize: 20,
-                      height: 44,
-                      justifyContent: "center",
-                      width: 44,
-                    }}
-                  >
-                    <Icon name={path.icon} />
-                  </div>
-                  <div>
-                    <Title level={4} style={{ margin: "0 0 6px" }}>
-                      {path.title}
-                    </Title>
-                    <Paragraph style={{ margin: 0 }}>{path.body}</Paragraph>
-                  </div>
-                </Flex>
-                <Button
-                  href={path.href}
-                  rel={path.href.startsWith("http") ? "noreferrer" : undefined}
-                  target={path.href.startsWith("http") ? "_blank" : undefined}
-                  type={index === 0 ? "primary" : "default"}
-                  style={{ marginTop: "auto", width: "fit-content" }}
+    <section
+      style={{
+        background: `linear-gradient(135deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 46%, ${PUBLIC_COLORS.warningTint} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        overflow: "hidden",
+        padding: `34px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex vertical gap={22}>
+        <Row align="bottom" gutter={[32, 24]}>
+          <Col xs={24}>
+            <Eyebrow>Self-service entry points</Eyebrow>
+            <Title level={2} style={{ margin: "8px 0 0" }}>
+              Start with the simplest path.
+            </Title>
+            <Paragraph
+              style={{
+                color: PUBLIC_COLORS.mutedText,
+                fontSize: 18,
+                margin: "12px 0 0",
+                maxWidth: 760,
+              }}
+            >
+              Use CoCalc.ai, CoCalc Plus, or CoCalc Star when you want to try or
+              run CoCalc without planning a private deployment. Launchpad,
+              Rocket, and site licensing stay available as needs grow.
+            </Paragraph>
+          </Col>
+        </Row>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+          }}
+        >
+          {paths.map((path, index) => (
+            <div
+              key={path.title}
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                display: "flex",
+                flexDirection: "column",
+                minHeight: 160,
+                padding: 18,
+              }}
+            >
+              <Flex align="start" gap={12}>
+                <div
+                  style={{
+                    alignItems: "center",
+                    background:
+                      index === 2
+                        ? PUBLIC_COLORS.warningTint
+                        : PUBLIC_COLORS.surfaceMuted,
+                    border:
+                      index === 2
+                        ? `1px solid ${PUBLIC_COLORS.warningBorder}`
+                        : `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: PANEL_RADIUS,
+                    color:
+                      index === 2 ? PUBLIC_COLORS.warning : PUBLIC_COLORS.brand,
+                    display: "flex",
+                    flex: "0 0 44px",
+                    fontSize: 20,
+                    height: 44,
+                    justifyContent: "center",
+                    width: 44,
+                  }}
                 >
-                  {path.button}
-                </Button>
-              </div>
-            ))}
-          </div>
-          <Flex align="center" justify="space-between" wrap gap={14}>
-            <Text type="secondary">
-              Need a private deployment or site licensing? Compare product paths
-              or contact us.
-            </Text>
-            <Flex gap={10} wrap>
-              <Button href={appPath("products")}>Compare product paths</Button>
-              <Button href={appPath("support")}>Support</Button>
-            </Flex>
+                  <Icon name={path.icon} />
+                </div>
+                <div>
+                  <Title level={4} style={{ margin: "0 0 6px" }}>
+                    {path.title}
+                  </Title>
+                  <Paragraph style={{ margin: 0 }}>{path.body}</Paragraph>
+                </div>
+              </Flex>
+              <Button
+                href={path.href}
+                rel={path.href.startsWith("http") ? "noreferrer" : undefined}
+                target={path.href.startsWith("http") ? "_blank" : undefined}
+                type={index === 0 ? "primary" : "default"}
+                style={{ marginTop: "auto", width: "fit-content" }}
+              >
+                {path.button}
+              </Button>
+            </div>
+          ))}
+        </div>
+        <Flex align="center" justify="space-between" wrap gap={14}>
+          <Text type="secondary">
+            Need a private deployment or site licensing? Compare product paths
+            or contact us.
+          </Text>
+          <Flex gap={10} wrap>
+            <Button href={appPath("products")}>Compare product paths</Button>
+            <Button href={appPath("support")}>Support</Button>
           </Flex>
         </Flex>
-      </div>
+      </Flex>
     </section>
   );
 }
@@ -988,6 +1116,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   return (
     <PublicPage active="home" config={marketingConfig}>
       <Hero config={config} />
+      <OperatingModelSection />
       <ProjectStorySection />
       <WorkflowsSection />
       <ProductOptionsSection />

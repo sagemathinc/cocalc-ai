@@ -64,7 +64,7 @@ const PUBLIC_PAGE_CSS = `
   .cocalc-public-page h4,
   .cocalc-public-page .ant-card-head-title {
     font-family: ${PUBLIC_DISPLAY_FONT_FAMILY};
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
   }
 
   .cocalc-public-footer a:hover {
@@ -260,7 +260,7 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
               color: token.colorWhite,
               fontFamily: PUBLIC_DISPLAY_FONT_FAMILY,
               fontSize: token.fontSizeHeading4,
-              letterSpacing: "-0.02em",
+              letterSpacing: 0,
             }}
           >
             {siteName}
@@ -374,7 +374,7 @@ export function PublicPage({
     <ConfigProvider
       theme={{
         token: {
-          borderRadius: 16,
+          borderRadius: 8,
           colorBgLayout: PUBLIC_COLORS.pageBackground,
           colorBorder: PUBLIC_COLORS.border,
           colorBorderSecondary: PUBLIC_COLORS.border,

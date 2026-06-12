@@ -53,7 +53,8 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "AI-Native Technical Workspace for Humans and Agents",
+        level: 1,
+        name: "CoCalc.ai",
       }),
     ).not.toBeNull();
     expect(
