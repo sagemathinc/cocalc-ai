@@ -11,8 +11,8 @@ import createSubscription from "@cocalc/server/purchases/create-subscription";
 import { MembershipClass } from "@cocalc/conat/hub/api/purchases";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
-import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
 import { claimMembershipTrial } from "@cocalc/server/membership/trials";
+import { assertBillingReady } from "@cocalc/server/purchases/stripe/billing-readiness";
 
 interface MembershipChangeOptions {
   account_id: string;
@@ -93,8 +93,8 @@ export async function applyMembershipChange({
       change.change == "new" &&
       change.trial_available === true &&
       trialDays > 0;
-    if (isTrial && !(await hasPaymentMethod(account_id))) {
-      throw Error("A payment method is required to start a free trial.");
+    if (isTrial) {
+      await assertBillingReady(account_id);
     }
     const end = isTrial
       ? dayjs(start).add(trialDays, "day").toDate()

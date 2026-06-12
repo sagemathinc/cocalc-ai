@@ -15,7 +15,7 @@ import {
 import api from "@cocalc/frontend/client/api";
 import { Icon } from "@cocalc/frontend/components";
 import StripePayment, {
-  AddPaymentMethodModal,
+  BillingSetupModal,
 } from "@cocalc/frontend/purchases/stripe-payment";
 import {
   useEmailVerificationRequired,
@@ -183,8 +183,7 @@ function MembershipPurchaseModalInner({
   const [quoteError, setQuoteError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [paymentSubmitting, setPaymentSubmitting] = useState<boolean>(false);
-  const [addPaymentMethodOpen, setAddPaymentMethodOpen] =
-    useState<boolean>(false);
+  const [billingSetupOpen, setBillingSetupOpen] = useState<boolean>(false);
   const [quoteRefreshKey, setQuoteRefreshKey] = useState<number>(0);
   const [place, setPlace] = useState<
     "choose" | "checkout" | "processing" | "done"
@@ -232,7 +231,7 @@ function MembershipPurchaseModalInner({
     setQuote(null);
     setQuoteError("");
     setInterval("year");
-    setAddPaymentMethodOpen(false);
+    setBillingSetupOpen(false);
     setQuoteRefreshKey(0);
     setPaymentSubmitting(false);
     setPlace("choose");
@@ -369,6 +368,18 @@ function MembershipPurchaseModalInner({
       : undefined;
   const confirmChangeLabel =
     quote?.change === "downgrade" ? "Confirm downgrade" : "Confirm change";
+  const trialRequiresBillingDetails =
+    quote?.allowed === false && !!quote.trial_requires_billing_details;
+  const trialRequiresPaymentMethod =
+    quote?.allowed === false && !!quote.trial_requires_payment_method;
+  const trialSetupRequired =
+    trialRequiresBillingDetails || trialRequiresPaymentMethod;
+  const trialSetupButtonLabel =
+    trialRequiresBillingDetails && trialRequiresPaymentMethod
+      ? "Add billing details and payment method to start free trial"
+      : trialRequiresBillingDetails
+        ? "Add billing details to start free trial"
+        : "Add payment method to start free trial";
 
   function isCurrentChoice(tier: MembershipTier): boolean {
     if (tier.id !== currentPersonalClass) return false;
@@ -574,13 +585,13 @@ function MembershipPurchaseModalInner({
         >
           Change selection
         </Button>
-        {quote.trial_requires_payment_method && quote.allowed === false && (
+        {trialSetupRequired && (
           <Button
             disabled={paymentSubmitting || actionLoading}
-            onClick={() => setAddPaymentMethodOpen(true)}
+            onClick={() => setBillingSetupOpen(true)}
             type="primary"
           >
-            Add payment method to start free trial
+            {trialSetupButtonLabel}
           </Button>
         )}
         {canProceed && quoteChargeValue.gt(0) && chargeAmountValue.gt(0) && (
@@ -667,9 +678,7 @@ function MembershipPurchaseModalInner({
           quote.allowed === false &&
           quote.reason &&
           !paymentRequired &&
-          !quote.trial_requires_payment_method && (
-            <Alert type="error" title={quote.reason} />
-          )}
+          !trialSetupRequired && <Alert type="error" title={quote.reason} />}
         {place === "checkout" && renderCheckoutStep()}
         {place === "processing" && renderProcessingStep()}
         {place === "done" && (
@@ -712,13 +721,14 @@ function MembershipPurchaseModalInner({
       title="Change Membership"
     >
       {renderModalBody()}
-      {addPaymentMethodOpen ? (
-        <AddPaymentMethodModal
-          onCancel={() => setAddPaymentMethodOpen(false)}
+      {billingSetupOpen ? (
+        <BillingSetupModal
+          onCancel={() => setBillingSetupOpen(false)}
           onFinished={() => {
-            setAddPaymentMethodOpen(false);
+            setBillingSetupOpen(false);
             setQuoteRefreshKey((value) => value + 1);
           }}
+          requirePaymentMethod={trialRequiresPaymentMethod}
         />
       ) : null}
       <FreshAuthModal {...freshAuthModalProps} />

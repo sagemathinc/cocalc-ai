@@ -158,6 +158,7 @@ function AddressForm({
         });
         return;
       }
+      setError("Complete billing name and address before continuing.");
     } catch (err) {
       setError(`${err}`);
     } finally {

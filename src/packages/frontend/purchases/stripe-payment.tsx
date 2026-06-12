@@ -758,15 +758,37 @@ export function AddPaymentMethodModal({
   onCancel: () => void;
   onFinished?: () => void;
 }) {
-  const [addressSaved, setAddressSaved] = useState<boolean>(false);
   return (
-    <Modal
-      open
-      title={"Add Payment Method"}
+    <BillingSetupModal
       onCancel={onCancel}
-      onOk={onCancel}
-      footer={[]}
-    >
+      onFinished={onFinished}
+      requirePaymentMethod
+      title="Add Payment Method"
+    />
+  );
+}
+
+export function BillingSetupModal({
+  onCancel,
+  onFinished,
+  requirePaymentMethod,
+  title = requirePaymentMethod ? "Add Payment Method" : "Billing Details",
+}: {
+  onCancel: () => void;
+  onFinished?: () => void;
+  requirePaymentMethod: boolean;
+  title?: ReactNode;
+}) {
+  const [addressSaved, setAddressSaved] = useState<boolean>(false);
+  const finishAddress = () => {
+    if (requirePaymentMethod) {
+      setAddressSaved(true);
+    } else {
+      onFinished?.();
+    }
+  };
+  return (
+    <Modal open title={title} onCancel={onCancel} onOk={onCancel} footer={[]}>
       {!addressSaved ? (
         <Space vertical size="middle" style={{ width: "100%" }}>
           <Alert
@@ -775,10 +797,7 @@ export function AddPaymentMethodModal({
             message="Enter your billing name and address first."
             description="CoCalc uses this for receipts, invoices, and tax calculation."
           />
-          <StripeAddressElement
-            onFinished={() => setAddressSaved(true)}
-            showCancel={false}
-          />
+          <StripeAddressElement onFinished={finishAddress} showCancel={false} />
         </Space>
       ) : (
         <CollectPaymentMethod onFinished={onFinished} />

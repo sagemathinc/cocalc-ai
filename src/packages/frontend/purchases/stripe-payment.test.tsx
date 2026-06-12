@@ -6,7 +6,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
-import StripePayment, { AddPaymentMethodButton } from "./stripe-payment";
+import StripePayment, {
+  AddPaymentMethodButton,
+  BillingSetupModal,
+} from "./stripe-payment";
 import {
   createPaymentIntent,
   createSetupIntent,
@@ -289,10 +292,44 @@ describe("StripePayment", () => {
     render(<AddPaymentMethodButton />);
 
     fireEvent.click(screen.getByText(/Add Payment Method/));
+    await waitFor(() => {
+      expect(screen.getByText("Stripe address element")).toBeTruthy();
+    });
+    const saveAddress = (await screen.findByText("Save Address"))
+      .closest("button") as HTMLButtonElement;
+    await waitFor(() => {
+      expect(saveAddress.disabled).toBe(false);
+    });
+    fireEvent.click(saveAddress);
 
-    expect(
-      screen.getByText("Verify your email before adding a payment method"),
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        screen.getByText("Verify your email before adding a payment method"),
+      ).toBeTruthy();
+    });
+    expect(createSetupIntent).not.toHaveBeenCalled();
+  });
+
+  it("can collect billing details without requiring another payment method", async () => {
+    const onFinished = jest.fn();
+
+    render(
+      <BillingSetupModal
+        onCancel={jest.fn()}
+        onFinished={onFinished}
+        requirePaymentMethod={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Stripe address element")).toBeTruthy();
+    });
+    fireEvent.click(await screen.findByText("Save Address"));
+
+    await waitFor(() => {
+      expect(onFinished).toHaveBeenCalled();
+    });
+    expect(screen.queryByText("Stripe payment element")).toBeNull();
     expect(createSetupIntent).not.toHaveBeenCalled();
   });
 

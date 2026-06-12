@@ -11,6 +11,13 @@ import {
   createTestMembershipSubscription,
   createTestMembershipTier,
 } from "./test-data";
+
+const mockAssertBillingReady = jest.fn();
+
+jest.mock("@cocalc/server/purchases/stripe/billing-readiness", () => ({
+  assertBillingReady: (...args: any[]) => mockAssertBillingReady(...args),
+}));
+
 import { applyMembershipChange } from "./membership-change";
 
 beforeAll(async () => {
@@ -21,6 +28,13 @@ afterAll(after);
 describe("membership change payment enforcement", () => {
   const account_id = uuid();
   const targetClass = `paid-${uuid().slice(0, 8)}` as any;
+
+  beforeEach(() => {
+    mockAssertBillingReady.mockReset().mockResolvedValue({
+      hasBillingDetails: true,
+      hasPaymentMethod: true,
+    });
+  });
 
   it("rejects externally paid membership changes when the payment is too small", async () => {
     await createTestAccount(account_id);
@@ -95,5 +109,55 @@ describe("membership change payment enforcement", () => {
       [downgradeAccount],
     );
     expect(purchaseRows[0]?.count).toBe(0);
+  });
+
+  it("rejects free trials when billing is not ready", async () => {
+    const trialAccount = uuid();
+    const trialTier = `trial-${uuid().slice(0, 8)}` as any;
+    await createTestAccount(trialAccount);
+    await createTestMembershipTier({
+      id: trialTier,
+      price_monthly: 50,
+      price_yearly: 500,
+      priority: 20,
+      trial_days: 7,
+    });
+    mockAssertBillingReady.mockRejectedValueOnce(
+      new Error("Billing details are required to start a free trial."),
+    );
+
+    await expect(
+      applyMembershipChange({
+        account_id: trialAccount,
+        targetClass: trialTier,
+        interval: "month",
+      }),
+    ).rejects.toThrow("Billing details are required");
+
+    expect(mockAssertBillingReady).toHaveBeenCalledWith(trialAccount);
+  });
+
+  it("allows free trials when billing is ready", async () => {
+    const trialAccount = uuid();
+    const trialTier = `trial-${uuid().slice(0, 8)}` as any;
+    await createTestAccount(trialAccount);
+    await createTestMembershipTier({
+      id: trialTier,
+      price_monthly: 50,
+      price_yearly: 500,
+      priority: 20,
+      trial_days: 7,
+    });
+
+    const result = await applyMembershipChange({
+      account_id: trialAccount,
+      targetClass: trialTier,
+      interval: "month",
+    });
+
+    expect(mockAssertBillingReady).toHaveBeenCalledWith(trialAccount);
+    expect(result.subscription_id).toBeGreaterThan(0);
+    expect(result.purchase_id).toBeUndefined();
+    expect(result.trial_available).toBe(true);
   });
 });

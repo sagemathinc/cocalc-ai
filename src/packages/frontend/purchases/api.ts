@@ -326,6 +326,7 @@ export interface MembershipChangeQuote {
   current_period_end?: Date | string;
   trial_days?: number;
   trial_available?: boolean;
+  trial_requires_billing_details?: boolean;
   trial_requires_payment_method?: boolean;
   trial_email?: string;
   trial_reason?: string;

@@ -106,11 +106,18 @@ jest.mock("@cocalc/frontend/purchases/stripe-payment", () => ({
       Pay with Stripe
     </button>
   ),
-  AddPaymentMethodModal: ({ onFinished }: { onFinished: () => void }) => (
+  BillingSetupModal: ({
+    onFinished,
+    requirePaymentMethod,
+  }: {
+    onFinished: () => void;
+    requirePaymentMethod: boolean;
+  }) => (
     <section>
-      <div>local add payment method modal</div>
+      <div>local billing setup modal</div>
+      <div>requires payment method: {requirePaymentMethod ? "yes" : "no"}</div>
       <button onClick={onFinished} type="button">
-        Finish adding payment method
+        Finish billing setup
       </button>
     </section>
   ),
@@ -218,7 +225,7 @@ describe("MembershipPurchaseModal", () => {
     expect(api).not.toHaveBeenCalled();
   });
 
-  it("opens payment-method collection in place for trial memberships", async () => {
+  it("opens billing setup in place for trial memberships that need a payment method", async () => {
     jest
       .mocked(getMembershipChangeQuote)
       .mockResolvedValueOnce({
@@ -248,15 +255,14 @@ describe("MembershipPurchaseModal", () => {
       }),
     );
 
-    expect(screen.getByText("local add payment method modal")).toBeTruthy();
-    fireEvent.click(screen.getByText("Finish adding payment method"));
+    expect(screen.getByText("local billing setup modal")).toBeTruthy();
+    expect(screen.getByText("requires payment method: yes")).toBeTruthy();
+    fireEvent.click(screen.getByText("Finish billing setup"));
 
     await waitFor(() => {
       expect(getMembershipChangeQuote).toHaveBeenCalledTimes(2);
     });
-    expect(
-      screen.queryByText("local add payment method modal"),
-    ).not.toBeTruthy();
+    expect(screen.queryByText("local billing setup modal")).not.toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm change" }));
 
@@ -270,6 +276,49 @@ describe("MembershipPurchaseModal", () => {
       interval: "year",
     });
     expect(getMembershipChangeQuote).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens billing-details setup without forcing another payment method", async () => {
+    jest
+      .mocked(getMembershipChangeQuote)
+      .mockResolvedValueOnce({
+        allowed: false,
+        change: "upgrade",
+        charge: 0,
+        price: 216,
+        trial_available: true,
+        trial_days: 7,
+        trial_requires_billing_details: true,
+        trial_requires_payment_method: false,
+      } as any)
+      .mockResolvedValueOnce({
+        allowed: true,
+        change: "upgrade",
+        charge: 0,
+        price: 216,
+        trial_available: true,
+        trial_days: 7,
+        trial_requires_billing_details: false,
+        trial_requires_payment_method: false,
+      } as any);
+
+    render(<MembershipPurchaseModal open onClose={jest.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Standard" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Add billing details to start free trial",
+      }),
+    );
+
+    expect(screen.getByText("local billing setup modal")).toBeTruthy();
+    expect(screen.getByText("requires payment method: no")).toBeTruthy();
+    fireEvent.click(screen.getByText("Finish billing setup"));
+
+    await waitFor(() => {
+      expect(getMembershipChangeQuote).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByText("local billing setup modal")).not.toBeTruthy();
   });
 
   it("finalizes paid membership changes without showing payment history", async () => {
