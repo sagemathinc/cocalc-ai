@@ -293,9 +293,26 @@ export function url_href(project_id: string, path: string): string {
 }
 
 // returns the download URL for a file at a given path
-export function download_href(project_id: string, path: string): string {
+export function download_href(
+  project_id: string,
+  path: string,
+  {
+    deleteAfterDownload,
+    downloadFilename,
+  }: {
+    deleteAfterDownload?: boolean;
+    downloadFilename?: string;
+  } = {},
+): string {
   const u = url_href(project_id, path);
-  return `${u}?download&ts=${Date.now()}`;
+  const params = [`download`, `ts=${Date.now()}`];
+  if (deleteAfterDownload) {
+    params.push("deleteAfterDownload=1");
+  }
+  if (downloadFilename) {
+    params.push(`downloadFilename=${encodeURIComponent(downloadFilename)}`);
+  }
+  return `${u}?${params.join("&")}`;
 }
 
 export function in_snapshot_path(path: string): boolean {

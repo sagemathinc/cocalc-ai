@@ -223,11 +223,8 @@ describe("PublicAuthApp", () => {
         target: { value: "correct horse battery staple 12345!" },
       },
     );
-    fireEvent.change(screen.getByPlaceholderText("First name"), {
-      target: { value: "New" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Last name"), {
-      target: { value: "User" },
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
     });
     expect(
       screen.getByRole("button", { name: "Create account" }),
@@ -268,11 +265,8 @@ describe("PublicAuthApp", () => {
     fireEvent.change(confirmPassword, {
       target: { value: "different horse battery staple 12345!" },
     });
-    fireEvent.change(screen.getByPlaceholderText("First name"), {
-      target: { value: "New" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Last name"), {
-      target: { value: "User" },
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
     });
 
     expect(screen.getByText("Passwords do not match.")).not.toBeNull();
@@ -344,11 +338,8 @@ describe("PublicAuthApp", () => {
         target: { value: "correct horse battery staple 12345!" },
       },
     );
-    fireEvent.change(screen.getByPlaceholderText("First name"), {
-      target: { value: "New" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Last name"), {
-      target: { value: "User" },
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
     });
     expect(
       screen.getByRole("button", { name: "Create account" }),
@@ -358,7 +349,12 @@ describe("PublicAuthApp", () => {
       expect(mockedPostAuthApi).toHaveBeenCalledWith(
         expect.objectContaining({
           endpoint: "auth/sign-up",
-          body: expect.objectContaining({ terms: true }),
+          body: expect.objectContaining({
+            displayName: "New User",
+            firstName: "New",
+            lastName: "User",
+            terms: true,
+          }),
         }),
       );
     });
@@ -398,11 +394,8 @@ describe("PublicAuthApp", () => {
         target: { value: "correct horse battery staple 12345!" },
       },
     );
-    fireEvent.change(screen.getByPlaceholderText("First name"), {
-      target: { value: "New" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Last name"), {
-      target: { value: "User" },
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
@@ -442,11 +435,8 @@ describe("PublicAuthApp", () => {
         target: { value: "correct horse battery staple 12345!" },
       },
     );
-    fireEvent.change(screen.getByPlaceholderText("First name"), {
-      target: { value: "New" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Last name"), {
-      target: { value: "User" },
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 

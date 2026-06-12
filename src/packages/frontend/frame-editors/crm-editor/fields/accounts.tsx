@@ -118,11 +118,7 @@ function AccountList({
 function AccountName({ account_id }) {
   const name = useAccountName(account_id);
   if (name == null) return null;
-  return (
-    <>
-      {name.firstName} {name.lastName}
-    </>
-  );
+  return <>{name.displayName}</>;
 }
 
 function AddAccount({

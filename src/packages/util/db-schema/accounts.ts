@@ -223,16 +223,22 @@ Table({
       type: "map",
       desc: "Miscellaneous overall configuration settings for CoCalc, e.g., confirm close on exit?",
     },
+    display_name: {
+      type: "string",
+      pg_type: "VARCHAR(254)",
+      desc: "The display name of this user.",
+      render: { type: "text", maxLength: 254, editable: true },
+    },
     first_name: {
       type: "string",
       pg_type: "VARCHAR(254)", // some limit (actually around 3000) is required for indexing
-      desc: "The first name of this user.",
+      desc: "Legacy split first/given name for this user.",
       render: { type: "text", maxLength: 254, editable: true },
     },
     last_name: {
       type: "string",
       pg_type: "VARCHAR(254)",
-      desc: "The last name of this user.",
+      desc: "Legacy split last/family name for this user.",
       render: { type: "text", maxLength: 254, editable: true },
     },
     banned: {
@@ -437,6 +443,7 @@ Table({
     primary_key: "account_id",
     // db_standby: "unsafe",
     pg_indexes: [
+      "(lower(display_name) text_pattern_ops)",
       "(lower(first_name) text_pattern_ops)",
       "(lower(last_name)  text_pattern_ops)",
       "created_by",
@@ -449,6 +456,7 @@ Table({
       "((ssh_keys IS NOT NULL))", // used by ssh-gateway to speed up getting all users
     ],
     crm_indexes: [
+      "(lower(display_name) text_pattern_ops)",
       "(lower(first_name) text_pattern_ops)",
       "(lower(last_name)  text_pattern_ops)",
       "(lower(email_address)  text_pattern_ops)",
@@ -548,6 +556,7 @@ Table({
             hide_navbar_balance: false,
             cookie_consent: null,
           },
+          display_name: "",
           first_name: "",
           last_name: "",
           terminal: {
@@ -591,6 +600,7 @@ Table({
           account_id: "account_id",
           editor_settings: true,
           other_settings: true,
+          display_name: true,
           first_name: true,
           last_name: true,
           terminal: true,
@@ -612,7 +622,12 @@ Table({
         async check_hook(_db, obj, _account_id, _project_id, cb) {
           // Hook to truncate some text fields to at most 254 characters, to avoid
           // further trouble down the line.
-          for (const field of ["first_name", "last_name", "email_address"]) {
+          for (const field of [
+            "display_name",
+            "first_name",
+            "last_name",
+            "email_address",
+          ]) {
             if (obj[field] != null) {
               obj[field] = obj[field].slice(0, 254);
               if (field != "email_address" && !obj[field]) {
@@ -748,6 +763,7 @@ Table({
         admin: true, // only admins can do get queries on this table
         fields: {
           account_id: true,
+          display_name: true,
           first_name: true,
           last_name: true,
           autosave: true,
@@ -950,6 +966,7 @@ export const CONTACT_THESE_TAGS = [professional];
 
 export interface UserSearchResult {
   account_id: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   home_bay_id?: string;

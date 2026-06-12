@@ -2,8 +2,10 @@ import { handleFileDownload, DOWNLOAD_ERROR_HEADER } from "./file-download";
 
 const mockReadFile = jest.fn();
 const mockFsStat = jest.fn();
+const mockFsRm = jest.fn();
 const mockFsClient = jest.fn(() => ({
   stat: mockFsStat,
+  rm: mockFsRm,
 }));
 const mockFsSubject = jest.fn(() => "fs.project-test");
 
@@ -20,6 +22,7 @@ describe("handleFileDownload", () => {
   beforeEach(() => {
     mockReadFile.mockReset();
     mockFsStat.mockReset();
+    mockFsRm.mockReset();
     mockFsClient.mockClear();
     mockFsSubject.mockClear();
   });
@@ -155,6 +158,105 @@ describe("handleFileDownload", () => {
         path: "/home/user/a.txt",
         name: ":project-host",
       }),
+    );
+  });
+
+  it("uses the requested display filename and removes temporary archives after streaming", async () => {
+    mockReadFile.mockResolvedValue([Buffer.from("archive")]);
+    mockFsRm.mockResolvedValue(undefined);
+    const headers: Record<string, any> = {};
+    const req: any = {
+      method: "GET",
+      url: "/project-123/files/tmp/.cocalc-download-archive-token-selection.zip?download&deleteAfterDownload=1&downloadFilename=selection.zip",
+    };
+    const res: any = {
+      statusCode: undefined,
+      setHeader: jest.fn((key, value) => {
+        headers[key] = value;
+      }),
+      write: jest.fn(() => true),
+      end: jest.fn(),
+      on: jest.fn(),
+      writableEnded: false,
+      destroyed: false,
+    };
+
+    await handleFileDownload({
+      req,
+      res,
+      client: { id: "client-1" } as any,
+    });
+
+    expect(headers["Content-disposition"]).toBe(
+      "attachment; filename*=UTF-8''selection.zip",
+    );
+    expect(mockReadFile).toHaveBeenCalledWith({
+      client: { id: "client-1" },
+      project_id: "project-123",
+      path: "/tmp/.cocalc-download-archive-token-selection.zip",
+      maxWait: 1000 * 60 * 60,
+    });
+    expect(mockFsRm).toHaveBeenCalledWith(
+      "/tmp/.cocalc-download-archive-token-selection.zip",
+      { force: true },
+    );
+  });
+
+  it("ignores delete-after-download for non-temporary paths", async () => {
+    mockReadFile.mockResolvedValue([Buffer.from("data")]);
+    const req: any = {
+      method: "GET",
+      url: "/project-123/files/home/user/a.txt?download&deleteAfterDownload=1",
+    };
+    const res: any = {
+      statusCode: undefined,
+      setHeader: jest.fn(),
+      write: jest.fn(() => true),
+      end: jest.fn(),
+      on: jest.fn(),
+      writableEnded: false,
+      destroyed: false,
+    };
+
+    await handleFileDownload({
+      req,
+      res,
+      client: { id: "client-1" } as any,
+    });
+
+    expect(mockFsRm).not.toHaveBeenCalled();
+  });
+
+  it("removes temporary archives when a GET download is rejected before streaming", async () => {
+    mockFsRm.mockResolvedValue(undefined);
+    const req: any = {
+      method: "GET",
+      url: "/project-123/files/tmp/.cocalc-download-archive-token-selection.zip?download&deleteAfterDownload=1&downloadFilename=selection.zip",
+    };
+    const res: any = {
+      statusCode: undefined,
+      setHeader: jest.fn(),
+      end: jest.fn(),
+      on: jest.fn(),
+      writableEnded: false,
+      destroyed: false,
+    };
+
+    await handleFileDownload({
+      req,
+      res,
+      client: { id: "client-1" } as any,
+      beforeExplicitDownload: async () => ({
+        allowed: false,
+        message: "managed egress blocked",
+      }),
+    });
+
+    expect(res.statusCode).toBe(429);
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockFsRm).toHaveBeenCalledWith(
+      "/tmp/.cocalc-download-archive-token-selection.zip",
+      { force: true },
     );
   });
 

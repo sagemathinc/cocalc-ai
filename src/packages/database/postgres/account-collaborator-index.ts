@@ -25,6 +25,7 @@ export interface RebuildAccountCollaboratorIndexResult {
 export interface AccountCollaboratorIndexRow {
   collaborator_account_id: string;
   common_project_count: number;
+  display_name: string | null;
   first_name: string | null;
   last_name: string | null;
   name: string | null;
@@ -35,6 +36,7 @@ export interface AccountCollaboratorIndexRow {
 
 export interface ProjectedMyCollaboratorRow {
   account_id: string;
+  display_name: string | null;
   name: string | null;
   first_name: string | null;
   last_name: string | null;
@@ -98,6 +100,7 @@ async function ensureClusterAccountDirectorySchema(
     CREATE TABLE IF NOT EXISTS ${CLUSTER_ACCOUNT_DIRECTORY_TABLE} (
       account_id UUID PRIMARY KEY,
       email_address VARCHAR(254) NOT NULL UNIQUE,
+      display_name VARCHAR(254),
       first_name VARCHAR(254),
       last_name VARCHAR(254),
       home_bay_id VARCHAR(64) NOT NULL,
@@ -107,6 +110,9 @@ async function ensureClusterAccountDirectorySchema(
       provisioned BOOLEAN NOT NULL DEFAULT TRUE
     )
   `);
+  await db.query(
+    `ALTER TABLE ${CLUSTER_ACCOUNT_DIRECTORY_TABLE} ADD COLUMN IF NOT EXISTS display_name VARCHAR(254)`,
+  );
 }
 
 export async function listProjectedCollaboratorsForAccount(opts: {
@@ -132,6 +138,7 @@ export async function listProjectedCollaboratorsForAccount(opts: {
     `SELECT
        collaborator_account_id,
        common_project_count,
+       display_name,
        first_name,
        last_name,
        name,
@@ -162,6 +169,7 @@ export async function listProjectedMyCollaboratorsForAccount(opts: {
   const { rows } = await getPool().query<ProjectedMyCollaboratorRow>(
     `SELECT
        aci.collaborator_account_id AS account_id,
+       aci.display_name,
        aci.name,
        aci.first_name,
        aci.last_name,
@@ -192,6 +200,7 @@ export async function listProjectedMyCollaboratorsForAccount(opts: {
 
 function deletedUserProjection() {
   return {
+    display_name: "Deleted User",
     first_name: "Deleted",
     last_name: "User",
     name: "Deleted User",
@@ -202,6 +211,7 @@ function deletedUserProjection() {
 
 function displayNameSql(alias: string): string {
   return `COALESCE(
+            NULLIF(BTRIM(${alias}.display_name), ''),
             NULLIF(
               BTRIM(
                 CONCAT_WS(
@@ -223,6 +233,13 @@ function collaboratorProjectionSelect(
   const localAvailable = `${accountAlias}.account_id IS NOT NULL AND (${accountAlias}.deleted IS NULL OR ${accountAlias}.deleted IS FALSE)`;
   const directoryAvailable = `${directoryAlias}.account_id IS NOT NULL AND ${directoryAlias}.provisioned IS TRUE`;
   return `CASE
+            WHEN ${localAvailable}
+              THEN ${displayNameSql(accountAlias)}
+            WHEN ${directoryAvailable}
+              THEN ${displayNameSql(directoryAlias)}
+            ELSE $4::TEXT
+          END AS display_name,
+          CASE
             WHEN ${localAvailable}
               THEN ${accountAlias}.first_name
             WHEN ${directoryAvailable}
@@ -357,6 +374,7 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
           account_id,
           collaborator_account_id,
           common_project_count,
+          display_name,
           first_name,
           last_name,
           name,
@@ -383,6 +401,7 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
       ON CONFLICT (account_id, collaborator_account_id)
       DO UPDATE SET
         common_project_count = EXCLUDED.common_project_count,
+        display_name = EXCLUDED.display_name,
         first_name = EXCLUDED.first_name,
         last_name = EXCLUDED.last_name,
         name = EXCLUDED.name,
@@ -430,7 +449,8 @@ export async function refreshProjectedCollaboratorIdentityRows(opts: {
       ),
       updated AS (
         UPDATE account_collaborator_index aci
-           SET first_name = source.first_name,
+           SET display_name = source.display_name,
+               first_name = source.first_name,
                last_name = source.last_name,
                name = source.name,
                last_active = source.last_active,
@@ -443,6 +463,7 @@ export async function refreshProjectedCollaboratorIdentityRows(opts: {
           aci.account_id,
           aci.collaborator_account_id,
           aci.common_project_count,
+          aci.display_name,
           aci.first_name,
           aci.last_name,
           aci.name,

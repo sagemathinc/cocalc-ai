@@ -160,6 +160,7 @@ async function collaboratorRowsForAccount(
   const { rows } = await db.query<{
     collaborator_account_id: string;
     common_project_count: number;
+    display_name: string | null;
     first_name: string | null;
     last_name: string | null;
     name: string | null;
@@ -170,6 +171,7 @@ async function collaboratorRowsForAccount(
     `SELECT
        collaborator_account_id,
        common_project_count,
+       display_name,
        first_name,
        last_name,
        name,
@@ -187,6 +189,7 @@ async function collaboratorRowsForAccount(
   );
   return rows.map((row) => ({
     account_id: row.collaborator_account_id,
+    display_name: row.display_name,
     first_name: row.first_name,
     last_name: row.last_name,
     name: row.name,

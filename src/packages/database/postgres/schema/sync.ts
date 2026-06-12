@@ -362,6 +362,35 @@ async function applyLegacyRenames(db: Client): Promise<void> {
   }
 }
 
+async function backfillAccountDisplayNames(db: Client): Promise<void> {
+  if (
+    !(await hasTable(db, "accounts")) ||
+    !(await hasColumn(db, "accounts", "display_name")) ||
+    !(await hasColumn(db, "accounts", "first_name")) ||
+    !(await hasColumn(db, "accounts", "last_name"))
+  ) {
+    return;
+  }
+  await db.query(`
+    UPDATE accounts
+       SET display_name = LEFT(
+         BTRIM(
+           CONCAT_WS(
+             ' ',
+             NULLIF(BTRIM(first_name), ''),
+             NULLIF(BTRIM(last_name), '')
+           )
+         ),
+         254
+       )
+     WHERE NULLIF(BTRIM(COALESCE(display_name, '')), '') IS NULL
+       AND (
+         NULLIF(BTRIM(COALESCE(first_name, '')), '') IS NOT NULL OR
+         NULLIF(BTRIM(COALESCE(last_name, '')), '') IS NOT NULL
+       )
+  `);
+}
+
 // Determine names of all tables that are in our schema but not in the
 // actual database.
 function getMissingTables(
@@ -437,6 +466,8 @@ export async function syncSchema(
       //dbg("sync existing table", table);
       await syncTableSchema(db, schema);
     }
+    dbg("backfilling account display names");
+    await backfillAccountDisplayNames(db);
   } catch (err) {
     dbg("FAILED to sync schema ", { role }, err);
     throw err;

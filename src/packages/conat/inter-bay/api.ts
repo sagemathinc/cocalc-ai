@@ -532,6 +532,7 @@ export interface AccountApiKeyDirectoryTouchRequest {
 export interface AccountDirectoryCreateRequest {
   email_address: string;
   password: string;
+  display_name?: string;
   first_name: string;
   last_name: string;
   home_bay_id: string;

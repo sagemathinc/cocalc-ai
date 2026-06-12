@@ -9,6 +9,7 @@ declare const $: any;
 
 import { delay } from "awaiting";
 import CodeMirror from "codemirror";
+import "../frame-editors/generic/codemirror-plugins";
 import { Map as ImmutableMap } from "immutable";
 import { debounce } from "lodash";
 import LRU from "lru-cache";

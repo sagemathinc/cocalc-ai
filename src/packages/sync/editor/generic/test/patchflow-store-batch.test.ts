@@ -4,6 +4,7 @@
  */
 
 import { EventEmitter } from "events";
+import { Map } from "immutable";
 import { legacyPatchId, type PatchEnvelope } from "patchflow";
 import { once } from "@cocalc/util/async-utils";
 import { SyncString } from "../../string/sync";
@@ -72,6 +73,23 @@ describe("SyncDoc patchflow store change batching", () => {
 
     expect(applied).toBe(true);
     expect(session.applyRemoteBatch).toHaveBeenCalledWith([envA, envB]);
+    await doc.close();
+  });
+
+  it("loads initial patches from an initialized table even when live stream is reconnecting", async () => {
+    const doc = await openSyncString();
+    const target: any = doc;
+    target.patches_table = {
+      get_state: () => "disconnected",
+      is_ready: () => true,
+      get: () => Map(),
+    };
+
+    const store = target.createPatchflowStore();
+    await expect(store.loadInitial()).resolves.toEqual({
+      patches: [],
+      hasMore: false,
+    });
     await doc.close();
   });
 });
