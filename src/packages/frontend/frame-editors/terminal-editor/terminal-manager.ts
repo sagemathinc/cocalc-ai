@@ -120,7 +120,6 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
     if (this.actions == null) {
       return Promise.resolve(undefined);
     }
-    const node = this.actions._get_frame_node(id);
 
     if (this.terminals[id] != null) {
       parent.appendChild(this.terminals[id].element);
@@ -132,22 +131,20 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
       const terminalLoads = this.terminalLoads;
       this.terminalLoads[id] = (async () => {
         try {
-          let command: string | undefined = undefined;
-          let args: string[] | undefined = undefined;
-          if (node != null) {
-            command = normalizeTerminalCommand(node.get("command"));
-            args = normalizeTerminalArgs(node.get("args"));
-          }
           const Terminal = await getTerminalCtor<T>();
           const actions = this.actions;
           const terminals = this.terminals;
+          const currentNode = actions?._get_frame_node(id);
           if (
             actions == null ||
             terminals == null ||
+            currentNode == null ||
             this.terminalLoads !== terminalLoads
           ) {
             return undefined;
           }
+          const command = normalizeTerminalCommand(currentNode.get("command"));
+          const args = normalizeTerminalArgs(currentNode.get("args"));
           const terminal = new Terminal(
             actions,
             this._node_number(id),
@@ -183,8 +180,9 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
       }
       terminal.set_terminal_theme_override(terminalThemeOverride);
       // pause: sync local view state with terminal state
-      if (node != null) {
-        if (node.get("is_paused")) {
+      const currentNode = this.actions?._get_frame_node(id);
+      if (currentNode != null) {
+        if (currentNode.get("is_paused")) {
           terminal.pause();
         } else {
           terminal.unpause();
