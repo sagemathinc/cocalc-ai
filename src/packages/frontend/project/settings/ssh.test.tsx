@@ -75,9 +75,13 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => {
           Verify fresh auth
         </button>
       ) : null,
-    useFreshAuthAction: ({ onUnhandledError }: any = {}) => {
+    useFreshAuthAction: () => {
       const [open, setOpen] = React.useState(false);
-      const pendingActionRef = React.useRef<null | (() => Promise<void>)>(null);
+      const pendingActionRef = React.useRef<null | {
+        action: () => Promise<void>;
+        resolve: (completed: boolean) => void;
+        reject: (err: unknown) => void;
+      }>(null);
       return {
         runFreshAuthAction: async (action: () => Promise<void>) => {
           try {
@@ -87,24 +91,30 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => {
             if (!isFreshAuthRequiredError(err)) {
               throw err;
             }
-            pendingActionRef.current = action;
-            setOpen(true);
-            return false;
+            return await new Promise<boolean>((resolve, reject) => {
+              pendingActionRef.current = { action, resolve, reject };
+              setOpen(true);
+            });
           }
         },
         freshAuthModalProps: {
           open,
-          onCancel: () => setOpen(false),
-          onSuccess: async () => {
-            const action = pendingActionRef.current;
+          onCancel: () => {
+            const pending = pendingActionRef.current;
             pendingActionRef.current = null;
-            if (!action) return;
+            pending?.resolve(false);
+            setOpen(false);
+          },
+          onSuccess: async () => {
+            const pending = pendingActionRef.current;
+            pendingActionRef.current = null;
+            if (!pending) return;
+            setOpen(false);
             try {
-              await action();
-              setOpen(false);
+              await pending.action();
+              pending.resolve(true);
             } catch (err) {
-              onUnhandledError?.(err);
-              throw err;
+              pending.reject(err);
             }
           },
         },

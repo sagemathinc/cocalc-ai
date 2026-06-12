@@ -52,12 +52,7 @@ export default function ResumeSubscription({
     undefined,
   );
   const [loading, setLoading] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      setPlace("checkout");
-      setError(`${err}`);
-    },
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const directResume = async () => {
     // user is paying entirely using their credit on file, so we need to get

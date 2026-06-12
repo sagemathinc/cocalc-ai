@@ -1474,9 +1474,7 @@ export function TeamPackageManager({
   const [assignmentTarget, setAssignmentTarget] =
     useState<MembershipPackageDetails | null>(null);
   const [accountNames, setAccountNames] = useState<AccountNames>({});
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const refreshPackages = async () => {
     setLoading(true);
@@ -1648,9 +1646,7 @@ export function SiteLicenseManager({
   const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
     useState<string>("");
   const [accountNames, setAccountNames] = useState<AccountNames>({});
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const refreshSiteLicenseOverviews = async () => {
     if (!account_id) {
@@ -1851,9 +1847,7 @@ export function SiteLicenseAdminPanel({
   );
   const [accountNames, setAccountNames] = useState<AccountNames>({});
   const [reviewingRequestId, setReviewingRequestId] = useState("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function refreshOverviews() {
     if (!account_id) {
@@ -3720,9 +3714,7 @@ function ProvisionSiteLicenseModal({
   const [editingPoolIndex, setEditingPoolIndex] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     if (!open) return;
@@ -4736,9 +4728,7 @@ function TeamPackagePurchaseModal({
   );
   const numPaymentsRef = useRef<number | null>(null);
   const [chargeAmount, setChargeAmount] = useState<number>(0);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setActionError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     if (!open) return;
@@ -5100,9 +5090,7 @@ function AssignMembershipSeatModal({
   const [searchError, setSearchError] = useState<string>("");
   const [selectedTarget, setSelectedTarget] = useState<string>("");
   const [assigning, setAssigning] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setSearchError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const activeAccountIds = useMemo(
     () =>
       new Set(

@@ -16,7 +16,6 @@ import { lite } from "@cocalc/frontend/lite";
 import { DeleteAccountButton } from "./delete-account";
 import { PasswordSetting } from "./settings/password-setting";
 import TwoFactorAuthSetting from "./settings/two-factor-auth";
-import { ugly_error } from "./util";
 
 interface Props {
   email_address?: string;
@@ -29,9 +28,7 @@ export function SecuritySettings({
   first_name,
   last_name,
 }: Readonly<Props>) {
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: ugly_error,
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   if (lite) {
     return null;

@@ -75,9 +75,7 @@ export function AccountSettings(props: Readonly<Props>) {
   const [remove_strategy_button, set_remove_strategy_button] = useState<
     string | undefined
   >(undefined);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: ugly_error,
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const actions = () => redux.getActions("account");
 

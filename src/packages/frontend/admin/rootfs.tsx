@@ -514,12 +514,7 @@ export function RootfsAdmin() {
     return () => clearTimeout(timeout);
   }, [load, pageSize, search]);
 
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      message.error(`RootFS admin action failed: ${err}`);
-      void load();
-    },
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function requestDelete(entry: RootfsAdminCatalogEntry) {
     try {

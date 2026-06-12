@@ -144,9 +144,7 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
     : [];
   const allowedProjectsRequired = needsAllowedProjects(selectedCapabilities);
   const [projectFilter, setProjectFilter] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const projectOptions = useMemo<ProjectOption[]>(() => {
     const selected = new Set(selectedProjectIds);

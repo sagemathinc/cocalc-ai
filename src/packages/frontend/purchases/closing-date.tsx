@@ -35,9 +35,7 @@ function ClosingDateModal({ onClose }) {
   const day = resetDay(webapp_client.server_time());
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const purchase_closing_day: number | undefined = useTypedRedux(
     "account",
     "purchase_closing_day",

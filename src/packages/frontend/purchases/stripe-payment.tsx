@@ -84,10 +84,7 @@ export default function StripePayment({
     null,
   );
   const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
-  const { freshAuthActionRunning, runFreshAuthAction, freshAuthModalProps } =
-    useFreshAuthAction({
-      onUnhandledError: (err) => setError(`${err}`),
-    });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const safeLineItems = lineItems ?? [];
 
   useEffect(() => {
@@ -160,7 +157,7 @@ export default function StripePayment({
             {showOneClick && hasPaymentMethods != null && (
               <Tooltip title="Attempt to finish this purchase (including computing and adding tax) using any payment methods you have on file.">
                 <ConfirmButton
-                  isSubmitting={loading || freshAuthActionRunning}
+                  isSubmitting={loading}
                   label={
                     "Buy Now With 1-Click" /* amazon's patent expired in 2017 */
                   }
@@ -189,11 +186,7 @@ export default function StripePayment({
             {!requiresPayment && hasPaymentMethods != null && (
               <ConfirmButton
                 notPrimary={showOneClick}
-                disabled={
-                  loading ||
-                  freshAuthActionRunning ||
-                  (!stripeEnabled && totalStripe > 0)
-                }
+                disabled={loading || (!stripeEnabled && totalStripe > 0)}
                 showAddress={stripeEnabled && !showOneClick && totalStripe > 0}
                 label={
                   totalStripe > 0
@@ -400,9 +393,7 @@ export function FinishStripePayment({
   const [error, setError] = useState<string>("");
   const [customerSession, setCustomerSession] =
     useState<CustomerSessionSecret | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     (async () => {
@@ -721,17 +712,12 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
   const [error, setError] = useState<string>("");
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [waitingForFreshAuth, setWaitingForFreshAuth] =
-    useState<boolean>(false);
   const [freshAuthCanceled, setFreshAuthCanceled] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const load = async () => {
     try {
       setLoading(true);
-      setWaitingForFreshAuth(false);
       setFreshAuthCanceled(false);
       setError("");
       const completed = await runFreshAuthAction(async () => {
@@ -741,7 +727,7 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
         setSecret(intent);
       });
       if (!completed) {
-        setWaitingForFreshAuth(true);
+        setFreshAuthCanceled(true);
       }
     } catch (err) {
       setError(`${err}`);
@@ -754,13 +740,11 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
     <FreshAuthModal
       {...freshAuthModalProps}
       onCancel={() => {
-        setWaitingForFreshAuth(false);
         setFreshAuthCanceled(true);
         freshAuthModalProps.onCancel();
       }}
       onSuccess={async () => {
         await freshAuthModalProps.onSuccess();
-        setWaitingForFreshAuth(false);
         setFreshAuthCanceled(false);
       }}
     />
@@ -789,19 +773,6 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
             setError(error);
             load();
           }}
-        />
-        {freshAuthModal}
-      </>
-    );
-  }
-
-  if (waitingForFreshAuth) {
-    return (
-      <>
-        <Alert
-          showIcon
-          type="info"
-          message="Confirm this security action to add a payment method."
         />
         {freshAuthModal}
       </>

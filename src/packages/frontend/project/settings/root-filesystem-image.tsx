@@ -163,9 +163,7 @@ export default function RootFilesystemImage({
     prepull: false,
     hidden: false,
   });
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const siteDefaultRootfs = useTypedRedux(
     "customize",

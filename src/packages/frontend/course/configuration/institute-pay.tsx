@@ -231,9 +231,7 @@ function PurchaseCourseSeatsModal({
   );
   const numPaymentsRef = useRef<number | null>(null);
   const [chargeAmount, setChargeAmount] = useState<number>(0);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setActionError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const product = useMemo(
     () => ({

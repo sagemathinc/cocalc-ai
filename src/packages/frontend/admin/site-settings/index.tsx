@@ -151,12 +151,7 @@ export default function SiteSettings({ close }) {
   const [cloudflareApplyResult, setCloudflareApplyResult] =
     useState<CloudflareTunnelApplyResult | null>(null);
   const [cloudflareApplyError, setCloudflareApplyError] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      setState("error");
-      setError(`${err}`);
-    },
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const [data, setData] = useState<Data | null>(null);
   const [isSet, setIsSet] = useState<IsSet | null>(null);
   const [filterStr, setFilterStr] = useState<string>("");

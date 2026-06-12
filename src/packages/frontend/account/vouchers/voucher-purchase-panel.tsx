@@ -83,9 +83,7 @@ export default function VoucherPurchasePanel({
   const [codes, setCodes] = useState<string[]>([]);
   const [actionError, setActionError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setActionError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const totalValue = useMemo(() => {
     if (!amount || !count) return toDecimal(0);

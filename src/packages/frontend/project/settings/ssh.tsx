@@ -66,9 +66,7 @@ export function SSHPanel({
   const [setupError, setSetupError] = useState<string | undefined>();
   const [setupApiKey, setSetupApiKey] = useState<string | undefined>();
   const copyTimeoutRef = useRef<number | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setSetupError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const ssh_keys = project.getIn([
     "users",

@@ -124,26 +124,30 @@ describe("FreshAuthModal", () => {
 
 function FreshAuthActionHarness({ action }: { action: () => Promise<void> }) {
   const [callerError, setCallerError] = useState("");
-  const { freshAuthActionRunning, runFreshAuthAction, freshAuthModalProps } =
-    useFreshAuthAction({
-      onUnhandledError: (err) => setCallerError(`Caller handled ${err}`),
-    });
+  const [running, setRunning] = useState(false);
+  const [completed, setCompleted] = useState(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   return (
     <>
       <button
         onClick={async () => {
           try {
-            await runFreshAuthAction(action);
+            setRunning(true);
+            const result = await runFreshAuthAction(action);
+            setCompleted(result);
           } catch (err) {
             setCallerError(`Initial caller handled ${err}`);
+          } finally {
+            setRunning(false);
           }
         }}
         type="button"
       >
         Run protected action
       </button>
-      {freshAuthActionRunning ? <div>Retrying protected action</div> : null}
+      {running ? <div>Protected action running</div> : null}
+      {completed ? <div>Protected action completed</div> : null}
       {callerError ? <div>{callerError}</div> : undefined}
       <FreshAuthModal {...freshAuthModalProps} />
     </>
@@ -155,7 +159,7 @@ describe("useFreshAuthAction", () => {
     jest.mocked(postAuthApi).mockReset();
   });
 
-  it("closes the auth modal before routing retry failures to the caller", async () => {
+  it("keeps the action promise pending through fresh auth and retry failure", async () => {
     jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
       if (endpoint === "auth/fresh-auth-status") {
         return {
@@ -187,6 +191,7 @@ describe("useFreshAuthAction", () => {
 
     fireEvent.click(screen.getByText("Run protected action"));
 
+    expect(screen.getByText("Protected action running")).toBeTruthy();
     await waitFor(() => {
       expect(
         (screen.getByRole("button", { name: "Verify" }) as HTMLButtonElement)
@@ -196,7 +201,7 @@ describe("useFreshAuthAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Retrying protected action")).toBeTruthy();
+      expect(screen.getByText("Protected action running")).toBeTruthy();
     });
     await waitFor(() => {
       expect(action).toHaveBeenCalledTimes(2);
@@ -204,11 +209,45 @@ describe("useFreshAuthAction", () => {
     rejectRetry(retryError);
     await waitFor(() => {
       expect(
-        screen.getByText("Caller handled Error: payment retry failed"),
+        screen.getByText("Initial caller handled Error: payment retry failed"),
       ).toBeTruthy();
     });
+    expect(screen.queryByText("Protected action running")).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "Confirm security action" }),
     ).toBeNull();
+  });
+
+  it("resolves false when fresh auth is canceled", async () => {
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/fresh-auth-status") {
+        return {
+          mode: "account",
+          enabled: false,
+          email_address: "user@example.com",
+        };
+      }
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    });
+    const freshAuthError: any = new Error("fresh auth is required");
+    freshAuthError.code = "fresh_auth_required";
+    const action = jest.fn(async () => {
+      throw freshAuthError;
+    });
+
+    render(<FreshAuthActionHarness action={action} />);
+
+    fireEvent.click(screen.getByText("Run protected action"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Protected action running")).toBeNull();
+    });
+    expect(screen.queryByText("Protected action completed")).toBeNull();
+    expect(action).toHaveBeenCalledTimes(1);
   });
 });

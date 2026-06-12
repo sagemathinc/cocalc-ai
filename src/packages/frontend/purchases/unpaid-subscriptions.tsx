@@ -34,9 +34,7 @@ export default function UnpaidSubscriptions({
     LiveSubscription[] | null
   >(null);
   const [numActive, setNumActive] = useState<number | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const update = async () => {
     try {

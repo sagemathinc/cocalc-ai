@@ -53,9 +53,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [protectionSaving, setProtectionSaving] = useState(false);
   const [protectionError, setProtectionError] = useState("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setProtectionError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   function toggle_hide_project(): void {
     actions.toggle_hide_project(project_id);

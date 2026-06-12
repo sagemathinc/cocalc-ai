@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Flex, message, Popconfirm, Typography } from "antd";
+import { Button, Flex, Popconfirm, Typography } from "antd";
 import { Map } from "immutable";
 import { useIntl } from "react-intl";
 
@@ -51,9 +51,7 @@ export default function SSHKeyList({
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const isFlyout = mode === "flyout";
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => message.error(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   function renderAdder(size?) {
     if (project_id) {

@@ -151,9 +151,7 @@ export default function MembershipPurchaseModal({
     "choose" | "checkout" | "processing" | "done"
   >("choose");
   const numPaymentsRef = useRef<number | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setQuoteError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const load = async () => {
     setLoading(true);
