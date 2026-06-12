@@ -1,0 +1,29 @@
+[Unit]
+Description=CoCalc Bay Cloudflare Tunnel
+After=network-online.target cocalc-bay-postgres.service cocalc-bay-migrations.service
+Requires=cocalc-bay-postgres.service cocalc-bay-migrations.service
+PartOf=cocalc-bay.target
+
+[Service]
+Type=exec
+User=cocalc-bay
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
+EnvironmentFile=-/etc/cocalc/bay-topology.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+Environment=COCALC_REQUIRE_SITE_MASTER_KEY=1
+Environment=COCALC_BAY_CLOUDFLARED_SYSTEMD=1
+LoadCredential=site-master-key:/etc/cocalc/site-master-key
+ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight cloudflared
+ExecStart=/opt/cocalc/bay/current/bin/bay-cloudflared
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=cocalc-bay.target
