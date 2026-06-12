@@ -499,8 +499,7 @@ export class ProjectsStore extends Store<ProjectsState> {
     tag?: string,
     vendor: AIServiceName | "any" = "any",
   ): boolean {
-    if (redux.getStore("account").getIn(["customize", "disableAI"])) {
-      // admin account-wide AI is disabled for this user.
+    if (!this.isAIAllowedByPolicy(project_id, tag)) {
       return false;
     }
     const courseLimited = this.limitAIinCourseProject(tag);
@@ -510,18 +509,45 @@ export class ProjectsStore extends Store<ProjectsState> {
     if (aiEnabledCache.has(key)) {
       return !!aiEnabledCache.get(key);
     }
-    const value = this._hasLanguageModelEnabled(
-      project_id,
-      courseLimited,
-      vendor,
-    );
+    const value = this._hasLanguageModelEnabled(vendor);
     aiEnabledCache.set(key, value);
     return value;
   }
 
+  public isAIAllowedByPolicy(
+    project_id: string = "global",
+    tag?: string,
+  ): boolean {
+    if (redux.getStore("account").getIn(["customize", "disableAI"])) {
+      // Admin account-wide AI is disabled for this user.
+      return false;
+    }
+
+    // The "openai_disabled" account setting disables any language model vendor.
+    const openai_disabled = redux
+      .getStore("account")
+      .getIn(["other_settings", "openai_disabled"]);
+    if (openai_disabled) {
+      return false;
+    }
+
+    if (project_id === "global") {
+      return true;
+    }
+
+    const studentProjectSettings = this.get_course_info(project_id)?.get(
+      "student_project_functionality",
+    );
+    if (studentProjectSettings?.get("disableAI")) {
+      return false;
+    }
+    if (studentProjectSettings?.get("disableSomeAI")) {
+      return !this.limitAIinCourseProject(tag);
+    }
+    return true;
+  }
+
   private _hasLanguageModelEnabled(
-    project_id: string | "global" = "global",
-    courseLimited: boolean,
     vendor: AIServiceName | "any" = "any",
   ): boolean {
     // First, check which ones are actually available
@@ -541,27 +567,6 @@ export class ProjectsStore extends Store<ProjectsState> {
       }
     }
 
-    // the "openai_disabled" account setting disabled **any** language model vendor!
-    const openai_disabled = redux
-      .getStore("account")
-      .getIn(["other_settings", "openai_disabled"]);
-    if (openai_disabled) {
-      return false;
-    }
-
-    // Finally, if we're in a specific project, we check if some/all are disabled for students
-    if (project_id !== "global") {
-      const studentProjectSettings = this.get_course_info(project_id)?.get(
-        "student_project_functionality",
-      );
-
-      if (studentProjectSettings?.get("disableAI")) {
-        return false;
-      }
-      if (studentProjectSettings?.get("disableSomeAI")) {
-        return !courseLimited;
-      }
-    }
     return true;
   }
 }

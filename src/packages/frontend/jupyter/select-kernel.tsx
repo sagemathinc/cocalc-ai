@@ -23,15 +23,17 @@ import { FormattedMessage, useIntl } from "react-intl";
 import {
   CSS,
   Rendered,
+  redux,
   useRedux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { Icon, Paragraph, Text, Tooltip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course/configuration/customize-student-project-functionality";
 import {
   submitNavigatorPromptInWorkspaceChat,
   submitNavigatorPromptToCurrentThread,
@@ -114,6 +116,22 @@ export function KernelSelector({
   const kernels_by_language: undefined | OrderedMap<string, List<string>> =
     useRedux([actions.name, "kernels_by_language"]);
   const project_id = redux_project_id ?? actions.project_id;
+  const accountCustomize = useTypedRedux("account", "customize");
+  const accountOtherSettings = useTypedRedux("account", "other_settings");
+  const studentProjectFunctionality =
+    useStudentProjectFunctionality(project_id);
+  const canAskAgentForKernel = useMemo(() => {
+    if (!project_id) return false;
+    return redux
+      .getStore("projects")
+      .isAIAllowedByPolicy(project_id, "jupyter-install-kernel");
+  }, [
+    accountCustomize,
+    accountOtherSettings,
+    project_id,
+    studentProjectFunctionality.disableAI,
+    studentProjectFunctionality.disableSomeAI,
+  ]);
   const [sendingAgentTarget, setSendingAgentTarget] = useState<string | null>(
     null,
   );
@@ -158,7 +176,7 @@ export function KernelSelector({
     requestedKernel?: string;
     spec?: JupyterKernelInstallSpec;
   }) {
-    if (!project_id) return;
+    if (!project_id || !canAskAgentForKernel) return;
     try {
       const requested =
         `${opts?.spec?.requestedKernel ?? opts?.requestedKernel ?? ""}`.trim();
@@ -222,7 +240,7 @@ export function KernelSelector({
   }
 
   function renderAskAgentButton(requestedKernel?: string): Rendered {
-    if (!project_id) return;
+    if (!project_id || !canAskAgentForKernel) return;
     const targetKey = `${requestedKernel ?? ""}`.trim() || "generic";
     return (
       <Button
@@ -238,7 +256,7 @@ export function KernelSelector({
   function renderPopularKernelAgentButton(
     spec: JupyterKernelInstallSpec,
   ): Rendered {
-    if (!project_id) return;
+    if (!project_id || !canAskAgentForKernel) return;
     return (
       <Button
         size="small"
@@ -274,6 +292,7 @@ export function KernelSelector({
   }
 
   function render_install_kernel_items(): Rendered[] {
+    if (!canAskAgentForKernel) return [];
     return [
       <Descriptions.Item key="install-generic-kernel" label="Ask Agent">
         <div
@@ -432,8 +451,10 @@ export function KernelSelector({
                 name="question-circle"
               />
             </Popover>{" "}
-            for kernels. Install one of these common kernels with Agent, or ask
-            Agent for a specific kernel.
+            for kernels.{" "}
+            {canAskAgentForKernel
+              ? "Install one of these common kernels with Agent, or ask Agent for a specific kernel."
+              : "Install a Jupyter kernel in the project environment, then refresh this list."}
           </Paragraph>
         </Space>
       </Descriptions.Item>,
@@ -493,7 +514,7 @@ export function KernelSelector({
         ),
       },
     ];
-    if (hasKnownKernels) {
+    if (hasKnownKernels && canAskAgentForKernel) {
       items.push({
         key: "install",
         label: (
