@@ -189,6 +189,20 @@ export default function getConfig(): Configuration {
     mode: PRODMODE
       ? ("production" as "production")
       : ("development" as "development"),
+    // Editor-load invariant:
+    //
+    // @cocalc/frontend/editors/register-all must stay in the main app graph,
+    // not behind a first-file-open dynamic import. Production Rspack can split
+    // synchronous CodeMirror/style-loader side-effect dependencies into
+    // companion chunks. When register-all was lazy-loaded from
+    // ProjectActions.initFileRedux, the parent chunk could execute before those
+    // companion modules were installed, causing "__webpack_modules__[id].call"
+    // crashes when opening chat, markdown, and Jupyter files after a refresh.
+    //
+    // Do not "fix" that by disabling splitChunks globally; it bloats many async
+    // chunks and only hides the dependency-shape problem. If this invariant
+    // changes, validate with a production static build and hard refresh on chat,
+    // markdown, and Jupyter files.
     entry: {
       load: [resolve("dist-ts/src/load.js")],
       app: {

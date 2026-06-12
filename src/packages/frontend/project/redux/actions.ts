@@ -15,6 +15,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { get as getProjectStatus } from "@cocalc/conat/project/project-status";
 import { default_filename } from "@cocalc/frontend/account";
 import { alert_message } from "@cocalc/frontend/alerts";
+import "@cocalc/frontend/editors/register-all";
 import {
   Actions,
   project_redux_name,
@@ -1507,9 +1508,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           typeof staleActions.isClosed === "function" &&
           staleActions.isClosed()) ||
         (staleActions == null && staleStore != null);
-      // LAZY IMPORT, so that editors are only available
-      // when you are going to use them.  Helps with code splitting.
-      await import("../../editors/register-all");
       if (shouldRemoveStaleRuntime) {
         project_file.remove(path, this.redux, this.project_id);
         if (redux.getActions(staleName) != null) {
