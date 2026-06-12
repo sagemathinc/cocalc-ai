@@ -3134,7 +3134,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
     switch (route.kind) {
       case "directory":
-        this.open_directory(route.path, change_history, true, foreground);
+        await this.open_directory(route.path, change_history, true, foreground);
         return;
 
       case "file": {
@@ -3153,7 +3153,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         const isDir = await this.isDir(route.path);
         if (isDir) {
-          this.open_directory(route.path, change_history, true, foreground);
+          await this.open_directory(
+            route.path,
+            change_history,
+            true,
+            foreground,
+          );
         } else {
           this.open_file({
             path: route.path,

@@ -17,11 +17,20 @@ function isRetryableProjectFsError(err: unknown): boolean {
   if (code === "408") {
     return true;
   }
-  const message = `${(err as ConatErrorLike | undefined)?.message ?? err ?? ""}`;
+  const message =
+    `${(err as ConatErrorLike | undefined)?.message ?? err ?? ""}`.toLowerCase();
   return (
     message.includes("retry in about") ||
+    message.includes("project-host auth token retry cooldown active") ||
     message.includes("failed to sign in") ||
     message.includes("missing project-host bearer token") ||
+    message.includes("no subscribers matching") ||
+    message.includes("unable to route") ||
+    message.includes("host routing info unavailable") ||
+    message.includes("project host id unavailable") ||
+    message.includes("project not running") ||
+    message.includes("not running") ||
+    message.includes("not ready") ||
     message.includes('once: "ready" not emitted before "closed"') ||
     message.includes('once: "inbox" not emitted before "closed"') ||
     message.includes("timed out")

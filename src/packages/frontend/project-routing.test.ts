@@ -39,6 +39,10 @@ describe("project-routing", () => {
   });
 
   it("parses file and directory targets", () => {
+    expect(parseProjectTarget("files", { decodeDirectoryPath })).toEqual({
+      kind: "directory",
+      path: "/home/user",
+    });
     expect(parseProjectTarget("files/", { decodeDirectoryPath })).toEqual({
       kind: "directory",
       path: "/home/user",

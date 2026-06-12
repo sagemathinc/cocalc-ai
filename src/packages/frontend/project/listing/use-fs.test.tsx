@@ -121,6 +121,36 @@ describe("useFs", () => {
     expect(result).toBe(fs);
   });
 
+  it("retries project-host routing warmup failures and recovers", async () => {
+    const transientErr = new Error(
+      "unable to route 'useFs' to project-host for project project-3; host routing info unavailable",
+    );
+    const fs = { readdir: jest.fn() } as any;
+    projectFs.mockRejectedValueOnce(transientErr).mockResolvedValueOnce(fs);
+
+    useFsForTest("project-3");
+    await flushEffects();
+
+    const result = useFsForTest("project-3");
+    expect(projectFs).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(1000);
+    expect(result).toBe(fs);
+  });
+
+  it("retries project startup not-running failures and recovers", async () => {
+    const transientErr = new Error("project not running");
+    const fs = { readdir: jest.fn() } as any;
+    projectFs.mockRejectedValueOnce(transientErr).mockResolvedValueOnce(fs);
+
+    useFsForTest("project-4");
+    await flushEffects();
+
+    const result = useFsForTest("project-4");
+    expect(projectFs).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(1000);
+    expect(result).toBe(fs);
+  });
+
   it("does not retry non-retryable projectFs failures", async () => {
     projectFs.mockRejectedValueOnce(new Error("permission denied"));
 
