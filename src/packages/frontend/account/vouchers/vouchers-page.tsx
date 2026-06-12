@@ -260,9 +260,7 @@ export function VouchersPage() {
   const [showPaidOnly, setShowPaidOnly] = useState<boolean>(false);
   const [charging, setCharging] = useState<boolean>(false);
   const [chargeResult, setChargeResult] = useState<any>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function load() {
     setLoading(true);

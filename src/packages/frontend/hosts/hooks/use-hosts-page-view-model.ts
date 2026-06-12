@@ -309,16 +309,7 @@ export const useHostsPageViewModel = () => {
   const [showRuntimeVersions, setShowRuntimeVersions] = React.useState(
     readShowRuntimeVersions,
   );
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      alert_message({
-        type: "error",
-        message:
-          err instanceof Error ? err.message : `Unexpected error: ${err}`,
-        timeout: 20,
-      });
-    },
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const parallelOps = useParallelOps(hub, {
     enabled: isAdmin && showParallelLimits,
     runFreshAuthAction,

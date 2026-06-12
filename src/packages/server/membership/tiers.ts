@@ -61,6 +61,8 @@ type ActiveMembershipSubscription = {
   cost: number;
   current_period_start: Date;
   current_period_end: Date;
+  latest_purchase_cost?: number | string | null;
+  latest_purchase_id?: number | null;
   status: string;
 };
 
@@ -179,13 +181,19 @@ export async function getActiveMembershipSubscription({
 }): Promise<ActiveMembershipSubscription | undefined> {
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
-    `SELECT id, metadata, cost, current_period_start, current_period_end, status
-       FROM subscriptions
-       WHERE account_id=$1
-         AND metadata->>'type'='membership'
-         AND status IN ('active','unpaid','past_due','canceled')
-         AND current_period_end >= NOW()
-       ORDER BY current_period_end DESC, id DESC`,
+    `SELECT s.id, s.metadata, s.cost, s.current_period_start,
+            s.current_period_end, s.latest_purchase_id, s.status,
+            p.cost AS latest_purchase_cost
+       FROM subscriptions s
+       LEFT JOIN purchases p
+         ON p.id=s.latest_purchase_id
+        AND p.account_id=s.account_id
+        AND p.service='membership'
+       WHERE s.account_id=$1
+         AND s.metadata->>'type'='membership'
+         AND s.status IN ('active','unpaid','past_due','canceled')
+         AND s.current_period_end >= NOW()
+       ORDER BY s.current_period_end DESC, s.id DESC`,
     [account_id],
   );
   const subscriptions = rows as ActiveMembershipSubscription[];
@@ -247,6 +255,28 @@ function subscriptionStatusRank(status: string): number {
   }
 }
 
+function subscriptionRefundBasis(subscription: ActiveMembershipSubscription) {
+  const basis =
+    subscription.latest_purchase_cost != null
+      ? subscription.latest_purchase_cost
+      : (subscription.cost ?? 0);
+  const amount = toDecimal(basis);
+  return amount.lt(0) ? toDecimal(0) : amount;
+}
+
+function proratedSubscriptionRefund(
+  subscription: ActiveMembershipSubscription,
+) {
+  const start = new Date(subscription.current_period_start).valueOf();
+  const end = new Date(subscription.current_period_end).valueOf();
+  const now = Date.now();
+  if (end <= now || end <= start) {
+    return toDecimal(0);
+  }
+  const fraction = Math.max(0, Math.min(1, (end - now) / (end - start)));
+  return moneyRound2Up(subscriptionRefundBasis(subscription).mul(fraction));
+}
+
 export async function computeMembershipPricing({
   account_id,
   targetClass,
@@ -295,13 +325,7 @@ export async function computeMembershipPricing({
 
   let refund = toDecimal(0);
   if (existingClass && targetPriority > existingPriority) {
-    const start = new Date(existing.current_period_start).valueOf();
-    const end = new Date(existing.current_period_end).valueOf();
-    const now = Date.now();
-    if (end > now && end > start) {
-      const fraction = Math.max(0, Math.min(1, (end - now) / (end - start)));
-      refund = moneyRound2Up(toDecimal(existing.cost ?? 0).mul(fraction));
-    }
+    refund = proratedSubscriptionRefund(existing);
   }
 
   const charge = moneyRound2Up(
@@ -384,13 +408,7 @@ export async function computeMembershipChange({
 
   let refund = toDecimal(0);
   if (change == "upgrade" && existing) {
-    const start = new Date(existing.current_period_start).valueOf();
-    const end = new Date(existing.current_period_end).valueOf();
-    const now = Date.now();
-    if (end > now && end > start) {
-      const fraction = Math.max(0, Math.min(1, (end - now) / (end - start)));
-      refund = moneyRound2Up(toDecimal(existing.cost ?? 0).mul(fraction));
-    }
+    refund = proratedSubscriptionRefund(existing);
   }
   const charge =
     change == "downgrade"

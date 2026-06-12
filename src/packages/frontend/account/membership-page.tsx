@@ -409,9 +409,7 @@ function PersonalSubscriptionActions({
   const subscriptionId = membership.subscription_id;
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   if (subscriptionId == null) {
     return null;

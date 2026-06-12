@@ -50,9 +50,7 @@ export default function AdminRefund({
   const [refunding, setRefunding] = useState<boolean>(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [form] = Form.useForm(); // Add this line
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const showModal = () => {
     setError("");

@@ -60,9 +60,7 @@ function StripeAddressElement({ style, onFinished }: { style?; onFinished? }) {
   const [customerSession, setCustomerSession] =
     useState<CustomerSessionSecret | null>(null);
   const [customer, setCustomer] = useState<any | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     (async () => {

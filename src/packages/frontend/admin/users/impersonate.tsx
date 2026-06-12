@@ -29,9 +29,7 @@ export function Impersonate({ first_name, last_name, account_id }: Props) {
   const [extraWarning, setExtraWarning] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const { locale } = useLocalizationCtx();
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => set_err(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function generate_link(): Promise<void> {
     setLoading(true);
