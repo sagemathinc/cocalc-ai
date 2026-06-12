@@ -337,7 +337,7 @@ interface ChatRoomThreadPanelProps {
   onOpenGitBrowser?: (request: {
     threadKey: string;
     cwdOverride?: string;
-    commitHash: string;
+    commitHash?: string;
   }) => void;
   readOnly?: boolean;
 }
@@ -1719,6 +1719,23 @@ export function ChatRoomThreadPanel({
           gap: 6,
         }}
       >
+        {!readOnly && onOpenGitBrowser != null ? (
+          <Tooltip title="Open git browser">
+            <Button
+              size="small"
+              disabled={!selectedThreadKey}
+              onClick={() => {
+                if (!selectedThreadKey) {
+                  return;
+                }
+                onOpenGitBrowser({ threadKey: selectedThreadKey });
+              }}
+              icon={<Icon name="git" />}
+            >
+              Git
+            </Button>
+          </Tooltip>
+        ) : null}
         <Tooltip title="Search thread (Ctrl/Cmd+F)">
           <Button
             size="small"
