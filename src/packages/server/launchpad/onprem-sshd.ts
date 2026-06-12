@@ -118,6 +118,13 @@ function isEnabled(value: unknown): boolean {
   return !["0", "false", "no", "off"].includes(lowered);
 }
 
+function parsePort(value: unknown): number | undefined {
+  const raw = clean(value);
+  if (!raw) return undefined;
+  const port = Number.parseInt(raw, 10);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
+}
+
 function normalizeCloudflareMode(
   value: unknown,
 ): "none" | "self" | "managed" | undefined {
@@ -1184,6 +1191,16 @@ async function killDuplicateRestServers(opts: {
 }
 
 function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
+  if (systemdManagedCloudflared()) {
+    const port =
+      parsePort(process.env.COCALC_BAY_HUB_BASE_PORT) ??
+      parsePort(process.env.COCALC_BAY_WORKER_PORT) ??
+      parsePort(process.env.PORT);
+    if (port != null) {
+      const host = clean(process.env.COCALC_BAY_HUB_BIND_HOST) ?? "127.0.0.1";
+      return { origin: `http://${host}:${port}`, noTLSVerify: false };
+    }
+  }
   const config = getLaunchpadLocalConfig("local");
   const httpPort = config.http_port;
   const port = httpPort ?? 9001;
