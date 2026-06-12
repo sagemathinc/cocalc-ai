@@ -41,7 +41,7 @@ export const BILLING_SETTINGS_BODY = String.raw`
 ## What billing settings are for
 
 Billing settings collect licenses, purchases, payment methods, statements,
-vouchers, and store access for the signed-in account. These screens are
+and store access for the signed-in account. These screens are
 account-scoped. Purchased membership tiers and dedicated project hosts may
 change how projects run, but the purchase history and payment instruments
 belong to the account.

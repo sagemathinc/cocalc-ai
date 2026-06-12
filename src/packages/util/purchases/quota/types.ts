@@ -79,16 +79,7 @@ export type PurchaseInfoQuota = PurchaseInfoQuota0 &
   CustomDescription &
   StartEndDates;
 
-export type PurchaseInfoVoucher = {
-  type: "vouchers";
-  id: number;
-  quantity: number;
-  cost: number;
-  tax: number;
-};
-
-export type PurchaseInfo = Version &
-  (PurchaseInfoQuota | (PurchaseInfoVoucher & CustomDescription));
+export type PurchaseInfo = Version & PurchaseInfoQuota;
 
 // stripe's metadata can only handle string or number values.
 export type ProductMetadataQuota = Record<
@@ -107,9 +98,4 @@ export type ProductMetadataQuota = Record<
   duration_days?: number;
 };
 
-export interface ProductMetadataVouchers {
-  type: "vouchers";
-  id: number; // id of the voucher in the vouchers table of the database
-}
-
-export type ProductMetadata = ProductMetadataVouchers | ProductMetadataQuota;
+export type ProductMetadata = ProductMetadataQuota;

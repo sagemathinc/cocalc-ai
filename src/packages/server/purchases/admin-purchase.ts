@@ -16,12 +16,10 @@ import createCredit from "@cocalc/server/purchases/create-credit";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
-import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import { moneyRound2Up, moneyToCurrency, toDecimal } from "@cocalc/util/money";
-import { MAX_VOUCHERS, MAX_VOUCHER_VALUE } from "@cocalc/util/vouchers";
 
-type Product = "balance" | "membership" | "voucher";
+type Product = "balance" | "membership";
 type Source = "credit" | "free";
 
 export interface AdminPurchaseOptions {
@@ -34,9 +32,6 @@ export interface AdminPurchaseOptions {
   product: Product;
   source: Source;
   user_account_id: string;
-  voucher_amount?: number;
-  voucher_count?: number;
-  voucher_title?: string;
   balance_user_note?: string;
   balance_admin_note?: string;
 }
@@ -45,8 +40,6 @@ export interface AdminPurchaseResult {
   purchase_id: number;
   credit_id?: number;
   expires_at?: Date | null;
-  voucher_codes?: string[];
-  voucher_id?: number;
   adjustment_amount?: number;
 }
 
@@ -145,7 +138,7 @@ async function ensureCreditCoversPurchase({
   account_id: string;
   client;
   cost: number;
-  service: "membership" | "voucher";
+  service: "membership";
 }) {
   const purchase = await isPurchaseAllowed({
     account_id,
@@ -169,9 +162,6 @@ export default async function adminPurchase({
   product,
   source,
   user_account_id,
-  voucher_amount,
-  voucher_count,
-  voucher_title,
   balance_user_note,
   balance_admin_note,
 }: AdminPurchaseOptions): Promise<AdminPurchaseResult> {
@@ -273,7 +263,7 @@ export default async function adminPurchase({
         account_id: user_account_id,
         client,
         cost: priceValue.toNumber(),
-        service: product === "membership" ? "membership" : "voucher",
+        service: "membership",
       });
     }
 
@@ -332,56 +322,7 @@ export default async function adminPurchase({
       return { credit_id, expires_at, purchase_id };
     }
 
-    const amountValue = toDecimal(voucher_amount ?? 0);
-    const count = Number(voucher_count ?? 0);
-    const title = `${voucher_title ?? ""}`.trim();
-    if (
-      !Number.isFinite(amountValue.toNumber()) ||
-      amountValue.lte(0) ||
-      amountValue.gt(MAX_VOUCHER_VALUE)
-    ) {
-      throw Error(
-        `voucher amount must be positive and at most ${MAX_VOUCHER_VALUE}`,
-      );
-    }
-    if (!Number.isInteger(count) || count < 1 || count > MAX_VOUCHERS.admin) {
-      throw Error(
-        `voucher count must be an integer between 1 and ${MAX_VOUCHERS.admin}`,
-      );
-    }
-    if (!title) {
-      throw Error("voucher_title is required");
-    }
-
-    const result = await createVouchers({
-      account_id: user_account_id,
-      active: new Date(),
-      amount: amountValue.toNumber(),
-      cancelBy: null,
-      client,
-      credit_id,
-      expire: null,
-      numVouchers: count,
-      purchaseCost: priceValue.toNumber(),
-      title,
-      whenPay: "now",
-    });
-
-    if (result.purchase_id != null) {
-      await client.query("UPDATE purchases SET notes=$1, tag=$2 WHERE id=$3", [
-        notes,
-        "admin-purchase",
-        result.purchase_id,
-      ]);
-    }
-
-    await client.query("COMMIT");
-    return {
-      credit_id,
-      purchase_id: result.purchase_id ?? 0,
-      voucher_codes: result.codes,
-      voucher_id: result.id,
-    };
+    throw Error(`unsupported admin purchase product: ${product}`);
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

@@ -38,7 +38,6 @@ export const VALID_BILLING_SUB_TYPES = [
   "payments",
   "payment-methods",
   "statements",
-  "vouchers",
 ] as const;
 
 export type BillingSubTabType = (typeof VALID_BILLING_SUB_TYPES)[number];

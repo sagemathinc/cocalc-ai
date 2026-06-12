@@ -27,8 +27,6 @@ export const ADMIN_DATA_EXPLORER_ALLOWED_SQL_RELATIONS = [
   "statements",
   "usage_info",
   "ux_latency_events",
-  "voucher_codes",
-  "vouchers",
 ] as const;
 
 export const ADMIN_DATA_EXPLORER_ALLOWED_SQL_FUNCTIONS = [
@@ -248,31 +246,6 @@ export const ADMIN_DATA_EXPLORER_ALLOWED_SQL_COLUMNS = {
     "started_at",
     "created_at",
     "metadata",
-  ],
-  voucher_codes: [
-    "code",
-    "id",
-    "created",
-    "when_redeemed",
-    "redeemed_by",
-    "canceled",
-    "purchase_ids",
-    "notes",
-  ],
-  vouchers: [
-    "id",
-    "when_pay",
-    "created_by",
-    "created",
-    "title",
-    "active",
-    "expire",
-    "cancel_by",
-    "count",
-    "cost",
-    "tax",
-    "notes",
-    "purchased",
   ],
 } as const satisfies Record<
   (typeof ADMIN_DATA_EXPLORER_ALLOWED_SQL_RELATIONS)[number],

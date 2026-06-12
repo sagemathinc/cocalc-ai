@@ -4,7 +4,7 @@ It doesn't manage actually coordinating purchases, showing prices, or anything
 like that.
 */
 
-import { Alert, DatePicker, InputNumber, Switch, Table, Tag } from "antd";
+import { DatePicker, InputNumber, Switch, Table, Tag } from "antd";
 import dayjs from "dayjs";
 import { useMemo, useState } from "react";
 import { useIntl } from "react-intl";
@@ -73,12 +73,11 @@ export default function LicenseEditor({
 }: Props) {
   const intl = useIntl();
   const projectsLabel = intl.formatMessage(labels.projects);
-  const editableInfo = info.type === "vouchers" ? undefined : info;
   const [start, setStart] = useState<dayjs.Dayjs | undefined>(
-    editableInfo?.start ? dayjs(editableInfo.start) : undefined,
+    info.start ? dayjs(info.start) : undefined,
   );
   const [end, setEnd] = useState<dayjs.Dayjs | undefined>(
-    editableInfo?.end ? dayjs(editableInfo.end) : undefined,
+    info.end ? dayjs(info.end) : undefined,
   );
   const columns = [
     {
@@ -111,8 +110,7 @@ export default function LicenseEditor({
     onChange(next);
   };
 
-  const isSubscription =
-    editableInfo?.subscription != null && editableInfo.subscription != "no";
+  const isSubscription = info.subscription != null && info.subscription != "no";
 
   const endPresets = useMemo(() => {
     if (isSubscription || start == null) {
@@ -143,10 +141,6 @@ export default function LicenseEditor({
       </div>
     );
   }, [isSubscription, start?.valueOf() ?? 0]);
-
-  if (info.type == "vouchers") {
-    return <Alert type="error" title="Editing vouchers is not allowed." />;
-  }
 
   let data = [
     {

@@ -4,10 +4,6 @@ import { parse_target } from "./history";
 
 describe("parse_target", () => {
   it("recognizes account settings tabs on direct loads", () => {
-    expect(parse_target("settings/vouchers")).toEqual({
-      page: "account",
-      tab: "vouchers",
-    });
     expect(parse_target("settings/payment-methods")).toEqual({
       page: "account",
       tab: "payment-methods",

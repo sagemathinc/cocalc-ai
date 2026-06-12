@@ -27,7 +27,6 @@ import {
   PublicSignUpForm,
 } from "./forms";
 import PublicAuthPageShell from "./page-shell";
-import PublicRedeemVoucherView from "./redeem-view";
 import {
   getPublicAuthRouteFromPath,
   pathForAuthView,
@@ -70,8 +69,6 @@ function titleForRoute(route: PublicAuthRoute, siteName: string): string {
       return `Choose a new ${siteName} password`;
     case "auth-verify-email":
       return `Verify your ${siteName} email`;
-    case "redeem":
-      return `Redeem voucher for ${siteName}`;
     case "project-invite":
       return `Accept project invite for ${siteName}`;
     case "sso-detail":
@@ -99,8 +96,6 @@ function subtitleForRoute(
       return `Finish signing in to ${siteName}`;
     case "auth-password-reset-done":
       return siteName;
-    case "redeem":
-      return `Sign in or create an account to apply voucher credit to your ${siteName} account.`;
     case "project-invite":
       if (isAuthenticated) {
         return `Review this ${siteName} project invite before accepting it.`;
@@ -123,7 +118,6 @@ function cardWidthForRoute(route: PublicAuthRoute): string | undefined {
     case "auth-password-reset-done":
     case "auth-verify-email":
       return "min(560px, 96vw)";
-    case "redeem":
     case "project-invite":
       return "min(720px, 96vw)";
     default:
@@ -247,13 +241,6 @@ export default function PublicAuthApp({
             email={route.email}
             isAuthenticated={!!config?.is_authenticated}
             token={route.token}
-          />
-        )}
-        {route.kind === "redeem" && (
-          <PublicRedeemVoucherView
-            initialCode={route.code}
-            isAuthenticated={!!config?.is_authenticated}
-            onNavigate={onNavigate}
           />
         )}
         {route.kind === "project-invite" && (

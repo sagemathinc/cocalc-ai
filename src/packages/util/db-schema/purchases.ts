@@ -40,9 +40,6 @@ export const MEMBERSHIP_CHANGE = "membership-change";
 // purchase or expand a membership package directly in-app
 export const MEMBERSHIP_PACKAGE_PURCHASE = "membership-package-purchase";
 
-// purchase account credit vouchers directly
-export const VOUCHER_PURCHASE = "voucher-purchase";
-
 // metered dedicated-host compute usage
 export const DEDICATED_HOST_USAGE = "dedicated-host-usage";
 
@@ -64,8 +61,7 @@ export type ComputeService =
   | "refund"
   | "membership"
   | "dedicated-host"
-  | "student-pay"
-  | "voucher";
+  | "student-pay";
 export type Service = ComputeService;
 
 export interface Membership {
@@ -101,15 +97,6 @@ export interface StudentPayPurchase {
   credit_id?: number;
 }
 
-export interface Voucher {
-  type: "voucher";
-  quantity: number;
-  cost: MoneyValue; // per voucher
-  title: string;
-  voucher_id: number;
-  credit_id?: number;
-}
-
 export interface DedicatedHostPurchase {
   type: "dedicated-host";
   host_id: string;
@@ -125,7 +112,6 @@ export interface DedicatedHostPurchase {
 
 export interface Credit {
   type: "credit";
-  voucher_code?: string; // if credit is the result of redeeming a voucher code
   line_items?: LineItem[];
   description?: string;
   purpose?: string;
@@ -151,8 +137,7 @@ export type Description =
   | DedicatedHostPurchase
   | Membership
   | MembershipPackagePurchase
-  | StudentPayPurchase
-  | Voucher;
+  | StudentPayPurchase;
 
 // max number of purchases a user can get in one query.
 export const MAX_API_LIMIT = 500;
@@ -241,7 +226,7 @@ Table({
     },
     service: {
       title: "Service Category",
-      desc: "The service being charged for, e.g., membership, voucher, etc.",
+      desc: "The service being charged for, e.g., membership, student-pay, etc.",
       type: "string",
       pg_type: "varchar(127)",
     },

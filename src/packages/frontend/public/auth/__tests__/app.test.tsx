@@ -104,12 +104,9 @@ describe("getPublicAuthRouteFromPath", () => {
       id: "example",
       kind: "sso-detail",
     });
-    expect(getPublicAuthRouteFromPath("/base/redeem")).toEqual({
-      kind: "redeem",
-    });
-    expect(getPublicAuthRouteFromPath("/base/redeem/CODE12345")).toEqual({
-      code: "CODE12345",
-      kind: "redeem",
+    expect(getPublicAuthRouteFromPath("/base/not-real")).toEqual({
+      kind: "auth-form",
+      view: "sign-in",
     });
     expect(getPublicAuthRouteFromPath("/base/invites/secret-token")).toEqual({
       kind: "project-invite",
@@ -566,23 +563,6 @@ describe("PublicAuthApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Example SSO")).not.toBeNull();
     expect(screen.getByRole("link", { name: "Continue" })).not.toBeNull();
-  });
-
-  it("renders the public redeem view", () => {
-    render(
-      <PublicAuthApp
-        config={config()}
-        initialRoute={{ code: "CODE12345", kind: "redeem" }}
-      />,
-    );
-
-    expect(
-      screen.getByRole("heading", { name: "Redeem voucher for Launchpad" }),
-    ).not.toBeNull();
-    expect(screen.getByDisplayValue("CODE12345")).not.toBeNull();
-    expect(
-      screen.getByText("Sign in or create an account to redeem this voucher"),
-    ).not.toBeNull();
   });
 
   it("previews project invite links without accepting them immediately", async () => {

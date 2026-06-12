@@ -30,7 +30,7 @@ export async function chargeUser(
   logger.debug("getting product_id");
   const product_id = await stripeGetProduct(info);
   let purchase;
-  if (info.type == "vouchers" || info.subscription == "no") {
+  if (info.subscription == "no") {
     purchase = await stripePurchaseProduct(stripe, product_id, info);
   } else {
     purchase = await stripeCreateSubscription(stripe, product_id, info);
@@ -39,9 +39,6 @@ export async function chargeUser(
 }
 
 export function unitAmount(info: PurchaseInfo): number {
-  if (info.type == "vouchers") {
-    return decimalToStripe(info.cost);
-  }
   if (info.cost == null) throw Error("cost must be defined");
   return decimalToStripe(info.cost.cost_per_unit);
 }
@@ -55,7 +52,7 @@ async function stripeCreatePrice(info: PurchaseInfo): Promise<void> {
   //  - if number of days, we set price for that many days.
   if (info.cost == null) throw Error("cost must be defined");
   const conn = await getConn();
-  if (info.type == "vouchers" || info.subscription == "no") {
+  if (info.subscription == "no") {
     // create the one-time cost
     await conn.prices.create({
       currency: "usd",
@@ -105,11 +102,7 @@ async function stripeGetProduct(info: PurchaseInfo): Promise<string> {
     const metadata = getProductMetadata(info);
     const name = getProductName(info);
     let statement_descriptor = "COCALC ";
-    if (info.type == "vouchers") {
-      statement_descriptor += `${info.quantity} VOUCHER${
-        info.quantity != 1 ? "S" : ""
-      }`;
-    } else if (info.subscription != "no") {
+    if (info.subscription != "no") {
       statement_descriptor += "LIC SUB";
     } else {
       const n = getDays(info);
@@ -162,8 +155,8 @@ async function stripePurchaseProduct(
   const { quantity } = info;
   logger.debug("stripePurchaseProduct", product_id, quantity);
 
-  if (info.type !== "quota" && info.type !== "vouchers") {
-    throw new Error("can only deal with quota licenses or vouchers");
+  if (info.type !== "quota") {
+    throw new Error("can only deal with quota licenses");
   }
 
   const customer: string = await stripe.need_customer_id();
@@ -193,31 +186,21 @@ async function stripePurchaseProduct(
     }
   }
   logger.debug("stripePurchaseProduct: got price", price);
-  if (info.type == "vouchers") {
-    // There is no period for a voucher.
-    await conn.invoiceItems.create({
-      customer,
-      pricing: { price },
-      quantity,
-      metadata: info as any,
-    });
-  } else {
-    if (info.start == null || info.end == null) {
-      throw Error("start and end must be defined");
-    }
-    const period = {
-      start: Math.round(new Date(info.start).valueOf() / 1000),
-      end: Math.round(new Date(info.end).valueOf() / 1000),
-    };
-
-    // Item gets automatically put on the invoice created below.
-    await conn.invoiceItems.create({
-      customer,
-      pricing: { price },
-      quantity,
-      period,
-    });
+  if (info.start == null || info.end == null) {
+    throw Error("start and end must be defined");
   }
+  const period = {
+    start: Math.round(new Date(info.start).valueOf() / 1000),
+    end: Math.round(new Date(info.end).valueOf() / 1000),
+  };
+
+  // Item gets automatically put on the invoice created below.
+  await conn.invoiceItems.create({
+    customer,
+    pricing: { price },
+    quantity,
+    period,
+  });
 
   // TODO: improve later to handle case of *multiple* items on one invoice
 
@@ -236,14 +219,9 @@ async function stripePurchaseProduct(
   });
   logger.debug("stripePurchaseProduct -- pay invoice");
   try {
-    const invoice = await conn.invoices.pay(
-      invoice_id,
-      info.type == "vouchers"
-        ? {}
-        : {
-            payment_method: info.payment_method,
-          },
-    );
+    const invoice = await conn.invoices.pay(invoice_id, {
+      payment_method: info.payment_method,
+    });
     const paid = invoice.status == "paid";
     logger.debug("stripePurchaseProduct -- paid = ", paid);
     if (info.type === "quota") {
@@ -291,9 +269,6 @@ async function stripeCreateSubscription(
   product_id: string,
   info: PurchaseInfo,
 ): Promise<Purchase> {
-  if (info.type == "vouchers") {
-    throw Error("stripeCreateSubscription can't be used to purchase vouchers");
-  }
   const { quantity, subscription } = info;
   const customer: string = await stripe.need_customer_id();
   const conn = await getConn();

@@ -8,7 +8,6 @@ import { Tag } from "antd";
 import { useState } from "react";
 import { Tooltip } from "@cocalc/frontend/components";
 
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   QUOTA_SPEC,
   Service,
@@ -62,18 +61,6 @@ export default function ServiceTag({
       )}
     </Tag>
   );
-
-  if (service == "voucher") {
-    tag = (
-      <a
-        onClick={() => {
-          openAccountSettings({ page: "vouchers" });
-        }}
-      >
-        {tag}
-      </a>
-    );
-  }
 
   if (spec?.description) {
     return <Tooltip title={spec.description}>{tag}</Tooltip>;
