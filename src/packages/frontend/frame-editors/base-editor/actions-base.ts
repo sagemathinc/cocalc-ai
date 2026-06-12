@@ -1802,7 +1802,7 @@ export class BaseEditorActions<
       if (type == "chat") {
         this.closeChat();
       }
-      this.store.emit("close-frame", { id, type });
+      this.store.emit("close-frame", { id, type, closingFile: true });
       this._get_project_actions()?.close_tab?.(this.path);
       return;
     }

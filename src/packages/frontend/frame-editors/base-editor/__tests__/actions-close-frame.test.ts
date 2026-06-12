@@ -21,6 +21,7 @@ describe("BaseEditorActions.close_frame", () => {
     expect(emit).toHaveBeenCalledWith("close-frame", {
       id: "frame-1",
       type: "cm",
+      closingFile: true,
     });
     expect(closeTab).toHaveBeenCalledWith("/home/user/test.md");
   });

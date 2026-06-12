@@ -82,11 +82,21 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
     this.applyFrameTypeFromUrlForTests();
     this.normalizeHiddenSingleDocFrames();
 
-    this.store.on("close-frame", async ({ id }) => {
-      if (this.frame_actions[id] != null) {
-        await delay(1);
-        this.frame_actions[id].close();
+    this.store.on("close-frame", async ({ id, closingFile }) => {
+      const closeFrameActions = () => {
+        const actions = this.frame_actions[id];
+        if (actions == null) return;
+        actions.close();
         delete this.frame_actions[id];
+      };
+
+      if (this.frame_actions[id] != null) {
+        if (closingFile) {
+          closeFrameActions();
+          return;
+        }
+        await delay(1);
+        closeFrameActions();
       }
     });
   }
