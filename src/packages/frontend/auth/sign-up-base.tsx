@@ -1,5 +1,13 @@
 import { Alert, Button, Checkbox, Input, Space } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import type { InputRef } from "antd";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import api from "@cocalc/frontend/client/api";
@@ -55,6 +63,10 @@ export default function SignUpFormBase({
   const [signingUp, setSigningUp] = useState<boolean>(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>("");
+  const registrationTokenInputRef = useRef<InputRef | null>(null);
+  const emailInputRef = useRef<InputRef | null>(null);
+  const passwordInputRef = useRef<InputRef | null>(null);
+  const displayNameInputRef = useRef<InputRef | null>(null);
   const signupEmailDomainPolicy = useTypedRedux(
     "customize",
     "signup_email_domain_public_policy",
@@ -85,6 +97,29 @@ export default function SignUpFormBase({
       }
     })();
   }, [requiresToken]);
+
+  const syncBrowserFilledInputs = useCallback(() => {
+    const sync = (
+      ref: RefObject<InputRef | null>,
+      setter: (value: string) => void,
+    ) => {
+      const value = ref.current?.input?.value;
+      if (value) {
+        setter(value);
+      }
+    };
+    sync(registrationTokenInputRef, setRegistrationToken);
+    sync(emailInputRef, setEmail);
+    sync(passwordInputRef, setPassword);
+    sync(displayNameInputRef, setDisplayName);
+  }, []);
+
+  useEffect(() => {
+    const timers = [100, 500, 1000, 2000].map((delay) =>
+      setTimeout(syncBrowserFilledInputs, delay),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [syncBrowserFilledInputs]);
 
   const canSubmit = useMemo(() => {
     if (!isValidEmailAddress(email)) {
@@ -175,7 +210,13 @@ export default function SignUpFormBase({
   const issueList = Object.values(issues).filter(Boolean);
 
   return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+    <Space
+      orientation="vertical"
+      size="middle"
+      style={{ width: "100%" }}
+      onFocusCapture={syncBrowserFilledInputs}
+      onInputCapture={syncBrowserFilledInputs}
+    >
       {bootstrap && (
         <Alert
           type="info"
@@ -202,6 +243,7 @@ export default function SignUpFormBase({
         <div>
           <div>Registration token</div>
           <Input
+            ref={registrationTokenInputRef}
             autoFocus={!!requiresToken}
             value={registrationToken}
             placeholder="Enter your registration token"
@@ -212,6 +254,7 @@ export default function SignUpFormBase({
       <div>
         <div>Email address</div>
         <Input
+          ref={emailInputRef}
           value={email}
           autoComplete="username"
           autoFocus={!requiresToken}
@@ -235,6 +278,7 @@ export default function SignUpFormBase({
       <div>
         <div>Password</div>
         <Input.Password
+          ref={passwordInputRef}
           value={password}
           autoComplete="new-password"
           placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
@@ -246,6 +290,7 @@ export default function SignUpFormBase({
       <div>
         <div>Name</div>
         <Input
+          ref={displayNameInputRef}
           autoComplete="name"
           value={displayName}
           placeholder="Your name"

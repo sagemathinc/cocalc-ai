@@ -3,8 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties, ReactNode, RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import api from "@cocalc/frontend/client/api";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
@@ -195,6 +195,7 @@ function Alert({
 function TextInput(props: {
   autoComplete?: string;
   autoFocus?: boolean;
+  inputRef?: RefObject<HTMLInputElement | null>;
   maxLength?: number;
   name?: string;
   onChange: (value: string) => void;
@@ -207,6 +208,7 @@ function TextInput(props: {
     <input
       autoComplete={props.autoComplete}
       autoFocus={props.autoFocus}
+      ref={props.inputRef}
       maxLength={props.maxLength}
       name={props.name}
       placeholder={props.placeholder}
@@ -760,6 +762,11 @@ export function PublicSignUpForm({
   const [signingUp, setSigningUp] = useState(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const registrationTokenInputRef = useRef<HTMLInputElement | null>(null);
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
+  const passwordInputRef = useRef<HTMLInputElement | null>(null);
+  const confirmPasswordInputRef = useRef<HTMLInputElement | null>(null);
+  const displayNameInputRef = useRef<HTMLInputElement | null>(null);
   const publicConfig = usePublicConfig();
   const consentReady = useEssentialConsent();
   const cookieConsentReady = !cookieBannerEnabled || consentReady;
@@ -790,6 +797,30 @@ export function PublicSignUpForm({
       }
     })();
   }, [requiresToken]);
+
+  const syncBrowserFilledInputs = useCallback(() => {
+    const sync = (
+      ref: RefObject<HTMLInputElement | null>,
+      setter: (value: string) => void,
+    ) => {
+      const value = ref.current?.value;
+      if (value) {
+        setter(value);
+      }
+    };
+    sync(registrationTokenInputRef, setRegistrationToken);
+    sync(emailInputRef, setEmail);
+    sync(passwordInputRef, setPassword);
+    sync(confirmPasswordInputRef, setConfirmPassword);
+    sync(displayNameInputRef, setDisplayName);
+  }, []);
+
+  useEffect(() => {
+    const timers = [100, 500, 1000, 2000].map((delay) =>
+      setTimeout(syncBrowserFilledInputs, delay),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [syncBrowserFilledInputs]);
 
   const canSubmit = useMemo(() => {
     if (!isValidEmailAddress(email)) {
@@ -892,7 +923,11 @@ export function PublicSignUpForm({
   const issueList = Object.values(issues).filter(Boolean);
 
   return (
-    <div style={STACK_STYLE}>
+    <div
+      style={STACK_STYLE}
+      onFocusCapture={syncBrowserFilledInputs}
+      onInputCapture={syncBrowserFilledInputs}
+    >
       {bootstrap && (
         <Alert kind="info">
           You are creating the initial admin account for this server.
@@ -916,6 +951,7 @@ export function PublicSignUpForm({
           <div style={LABEL_STYLE}>Registration token</div>
           <TextInput
             autoFocus={!!requiresToken}
+            inputRef={registrationTokenInputRef}
             name="registration-token"
             placeholder="Enter your registration token"
             value={registrationToken}
@@ -928,6 +964,7 @@ export function PublicSignUpForm({
         <TextInput
           autoComplete="username"
           autoFocus={!requiresToken}
+          inputRef={emailInputRef}
           name="email"
           placeholder="you@example.com"
           value={email}
@@ -950,6 +987,7 @@ export function PublicSignUpForm({
         <div style={LABEL_STYLE}>Password</div>
         <TextInput
           autoComplete="new-password"
+          inputRef={passwordInputRef}
           maxLength={MAX_PASSWORD_LENGTH}
           name="new-password"
           placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
@@ -963,6 +1001,7 @@ export function PublicSignUpForm({
         <div style={LABEL_STYLE}>Confirm password</div>
         <TextInput
           autoComplete="new-password"
+          inputRef={confirmPasswordInputRef}
           maxLength={MAX_PASSWORD_LENGTH}
           name="confirm-password"
           placeholder="Enter the same password again"
@@ -981,6 +1020,7 @@ export function PublicSignUpForm({
         <div style={LABEL_STYLE}>Name</div>
         <TextInput
           autoComplete="name"
+          inputRef={displayNameInputRef}
           name="name"
           placeholder="Your name"
           value={displayName}
