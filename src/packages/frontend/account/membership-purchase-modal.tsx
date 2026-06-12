@@ -13,7 +13,9 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import api from "@cocalc/frontend/client/api";
 import { Icon } from "@cocalc/frontend/components";
-import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
+import StripePayment, {
+  AddPaymentMethodModal,
+} from "@cocalc/frontend/purchases/stripe-payment";
 import Payments from "@cocalc/frontend/purchases/payments";
 import {
   applyMembershipChange,
@@ -142,6 +144,9 @@ export default function MembershipPurchaseModal({
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [quoteError, setQuoteError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
+  const [addPaymentMethodOpen, setAddPaymentMethodOpen] =
+    useState<boolean>(false);
+  const [quoteRefreshKey, setQuoteRefreshKey] = useState<number>(0);
   const [place, setPlace] = useState<
     "choose" | "checkout" | "processing" | "done"
   >("choose");
@@ -173,6 +178,8 @@ export default function MembershipPurchaseModal({
     setQuote(null);
     setQuoteError("");
     setInterval("year");
+    setAddPaymentMethodOpen(false);
+    setQuoteRefreshKey(0);
     setPlace("choose");
     load();
   }, [open]);
@@ -217,7 +224,7 @@ export default function MembershipPurchaseModal({
       }
     };
     loadQuote();
-  }, [open, selectedTierId, interval, place]);
+  }, [open, selectedTierId, interval, place, quoteRefreshKey]);
 
   const currentPersonalClass =
     currentClassOverride ??
@@ -442,11 +449,7 @@ export default function MembershipPurchaseModal({
         />
         <Button onClick={backToChooser}>Change selection</Button>
         {quote.trial_requires_payment_method && quote.allowed === false && (
-          <Button
-            href={joinUrlPath(appBasePath, "settings/payment-methods")}
-            target="_blank"
-            type="primary"
-          >
+          <Button onClick={() => setAddPaymentMethodOpen(true)} type="primary">
             Add payment method to start free trial
           </Button>
         )}
@@ -562,6 +565,15 @@ export default function MembershipPurchaseModal({
       title="Change Membership"
     >
       {renderModalBody()}
+      {addPaymentMethodOpen ? (
+        <AddPaymentMethodModal
+          onCancel={() => setAddPaymentMethodOpen(false)}
+          onFinished={() => {
+            setAddPaymentMethodOpen(false);
+            setQuoteRefreshKey((value) => value + 1);
+          }}
+        />
+      ) : null}
       <FreshAuthModal {...freshAuthModalProps} />
     </Modal>
   );

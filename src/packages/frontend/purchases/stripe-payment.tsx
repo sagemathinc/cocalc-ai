@@ -680,22 +680,35 @@ export function AddPaymentMethodButton({
     >
       {button}
       {show && (
-        <Modal
-          open
-          title={"Add Payment Method"}
+        <AddPaymentMethodModal
           onCancel={() => setShow(false)}
-          onOk={() => setShow(false)}
-          footer={[]}
-        >
-          <CollectPaymentMethod
-            onFinished={() => {
-              setShow(false);
-              onFinished?.();
-            }}
-          />
-        </Modal>
+          onFinished={() => {
+            setShow(false);
+            onFinished?.();
+          }}
+        />
       )}
     </div>
+  );
+}
+
+export function AddPaymentMethodModal({
+  onCancel,
+  onFinished,
+}: {
+  onCancel: () => void;
+  onFinished?: () => void;
+}) {
+  return (
+    <Modal
+      open
+      title={"Add Payment Method"}
+      onCancel={onCancel}
+      onOk={onCancel}
+      footer={[]}
+    >
+      <CollectPaymentMethod onFinished={onFinished} />
+    </Modal>
   );
 }
 
