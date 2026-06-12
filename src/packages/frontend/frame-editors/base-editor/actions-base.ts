@@ -1801,6 +1801,8 @@ export class BaseEditorActions<
       const type = node.get("type");
       if (type == "chat") {
         this.closeChat();
+      } else if (type == "terminal") {
+        this.terminals.close_terminal(id);
       }
       this.store.emit("close-frame", { id, type, closingFile: true });
       this._get_project_actions()?.close_tab?.(this.path);
