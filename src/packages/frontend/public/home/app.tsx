@@ -770,6 +770,146 @@ function WorkflowsSection() {
   );
 }
 
+function AudienceSection() {
+  const audiences = [
+    {
+      accent: COLORS.ANTD_LINK_BLUE_DARK,
+      body: "Keep source files, service terminals, notebooks, reviews, and Codex threads in the same project when a technical issue needs full context.",
+      bullets: [
+        "Shared debugging",
+        "Agent-assisted patches",
+        "Durable project history",
+      ],
+      href: appPath("features/ai"),
+      icon: "code-outlined",
+      title: "Engineering teams",
+    },
+    {
+      accent: PUBLIC_COLORS.success,
+      body: "Preserve computational environments, notebook output, data files, and collaborator decisions so research work can be inspected later.",
+      bullets: [
+        "Long-running sessions",
+        "Snapshots and backups",
+        "Shared notebooks",
+      ],
+      href: appPath("features/jupyter-notebook"),
+      icon: "experiment",
+      title: "Research labs",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      body: "Run courses and workshops with one browser-based environment for assignments, notebooks, Linux, grading, and student support.",
+      bullets: ["Course projects", "Notebook grading", "Consistent lab setup"],
+      href: appPath("features/teaching"),
+      icon: "graduation-cap",
+      title: "Technical courses",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    bullets: string[];
+    href: string;
+    icon: IconName;
+    title: string;
+  }[];
+
+  return (
+    <section>
+      <Flex align="end" justify="space-between" wrap gap={16}>
+        <div style={{ maxWidth: 780 }}>
+          <Eyebrow>Who CoCalc is for</Eyebrow>
+          <Title level={2} style={{ margin: "8px 0 10px" }}>
+            Built for technical groups.
+          </Title>
+          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+            CoCalc works best when a group needs real compute, persistent
+            project state, collaboration, and review in one place instead of a
+            stack of disconnected tools.
+          </Paragraph>
+        </div>
+        <Button href={appPath("features/compare")}>Compare CoCalc</Button>
+      </Flex>
+      <div
+        style={{
+          display: "grid",
+          gap: 16,
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          marginTop: 26,
+        }}
+      >
+        {audiences.map((audience) => (
+          <a
+            href={audience.href}
+            key={audience.title}
+            style={{
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
+              color: "inherit",
+              display: "block",
+              minHeight: 270,
+              padding: 22,
+              textDecoration: "none",
+            }}
+          >
+            <Flex vertical gap={16} style={{ height: "100%" }}>
+              <Flex align="center" justify="space-between">
+                <div
+                  style={{
+                    alignItems: "center",
+                    background: `${audience.accent}14`,
+                    border: `1px solid ${audience.accent}33`,
+                    borderRadius: PANEL_RADIUS,
+                    color: audience.accent,
+                    display: "flex",
+                    fontSize: 24,
+                    height: 52,
+                    justifyContent: "center",
+                    width: 52,
+                  }}
+                >
+                  <Icon name={audience.icon} />
+                </div>
+                <Icon
+                  name="arrow-right"
+                  style={{ color: audience.accent, fontSize: 18 }}
+                />
+              </Flex>
+              <div>
+                <Title level={3} style={{ fontSize: 23, margin: "0 0 10px" }}>
+                  {audience.title}
+                </Title>
+                <Paragraph style={{ margin: 0 }}>{audience.body}</Paragraph>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  marginTop: "auto",
+                }}
+              >
+                {audience.bullets.map((bullet) => (
+                  <Flex align="center" gap={8} key={bullet}>
+                    <Icon
+                      name="check-circle"
+                      style={{
+                        color: audience.accent,
+                        flex: "0 0 auto",
+                      }}
+                    />
+                    <Text>{bullet}</Text>
+                  </Flex>
+                ))}
+              </div>
+            </Flex>
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ProductOptionsSection() {
   const options = [
     {
@@ -1303,6 +1443,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <ProjectStorySection />
       <ProjectFlowSection />
       <WorkflowsSection />
+      <AudienceSection />
       <ProductOptionsSection />
       <DifferenceSection />
       <NewsSection initialNews={news} />

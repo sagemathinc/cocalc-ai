@@ -67,6 +67,11 @@ describe("PublicHomeApp", () => {
         name: "From first file to reviewed result.",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Built for technical groups.",
+      }),
+    ).not.toBeNull();
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "Recent News" }),
@@ -101,6 +106,19 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Jupyter Notebooks/i })
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
+    expect(
+      screen
+        .getByRole("link", { name: /Engineering teams/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      screen.getByRole("link", { name: /Research labs/i }).getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      screen
+        .getByRole("link", { name: /Technical courses/i })
+        .getAttribute("href"),
+    ).toBe("/features/teaching");
     expect(screen.getByRole("link", { name: "All news" })).not.toBeNull();
   });
 
