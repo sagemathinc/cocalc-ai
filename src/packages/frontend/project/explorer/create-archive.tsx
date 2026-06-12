@@ -16,8 +16,8 @@ export const defaultFormat = OUCH_FORMATS.includes("tar.gz")
   ? "tar.gz"
   : OUCH_FORMATS[0];
 export const ARCHIVE_TIMEOUT_MS = 10 * 60_000;
-export const DOWNLOAD_ARCHIVE_CLEANUP_DELAY_MS = 60_000;
 const DOWNLOAD_ARCHIVE_PATH = "/tmp";
+const TEMPORARY_DOWNLOAD_ARCHIVE_PREFIX = ".cocalc-download-archive-";
 
 const ARCHIVE_SUFFIXES = ["tar", ...OUCH_FORMATS].sort(
   (a, b) => b.length - a.length,
@@ -182,13 +182,17 @@ export async function createDownloadArchive({
   actions,
 }) {
   await ensureProjectScratchVolume(actions.project_id);
-  return await createArchive({
+  const filename = getSafeDownloadArchiveFilename(target, format);
+  const path = await createArchive({
     path: DOWNLOAD_ARCHIVE_PATH,
     files,
-    target,
+    target: `${TEMPORARY_DOWNLOAD_ARCHIVE_PREFIX}${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}-${filename}`,
     format,
     actions,
   });
+  return { path, filename };
 }
 
 export async function removeDownloadArchive({
@@ -200,22 +204,6 @@ export async function removeDownloadArchive({
 }) {
   const fs = actions.fs();
   await fs.rm(path, { force: true });
-}
-
-export function scheduleDownloadArchiveCleanup({
-  path,
-  actions,
-  delayMs = DOWNLOAD_ARCHIVE_CLEANUP_DELAY_MS,
-}: {
-  path: string;
-  actions: any;
-  delayMs?: number;
-}) {
-  setTimeout(() => {
-    void removeDownloadArchive({ path, actions }).catch(() => {
-      // Best effort cleanup after handing the file to the browser.
-    });
-  }, delayMs);
 }
 
 async function ensureProjectScratchVolume(project_id: string) {
@@ -234,6 +222,16 @@ export function getArchiveTargetName(target: string, format: string): string {
     }
   }
   return `${base}.${format}`;
+}
+
+function getSafeDownloadArchiveFilename(
+  target: string,
+  format: string,
+): string {
+  const archiveName = getArchiveTargetName(target, format)
+    .replace(/[\\/]+/g, "-")
+    .replace(/^[.\-_\s]+/, "");
+  return archiveName || `download.${format}`;
 }
 
 export function SelectFormat({ format, setFormat }) {

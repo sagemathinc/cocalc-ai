@@ -2944,12 +2944,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     auto = true,
     print = false,
     showError = true,
+    deleteAfterDownload,
+    downloadFilename,
   }: {
     path: string;
     log?: boolean | string[];
     auto?: boolean;
     print?: boolean;
     showError?: boolean;
+    deleteAfterDownload?: boolean;
+    downloadFilename?: string;
   }): Promise<void> => {
     await downloadProjectFile({
       project_id: this.project_id,
@@ -2958,6 +2962,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       auto,
       print,
       showError,
+      deleteAfterDownload,
+      downloadFilename,
       logAction: (opts) => this.log(opts),
       routeProjectHostHttpUrl: (opts) =>
         webapp_client.conat_client.routeProjectHostHttpUrl(opts),
