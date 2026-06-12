@@ -138,6 +138,7 @@ describe("createArchive", () => {
     const ouch = jest.fn(async () => ({ code: 0, stderr: Buffer.alloc(0) }));
     const rename = jest.fn(async () => undefined);
     const rm = jest.fn(async () => undefined);
+    const onProgress = jest.fn();
     const actions = {
       project_id: "project-1",
       fs: () => ({ ouch, rename, rm }),
@@ -148,8 +149,14 @@ describe("createArchive", () => {
       target: "selection",
       format: "zip",
       actions,
+      onProgress,
     });
 
+    expect(onProgress.mock.calls.map(([stage]) => stage)).toEqual([
+      "scratch",
+      "cleanup",
+      "compress",
+    ]);
     expect(ensureProjectScratchVolume).toHaveBeenCalledWith({
       project_id: "project-1",
     });

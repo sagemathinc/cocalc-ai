@@ -19,6 +19,7 @@ export const ARCHIVE_TIMEOUT_MS = 10 * 60_000;
 export const STALE_DOWNLOAD_ARCHIVE_MS = 6 * 60 * 60_000;
 const DOWNLOAD_ARCHIVE_PATH = "/tmp";
 const TEMPORARY_DOWNLOAD_ARCHIVE_PREFIX = ".cocalc-download-archive-";
+export type DownloadArchiveProgressStage = "scratch" | "cleanup" | "compress";
 
 const ARCHIVE_SUFFIXES = ["tar", ...OUCH_FORMATS].sort(
   (a, b) => b.length - a.length,
@@ -181,10 +182,14 @@ export async function createDownloadArchive({
   target,
   format,
   actions,
+  onProgress,
 }) {
+  onProgress?.("scratch");
   await ensureProjectScratchVolume(actions.project_id);
+  onProgress?.("cleanup");
   await removeStaleDownloadArchives({ actions });
   const filename = getSafeDownloadArchiveFilename(target, format);
+  onProgress?.("compress");
   const path = await createArchive({
     path: DOWNLOAD_ARCHIVE_PATH,
     files,
