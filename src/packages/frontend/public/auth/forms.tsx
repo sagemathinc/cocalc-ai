@@ -28,7 +28,9 @@ import {
 import { appUrl } from "@cocalc/frontend/auth/util";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
+  arePublicPoliciesVisible,
   getExternalPoliciesUrl,
+  type PublicConfig,
   usePublicConfig,
 } from "@cocalc/frontend/public/config";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -193,6 +195,7 @@ function TextInput(props: {
   autoComplete?: string;
   autoFocus?: boolean;
   maxLength?: number;
+  name?: string;
   onChange: (value: string) => void;
   onPressEnter?: () => void;
   placeholder?: string;
@@ -204,6 +207,7 @@ function TextInput(props: {
       autoComplete={props.autoComplete}
       autoFocus={props.autoFocus}
       maxLength={props.maxLength}
+      name={props.name}
       placeholder={props.placeholder}
       style={INPUT_STYLE}
       type={props.type ?? "text"}
@@ -265,6 +269,14 @@ function privacyPolicyHref(): string {
   return joinUrlPath(appBasePath, "policies/privacy");
 }
 
+function policyUrls(publicConfig?: PublicConfig) {
+  const externalPoliciesUrl = getExternalPoliciesUrl(publicConfig);
+  return {
+    termsUrl: externalPoliciesUrl ?? termsOfServiceHref(),
+    privacyUrl: externalPoliciesUrl ?? privacyPolicyHref(),
+  };
+}
+
 export function defaultAuthRedirectPath(): string {
   return appUrl("projects");
 }
@@ -306,12 +318,13 @@ export function PublicSignInForm({
   const codeFactorMethod = inferSecondFactorInputMethod(factorCode);
   const consentReady = useEssentialConsent();
   const cookieConsentReady = !cookieBannerEnabled || consentReady;
-  const termsUrl = getExternalPoliciesUrl(publicConfig) ?? termsOfServiceHref();
-  const privacyUrl = privacyPolicyHref();
+  const policiesVisible = arePublicPoliciesVisible(publicConfig);
+  const { termsUrl, privacyUrl } = policyUrls(publicConfig);
   const ssoStrategy =
     !challengeId && signInMethod?.sso_required
       ? signInMethod.sso_strategy
       : undefined;
+  const acceptedRequiredSsoTerms = !policiesVisible || acceptedSsoTerms;
 
   useEffect(() => {
     setChallengeId(initialChallengeId ?? "");
@@ -469,6 +482,7 @@ export function PublicSignInForm({
             <TextInput
               autoComplete="username"
               autoFocus
+              name="email"
               placeholder="you@example.com"
               value={email}
               onChange={(value) => {
@@ -489,36 +503,40 @@ export function PublicSignInForm({
               <div style={{ marginBottom: "10px" }}>
                 Continue with {ssoStrategy.display} instead of using a password.
               </div>
-              <label style={{ ...CHECKBOX_ROW_STYLE, marginBottom: "12px" }}>
-                <input
-                  checked={acceptedSsoTerms}
-                  type="checkbox"
-                  onChange={(e) => setAcceptedSsoTerms(e.currentTarget.checked)}
-                />
-                <span>
-                  I accept the{" "}
-                  <a href={termsUrl} target="_blank" rel="noreferrer">
-                    Terms of Service
-                  </a>{" "}
-                  and{" "}
-                  <a href={privacyUrl} target="_blank" rel="noreferrer">
-                    Privacy Policy
-                  </a>
-                  .
-                </span>
-              </label>
+              {policiesVisible ? (
+                <label style={{ ...CHECKBOX_ROW_STYLE, marginBottom: "12px" }}>
+                  <input
+                    checked={acceptedSsoTerms}
+                    type="checkbox"
+                    onChange={(e) =>
+                      setAcceptedSsoTerms(e.currentTarget.checked)
+                    }
+                  />
+                  <span>
+                    I accept the{" "}
+                    <a href={termsUrl} target="_blank" rel="noreferrer">
+                      Terms of Service
+                    </a>{" "}
+                    and{" "}
+                    <a href={privacyUrl} target="_blank" rel="noreferrer">
+                      Privacy Policy
+                    </a>
+                    .
+                  </span>
+                </label>
+              ) : null}
               <a
                 href={ssoLoginHref(ssoStrategy.name)}
                 style={{
                   ...BUTTON_STYLE,
-                  opacity: acceptedSsoTerms ? 1 : 0.65,
+                  opacity: acceptedRequiredSsoTerms ? 1 : 0.65,
                   display: "block",
                   textAlign: "center",
                   textDecoration: "none",
                 }}
-                aria-disabled={!acceptedSsoTerms}
+                aria-disabled={!acceptedRequiredSsoTerms}
                 onClick={(event) => {
-                  if (!acceptedSsoTerms) {
+                  if (!acceptedRequiredSsoTerms) {
                     event.preventDefault();
                     return;
                   }
@@ -540,6 +558,7 @@ export function PublicSignInForm({
             <TextInput
               autoComplete="current-password"
               maxLength={MAX_PASSWORD_LENGTH}
+              name="password"
               placeholder="Password"
               type="password"
               value={password}
@@ -600,6 +619,7 @@ export function PublicSignInForm({
               <TextInput
                 autoComplete="one-time-code"
                 autoFocus
+                name="one-time-code"
                 placeholder={getSecondFactorPlaceholder(factorCode)}
                 value={factorCode}
                 onChange={setFactorCode}
@@ -695,6 +715,7 @@ export function PublicPasswordResetForm({
         <TextInput
           autoComplete="username"
           autoFocus
+          name="email"
           placeholder="you@example.com"
           value={email}
           onChange={setEmail}
@@ -731,6 +752,7 @@ export function PublicSignUpForm({
   );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [acceptedTerms, setAcceptedTerms] = useState(false);
@@ -741,8 +763,8 @@ export function PublicSignUpForm({
   const publicConfig = usePublicConfig();
   const consentReady = useEssentialConsent();
   const cookieConsentReady = !cookieBannerEnabled || consentReady;
-  const termsUrl = getExternalPoliciesUrl(publicConfig) ?? termsOfServiceHref();
-  const privacyUrl = privacyPolicyHref();
+  const policiesVisible = arePublicPoliciesVisible(publicConfig);
+  const { termsUrl, privacyUrl } = policyUrls(publicConfig);
   const emailAllowedByDomainPolicy = emailAllowedByPublicSignupPolicy({
     email_address: email,
     policy: signupEmailDomainPolicy,
@@ -779,24 +801,29 @@ export function PublicSignUpForm({
     if (password.length < MIN_PASSWORD_LENGTH) {
       return false;
     }
+    if (password !== confirmPassword) {
+      return false;
+    }
     if (!firstName.trim() || !lastName.trim()) {
       return false;
     }
     if (requiresToken && !registrationToken.trim()) {
       return false;
     }
-    if (!acceptedTerms) {
+    if (policiesVisible && !acceptedTerms) {
       return false;
     }
     return cookieConsentReady && !signingUp;
   }, [
     acceptedTerms,
+    confirmPassword,
     cookieConsentReady,
     email,
     emailAllowedByDomainPolicy,
     firstName,
     lastName,
     password,
+    policiesVisible,
     registrationToken,
     requiresToken,
     signingUp,
@@ -819,7 +846,7 @@ export function PublicSignUpForm({
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
-          terms: acceptedTerms,
+          terms: policiesVisible ? acceptedTerms : true,
           marketing_consent: marketingConsent,
           email,
           password,
@@ -888,6 +915,7 @@ export function PublicSignUpForm({
           <div style={LABEL_STYLE}>Registration token</div>
           <TextInput
             autoFocus={!!requiresToken}
+            name="registration-token"
             placeholder="Enter your registration token"
             value={registrationToken}
             onChange={setRegistrationToken}
@@ -899,6 +927,7 @@ export function PublicSignUpForm({
         <TextInput
           autoComplete="username"
           autoFocus={!requiresToken}
+          name="email"
           placeholder="you@example.com"
           value={email}
           onChange={setEmail}
@@ -921,6 +950,7 @@ export function PublicSignUpForm({
         <TextInput
           autoComplete="new-password"
           maxLength={MAX_PASSWORD_LENGTH}
+          name="new-password"
           placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
           type="password"
           value={password}
@@ -929,8 +959,27 @@ export function PublicSignUpForm({
         />
       </div>
       <div style={FIELD_STYLE}>
+        <div style={LABEL_STYLE}>Confirm password</div>
+        <TextInput
+          autoComplete="new-password"
+          maxLength={MAX_PASSWORD_LENGTH}
+          name="confirm-password"
+          placeholder="Enter the same password again"
+          type="password"
+          value={confirmPassword}
+          onChange={setConfirmPassword}
+          onPressEnter={signUp}
+        />
+        {confirmPassword && password !== confirmPassword ? (
+          <div style={{ ...TERMS_NOTICE_STYLE, color: COLORS.FG_RED }}>
+            Passwords do not match.
+          </div>
+        ) : null}
+      </div>
+      <div style={FIELD_STYLE}>
         <div style={LABEL_STYLE}>First name</div>
         <TextInput
+          name="given-name"
           placeholder="First name"
           value={firstName}
           onChange={setFirstName}
@@ -940,31 +989,36 @@ export function PublicSignUpForm({
       <div style={FIELD_STYLE}>
         <div style={LABEL_STYLE}>Last name</div>
         <TextInput
+          name="family-name"
           placeholder="Last name"
           value={lastName}
           onChange={setLastName}
           onPressEnter={signUp}
         />
       </div>
-      <label style={CHECKBOX_ROW_STYLE}>
-        <input
-          checked={acceptedTerms}
-          type="checkbox"
-          onChange={(e) => setAcceptedTerms(e.currentTarget.checked)}
-        />
-        <span>
-          I accept the{" "}
-          <a href={termsUrl} target="_blank" rel="noreferrer">
-            Terms of Service
-          </a>{" "}
-          and{" "}
-          <a href={privacyUrl} target="_blank" rel="noreferrer">
-            Privacy Policy
-          </a>
-          .
-        </span>
-      </label>
-      {issues.terms && <div style={TERMS_NOTICE_STYLE}>{issues.terms}</div>}
+      {policiesVisible ? (
+        <>
+          <label style={CHECKBOX_ROW_STYLE}>
+            <input
+              checked={acceptedTerms}
+              type="checkbox"
+              onChange={(e) => setAcceptedTerms(e.currentTarget.checked)}
+            />
+            <span>
+              I accept the{" "}
+              <a href={termsUrl} target="_blank" rel="noreferrer">
+                Terms of Service
+              </a>{" "}
+              and{" "}
+              <a href={privacyUrl} target="_blank" rel="noreferrer">
+                Privacy Policy
+              </a>
+              .
+            </span>
+          </label>
+          {issues.terms && <div style={TERMS_NOTICE_STYLE}>{issues.terms}</div>}
+        </>
+      ) : null}
       <label style={CHECKBOX_ROW_STYLE}>
         <input
           checked={marketingConsent}

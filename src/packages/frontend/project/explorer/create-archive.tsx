@@ -16,6 +16,7 @@ export const defaultFormat = OUCH_FORMATS.includes("tar.gz")
   ? "tar.gz"
   : OUCH_FORMATS[0];
 export const ARCHIVE_TIMEOUT_MS = 10 * 60_000;
+export const DOWNLOAD_ARCHIVE_CLEANUP_DELAY_MS = 60_000;
 const DOWNLOAD_ARCHIVE_PATH = "/tmp";
 
 const ARCHIVE_SUFFIXES = ["tar", ...OUCH_FORMATS].sort(
@@ -199,6 +200,22 @@ export async function removeDownloadArchive({
 }) {
   const fs = actions.fs();
   await fs.rm(path, { force: true });
+}
+
+export function scheduleDownloadArchiveCleanup({
+  path,
+  actions,
+  delayMs = DOWNLOAD_ARCHIVE_CLEANUP_DELAY_MS,
+}: {
+  path: string;
+  actions: any;
+  delayMs?: number;
+}) {
+  setTimeout(() => {
+    void removeDownloadArchive({ path, actions }).catch(() => {
+      // Best effort cleanup after handing the file to the browser.
+    });
+  }, delayMs);
 }
 
 async function ensureProjectScratchVolume(project_id: string) {

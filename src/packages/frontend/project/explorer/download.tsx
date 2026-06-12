@@ -14,6 +14,7 @@ import {
   SelectFormat,
   createDownloadArchive,
   removeDownloadArchive,
+  scheduleDownloadArchiveCleanup,
 } from "./create-archive";
 
 export default function Download({
@@ -84,6 +85,7 @@ export default function Download({
       return;
     }
     let success = false;
+    let downloadStarted = false;
     let temporaryArchivePath: string | undefined;
     try {
       setLoading(true);
@@ -96,20 +98,30 @@ export default function Download({
         dest = files[0];
       }
       await actions.download_file({ path: dest, log: files, showError: false });
+      downloadStarted = true;
       success = true;
     } catch (err) {
       setError(`${err}`);
     } finally {
       if (temporaryArchivePath != null) {
-        try {
-          await removeDownloadArchive({
+        if (downloadStarted) {
+          scheduleDownloadArchiveCleanup({
             path: temporaryArchivePath,
             actions,
           });
-        } catch (err) {
-          setError((prev) =>
-            prev ? `${prev}\nCleanup failed: ${err}` : `Cleanup failed: ${err}`,
-          );
+        } else {
+          try {
+            await removeDownloadArchive({
+              path: temporaryArchivePath,
+              actions,
+            });
+          } catch (err) {
+            setError((prev) =>
+              prev
+                ? `${prev}\nCleanup failed: ${err}`
+                : `Cleanup failed: ${err}`,
+            );
+          }
         }
       }
       setLoading(false);

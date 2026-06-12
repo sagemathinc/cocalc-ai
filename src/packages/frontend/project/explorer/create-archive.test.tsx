@@ -2,8 +2,10 @@
 
 import {
   ARCHIVE_TIMEOUT_MS,
+  DOWNLOAD_ARCHIVE_CLEANUP_DELAY_MS,
   createArchive,
   createDownloadArchive,
+  scheduleDownloadArchiveCleanup,
 } from "./create-archive";
 
 const ensureProjectScratchVolume = jest.fn();
@@ -156,5 +158,30 @@ describe("createArchive", () => {
       "/tmp/selection.zip",
     );
     expect(finalPath).toBe("/tmp/selection.zip");
+  });
+
+  it("defers cleanup for temporary download archives after browser handoff", async () => {
+    jest.useFakeTimers();
+    try {
+      const rm = jest.fn(async () => undefined);
+      const actions = {
+        fs: () => ({ rm }),
+      };
+
+      scheduleDownloadArchiveCleanup({
+        path: "/tmp/selection.zip",
+        actions,
+      });
+
+      expect(rm).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(
+        DOWNLOAD_ARCHIVE_CLEANUP_DELAY_MS - 1,
+      );
+      expect(rm).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(1);
+      expect(rm).toHaveBeenCalledWith("/tmp/selection.zip", { force: true });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
