@@ -11,12 +11,10 @@ import { register_file_editor } from "../frame-tree/register";
 
 register_file_editor({
   ext: "sage-chat",
-  editor: async () => await import("./editor"),
-  actions: async () => await import("./actions"),
+  asyncData: async () => await import("./loader"),
 });
 
 register_file_editor({
   ext: "chat",
-  editor: async () => await import("./editor"),
-  actions: async () => await import("./actions"),
+  asyncData: async () => await import("./loader"),
 });

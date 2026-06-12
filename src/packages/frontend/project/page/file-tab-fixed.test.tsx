@@ -1,12 +1,22 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 const mockSetActiveTab = jest.fn();
 const mockToggleFlyout = jest.fn();
+let mockStatusAlerts: any[] = [];
 
 jest.mock("antd", () => ({
-  Popover: ({ children }: any) => children,
+  Button: ({ children, onClick }: any) => (
+    <button onClick={onClick}>{children}</button>
+  ),
+  Popover: ({ children, content }: any) => (
+    <span>
+      {children}
+      {content}
+    </span>
+  ),
+  Space: ({ children }: any) => <div>{children}</div>,
   Tag: ({ children }: any) => <span>{children}</span>,
   Tooltip: ({ children }: any) => children,
 }));
@@ -31,7 +41,18 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     return undefined;
   },
   useTypedRedux: (_store: any, key: string) => {
-    if (key === "status") return undefined;
+    if (key === "status") {
+      return {
+        get: (name: string) => {
+          if (name === "alerts") {
+            return {
+              toJS: () => mockStatusAlerts,
+            };
+          }
+          return undefined;
+        },
+      };
+    }
     if (key === "other_settings") {
       return {
         get: (name: string) => {
@@ -59,6 +80,7 @@ jest.mock("@cocalc/frontend/i18n", () => ({
     settings: "Settings",
     users: "Users",
     tabs: "Tabs",
+    project_info_title: "Project Info",
   },
   isIntlMessage: (value: any) => value?.defaultMessage != null,
 }));
@@ -107,6 +129,7 @@ describe("FileTab fixed-tab behavior", () => {
   beforeEach(() => {
     mockSetActiveTab.mockReset();
     mockToggleFlyout.mockReset();
+    mockStatusAlerts = [];
   });
 
   it("opens the flyout on ordinary click", () => {
@@ -155,5 +178,24 @@ describe("FileTab fixed-tab behavior", () => {
     fireEvent.click(tab, { detail: 2 });
     expect(mockToggleFlyout).toHaveBeenCalledWith("agents");
     expect(mockSetActiveTab).not.toHaveBeenCalled();
+  });
+
+  it("does not show stale cgroup CPU alerts on the info fixed tab", () => {
+    mockStatusAlerts = [{ type: "cpu-cgroup" }];
+
+    render(<FileTab project_id="project-1" name="info" isFixedTab showLabel />);
+
+    expect(screen.queryByText("CPU warning")).toBeNull();
+  });
+
+  it("explains project process CPU alerts on the info fixed tab", () => {
+    mockStatusAlerts = [{ type: "cpu-process", pids: ["1234"] }];
+
+    render(<FileTab project_id="project-1" name="info" isFixedTab showLabel />);
+
+    expect(screen.getByText("CPU warning")).toBeTruthy();
+    expect(screen.getByText(/project process samples/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open process list" }));
+    expect(mockSetActiveTab).toHaveBeenCalledWith("info");
   });
 });
