@@ -61,7 +61,7 @@ describe("defaultOpenProjectTarget", () => {
         target: "",
         activeProjectTab: "settings",
       }),
-    ).toBe("project-home");
+    ).toBe("files/");
   });
 
   it("defaults to files/ when active tab is unset", () => {

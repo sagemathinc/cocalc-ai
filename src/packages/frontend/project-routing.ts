@@ -8,7 +8,6 @@ export type ProjectFixedRouteTab =
   | "docs"
   | "info"
   | "log"
-  | "project-home"
   | "servers"
   | "settings"
   | "users"
@@ -114,11 +113,13 @@ export function parseProjectTarget(
         ),
       };
 
+    case "project-home":
+      return { kind: "directory", path: opts.decodeDirectoryPath("") };
+
     case "agents":
     case "docs":
     case "info":
     case "log":
-    case "project-home":
     case "servers":
     case "settings":
     case "users":

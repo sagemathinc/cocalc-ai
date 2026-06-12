@@ -93,7 +93,7 @@ export function MobileProjectsList({
     if (record.deletionBlocked) return;
     actions.open_project({
       project_id: record.project_id,
-      target: "project-home",
+      target: "files/",
       switch_to: !(e?.button === 1 || e?.ctrlKey || e?.metaKey),
     });
   }

@@ -1036,10 +1036,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (key === "users") {
       key = "settings";
     }
+    const openProjectHomeFiles = key === "home";
+    if (openProjectHomeFiles) {
+      key = "files";
+    }
     const store = this.get_store();
     if (store == undefined) return; // project closed
     const prev_active_project_tab = store.get("active_project_tab");
-    if (!opts.change_history && prev_active_project_tab === key) {
+    if (
+      !openProjectHomeFiles &&
+      !opts.change_history &&
+      prev_active_project_tab === key
+    ) {
       // already active -- nothing further to do
       return;
     }
@@ -1058,12 +1066,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "files":
         // Treat "/" as a fallback state. Re-entering the files tab should land in
         // HOME unless the user is already on a concrete filesystem path.
-        const currentPathAbs = store.get("current_path_abs") ?? "/";
+        const existingPathAbs = store.get("current_path_abs") ?? "/";
+        const currentPathAbs = openProjectHomeFiles
+          ? this.getHomeDirectoryForPaths()
+          : existingPathAbs;
         const filesPathAbs =
           currentPathAbs === "/"
             ? this.getHomeDirectoryForPaths()
             : currentPathAbs;
-        if (filesPathAbs !== currentPathAbs) {
+        if (filesPathAbs !== existingPathAbs) {
           this.set_current_path(filesPathAbs);
         }
         if (opts.change_history) {
@@ -1128,13 +1139,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "info":
         if (opts.change_history) {
           this.push_state("info", "");
-        }
-        break;
-
-      case "home":
-        this.set_current_path(this.getHomeDirectoryForPaths());
-        if (opts.change_history) {
-          this.push_state("project-home", "");
         }
         break;
 
@@ -2565,8 +2569,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           this.replaceFallbackRootWithHome(normalizedHomeDirectory);
         }
 
-        // Keep project-home aligned with HOME once capabilities arrive.
-        if (store.get("active_project_tab") === "home") {
+        // Keep the files landing path aligned with HOME once capabilities arrive.
+        const activeTab = store.get("active_project_tab");
+        if (activeTab === "home" || activeTab === "files") {
           this.set_current_path(normalizedHomeDirectory);
         }
       }
@@ -3168,10 +3173,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         break;
 
       case "tab":
-        if (route.tab === "project-home") {
-          this.set_active_tab("home", { change_history: change_history });
-          break;
-        }
         this.set_active_tab(route.tab as FixedTab, {
           change_history: change_history,
         });

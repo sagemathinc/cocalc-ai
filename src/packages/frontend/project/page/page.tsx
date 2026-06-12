@@ -296,12 +296,8 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   ]);
 
   const displayProjectTab = useMemo(() => {
-    const displayTab = initialWorkspaceRender.displayActiveTab;
-    if (lifecycle.shouldForceHomeTab && displayTab === "files") {
-      return "home";
-    }
-    return displayTab;
-  }, [initialWorkspaceRender.displayActiveTab, lifecycle.shouldForceHomeTab]);
+    return initialWorkspaceRender.displayActiveTab;
+  }, [initialWorkspaceRender.displayActiveTab]);
 
   useEffect(() => {
     if (
@@ -364,11 +360,8 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if ((open_files_order?.size ?? 0) > 0) {
       actions.close_all_files?.();
     }
-    if (
-      (active_project_tab ?? "").startsWith(EDITOR_PREFIX) ||
-      active_project_tab === "files"
-    ) {
-      actions.set_active_tab("home", { change_history: false });
+    if ((active_project_tab ?? "").startsWith(EDITOR_PREFIX)) {
+      actions.set_active_tab("files", { change_history: false });
     }
   }, [archivedLike, actions, active_project_tab, is_active, open_files_order]);
 
@@ -377,7 +370,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       return;
     }
     actions.close_all_files?.();
-    actions.set_active_tab?.("home", { change_history: false });
+    actions.set_active_tab?.("files", { change_history: false });
   }, [actions, hardDeleteBlocked, is_active]);
 
   const recoverActiveEditorComponent = React.useCallback(() => {
@@ -693,7 +686,9 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
           {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
           <HomePageButton
             project_id={project_id}
-            active={active_project_tab == "home"}
+            active={
+              active_project_tab == "files" || active_project_tab == "home"
+            }
             width={
               hideActionButtons
                 ? HIDDEN_RAIL_HOME_BUTTON_WIDTH_PX
@@ -712,7 +707,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
         <HomePageButton
           project_id={project_id}
-          active={active_project_tab == "home"}
+          active={active_project_tab == "files" || active_project_tab == "home"}
           width={
             hideActionButtons
               ? HIDDEN_RAIL_HOME_BUTTON_WIDTH_PX

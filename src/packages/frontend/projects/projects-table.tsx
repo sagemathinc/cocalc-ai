@@ -179,7 +179,7 @@ export function ProjectsTable({
     }
     actions.open_project({
       project_id: record.project_id,
-      target: "project-home",
+      target: "files/",
       switch_to: !(e?.button === 1 || e?.ctrlKey || e?.metaKey),
     });
   }

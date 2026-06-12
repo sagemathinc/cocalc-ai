@@ -50,7 +50,6 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useProjectContext } from "../context";
 import { AgentsPanel } from "./flyouts/agents";
 import getAnchorTagComponent from "./anchor-tag-component";
-import HomePage from "./home-page";
 import getUrlTransform from "./url-transform";
 
 // Default width of chat window as a fraction of the
@@ -198,8 +197,8 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
   }
 
   switch (tab_name) {
+    // Legacy in-memory state from the old project-home page.
     case "home":
-      return <HomePage />;
     case "files":
       return <Explorer isVisible={is_visible} />;
     case "new":

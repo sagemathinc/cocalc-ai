@@ -257,7 +257,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       // switch_to=true is perhaps suggested by #4088
       actions.open_project({
         project_id,
-        target: "project-home",
+        target: "files/",
         switch_to: true,
       });
     }
