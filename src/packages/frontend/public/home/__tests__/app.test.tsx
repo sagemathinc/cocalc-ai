@@ -119,6 +119,15 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Technical courses/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
+    expect(screen.getByText("Runtime path chooser")).not.toBeNull();
+    expect(
+      screen.getByText("Site licensing wraps the path you choose."),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: /CoCalc Launchpad Customer/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-launchpad");
     expect(screen.getByRole("link", { name: "All news" })).not.toBeNull();
   });
 

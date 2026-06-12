@@ -937,6 +937,16 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
     expect(screen.getByText("CoCalc.ai")).not.toBeNull();
+    expect(
+      screen.getByRole("table", { name: "CoCalc product path chooser" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Vendor-operated hosted service")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open CoCalc Rocket" }),
+    ).toHaveAttribute("href", "/products/cocalc-rocket");
+    expect(
+      screen.getByText("Site licensing is an organizational wrapper."),
+    ).not.toBeNull();
   });
 
   it("uses CoCalc marketing branding on public product pages for default Launchpad installs", async () => {
@@ -957,6 +967,7 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(screen.getByText("Choose the product path first.")).not.toBeNull();
+    expect(screen.getByText("Product path chooser")).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "Explore shared features" }),
     ).toHaveAttribute("href", "/features");

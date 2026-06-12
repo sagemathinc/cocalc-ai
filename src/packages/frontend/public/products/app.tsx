@@ -6,6 +6,8 @@
 import { useEffect } from "react";
 
 import { Button, Flex, Typography } from "antd";
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import {
   appPath,
   LinkButton,
@@ -13,11 +15,11 @@ import {
   PublicSectionShell,
 } from "../common";
 import { publicPath } from "../routes";
-import { PublicCard, PublicGrid, PublicSection } from "../layout/shell";
+import { PublicGrid, PublicSection } from "../layout/shell";
 import { CodeCommand, CopyCommandButton } from "./components";
 import type { PublicProductsRoute } from "./routes";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
 
 function titleForRoute(route: PublicProductsRoute): string {
   switch (route.view) {
@@ -36,6 +38,50 @@ function titleForRoute(route: PublicProductsRoute): string {
 }
 
 function ProductsOverviewPage() {
+  const paths = [
+    {
+      bestFor: "Managed accounts, hosted projects, and quick team starts",
+      href: appPath(""),
+      icon: "cloud",
+      operator: "Vendor-operated hosted service",
+      title: "CoCalc.ai",
+    },
+    {
+      bestFor: "One person using CoCalc locally on Linux or Mac",
+      href: publicPath("products/cocalc-plus"),
+      icon: "laptop",
+      operator: "Individual-operated local runtime",
+      title: "CoCalc Plus",
+    },
+    {
+      bestFor: "A lab, class, GPU box, agent sandbox, or small team",
+      href: publicPath("products/cocalc-star"),
+      icon: "star",
+      operator: "Single public VM owner",
+      title: "CoCalc Star",
+    },
+    {
+      bestFor: "A lightweight private deployment with customer control",
+      href: publicPath("products/cocalc-launchpad"),
+      icon: "servers",
+      operator: "Customer-operated private deployment",
+      title: "CoCalc Launchpad",
+    },
+    {
+      bestFor: "Production private cloud and multi-bay operations",
+      href: publicPath("products/cocalc-rocket"),
+      icon: "rocket",
+      operator: "Customer-operated private cloud",
+      title: "CoCalc Rocket",
+    },
+  ] satisfies {
+    bestFor: string;
+    href: string;
+    icon: IconName;
+    operator: string;
+    title: string;
+  }[];
+
   return (
     <Flex vertical gap={18}>
       <PublicSection>
@@ -56,62 +102,127 @@ function ProductsOverviewPage() {
           </LinkButton>
         </Flex>
       </PublicSection>
-      <PublicGrid columns={3}>
-        <PublicCard href={appPath("")} title="CoCalc.ai">
-          <Paragraph>
-            Choose hosted CoCalc when you want managed collaboration, shared
-            projects, hosted compute, and support without operating your own
-            service.
-          </Paragraph>
-        </PublicCard>
-        <PublicCard
-          href={publicPath("products/cocalc-plus")}
-          title="CoCalc Plus"
-        >
-          <Paragraph style={{ margin: 0 }}>
-            Choose Plus when one person wants the CoCalc workspace model on a
-            local Linux or Mac machine without creating a hosted account or
-            running a shared service.
-          </Paragraph>
-        </PublicCard>
-        <PublicCard
-          href={publicPath("products/cocalc-star")}
-          title="CoCalc Star"
-        >
-          <Paragraph style={{ margin: 0 }}>
-            Choose Star when a lab, class, GPU box, agent sandbox, or small team
-            needs one public Ubuntu VM with HTTPS and shared CoCalc projects.
-          </Paragraph>
-        </PublicCard>
-        <PublicCard
-          href={publicPath("products/cocalc-launchpad")}
-          title="CoCalc Launchpad"
-        >
-          <Paragraph style={{ margin: 0 }}>
-            Choose Launchpad when you need a lightweight customer-operated
-            private deployment with more control than Star and less operational
-            scope than Rocket.
-          </Paragraph>
-        </PublicCard>
-        <PublicCard
-          href={publicPath("products/cocalc-rocket")}
-          title="CoCalc Rocket"
-        >
-          <Paragraph style={{ margin: 0 }}>
-            Choose Rocket when a larger team needs customer-operated private
-            cloud CoCalc with production multi-user operations, multi-bay
-            architecture, and deeper deployment control.
-          </Paragraph>
-        </PublicCard>
-      </PublicGrid>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Need one agreement for a group?
+          Product path chooser
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Site licensing is the organizational buying path for procurement,
-          governance, support, rollout, and broader deployment rights across the
-          product ladder.
+          Start with who operates the environment. The workspace model stays
+          project-centered; the product path changes the operating boundary.
+        </Paragraph>
+        <div style={{ overflowX: "auto" }}>
+          <table
+            aria-label="CoCalc product path chooser"
+            style={{
+              borderCollapse: "separate",
+              borderSpacing: 0,
+              minWidth: 760,
+              width: "100%",
+            }}
+          >
+            <thead>
+              <tr>
+                {["Path", "Operator model", "Best fit", "Next step"].map(
+                  (label) => (
+                    <th
+                      key={label}
+                      scope="col"
+                      style={{
+                        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+                        color: PUBLIC_COLORS.brand,
+                        padding: "0 14px 12px",
+                        textAlign: "left",
+                      }}
+                    >
+                      {label}
+                    </th>
+                  ),
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {paths.map((path, index) => (
+                <tr key={path.title}>
+                  <th
+                    scope="row"
+                    style={{
+                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+                      padding: "14px",
+                      textAlign: "left",
+                      verticalAlign: "top",
+                    }}
+                  >
+                    <Flex align="center" gap={10}>
+                      <span
+                        style={{
+                          alignItems: "center",
+                          background:
+                            index === 2
+                              ? PUBLIC_COLORS.warningTint
+                              : PUBLIC_COLORS.surfaceMuted,
+                          border: `1px solid ${
+                            index === 2
+                              ? PUBLIC_COLORS.warningBorder
+                              : PUBLIC_COLORS.border
+                          }`,
+                          borderRadius: 8,
+                          color:
+                            index === 2
+                              ? PUBLIC_COLORS.warning
+                              : PUBLIC_COLORS.brand,
+                          display: "flex",
+                          flex: "0 0 38px",
+                          height: 38,
+                          justifyContent: "center",
+                          width: 38,
+                        }}
+                      >
+                        <Icon name={path.icon} />
+                      </span>
+                      <Text strong>{path.title}</Text>
+                    </Flex>
+                  </th>
+                  <td
+                    style={{
+                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+                      padding: "14px",
+                      verticalAlign: "top",
+                    }}
+                  >
+                    {path.operator}
+                  </td>
+                  <td
+                    style={{
+                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+                      padding: "14px",
+                      verticalAlign: "top",
+                    }}
+                  >
+                    {path.bestFor}
+                  </td>
+                  <td
+                    style={{
+                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+                      padding: "14px",
+                      verticalAlign: "top",
+                    }}
+                  >
+                    <LinkButton href={path.href}>Open {path.title}</LinkButton>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </PublicSection>
+      <PublicSection>
+        <Title level={3} style={{ margin: 0 }}>
+          Site licensing is an organizational wrapper.
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          Use site licensing for procurement, governance, support, rollout, and
+          broader deployment rights across the product ladder. It does not
+          replace the runtime choice; it wraps the path your group chooses.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("pricing")}>

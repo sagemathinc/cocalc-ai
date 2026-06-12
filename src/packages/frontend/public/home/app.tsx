@@ -913,33 +913,45 @@ function AudienceSection() {
 function ProductOptionsSection() {
   const options = [
     {
-      body: "Managed hosted workspace",
+      bestFor: "Managed accounts, hosted projects, and fast team starts",
+      href: appPath(""),
       icon: "cloud",
+      operator: "CoCalc",
       title: "CoCalc.ai",
     },
     {
-      body: "Free local runtime",
+      bestFor: "One person running the workspace model on their own machine",
+      href: appPath("products/cocalc-plus"),
       icon: "laptop",
+      operator: "Individual",
       title: "CoCalc Plus",
     },
     {
-      body: "Single public VM appliance",
+      bestFor: "A lab, class, GPU box, or small team on one public Ubuntu VM",
+      href: appPath("products/cocalc-star"),
       icon: "star",
+      operator: "VM owner",
       title: "CoCalc Star",
     },
     {
-      body: "Lightweight private deployment",
+      bestFor: "A private deployment with lightweight customer operations",
+      href: appPath("products/cocalc-launchpad"),
       icon: "servers",
+      operator: "Customer",
       title: "CoCalc Launchpad",
     },
     {
-      body: "Private cloud deployment",
+      bestFor: "Production private cloud operations and multi-bay deployments",
+      href: appPath("products/cocalc-rocket"),
       icon: "rocket",
+      operator: "Customer cloud",
       title: "CoCalc Rocket",
     },
   ] satisfies {
-    body: string;
+    bestFor: string;
+    href: string;
     icon: IconName;
+    operator: string;
     title: string;
   }[];
   return (
@@ -979,73 +991,124 @@ function ProductOptionsSection() {
             <Flex vertical gap={18}>
               <Flex align="center" justify="space-between" wrap gap={12}>
                 <Text strong style={{ color: PUBLIC_COLORS.brand }}>
-                  Deployment choices
+                  Runtime path chooser
                 </Text>
-                <Text type="secondary">One project-centered workspace</Text>
+                <Text type="secondary">Choose by operator and scope</Text>
               </Flex>
               <div
                 style={{
                   display: "grid",
                   gap: 10,
-                  gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))",
                 }}
               >
                 {options.map((option, index) => (
-                  <div
+                  <a
+                    href={option.href}
                     key={option.title}
                     style={{
+                      alignItems: "center",
                       background: PUBLIC_COLORS.surface,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
                       borderRadius: PANEL_RADIUS,
-                      minHeight: 132,
-                      padding: 14,
+                      color: "inherit",
+                      display: "grid",
+                      gap: 14,
+                      gridTemplateColumns: "44px minmax(0, 1fr) 18px",
+                      padding: "12px 14px",
+                      textDecoration: "none",
                     }}
                   >
-                    <Flex vertical gap={10}>
-                      <div
-                        style={{
-                          alignItems: "center",
-                          background:
-                            index === 2
-                              ? PUBLIC_COLORS.warningTint
-                              : PUBLIC_COLORS.surfaceMuted,
-                          border:
-                            index === 2
-                              ? `1px solid ${PUBLIC_COLORS.warningBorder}`
-                              : `1px solid ${PUBLIC_COLORS.border}`,
-                          borderRadius: PANEL_RADIUS,
-                          color:
-                            index === 2
-                              ? PUBLIC_COLORS.warning
-                              : PUBLIC_COLORS.brand,
-                          display: "flex",
-                          fontSize: 20,
-                          height: 44,
-                          justifyContent: "center",
-                          width: 44,
-                        }}
-                      >
-                        <Icon name={option.icon} />
-                      </div>
-                      <div>
-                        <Title
-                          level={4}
-                          style={{
-                            fontSize: 15,
-                            lineHeight: 1.25,
-                            margin: "0 0 6px",
-                          }}
-                        >
-                          {option.title}
-                        </Title>
-                        <Paragraph style={{ margin: 0 }}>
-                          {option.body}
-                        </Paragraph>
-                      </div>
-                    </Flex>
-                  </div>
+                    <span
+                      style={{
+                        alignItems: "center",
+                        background:
+                          index === 2
+                            ? PUBLIC_COLORS.warningTint
+                            : PUBLIC_COLORS.surfaceMuted,
+                        border:
+                          index === 2
+                            ? `1px solid ${PUBLIC_COLORS.warningBorder}`
+                            : `1px solid ${PUBLIC_COLORS.border}`,
+                        borderRadius: PANEL_RADIUS,
+                        color:
+                          index === 2
+                            ? PUBLIC_COLORS.warning
+                            : PUBLIC_COLORS.brand,
+                        display: "flex",
+                        fontSize: 20,
+                        height: 44,
+                        justifyContent: "center",
+                        width: 44,
+                      }}
+                    >
+                      <Icon name={option.icon} />
+                    </span>
+                    <span>
+                      <Text strong style={{ display: "block" }}>
+                        {option.title}
+                      </Text>
+                      <Text type="secondary">{option.operator}</Text>
+                    </span>
+                    <Text style={{ gridColumn: "2 / 4" }}>
+                      {option.bestFor}
+                    </Text>
+                    <Icon
+                      name="arrow-right"
+                      style={{
+                        color:
+                          index === 2
+                            ? PUBLIC_COLORS.warning
+                            : PUBLIC_COLORS.brand,
+                      }}
+                    />
+                  </a>
                 ))}
               </div>
+              <div
+                style={{
+                  background: alpha(PUBLIC_COLORS.surface, 0.78),
+                  border: `1px solid ${PUBLIC_COLORS.warningBorder}`,
+                  borderRadius: PANEL_RADIUS,
+                  padding: 16,
+                }}
+              >
+                <Flex align="start" gap={12}>
+                  <div
+                    style={{
+                      alignItems: "center",
+                      background: PUBLIC_COLORS.warningTint,
+                      border: `1px solid ${PUBLIC_COLORS.warningBorder}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: PUBLIC_COLORS.warning,
+                      display: "flex",
+                      flex: "0 0 42px",
+                      fontSize: 20,
+                      height: 42,
+                      justifyContent: "center",
+                      width: 42,
+                    }}
+                  >
+                    <Icon name="credit-card" />
+                  </div>
+                  <div>
+                    <Text strong style={{ display: "block" }}>
+                      Site licensing wraps the path you choose.
+                    </Text>
+                    <Paragraph style={{ margin: "4px 0 0" }}>
+                      Use licensing for procurement, governance, support,
+                      rollout, and broader deployment rights after you know
+                      where CoCalc should run.
+                    </Paragraph>
+                  </div>
+                </Flex>
+              </div>
+              <Flex align="center" justify="space-between" wrap gap={12}>
+                <Text type="secondary">
+                  Start small, then move toward private operation as control
+                  requirements grow.
+                </Text>
+                <Button href={appPath("pricing")}>Pricing and licensing</Button>
+              </Flex>
               <div
                 aria-hidden="true"
                 style={{
@@ -1055,7 +1118,7 @@ function ProductOptionsSection() {
                   gridTemplateColumns: "auto 1fr auto",
                 }}
               >
-                <Text type="secondary">Individual</Text>
+                <Text type="secondary">Hosted</Text>
                 <div
                   style={{
                     background: `linear-gradient(90deg, ${COLORS.BLUE_D} 0%, ${PUBLIC_COLORS.success} 50%, ${PUBLIC_COLORS.warning} 100%)`,
@@ -1063,7 +1126,7 @@ function ProductOptionsSection() {
                     height: 4,
                   }}
                 />
-                <Text type="secondary">Organization</Text>
+                <Text type="secondary">Customer-operated</Text>
               </div>
             </Flex>
           </div>
