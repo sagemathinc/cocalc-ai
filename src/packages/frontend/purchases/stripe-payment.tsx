@@ -84,9 +84,10 @@ export default function StripePayment({
     null,
   );
   const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { freshAuthActionRunning, runFreshAuthAction, freshAuthModalProps } =
+    useFreshAuthAction({
+      onUnhandledError: (err) => setError(`${err}`),
+    });
   const safeLineItems = lineItems ?? [];
 
   useEffect(() => {
@@ -159,7 +160,7 @@ export default function StripePayment({
             {showOneClick && hasPaymentMethods != null && (
               <Tooltip title="Attempt to finish this purchase (including computing and adding tax) using any payment methods you have on file.">
                 <ConfirmButton
-                  isSubmitting={loading}
+                  isSubmitting={loading || freshAuthActionRunning}
                   label={
                     "Buy Now With 1-Click" /* amazon's patent expired in 2017 */
                   }
@@ -188,7 +189,11 @@ export default function StripePayment({
             {!requiresPayment && hasPaymentMethods != null && (
               <ConfirmButton
                 notPrimary={showOneClick}
-                disabled={loading || (!stripeEnabled && totalStripe > 0)}
+                disabled={
+                  loading ||
+                  freshAuthActionRunning ||
+                  (!stripeEnabled && totalStripe > 0)
+                }
                 showAddress={stripeEnabled && !showOneClick && totalStripe > 0}
                 label={
                   totalStripe > 0

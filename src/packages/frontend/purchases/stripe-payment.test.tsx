@@ -7,15 +7,21 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import StripePayment, { AddPaymentMethodButton } from "./stripe-payment";
-import { createSetupIntent } from "./api";
+import {
+  createPaymentIntent,
+  createSetupIntent,
+  getPaymentMethods,
+} from "./api";
 
 let mockFreshAuthOpen = false;
 let mockFreshAuthOnCancel = jest.fn();
 let mockFreshAuthOnSuccess = jest.fn();
+let mockFreshAuthActionRunning = false;
 let mockRunFreshAuthAction = jest.fn(async (fn: () => Promise<void>) => {
   await fn();
   return true;
 });
+let mockStripeEnabled = false;
 
 jest.mock("antd", () => {
   const Box = ({
@@ -38,8 +44,8 @@ jest.mock("antd", () => {
   );
   return {
     Alert: Box,
-    Button: ({ children, onClick }: any) => (
-      <button onClick={onClick} type="button">
+    Button: ({ children, disabled, onClick }: any) => (
+      <button disabled={disabled} onClick={onClick} type="button">
         {children}
       </button>
     ),
@@ -79,7 +85,7 @@ jest.mock("@stripe/react-stripe-js", () => ({
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: () => false,
+  useTypedRedux: () => mockStripeEnabled,
 }));
 
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
@@ -100,14 +106,17 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
         </button>
       </section>
     ) : null,
-  useFreshAuthAction: () => ({
-    freshAuthModalProps: {
-      open: mockFreshAuthOpen,
-      onCancel: mockFreshAuthOnCancel,
-      onSuccess: mockFreshAuthOnSuccess,
-    },
-    runFreshAuthAction: mockRunFreshAuthAction,
-  }),
+  useFreshAuthAction: () => {
+    return {
+      freshAuthModalProps: {
+        open: mockFreshAuthOpen,
+        onCancel: mockFreshAuthOnCancel,
+        onSuccess: mockFreshAuthOnSuccess,
+      },
+      freshAuthActionRunning: mockFreshAuthActionRunning,
+      runFreshAuthAction: mockRunFreshAuthAction,
+    };
+  },
 }));
 
 jest.mock("@cocalc/frontend/billing/stripe", () => ({
@@ -138,11 +147,15 @@ describe("StripePayment", () => {
     mockFreshAuthOnSuccess = jest.fn(async () => {
       mockFreshAuthOpen = false;
     });
+    mockFreshAuthActionRunning = false;
     mockRunFreshAuthAction = jest.fn(async (fn: () => Promise<void>) => {
       await fn();
       return true;
     });
+    mockStripeEnabled = false;
+    jest.mocked(createPaymentIntent).mockReset();
     jest.mocked(createSetupIntent).mockReset();
+    jest.mocked(getPaymentMethods).mockReset();
   });
 
   it("renders the description and full line-item table by default", () => {
@@ -175,6 +188,42 @@ describe("StripePayment", () => {
     expect(
       screen.getByText(/Amount due \(excluding tax\) \$72\.00/),
     ).toBeTruthy();
+  });
+
+  it("keeps one-click purchase disabled and busy during fresh-auth retry", async () => {
+    mockStripeEnabled = true;
+    jest.mocked(getPaymentMethods).mockResolvedValue({ data: [{}] } as any);
+    mockRunFreshAuthAction = jest.fn(async () => false);
+    const { rerender } = render(
+      <StripePayment
+        description="Membership change"
+        lineItems={[{ description: "Pro membership, annual", amount: 1440 }]}
+        purpose="membership-change"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Buy Now With 1-Click")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("Buy Now With 1-Click"));
+
+    await waitFor(() => {
+      expect(mockRunFreshAuthAction).toHaveBeenCalledTimes(1);
+    });
+    mockFreshAuthActionRunning = true;
+    rerender(
+      <StripePayment
+        description="Membership change"
+        lineItems={[{ description: "Pro membership, annual", amount: 1440 }]}
+        purpose="membership-change"
+      />,
+    );
+
+    const button = screen
+      .getByText("Buy Now With 1-Click")
+      .closest("button") as HTMLButtonElement | null;
+    expect(button?.disabled).toBe(true);
+    expect(screen.getByText("loading")).toBeTruthy();
   });
 
   it("shows fresh auth prompt when adding a payment method requires it", async () => {

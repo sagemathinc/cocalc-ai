@@ -283,18 +283,17 @@ export function FreshAuthModal({
 }
 
 export function useFreshAuthAction({
-  closeBeforeRetry = false,
   onUnhandledError,
 }: {
-  closeBeforeRetry?: boolean;
-  onUnhandledError?: (err: unknown) => void;
-} = {}) {
+  onUnhandledError: (err: unknown) => void;
+}) {
   // Frontend counterpart to backend requireFreshAuth checks. Any browser UI
   // action that can hit a fresh-auth-protected HTTP route or Conat RPC should
   // run the mutation through runFreshAuthAction and render FreshAuthModal with
   // freshAuthModalProps. Backend-only fresh-auth changes without this wiring
   // leave users with an opaque "fresh auth is required" error.
   const [open, setOpen] = useState(false);
+  const [freshAuthActionRunning, setFreshAuthActionRunning] = useState(false);
   const pendingActionRef = useRef<null | (() => Promise<void>)>(null);
 
   const cancelFreshAuth = useCallback(() => {
@@ -326,21 +325,19 @@ export function useFreshAuthAction({
       setOpen(false);
       return;
     }
-    if (closeBeforeRetry) {
-      setOpen(false);
-    }
+    setOpen(false);
+    setFreshAuthActionRunning(true);
     try {
       await action();
-      if (!closeBeforeRetry) {
-        setOpen(false);
-      }
     } catch (err) {
-      onUnhandledError?.(err);
-      throw err;
+      onUnhandledError(err);
+    } finally {
+      setFreshAuthActionRunning(false);
     }
-  }, [closeBeforeRetry, onUnhandledError]);
+  }, [onUnhandledError]);
 
   return {
+    freshAuthActionRunning,
     runFreshAuthAction,
     freshAuthModalProps: {
       open,

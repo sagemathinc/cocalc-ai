@@ -515,7 +515,6 @@ export function RootfsAdmin() {
   }, [load, pageSize, search]);
 
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    closeBeforeRetry: true,
     onUnhandledError: (err) => {
       message.error(`RootFS admin action failed: ${err}`);
       void load();
