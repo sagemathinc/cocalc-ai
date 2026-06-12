@@ -46,23 +46,17 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { join } from "path";
 import { moneyToStripe, stripeToMoney } from "@cocalc/util/money";
 import { Icon } from "@cocalc/frontend/components/icon";
+import {
+  useEmailVerificationRequired,
+  VerifyEmailRequiredPanel,
+} from "@cocalc/frontend/app/verify-email-banner";
 import { LineItemsTable, moneyToString } from "./line-items";
 import { AddressButton } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
 const PAYMENT_UPDATE_DEBOUNCE = 2000;
 
-export default function StripePayment({
-  description = "",
-  lineItems = [],
-  purpose = "add-credit",
-  metadata,
-  onFinished,
-  summaryMode = "full",
-  style,
-  title = description,
-  disabled,
-}: {
+interface StripePaymentProps {
   description?: string;
   lineItems?: LineItem[];
   purpose: string;
@@ -76,7 +70,38 @@ export default function StripePayment({
   style?;
   title?: ReactNode | null;
   disabled?: boolean;
-}) {
+}
+
+export default function StripePayment(props: StripePaymentProps) {
+  const emailVerificationRequired = useEmailVerificationRequired();
+  const safeLineItems = props.lineItems ?? [];
+  if (safeLineItems.length == 0) {
+    // no payment needed.
+    return null;
+  }
+  if (emailVerificationRequired) {
+    return (
+      <VerifyEmailRequiredPanel
+        compact
+        title="Verify your email before purchasing"
+        description="Please verify your email address before making purchases, adding account credit, or changing paid services."
+      />
+    );
+  }
+  return <StripePaymentInner {...props} />;
+}
+
+function StripePaymentInner({
+  description = "",
+  lineItems = [],
+  purpose = "add-credit",
+  metadata,
+  onFinished,
+  summaryMode = "full",
+  style,
+  title = description,
+  disabled,
+}: StripePaymentProps) {
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [requiresPayment, setRequiresPayment] = useState<boolean>(false);
@@ -103,11 +128,6 @@ export default function StripePayment({
   useEffect(() => {
     setRequiresPayment(false);
   }, [JSON.stringify(safeLineItems)]);
-
-  if (safeLineItems.length == 0) {
-    // no payment needed.
-    return null;
-  }
 
   let totalStripe = 0;
   for (const lineItem of safeLineItems) {
@@ -381,7 +401,26 @@ function StripeCheckout({
   );
 }
 
-export function FinishStripePayment({
+export function FinishStripePayment(props: {
+  paymentIntent;
+  style?;
+  onFinished?;
+}) {
+  const emailVerificationRequired = useEmailVerificationRequired();
+  if (emailVerificationRequired) {
+    return (
+      <VerifyEmailRequiredPanel
+        compact
+        title="Verify your email before completing payment"
+        description="Please verify your email address before completing purchases."
+        style={props.style}
+      />
+    );
+  }
+  return <FinishStripePaymentInner {...props} />;
+}
+
+function FinishStripePaymentInner({
   paymentIntent,
   style,
   onFinished,
@@ -708,7 +747,28 @@ export function AddPaymentMethodModal({
   );
 }
 
-function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
+function CollectPaymentMethod(props: { style?; onFinished? }) {
+  const emailVerificationRequired = useEmailVerificationRequired();
+  if (emailVerificationRequired) {
+    return (
+      <VerifyEmailRequiredPanel
+        compact
+        title="Verify your email before adding a payment method"
+        description="Please verify your email address before adding payment methods or starting membership trials."
+        style={props.style}
+      />
+    );
+  }
+  return <CollectPaymentMethodInner {...props} />;
+}
+
+function CollectPaymentMethodInner({
+  style,
+  onFinished,
+}: {
+  style?;
+  onFinished?;
+}) {
   const [error, setError] = useState<string>("");
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);

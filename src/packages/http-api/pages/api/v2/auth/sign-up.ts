@@ -51,14 +51,16 @@ import redeemRegistrationToken, {
   validateRegistrationToken,
 } from "@cocalc/server/auth/tokens/redeem";
 import getRequiresRegistrationToken from "@cocalc/server/auth/tokens/get-requires-token";
-import sendEmailVerification from "@cocalc/server/accounts/send-email-verification";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { issueHomeBayRetryToken } from "@cocalc/server/auth/home-bay-retry-token";
 import { selectSignupHomeBay } from "@cocalc/server/accounts/select-home-bay";
 import { SignupEmailDomainPolicyError } from "@cocalc/server/accounts/signup-email-domain-policy";
-import { createClusterAccount } from "@cocalc/server/inter-bay/accounts";
+import {
+  createClusterAccount,
+  sendClusterEmailVerification,
+} from "@cocalc/server/inter-bay/accounts";
 import { getTierTemplate } from "@cocalc/util/membership-tier-templates";
 import {
   isLaunchpadMode,
@@ -398,7 +400,11 @@ export async function signUp(req, res) {
 
     if (email) {
       const onlyVerify = !requiresRegistrationToken;
-      const emailError = await sendEmailVerification(account_id, onlyVerify);
+      const emailError = await sendClusterEmailVerification({
+        account_id,
+        home_bay_id,
+        only_verify: onlyVerify,
+      });
       if (emailError) {
         logger.debug("signup email skipped (no email backend configured)", {
           email,

@@ -14,6 +14,8 @@ import {
 
 import MembershipPurchaseModal from "./membership-purchase-modal";
 
+let mockEmailVerificationRequired = false;
+
 jest.mock("antd", () => {
   const Box = ({
     children,
@@ -92,6 +94,16 @@ jest.mock("@cocalc/frontend/purchases/stripe-payment", () => ({
   ),
 }));
 
+jest.mock("@cocalc/frontend/app/verify-email-banner", () => ({
+  useEmailVerificationRequired: () => mockEmailVerificationRequired,
+  VerifyEmailRequiredPanel: ({ description, title }: any) => (
+    <section>
+      <h2>{title}</h2>
+      <div>{description}</div>
+    </section>
+  ),
+}));
+
 jest.mock("./membership-pricing-chooser", () => ({
   MembershipBillingSelector: () => <div>billing selector</div>,
   MembershipPricingTierGrid: ({ children }: { children?: ReactNode }) => (
@@ -111,6 +123,7 @@ jest.mock("./membership-pricing-chooser", () => ({
 describe("MembershipPurchaseModal", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockEmailVerificationRequired = false;
     jest.mocked(api).mockImplementation(async (endpoint: string) => {
       if (endpoint === "purchases/get-membership") {
         return { class: "free", source: "free" };
@@ -138,6 +151,18 @@ describe("MembershipPurchaseModal", () => {
       }
       throw new Error(`unexpected endpoint ${endpoint}`);
     });
+  });
+
+  it("requires email verification before upgrading membership", () => {
+    mockEmailVerificationRequired = true;
+
+    render(<MembershipPurchaseModal open onClose={jest.fn()} />);
+
+    expect(
+      screen.getByText("Verify your email before upgrading membership"),
+    ).toBeTruthy();
+    expect(screen.queryByText("billing selector")).toBeNull();
+    expect(api).not.toHaveBeenCalled();
   });
 
   it("opens payment-method collection in place for trial memberships", async () => {

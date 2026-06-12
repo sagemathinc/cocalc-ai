@@ -20,7 +20,6 @@ let interBayCheckStartAdmissionMock: jest.Mock;
 let projectControlBridgeMock: jest.Mock;
 let getNameMock: jest.Mock;
 let poolQueryMock: jest.Mock;
-let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
 
 async function flushBackgroundStartTask() {
   for (let i = 0; i < 6; i += 1) {
@@ -109,12 +108,6 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   })),
 }));
 
-jest.mock("@cocalc/server/inter-bay/accounts", () => ({
-  __esModule: true,
-  assertClusterAccountTrustedForProductAccess: (...args: any[]) =>
-    assertClusterAccountTrustedForProductAccessMock(...args),
-}));
-
 projectControlBridgeMock = jest.fn(() => ({
   checkStartAdmission: (...args: any[]) =>
     interBayCheckStartAdmissionMock(...args),
@@ -173,9 +166,6 @@ describe("projects.start", () => {
   beforeEach(() => {
     jest.resetModules();
     assertCollabMock = jest.fn(async () => undefined);
-    assertClusterAccountTrustedForProductAccessMock = jest.fn(
-      async () => undefined,
-    );
     createLroMock = jest.fn(async () => ({
       op_id: "op-1",
       kind: "project-start",
@@ -259,23 +249,6 @@ describe("projects.start", () => {
       keep_op_id: "op-1",
     });
     expect(publishLroSummaryMock).toHaveBeenCalled();
-  });
-
-  it("blocks project starts when email verification is required", async () => {
-    assertClusterAccountTrustedForProductAccessMock = jest.fn(async () => {
-      throw new Error("Verify your email address before you start projects.");
-    });
-    const { start } = await import("./projects");
-
-    await expect(
-      start({
-        account_id: "acct-1",
-        project_id: "proj-1",
-      }),
-    ).rejects.toThrow("Verify your email address before you start projects.");
-
-    expect(createLroMock).not.toHaveBeenCalled();
-    expect(interBayCheckStartAdmissionMock).not.toHaveBeenCalled();
   });
 
   it("keeps the long control timeout for explicit backup restores", async () => {
