@@ -54,6 +54,7 @@ type ImmutablePassportStrategy = TypedMap<PassportStrategyFrontend>;
 
 interface Props {
   account_id?: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   unlisted?: boolean;
@@ -349,24 +350,17 @@ export function AccountSettings(props: Readonly<Props>) {
 
   function render_name(): Rendered {
     return (
-      <>
-        <TextSetting
-          label={intl.formatMessage(labels.account_first_name)}
-          value={props.first_name}
-          onChange={(e) => handle_change(e, "first_name")}
-          onBlur={(e) => save_change(e, "first_name")}
-          onPressEnter={(e) => save_change(e, "first_name")}
-          maxLength={254}
-        />
-        <TextSetting
-          label={intl.formatMessage(labels.account_last_name)}
-          value={props.last_name}
-          onChange={(e) => handle_change(e, "last_name")}
-          onBlur={(e) => save_change(e, "last_name")}
-          onPressEnter={(e) => save_change(e, "last_name")}
-          maxLength={254}
-        />
-      </>
+      <TextSetting
+        label="Display name"
+        value={
+          props.display_name ||
+          `${props.first_name ?? ""} ${props.last_name ?? ""}`.trim()
+        }
+        onChange={(e) => handle_change(e, "display_name")}
+        onBlur={(e) => save_change(e, "display_name")}
+        onPressEnter={(e) => save_change(e, "display_name")}
+        maxLength={254}
+      />
     );
   }
 

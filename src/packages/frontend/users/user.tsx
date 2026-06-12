@@ -52,8 +52,10 @@ function User_map_given(props: Props) {
   }
 
   function render_original(info) {
-    let full_name;
-    if (info.first_name && info.last_name) {
+    let full_name = `${info.display_name ?? ""}`.trim();
+    if (full_name) {
+      // already set
+    } else if (info.first_name && info.last_name) {
       full_name = info.first_name + " " + info.last_name;
     } else if (info.first_name) {
       full_name = info.first_name;
@@ -80,7 +82,10 @@ function User_map_given(props: Props) {
 
   function name(info) {
     const x = trunc_middle(
-      props.name != null ? props.name : `${info.first_name} ${info.last_name}`,
+      props.name != null
+        ? props.name
+        : `${info.display_name ?? ""}`.trim() ||
+            `${info.first_name} ${info.last_name}`,
       props.trunc ?? 50,
     ).trim();
     if (x) {

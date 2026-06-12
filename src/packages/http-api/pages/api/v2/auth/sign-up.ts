@@ -20,8 +20,7 @@ allowed; use the fresh-auth-protected admin account-creation RPC instead.
 
 API Usage:
 
-curl -d firstName=John00 \
-  -d lastName=Doe00 \
+curl -d displayName='John Doe' \
   -d email=jd@example.com \
   -d password=xyzabc09090 \
   -d terms=true https://cocalc.com/api/v2/auth/sign-up
@@ -87,6 +86,11 @@ import {
   MIN_PASSWORD_LENGTH,
   MIN_PASSWORD_STRENGTH,
 } from "@cocalc/util/auth";
+import {
+  displayNameFromParts,
+  legacyNamePartsFromDisplayName,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
 
 const logger = getLogger("auth:sign-up");
 
@@ -98,6 +102,7 @@ export async function signUp(req, res) {
     terms,
     email,
     password,
+    displayName,
     firstName,
     lastName,
     registrationToken,
@@ -106,10 +111,16 @@ export async function signUp(req, res) {
 
   password = (password ?? "").trim();
   email = (email ?? "").toLowerCase().trim();
-  firstName = (firstName ? firstName : "Anonymous").trim();
-  lastName = (
-    lastName ? lastName : `User-${Math.round(Date.now() / 1000)}`
-  ).trim();
+  displayName =
+    normalizeDisplayName(displayName) ||
+    displayNameFromParts({
+      first_name: firstName,
+      last_name: lastName,
+    }) ||
+    "Anonymous User";
+  const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
+  firstName = normalizeDisplayName(firstName) || legacyNameParts.first_name;
+  lastName = normalizeDisplayName(lastName) || legacyNameParts.last_name;
   registrationToken = (registrationToken ?? "").trim();
 
   if (isLaunchpadMode() && !(await isSoftwareLicenseActivated())) {
@@ -294,6 +305,7 @@ export async function signUp(req, res) {
       account_id: v4(),
       email_address: email,
       password,
+      display_name: displayName,
       first_name: firstName,
       last_name: lastName,
       home_bay_id: selected_home_bay_id,

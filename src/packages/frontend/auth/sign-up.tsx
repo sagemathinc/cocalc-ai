@@ -11,7 +11,9 @@ export default function SignUpForm({ onNavigate }: SignUpProps) {
   return (
     <SignUpFormBase
       onNavigate={onNavigate}
-      initialRequiresToken={tokenFromStore}
+      initialRequiresToken={
+        typeof tokenFromStore === "boolean" ? tokenFromStore : undefined
+      }
     />
   );
 }

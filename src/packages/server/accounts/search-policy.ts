@@ -66,7 +66,7 @@ function addStringQueryClauses({
       params.push(`%${term}%`);
       const pos = params.length;
       termClauses.push(
-        `(lower(first_name) LIKE $${pos}::TEXT OR lower(last_name) LIKE $${pos}::TEXT)`,
+        `(lower(display_name) LIKE $${pos}::TEXT OR lower(first_name) LIKE $${pos}::TEXT OR lower(last_name) LIKE $${pos}::TEXT)`,
       );
     }
     if (termClauses.length > 0) {
@@ -144,6 +144,7 @@ export async function searchRelatedClusterAccounts({
 
   const fields = `
     account_id,
+    display_name,
     first_name,
     last_name,
     email_address,
@@ -170,6 +171,7 @@ export async function searchRelatedClusterAccounts({
         UNION ALL
         SELECT
           cluster_account_directory.account_id,
+          display_name,
           first_name,
           last_name,
           email_address,

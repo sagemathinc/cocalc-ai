@@ -1438,6 +1438,7 @@ export interface BayRestoreTestRunResult extends BayInfo {
 export interface AccountBayLocation {
   account_id: string;
   email_address?: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   name?: string;
@@ -1963,6 +1964,7 @@ export interface System {
   getNames: (account_ids: string[]) => Promise<{
     [account_id: string]:
       | {
+          display_name: string;
           first_name: string;
           last_name: string;
           profile?: { color?: string; image?: string };
@@ -1976,12 +1978,14 @@ export interface System {
     session_hash?: string | null;
     email: string;
     password?: string;
+    display_name?: string;
     first_name?: string;
     last_name?: string;
     tags?: string[];
   }) => Promise<{
     account_id: string;
     email_address: string;
+    display_name: string;
     first_name: string;
     last_name: string;
     created_by: string;

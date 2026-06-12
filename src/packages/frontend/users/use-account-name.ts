@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { webapp_client } from "../webapp-client";
 
 interface AccountName {
+  displayName: string;
   firstName: string;
   lastName: string;
 }
@@ -18,7 +20,11 @@ export default function useAccountName(account_id: string): AccountName | null {
         return;
       }
       const { first_name: firstName, last_name: lastName } = user;
-      setName({ firstName, lastName });
+      setName({
+        displayName: displayNameFromAccount(user),
+        firstName,
+        lastName,
+      });
     })();
   }, [account_id]);
 

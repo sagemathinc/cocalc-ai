@@ -113,12 +113,14 @@ interface Props {
 
 interface PackageUserSearchResult {
   account_id: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   email_address?: string;
 }
 
 interface AccountNameInfo {
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   email_address?: string;
@@ -131,10 +133,12 @@ type SiteLicenseRecentAuditEvent = NonNullable<
 >[number];
 
 function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
-  const displayName = [user.first_name, user.last_name]
-    .map((part) => `${part ?? ""}`.trim())
-    .filter(Boolean)
-    .join(" ");
+  const displayName =
+    user.display_name ||
+    [user.first_name, user.last_name]
+      .map((part) => `${part ?? ""}`.trim())
+      .filter(Boolean)
+      .join(" ");
   return (
     <Space orientation="vertical" size={0}>
       <Text>{displayName || user.email_address || user.account_id}</Text>

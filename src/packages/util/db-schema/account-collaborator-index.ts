@@ -22,6 +22,7 @@ Table({
           account_id: null,
           collaborator_account_id: null,
           common_project_count: 0,
+          display_name: "",
           first_name: "",
           last_name: "",
           name: "",
@@ -45,13 +46,17 @@ Table({
       type: "integer",
       desc: "Number of visible projects this account currently shares with the collaborator.",
     },
+    display_name: {
+      type: "string",
+      desc: "Projected collaborator display name.",
+    },
     first_name: {
       type: "string",
-      desc: "Projected collaborator first name.",
+      desc: "Projected collaborator legacy split first/given name.",
     },
     last_name: {
       type: "string",
-      desc: "Projected collaborator last name.",
+      desc: "Projected collaborator legacy split last/family name.",
     },
     name: {
       type: "string",
