@@ -3,13 +3,20 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import api from "@cocalc/frontend/client/api";
 import {
   applyMembershipChange,
   getMembershipChangeQuote,
+  processPaymentIntents,
 } from "@cocalc/frontend/purchases/api";
 
 import MembershipPurchaseModal from "./membership-purchase-modal";
@@ -60,6 +67,9 @@ jest.mock("antd", () => {
   };
 });
 
+const mockGetMembershipDetails = jest.fn();
+let mockFinishStripePayment: (() => Promise<void>) | undefined;
+
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
 
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
@@ -79,11 +89,25 @@ jest.mock("@cocalc/frontend/purchases/payments", () => () => null);
 jest.mock("@cocalc/frontend/purchases/api", () => ({
   applyMembershipChange: jest.fn(),
   getMembershipChangeQuote: jest.fn(),
+  processPaymentIntents: jest.fn(),
 }));
 
 jest.mock("@cocalc/frontend/purchases/stripe-payment", () => ({
   __esModule: true,
-  default: () => <div>stripe payment</div>,
+  default: ({ onFinished, onSubmittingChange }: any) => (
+    <button
+      onClick={() => {
+        onSubmittingChange?.(true);
+        mockFinishStripePayment = async () => {
+          await onFinished?.(72);
+          onSubmittingChange?.(false);
+        };
+      }}
+      type="button"
+    >
+      Pay with Stripe
+    </button>
+  ),
   AddPaymentMethodModal: ({ onFinished }: { onFinished: () => void }) => (
     <section>
       <div>local add payment method modal</div>
@@ -104,6 +128,19 @@ jest.mock("@cocalc/frontend/app/verify-email-banner", () => ({
   ),
 }));
 
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: {
+      hub: {
+        purchases: {
+          getMembershipDetails: (...args: any[]) =>
+            mockGetMembershipDetails(...args),
+        },
+      },
+    },
+  },
+}));
+
 jest.mock("./membership-pricing-chooser", () => ({
   MembershipBillingSelector: () => <div>billing selector</div>,
   MembershipPricingTierGrid: ({ children }: { children?: ReactNode }) => (
@@ -121,12 +158,31 @@ jest.mock("./membership-pricing-chooser", () => ({
 }));
 
 describe("MembershipPurchaseModal", () => {
+  let currentMembership: any;
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockEmailVerificationRequired = false;
+    currentMembership = { class: "free", source: "free" };
+    mockFinishStripePayment = undefined;
+    jest.mocked(processPaymentIntents).mockResolvedValue({ count: 1 });
+    mockGetMembershipDetails.mockResolvedValue({
+      candidates: [
+        {
+          class: "standard",
+          source: "subscription",
+          subscription_interval: "year",
+          subscription_status: "active",
+        },
+      ],
+      selected: {
+        class: "standard",
+        source: "subscription",
+      },
+    });
     jest.mocked(api).mockImplementation(async (endpoint: string) => {
       if (endpoint === "purchases/get-membership") {
-        return { class: "free", source: "free" };
+        return currentMembership;
       }
       if (endpoint === "purchases/get-membership-tiers") {
         return {
@@ -217,5 +273,49 @@ describe("MembershipPurchaseModal", () => {
       interval: "year",
     });
     expect(getMembershipChangeQuote).toHaveBeenCalledTimes(2);
+  });
+
+  it("finalizes paid membership changes without showing payment history", async () => {
+    jest.mocked(getMembershipChangeQuote).mockResolvedValue({
+      allowed: true,
+      change: "upgrade",
+      charge: 216,
+      charge_amount: 216,
+      price: 216,
+    } as any);
+
+    const onChanged = jest.fn();
+    render(
+      <MembershipPurchaseModal
+        open
+        onChanged={onChanged}
+        onClose={jest.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Standard" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Pay with Stripe" }),
+    );
+
+    expect(screen.getByText("Processing payment")).toBeTruthy();
+    expect(mockFinishStripePayment).toBeDefined();
+
+    currentMembership = {
+      class: "standard",
+      source: "subscription",
+      subscription_interval: "year",
+    };
+    await act(async () => {
+      await mockFinishStripePayment?.();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Membership updated.")).toBeTruthy();
+    });
+    expect(processPaymentIntents).toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalled();
+    expect(screen.queryByText("Refresh membership")).toBeNull();
+    expect(screen.queryByText("Payment is processing.")).toBeNull();
   });
 });

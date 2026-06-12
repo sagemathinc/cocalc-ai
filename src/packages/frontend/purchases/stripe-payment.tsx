@@ -65,7 +65,8 @@ interface StripePaymentProps {
   //   - this means the paymentIntent was created when total > 0
   //   - if total = 0, this means user confirmed "I want to make this purchase using credit"; the
   //     caller then needs to actually allocate the thing they want to purchase.
-  onFinished?: (total: number) => void;
+  onFinished?: (total: number) => void | Promise<void>;
+  onSubmittingChange?: (submitting: boolean) => void;
   summaryMode?: "full" | "total-only";
   style?;
   title?: ReactNode | null;
@@ -97,6 +98,7 @@ function StripePaymentInner({
   purpose = "add-credit",
   metadata,
   onFinished,
+  onSubmittingChange,
   summaryMode = "full",
   style,
   title = description,
@@ -185,6 +187,7 @@ function StripePaymentInner({
                   onClick={async () => {
                     try {
                       setLoading(true);
+                      onSubmittingChange?.(true);
                       await runFreshAuthAction(async () => {
                         await createPaymentIntent({
                           description,
@@ -192,11 +195,14 @@ function StripePaymentInner({
                           purpose,
                           metadata,
                         });
-                        onFinished?.(stripeToMoney(totalStripe).toNumber());
+                        await onFinished?.(
+                          stripeToMoney(totalStripe).toNumber(),
+                        );
                       });
                     } catch (err) {
                       setError(`${err}`);
                     } finally {
+                      onSubmittingChange?.(false);
                       setLoading(false);
                     }
                   }}

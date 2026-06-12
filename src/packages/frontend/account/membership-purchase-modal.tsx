@@ -4,8 +4,9 @@
  */
 
 import { Alert, Button, Flex, Modal, Space, Spin, Typography } from "antd";
+import { delay } from "awaiting";
 import dayjs from "dayjs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   FreshAuthModal,
@@ -20,10 +21,10 @@ import {
   useEmailVerificationRequired,
   VerifyEmailRequiredPanel,
 } from "@cocalc/frontend/app/verify-email-banner";
-import Payments from "@cocalc/frontend/purchases/payments";
 import {
   applyMembershipChange,
   getMembershipChangeQuote,
+  processPaymentIntents,
   type MembershipChangeQuote,
 } from "@cocalc/frontend/purchases/api";
 import {
@@ -41,11 +42,17 @@ import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-
 import { currency } from "@cocalc/util/misc";
 import { moneyRound2Up, toDecimal, type MoneyValue } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
-import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
+import type {
+  MembershipDetails,
+  MembershipResolution,
+} from "@cocalc/conat/hub/api/purchases";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const { Text } = Typography;
+const MEMBERSHIP_FINALIZATION_TIMEOUT_MS = 12_000;
+const MEMBERSHIP_FINALIZATION_POLL_MS = 1_000;
 
 interface MembershipTier extends MembershipPricingTier {
   id: string;
@@ -60,6 +67,11 @@ interface MembershipTier extends MembershipPricingTier {
 
 interface MembershipTiersResponse {
   tiers?: MembershipTier[];
+}
+
+interface MembershipSnapshot {
+  details?: MembershipDetails | null;
+  membership: MembershipResolution;
 }
 
 function billingAdjective(interval: BillingInterval): string {
@@ -171,17 +183,19 @@ function MembershipPurchaseModalInner({
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [quoteError, setQuoteError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
+  const [paymentSubmitting, setPaymentSubmitting] = useState<boolean>(false);
   const [addPaymentMethodOpen, setAddPaymentMethodOpen] =
     useState<boolean>(false);
   const [quoteRefreshKey, setQuoteRefreshKey] = useState<number>(0);
   const [place, setPlace] = useState<
     "choose" | "checkout" | "processing" | "done"
   >("choose");
-  const numPaymentsRef = useRef<number | null>(null);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ showLoading = true } = {}) => {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError("");
     try {
       const [membershipResult, tiersResult] = await Promise.all([
@@ -190,11 +204,27 @@ function MembershipPurchaseModalInner({
       ]);
       setMembership(membershipResult as MembershipResolution);
       setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
+      return membershipResult as MembershipResolution;
     } catch (err) {
       setError(`${err}`);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
+  };
+
+  const refreshMembershipSnapshot = async (): Promise<MembershipSnapshot> => {
+    const [membershipResult, detailsResult] = await Promise.all([
+      api("purchases/get-membership"),
+      webapp_client.conat_client.hub.purchases.getMembershipDetails(),
+    ]);
+    const nextMembership = membershipResult as MembershipResolution;
+    setMembership(nextMembership);
+    return {
+      details: (detailsResult as MembershipDetails) ?? null,
+      membership: nextMembership,
+    };
   };
 
   useEffect(() => {
@@ -205,6 +235,7 @@ function MembershipPurchaseModalInner({
     setInterval("year");
     setAddPaymentMethodOpen(false);
     setQuoteRefreshKey(0);
+    setPaymentSubmitting(false);
     setPlace("choose");
     load();
   }, [open]);
@@ -353,6 +384,7 @@ function MembershipPurchaseModalInner({
     setSelectedTierId(tier.id);
     setQuote(null);
     setQuoteError("");
+    setPaymentSubmitting(false);
     setPlace("checkout");
   }
 
@@ -360,7 +392,46 @@ function MembershipPurchaseModalInner({
     setSelectedTierId(null);
     setQuote(null);
     setQuoteError("");
+    setPaymentSubmitting(false);
     setPlace("choose");
+  }
+
+  function snapshotHasSelectedPersonalMembership({
+    details,
+    membership,
+  }: MembershipSnapshot): boolean {
+    if (selectedTierId == null) return false;
+    if (
+      membership.source === "subscription" &&
+      membership.class === selectedTierId &&
+      (membership.subscription_interval == null ||
+        membership.subscription_interval === interval)
+    ) {
+      return true;
+    }
+    return (
+      details?.candidates.some(
+        (candidate) =>
+          candidate.source === "subscription" &&
+          candidate.class === selectedTierId &&
+          candidate.subscription_status !== "canceled" &&
+          (candidate.subscription_interval == null ||
+            candidate.subscription_interval === interval),
+      ) ?? false
+    );
+  }
+
+  async function waitForSelectedPersonalMembership(): Promise<boolean> {
+    const deadline = Date.now() + MEMBERSHIP_FINALIZATION_TIMEOUT_MS;
+    while (Date.now() <= deadline) {
+      const snapshot = await refreshMembershipSnapshot();
+      onChanged?.();
+      if (snapshotHasSelectedPersonalMembership(snapshot)) {
+        return true;
+      }
+      await delay(MEMBERSHIP_FINALIZATION_POLL_MS);
+    }
+    return false;
   }
 
   const directChange = async () => {
@@ -388,9 +459,25 @@ function MembershipPurchaseModalInner({
     }
   };
 
-  const refreshStatus = async () => {
-    await load();
-    onChanged?.();
+  const finalizePaidChange = async () => {
+    setActionLoading(true);
+    setQuoteError("");
+    try {
+      const { count } = await processPaymentIntents();
+      await load({ showLoading: false });
+      onChanged?.();
+      if (count > 0 || (await waitForSelectedPersonalMembership())) {
+        setPlace("done");
+        return;
+      }
+      setPlace("processing");
+    } catch {
+      await load({ showLoading: false });
+      onChanged?.();
+      setPlace("processing");
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const modalWidth = place === "choose" ? 1180 : 600;
@@ -472,9 +559,26 @@ function MembershipPurchaseModalInner({
             </Space>
           }
         />
-        <Button onClick={backToChooser}>Change selection</Button>
+        {paymentSubmitting && (
+          <Alert
+            showIcon
+            type="info"
+            message="Processing payment"
+            description="Creating the invoice and charging your saved payment method. This can take a few seconds."
+          />
+        )}
+        <Button
+          disabled={paymentSubmitting || actionLoading}
+          onClick={backToChooser}
+        >
+          Change selection
+        </Button>
         {quote.trial_requires_payment_method && quote.allowed === false && (
-          <Button onClick={() => setAddPaymentMethodOpen(true)} type="primary">
+          <Button
+            disabled={paymentSubmitting || actionLoading}
+            onClick={() => setAddPaymentMethodOpen(true)}
+            type="primary"
+          >
             Add payment method to start free trial
           </Button>
         )}
@@ -493,11 +597,12 @@ function MembershipPurchaseModalInner({
               membership_interval: interval,
               allow_downgrade: "true",
             }}
+            onSubmittingChange={setPaymentSubmitting}
             onFinished={async (total) => {
               if (!total) {
                 await directChange();
               } else {
-                setPlace("processing");
+                await finalizePaidChange();
               }
             }}
           />
@@ -520,22 +625,15 @@ function MembershipPurchaseModalInner({
 
   function renderProcessingStep() {
     return (
-      <Space vertical size="middle">
+      <Space align="center" vertical size="middle" style={{ width: "100%" }}>
         <Alert
           type="info"
-          title="Payment is processing. Your membership will update once the payment completes."
+          title="Payment received. We are finalizing your membership change."
+          description="Your membership should update shortly. You can close this window."
         />
-        <Payments
-          purpose={MEMBERSHIP_CHANGE}
-          numPaymentsRef={numPaymentsRef}
-          limit={5}
-        />
-        <Space>
-          <Button onClick={refreshStatus}>Refresh membership</Button>
-          <Button type="primary" onClick={onClose}>
-            Close
-          </Button>
-        </Space>
+        <Button type="primary" onClick={onClose}>
+          Close
+        </Button>
       </Space>
     );
   }
