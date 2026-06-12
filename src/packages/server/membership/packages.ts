@@ -857,7 +857,48 @@ async function prepareGrantForAssignment({
   };
 }
 
-async function getHomeBayForAccount(account_id: string): Promise<string> {
+async function getHomeBayForAccount(
+  account_id: string,
+  client?: PoolClient,
+): Promise<string> {
+  if (client != null) {
+    const localBayId = getConfiguredBayId();
+    const directoryTable = await client.query<{ table_name: string | null }>(
+      "SELECT to_regclass($1) AS table_name",
+      ["public.cluster_account_directory"],
+    );
+    if (directoryTable.rows[0]?.table_name) {
+      const { rows } = await client.query(
+        `
+          SELECT home_bay_id
+            FROM cluster_account_directory
+           WHERE account_id = $1
+             AND provisioned = TRUE
+           LIMIT 1
+        `,
+        [account_id],
+      );
+      const directoryHomeBayId = `${rows[0]?.home_bay_id ?? ""}`.trim();
+      if (directoryHomeBayId) {
+        return directoryHomeBayId;
+      }
+    }
+    const { rows } = await client.query(
+      `
+        SELECT home_bay_id
+          FROM accounts
+         WHERE account_id = $1
+           AND deleted IS NOT TRUE
+         LIMIT 1
+      `,
+      [account_id],
+    );
+    const localHomeBayId = `${rows[0]?.home_bay_id ?? ""}`.trim();
+    if (rows[0]) {
+      return localHomeBayId || localBayId;
+    }
+    throw Error(`account ${account_id} not found`);
+  }
   const account = await getClusterAccountById(account_id);
   if (!account) {
     throw Error(`account ${account_id} not found`);
@@ -890,7 +931,7 @@ async function createGrantForAssignment({
     metadata,
     client,
   });
-  const home_bay_id = await getHomeBayForAccount(account_id);
+  const home_bay_id = await getHomeBayForAccount(account_id, client);
   if (home_bay_id === getConfiguredBayId()) {
     await createMembershipGrant(grant, client);
   }
@@ -1432,7 +1473,7 @@ async function syncUpdatedGrantForAssignment({
       assignment_id: assignment.id,
     },
   };
-  const home_bay_id = await getHomeBayForAccount(assignment.account_id);
+  const home_bay_id = await getHomeBayForAccount(assignment.account_id, client);
   if (home_bay_id === getConfiguredBayId()) {
     await getQueryClient(client).query(
       `
@@ -1971,7 +2012,7 @@ export async function revokeMembershipPackageSeat(
         return false;
       }
       const currentGrantHomeBayId = assignment.account_id
-        ? await getHomeBayForAccount(assignment.account_id)
+        ? await getHomeBayForAccount(assignment.account_id, dbClient)
         : getConfiguredBayId();
       if (
         assignment.account_id &&
