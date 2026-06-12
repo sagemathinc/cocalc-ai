@@ -89,6 +89,7 @@ import {
   defaultWorkingDirectoryForChat,
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course/configuration/customize-student-project-functionality";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
   clearWorkspaceNoticeForChatPath,
@@ -703,6 +704,19 @@ export function ChatPanel({
   const codexNewChatDefaultsSetting = useAccountOtherSetting(
     OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
   );
+  const accountCustomize = useTypedRedux("account", "customize");
+  const accountOtherSettings = useTypedRedux("account", "other_settings");
+  const studentProjectFunctionality =
+    useStudentProjectFunctionality(project_id);
+  const aiAgentPolicyAllowed = useMemo(() => {
+    return redux.getStore("projects").isAIAllowedByPolicy(project_id, "agent");
+  }, [
+    accountCustomize,
+    accountOtherSettings,
+    project_id,
+    studentProjectFunctionality.disableAI,
+    studentProjectFunctionality.disableSomeAI,
+  ]);
   const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
   const priorThreadCompletionSnapshotsRef = useRef<
@@ -731,7 +745,7 @@ export function ChatPanel({
       title: title ?? baseNewThreadSetup.title,
       icon: icon ?? baseNewThreadSetup.icon,
       color: color ?? baseNewThreadSetup.color,
-      agentMode: "codex",
+      agentMode: aiAgentPolicyAllowed ? "codex" : "human",
       codexConfig: {
         ...baseNewThreadSetup.codexConfig,
         workingDirectory:
@@ -744,6 +758,7 @@ export function ChatPanel({
       },
     };
   }, [
+    aiAgentPolicyAllowed,
     codexNewChatDefaultsSetting,
     desc,
     path,
@@ -753,6 +768,18 @@ export function ChatPanel({
   const [newThreadSetup, setNewThreadSetup] = useState<NewThreadSetup>(
     defaultNewThreadSetup,
   );
+  useEffect(() => {
+    if (aiAgentPolicyAllowed || newThreadSetup.agentMode !== "codex") return;
+    setNewThreadSetup((current) => ({
+      ...current,
+      agentMode: "human",
+      automationConfig: buildAutomationDraft({
+        config: current.automationConfig,
+        enabled: false,
+        allowCodexRunKind: false,
+      }),
+    }));
+  }, [aiAgentPolicyAllowed, newThreadSetup.agentMode]);
   const [codexPaymentConfigOpen, setCodexPaymentConfigOpen] = useState(false);
   const [automationModalOpen, setAutomationModalOpen] = useState(false);
   const [automationDetailsOpen, setAutomationDetailsOpen] = useState(false);
@@ -1400,7 +1427,9 @@ export function ChatPanel({
   } = useCodexPaymentSource({
     projectId: project_id,
     enabled:
-      !readOnly && (isSelectedThreadAI || newThreadSetup.agentMode === "codex"),
+      aiAgentPolicyAllowed &&
+      !readOnly &&
+      (isSelectedThreadAI || newThreadSetup.agentMode === "codex"),
   });
 
   const indexedThreads = useMemo(() => {
@@ -1589,6 +1618,14 @@ export function ChatPanel({
         existingThreadMetadata?.agent_model ??
         existingThreadMetadata?.acp_config?.model,
     });
+    if (isCodexSubmit && !aiAgentPolicyAllowed) {
+      Modal.error({
+        title: "AI integrations are disabled",
+        content:
+          "Codex chat is disabled for this account or project. You can still use ordinary human chat.",
+      });
+      return;
+    }
     if (
       isCodexSubmit &&
       isCodexPaymentSourceDefinitelyUnconfigured(codexPaymentSource)
@@ -2215,7 +2252,7 @@ export function ChatPanel({
         onNewThreadSetupChange={setNewThreadSetup}
         onCreateThread={createThreadWithoutMessage}
         showThreadImagePreview={showThreadImagePreview}
-        hideChatTypeSelector={hideChatTypeSelector}
+        hideChatTypeSelector={hideChatTypeSelector || !aiAgentPolicyAllowed}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
         shortcutEnabled={isVisible && tabIsVisible}

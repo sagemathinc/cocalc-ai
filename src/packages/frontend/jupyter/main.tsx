@@ -196,22 +196,25 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
 
   // this is confusing: it's here because the "nbviewer" code reuses a subset of components
   // and this is here to pass down AI tools related functionality to those, which are used by the frontend
-  const aiDisabled =
-    !!redux.getStore("account").getIn(["customize", "disableAI"]) ||
-    !!redux.getStore("account").getIn(["other_settings", "openai_disabled"]);
-  const aiEnabledLegacy = redux
-    .getStore("projects")
-    .hasLanguageModelEnabled(project_id);
+  const projectsStore = redux.getStore("projects");
+  const aiAllowedByPolicy = projectsStore.isAIAllowedByPolicy(
+    project_id,
+    "jupyter",
+  );
+  const aiEnabledLegacy = projectsStore.hasLanguageModelEnabled(
+    project_id,
+    "jupyter",
+  );
   const { paymentSource } = useCodexPaymentSource({
     projectId: project_id,
-    enabled: !aiEnabledLegacy && !aiDisabled,
+    enabled: !aiEnabledLegacy && aiAllowedByPolicy,
     pollMs: 90_000,
   });
   const codexAvailable =
     paymentSource?.source != null && paymentSource.source !== "none";
   // ATTN: if you add values here, make sure to check the memoize check functions in the components –
   // otherwise they will not re-render as expected.
-  const aiEnabled = aiEnabledLegacy || (!aiDisabled && codexAvailable);
+  const aiEnabled = aiEnabledLegacy || (aiAllowedByPolicy && codexAvailable);
   // This only checks if we can use the AI tools at all – detailed checks like "for this project in a course" are by component.
   const aiTools: AITools | undefined = aiEnabled
     ? {

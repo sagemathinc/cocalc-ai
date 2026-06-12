@@ -143,7 +143,7 @@ interface TabContentProps {
 
 const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
   const { tab_name, is_visible } = props;
-  const { project_id, projectAccess } = useProjectContext();
+  const { agentAIEnabled, project_id, projectAccess } = useProjectContext();
 
   const open_files =
     useTypedRedux({ project_id }, "open_files") ?? Map<string, any>();
@@ -217,6 +217,17 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
     case "users":
       return <ProjectSettings project_id={project_id} />;
     case "agents":
+      if (!agentAIEnabled) {
+        return (
+          <Alert
+            showIcon
+            type="info"
+            style={{ margin: "24px" }}
+            message="AI integrations are disabled"
+            description="Agents are hidden because AI integrations are disabled for this account or project."
+          />
+        );
+      }
       return <AgentsPanel project_id={project_id} layout="page" />;
     case "docs":
       return <ProjectDocsPanel project_id={project_id} layout="page" />;

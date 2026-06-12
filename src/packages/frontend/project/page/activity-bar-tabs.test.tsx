@@ -15,6 +15,7 @@ let mockAccountStoreReady = true;
 let mockLite = true;
 let mockPageState: Record<string, any> = {};
 let mockProjectAccessRole: "owner" | "collaborator" | "viewer" = "collaborator";
+let mockAgentAIEnabled = true;
 
 const mockPageStore = {
   get: (key: string) => mockPageState[key],
@@ -138,6 +139,7 @@ jest.mock("@cocalc/frontend/project/context", () => ({
       toggleFlyout: mockToggleFlyout,
       toggleActionButtons: mockToggleActionButtons,
     },
+    agentAIEnabled: mockAgentAIEnabled,
     project_id: "project-1",
     active_project_tab: "files",
     projectAccess: {
@@ -230,6 +232,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockLite = true;
     mockPageState = {};
     mockProjectAccessRole = "collaborator";
+    mockAgentAIEnabled = true;
     window.localStorage.clear();
     (global as any).ResizeObserver = class {
       observe() {}
@@ -279,6 +282,15 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(screen.queryByTestId("menu-overflow:servers")).toBeNull();
   });
 
+  it("hides the Agents rail entry when AI is disabled", () => {
+    mockAgentAIEnabled = false;
+
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    expect(screen.queryByTestId("rail-agents")).toBeNull();
+    expect(screen.queryByTestId("menu-overflow:agents")).toBeNull();
+  });
+
   it("lets viewers remove themselves from the overflow rail menu", () => {
     mockProjectAccessRole = "viewer";
 
@@ -323,6 +335,7 @@ describe("ProjectTabs settings affordance", () => {
     mockLite = false;
     mockPageState = {};
     mockProjectAccessRole = "collaborator";
+    mockAgentAIEnabled = true;
   });
 
   afterEach(() => {
@@ -358,6 +371,7 @@ describe("HiddenActivityBarLauncher", () => {
     mockAccountStoreReady = true;
     mockPageState = {};
     mockProjectAccessRole = "collaborator";
+    mockAgentAIEnabled = true;
   });
 
   it("opens a flyout from the hidden launcher on ordinary click", () => {
@@ -404,6 +418,14 @@ describe("HiddenActivityBarLauncher", () => {
     expect(screen.queryByTestId("menu-launcher:log")).toBeNull();
     expect(screen.queryByTestId("menu-launcher:info")).toBeNull();
     expect(screen.queryByTestId("menu-launcher:servers")).toBeNull();
+  });
+
+  it("hides Agents from hidden-launcher menus when AI is disabled", () => {
+    mockAgentAIEnabled = false;
+
+    render(<HiddenActivityBarLauncher />);
+
+    expect(screen.queryByTestId("menu-launcher:agents")).toBeNull();
   });
 
   it("lets viewers remove themselves from the hidden rail launcher menu", () => {

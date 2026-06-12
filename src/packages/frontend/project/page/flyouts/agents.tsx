@@ -2192,5 +2192,17 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 }
 
 export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
+  const { agentAIEnabled } = useProjectContext();
+  if (!agentAIEnabled) {
+    return wrap(
+      <Alert
+        showIcon
+        type="info"
+        style={{ margin: "12px" }}
+        message="AI integrations are disabled"
+        description="Agents are hidden because AI integrations are disabled for this account or project."
+      />,
+    );
+  }
   return wrap(<AgentsPanel project_id={project_id} layout="flyout" />);
 }

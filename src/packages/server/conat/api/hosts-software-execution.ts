@@ -47,6 +47,7 @@ const PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS = 150_000;
 const PROJECT_HOST_ROLLOUT_POLL_MS = 5_000;
 const PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS = 30_000;
 const HOST_UPGRADE_CONTROL_PREFLIGHT_TIMEOUT_MS = 8_000;
+const MANAGED_COMPONENT_ROLLOUT_RPC_TIMEOUT_MS = 30_000;
 
 export type HostSoftwareRolloutProgressUpdate = {
   rollout_phase: string;
@@ -89,6 +90,70 @@ function uniqueRuntimeLogSourcesForComponents(
 function trimRuntimeLogText(text?: string): string | undefined {
   const normalized = `${text ?? ""}`.trim();
   return normalized || undefined;
+}
+
+class ManagedComponentRolloutRpcTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`managed component rollout RPC did not return within ${timeoutMs}ms`);
+    this.name = "ManagedComponentRolloutRpcTimeoutError";
+  }
+}
+
+async function withTimeout<T>({
+  promise,
+  timeoutMs,
+}: {
+  promise: Promise<T>;
+  timeoutMs: number;
+}): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new ManagedComponentRolloutRpcTimeoutError(timeoutMs)),
+          timeoutMs,
+        );
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function assumedManagedComponentRolloutResponse(
+  components: HostManagedComponentRolloutRequest["components"],
+): HostManagedComponentRolloutResponse {
+  return {
+    results: components.map((component) => {
+      switch (component) {
+        case "project-host":
+          return {
+            component,
+            action: "restart_scheduled",
+            message:
+              "project-host rollout RPC timed out; verifying host convergence",
+          };
+        case "conat-router":
+        case "conat-persist":
+          return {
+            component,
+            action: "restarted",
+            message:
+              "managed component rollout RPC timed out; verifying host convergence",
+          };
+        case "acp-worker":
+          return {
+            component,
+            action: "drain_requested",
+            message:
+              "managed component rollout RPC timed out; verifying host convergence",
+          };
+      }
+    }),
+  };
 }
 
 function normalizeObservedVersion(value: unknown): string | undefined {
@@ -835,6 +900,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   projectHostRolloutSettleTimeoutMs = PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS,
   projectHostRolloutPollMs = PROJECT_HOST_ROLLOUT_POLL_MS,
   projectHostRolloutMinObservationMs = PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS,
+  managedComponentRolloutRpcTimeoutMs = MANAGED_COMPONENT_ROLLOUT_RPC_TIMEOUT_MS,
   onProgress,
 }: {
   account_id?: string;
@@ -922,6 +988,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   projectHostRolloutSettleTimeoutMs?: number;
   projectHostRolloutPollMs?: number;
   projectHostRolloutMinObservationMs?: number;
+  managedComponentRolloutRpcTimeoutMs?: number;
   onProgress?: (
     update: HostSoftwareRolloutProgressUpdate,
   ) => Promise<void> | void;
@@ -988,16 +1055,33 @@ export async function rolloutHostManagedComponentsInternalHelper({
   const rolloutStartedAt = Date.now();
   let response: HostManagedComponentRolloutResponse;
   try {
-    response = await client.rolloutManagedComponents({
-      components,
-      reason,
+    response = await withTimeout({
+      promise: client.rolloutManagedComponents({
+        components,
+        reason,
+      }),
+      timeoutMs: managedComponentRolloutRpcTimeoutMs,
     });
   } catch (err) {
-    throw await enrichManagedComponentRolloutError({
-      err,
-      client,
-      components,
-    });
+    if (
+      requestedProjectHostRollout &&
+      err instanceof ManagedComponentRolloutRpcTimeoutError
+    ) {
+      await onProgress?.({
+        rollout_phase: "managed_components.rpc_timeout",
+        rollout_phase_label:
+          "Managed component rollout request timed out; verifying host state",
+        rollout_phase_owner: "managed component alignment",
+        rollout_target_version: desiredProjectHostVersion,
+      });
+      response = assumedManagedComponentRolloutResponse(components);
+    } else {
+      throw await enrichManagedComponentRolloutError({
+        err,
+        client,
+        components,
+      });
+    }
   }
   let refreshedRow = row;
   if (requestedProjectHostRollout) {

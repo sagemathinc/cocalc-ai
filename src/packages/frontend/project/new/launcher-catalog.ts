@@ -16,7 +16,7 @@ export interface QuickCreateSpec {
 }
 
 export const QUICK_CREATE_CATALOG: QuickCreateSpec[] = [
-  { id: "chat", ext: "chat", label: "Agent Chat", icon: NEW_FILETYPE_ICONS.chat },
+  { id: "chat", ext: "chat", label: "Chat", icon: NEW_FILETYPE_ICONS.chat },
   {
     id: "ipynb",
     ext: "ipynb",
