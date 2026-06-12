@@ -1684,9 +1684,13 @@ export class SyncDoc extends EventEmitter {
 
   private assert_table_is_ready = (table: string): void => {
     const t = this[table + "_table"]; // not using string template only because it breaks codemirror!
-    if (t == null || t.get_state() != "connected") {
+    const ready =
+      typeof t?.is_ready === "function"
+        ? t.is_ready()
+        : t?.get_state?.() === "connected";
+    if (!ready) {
       throw Error(
-        `Table ${table} must be connected.  string_id=${this.string_id}`,
+        `Table ${table} must be initialized.  string_id=${this.string_id}`,
       );
     }
   };
