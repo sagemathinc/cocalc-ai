@@ -68,6 +68,11 @@ let cloudflaredState: CloudflaredState | null = null;
 let cloudflaredLastError: string | null = null;
 const REST_USER = "cocalc";
 
+type PreparedCloudflaredState = Omit<CloudflaredState, "pid"> & {
+  cloudflaredBin: string;
+  changed: boolean;
+};
+
 function pool() {
   return getPool();
 }
@@ -113,6 +118,13 @@ function isEnabled(value: unknown): boolean {
   return !["0", "false", "no", "off"].includes(lowered);
 }
 
+function parsePort(value: unknown): number | undefined {
+  const raw = clean(value);
+  if (!raw) return undefined;
+  const port = Number.parseInt(raw, 10);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
+}
+
 function normalizeCloudflareMode(
   value: unknown,
 ): "none" | "self" | "managed" | undefined {
@@ -134,6 +146,10 @@ function cloudflareSelfMode(settings: any): boolean {
     return tunnelEnabled;
   }
   return tunnelEnabled;
+}
+
+function systemdManagedCloudflared(): boolean {
+  return isEnabled(process.env.COCALC_BAY_CLOUDFLARED_SYSTEMD);
 }
 
 async function hasLaunchpadReverseTunnelHosts(): Promise<boolean> {
@@ -1175,6 +1191,16 @@ async function killDuplicateRestServers(opts: {
 }
 
 function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
+  if (systemdManagedCloudflared()) {
+    const port =
+      parsePort(process.env.COCALC_BAY_HUB_BASE_PORT) ??
+      parsePort(process.env.COCALC_BAY_WORKER_PORT) ??
+      parsePort(process.env.PORT);
+    if (port != null) {
+      const host = clean(process.env.COCALC_BAY_HUB_BIND_HOST) ?? "127.0.0.1";
+      return { origin: `http://${host}:${port}`, noTLSVerify: false };
+    }
+  }
   const config = getLaunchpadLocalConfig("local");
   const httpPort = config.http_port;
   const port = httpPort ?? 9001;
@@ -1285,7 +1311,7 @@ async function loadCloudflaredStateFile(
   return undefined;
 }
 
-async function startCloudflared(): Promise<CloudflaredState | null> {
+async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
   cloudflaredLastError = null;
   if (!isLaunchpadProduct()) {
     logger.info("cloudflare tunnel not started (product is not launchpad)");
@@ -1421,10 +1447,38 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     publicViewerHostname,
     additionalHostnames,
   });
-  const shouldRestartRunning =
-    tunnelStateChanged || credentialsChanged || configChanged;
 
-  const persistedPid = await readPidFile(pidPath);
+  return {
+    tunnel,
+    configPath,
+    credentialsPath,
+    origin,
+    pidFile: pidPath,
+    cloudflaredBin,
+    changed: tunnelStateChanged || credentialsChanged || configChanged,
+  };
+}
+
+async function startCloudflared(): Promise<CloudflaredState | null> {
+  if (systemdManagedCloudflared()) {
+    logger.info(
+      "cloudflare tunnel not started by hub (systemd manages cloudflared)",
+    );
+    return null;
+  }
+  const prepared = await prepareCloudflared();
+  if (!prepared) return null;
+  const {
+    tunnel,
+    configPath,
+    credentialsPath,
+    origin,
+    pidFile,
+    cloudflaredBin,
+  } = prepared;
+  const shouldRestartRunning = prepared.changed;
+
+  const persistedPid = await readPidFile(pidFile);
   if (isPidRunning(persistedPid)) {
     if (shouldRestartRunning) {
       logger.info("restarting cloudflared to apply updated config", {
@@ -1444,7 +1498,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
           // ignore
         }
       }
-      await clearPidFile(pidPath);
+      await clearPidFile(pidFile);
       if (cloudflaredState?.pid === persistedPid) {
         cloudflaredState = null;
       }
@@ -1459,13 +1513,13 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
         credentialsPath,
         origin,
         pid: persistedPid as number,
-        pidFile: pidPath,
+        pidFile,
       };
       return cloudflaredState;
     }
   }
   if (persistedPid) {
-    await clearPidFile(pidPath);
+    await clearPidFile(pidFile);
   }
   const args = ["tunnel", "--no-autoupdate", "--config", configPath, "run"];
   logger.info("starting cloudflared", { hostname: tunnel.hostname, origin });
@@ -1480,14 +1534,14 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     return null;
   }
   child.unref();
-  await writePidFile(pidPath, child.pid);
+  await writePidFile(pidFile, child.pid);
   cloudflaredState = {
     tunnel,
     configPath,
     credentialsPath,
     origin,
     pid: child.pid,
-    pidFile: pidPath,
+    pidFile,
   };
   logger.info("cloudflare tunnel started", {
     hostname: tunnel.hostname,
@@ -1497,6 +1551,82 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     `Cloudflare tunnel is live: https://${tunnel.hostname} (public access enabled)`,
   );
   return cloudflaredState;
+}
+
+export async function runLaunchpadCloudflaredForeground(): Promise<void> {
+  const prepared = await prepareCloudflared();
+  if (!prepared) {
+    const message =
+      cloudflaredLastError ?? "Cloudflare tunnel is not configured.";
+    logger.info("cloudflare tunnel foreground runner exiting", { message });
+    console.log(message);
+    return;
+  }
+
+  await stopManagedLaunchpadCloudflared();
+
+  const args = [
+    "tunnel",
+    "--no-autoupdate",
+    "--config",
+    prepared.configPath,
+    "run",
+  ];
+  logger.info("starting systemd-managed cloudflared", {
+    hostname: prepared.tunnel.hostname,
+    origin: prepared.origin,
+  });
+  const child = spawn(prepared.cloudflaredBin, args, {
+    env: process.env,
+    stdio: "inherit",
+  });
+  if (!(child.pid && Number.isInteger(child.pid) && child.pid > 0)) {
+    throw new Error("failed to start cloudflared (missing child pid)");
+  }
+
+  await writePidFile(prepared.pidFile, child.pid);
+  cloudflaredState = {
+    tunnel: prepared.tunnel,
+    configPath: prepared.configPath,
+    credentialsPath: prepared.credentialsPath,
+    origin: prepared.origin,
+    pid: child.pid,
+    pidFile: prepared.pidFile,
+  };
+  console.log(
+    `Cloudflare tunnel is live: https://${prepared.tunnel.hostname} (systemd managed)`,
+  );
+
+  let stopping = false;
+  const stopChild = (signal: NodeJS.Signals) => {
+    stopping = true;
+    if (isPidRunning(child.pid)) {
+      try {
+        child.kill(signal);
+      } catch {
+        // ignore
+      }
+    }
+  };
+  process.once("SIGTERM", () => stopChild("SIGTERM"));
+  process.once("SIGINT", () => stopChild("SIGINT"));
+
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      cloudflaredState = null;
+      void clearPidFile(prepared.pidFile).finally(() => {
+        if (stopping) {
+          process.exitCode = 0;
+        } else if (code != null) {
+          process.exitCode = code;
+        } else if (signal) {
+          process.exitCode = 1;
+        }
+        resolve();
+      });
+    });
+  });
 }
 
 export async function getLaunchpadCloudflaredStatus(): Promise<{
@@ -1536,7 +1666,10 @@ export async function applyLaunchpadCloudflareTunnelSettings(): Promise<{
   message: string;
 }> {
   const result = await withCloudflaredApplyLock(async () => {
-    const tunnel = await startCloudflared();
+    const systemdManaged = systemdManagedCloudflared();
+    const tunnel = systemdManaged
+      ? await prepareCloudflared()
+      : await startCloudflared();
     try {
       const publicViewerDns = await ensurePublicViewerDns();
       if (publicViewerDns) {
@@ -1548,10 +1681,14 @@ export async function applyLaunchpadCloudflareTunnelSettings(): Promise<{
     const status = await getLaunchpadCloudflaredStatus();
     return {
       ...status,
-      applied: !!tunnel && status.running,
-      message: status.running
-        ? `Cloudflare tunnel is running${status.hostname ? ` at ${status.hostname}` : ""}.`
-        : (status.error ?? "Cloudflare tunnel is not running."),
+      applied: !!tunnel && (systemdManaged || status.running),
+      message: systemdManaged
+        ? tunnel
+          ? "Cloudflare tunnel configuration was updated. Restart cocalc-bay-cloudflared.service to force immediate runtime reload."
+          : (status.error ?? "Cloudflare tunnel is not configured.")
+        : status.running
+          ? `Cloudflare tunnel is running${status.hostname ? ` at ${status.hostname}` : ""}.`
+          : (status.error ?? "Cloudflare tunnel is not running."),
     };
   });
   if (result != null) {
