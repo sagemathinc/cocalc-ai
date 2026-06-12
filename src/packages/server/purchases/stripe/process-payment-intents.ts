@@ -216,9 +216,31 @@ async function setMetadataRecorded(paymentIntent) {
 // messages out to the user, which is confusing.
 export const processPaymentIntent = reuseInFlight(
   async (paymentIntent): Promise<number | undefined> => {
+    paymentIntent.metadata ??= {};
     if (paymentIntent.metadata.processed == "true") {
       // already done.
       return;
+    }
+    const stripe = await getConn();
+    let invoice;
+    const getInvoice = async () => {
+      if (invoice == null && paymentIntent.invoice) {
+        invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+      }
+      return invoice;
+    };
+    if (
+      !paymentIntent.metadata?.account_id ||
+      !paymentIntent.metadata?.purpose ||
+      !paymentIntent.metadata?.total_excluding_tax_usd
+    ) {
+      invoice = await getInvoice();
+      if (invoice?.metadata != null) {
+        paymentIntent.metadata = {
+          ...invoice.metadata,
+          ...paymentIntent.metadata,
+        };
+      }
     }
     let account_id = paymentIntent.metadata.account_id;
     logger.debug("processPaymentIntent", { id: paymentIntent.id, account_id });
@@ -256,7 +278,6 @@ customer.  So we don't know what to do with this.  Please manually investigate.
       }
     }
 
-    const stripe = await getConn();
     expectedCustomerId = await getStripeCustomerId({
       account_id,
       create: false,
@@ -374,7 +395,7 @@ ${await support()}`;
       return;
     }
 
-    const invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+    invoice = await getInvoice();
     assertInvoiceAccountBinding({
       invoice,
       expected_customer_id: expectedCustomerId,
