@@ -23,6 +23,7 @@ import { make_patch, apply_patch } from "@cocalc/util/patch";
 import * as immutable from "immutable";
 import { debounce } from "lodash";
 import * as CodeMirror from "codemirror";
+import "../frame-editors/generic/codemirror-plugins";
 import { all_fields_equal } from "@cocalc/util/misc";
 
 const ERROR_STYLE: React.CSSProperties = {

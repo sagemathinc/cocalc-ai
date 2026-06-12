@@ -16,8 +16,9 @@ export const defaultFormat = OUCH_FORMATS.includes("tar.gz")
   ? "tar.gz"
   : OUCH_FORMATS[0];
 export const ARCHIVE_TIMEOUT_MS = 10 * 60_000;
-export const DOWNLOAD_ARCHIVE_CLEANUP_DELAY_MS = 60_000;
+export const STALE_DOWNLOAD_ARCHIVE_MS = 6 * 60 * 60_000;
 const DOWNLOAD_ARCHIVE_PATH = "/tmp";
+const TEMPORARY_DOWNLOAD_ARCHIVE_PREFIX = ".cocalc-download-archive-";
 
 const ARCHIVE_SUFFIXES = ["tar", ...OUCH_FORMATS].sort(
   (a, b) => b.length - a.length,
@@ -182,13 +183,54 @@ export async function createDownloadArchive({
   actions,
 }) {
   await ensureProjectScratchVolume(actions.project_id);
-  return await createArchive({
+  await removeStaleDownloadArchives({ actions });
+  const filename = getSafeDownloadArchiveFilename(target, format);
+  const path = await createArchive({
     path: DOWNLOAD_ARCHIVE_PATH,
     files,
-    target,
+    target: `${TEMPORARY_DOWNLOAD_ARCHIVE_PREFIX}${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}-${filename}`,
     format,
     actions,
   });
+  return { path, filename };
+}
+
+export async function removeStaleDownloadArchives({
+  actions,
+  maxAgeMs = STALE_DOWNLOAD_ARCHIVE_MS,
+  now = Date.now(),
+}: {
+  actions: any;
+  maxAgeMs?: number;
+  now?: number;
+}) {
+  const fs = actions.fs();
+  let names: string[];
+  try {
+    names = await fs.readdir(DOWNLOAD_ARCHIVE_PATH);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (
+      typeof name != "string" ||
+      !name.startsWith(TEMPORARY_DOWNLOAD_ARCHIVE_PREFIX)
+    ) {
+      continue;
+    }
+    const path = join(DOWNLOAD_ARCHIVE_PATH, name);
+    try {
+      const stat = await fs.stat(path);
+      if (now - newestFileTimestampMs(stat) < maxAgeMs) {
+        continue;
+      }
+      await fs.rm(path, { force: true });
+    } catch {
+      // Best effort cleanup; a stale archive must not block a new download.
+    }
+  }
 }
 
 export async function removeDownloadArchive({
@@ -200,22 +242,6 @@ export async function removeDownloadArchive({
 }) {
   const fs = actions.fs();
   await fs.rm(path, { force: true });
-}
-
-export function scheduleDownloadArchiveCleanup({
-  path,
-  actions,
-  delayMs = DOWNLOAD_ARCHIVE_CLEANUP_DELAY_MS,
-}: {
-  path: string;
-  actions: any;
-  delayMs?: number;
-}) {
-  setTimeout(() => {
-    void removeDownloadArchive({ path, actions }).catch(() => {
-      // Best effort cleanup after handing the file to the browser.
-    });
-  }, delayMs);
 }
 
 async function ensureProjectScratchVolume(project_id: string) {
@@ -234,6 +260,42 @@ export function getArchiveTargetName(target: string, format: string): string {
     }
   }
   return `${base}.${format}`;
+}
+
+function getSafeDownloadArchiveFilename(
+  target: string,
+  format: string,
+): string {
+  const archiveName = getArchiveTargetName(target, format)
+    .replace(/[\\/]+/g, "-")
+    .replace(/^[.\-_\s]+/, "");
+  return archiveName || `download.${format}`;
+}
+
+function newestFileTimestampMs(stat: any): number {
+  let newest = 0;
+  for (const field of [
+    "atimeMs",
+    "mtimeMs",
+    "ctimeMs",
+    "birthtimeMs",
+    "atime",
+    "mtime",
+    "ctime",
+    "birthtime",
+  ]) {
+    const value = stat?.[field];
+    const ms =
+      value instanceof Date
+        ? value.valueOf()
+        : typeof value === "number"
+          ? value
+          : NaN;
+    if (Number.isFinite(ms)) {
+      newest = Math.max(newest, ms);
+    }
+  }
+  return newest;
 }
 
 export function SelectFormat({ format, setFormat }) {
