@@ -7,7 +7,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import api from "@cocalc/frontend/client/api";
-import { getMembershipChangeQuote } from "@cocalc/frontend/purchases/api";
+import {
+  applyMembershipChange,
+  getMembershipChangeQuote,
+} from "@cocalc/frontend/purchases/api";
 
 import MembershipPurchaseModal from "./membership-purchase-modal";
 
@@ -176,5 +179,18 @@ describe("MembershipPurchaseModal", () => {
     expect(
       screen.queryByText("local add payment method modal"),
     ).not.toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm change" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Membership updated.")).toBeTruthy();
+    });
+    expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
+    expect(applyMembershipChange).toHaveBeenCalledWith({
+      allow_downgrade: true,
+      class: "standard",
+      interval: "year",
+    });
+    expect(getMembershipChangeQuote).toHaveBeenCalledTimes(2);
   });
 });

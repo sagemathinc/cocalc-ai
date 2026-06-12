@@ -205,7 +205,7 @@ export default function MembershipPurchaseModal({
   }, [availableTiers]);
 
   useEffect(() => {
-    if (!open || !selectedTierId || place === "choose") return;
+    if (!open || !selectedTierId || place !== "checkout") return;
     const loadQuote = async () => {
       setQuote(null);
       setQuoteError("");
@@ -531,7 +531,12 @@ export default function MembershipPurchaseModal({
         {place === "checkout" && renderCheckoutStep()}
         {place === "processing" && renderProcessingStep()}
         {place === "done" && (
-          <Alert type="success" title="Membership updated." />
+          <Space align="center" vertical style={{ width: "100%" }}>
+            <Alert type="success" title="Membership updated." />
+            <Button type="primary" onClick={onClose}>
+              Close
+            </Button>
+          </Space>
         )}
       </Space>
     );
