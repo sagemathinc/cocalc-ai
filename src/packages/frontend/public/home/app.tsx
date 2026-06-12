@@ -20,7 +20,10 @@ import {
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_DISPLAY_FONT_FAMILY,
+} from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
 import type { NewsItem } from "@cocalc/util/types/news";
@@ -46,6 +49,28 @@ const PRIMARY_WORKFLOWS = ["jupyter-notebook", "terminal", "ai"] as const;
 const HERO_IMAGE_URL = "/public/landing/home-hero.jpg";
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
 const PANEL_RADIUS = 8;
+const HERO_SIGNALS = [
+  {
+    body: "Files, compute, chat, and history",
+    icon: "project-outlined",
+    title: "Project context",
+  },
+  {
+    body: "Notebooks, shells, packages, and services",
+    icon: "terminal",
+    title: "Real Linux",
+  },
+  {
+    body: "Codex works beside the source of truth",
+    icon: "robot",
+    title: "Agents in context",
+  },
+  {
+    body: "TimeTravel, snapshots, and backups",
+    icon: "history",
+    title: "Recoverable work",
+  },
+] satisfies { body: string; icon: IconName; title: string }[];
 
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
@@ -146,6 +171,14 @@ function HomeInfographic({ alt, src }: { alt: string; src: string }) {
   );
 }
 
+function DecorativeButtonIcon({ name }: { name: IconName }) {
+  return (
+    <span aria-hidden="true" style={{ display: "inline-flex" }}>
+      <Icon name={name} />
+    </span>
+  );
+}
+
 function Hero({ config }: { config?: HomeConfig }) {
   const authenticated = !!config?.is_authenticated;
   return (
@@ -206,10 +239,20 @@ function Hero({ config }: { config?: HomeConfig }) {
           <Flex gap={12} wrap>
             {authenticated ? (
               <>
-                <Button href={appPath("projects")} size="large" type="primary">
+                <Button
+                  href={appPath("projects")}
+                  icon={<DecorativeButtonIcon name="project-outlined" />}
+                  size="large"
+                  type="primary"
+                >
                   Open projects
                 </Button>
-                <Button ghost href={appPath("features")} size="large">
+                <Button
+                  ghost
+                  href={appPath("features")}
+                  icon={<DecorativeButtonIcon name="overview" />}
+                  size="large"
+                >
                   Explore features
                 </Button>
               </>
@@ -217,17 +260,28 @@ function Hero({ config }: { config?: HomeConfig }) {
               <>
                 <Button
                   href={appPath("auth/sign-up")}
+                  icon={<DecorativeButtonIcon name="rocket" />}
                   size="large"
                   type="primary"
                 >
                   Start on CoCalc.ai
                 </Button>
-                <Button ghost href={appPath("products")} size="large">
+                <Button
+                  ghost
+                  href={appPath("products")}
+                  icon={<DecorativeButtonIcon name="project-outlined" />}
+                  size="large"
+                >
                   Compare product paths
                 </Button>
               </>
             )}
-            <Button ghost href={appPath("products/cocalc-plus")} size="large">
+            <Button
+              ghost
+              href={appPath("products/cocalc-plus")}
+              icon={<DecorativeButtonIcon name="laptop" />}
+              size="large"
+            >
               Install CoCalc Plus
             </Button>
           </Flex>
@@ -240,29 +294,32 @@ function Hero({ config }: { config?: HomeConfig }) {
               maxWidth: 680,
             }}
           >
-            {[
-              { icon: "project-outlined", label: "Project context" },
-              { icon: "terminal", label: "Real Linux" },
-              { icon: "robot", label: "Agent threads" },
-              { icon: "history", label: "Recoverable work" },
-            ].map((item) => (
+            {HERO_SIGNALS.map((item) => (
               <div
-                key={item.label}
+                key={item.title}
                 style={{
-                  alignItems: "center",
                   background: alpha(PUBLIC_COLORS.surface, 0.14),
                   border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.28)}`,
                   borderRadius: PANEL_RADIUS,
                   color: PUBLIC_COLORS.surface,
                   display: "flex",
-                  gap: 10,
-                  padding: "10px 12px",
+                  gap: 12,
+                  minHeight: 82,
+                  padding: "12px 14px",
                 }}
               >
-                <Icon name={item.icon as IconName} />
-                <Text strong style={{ color: "inherit" }}>
-                  {item.label}
-                </Text>
+                <Icon
+                  name={item.icon}
+                  style={{ flex: "0 0 auto", fontSize: 20, marginTop: 2 }}
+                />
+                <div>
+                  <Text strong style={{ color: "inherit", display: "block" }}>
+                    {item.title}
+                  </Text>
+                  <Text style={{ color: alpha(PUBLIC_COLORS.surface, 0.78) }}>
+                    {item.body}
+                  </Text>
+                </div>
               </div>
             ))}
           </div>
@@ -384,6 +441,132 @@ function ProjectStorySection() {
           </PublicSection>
         </Col>
       </Row>
+    </section>
+  );
+}
+
+function ProjectFlowSection() {
+  const steps = [
+    {
+      body: "Start with a file tree, compute environment, collaborators, chat, and history in one project.",
+      icon: "project-outlined",
+      title: "Create a durable project",
+    },
+    {
+      body: "Run notebooks, terminals, editors, services, and package installs against the same project files.",
+      icon: "terminal",
+      title: "Run the technical work",
+    },
+    {
+      body: "Ask Codex from a project thread where prompts, patches, screenshots, and review notes stay attached.",
+      icon: "robot",
+      title: "Bring in an agent",
+    },
+    {
+      body: "Use shared state, TimeTravel, snapshots, and backups when humans need to inspect or recover the work.",
+      icon: "history",
+      title: "Review and recover",
+    },
+  ] satisfies { body: string; icon: IconName; title: string }[];
+
+  return (
+    <section
+      style={{
+        background: `linear-gradient(135deg, ${PUBLIC_COLORS.brandTint} 0%, ${PUBLIC_COLORS.surface} 55%, ${PUBLIC_COLORS.warningTint} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `42px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex vertical gap={22}>
+        <Flex align="end" justify="space-between" wrap gap={16}>
+          <div style={{ maxWidth: 760 }}>
+            <Eyebrow>Project workflow</Eyebrow>
+            <Title level={2} style={{ margin: "8px 0 10px" }}>
+              From first file to reviewed result.
+            </Title>
+            <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              CoCalc keeps the environment, conversation, execution, and
+              recovery around the project, so a human or agent can pick up work
+              without reconstructing context.
+            </Paragraph>
+          </div>
+          <Button
+            href={appPath("features/ai")}
+            icon={<DecorativeButtonIcon name="robot" />}
+          >
+            See AI workflows
+          </Button>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          }}
+        >
+          {steps.map((step, index) => (
+            <div
+              key={step.title}
+              style={{
+                background: alpha(PUBLIC_COLORS.surface, 0.92),
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
+                minHeight: 220,
+                padding: 22,
+              }}
+            >
+              <Flex vertical gap={16} style={{ height: "100%" }}>
+                <Flex align="center" justify="space-between">
+                  <div
+                    style={{
+                      alignItems: "center",
+                      background:
+                        index === 2
+                          ? PUBLIC_COLORS.warningTint
+                          : PUBLIC_COLORS.surfaceMuted,
+                      border:
+                        index === 2
+                          ? `1px solid ${PUBLIC_COLORS.warningBorder}`
+                          : `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: PANEL_RADIUS,
+                      color:
+                        index === 2
+                          ? PUBLIC_COLORS.warning
+                          : PUBLIC_COLORS.brand,
+                      display: "flex",
+                      fontSize: 24,
+                      height: 52,
+                      justifyContent: "center",
+                      width: 52,
+                    }}
+                  >
+                    <Icon name={step.icon} />
+                  </div>
+                  <Text
+                    strong
+                    style={{
+                      color: alpha(PUBLIC_COLORS.brandDark, 0.32),
+                      fontFamily: PUBLIC_DISPLAY_FONT_FAMILY,
+                      fontSize: 28,
+                    }}
+                  >
+                    {String(index + 1).padStart(2, "0")}
+                  </Text>
+                </Flex>
+                <div>
+                  <Title level={3} style={{ fontSize: 21, margin: "0 0 10px" }}>
+                    {step.title}
+                  </Title>
+                  <Paragraph style={{ margin: 0 }}>{step.body}</Paragraph>
+                </div>
+              </Flex>
+            </div>
+          ))}
+        </div>
+      </Flex>
     </section>
   );
 }
@@ -1118,6 +1301,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <Hero config={config} />
       <OperatingModelSection />
       <ProjectStorySection />
+      <ProjectFlowSection />
       <WorkflowsSection />
       <ProductOptionsSection />
       <DifferenceSection />

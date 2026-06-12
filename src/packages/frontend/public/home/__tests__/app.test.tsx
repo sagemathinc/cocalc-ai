@@ -62,6 +62,11 @@ describe("PublicHomeApp", () => {
         name: "Start where the work begins.",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "From first file to reviewed result.",
+      }),
+    ).not.toBeNull();
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "Recent News" }),
@@ -85,6 +90,11 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: "Explore shared features" })
         .getAttribute("href"),
     ).toBe("/features");
+    expect(
+      screen
+        .getByRole("link", { name: "See AI workflows" })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
     expect(screen.queryByText("Open page")).toBeNull();
     expect(
       screen
