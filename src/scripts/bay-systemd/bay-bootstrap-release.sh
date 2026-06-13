@@ -616,7 +616,7 @@ main() {
     )"
   fi
   if [[ -z "$WORKER_COUNT" ]]; then
-    WORKER_COUNT=2
+    WORKER_COUNT=1
   fi
   if [[ ! "$WORKER_COUNT" =~ ^[0-9]+$ || "$WORKER_COUNT" -lt 1 ]]; then
     echo "--worker-count must be a positive integer; got '${WORKER_COUNT}'" >&2
