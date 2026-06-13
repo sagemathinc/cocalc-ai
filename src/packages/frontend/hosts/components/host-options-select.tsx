@@ -183,6 +183,7 @@ export function HostOptionsSelect({
   size,
 }: HostOptionsSelectProps) {
   const groupedOptions = groupHostOptions(options);
+  const hasDetailLabels = options?.some((option) => !!option.detailLabel);
   return (
     <Select
       options={groupedOptions as any}
@@ -193,30 +194,56 @@ export function HostOptionsSelect({
       size={size}
       showSearch
       optionFilterProp="label"
-      filterOption={(input, option) =>
-        String(option?.label ?? "")
-          .toLowerCase()
-          .includes(input.trim().toLowerCase())
-      }
-      popupMatchSelectWidth={false}
+      filterOption={(input, option) => {
+        const data = option?.data as HostFieldOption | undefined;
+        const haystack = [
+          option?.label,
+          option?.value,
+          data?.label,
+          data?.selectionLabel,
+          data?.mainLabel,
+          data?.subLabel,
+          data?.detailLabel,
+          data?.priceLabel,
+          data?.stateLabel,
+        ]
+          .filter((value) => value != null)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(input.trim().toLowerCase());
+      }}
+      popupMatchSelectWidth={hasDetailLabels ? 760 : false}
       optionRender={(option: any) => {
         const data = option.data as HostFieldOption | undefined;
         const mainLabel =
           data?.mainLabel ?? data?.selectionLabel ?? data?.label;
         const subLabel = data?.subLabel;
+        const detailLabel = data?.detailLabel;
         const detail = data?.priceLabel ?? data?.stateLabel;
-        if (!detail && !subLabel) {
+        if (!detail && !subLabel && !detailLabel) {
           return <span>{mainLabel}</span>;
         }
         return (
           <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 16,
-              width: "100%",
-            }}
+            style={
+              detailLabel
+                ? {
+                    alignItems: "center",
+                    display: "grid",
+                    gap: 12,
+                    gridTemplateColumns: detail
+                      ? "360px 170px 110px"
+                      : "360px 170px",
+                    width: "100%",
+                  }
+                : {
+                    alignItems: "center",
+                    display: "flex",
+                    gap: 16,
+                    justifyContent: "space-between",
+                    width: "100%",
+                  }
+            }
           >
             <div
               style={{
@@ -226,7 +253,16 @@ export function HostOptionsSelect({
                 minWidth: 0,
               }}
             >
-              <span>{mainLabel}</span>
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={typeof mainLabel === "string" ? mainLabel : undefined}
+              >
+                {mainLabel}
+              </span>
               {subLabel ? (
                 <span
                   style={{
@@ -239,14 +275,33 @@ export function HostOptionsSelect({
                 </span>
               ) : null}
             </div>
+            {detailLabel ? (
+              <span
+                style={{
+                  color: COLORS.GRAY_M,
+                  fontSize: "12px",
+                  lineHeight: 1.3,
+                  overflow: "hidden",
+                  textAlign: "left",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={detailLabel}
+              >
+                {detailLabel}
+              </span>
+            ) : null}
             {detail ? (
               <span
                 style={{
                   color: data?.priceLabel ? COLORS.GRAY_D : COLORS.GRAY_M,
                   fontVariantNumeric: "tabular-nums",
+                  overflow: "hidden",
                   textAlign: "right",
+                  textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
+                title={detail}
               >
                 {detail}
               </span>

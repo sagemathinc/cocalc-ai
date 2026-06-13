@@ -1192,6 +1192,11 @@ async function killDuplicateRestServers(opts: {
 
 function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
   if (systemdManagedCloudflared()) {
+    const frontdoorPort = parsePort(process.env.COCALC_BAY_FRONTDOOR_PORT);
+    if (frontdoorPort != null) {
+      const host = clean(process.env.COCALC_BAY_FRONTDOOR_HOST) ?? "127.0.0.1";
+      return { origin: `http://${host}:${frontdoorPort}`, noTLSVerify: false };
+    }
     const port =
       parsePort(process.env.COCALC_BAY_HUB_BASE_PORT) ??
       parsePort(process.env.COCALC_BAY_WORKER_PORT) ??

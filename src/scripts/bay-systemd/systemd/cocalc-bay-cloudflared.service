@@ -1,8 +1,7 @@
 [Unit]
 Description=CoCalc Bay Cloudflare Tunnel
-After=network-online.target cocalc-bay-postgres.service cocalc-bay-migrations.service
-Requires=cocalc-bay-postgres.service cocalc-bay-migrations.service
-PartOf=cocalc-bay.target
+After=network-online.target cocalc-bay-frontdoor.service
+Wants=cocalc-bay-frontdoor.service
 
 [Service]
 Type=exec
@@ -26,4 +25,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=cocalc-bay.target
+WantedBy=multi-user.target

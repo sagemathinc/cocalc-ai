@@ -8,6 +8,20 @@ import getConn from "@cocalc/server/stripe/connection";
 import { getStripeCustomerId } from "./util";
 import getName from "@cocalc/server/accounts/get-name";
 
+export function customerHasUsableBillingDetails(customer): boolean {
+  if (customer?.deleted) {
+    return false;
+  }
+  const address = customer?.address ?? {};
+  return (
+    !!`${customer?.name ?? ""}`.trim() &&
+    !!`${address.line1 ?? ""}`.trim() &&
+    !!`${address.city ?? ""}`.trim() &&
+    !!`${address.country ?? ""}`.trim() &&
+    !!`${address.postal_code ?? ""}`.trim()
+  );
+}
+
 export async function setCustomer(
   account_id,
   changes: { name?: string; address?; email?: string },
@@ -23,6 +37,16 @@ export async function setCustomer(
     address: changes.address,
     email: changes.email,
   });
+}
+
+export async function hasBillingDetails(account_id: string): Promise<boolean> {
+  const customer_id = await getStripeCustomerId({ account_id, create: false });
+  if (!customer_id) {
+    return false;
+  }
+  const stripe = await getConn();
+  const customer = await stripe.customers.retrieve(customer_id);
+  return customerHasUsableBillingDetails(customer);
 }
 
 export async function getCustomer(account_id) {

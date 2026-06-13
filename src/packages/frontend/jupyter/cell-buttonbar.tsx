@@ -280,21 +280,18 @@ export const CellButtonBar: React.FC<Props> = React.memo(
 
     return (
       <div className="hidden-xs" style={MINI_BUTTONS_STYLE_INNER}>
-        <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
-          {showControls ? renderCodeBarRunStop() : null}
-          {showControls ? renderCodeBarAIButtons() : null}
-          {showControls ? renderMarkdownEditButton() : null}
-          {showControls ? renderCodeBarFormatButton() : null}
-          {showControls ? renderDropdownMenu() : null}
-        </div>
         <div
           style={{
             display: "flex",
             alignItems: "center",
             gap: "3px",
-            marginLeft: "auto",
           }}
         >
+          {showControls ? renderCodeBarRunStop() : null}
+          {showControls ? renderCodeBarAIButtons() : null}
+          {showControls ? renderMarkdownEditButton() : null}
+          {showControls ? renderCodeBarFormatButton() : null}
+          {showControls ? renderDropdownMenu() : null}
           {renderCodeBarCellTiming()}
           <CellIndexNumber index={index} />
         </div>

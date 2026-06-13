@@ -17,8 +17,8 @@ import {
   useElements,
 } from "@stripe/react-stripe-js";
 import type {
+  CheckoutSessionSecret,
   LineItem,
-  PaymentIntentSecret,
   CustomerSessionSecret,
 } from "@cocalc/util/stripe/types";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -51,7 +51,7 @@ import {
   VerifyEmailRequiredPanel,
 } from "@cocalc/frontend/app/verify-email-banner";
 import { LineItemsTable, moneyToString } from "./line-items";
-import { AddressButton } from "./address";
+import { AddressButton, StripeAddressElement } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
 const PAYMENT_UPDATE_DEBOUNCE = 2000;
@@ -65,7 +65,8 @@ interface StripePaymentProps {
   //   - this means the paymentIntent was created when total > 0
   //   - if total = 0, this means user confirmed "I want to make this purchase using credit"; the
   //     caller then needs to actually allocate the thing they want to purchase.
-  onFinished?: (total: number) => void;
+  onFinished?: (total: number) => void | Promise<void>;
+  onSubmittingChange?: (submitting: boolean) => void;
   summaryMode?: "full" | "total-only";
   style?;
   title?: ReactNode | null;
@@ -97,6 +98,7 @@ function StripePaymentInner({
   purpose = "add-credit",
   metadata,
   onFinished,
+  onSubmittingChange,
   summaryMode = "full",
   style,
   title = description,
@@ -185,6 +187,7 @@ function StripePaymentInner({
                   onClick={async () => {
                     try {
                       setLoading(true);
+                      onSubmittingChange?.(true);
                       await runFreshAuthAction(async () => {
                         await createPaymentIntent({
                           description,
@@ -192,11 +195,14 @@ function StripePaymentInner({
                           purpose,
                           metadata,
                         });
-                        onFinished?.(stripeToMoney(totalStripe).toNumber());
+                        await onFinished?.(
+                          stripeToMoney(totalStripe).toNumber(),
+                        );
                       });
                     } catch (err) {
                       setError(`${err}`);
                     } finally {
+                      onSubmittingChange?.(false);
                       setLoading(false);
                     }
                   }}
@@ -295,7 +301,7 @@ function StripeCheckout({
   totalStripe,
   hasPaymentMethods,
 }) {
-  const [secret, setSecret] = useState<PaymentIntentSecret | null>(null);
+  const [secret, setSecret] = useState<CheckoutSessionSecret | null>(null);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -389,8 +395,20 @@ function StripeCheckout({
       <EmbeddedCheckoutProvider
         options={{
           fetchClientSecret: async () => secret.clientSecret,
-          onComplete: () => {
-            onFinished?.(stripeToMoney(totalStripe).toNumber());
+          onComplete: async () => {
+            try {
+              setError("");
+              setLoading(true);
+              await processPaymentIntents({
+                checkout_session_id: secret.sessionId,
+                strict: true,
+              });
+              onFinished?.(stripeToMoney(totalStripe).toNumber());
+            } catch (err) {
+              setError(`${err}`);
+            } finally {
+              setLoading(false);
+            }
           },
         }}
         stripe={loadStripe()}
@@ -514,7 +532,10 @@ function PaymentForm({ style, onFinished, paymentIntent }) {
       });
 
       try {
-        await processPaymentIntents();
+        await processPaymentIntents({
+          payment_intent_id: paymentIntent.id,
+          strict: true,
+        });
       } catch (err) {
         console.warn("issue processing payment", err);
         // would usually be due to throttling, but could be network went down or
@@ -522,11 +543,14 @@ function PaymentForm({ style, onFinished, paymentIntent }) {
         console.log("try again in 15s...");
         await delay(15000);
         try {
-          await processPaymentIntents();
+          await processPaymentIntents({
+            payment_intent_id: paymentIntent.id,
+            strict: true,
+          });
         } catch (err) {
-          console.warn("still failing to processing payment", err);
+          console.warn("still failing to process payment", err);
           setMessage(
-            `Your payment appears to have went through, but CoCalc has not yet received the funds.  Please close this dialog and check the payment status panel. ${err}`,
+            `Your payment appears to have gone through, but CoCalc has not yet recorded it. Please close this dialog and check the payment status panel. ${err}`,
           );
           return;
           // still failing -- a backend maintenance task does
@@ -735,14 +759,49 @@ export function AddPaymentMethodModal({
   onFinished?: () => void;
 }) {
   return (
-    <Modal
-      open
-      title={"Add Payment Method"}
+    <BillingSetupModal
       onCancel={onCancel}
-      onOk={onCancel}
-      footer={[]}
-    >
-      <CollectPaymentMethod onFinished={onFinished} />
+      onFinished={onFinished}
+      requirePaymentMethod
+      title="Add Payment Method"
+    />
+  );
+}
+
+export function BillingSetupModal({
+  onCancel,
+  onFinished,
+  requirePaymentMethod,
+  title = requirePaymentMethod ? "Add Payment Method" : "Billing Details",
+}: {
+  onCancel: () => void;
+  onFinished?: () => void;
+  requirePaymentMethod: boolean;
+  title?: ReactNode;
+}) {
+  const [addressSaved, setAddressSaved] = useState<boolean>(false);
+  const finishAddress = () => {
+    if (requirePaymentMethod) {
+      setAddressSaved(true);
+    } else {
+      onFinished?.();
+    }
+  };
+  return (
+    <Modal open title={title} onCancel={onCancel} onOk={onCancel} footer={[]}>
+      {!addressSaved ? (
+        <Space vertical size="middle" style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="info"
+            message="Enter your billing name and address first."
+            description="CoCalc uses this for receipts, invoices, and tax calculation."
+          />
+          <StripeAddressElement onFinished={finishAddress} showCancel={false} />
+        </Space>
+      ) : (
+        <CollectPaymentMethod onFinished={onFinished} />
+      )}
     </Modal>
   );
 }
