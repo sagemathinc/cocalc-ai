@@ -458,6 +458,7 @@ const LANDING_ROUTE_MAP = [
   {
     accent: COLORS.BLUE_D,
     body: "Create or open a project when the immediate need is a place for notebooks, files, terminals, and agent work.",
+    continuity: "Files, output, and review history stay with the project.",
     href: ({ authenticated }: { authenticated: boolean }) =>
       authenticated ? appPath("projects") : appPath("auth/sign-up"),
     icon: "project-outlined",
@@ -470,6 +471,7 @@ const LANDING_ROUTE_MAP = [
   {
     accent: COLORS.RUN,
     body: "Use the feature pages when you are choosing between notebooks, terminal sessions, AI agents, teaching, or writing tools.",
+    continuity: "Each surface opens around the same project context.",
     href: () => appPath("features"),
     icon: "overview",
     label: "Workflow first",
@@ -480,6 +482,7 @@ const LANDING_ROUTE_MAP = [
   {
     accent: PUBLIC_COLORS.warning,
     body: "Use product pages when the main question is hosted service, one-user local runtime, or customer-operated deployment.",
+    continuity: "The operating boundary stays explicit before detail pages.",
     href: () => appPath("products"),
     icon: "servers",
     label: "Operations first",
@@ -490,6 +493,7 @@ const LANDING_ROUTE_MAP = [
 ] satisfies {
   accent: string;
   body: string;
+  continuity: string;
   href: (opts: { authenticated: boolean }) => string;
   icon: IconName;
   label: string;
@@ -1645,6 +1649,16 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                   {route.title}
                 </Title>
                 <Text type="secondary">{route.body}</Text>
+                <Text
+                  style={{
+                    color: PUBLIC_COLORS.mutedText,
+                    display: "block",
+                    fontSize: 13,
+                    marginTop: 8,
+                  }}
+                >
+                  {route.continuity}
+                </Text>
                 <Text
                   strong
                   style={{

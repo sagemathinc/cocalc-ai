@@ -294,6 +294,21 @@ describe("PublicHomeApp", () => {
     expect(
       within(primaryLandingRoutes).getByText("I need to decide where it runs"),
     ).not.toBeNull();
+    expect(
+      within(primaryLandingRoutes).getByText(
+        "Files, output, and review history stay with the project.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(primaryLandingRoutes).getByText(
+        "Each surface opens around the same project context.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(primaryLandingRoutes).getByText(
+        "The operating boundary stays explicit before detail pages.",
+      ),
+    ).not.toBeNull();
     const workspacePreview = screen.getByRole("region", {
       name: "CoCalc.ai workspace preview",
     });
