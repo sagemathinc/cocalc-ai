@@ -2542,6 +2542,23 @@ function AudienceSection() {
         { icon: "terminal", label: "Runtime", value: "Services and tests" },
         { icon: "robot", label: "Codex", value: "Patches and review" },
       ],
+      handoff: [
+        {
+          icon: "files",
+          label: "Project input",
+          value: "Repo, services, and patch notes",
+        },
+        {
+          icon: "robot",
+          label: "First surface",
+          value: "AI workflows",
+        },
+        {
+          icon: "arrow-right",
+          label: "Controlled route",
+          value: "Features: AI",
+        },
+      ],
       startingContext: ["Repo and config", "Service logs", "Patch notes"],
       nextStep: "See AI workflows",
       title: "Engineering teams",
@@ -2566,6 +2583,23 @@ function AudienceSection() {
         "Dataset files",
         "Environment notes",
       ],
+      handoff: [
+        {
+          icon: "jupyter",
+          label: "Project input",
+          value: "Notebook output, data, and notes",
+        },
+        {
+          icon: "experiment",
+          label: "First surface",
+          value: "Jupyter notebooks",
+        },
+        {
+          icon: "arrow-right",
+          label: "Controlled route",
+          value: "Features: Jupyter",
+        },
+      ],
       nextStep: "Open notebooks",
       title: "Research labs",
     },
@@ -2589,6 +2623,23 @@ function AudienceSection() {
         "Student submissions",
         "Grading notes",
       ],
+      handoff: [
+        {
+          icon: "files",
+          label: "Project input",
+          value: "Assignments, submissions, and notes",
+        },
+        {
+          icon: "graduation-cap",
+          label: "First surface",
+          value: "Teaching workflows",
+        },
+        {
+          icon: "arrow-right",
+          label: "Controlled route",
+          value: "Features: Teaching",
+        },
+      ],
       nextStep: "Explore teaching",
       title: "Technical courses",
     },
@@ -2597,6 +2648,7 @@ function AudienceSection() {
     body: string;
     bullets: string[];
     href: string;
+    handoff: { icon: IconName; label: string; value: string }[];
     icon: IconName;
     nextStep: string;
     signals: { icon: IconName; label: string; value: string }[];
@@ -2804,6 +2856,53 @@ function AudienceSection() {
                   <Text>{bullet}</Text>
                 </Flex>
               ))}
+              <div
+                aria-label={`${audience.title} route handoff`}
+                role="group"
+                style={{
+                  background: `${audience.accent}0a`,
+                  border: `1px solid ${audience.accent}1f`,
+                  borderRadius: PANEL_RADIUS,
+                  display: "grid",
+                  gap: 7,
+                  marginTop: 4,
+                  padding: 9,
+                }}
+              >
+                {audience.handoff.map((item) => (
+                  <span
+                    key={`${audience.title}-${item.label}`}
+                    style={{
+                      alignItems: "start",
+                      display: "grid",
+                      gap: 7,
+                      gridTemplateColumns: "20px minmax(0, 1fr)",
+                    }}
+                  >
+                    <Icon
+                      name={item.icon}
+                      style={{
+                        color: audience.accent,
+                        marginTop: 2,
+                      }}
+                    />
+                    <span style={{ minWidth: 0 }}>
+                      <Text
+                        strong
+                        style={{
+                          color: audience.accent,
+                          display: "block",
+                          fontSize: 12,
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {item.label}
+                      </Text>
+                      <Text type="secondary">{item.value}</Text>
+                    </span>
+                  </span>
+                ))}
+              </div>
             </div>
             <Text
               className="cocalc-public-home-audience-row-next"

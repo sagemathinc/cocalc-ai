@@ -1068,6 +1068,39 @@ describe("PublicHomeApp", () => {
     expect(within(courseCues).getByText("Coursework")).not.toBeNull();
     expect(within(courseCues).getByText("Student projects")).not.toBeNull();
     expect(within(courseCues).getByText("Notebook grading")).not.toBeNull();
+    const engineeringHandoff = within(audiencePaths).getByRole("group", {
+      name: "Engineering teams route handoff",
+    });
+    for (const routeText of [
+      "Project input",
+      "First surface",
+      "Controlled route",
+      "Repo, services, and patch notes",
+      "AI workflows",
+      "Features: AI",
+    ]) {
+      expect(within(engineeringHandoff).getByText(routeText)).not.toBeNull();
+    }
+    const researchHandoff = within(audiencePaths).getByRole("group", {
+      name: "Research labs route handoff",
+    });
+    for (const routeText of [
+      "Notebook output, data, and notes",
+      "Jupyter notebooks",
+      "Features: Jupyter",
+    ]) {
+      expect(within(researchHandoff).getByText(routeText)).not.toBeNull();
+    }
+    const courseHandoff = within(audiencePaths).getByRole("group", {
+      name: "Technical courses route handoff",
+    });
+    for (const routeText of [
+      "Assignments, submissions, and notes",
+      "Teaching workflows",
+      "Features: Teaching",
+    ]) {
+      expect(within(courseHandoff).getByText(routeText)).not.toBeNull();
+    }
     expect(screen.getByText("Operating path chooser")).not.toBeNull();
     expect(screen.getByText("Choose who runs the workspace")).not.toBeNull();
     const operatingBoundaryShortcuts = screen.getByRole("group", {
