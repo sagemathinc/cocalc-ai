@@ -369,9 +369,12 @@ stage_release() {
 }
 
 stage_host_software() {
-  if [[ "$SKIP_HOST_UPGRADE" -ne 0 ]]; then
+  if [[ "$SKIP_HOST_UPGRADE" -ne 0 && -z "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
     log "Skip project host software staging"
     return 0
+  fi
+  if [[ "$SKIP_HOST_UPGRADE" -ne 0 ]]; then
+    log "Stage project-host software without upgrading project hosts"
   fi
   if [[ -z "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
     log "Check project-host software artifacts embedded in current bay release"
