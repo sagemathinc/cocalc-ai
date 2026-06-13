@@ -371,7 +371,6 @@ validate_release() {
     for required_file in \
       "${TARGET_RELEASE}/runtime/project-host/index.js" \
       "${TARGET_RELEASE}/runtime/control-plane/bundle/index.js" \
-      "${TARGET_RELEASE}/runtime/control-plane/api-v2-routes/index.js" \
       "${TARGET_RELEASE}/runtime/control-plane/http-api-dist/pages/api/v2/index.js" \
       "${TARGET_RELEASE}/runtime/migrate-schema/index.js"; do
       if [[ ! -f "$required_file" ]]; then

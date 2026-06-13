@@ -65,7 +65,7 @@ function prependPath(dir) {
 
     const {
       runLaunchpadCloudflaredForeground,
-    } = require("@cocalc/server/launchpad/onprem-sshd");
+    } = require("@cocalc/server/launchpad/cloudflared-systemd");
     await runLaunchpadCloudflaredForeground();
   } catch (err) {
     console.error("cocalc-rocket cloudflared failed:", err);
