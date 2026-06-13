@@ -2697,8 +2697,9 @@ export class BaseEditorActions<
       return false;
     }
     const state = syncdoc.get_state();
+    if (state == "ready") return true;
     if (state == "closed") return false;
-    if (state == "init") {
+    {
       try {
         await once(syncdoc, "ready");
       } catch {
