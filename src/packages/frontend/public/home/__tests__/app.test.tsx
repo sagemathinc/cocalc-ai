@@ -63,6 +63,29 @@ describe("PublicHomeApp", () => {
     expect(within(projectPreview).getByText("research-demo")).not.toBeNull();
     expect(within(projectPreview).getByText("Codex thread")).not.toBeNull();
     expect(within(projectPreview).getByText("Live context")).not.toBeNull();
+    const handoffPath = screen.getByRole("region", {
+      name: "CoCalc.ai project handoff path",
+    });
+    expect(
+      within(handoffPath).getByRole("heading", {
+        name: "Move from context to agent work without leaving the project.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(handoffPath)
+        .getByRole("link", { name: /Gather the work/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      within(handoffPath)
+        .getByRole("link", { name: /Ask for the change/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(handoffPath)
+        .getByRole("link", { name: /Keep the trail/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     const workspaceBreadth = screen.getByRole("region", {
       name: "CoCalc.ai workspace breadth",
     });

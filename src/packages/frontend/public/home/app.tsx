@@ -71,6 +71,39 @@ const HERO_SIGNALS = [
     title: "Recoverable work",
   },
 ] satisfies { body: string; icon: IconName; title: string }[];
+const HERO_HANDOFF_ITEMS = [
+  {
+    accent: COLORS.RUN,
+    body: "Start from notebooks, scripts, data, terminals, and conversation in one project.",
+    href: "features/jupyter-notebook",
+    icon: "files",
+    label: "Shared context",
+    title: "Gather the work",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Open a Codex thread where the files, output, and prior decisions are already nearby.",
+    href: "features/ai",
+    icon: "robot",
+    label: "Agent turn",
+    title: "Ask for the change",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Review patches, terminal output, screenshots, and recovery points before moving on.",
+    href: "features/compare",
+    icon: "history",
+    label: "Human review",
+    title: "Keep the trail",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 const WORKSPACE_BREADTH_ITEMS = [
   {
     body: "Source files, scripts, and reviews",
@@ -705,7 +738,7 @@ function Hero({ config }: { config?: HomeConfig }) {
                 project.
               </Paragraph>
             </div>
-            <Flex gap={12} wrap>
+            <Flex gap={12} style={{ maxWidth: 740 }} wrap>
               {authenticated ? (
                 <>
                   <Button
@@ -807,6 +840,108 @@ function Hero({ config }: { config?: HomeConfig }) {
         </div>
         <div style={{ justifySelf: "end", maxWidth: 540, width: "100%" }}>
           <WorkspacePreview />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HeroHandoffStrip() {
+  return (
+    <section
+      aria-label="CoCalc.ai project handoff path"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `20px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <div
+        style={{
+          alignItems: "center",
+          display: "grid",
+          gap: 18,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+        }}
+      >
+        <div>
+          <Eyebrow>Project handoff path</Eyebrow>
+          <Title level={2} style={{ fontSize: 24, margin: "6px 0 0" }}>
+            Move from context to agent work without leaving the project.
+          </Title>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+          }}
+        >
+          {HERO_HANDOFF_ITEMS.map((item, index) => (
+            <a
+              href={appPath(item.href)}
+              key={item.title}
+              style={{
+                alignItems: "start",
+                background:
+                  index === 1
+                    ? PUBLIC_COLORS.warningTint
+                    : PUBLIC_COLORS.surfaceMuted,
+                border: `1px solid ${
+                  index === 1
+                    ? PUBLIC_COLORS.warningBorder
+                    : alpha(item.accent, 0.22)
+                }`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "42px minmax(0, 1fr)",
+                minHeight: 134,
+                padding: 14,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(PUBLIC_COLORS.surface, 0.84),
+                  border: `1px solid ${alpha(item.accent, 0.26)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  fontSize: 20,
+                  height: 42,
+                  justifyContent: "center",
+                  width: 42,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: item.accent,
+                    display: "block",
+                    fontSize: 12,
+                    letterSpacing: 0,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {item.label}
+                </Text>
+                <Text strong style={{ display: "block", marginTop: 4 }}>
+                  {item.title}
+                </Text>
+                <Text type="secondary">{item.body}</Text>
+              </span>
+            </a>
+          ))}
         </div>
       </div>
     </section>
@@ -3063,6 +3198,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   return (
     <PublicPage active="home" config={marketingConfig}>
       <Hero config={config} />
+      <HeroHandoffStrip />
       <ProofStripSection />
       <QuickStartSection />
       <StarterRecipesSection config={config} />
