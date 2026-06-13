@@ -387,6 +387,8 @@ describe("PublicHomeApp", () => {
     ).toBe("/features/teaching");
     expect(screen.getByText("Operating path chooser")).not.toBeNull();
     expect(screen.getByText("Choose who runs the workspace")).not.toBeNull();
+    expect(screen.getByText("Deployment path")).not.toBeNull();
+    expect(screen.getByText("Next step")).not.toBeNull();
     expect(screen.getAllByText("Operator").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Best fit").length).toBeGreaterThan(0);
     expect(screen.getByText("Run by CoCalc")).not.toBeNull();

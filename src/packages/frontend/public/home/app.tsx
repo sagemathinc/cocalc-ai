@@ -74,6 +74,29 @@ const HOME_PAGE_CSS = `
     }
 
   }
+
+  @media (max-width: 840px) {
+    .cocalc-public-home-product-header {
+      display: none !important;
+    }
+
+    .cocalc-public-home-product-row {
+      grid-template-columns: 44px minmax(0, 1fr) 18px !important;
+    }
+
+    .cocalc-public-home-product-row-path {
+      grid-column: 1 / 3 !important;
+    }
+
+    .cocalc-public-home-product-row-field {
+      grid-column: 1 / -1 !important;
+    }
+
+    .cocalc-public-home-product-row-next {
+      grid-column: 1 / -1 !important;
+      justify-self: start !important;
+    }
+  }
 `;
 const HERO_OUTCOMES = [
   {
@@ -1226,11 +1249,42 @@ function ProductOptionsSection() {
               <div
                 style={{
                   display: "grid",
-                  gap: 10,
+                  gap: 8,
                 }}
               >
+                <div
+                  aria-hidden="true"
+                  className="cocalc-public-home-product-header"
+                  style={{
+                    color: PUBLIC_COLORS.brand,
+                    display: "grid",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    gap: 14,
+                    gridTemplateColumns:
+                      "minmax(176px, 1fr) minmax(112px, 0.62fr) minmax(220px, 1.2fr) minmax(124px, 0.56fr) 18px",
+                    padding: "0 14px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  <Text style={{ color: "inherit", fontSize: "inherit" }}>
+                    Deployment path
+                  </Text>
+                  <Text style={{ color: "inherit", fontSize: "inherit" }}>
+                    Operator
+                  </Text>
+                  <Text style={{ color: "inherit", fontSize: "inherit" }}>
+                    Best fit
+                  </Text>
+                  <Text style={{ color: "inherit", fontSize: "inherit" }}>
+                    Next step
+                  </Text>
+                  <span />
+                </div>
                 {options.map((option, index) => (
                   <a
+                    aria-label={`${option.title}: ${option.route}. ${option.operator}. ${option.bestFor}. ${option.nextStep}.`}
+                    className="cocalc-public-home-product-row"
                     href={option.href}
                     key={option.title}
                     style={{
@@ -1240,51 +1294,62 @@ function ProductOptionsSection() {
                       color: "inherit",
                       display: "grid",
                       gap: 14,
-                      gridTemplateColumns: "44px minmax(0, 1fr) 18px",
+                      gridTemplateColumns:
+                        "minmax(176px, 1fr) minmax(112px, 0.62fr) minmax(220px, 1.2fr) minmax(124px, 0.56fr) 18px",
+                      minHeight: 96,
                       padding: "12px 14px",
                       textDecoration: "none",
                     }}
                   >
-                    <span
+                    <div
+                      className="cocalc-public-home-product-row-path"
                       style={{
                         alignItems: "center",
-                        background:
-                          index === 2
-                            ? PUBLIC_COLORS.warningTint
-                            : PUBLIC_COLORS.surfaceMuted,
-                        border:
-                          index === 2
-                            ? `1px solid ${PUBLIC_COLORS.warningBorder}`
-                            : `1px solid ${PUBLIC_COLORS.border}`,
-                        borderRadius: PANEL_RADIUS,
-                        color:
-                          index === 2
-                            ? PUBLIC_COLORS.warning
-                            : PUBLIC_COLORS.brand,
                         display: "flex",
-                        fontSize: 20,
-                        height: 44,
-                        justifyContent: "center",
-                        width: 44,
+                        gap: 12,
+                        minWidth: 0,
                       }}
                     >
-                      <Icon name={option.icon} />
-                    </span>
-                    <span>
-                      <Text strong style={{ display: "block" }}>
-                        {option.title}
-                      </Text>
-                      <Text type="secondary">{option.route}</Text>
-                    </span>
+                      <span
+                        style={{
+                          alignItems: "center",
+                          background:
+                            index === 2
+                              ? PUBLIC_COLORS.warningTint
+                              : PUBLIC_COLORS.surfaceMuted,
+                          border:
+                            index === 2
+                              ? `1px solid ${PUBLIC_COLORS.warningBorder}`
+                              : `1px solid ${PUBLIC_COLORS.border}`,
+                          borderRadius: PANEL_RADIUS,
+                          color:
+                            index === 2
+                              ? PUBLIC_COLORS.warning
+                              : PUBLIC_COLORS.brand,
+                          display: "flex",
+                          flex: "0 0 44px",
+                          fontSize: 20,
+                          height: 44,
+                          justifyContent: "center",
+                          width: 44,
+                        }}
+                      >
+                        <Icon name={option.icon} />
+                      </span>
+                      <span style={{ minWidth: 0 }}>
+                        <Text strong style={{ display: "block" }}>
+                          {option.title}
+                        </Text>
+                        <Text type="secondary">{option.route}</Text>
+                      </span>
+                    </div>
                     <div
+                      className="cocalc-public-home-product-row-detail"
                       style={{
-                        display: "grid",
-                        gap: 8,
-                        gridColumn: "2 / 4",
-                        gridRow: 2,
+                        display: "contents",
                       }}
                     >
-                      <div>
+                      <span className="cocalc-public-home-product-row-field">
                         <Text
                           strong
                           style={{
@@ -1297,8 +1362,8 @@ function ProductOptionsSection() {
                           Operator
                         </Text>
                         <Text>{option.operator}</Text>
-                      </div>
-                      <div>
+                      </span>
+                      <span className="cocalc-public-home-product-row-field">
                         <Text
                           strong
                           style={{
@@ -1311,14 +1376,17 @@ function ProductOptionsSection() {
                           Best fit
                         </Text>
                         <Text>{option.bestFor}</Text>
-                      </div>
+                      </span>
                       <Text
+                        className="cocalc-public-home-product-row-next"
                         strong
                         style={{
+                          alignSelf: "center",
                           color:
                             index === 2
                               ? PUBLIC_COLORS.warning
                               : PUBLIC_COLORS.brand,
+                          justifySelf: "start",
                         }}
                       >
                         {option.nextStep}
@@ -1327,12 +1395,11 @@ function ProductOptionsSection() {
                     <Icon
                       name="arrow-right"
                       style={{
+                        alignSelf: "center",
                         color:
                           index === 2
                             ? PUBLIC_COLORS.warning
                             : PUBLIC_COLORS.brand,
-                        gridColumn: 3,
-                        gridRow: 1,
                         justifySelf: "end",
                       }}
                     />
