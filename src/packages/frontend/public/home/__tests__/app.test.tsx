@@ -494,6 +494,7 @@ describe("PublicHomeApp", () => {
     expect(screen.queryByText(/fast team starts/i)).toBeNull();
     expect(screen.queryByText(/quickest start/i)).toBeNull();
     expect(screen.queryByText(/multi-bay deployments/i)).toBeNull();
+    expect(screen.queryByText("Pricing and licensing")).toBeNull();
     expect(screen.getByText("Local runtime for one user.")).not.toBeNull();
     expect(screen.queryByText(/Free local runtime/i)).toBeNull();
     const signalPoints = screen.getByRole("region", {

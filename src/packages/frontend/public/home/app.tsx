@@ -3295,7 +3295,14 @@ function ProductOptionsSection() {
                   Start small, then move toward private operation as control
                   requirements grow.
                 </Text>
-                <Button href={appPath("pricing")}>Pricing and licensing</Button>
+                <Button
+                  href={supportPurchasePath(
+                    "Site license",
+                    "I want to discuss a CoCalc site license.",
+                  )}
+                >
+                  Discuss site licensing
+                </Button>
               </Flex>
               <div
                 aria-hidden="true"
