@@ -64,6 +64,27 @@ const BLOCKED_HOMEPAGE_CLAIM_ATTRIBUTES = [
 const ALLOWED_EXTERNAL_HOMEPAGE_HREFS = [
   "https://software.cocalc.ai/software/cocalc-plus/index.html",
 ] as const;
+const ALLOWED_INTERNAL_HOMEPAGE_HREF_PATTERNS = [
+  /^#cookie-preferences$/,
+  /^\/$/,
+  /^\/about$/,
+  /^\/auth\/sign-in$/,
+  /^\/auth\/sign-up$/,
+  /^\/docs$/,
+  /^\/features$/,
+  /^\/features\/(ai|compare|jupyter-notebook|latex-editor|python|teaching|terminal)$/,
+  /^\/guides$/,
+  /^\/news(?:\/.*)?$/,
+  /^\/policies$/,
+  /^\/policies\/trust$/,
+  /^\/pricing$/,
+  /^\/products$/,
+  /^\/products\/cocalc-(launchpad|plus|rocket)$/,
+  /^\/projects$/,
+  /^\/settings$/,
+  /^\/support$/,
+  /^\/support\/new\?/,
+] as const;
 
 function getHomepageClaimCorpus(container: HTMLElement): string {
   const corpus = [container.textContent ?? ""];
@@ -99,6 +120,7 @@ function expectHomepageSectionsLabeled(container: HTMLElement) {
 function expectHomepageLinkTargetsControlled(container: HTMLElement) {
   const links = Array.from(container.querySelectorAll<HTMLAnchorElement>("a"));
   expect(links.length).toBeGreaterThan(0);
+  const unexpectedInternalHrefs: string[] = [];
 
   for (const link of links) {
     const href = link.getAttribute("href");
@@ -111,8 +133,16 @@ function expectHomepageLinkTargetsControlled(container: HTMLElement) {
       expect(ALLOWED_EXTERNAL_HOMEPAGE_HREFS).toContain(href);
     } else {
       expect(href.startsWith("/") || href.startsWith("#")).toBe(true);
+      if (
+        !ALLOWED_INTERNAL_HOMEPAGE_HREF_PATTERNS.some((pattern) =>
+          pattern.test(href),
+        )
+      ) {
+        unexpectedInternalHrefs.push(href);
+      }
     }
   }
+  expect(unexpectedInternalHrefs).toEqual([]);
 }
 
 function expectLinkHrefs(
