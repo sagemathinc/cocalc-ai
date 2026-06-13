@@ -785,16 +785,24 @@ describe("PublicAuthApp", () => {
       />,
     );
 
+    expect(await screen.findByText("Signed-in account")).not.toBeNull();
+    expect(screen.getByText("Email:")).not.toBeNull();
+    expect(screen.getByText("alice@example.com")).not.toBeNull();
+    expect(screen.getByText("Name:")).not.toBeNull();
+    expect(screen.getByText("Alice Example")).not.toBeNull();
     expect(
-      await screen.findByText(/This browser is signed in as/),
-    ).not.toBeNull();
-    expect(
-      screen.getByText("alice@example.com (Alice Example)"),
+      screen.getByText(
+        "Accepting this invite will add this account to the project.",
+      ),
     ).not.toBeNull();
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => {
       // jsdom does not implement full-page reloads.
     });
-    fireEvent.click(screen.getByRole("button", { name: "sign out first" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Sign out to use a different account",
+      }),
+    );
     await waitFor(() =>
       expect(mockedSignOutAuthSession).toHaveBeenCalledWith(),
     );

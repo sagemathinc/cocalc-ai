@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 
-import { Alert, Button, Flex, Input, Spin, Typography } from "antd";
+import { Alert, Button, Card, Flex, Input, Spin, Typography } from "antd";
 
 import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
 import {
@@ -294,12 +294,10 @@ export function PublicRedeemProjectInviteView({
   >("");
   const [signingOut, setSigningOut] = useState(false);
 
-  const accountLabel = [
-    currentAccountEmailAddress?.trim() || currentAccountId?.trim(),
-    currentAccountDisplayName?.trim()
-      ? `(${currentAccountDisplayName.trim()})`
-      : "",
-  ]
+  const accountEmail = currentAccountEmailAddress?.trim();
+  const accountName = currentAccountDisplayName?.trim();
+  const accountId = currentAccountId?.trim();
+  const accountLabel = [accountEmail || accountId, accountName]
     .filter(Boolean)
     .join(" ");
 
@@ -457,32 +455,56 @@ export function PublicRedeemProjectInviteView({
                   You can accept with this signed-in CoCalc account even if the
                   email address that received the link is different.
                 </span>
-                <span>
-                  This browser is signed in
-                  {accountLabel ? (
-                    <>
-                      {" "}
-                      as <Text strong>{accountLabel}</Text>
-                    </>
-                  ) : null}
-                  . If you want to accept using a different account,{" "}
-                  <Button
-                    disabled={signingOut || !!submitting}
-                    loading={signingOut}
-                    size="small"
-                    type="link"
-                    style={{ padding: 0 }}
-                    onClick={() => void signOutToSwitchAccount()}
-                  >
-                    sign out first
-                  </Button>
-                  , then sign in with the account you want to use.
-                </span>
               </Flex>
             }
             showIcon
             type="info"
           />
+          <Card size="small" title="Signed-in account">
+            <Flex vertical gap={8}>
+              <div>
+                {accountEmail ? (
+                  <Paragraph style={{ marginBottom: 2 }}>
+                    <Text type="secondary">Email: </Text>
+                    <Text strong>{accountEmail}</Text>
+                  </Paragraph>
+                ) : null}
+                {accountName ? (
+                  <Paragraph style={{ marginBottom: 2 }}>
+                    <Text type="secondary">Name: </Text>
+                    <Text strong>{accountName}</Text>
+                  </Paragraph>
+                ) : null}
+                {!accountEmail && !accountName && accountId ? (
+                  <Paragraph style={{ marginBottom: 2 }}>
+                    <Text type="secondary">Account ID: </Text>
+                    <Text strong>{accountId}</Text>
+                  </Paragraph>
+                ) : null}
+                {accountLabel ? (
+                  <Text type="secondary">
+                    Accepting this invite will add this account to the project.
+                  </Text>
+                ) : (
+                  <Text type="warning">
+                    This browser is signed in, but account details are still
+                    loading. Refresh before accepting if you are unsure which
+                    account this is.
+                  </Text>
+                )}
+              </div>
+              <div>
+                <Button
+                  disabled={signingOut || !!submitting}
+                  loading={signingOut}
+                  size="small"
+                  onClick={() => void signOutToSwitchAccount()}
+                >
+                  Sign out to use a different account
+                </Button>
+              </div>
+            </Flex>
+          </Card>
           <div>
             <Text type="secondary">Project</Text>
             <Paragraph style={{ marginBottom: 0 }}>
