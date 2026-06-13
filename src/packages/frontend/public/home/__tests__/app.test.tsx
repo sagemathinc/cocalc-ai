@@ -788,6 +788,7 @@ describe("PublicHomeApp", () => {
       "CoCalc.ai first-step routes",
       "Homepage boundary and detail routes",
       "Why CoCalc keeps work in projects",
+      "CoCalc.ai next action routes",
     ];
     for (const name of removedDuplicateRegions) {
       expect(screen.queryByRole("region", { name })).toBeNull();
@@ -923,65 +924,9 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Jupyter Notebooks/i })
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
-    const nextActionRoutes = screen.getByRole("region", {
-      name: "CoCalc.ai next action routes",
-    });
-    const nextActionCards = within(nextActionRoutes).getByRole("group", {
-      name: "CoCalc.ai next action cards",
-    });
-    expectLinkHrefs(nextActionCards, [
-      "/features/jupyter-notebook",
-      "/features/terminal",
-      "/features/ai",
-      "/products",
-    ]);
     expect(
-      within(nextActionRoutes).getByRole("heading", {
-        name: "Start from the artifact in front of you.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(nextActionRoutes)
-        .getByRole("link", { name: /Notebook or data file/i })
-        .getAttribute("href"),
-    ).toBe("/features/jupyter-notebook");
-    expect(
-      within(nextActionRoutes)
-        .getByRole("link", { name: /Shell command or service/i })
-        .getAttribute("href"),
-    ).toBe("/features/terminal");
-    expect(
-      within(nextActionRoutes)
-        .getByRole("link", { name: /Change request/i })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(nextActionRoutes)
-        .getByRole("link", { name: /Team operating question/i })
-        .getAttribute("href"),
-    ).toBe("/products");
-    expect(
-      within(nextActionRoutes).getByText("Choose the next action"),
-    ).not.toBeNull();
-    expect(within(nextActionRoutes).getByText("Compute")).not.toBeNull();
-    expect(within(nextActionRoutes).getByText("Runtime")).not.toBeNull();
-    expect(within(nextActionRoutes).getByText("Codex")).not.toBeNull();
-    expect(within(nextActionRoutes).getByText("Operation")).not.toBeNull();
-    expect(
-      within(nextActionRoutes).getAllByText("Project carry-forward"),
-    ).toHaveLength(4);
-    expect(
-      within(nextActionRoutes).getByText("Output, files, and notes"),
-    ).not.toBeNull();
-    expect(
-      within(nextActionRoutes).getByText("Commands, logs, and services"),
-    ).not.toBeNull();
-    expect(
-      within(nextActionRoutes).getByText("Prompts, patches, and tests"),
-    ).not.toBeNull();
-    expect(
-      within(nextActionRoutes).getByText("Runtime choice and support notes"),
-    ).not.toBeNull();
+      screen.queryByRole("group", { name: "CoCalc.ai next action cards" }),
+    ).toBeNull();
     const audiencePaths = screen.getByRole("region", {
       name: "CoCalc.ai audience paths",
     });
