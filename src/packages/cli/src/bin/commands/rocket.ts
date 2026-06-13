@@ -295,7 +295,7 @@ function buildReleaseBuildPlan({
     scriptName,
   ];
   if (opts.outDir || opts.bundle || opts.tarball) {
-    args.push("--", paths.out_dir, paths.artifact);
+    args.push(paths.out_dir, paths.artifact);
   }
   return {
     kind,
@@ -795,7 +795,12 @@ function releaseBuildPaths({
     `cocalc-${kind}-linux-${arch}.tar.xz`,
   );
   const resolvedOutDir = expandPath(outDir ?? defaultOutDir);
-  const resolvedArtifact = expandPath(bundle ?? defaultArtifact);
+  const resolvedArtifact = expandPath(
+    bundle ??
+      (outDir
+        ? join(dirname(resolvedOutDir), `cocalc-${kind}-linux-${arch}.tar.xz`)
+        : defaultArtifact),
+  );
   const manifest = join(
     resolvedOutDir,
     kind === "bay-runtime"

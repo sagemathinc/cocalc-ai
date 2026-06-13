@@ -84,7 +84,45 @@ test("rocket release build --kind bay-static builds and reports a local artifact
   assert.equal(runs[0].args[1].endsWith("/src/packages"), true);
   assert.deepEqual(runs[0].args.slice(2, 4), ["--filter", "@cocalc/rocket"]);
   assert.equal(runs[0].args.includes("build:bay-static-bundle"), true);
-  assert.deepEqual(runs[0].args.slice(-3), ["--", outDir, bundle]);
+  assert.deepEqual(runs[0].args.slice(-2), [outDir, bundle]);
+});
+
+test("rocket release build --out-dir keeps the default tarball beside that directory", async () => {
+  const runs: CapturedRun[] = [];
+  const dir = mkdtempSync(join(tmpdir(), "rocket-release-out-dir-"));
+  const outDir = join(dir, "runtime");
+  const bundle = join(dir, "cocalc-bay-runtime-linux-x64.tar.xz");
+  const manifest = join(outDir, "bay-runtime-manifest.json");
+  const program = createProgram({
+    runs,
+    onRun: async () => {
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(bundle, "runtime artifact");
+      writeFileSync(
+        manifest,
+        JSON.stringify({
+          kind: "cocalc-bay-runtime",
+          git: { commit: "abc123" },
+        }),
+      );
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "release",
+    "build",
+    "--kind",
+    "bay-runtime",
+    "--out-dir",
+    outDir,
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("--"), false);
+  assert.deepEqual(runs[0].args.slice(-2), [outDir, bundle]);
 });
 
 test("rocket release build dry-run does not execute the build", async () => {
