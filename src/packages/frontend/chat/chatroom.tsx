@@ -709,7 +709,8 @@ export function ChatPanel({
   const studentProjectFunctionality =
     useStudentProjectFunctionality(project_id);
   const aiAgentPolicyAllowed = useMemo(() => {
-    return redux.getStore("projects").isAIAllowedByPolicy(project_id, "agent");
+    const projectsStore = redux.getStore("projects");
+    return projectsStore?.isAIAllowedByPolicy?.(project_id, "agent") ?? true;
   }, [
     accountCustomize,
     accountOtherSettings,

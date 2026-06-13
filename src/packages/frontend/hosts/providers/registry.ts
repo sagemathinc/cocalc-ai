@@ -355,6 +355,14 @@ const buildBasePayload = (
     bucket: vals.bucket,
   };
   const mergedMetadata = { ...baseMetadata, ...(machine.metadata ?? {}) };
+  if (vals.provider === "gcp" && vals.auto_grow_enabled) {
+    mergedMetadata.auto_grow = {
+      enabled: true,
+      max_disk_gb: vals.auto_grow_max_disk_gb,
+      growth_step_gb: vals.auto_grow_growth_step_gb,
+      min_grow_interval_minutes: vals.auto_grow_min_grow_interval_minutes,
+    };
+  }
   if (vals.provider === "gcp" && vals.shared_scratch_auto_grow_enabled) {
     mergedMetadata.shared_scratch_auto_grow = {
       enabled: true,

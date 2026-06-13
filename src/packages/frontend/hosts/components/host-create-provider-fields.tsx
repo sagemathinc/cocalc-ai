@@ -8,6 +8,7 @@ import {
   Select,
   Segmented,
   Slider,
+  Switch,
   Tag,
   Typography,
 } from "antd";
@@ -15,6 +16,7 @@ import { React } from "@cocalc/frontend/app-framework";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   mapCloudRegionToR2Region,
+  mapCountryRegionToR2Region,
   R2_REGION_LABELS,
 } from "@cocalc/util/consts";
 import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
@@ -86,6 +88,16 @@ export const HostCreateProviderFields: React.FC<
   const watchedDisk = Form.useWatch("disk", form);
   const watchedDiskGb = Form.useWatch("disk_gb", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
+  const watchedAutoGrowEnabled = Form.useWatch("auto_grow_enabled", form);
+  const watchedAutoGrowMaxDiskGb = Form.useWatch("auto_grow_max_disk_gb", form);
+  const watchedAutoGrowGrowthStepGb = Form.useWatch(
+    "auto_grow_growth_step_gb",
+    form,
+  );
+  const watchedAutoGrowMinIntervalMinutes = Form.useWatch(
+    "auto_grow_min_grow_interval_minutes",
+    form,
+  );
   const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
   const watchedSelfHostMode = Form.useWatch("self_host_mode", form);
   const watchedSelfHostTarget = Form.useWatch("self_host_ssh_target", form);
@@ -97,6 +109,16 @@ export const HostCreateProviderFields: React.FC<
   const selfHostAlphaEnabled = !!useTypedRedux(
     "customize",
     "project_hosts_self_host_alpha_enabled",
+  );
+  const cloudflareCountry = useTypedRedux("customize", "country");
+  const cloudflareRegion = useTypedRedux("customize", "cloudflare_region");
+  const cloudflareRegionCode = useTypedRedux(
+    "customize",
+    "cloudflare_region_code",
+  );
+  const preferredR2Region = React.useMemo(
+    () => mapCountryRegionToR2Region(cloudflareCountry, cloudflareRegionCode),
+    [cloudflareCountry, cloudflareRegionCode],
   );
   const [machineTypeSortMode, setMachineTypeSortMode] =
     useMachineTypeSortMode();
@@ -162,6 +184,12 @@ export const HostCreateProviderFields: React.FC<
       : typeof watchedDisk === "number" && Number.isFinite(watchedDisk)
         ? watchedDisk
         : INITIAL_DISK_SIZE;
+  const showMainAutoGrowControls =
+    selectedProvider === "gcp" &&
+    showDiskFields &&
+    watchedStorageMode !== "ephemeral" &&
+    persistentGrowable;
+  const autoGrowDefaultMaxDisk = Math.max(diskValue, 500);
   const normalizeDiskValue = React.useCallback(
     (value: number) => {
       if (!isNebiusPersistentDisk) return value;
@@ -201,6 +229,61 @@ export const HostCreateProviderFields: React.FC<
     showDiskFields,
     watchedDisk,
     watchedDiskGb,
+  ]);
+  React.useEffect(() => {
+    if (!showMainAutoGrowControls) {
+      const patch: Record<string, any> = {};
+      if (form.getFieldValue("auto_grow_enabled") !== false) {
+        patch.auto_grow_enabled = false;
+      }
+      for (const field of [
+        "auto_grow_max_disk_gb",
+        "auto_grow_growth_step_gb",
+        "auto_grow_min_grow_interval_minutes",
+      ]) {
+        if (form.getFieldValue(field) !== undefined) {
+          patch[field] = undefined;
+        }
+      }
+      if (Object.keys(patch).length > 0) {
+        setFormFields(patch);
+      }
+      return;
+    }
+    if (!watchedAutoGrowEnabled) return;
+    const patch: Record<string, any> = {};
+    if (
+      typeof watchedAutoGrowMaxDiskGb !== "number" ||
+      !Number.isFinite(watchedAutoGrowMaxDiskGb) ||
+      watchedAutoGrowMaxDiskGb < diskValue
+    ) {
+      patch.auto_grow_max_disk_gb = autoGrowDefaultMaxDisk;
+    }
+    if (
+      typeof watchedAutoGrowGrowthStepGb !== "number" ||
+      !Number.isFinite(watchedAutoGrowGrowthStepGb)
+    ) {
+      patch.auto_grow_growth_step_gb = 50;
+    }
+    if (
+      typeof watchedAutoGrowMinIntervalMinutes !== "number" ||
+      !Number.isFinite(watchedAutoGrowMinIntervalMinutes)
+    ) {
+      patch.auto_grow_min_grow_interval_minutes = 60;
+    }
+    if (Object.keys(patch).length > 0) {
+      setFormFields(patch);
+    }
+  }, [
+    autoGrowDefaultMaxDisk,
+    diskValue,
+    form,
+    setFormFields,
+    showMainAutoGrowControls,
+    watchedAutoGrowEnabled,
+    watchedAutoGrowGrowthStepGb,
+    watchedAutoGrowMaxDiskGb,
+    watchedAutoGrowMinIntervalMinutes,
   ]);
   const gcpCompatibilityWarning = React.useMemo(() => {
     if (selectedProvider !== "gcp") return null;
@@ -453,6 +536,29 @@ export const HostCreateProviderFields: React.FC<
               </Form.Item>
             </Col>
           )}
+          {showRegionPreference && cloudflareRegionCode && (
+            <Col xs={24}>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 10 }}
+                title="Cloudflare location"
+                description={
+                  <>
+                    Cloudflare sees this browser near{" "}
+                    <Typography.Text strong>
+                      {cloudflareRegion || cloudflareRegionCode}
+                    </Typography.Text>{" "}
+                    ({cloudflareRegionCode}). Closest-region sorting uses{" "}
+                    <Typography.Text strong>
+                      {R2_REGION_LABELS[preferredR2Region]}
+                    </Typography.Text>
+                    .
+                  </>
+                }
+              />
+            </Col>
+          )}
         </Row>
       </div>
       <div style={FIELD_GROUP_STYLE}>
@@ -525,6 +631,116 @@ export const HostCreateProviderFields: React.FC<
             draftManaged={draftManaged}
             onDraftPatch={onDraftPatch}
           />
+          {showMainAutoGrowControls && (
+            <div style={{ marginTop: 12 }}>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                title="Guarded disk auto-grow"
+                description="For GCP hosts, CoCalc can grow the main persistent disk after a storage reservation failure, then retry the blocked operation once."
+              />
+              <Form.Item
+                label="Enable guarded auto-grow"
+                name="auto_grow_enabled"
+                valuePropName="checked"
+                extra="Only used after an explicit storage reservation failure. Growth is capped and rate-limited."
+              >
+                <Switch />
+              </Form.Item>
+              {watchedAutoGrowEnabled && (
+                <Row gutter={10}>
+                  <Col xs={24} md={8}>
+                    <Form.Item
+                      label="Maximum disk size (GB)"
+                      name="auto_grow_max_disk_gb"
+                      dependencies={["disk"]}
+                      rules={[
+                        ({ getFieldValue }) => ({
+                          validator(_, value) {
+                            const parsed = Number(value);
+                            if (!Number.isFinite(parsed) || parsed <= 0) {
+                              return Promise.reject(
+                                new Error(
+                                  "Enter the largest disk size this host may auto-grow to",
+                                ),
+                              );
+                            }
+                            const currentDisk = Number(
+                              getFieldValue("disk_gb") ??
+                                getFieldValue("disk") ??
+                                diskValue,
+                            );
+                            if (
+                              Number.isFinite(currentDisk) &&
+                              currentDisk > 0 &&
+                              parsed < currentDisk
+                            ) {
+                              return Promise.reject(
+                                new Error(
+                                  `Maximum disk must be at least ${currentDisk} GB`,
+                                ),
+                              );
+                            }
+                            return Promise.resolve();
+                          },
+                        }),
+                      ]}
+                      extra="The disk will never auto-grow past this limit."
+                    >
+                      <InputNumber
+                        min={diskValue}
+                        max={MAX_DISK_SIZE}
+                        precision={0}
+                        style={{ width: "100%" }}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={8}>
+                    <Form.Item
+                      label="Growth step (GB)"
+                      name="auto_grow_growth_step_gb"
+                      rules={[
+                        {
+                          required: true,
+                          message: "Enter how much to grow the disk per step",
+                        },
+                      ]}
+                      extra="Each grow increases the disk by this amount."
+                    >
+                      <InputNumber
+                        min={1}
+                        max={2000}
+                        precision={0}
+                        style={{ width: "100%" }}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={8}>
+                    <Form.Item
+                      label="Cooldown (minutes)"
+                      name="auto_grow_min_grow_interval_minutes"
+                      rules={[
+                        {
+                          required: true,
+                          message:
+                            "Enter the cooldown between auto-grow attempts",
+                        },
+                      ]}
+                      extra="Prevents repeated disk expansions under pressure."
+                    >
+                      <InputNumber
+                        min={1}
+                        max={7 * 24 * 60}
+                        precision={0}
+                        style={{ width: "100%" }}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )}
+            </div>
+          )}
         </div>
       )}
       {showSpotHint && (

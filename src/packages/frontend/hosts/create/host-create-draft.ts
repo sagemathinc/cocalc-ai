@@ -420,6 +420,10 @@ export function normalizeDraft(
     draft.disk_gb = undefined;
     draft.disk = undefined;
     draft.disk_type = undefined;
+    draft.auto_grow_enabled = false;
+    draft.auto_grow_max_disk_gb = undefined;
+    draft.auto_grow_growth_step_gb = undefined;
+    draft.auto_grow_min_grow_interval_minutes = undefined;
   } else {
     const diskTypeOptions = getDiskTypeOptions(provider);
     if (!draft.disk_type || !inOptions(draft.disk_type, diskTypeOptions)) {
@@ -430,6 +434,27 @@ export function normalizeDraft(
       draft.disk_gb = diskGb;
       draft.disk = diskGb;
     }
+  }
+
+  if (
+    provider !== "gcp" ||
+    draft.storage_mode === "ephemeral" ||
+    !storageSupport.growable
+  ) {
+    draft.auto_grow_enabled = false;
+    draft.auto_grow_max_disk_gb = undefined;
+    draft.auto_grow_growth_step_gb = undefined;
+    draft.auto_grow_min_grow_interval_minutes = undefined;
+  } else if (draft.auto_grow_enabled) {
+    const diskGb = draft.disk_gb ?? draft.disk ?? DEFAULT_DISK_GB;
+    draft.auto_grow_max_disk_gb = Math.max(
+      readPositiveInteger(draft.auto_grow_max_disk_gb) ?? 500,
+      diskGb,
+    );
+    draft.auto_grow_growth_step_gb =
+      readPositiveInteger(draft.auto_grow_growth_step_gb) ?? 50;
+    draft.auto_grow_min_grow_interval_minutes =
+      readPositiveInteger(draft.auto_grow_min_grow_interval_minutes) ?? 60;
   }
 
   if (provider !== "nebius" && provider !== "gcp") {

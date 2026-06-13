@@ -610,6 +610,55 @@ describe("host-create-draft", () => {
     expect(payload.start_after_create).toBe(false);
   });
 
+  it("persists GCP main disk auto-grow metadata in create payloads", () => {
+    const context = providerContext("gcp");
+    const draft = normalizeDraft(
+      {
+        ...buildDefaultDraft(context),
+        disk_gb: 150,
+        disk: 150,
+        auto_grow_enabled: true,
+        auto_grow_max_disk_gb: 400,
+      },
+      context,
+    ).draft;
+    const payload = buildCreateHostPayloadFromDraft(draft, context);
+
+    expect(draft).toMatchObject({
+      auto_grow_enabled: true,
+      auto_grow_max_disk_gb: 400,
+      auto_grow_growth_step_gb: 50,
+      auto_grow_min_grow_interval_minutes: 60,
+    });
+    expect(payload.machine.metadata.auto_grow).toEqual({
+      enabled: true,
+      max_disk_gb: 400,
+      growth_step_gb: 50,
+      min_grow_interval_minutes: 60,
+    });
+  });
+
+  it("clears main disk auto-grow when switching away from GCP", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "nebius",
+        auto_grow_enabled: true,
+        auto_grow_max_disk_gb: 500,
+        auto_grow_growth_step_gb: 50,
+        auto_grow_min_grow_interval_minutes: 60,
+      },
+      providerContext("nebius"),
+    ).draft;
+    const payload = buildCreateHostPayloadFromDraft(
+      draft,
+      providerContext("nebius"),
+    );
+
+    expect(draft.auto_grow_enabled).toBe(false);
+    expect(draft.auto_grow_max_disk_gb).toBeUndefined();
+    expect(payload.machine.metadata.auto_grow).toBeUndefined();
+  });
+
   it.each([
     ["gcp", { provider: "gcp", region: "bad", zone: "bad" }],
     [
