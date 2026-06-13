@@ -324,6 +324,41 @@ describe("createPaymentIntent", () => {
     expect(processed).toBe(true);
   });
 
+  it("can skip immediate processing for callers that must persist local payment state first", async () => {
+    stripe.invoices.finalizeInvoice.mockResolvedValue({
+      id: "in_123",
+      hosted_invoice_url: "https://stripe.example/invoice",
+      payments: {
+        data: [
+          {
+            is_default: true,
+            payment: {
+              type: "payment_intent",
+              payment_intent: "pi_123",
+            },
+          },
+        ],
+      },
+    });
+    stripe.paymentIntents.retrieve.mockResolvedValue({
+      id: "pi_123",
+      status: "succeeded",
+    });
+    mockIsReadyToProcess.mockReturnValue(true);
+
+    await createPaymentIntent({
+      account_id: "acct-1",
+      purpose: "subscription-renewal",
+      description: "Renew a subscription",
+      lineItems,
+      processImmediately: false,
+    });
+
+    expect(stripe.paymentIntents.retrieve).not.toHaveBeenCalled();
+    expect(mockIsReadyToProcess).not.toHaveBeenCalled();
+    expect(mockProcessPaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("surfaces processing failures instead of reporting checkout success", async () => {
     stripe.invoices.finalizeInvoice.mockResolvedValue({
       id: "in_123",

@@ -35,6 +35,7 @@ export default async function createPaymentIntent({
   metadata,
   force,
   requireAddress = false,
+  processImmediately = true,
 }: {
   account_id: string;
   purpose: string;
@@ -53,6 +54,9 @@ export default async function createPaymentIntent({
   // For interactive checkout, require a customer address so automatic tax can
   // be computed before we attempt to charge the user.
   requireAddress?: boolean;
+  // Some callers must persist local state that processPaymentIntent reads
+  // before an immediately paid invoice can be safely processed.
+  processImmediately?: boolean;
 }): Promise<{ payment_intent: string; hosted_invoice_url: string }> {
   logger.debug("createPaymentIntent", {
     account_id,
@@ -243,6 +247,9 @@ ${await support()}
   }
   if (!success) {
     return invoiceWithPaymentIntent(finalizedInvoice, paymentIntentId) as any;
+  }
+  if (!processImmediately) {
+    return invoiceWithPaymentIntent(invoice, paymentIntentId) as any;
   }
   // succeeded, so immediately check if we can process, in case of an instant
   // payment method.  otherwise, has to wait on user intervention and/or our

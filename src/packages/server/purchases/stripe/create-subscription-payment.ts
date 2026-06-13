@@ -157,6 +157,7 @@ export default async function createSubscriptionPayment({
         subscription_id: `${subscription_id}`,
       },
       force: true,
+      processImmediately: false,
     });
 
   const payment1 = {
