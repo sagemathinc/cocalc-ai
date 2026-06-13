@@ -453,6 +453,47 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectSurfaceLinks).getByText("Snapshots and TimeTravel"),
     ).not.toBeNull();
+    const workInputRoutes = screen.getByRole("region", {
+      name: "CoCalc.ai work input routes",
+    });
+    expect(
+      within(workInputRoutes).getByRole("heading", {
+        name: "Open the work where it already belongs.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(workInputRoutes)
+        .getByRole("link", { name: "Browse feature routes" })
+        .getAttribute("href"),
+    ).toBe("/features");
+    const materialRouteCards = within(workInputRoutes).getByRole("group", {
+      name: "CoCalc.ai material route cards",
+    });
+    expect(
+      within(materialRouteCards)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "/features/jupyter-notebook",
+      "/features/terminal",
+      "/features/python",
+      "/features/latex-editor",
+    ]);
+    expect(
+      within(materialRouteCards).getByText("Notebook or data table"),
+    ).not.toBeNull();
+    expect(
+      within(materialRouteCards).getByText("Command or service"),
+    ).not.toBeNull();
+    expect(
+      within(materialRouteCards).getByText("Script or source tree"),
+    ).not.toBeNull();
+    expect(
+      within(materialRouteCards).getByText("Paper or handout"),
+    ).not.toBeNull();
+    expect(
+      within(materialRouteCards).getByText("Review Python support"),
+    ).not.toBeNull();
     const removedDuplicateRegions = [
       "CoCalc.ai project handoff path",
       "CoCalc.ai intent router",

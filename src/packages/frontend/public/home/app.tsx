@@ -408,6 +408,52 @@ const NEXT_ACTION_ROUTES = [
   signal: string;
   title: string;
 }[];
+const WORK_INPUT_ROUTES = [
+  {
+    accent: COLORS.RUN,
+    body: "Use Jupyter when the first item is an .ipynb file, data table, or computation that should keep output beside the source.",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    label: "Notebook",
+    route: "Run the notebook",
+    title: "Notebook or data table",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Use a terminal when the work starts from a command, package install, service, or log that belongs with project files.",
+    href: "features/terminal",
+    icon: "terminal",
+    label: "Shell",
+    route: "Open terminal workflow",
+    title: "Command or service",
+  },
+  {
+    accent: PUBLIC_COLORS.success,
+    body: "Use the Python path when scripts, modules, plots, or scientific packages are the center of the project.",
+    href: "features/python",
+    icon: "python",
+    label: "Code",
+    route: "Review Python support",
+    title: "Script or source tree",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Use the LaTeX path when papers, notes, handouts, or technical writing need the same project history and collaboration.",
+    href: "features/latex-editor",
+    icon: "file-code",
+    label: "Writing",
+    route: "Open LaTeX workflow",
+    title: "Paper or handout",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  label: string;
+  route: string;
+  title: string;
+}[];
 const LANDING_ROUTE_MAP = [
   {
     accent: COLORS.BLUE_D,
@@ -1657,6 +1703,116 @@ function WorkspaceContextSection({
           <WorkspacePreview authenticated={authenticated} />
         </Col>
       </Row>
+    </section>
+  );
+}
+
+function WorkInputSection() {
+  return (
+    <section
+      aria-label="CoCalc.ai work input routes"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `28px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex align="end" justify="space-between" wrap gap={16}>
+        <div style={{ maxWidth: 760 }}>
+          <Eyebrow>Start from the material</Eyebrow>
+          <Title level={2} style={{ margin: "8px 0 10px" }}>
+            Open the work where it already belongs.
+          </Title>
+          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+            CoCalc routes the first file, command, script, or document into the
+            same persistent project, so surrounding context stays available as
+            the work changes.
+          </Paragraph>
+        </div>
+        <Button
+          href={appPath("features")}
+          icon={<DecorativeButtonIcon name="overview" />}
+        >
+          Browse feature routes
+        </Button>
+      </Flex>
+      <div
+        aria-label="CoCalc.ai material route cards"
+        role="group"
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+          marginTop: 22,
+        }}
+      >
+        {WORK_INPUT_ROUTES.map((route) => (
+          <a
+            href={appPath(route.href)}
+            key={route.title}
+            style={{
+              background: alpha(route.accent, 0.05),
+              border: `1px solid ${alpha(route.accent, 0.22)}`,
+              borderRadius: PANEL_RADIUS,
+              color: "inherit",
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "42px minmax(0, 1fr)",
+              minHeight: 186,
+              padding: 16,
+              textDecoration: "none",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                alignItems: "center",
+                background: alpha(route.accent, 0.08),
+                border: `1px solid ${alpha(route.accent, 0.24)}`,
+                borderRadius: PANEL_RADIUS,
+                color: route.accent,
+                display: "flex",
+                fontSize: 20,
+                height: 42,
+                justifyContent: "center",
+                width: 42,
+              }}
+            >
+              <Icon name={route.icon} />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <Tag
+                style={{
+                  background: alpha(route.accent, 0.08),
+                  borderColor: alpha(route.accent, 0.22),
+                  color: route.accent,
+                  marginBottom: 10,
+                  marginInlineEnd: 0,
+                }}
+              >
+                {route.label}
+              </Tag>
+              <Title level={3} style={{ fontSize: 22, margin: "0 0 8px" }}>
+                {route.title}
+              </Title>
+              <Paragraph style={{ margin: 0 }}>{route.body}</Paragraph>
+              <Text
+                strong
+                style={{
+                  color: route.accent,
+                  display: "inline-flex",
+                  gap: 8,
+                  marginTop: 14,
+                }}
+              >
+                {route.route}
+                <Icon name="arrow-right" />
+              </Text>
+            </span>
+          </a>
+        ))}
+      </div>
     </section>
   );
 }
@@ -3015,6 +3171,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <Hero config={config} />
       <LandingRouteMapSection authenticated={!!config?.is_authenticated} />
       <WorkspaceContextSection authenticated={!!config?.is_authenticated} />
+      <WorkInputSection />
       <WorkflowsSection />
       <NextActionSection />
       <AudienceSection />
