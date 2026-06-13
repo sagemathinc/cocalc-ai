@@ -169,6 +169,20 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectOutcomes).getByText("A lasting record"),
     ).not.toBeNull();
+    const contextCues = within(hero).getByRole("group", {
+      name: "CoCalc.ai workspace context cues",
+    });
+    expect(
+      within(contextCues).getByText("Project context kept together"),
+    ).not.toBeNull();
+    expect(within(contextCues).getByText("Files")).not.toBeNull();
+    expect(
+      within(contextCues).getByText("Shells, packages, services"),
+    ).not.toBeNull();
+    expect(
+      within(contextCues).getByText("Agent prompts and patches"),
+    ).not.toBeNull();
+    expect(within(contextCues).getByText("Review")).not.toBeNull();
     expect(
       within(hero).queryByRole("group", {
         name: "CoCalc project context preview",

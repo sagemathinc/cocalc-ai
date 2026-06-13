@@ -115,6 +115,28 @@ const HERO_OUTCOMES = [
     title: "A lasting record",
   },
 ] satisfies { body: string; icon: IconName; title: string }[];
+const HERO_CONTEXT_SIGNALS = [
+  {
+    body: "Source, notebooks, data",
+    icon: "files",
+    label: "Files",
+  },
+  {
+    body: "Shells, packages, services",
+    icon: "terminal",
+    label: "Runtime",
+  },
+  {
+    body: "Agent prompts and patches",
+    icon: "robot",
+    label: "Codex",
+  },
+  {
+    body: "Snapshots and TimeTravel",
+    icon: "history",
+    label: "Review",
+  },
+] satisfies { body: string; icon: IconName; label: string }[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -281,6 +303,91 @@ function DecorativeButtonIcon({ name }: { name: IconName }) {
     <span aria-hidden="true" style={{ display: "inline-flex" }}>
       <Icon name={name} />
     </span>
+  );
+}
+
+function HeroContextStrip() {
+  return (
+    <div
+      aria-label="CoCalc.ai workspace context cues"
+      role="group"
+      style={{
+        background: alpha(PUBLIC_COLORS.brandDark, 0.42),
+        border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.22)}`,
+        borderRadius: PANEL_RADIUS,
+        maxWidth: 740,
+        padding: 12,
+      }}
+    >
+      <Text
+        strong
+        style={{
+          color: PUBLIC_COLORS.surface,
+          display: "block",
+          marginBottom: 9,
+        }}
+      >
+        Project context kept together
+      </Text>
+      <div
+        style={{
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))",
+        }}
+      >
+        {HERO_CONTEXT_SIGNALS.map((item) => (
+          <div
+            key={item.label}
+            style={{
+              alignItems: "start",
+              background: alpha(PUBLIC_COLORS.surface, 0.12),
+              border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+              borderRadius: PANEL_RADIUS,
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "26px minmax(0, 1fr)",
+              minHeight: 62,
+              padding: "9px 10px",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                alignItems: "center",
+                color: PUBLIC_COLORS.accent,
+                display: "flex",
+                height: 26,
+                justifyContent: "center",
+                width: 26,
+              }}
+            >
+              <Icon name={item.icon} />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <Text
+                strong
+                style={{
+                  color: PUBLIC_COLORS.surface,
+                  display: "block",
+                }}
+              >
+                {item.label}
+              </Text>
+              <Text
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.68),
+                  display: "block",
+                  fontSize: 12,
+                }}
+              >
+                {item.body}
+              </Text>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -818,6 +925,7 @@ function Hero({ config }: { config?: HomeConfig }) {
               </>
             )}
           </Flex>
+          <HeroContextStrip />
         </Flex>
       </div>
     </section>
