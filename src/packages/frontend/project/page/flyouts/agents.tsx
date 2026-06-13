@@ -71,6 +71,7 @@ import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
 import CodexConfigButton from "@cocalc/frontend/chat/codex";
 import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
+import { agentSessionTitle } from "@cocalc/frontend/chat/recent-agent-sessions";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import {
   get_local_storage,
@@ -171,10 +172,7 @@ function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
 }
 
 function normalizedTitle(record: AgentSessionRecord): string {
-  const raw = typeof record.title === "string" ? record.title : "";
-  const plain = html_to_text(raw).replace(/\s+/g, " ").trim();
-  if (plain) return plain;
-  return "Navigator session";
+  return agentSessionTitle(record);
 }
 
 function previousTitle(title?: string): string {

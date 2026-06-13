@@ -3,8 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Modal, Progress, Space } from "antd";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Button, Modal, Progress, Select, Space } from "antd";
+import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
 import { CSS } from "@cocalc/frontend/app-framework";
@@ -16,6 +16,11 @@ import { COLORS } from "@cocalc/util/theme";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
 import { DEFAULT_ASSISTANT_CODEX_MODEL, Options } from "./create-chat";
 import { PopupAgentComposer } from "./popup-agent-composer";
+import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
+import {
+  agentSessionTitle,
+  useRecentAgentSessions,
+} from "@cocalc/frontend/chat/recent-agent-sessions";
 
 const TITLE_BAR_AGENT_LABEL = "Agent";
 
@@ -54,17 +59,38 @@ export default function AgentTitleBarButton({
   const [querying, setQuerying] = useState<boolean>(false);
   const [submitProgress, setSubmitProgress] = useState<number>(0);
   const [command, setCommand] = useState<string>("");
+  const [selectedSessionId, setSelectedSessionId] = useState<string>();
 
   const promptLsKey = `AI-CODEX-ASSISTANT-PROMPT:v1:${project_id}:${path}:${type}`;
+  const sessionLsKey = `AI-CODEX-ASSISTANT-SESSION:v1:${project_id}:${path}:${type}`;
+  const {
+    sessions: recentAgentSessions,
+    loading: loadingAgentSessions,
+    error: recentAgentSessionsError,
+  } = useRecentAgentSessions({
+    project_id,
+    enabled: Boolean(showDialog),
+  });
 
   const canSubmit = useMemo(
     () => command.trim().length > 0 && !querying,
     [command, querying],
   );
+  const selectedAgentSession = useMemo(
+    () =>
+      recentAgentSessions.find(
+        (session) => session.session_id === selectedSessionId,
+      ),
+    [recentAgentSessions, selectedSessionId],
+  );
   const helperText =
     type === "terminal"
-      ? "The agent will continue in the workspace agent thread, and it can inspect and write to this live terminal session."
-      : "The agent will continue the work in the workspace agent thread.";
+      ? selectedAgentSession
+        ? "The agent will continue in the selected session, and it can inspect and write to this live terminal session."
+        : "The agent will continue in the workspace agent thread, and it can inspect and write to this live terminal session."
+      : selectedAgentSession
+        ? "The agent will continue the work in the selected session."
+        : "The agent will continue the work in the workspace agent thread.";
 
   function closeDialog() {
     setShowDialog(false);
@@ -76,7 +102,35 @@ export default function AgentTitleBarButton({
     if (!showDialog) return;
     setError("");
     setCommand(LS.get(promptLsKey) ?? "");
-  }, [showDialog, promptLsKey]);
+    setSelectedSessionId(LS.get<string>(sessionLsKey));
+  }, [showDialog, promptLsKey, sessionLsKey]);
+
+  useEffect(() => {
+    if (!showDialog) return;
+    if (recentAgentSessions.length === 0) {
+      setSelectedSessionId(undefined);
+      return;
+    }
+    const savedSessionId = LS.get<string>(sessionLsKey);
+    const savedSession = savedSessionId
+      ? recentAgentSessions.find(
+          (session) => session.session_id === savedSessionId,
+        )
+      : undefined;
+    if (savedSession) {
+      setSelectedSessionId(savedSession.session_id);
+      return;
+    }
+    setSelectedSessionId((current) => {
+      if (
+        current &&
+        recentAgentSessions.some((session) => session.session_id === current)
+      ) {
+        return current;
+      }
+      return recentAgentSessions[0]?.session_id;
+    });
+  }, [recentAgentSessions, sessionLsKey, showDialog]);
 
   useEffect(() => {
     if (!querying) {
@@ -137,12 +191,16 @@ export default function AgentTitleBarButton({
     }
     submittingRef.current = true;
     try {
+      if (selectedAgentSession) {
+        LS.set(sessionLsKey, selectedAgentSession.session_id);
+      }
       await queryLLM({
         command: resolvedCommand,
         codegen: false,
         allowEmpty: true,
         model: DEFAULT_ASSISTANT_CODEX_MODEL,
         tag: "custom",
+        agentSession: selectedAgentSession,
       });
       closeDialog();
     } finally {
@@ -224,6 +282,39 @@ export default function AgentTitleBarButton({
                 cacheId={`popup-agent:${project_id}:${path}:${type}`}
                 autoFocus
               />
+              {recentAgentSessions.length > 0 ? (
+                <Space
+                  orientation="vertical"
+                  size={4}
+                  style={{ width: "100%" }}
+                >
+                  <div style={{ fontWeight: 500 }}>Recent agent sessions</div>
+                  <Select
+                    value={selectedSessionId}
+                    loading={loadingAgentSessions}
+                    disabled={querying}
+                    style={{ width: "100%" }}
+                    optionLabelProp="title"
+                    onChange={(value) => {
+                      setSelectedSessionId(value);
+                      LS.set(sessionLsKey, value);
+                    }}
+                    options={recentAgentSessions.map((session) => ({
+                      value: session.session_id,
+                      title: agentSessionTitle(session),
+                      label: <AgentSessionOption session={session} />,
+                    }))}
+                  />
+                </Space>
+              ) : null}
+              {recentAgentSessions.length > 0 && recentAgentSessionsError ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  title="Could not load recent agent sessions."
+                  description={recentAgentSessionsError}
+                />
+              ) : null}
               <div style={{ color: COLORS.GRAY_D }}>{helperText}</div>
             </>
           )}
@@ -247,5 +338,41 @@ export default function AgentTitleBarButton({
         </Space>
       </Modal>
     </>
+  );
+}
+
+function AgentSessionOption({
+  session,
+}: {
+  session: AgentSessionRecord;
+}): ReactElement {
+  const title = agentSessionTitle(session);
+  const context =
+    session.working_directory?.trim() || session.chat_path?.trim() || "";
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div
+        style={{
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {title}
+      </div>
+      {context ? (
+        <div
+          style={{
+            color: COLORS.GRAY_D,
+            fontSize: 12,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {context}
+        </div>
+      ) : null}
+    </div>
   );
 }
