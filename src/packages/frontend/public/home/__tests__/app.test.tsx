@@ -295,6 +295,26 @@ describe("PublicHomeApp", () => {
         "Output, snapshots, and TimeTravel keep review nearby.",
       ),
     ).not.toBeNull();
+    expect(
+      within(projectSequence)
+        .getByRole("link", { name: /Capture/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(projectSequence)
+        .getByRole("link", { name: /Run/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(projectSequence)
+        .getByRole("link", { name: /Ask/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(projectSequence)
+        .getByRole("link", { name: /Review/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     const continuityCues = within(projectPreview).getByRole("group", {
       name: "CoCalc.ai continuity cues",
     });

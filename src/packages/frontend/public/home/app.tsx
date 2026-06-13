@@ -288,30 +288,35 @@ const WORKSPACE_PREVIEW_FLOW = [
   {
     accent: COLORS.BLUE_D,
     detail: "Notebooks, code, data, and notes enter the project.",
+    href: "features/compare",
     icon: "files",
     label: "Capture",
   },
   {
     accent: COLORS.RUN,
     detail: "Shells and notebooks work against the same files.",
+    href: "features/terminal",
     icon: "terminal",
     label: "Run",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
     detail: "Codex can use the project record when helping.",
+    href: "features/ai",
     icon: "robot",
     label: "Ask",
   },
   {
     accent: PUBLIC_COLORS.warning,
     detail: "Output, snapshots, and TimeTravel keep review nearby.",
+    href: "features/compare",
     icon: "history",
     label: "Review",
   },
 ] satisfies {
   accent: string;
   detail: string;
+  href: string;
   icon: IconName;
   label: string;
 }[];
@@ -1003,7 +1008,8 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
           }}
         >
           {WORKSPACE_PREVIEW_FLOW.map((item, index) => (
-            <div
+            <a
+              href={appPath(item.href)}
               key={item.label}
               style={{
                 alignItems: "start",
@@ -1013,9 +1019,10 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
                 color: PUBLIC_COLORS.surface,
                 display: "grid",
                 gap: 8,
-                gridTemplateColumns: "30px minmax(0, 1fr)",
+                gridTemplateColumns: "30px minmax(0, 1fr) 14px",
                 minHeight: 112,
                 padding: 10,
+                textDecoration: "none",
               }}
             >
               <span
@@ -1061,7 +1068,15 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
                   {item.detail}
                 </Text>
               </span>
-            </div>
+              <Icon
+                name="arrow-right"
+                style={{
+                  alignSelf: "center",
+                  color: alpha(PUBLIC_COLORS.surface, 0.58),
+                  fontSize: 12,
+                }}
+              />
+            </a>
           ))}
         </div>
       </div>
