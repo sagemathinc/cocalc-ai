@@ -583,6 +583,43 @@ describe("PublicHomeApp", () => {
     expect(
       screen.getByText("Site licensing wraps the path you choose."),
     ).not.toBeNull();
+    const detailRoutes = screen.getByRole("region", {
+      name: "CoCalc.ai controlled detail routes",
+    });
+    expect(
+      within(detailRoutes).getByRole("heading", {
+        name: "Use detail pages for boundary questions.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(detailRoutes)
+        .getByRole("link", { name: /Trust policy/i })
+        .getAttribute("href"),
+    ).toBe("/policies/trust");
+    expect(
+      within(detailRoutes)
+        .getByRole("link", { name: /CoCalc Plus details/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(detailRoutes)
+        .getByRole("link", { name: /Deployment comparison/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(detailRoutes)
+        .getByRole("link", { name: /Support/i })
+        .getAttribute("href"),
+    ).toBe("/support");
+    const hostedTransitionLink = within(detailRoutes).getByRole("link", {
+      name: /Hosted transition questions/i,
+    });
+    expect(hostedTransitionLink.getAttribute("href")).toContain(
+      "/support/new?",
+    );
+    expect(hostedTransitionLink.getAttribute("href")).toContain(
+      "subject=Hosted+transition",
+    );
     expect(
       screen.getByRole("region", { name: "CoCalc.ai final calls to action" }),
     ).not.toBeNull();

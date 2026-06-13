@@ -2059,6 +2059,126 @@ function ProductOptionsSection() {
   );
 }
 
+function DetailRoutesSection() {
+  const routes = [
+    {
+      body: "Use the policy page for trust and compliance references.",
+      href: appPath("policies/trust"),
+      icon: "lock",
+      label: "Trust policy",
+    },
+    {
+      body: "Review local-runtime details on the CoCalc Plus page.",
+      href: appPath("products/cocalc-plus"),
+      icon: "laptop",
+      label: "CoCalc Plus details",
+    },
+    {
+      body: "Compare hosted, local, and customer-operated paths.",
+      href: appPath("products"),
+      icon: "servers",
+      label: "Deployment comparison",
+    },
+    {
+      body: "Use support for scope, onboarding, or account questions.",
+      href: appPath("support"),
+      icon: "support",
+      label: "Support",
+    },
+    {
+      body: "Ask about hosted-service transition planning.",
+      href: supportPurchasePath(
+        "Hosted transition",
+        "I have a question about hosted CoCalc service transition planning.",
+      ),
+      icon: "question-circle",
+      label: "Hosted transition questions",
+    },
+  ] satisfies {
+    body: string;
+    href: string;
+    icon: IconName;
+    label: string;
+  }[];
+
+  return (
+    <section
+      aria-label="CoCalc.ai controlled detail routes"
+      style={{
+        background: PUBLIC_COLORS.surfaceMuted,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `28px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex align="start" justify="space-between" wrap gap={16}>
+        <div style={{ maxWidth: 660 }}>
+          <Eyebrow>Detail routes</Eyebrow>
+          <Title level={2} style={{ margin: "8px 0 10px" }}>
+            Use detail pages for boundary questions.
+          </Title>
+          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+            Boundaries differ by deployment path. Keep trust, support, Plus,
+            deployment, and hosted-service questions on their controlled routes.
+          </Paragraph>
+        </div>
+      </Flex>
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+          marginTop: 20,
+        }}
+      >
+        {routes.map((route) => (
+          <a
+            href={route.href}
+            key={route.label}
+            style={{
+              alignItems: "start",
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              color: "inherit",
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns: "34px minmax(0, 1fr)",
+              minHeight: 104,
+              padding: 14,
+              textDecoration: "none",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                alignItems: "center",
+                background: alpha(PUBLIC_COLORS.brand, 0.08),
+                border: `1px solid ${alpha(PUBLIC_COLORS.brand, 0.2)}`,
+                borderRadius: PANEL_RADIUS,
+                color: PUBLIC_COLORS.brand,
+                display: "flex",
+                height: 34,
+                justifyContent: "center",
+                width: 34,
+              }}
+            >
+              <Icon name={route.icon} />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <Text strong style={{ display: "block" }}>
+                {route.label}
+              </Text>
+              <Text type="secondary">{route.body}</Text>
+            </span>
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
   const news = (initialNews ?? []).slice(0, 3);
   if (news.length === 0) return null;
@@ -2286,6 +2406,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <WorkflowsSection />
       <AudienceSection />
       <ProductOptionsSection />
+      <DetailRoutesSection />
       <NewsSection initialNews={news} />
       <BottomCallout config={config} />
     </PublicPage>
