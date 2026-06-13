@@ -14,6 +14,7 @@ let mockHidden = false;
 let mockSearch = "";
 let mockSelectedHashtags: any = mockEmptyMap;
 let mockEmailVerificationRequired = false;
+let mockActiveTopTab: string | undefined;
 const mockLoadProjectListWindow = jest.fn();
 
 jest.mock("./actions", () => ({}));
@@ -186,6 +187,7 @@ beforeEach(() => {
   mockSearch = "";
   mockSelectedHashtags = mockEmptyMap;
   mockEmailVerificationRequired = false;
+  mockActiveTopTab = undefined;
   mockLoadProjectListWindow.mockClear();
   (globalThis as any).ResizeObserver = class {
     observe() {}
@@ -201,6 +203,7 @@ beforeEach(() => {
       return mockSelectedHashtags;
     if (store === "projects" && key === "project_list_window")
       return mockProjectListWindow;
+    if (store === "page" && key === "active_top_tab") return mockActiveTopTab;
     return undefined;
   });
 });
@@ -399,4 +402,65 @@ test("projects page cancels pending automatic window refresh when the window bec
 
   expect(mockLoadProjectListWindow).not.toHaveBeenCalled();
   jest.useRealTimers();
+});
+
+test("projects page refreshes a dirty backend window when it becomes active", () => {
+  mockVisibleProjects.push("local-project-1", "local-project-2");
+  mockActiveTopTab = "other-tab";
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["stable-backend-project"],
+    loading: false,
+    dirty: true,
+    dirty_count: 1,
+  });
+
+  const { rerender } = render(<ProjectsPage />);
+
+  expect(mockLoadProjectListWindow).not.toHaveBeenCalled();
+
+  mockActiveTopTab = "projects";
+  rerender(<ProjectsPage />);
+
+  expect(mockLoadProjectListWindow).toHaveBeenCalledWith({
+    limit: 200,
+    offset: 0,
+    hidden: false,
+    search: "",
+    sort: "last_edited",
+    force: true,
+  });
+});
+
+test("projects page does not repeatedly refresh a dirty backend window while active", () => {
+  mockActiveTopTab = "projects";
+  mockProjectListWindow = ImmutableMap({
+    key: JSON.stringify({
+      limit: 200,
+      offset: 0,
+      hidden: false,
+      search: "",
+      sort: "last_edited",
+    }),
+    project_ids: ["stable-backend-project"],
+    loading: false,
+    dirty: true,
+    dirty_count: 1,
+  });
+
+  const { rerender } = render(<ProjectsPage />);
+
+  expect(mockLoadProjectListWindow).toHaveBeenCalledTimes(1);
+  mockLoadProjectListWindow.mockClear();
+
+  mockProjectListWindow = mockProjectListWindow.set("dirty_count", 2);
+  rerender(<ProjectsPage />);
+
+  expect(mockLoadProjectListWindow).not.toHaveBeenCalled();
 });

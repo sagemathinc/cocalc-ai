@@ -92,6 +92,7 @@ export const ProjectsPage: React.FC = () => {
   const project_map = useTypedRedux("projects", "project_map");
   const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
+  const activeTopTab = useTypedRedux("page", "active_top_tab");
 
   const all_projects: string[] = useMemo(
     () => project_map?.keySeq().toJS() ?? [],
@@ -216,11 +217,29 @@ export const ProjectsPage: React.FC = () => {
   const backendWindowDirtyCount = Number(
     readMaybeImmutable(project_list_window, "dirty_count") ?? 0,
   );
+  const refreshBackendWindow = React.useCallback(() => {
+    void redux
+      .getActions("projects")
+      ?.loadProjectListWindowForCurrentAccount?.({
+        ...backendWindowQuery,
+        force: true,
+      });
+  }, [backendWindowQuery]);
 
   const visibleProjectionRepairKey = useMemo(
     () => visible_projects.slice(0, VISIBLE_WINDOW_REPAIR_LIMIT).join("\n"),
     [visible_projects],
   );
+
+  const previousActiveTopTabRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const wasProjectsPage = previousActiveTopTabRef.current === "projects";
+    const isProjectsPage = activeTopTab === "projects";
+    previousActiveTopTabRef.current = activeTopTab;
+    if (backendWindowDirty && isProjectsPage && !wasProjectsPage) {
+      refreshBackendWindow();
+    }
+  }, [activeTopTab, backendWindowDirty, refreshBackendWindow]);
 
   useEffect(() => {
     const project_ids =
@@ -276,15 +295,6 @@ export const ProjectsPage: React.FC = () => {
     backendWindowQuery,
     project_list_window,
   ]);
-
-  function refreshBackendWindow() {
-    void redux
-      .getActions("projects")
-      ?.loadProjectListWindowForCurrentAccount?.({
-        ...backendWindowQuery,
-        force: true,
-      });
-  }
 
   useEffect(() => {
     const visible = new Set(visible_projects);
