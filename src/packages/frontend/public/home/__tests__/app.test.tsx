@@ -6,7 +6,6 @@ import PublicHomeApp from "../app";
 
 const originalFetch = global.fetch;
 const BLOCKED_HOMEPAGE_CLAIM_PATTERNS = [
-  /CoCalc Star/i,
   /Install CoCalc Star/i,
   /fast team starts/i,
   /quickest start/i,
@@ -393,10 +392,14 @@ describe("PublicHomeApp", () => {
     expect(screen.getAllByText("Best fit").length).toBeGreaterThan(0);
     expect(screen.getByText("Run by CoCalc")).not.toBeNull();
     expect(screen.getByText("Run by you")).not.toBeNull();
+    expect(screen.getByText("Run by VM owner")).not.toBeNull();
     expect(screen.getByText("Run by your team")).not.toBeNull();
     expect(screen.getByText("Run with CoCalc")).not.toBeNull();
     expect(
       screen.getByText("Managed accounts, hosted projects, and team access"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("A lab, class, GPU box, agent sandbox, or small team"),
     ).not.toBeNull();
     expect(
       screen.getByText(
@@ -404,12 +407,24 @@ describe("PublicHomeApp", () => {
       ),
     ).not.toBeNull();
     expect(screen.getByText("Start hosted")).not.toBeNull();
+    expect(screen.getByText("Review Star")).not.toBeNull();
     expect(screen.getByText("Review Launchpad")).not.toBeNull();
     expect(
       screen.getByText("Site licensing wraps the path you choose."),
     ).not.toBeNull();
     expect(screen.getByText(/direct self-service path/i)).not.toBeNull();
     expect(screen.getByText("Local runtime for one user.")).not.toBeNull();
+    expect(screen.getByText("Single public VM appliance.")).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Run CoCalc Star" })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-star");
+    expect(
+      screen
+        .getByRole("link", { name: /CoCalc Star: Public VM appliance/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-star");
     expect(
       screen
         .getByRole("link", { name: /CoCalc Launchpad/i })

@@ -14,6 +14,7 @@ import {
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { COLORS } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
 import {
@@ -89,7 +90,7 @@ const FEATURE_INDEX_PRIORITY = [
 
 const FEATURE_GROUPS = [
   {
-    accent: "#2f6fda",
+    accent: COLORS.BLUE_D,
     description:
       "Notebooks, papers, whiteboards, slides, and technical writing in one collaborative project.",
     icon: "jupyter",
@@ -97,7 +98,7 @@ const FEATURE_GROUPS = [
     title: "Documents",
   },
   {
-    accent: "#096dd9",
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
     description:
       "A real Linux environment with terminals, language stacks, graphical apps, and installable software.",
     icon: "terminal",
@@ -113,7 +114,7 @@ const FEATURE_GROUPS = [
     title: "Compute",
   },
   {
-    accent: "#7c3aed",
+    accent: COLORS.AI_ASSISTANT_FONT,
     description:
       "Codex and AI assistance where files, notebooks, terminals, and chat already live.",
     icon: "robot",
@@ -121,7 +122,7 @@ const FEATURE_GROUPS = [
     title: "AI and automation",
   },
   {
-    accent: "#389e0d",
+    accent: COLORS.RUN,
     description:
       "Course workflows, grading, shared environments, and collaborative help for technical classes.",
     icon: "graduation-cap",
@@ -131,26 +132,89 @@ const FEATURE_GROUPS = [
 ] as const;
 
 const FEATURE_META = {
-  ai: { accent: "#7c3aed", icon: "robot", label: "Agents" },
-  api: { accent: "#096dd9", icon: "api", label: "API" },
-  compare: { accent: "#2f6fda", icon: "swap", label: "Positioning" },
+  ai: { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot", label: "Agents" },
+  api: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "api", label: "API" },
+  compare: { accent: COLORS.BLUE_D, icon: "swap", label: "Positioning" },
   "jupyter-notebook": {
-    accent: "#2f6fda",
+    accent: COLORS.BLUE_D,
     icon: "jupyter",
     label: "Notebook",
   },
-  julia: { accent: "#9558b2", icon: "julia", label: "Language" },
-  "latex-editor": { accent: "#ad6800", icon: "tex", label: "Writing" },
-  linux: { accent: "#096dd9", icon: "linux", label: "Environment" },
-  octave: { accent: "#d4380d", icon: "octave", label: "Language" },
-  python: { accent: "#2f6fda", icon: "python", label: "Language" },
-  "r-statistical-software": { accent: "#386cb0", icon: "r", label: "Stats" },
-  sage: { accent: "#389e0d", icon: "sagemath", label: "Math" },
-  slides: { accent: "#d46b08", icon: "slides", label: "Present" },
-  teaching: { accent: "#389e0d", icon: "graduation-cap", label: "Courses" },
-  terminal: { accent: "#096dd9", icon: "terminal", label: "Shell" },
-  whiteboard: { accent: "#d4380d", icon: "layout", label: "Canvas" },
+  julia: { accent: COLORS.BRWN, icon: "julia", label: "Language" },
+  "latex-editor": { accent: COLORS.YELL_D, icon: "tex", label: "Writing" },
+  linux: {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    icon: "linux",
+    label: "Environment",
+  },
+  octave: { accent: COLORS.FG_RED, icon: "octave", label: "Language" },
+  python: { accent: COLORS.BLUE_D, icon: "python", label: "Language" },
+  "r-statistical-software": {
+    accent: COLORS.BLUE_DD,
+    icon: "r",
+    label: "Stats",
+  },
+  sage: { accent: COLORS.RUN, icon: "sagemath", label: "Math" },
+  slides: { accent: COLORS.BG_WARNING, icon: "slides", label: "Present" },
+  teaching: { accent: COLORS.RUN, icon: "graduation-cap", label: "Courses" },
+  terminal: {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    icon: "terminal",
+    label: "Shell",
+  },
+  whiteboard: { accent: COLORS.FG_RED, icon: "layout", label: "Canvas" },
 } satisfies Record<string, { accent: string; icon: IconName; label: string }>;
+
+const FEATURE_STARTERS = [
+  {
+    body: "Notebook-first computation with files, output, and review history nearby.",
+    icon: "jupyter",
+    slug: "jupyter-notebook",
+    title: "Notebooks",
+  },
+  {
+    body: "A browser Linux shell for scripts, packages, services, and debugging.",
+    icon: "terminal",
+    slug: "terminal",
+    title: "Terminals",
+  },
+  {
+    body: "Codex agent work in the same project context your team uses.",
+    icon: "robot",
+    slug: "ai",
+    title: "AI agents",
+  },
+  {
+    body: "Files, collaborators, snapshots, and product paths as one workspace model.",
+    icon: "project-outlined",
+    slug: "compare",
+    title: "Projects",
+  },
+] satisfies {
+  body: string;
+  icon: IconName;
+  slug: string;
+  title: string;
+}[];
+
+const FEATURE_PANEL_RADIUS = 8;
+
+function alpha(hexColor: string, opacity: number): string {
+  if (hexColor === COLORS.TOP_BAR.ACTIVE) {
+    return `rgba(255, 255, 255, ${opacity})`;
+  }
+  const hex = hexColor.replace("#", "");
+  if (hex.length !== 6) return hexColor;
+  const red = parseInt(hex.slice(0, 2), 16);
+  const green = parseInt(hex.slice(2, 4), 16);
+  const blue = parseInt(hex.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
+}
+
+const FEATURE_PANEL_SHADOW = `0 14px 34px ${alpha(
+  PUBLIC_COLORS.heading,
+  0.07,
+)}`;
 
 function featureMeta(slug: string) {
   return (
@@ -213,15 +277,15 @@ function FeatureLinkCard({ page }: { page: FeaturePage }) {
     <a
       href={featurePath(page.slug)}
       style={{
-        background: "#fff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 22,
-        boxShadow: "0 14px 38px rgba(33, 49, 57, 0.07)",
+        borderRadius: FEATURE_PANEL_RADIUS,
+        boxShadow: FEATURE_PANEL_SHADOW,
         color: "inherit",
         display: "block",
         height: "100%",
-        minHeight: 188,
-        padding: 20,
+        minHeight: 168,
+        padding: 18,
         textDecoration: "none",
       }}
     >
@@ -232,13 +296,13 @@ function FeatureLinkCard({ page }: { page: FeaturePage }) {
               alignItems: "center",
               background: `${meta.accent}14`,
               border: `1px solid ${meta.accent}33`,
-              borderRadius: 16,
+              borderRadius: FEATURE_PANEL_RADIUS,
               color: meta.accent,
               display: "flex",
-              fontSize: 24,
-              height: 50,
+              fontSize: 22,
+              height: 44,
               justifyContent: "center",
-              width: 50,
+              width: 44,
             }}
           >
             <Icon name={meta.icon} />
@@ -279,27 +343,28 @@ function CapabilityCard({
   return (
     <div
       style={{
-        background: "#fff",
+        background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 24,
-        boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
-        padding: 24,
+        borderRadius: FEATURE_PANEL_RADIUS,
+        boxShadow: FEATURE_PANEL_SHADOW,
+        height: "100%",
+        padding: 20,
       }}
     >
       <Flex gap={14}>
         <div
           style={{
             alignItems: "center",
-            background: "#eef5ff",
+            background: PUBLIC_COLORS.surfaceMuted,
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 16,
+            borderRadius: FEATURE_PANEL_RADIUS,
             color: PUBLIC_COLORS.brand,
             display: "flex",
             flex: "0 0 auto",
             fontSize: 24,
-            height: 52,
+            height: 48,
             justifyContent: "center",
-            width: 52,
+            width: 48,
           }}
         >
           <Icon name={icon} />
@@ -333,11 +398,10 @@ function FeatureGroupSection({
         <Col lg={6} xs={24}>
           <div
             style={{
-              background:
-                "linear-gradient(145deg, #ffffff 0%, #f7fbff 58%, #fff8e8 100%)",
+              background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 100%)`,
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 28,
-              boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
+              borderRadius: FEATURE_PANEL_RADIUS,
+              boxShadow: FEATURE_PANEL_SHADOW,
               padding: 24,
             }}
           >
@@ -347,13 +411,13 @@ function FeatureGroupSection({
                   alignItems: "center",
                   background: `${group.accent}14`,
                   border: `1px solid ${group.accent}33`,
-                  borderRadius: 18,
+                  borderRadius: FEATURE_PANEL_RADIUS,
                   color: group.accent,
                   display: "flex",
-                  fontSize: 28,
-                  height: 58,
+                  fontSize: 26,
+                  height: 52,
                   justifyContent: "center",
-                  width: 58,
+                  width: 52,
                 }}
               >
                 <Icon name={group.icon} />
@@ -421,7 +485,7 @@ function FeaturesIndex() {
                   margin: 0,
                 }}
               >
-                Everything starts in a project.
+                The CoCalc workspace model.
               </Title>
               <Paragraph
                 style={{
@@ -430,10 +494,9 @@ function FeaturesIndex() {
                   margin: 0,
                 }}
               >
-                CoCalc features make the most sense when viewed through the
-                shared workspace story: documents, compute, AI agents, teaching,
-                and platform operations share the same files, collaborators,
-                history, and project environment.
+                CoCalc features make the most sense as one project workspace:
+                documents, compute, AI agents, teaching, and operations share
+                the same files, collaborators, history, and environment.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button href={featurePath("compare")} type="primary">
@@ -455,18 +518,92 @@ function FeaturesIndex() {
         </Row>
       </section>
 
+      <section aria-label="CoCalc feature starting points">
+        <Flex align="end" justify="space-between" wrap gap={14}>
+          <div>
+            <Text
+              strong
+              style={{
+                color: PUBLIC_COLORS.brand,
+                display: "block",
+                fontSize: 12,
+                textTransform: "uppercase",
+              }}
+            >
+              Start with
+            </Text>
+            <Title level={2} style={{ margin: "8px 0 0" }}>
+              Choose the workflow you recognize.
+            </Title>
+          </div>
+          <Button href={featurePath("compare")}>Open comparison</Button>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            marginTop: 18,
+          }}
+        >
+          {FEATURE_STARTERS.map((starter) => {
+            const meta = featureMeta(starter.slug);
+            return (
+              <a
+                href={featurePath(starter.slug)}
+                key={starter.slug}
+                style={{
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: FEATURE_PANEL_RADIUS,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 10,
+                  gridTemplateColumns: "42px minmax(0, 1fr)",
+                  minHeight: 124,
+                  padding: 16,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  style={{
+                    alignItems: "center",
+                    background: `${meta.accent}12`,
+                    border: `1px solid ${meta.accent}2e`,
+                    borderRadius: FEATURE_PANEL_RADIUS,
+                    color: meta.accent,
+                    display: "flex",
+                    fontSize: 20,
+                    height: 42,
+                    justifyContent: "center",
+                    width: 42,
+                  }}
+                >
+                  <Icon name={starter.icon} />
+                </span>
+                <span>
+                  <Text strong style={{ display: "block" }}>
+                    {starter.title}
+                  </Text>
+                  <Text type="secondary">{starter.body}</Text>
+                </span>
+              </a>
+            );
+          })}
+        </div>
+      </section>
+
       <section>
         <Row gutter={[18, 18]}>
           <Col lg={8} xs={24}>
             <div
               style={{
-                background:
-                  "linear-gradient(145deg, #f4f9ff 0%, #ffffff 58%, #fff8e8 100%)",
+                background: `linear-gradient(145deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 100%)`,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 28,
-                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
+                borderRadius: FEATURE_PANEL_RADIUS,
+                boxShadow: FEATURE_PANEL_SHADOW,
                 height: "100%",
-                padding: 26,
+                padding: 22,
               }}
             >
               <Flex vertical gap={18}>
@@ -474,15 +611,15 @@ function FeaturesIndex() {
                   <div
                     style={{
                       alignItems: "center",
-                      background: "#e9f2ff",
+                      background: PUBLIC_COLORS.surfaceMuted,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 18,
+                      borderRadius: FEATURE_PANEL_RADIUS,
                       color: PUBLIC_COLORS.brand,
                       display: "flex",
-                      fontSize: 28,
-                      height: 60,
+                      fontSize: 24,
+                      height: 50,
                       justifyContent: "center",
-                      width: 60,
+                      width: 50,
                     }}
                   >
                     <Icon name="project-outlined" />
@@ -572,9 +709,9 @@ function FeaturesIndex() {
                 key={page.slug}
                 style={{
                   alignItems: "center",
-                  background: "#fff",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 18,
+                  borderRadius: FEATURE_PANEL_RADIUS,
                   color: "inherit",
                   display: "flex",
                   gap: 12,
@@ -586,7 +723,7 @@ function FeaturesIndex() {
                   style={{
                     alignItems: "center",
                     background: `${meta.accent}12`,
-                    borderRadius: 12,
+                    borderRadius: FEATURE_PANEL_RADIUS,
                     color: meta.accent,
                     display: "flex",
                     flex: "0 0 auto",

@@ -100,17 +100,17 @@ const HOME_PAGE_CSS = `
 `;
 const HERO_OUTCOMES = [
   {
-    body: "Notebooks, terminals, files, chat, and AI live together.",
+    body: "Notebooks, terminals, files, chat, and AI stay together.",
     icon: "project-outlined",
     title: "One place to work",
   },
   {
-    body: "Use Linux, packages, services, and collaborative notebooks in the browser.",
+    body: "Linux, packages, services, and notebooks run in the browser.",
     icon: "terminal",
     title: "Real compute",
   },
   {
-    body: "History and snapshots make work easier to review or recover.",
+    body: "History and snapshots keep work reviewable and recoverable.",
     icon: "disk-snapshot",
     title: "A lasting record",
   },
@@ -704,8 +704,8 @@ function Hero({ config }: { config?: HomeConfig }) {
                 maxWidth: 640,
               }}
             >
-              A technical workspace where the notebook, shell, source tree,
-              chat, and Codex thread stay in the same recoverable project.
+              CoCalc.ai keeps notebooks, terminals, files, documents, chat, and
+              Codex agent work together in one persistent workspace.
             </Paragraph>
           </div>
           <div
@@ -877,11 +877,11 @@ function WorkspaceContextSection({
 
 function WorkflowsSection() {
   const workflowSummaries = {
-    ai: "Ask Codex to work from project files, notebook state, terminal output, and review notes.",
+    ai: "Ask Codex to work from project files, terminal output, and review notes.",
     "jupyter-notebook":
-      "Run computational notebooks with shared output, history, and nearby project tools.",
+      "Run notebooks with shared output, history, and nearby project tools.",
     terminal:
-      "Use a browser-based Linux shell for scripts, packages, services, and debugging.",
+      "Use browser Linux for scripts, packages, services, and debugging.",
   } satisfies Record<(typeof PRIMARY_WORKFLOWS)[number], string>;
   const workflowMeta = {
     ai: { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot", label: "AI agents" },
@@ -915,9 +915,8 @@ function WorkflowsSection() {
             Start where the work begins.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Open a notebook, a shell, or an agent thread without moving the work
-            into a separate system. Writing, teaching, whiteboards, and more
-            stay close when the workflow expands.
+            Open a notebook, shell, or agent thread without moving the work into
+            another system. Writing, teaching, and whiteboards stay nearby.
           </Paragraph>
         </div>
         <Button
@@ -949,8 +948,8 @@ function WorkflowsSection() {
                   borderRadius: PANEL_RADIUS,
                   boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
                   color: "inherit",
-                  minHeight: 178,
-                  padding: 18,
+                  minHeight: 160,
+                  padding: 16,
                   textDecoration: "none",
                 }}
               >
@@ -964,10 +963,10 @@ function WorkflowsSection() {
                         borderRadius: PANEL_RADIUS,
                         color: accent,
                         display: "flex",
-                        fontSize: 24,
-                        height: 50,
+                        fontSize: 22,
+                        height: 44,
                         justifyContent: "center",
-                        width: 50,
+                        width: 44,
                       }}
                     >
                       <Icon name={icon} />
@@ -1171,6 +1170,15 @@ function ProductOptionsSection() {
       title: "CoCalc Plus",
     },
     {
+      bestFor: "A lab, class, GPU box, agent sandbox, or small team",
+      href: appPath("products/cocalc-star"),
+      icon: "star",
+      nextStep: "Review Star",
+      operator: "Run by VM owner",
+      route: "Public VM appliance",
+      title: "CoCalc Star",
+    },
+    {
       bestFor: "A lightweight private deployment with customer control",
       href: appPath("products/cocalc-launchpad"),
       icon: "servers",
@@ -1314,16 +1322,16 @@ function ProductOptionsSection() {
                         style={{
                           alignItems: "center",
                           background:
-                            index === 2
+                            index === 3
                               ? PUBLIC_COLORS.warningTint
                               : PUBLIC_COLORS.surfaceMuted,
                           border:
-                            index === 2
+                            index === 3
                               ? `1px solid ${PUBLIC_COLORS.warningBorder}`
                               : `1px solid ${PUBLIC_COLORS.border}`,
                           borderRadius: PANEL_RADIUS,
                           color:
-                            index === 2
+                            index === 3
                               ? PUBLIC_COLORS.warning
                               : PUBLIC_COLORS.brand,
                           display: "flex",
@@ -1383,7 +1391,7 @@ function ProductOptionsSection() {
                         style={{
                           alignSelf: "center",
                           color:
-                            index === 2
+                            index === 3
                               ? PUBLIC_COLORS.warning
                               : PUBLIC_COLORS.brand,
                           justifySelf: "start",
@@ -1397,7 +1405,7 @@ function ProductOptionsSection() {
                       style={{
                         alignSelf: "center",
                         color:
-                          index === 2
+                          index === 3
                             ? PUBLIC_COLORS.warning
                             : PUBLIC_COLORS.brand,
                         justifySelf: "end",
@@ -1542,6 +1550,13 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
       icon: "laptop",
       title: "CoCalc Plus",
     },
+    {
+      body: "Single public VM appliance.",
+      button: "Run CoCalc Star",
+      href: appPath("products/cocalc-star"),
+      icon: "star",
+      title: "CoCalc Star",
+    },
   ] satisfies {
     body: string;
     button: string;
@@ -1576,10 +1591,10 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 maxWidth: 760,
               }}
             >
-              Use CoCalc.ai or CoCalc Plus when you want a direct self-service
-              path. Compare deployment options and site licensing after
-              organizational control, procurement, or private operation becomes
-              the next question.
+              Use CoCalc.ai, CoCalc Plus, or CoCalc Star when you want a direct
+              self-service path. Compare deployment options and site licensing
+              when organizational control, procurement, or private operation
+              becomes the next question.
             </Paragraph>
           </Col>
         </Row>
@@ -1643,8 +1658,8 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
         </div>
         <Flex align="center" justify="space-between" wrap gap={14}>
           <Text type="secondary">
-            Need private deployment or site licensing? Move from the
-            self-service entry points to the product chooser.
+            Need private deployment beyond one VM or site licensing? Move from
+            the self-service entry points to the product chooser.
           </Text>
           <Flex gap={10} wrap>
             <Button

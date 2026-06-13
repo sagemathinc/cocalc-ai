@@ -42,7 +42,7 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Everything starts in a project.",
+        name: "The CoCalc workspace model.",
       }),
     ).not.toBeNull();
     expect(
@@ -50,6 +50,29 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(screen.queryByText(/Launchpad features make/)).toBeNull();
     expect(screen.getByText("Durable collaborative projects")).not.toBeNull();
+    const startingPoints = screen.getByRole("region", {
+      name: "CoCalc feature starting points",
+    });
+    expect(
+      within(startingPoints).getByRole("heading", {
+        name: "Choose the workflow you recognize.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(startingPoints)
+        .getByRole("link", { name: /Terminals/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(startingPoints)
+        .getByRole("link", { name: /AI agents/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(startingPoints)
+        .getByRole("link", { name: /Projects/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     expect(screen.getByText("Documents")).not.toBeNull();
     expect(screen.getByText("Compute")).not.toBeNull();
     expect(screen.getByText("AI and automation")).not.toBeNull();
