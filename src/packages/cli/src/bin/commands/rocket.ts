@@ -63,6 +63,7 @@ type DeployOptions = {
   cli?: string;
   script?: string;
   restartHubWorkers?: boolean;
+  restartSharedServices?: boolean;
   keepRemoteArtifacts?: boolean;
   cleanupLocalBundle?: boolean;
   allowDirty?: boolean;
@@ -225,6 +226,11 @@ export function registerRocketCommand(
     .option(
       "--restart-hub-workers",
       "restart hub workers one at a time for static deploys",
+      false,
+    )
+    .option(
+      "--restart-shared-services",
+      "restart bay router/persist/peer-health during bay deploys",
       false,
     )
     .option("--keep-remote-artifacts", "do not delete remote /tmp artifacts")
@@ -486,6 +492,9 @@ function buildDeployPlan({
   }
   if (opts.keepRemoteArtifacts) {
     args.push("--keep-remote-artifacts");
+  }
+  if (opts.restartSharedServices) {
+    args.push("--restart-shared-services");
   }
   if (opts.cleanupLocalBundle) {
     args.push("--cleanup-local-bundle");

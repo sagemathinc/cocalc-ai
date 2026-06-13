@@ -1,7 +1,7 @@
 [Unit]
-Description=CoCalc Bay Cloudflare Tunnel
-After=network-online.target cocalc-bay-frontdoor.service
-Wants=cocalc-bay-frontdoor.service
+Description=CoCalc Bay Local Front Door
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=exec
@@ -13,14 +13,13 @@ EnvironmentFile=-/etc/cocalc/bay-overlay.env
 EnvironmentFile=-/etc/cocalc/bay-topology.env
 EnvironmentFile=-/etc/cocalc/bay-secrets.env
 Environment=COCALC_REQUIRE_SITE_MASTER_KEY=1
-Environment=COCALC_BAY_CLOUDFLARED_SYSTEMD=1
 LoadCredential=site-master-key:/etc/cocalc/site-master-key
-ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight cloudflared
-ExecStart=/opt/cocalc/bay/current/bin/bay-cloudflared
-Restart=on-failure
-RestartSec=5
-TimeoutStartSec=120
-TimeoutStopSec=20
+ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight frontdoor
+ExecStart=/opt/cocalc/bay/current/bin/bay-frontdoor
+Restart=always
+RestartSec=2
+TimeoutStartSec=30
+TimeoutStopSec=10
 StandardOutput=journal
 StandardError=journal
 

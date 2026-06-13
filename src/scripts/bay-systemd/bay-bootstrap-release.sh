@@ -718,6 +718,11 @@ COCALC_BAY_HUB_BIND_HOST=127.0.0.1
 COCALC_BAY_HUB_BASE_PORT=${HUB_BASE_PORT}
 COCALC_BAY_HUB_HEALTH_PATH=/alive
 
+COCALC_BAY_FRONTDOOR_HOST=127.0.0.1
+COCALC_BAY_FRONTDOOR_PORT=9400
+COCALC_BAY_FRONTDOOR_HEALTH_PATH=/_cocalc/frontdoor/healthz
+COCALC_BAY_FRONTDOOR_DRAIN_FILE=${BAY_ROOT}/state/frontdoor-drain-workers
+
 COCALC_BAY_MIN_HEALTHY_WORKERS=1
 COCALC_BAY_HEALTH_TIMEOUT_S=15
 COCALC_BAY_MIN_FREE_MB=1024
@@ -800,6 +805,7 @@ EOF
   fi
 
   run systemctl enable cocalc-bay.target
+  run systemctl enable cocalc-bay-frontdoor.service
   run systemctl enable cocalc-bay-cloudflared.service
   if [[ "$ENABLE_WORKERS" -eq 1 ]]; then
     for worker_id in $(seq 1 "$WORKER_COUNT"); do
@@ -810,6 +816,8 @@ EOF
   if [[ "$START_BAY" -eq 1 ]]; then
     validate_site_master_key
     run systemctl start cocalc-bay.target
+    run systemctl start cocalc-bay-frontdoor.service
+    run systemctl start cocalc-bay-cloudflared.service
   fi
   prune_old_releases
 

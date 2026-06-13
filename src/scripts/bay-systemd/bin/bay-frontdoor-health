@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+if ! wait_for_http_check "$(frontdoor_url)" "frontdoor"; then
+  exit 1
+fi
+
+bay_log "frontdoor healthy"

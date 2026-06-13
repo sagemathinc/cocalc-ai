@@ -37,6 +37,10 @@ load_bay_env
 : "${COCALC_BAY_HUB_BIND_HOST:=127.0.0.1}"
 : "${COCALC_BAY_HUB_BASE_PORT:=9300}"
 : "${COCALC_BAY_HUB_HEALTH_PATH:=/alive}"
+: "${COCALC_BAY_FRONTDOOR_HOST:=127.0.0.1}"
+: "${COCALC_BAY_FRONTDOOR_PORT:=9400}"
+: "${COCALC_BAY_FRONTDOOR_HEALTH_PATH:=/_cocalc/frontdoor/healthz}"
+: "${COCALC_BAY_FRONTDOOR_DRAIN_FILE:=${COCALC_BAY_STATE_DIR}/frontdoor-drain-workers}"
 : "${COCALC_BAY_PEER_HEALTH_HOST:=127.0.0.1}"
 : "${COCALC_BAY_PEER_HEALTH_PORT:=9402}"
 : "${COCALC_BAY_PEER_HEALTH_PATH:=/peer-health}"
@@ -142,6 +146,13 @@ worker_url() {
     "$COCALC_BAY_HUB_BIND_HOST" \
     "$(worker_port "$worker_id")" \
     "$COCALC_BAY_HUB_HEALTH_PATH"
+}
+
+frontdoor_url() {
+  printf 'http://%s:%s%s' \
+    "$COCALC_BAY_FRONTDOOR_HOST" \
+    "$COCALC_BAY_FRONTDOOR_PORT" \
+    "$COCALC_BAY_FRONTDOOR_HEALTH_PATH"
 }
 
 persist_url() {

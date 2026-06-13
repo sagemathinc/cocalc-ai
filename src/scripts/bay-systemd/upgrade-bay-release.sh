@@ -12,6 +12,7 @@ BUILD_BUNDLE=0
 BUILD_HOST_SOFTWARE_BUNDLE=0
 STATIC_ONLY=0
 RESTART_HUB_WORKERS=0
+RESTART_SHARED_SERVICES=0
 API_URL=""
 PUBLIC_URL=""
 BAY_ID="bay-0"
@@ -51,7 +52,7 @@ optionally upgrade all online project hosts through the site's CLI API.
 This is an operational wrapper around the proven manual lifecycle:
   1. copy bay-systemd scaffold and runtime tarball to the VM
   2. stage a versioned release with bay-bootstrap-release.sh
-  3. restart bay services and run bay-health
+  3. run migrations, roll hub workers, and run bay-health
   4. run cocalc host upgrade --all-online --wait
   5. verify project_hosts software/rollout state
   6. remove temporary auth/session and upload artifacts
@@ -97,6 +98,8 @@ Options:
   --cli <path>                local cocalc CLI path
   --report-dir <dir>          write JSON/text reports here
   --skip-host-upgrade         only upgrade bay services
+  --restart-shared-services   restart router/persist/peer-health during bay
+                              deploy; default only rolls hub workers
   --keep-remote-artifacts     leave uploaded /tmp artifacts on the VM
   --cleanup-local-bundle      remove the local bundle after upload
   -h, --help                  show help
@@ -173,6 +176,8 @@ parse_args() {
         STATIC_ONLY=1; shift ;;
       --restart-hub-workers)
         RESTART_HUB_WORKERS=1; shift ;;
+      --restart-shared-services)
+        RESTART_SHARED_SERVICES=1; shift ;;
       --api)
         API_URL="$2"; shift 2 ;;
       --public-url)
@@ -433,7 +438,7 @@ restart_and_health_check() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     if [[ "$RESTART_HUB_WORKERS" -eq 0 ]]; then
       log "Run health checks without restarting hub workers"
-      remote_exec "sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
+      remote_exec "sudo systemctl start cocalc-bay-frontdoor.service && sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
         | tee "${REPORT_DIR}/bay-health.txt"
       return 0
     fi
@@ -442,26 +447,69 @@ restart_and_health_check() {
 set -euo pipefail
 source /etc/cocalc/bay-workers.env
 systemctl daemon-reload
+systemctl start cocalc-bay-frontdoor.service
+roll_worker() {
+  local worker_id="$1"
+  /opt/cocalc/bay/current/bin/bay-frontdoor-drain "$worker_id"
+  if systemctl restart "cocalc-bay-hub@${worker_id}.service" \
+    && /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"; then
+    /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id"
+    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    return 0
+  fi
+  local status=$?
+  /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id" || true
+  return "$status"
+}
 for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
-  systemctl restart "cocalc-bay-hub@${worker_id}.service"
-  /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"
+  roll_worker "$worker_id"
 done
 /opt/cocalc/bay/current/bin/bay-status
 /opt/cocalc/bay/current/bin/bay-health
 EOF
   else
-    log "Restart bay services and run health checks"
-    remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+    log "Run migrations, roll hub workers, and run health checks"
+    remote_exec "sudo env RESTART_SHARED_SERVICES=$(q "$RESTART_SHARED_SERVICES") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
 set -euo pipefail
 source /etc/cocalc/bay-workers.env
 systemctl daemon-reload
-systemctl restart \
-  cocalc-bay-postgres.service \
-  cocalc-bay-migrations.service \
-  cocalc-bay-conat-router.service \
-  cocalc-bay-conat-persist.service
+systemctl start cocalc-bay.target
+systemctl start cocalc-bay-frontdoor.service
+
+credential_dir="$(mktemp -d /run/cocalc-bay-deploy-credentials.XXXXXX)"
+cleanup() {
+  rm -rf "$credential_dir"
+}
+trap cleanup EXIT
+install -o "$BAY_USER" -g "$BAY_USER" -m 0700 -d "$credential_dir"
+install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
+  /etc/cocalc/site-master-key "$credential_dir/site-master-key"
+runuser -u "$BAY_USER" -- env \
+  CREDENTIALS_DIRECTORY="$credential_dir" \
+  COCALC_REQUIRE_SITE_MASTER_KEY=1 \
+  /opt/cocalc/bay/current/bin/bay-migrate
+
+if [[ "$RESTART_SHARED_SERVICES" -eq 1 ]]; then
+  systemctl restart cocalc-bay-conat-router.service
+  systemctl restart cocalc-bay-conat-persist.service
+  systemctl restart cocalc-bay-peer-health.service
+fi
+
+roll_worker() {
+  local worker_id="$1"
+  /opt/cocalc/bay/current/bin/bay-frontdoor-drain "$worker_id"
+  if systemctl restart "cocalc-bay-hub@${worker_id}.service" \
+    && /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"; then
+    /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id"
+    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    return 0
+  fi
+  local status=$?
+  /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id" || true
+  return "$status"
+}
 for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
-  systemctl restart "cocalc-bay-hub@${worker_id}.service"
+  roll_worker "$worker_id"
 done
 /opt/cocalc/bay/current/bin/bay-status
 /opt/cocalc/bay/current/bin/bay-health
@@ -694,6 +742,7 @@ static_only=${STATIC_ONLY}
 bundle=${BUNDLE_PATH}
 host_software_bundle=${HOST_SOFTWARE_BUNDLE_PATH}
 worker_count_override=${WORKER_COUNT}
+restart_shared_services=${RESTART_SHARED_SERVICES}
 report_dir=${REPORT_DIR}
 EOF
 
