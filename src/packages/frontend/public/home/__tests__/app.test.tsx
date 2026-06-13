@@ -5,6 +5,45 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import PublicHomeApp from "../app";
 
 const originalFetch = global.fetch;
+const BLOCKED_HOMEPAGE_CLAIM_PATTERNS = [
+  /CoCalc Star/i,
+  /Install CoCalc Star/i,
+  /fast team starts/i,
+  /quickest start/i,
+  /Free local runtime/i,
+  /self-service team starts/i,
+  /Pricing and licensing/i,
+  /Operational proof/i,
+  /production private cloud/i,
+  /production-ready/i,
+  /production readiness/i,
+  /multi-bay/i,
+  /setup time/i,
+  /setup-time/i,
+  /restore time/i,
+  /restore-time/i,
+  /zero outbound/i,
+  /zero telemetry/i,
+  /offline-only/i,
+  /offline only/i,
+  /air-gapped/i,
+  /air gapped/i,
+  /\bSLA\b/i,
+  /sovereignty/i,
+  /automatic project transfer/i,
+  /automatic migration/i,
+  /grandfathered hosted prices/i,
+  /card payment/i,
+  /Stripe/i,
+  /validated demo/i,
+  /benchmark/i,
+] as const;
+
+function expectBlockedHomepageClaimsAbsent() {
+  for (const pattern of BLOCKED_HOMEPAGE_CLAIM_PATTERNS) {
+    expect(screen.queryByText(pattern)).toBeNull();
+  }
+}
 
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -329,8 +368,7 @@ describe("PublicHomeApp", () => {
         );
       }),
     ).toBe(true);
-    expect(screen.queryByText("CoCalc Star")).toBeNull();
-    expect(screen.queryByText("Install CoCalc Star")).toBeNull();
+    expectBlockedHomepageClaimsAbsent();
     expect(
       screen
         .getByRole("link", { name: "Explore shared features" })
@@ -448,7 +486,6 @@ describe("PublicHomeApp", () => {
     expect(
       screen.getByText("Managed accounts, hosted projects, and team access"),
     ).not.toBeNull();
-    expect(screen.queryByText(/self-service team starts/i)).toBeNull();
     expect(
       screen.getByText(
         "Enterprise private deployment planning with customer-operated infrastructure boundaries",
@@ -491,12 +528,7 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/support");
     expect(screen.getByText(/direct self-service path/i)).not.toBeNull();
-    expect(screen.queryByText(/fast team starts/i)).toBeNull();
-    expect(screen.queryByText(/quickest start/i)).toBeNull();
-    expect(screen.queryByText(/multi-bay deployments/i)).toBeNull();
-    expect(screen.queryByText("Pricing and licensing")).toBeNull();
     expect(screen.getByText("Local runtime for one user.")).not.toBeNull();
-    expect(screen.queryByText(/Free local runtime/i)).toBeNull();
     const signalPoints = screen.getByRole("region", {
       name: "Operational workspace signals for CoCalc.ai",
     });
@@ -507,7 +539,6 @@ describe("PublicHomeApp", () => {
     expect(
       within(signalPoints).getByText("People and agents share context"),
     ).not.toBeNull();
-    expect(screen.queryByText("Operational proof")).toBeNull();
     expect(
       screen
         .getByRole("link", { name: /CoCalc Launchpad Customer/i })
