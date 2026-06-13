@@ -85,6 +85,8 @@ existing capability available on the route that the bay had explicitly chosen.
 Think of a Conat fabric as a scoped communication surface. The same subject text
 can mean different things depending on which fabric it is registered on.
 
+![Explicit Conat routing fabrics](./images/conat-fabrics.webp)
+
 Common fabrics:
 
 - Browser to home bay: user control-plane connection for accounts, projects,
@@ -300,3 +302,4 @@ debuggability, and operational control. That tradeoff is increasingly practical
 because tedious consistency work can be accelerated with AI assistance.
 
 The goal is not to avoid abstraction. The goal is to avoid hiding authority.
+
