@@ -1168,6 +1168,61 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(within(courseHandoff).getByText(routeText)).not.toBeNull();
     }
+    const audienceDecisionGuide = within(audiencePaths).getByRole("group", {
+      name: "CoCalc.ai audience decision guide",
+    });
+    expectLinkHrefs(audienceDecisionGuide, [
+      "/features/compare",
+      "/features/terminal",
+      "/features/ai",
+      "/products",
+    ]);
+    expect(
+      within(audienceDecisionGuide).getByText(
+        "Decide from the first constraint",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(audienceDecisionGuide).getByText(
+        "Route to a workflow or operating path before drilling into details.",
+      ),
+    ).not.toBeNull();
+    for (const guide of [
+      "Work starts with files",
+      "Runtime shapes the next step",
+      "Agent work needs context",
+      "Operating responsibility matters",
+      "Use comparison workflows when source, notebooks, data, and notes need the same review context.",
+      "Use terminal workflows when packages, services, and scripts define the next step.",
+      "Use AI workflows when prompts, patches, and review notes should stay attached to the project.",
+      "Use products when the first question is hosted, local, or customer-operated.",
+      "Map project context",
+      "Open terminal workflows",
+      "Open AI workflow guide",
+      "Compare deployment paths",
+    ]) {
+      expect(within(audienceDecisionGuide).getByText(guide)).not.toBeNull();
+    }
+    expect(
+      within(audienceDecisionGuide)
+        .getByRole("link", { name: /Work starts with files/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(audienceDecisionGuide)
+        .getByRole("link", { name: /Runtime shapes the next step/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(audienceDecisionGuide)
+        .getByRole("link", { name: /Agent work needs context/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(audienceDecisionGuide)
+        .getByRole("link", { name: /Operating responsibility matters/i })
+        .getAttribute("href"),
+    ).toBe("/products");
     const audienceOperatingHandoff = within(audiencePaths).getByRole("group", {
       name: "CoCalc.ai audience operating handoff",
     });

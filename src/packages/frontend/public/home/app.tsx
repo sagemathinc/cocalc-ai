@@ -716,6 +716,51 @@ const AUDIENCE_OPERATING_HANDOFFS = [
   icon: IconName;
   label: string;
 }[];
+const AUDIENCE_DECISION_GUIDES = [
+  {
+    accent: COLORS.BLUE_D,
+    detail:
+      "Use comparison workflows when source, notebooks, data, and notes need the same review context.",
+    href: "features/compare",
+    icon: "files",
+    next: "Map project context",
+    title: "Work starts with files",
+  },
+  {
+    accent: COLORS.RUN,
+    detail:
+      "Use terminal workflows when packages, services, and scripts define the next step.",
+    href: "features/terminal",
+    icon: "terminal",
+    next: "Open terminal workflows",
+    title: "Runtime shapes the next step",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail:
+      "Use AI workflows when prompts, patches, and review notes should stay attached to the project.",
+    href: "features/ai",
+    icon: "robot",
+    next: "Open AI workflow guide",
+    title: "Agent work needs context",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail:
+      "Use products when the first question is hosted, local, or customer-operated.",
+    href: "products",
+    icon: "servers",
+    next: "Compare deployment paths",
+    title: "Operating responsibility matters",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  href: string;
+  icon: IconName;
+  next: string;
+  title: string;
+}[];
 const WORKFLOW_REVIEW_STEPS = [
   {
     accent: COLORS.BLUE_D,
@@ -3326,6 +3371,96 @@ function AudienceSection() {
             />
           </a>
         ))}
+      </div>
+      <div
+        aria-label="CoCalc.ai audience decision guide"
+        role="group"
+        style={{
+          background: PUBLIC_COLORS.surfaceMuted,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 14,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+            Decide from the first constraint
+          </Text>
+          <Text type="secondary">
+            Route to a workflow or operating path before drilling into details.
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {AUDIENCE_DECISION_GUIDES.map((guide) => (
+            <a
+              href={appPath(guide.href)}
+              key={guide.title}
+              style={{
+                alignItems: "start",
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${alpha(guide.accent, 0.24)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 9,
+                gridTemplateColumns: "32px minmax(0, 1fr) 14px",
+                minHeight: 122,
+                padding: 12,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(guide.accent, 0.08),
+                  border: `1px solid ${alpha(guide.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: guide.accent,
+                  display: "flex",
+                  height: 32,
+                  justifyContent: "center",
+                  width: 32,
+                }}
+              >
+                <Icon name={guide.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ display: "block" }}>
+                  {guide.title}
+                </Text>
+                <Text type="secondary">{guide.detail}</Text>
+                <Text
+                  strong
+                  style={{
+                    color: guide.accent,
+                    display: "block",
+                    marginTop: 4,
+                  }}
+                >
+                  {guide.next}
+                </Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{
+                  alignSelf: "center",
+                  color: guide.accent,
+                  fontSize: 12,
+                }}
+              />
+            </a>
+          ))}
+        </div>
       </div>
       <div
         aria-label="CoCalc.ai audience operating handoff"
