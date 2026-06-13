@@ -12,7 +12,7 @@ import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { Command } from "commander";
 
 type DeployScope = "static" | "bay" | "hosts" | "all";
-type ReleaseBuildKind = "bay-runtime" | "bay-static";
+type ReleaseBuildKind = "bay-runtime" | "bay-static" | "project-host-software";
 
 type RocketConfig = {
   clusters?: Record<string, RocketClusterConfig>;
@@ -48,6 +48,8 @@ type DeployOptions = {
   skipHosts?: boolean;
   build?: boolean;
   bundle?: string;
+  buildHostSoftware?: boolean;
+  hostSoftwareBundle?: string;
   remote?: string;
   api?: string;
   publicUrl?: string;
@@ -142,7 +144,10 @@ export function registerRocketCommand(
   release
     .command("build")
     .description("build a Rocket release artifact without deploying it")
-    .requiredOption("--kind <bay-runtime|bay-static>", "artifact kind to build")
+    .requiredOption(
+      "--kind <bay-runtime|bay-static|project-host-software>",
+      "artifact kind to build",
+    )
     .option("--out-dir <path>", "output directory for unpacked artifact")
     .option("--bundle <path>", "output tarball path")
     .option("--tarball <path>", "alias for --bundle")
@@ -194,6 +199,14 @@ export function registerRocketCommand(
     .option("--skip-hosts", "compatibility alias for --scope bay")
     .option("--build", "build the required bundle before deploying")
     .option("--bundle <path>", "existing bay runtime or static bundle")
+    .option(
+      "--build-host-software",
+      "build project-host software bundle before host upgrades",
+    )
+    .option(
+      "--host-software-bundle <path>",
+      "existing project-host software bundle to stage before host upgrades",
+    )
     .option("--remote <ssh-target>", "bay SSH target")
     .option("--api <url>", "site API URL")
     .option("--public-url <url>", "public bay URL for release env")
@@ -285,7 +298,11 @@ function buildReleaseBuildPlan({
     bundle: opts.bundle ?? opts.tarball,
   });
   const scriptName =
-    kind === "bay-runtime" ? "build:bay-bundle" : "build:bay-static-bundle";
+    kind === "bay-runtime"
+      ? "build:bay-bundle"
+      : kind === "bay-static"
+        ? "build:bay-static-bundle"
+        : "build:project-host-software-bundle";
   const args = [
     "-C",
     join(srcRoot, "packages"),
@@ -403,6 +420,11 @@ function buildDeployPlan({
   if (opts.build && opts.bundle) {
     throw new Error("use either --build or --bundle <path>, not both");
   }
+  if (opts.buildHostSoftware && opts.hostSoftwareBundle) {
+    throw new Error(
+      "use either --build-host-software or --host-software-bundle <path>, not both",
+    );
+  }
   if (
     scope === "all" &&
     !opts.cookie &&
@@ -429,6 +451,11 @@ function buildDeployPlan({
     args.push("--build-bundle");
   } else if (opts.bundle) {
     args.push("--bundle", expandPath(opts.bundle));
+  }
+  if (opts.buildHostSoftware || (scope === "all" && opts.build)) {
+    args.push("--build-host-software-bundle");
+  } else if (opts.hostSoftwareBundle) {
+    args.push("--host-software-bundle", expandPath(opts.hostSoftwareBundle));
   }
   args.push("--public-url", publicUrl ?? api);
   args.push("--bay-id", bayId);
@@ -770,7 +797,16 @@ function normalizeReleaseBuildKind(kind: string | undefined): ReleaseBuildKind {
   if (value === "bay-static" || value === "static") {
     return "bay-static";
   }
-  throw new Error("--kind must be one of: bay-runtime, bay-static");
+  if (
+    value === "project-host-software" ||
+    value === "host-software" ||
+    value === "hosts"
+  ) {
+    return "project-host-software";
+  }
+  throw new Error(
+    "--kind must be one of: bay-runtime, bay-static, project-host-software",
+  );
 }
 
 function releaseBuildPaths({
@@ -788,24 +824,37 @@ function releaseBuildPaths({
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   const defaultOutDir = join(
     buildRoot,
-    kind === "bay-runtime" ? "bay-runtime" : "bay-static",
+    kind === "bay-runtime"
+      ? "bay-runtime"
+      : kind === "bay-static"
+        ? "bay-static"
+        : "project-host-software",
   );
   const defaultArtifact = join(
     buildRoot,
-    `cocalc-${kind}-linux-${arch}.tar.xz`,
+    kind === "project-host-software"
+      ? `cocalc-project-host-software-linux-${arch}.tar.xz`
+      : `cocalc-${kind}-linux-${arch}.tar.xz`,
   );
   const resolvedOutDir = expandPath(outDir ?? defaultOutDir);
   const resolvedArtifact = expandPath(
     bundle ??
       (outDir
-        ? join(dirname(resolvedOutDir), `cocalc-${kind}-linux-${arch}.tar.xz`)
+        ? join(
+            dirname(resolvedOutDir),
+            kind === "project-host-software"
+              ? `cocalc-project-host-software-linux-${arch}.tar.xz`
+              : `cocalc-${kind}-linux-${arch}.tar.xz`,
+          )
         : defaultArtifact),
   );
   const manifest = join(
     resolvedOutDir,
     kind === "bay-runtime"
       ? "bay-runtime-manifest.json"
-      : "bay-static-manifest.json",
+      : kind === "bay-static"
+        ? "bay-static-manifest.json"
+        : "project-host-software-manifest.json",
   );
   return {
     out_dir: resolvedOutDir,
@@ -999,9 +1048,15 @@ function printReleaseBuildSummary(
     );
   }
   console.log("");
-  console.log(
-    `Deploy this exact artifact with: cocalc rocket deploy --scope ${summary.kind === "bay-static" ? "static" : "bay"} --bundle ${shellQuote(summary.artifact)} ...`,
-  );
+  if (summary.kind === "project-host-software") {
+    console.log(
+      `Stage this exact artifact during a full deploy with: cocalc rocket deploy --scope all --host-software-bundle ${shellQuote(summary.artifact)} ...`,
+    );
+  } else {
+    console.log(
+      `Deploy this exact artifact with: cocalc rocket deploy --scope ${summary.kind === "bay-static" ? "static" : "bay"} --bundle ${shellQuote(summary.artifact)} ...`,
+    );
+  }
 }
 
 function requireCommand(deps: RocketCommandDeps, command: string) {

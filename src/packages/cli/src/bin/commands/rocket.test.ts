@@ -125,6 +125,47 @@ test("rocket release build --out-dir keeps the default tarball beside that direc
   assert.deepEqual(runs[0].args.slice(-2), [outDir, bundle]);
 });
 
+test("rocket release build --kind project-host-software builds separate host payload", async () => {
+  const runs: CapturedRun[] = [];
+  const dir = mkdtempSync(join(tmpdir(), "rocket-host-software-build-"));
+  const outDir = join(dir, "project-host-software");
+  const bundle = join(dir, "cocalc-project-host-software-linux-x64.tar.xz");
+  const manifest = join(outDir, "project-host-software-manifest.json");
+  const program = createProgram({
+    runs,
+    onRun: async () => {
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(bundle, "host software artifact");
+      writeFileSync(
+        manifest,
+        JSON.stringify({
+          kind: "cocalc-project-host-software",
+          git: { commit: "abc123" },
+        }),
+      );
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "release",
+    "build",
+    "--kind",
+    "project-host-software",
+    "--out-dir",
+    outDir,
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(
+    runs[0].args.includes("build:project-host-software-bundle"),
+    true,
+  );
+  assert.deepEqual(runs[0].args.slice(-2), [outDir, bundle]);
+});
+
 test("rocket release build dry-run does not execute the build", async () => {
   const runs: CapturedRun[] = [];
   const program = createProgram({ runs });
@@ -235,6 +276,77 @@ test("rocket deploy --static-only keeps compatibility with static deploys", asyn
   assert.equal(runs[0].args.includes("--static-only"), true);
   assert.equal(runs[0].args.includes("--restart-hub-workers"), true);
   assert.equal(runs[0].args.includes("--skip-host-upgrade"), false);
+});
+
+test("rocket deploy --scope all builds bay and host software separately", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({ runs });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "deploy",
+    "--scope",
+    "all",
+    "--build",
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
+    "--worker-count",
+    "4",
+    "--admin-email",
+    "admin@example.com",
+    "--yes",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("--build-bundle"), true);
+  assert.equal(runs[0].args.includes("--build-host-software-bundle"), true);
+  assert.equal(runs[0].args.includes("--skip-host-upgrade"), false);
+});
+
+test("rocket deploy --scope all accepts explicit host software bundle", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({ runs });
+  const dir = mkdtempSync(join(tmpdir(), "rocket-host-software-deploy-"));
+  const hostSoftwareBundle = join(
+    dir,
+    "cocalc-project-host-software-linux-x64.tar.xz",
+  );
+  writeFileSync(hostSoftwareBundle, "host software artifact");
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "deploy",
+    "--scope",
+    "all",
+    "--bundle",
+    "/tmp/cocalc-bay-runtime-linux-x64.tar.xz",
+    "--host-software-bundle",
+    hostSoftwareBundle,
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
+    "--worker-count",
+    "4",
+    "--admin-email",
+    "admin@example.com",
+    "--yes",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.deepEqual(
+    runs[0].args.slice(
+      runs[0].args.indexOf("--host-software-bundle"),
+      runs[0].args.indexOf("--host-software-bundle") + 2,
+    ),
+    ["--host-software-bundle", hostSoftwareBundle],
+  );
 });
 
 test("rocket deploy --scope hosts maps to host upgrade without bay script", async () => {

@@ -103,12 +103,6 @@ cd "$ROOT"
 echo "- Build project-host bundle"
 pnpm --filter @cocalc/project-host run build:bundle
 
-echo "- Build project bundle"
-pnpm --filter @cocalc/project run build:bundle
-
-echo "- Build tools bundle"
-pnpm --filter @cocalc/project run build:tools
-
 echo "- Build static frontend assets"
 pnpm --filter @cocalc/launchpad run build:static
 
@@ -124,25 +118,6 @@ echo "- Copy project-host daemon bundle"
 mkdir -p "$OUT/runtime/project-host"
 cp -a "$ROOT/packages/project-host/build/bundle/main"/. \
   "$OUT/runtime/project-host"/
-
-echo "- Copy project-host software artifacts"
-mkdir -p \
-  "$OUT/runtime/packages/project-host/build/bundle" \
-  "$OUT/runtime/packages/project/build" \
-  "$OUT/runtime/packages/server/cloud"
-cp "$ROOT/packages/project-host/build/bundle-linux.tar.xz" \
-  "$OUT/runtime/packages/project-host/build/"
-if [ -f "$ROOT/packages/project-host/build/bundle/build-identity.json" ]; then
-  cp "$ROOT/packages/project-host/build/bundle/build-identity.json" \
-    "$OUT/runtime/packages/project-host/build/bundle/"
-fi
-cp "$ROOT/packages/project/build/bundle-linux.tar.xz" \
-  "$OUT/runtime/packages/project/build/"
-cp "$ROOT/packages/project/build"/tools-linux-*.tar.xz \
-  "$OUT/runtime/packages/project/build/"
-mkdir -p "$OUT/runtime/packages/server/cloud/bootstrap"
-cp "$ROOT/packages/server/cloud/bootstrap/bootstrap.py" \
-  "$OUT/runtime/packages/server/cloud/bootstrap/"
 
 echo "- Bundle schema migration helper with @vercel/ncc"
 pnpm --filter @cocalc/project-host exec ncc build "$ROOT/packages/rocket/bin/bay-migrate-schema.js" \
@@ -219,9 +194,6 @@ validate_file "$OUT/runtime/project-host/index.js"
 validate_file "$OUT/runtime/control-plane/bundle/index.js"
 validate_file "$OUT/runtime/migrate-schema/index.js"
 validate_file "$OUT/runtime/cloudflared/index.js"
-validate_file "$OUT/runtime/packages/project-host/build/bundle-linux.tar.xz"
-validate_file "$OUT/runtime/packages/project/build/bundle-linux.tar.xz"
-validate_file "$OUT/runtime/packages/server/cloud/bootstrap/bootstrap.py"
 validate_file "$OUT/runtime/control-plane/http-api-dist/pages/api/v2/index.js"
 validate_file "$OUT/runtime/control-plane/static/public.html"
 validate_file "$OUT/runtime/control-plane/public/cocalc-content.css"
