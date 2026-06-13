@@ -196,6 +196,8 @@ export default function PublicTopNav({
         <Text
           ellipsis
           style={{
+            alignItems: "center",
+            display: "inline-flex",
             maxWidth: isCompact ? 110 : 180,
           }}
         >
