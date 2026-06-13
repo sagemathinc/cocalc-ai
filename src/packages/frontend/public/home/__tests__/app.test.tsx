@@ -1090,6 +1090,20 @@ describe("PublicHomeApp", () => {
     const productOptions = screen.getByRole("region", {
       name: "CoCalc.ai product options",
     });
+    const sharedOperatingContext = within(productOptions).getByRole("group", {
+      name: "CoCalc.ai shared operating context",
+    });
+    expect(
+      within(sharedOperatingContext).getByText("Same workspace model"),
+    ).not.toBeNull();
+    expect(
+      within(sharedOperatingContext).getByText(
+        "Visible across operating paths.",
+      ),
+    ).not.toBeNull();
+    for (const context of ["Projects", "Files", "Workflows", "History"]) {
+      expect(within(sharedOperatingContext).getByText(context)).not.toBeNull();
+    }
     const deploymentPathCards = within(productOptions).getByRole("group", {
       name: "CoCalc.ai deployment path cards",
     });

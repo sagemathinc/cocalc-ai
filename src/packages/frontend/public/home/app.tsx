@@ -2991,6 +2991,12 @@ function ProductOptionsSection() {
     label: string;
     title: string;
   }[];
+  const sharedOperatingContext = [
+    { accent: COLORS.BLUE_D, icon: "project-outlined", label: "Projects" },
+    { accent: PUBLIC_COLORS.success, icon: "files", label: "Files" },
+    { accent: COLORS.AI_ASSISTANT_FONT, icon: "overview", label: "Workflows" },
+    { accent: PUBLIC_COLORS.warning, icon: "history", label: "History" },
+  ] satisfies { accent: string; icon: IconName; label: string }[];
 
   return (
     <section aria-label="CoCalc.ai product options">
@@ -3102,6 +3108,54 @@ function ProductOptionsSection() {
                     </span>
                   </a>
                 ))}
+              </div>
+              <div
+                aria-label="CoCalc.ai shared operating context"
+                role="group"
+                style={{
+                  background: alpha(PUBLIC_COLORS.surface, 0.86),
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  padding: 14,
+                }}
+              >
+                <Flex align="baseline" justify="space-between" wrap gap={8}>
+                  <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                    Same workspace model
+                  </Text>
+                  <Text type="secondary">Visible across operating paths.</Text>
+                </Flex>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(min(100%, 124px), 1fr))",
+                    marginTop: 10,
+                  }}
+                >
+                  {sharedOperatingContext.map((item) => (
+                    <span
+                      key={item.label}
+                      style={{
+                        alignItems: "center",
+                        background: alpha(item.accent, 0.07),
+                        border: `1px solid ${alpha(item.accent, 0.22)}`,
+                        borderRadius: PANEL_RADIUS,
+                        color: item.accent,
+                        display: "flex",
+                        gap: 8,
+                        minHeight: 42,
+                        padding: "8px 10px",
+                      }}
+                    >
+                      <Icon name={item.icon} />
+                      <Text strong style={{ color: "inherit" }}>
+                        {item.label}
+                      </Text>
+                    </span>
+                  ))}
+                </div>
               </div>
               <div
                 aria-label="CoCalc.ai deployment path cards"
