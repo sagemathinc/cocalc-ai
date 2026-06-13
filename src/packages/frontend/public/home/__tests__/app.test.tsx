@@ -249,6 +249,34 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Contact support/i })
         .getAttribute("href"),
     ).toBe("/support");
+    const workflowPathRoutes = screen.getByRole("region", {
+      name: "CoCalc.ai workflow path routing",
+    });
+    expect(
+      within(workflowPathRoutes).getByRole("heading", {
+        name: "Route by the artifact you already have.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(workflowPathRoutes)
+        .getByRole("link", { name: /Computational notebook path/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      within(workflowPathRoutes)
+        .getByRole("link", { name: /Shared runtime path/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(workflowPathRoutes)
+        .getByRole("link", { name: /Codex context path/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(workflowPathRoutes)
+        .getByRole("link", { name: /Class workspace path/i })
+        .getAttribute("href"),
+    ).toBe("/features/teaching");
     const removedDuplicateRegions = [
       "CoCalc.ai project handoff path",
       "CoCalc.ai intent router",

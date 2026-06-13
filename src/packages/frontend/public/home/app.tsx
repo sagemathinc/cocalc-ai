@@ -145,6 +145,47 @@ const FIRST_STEP_LINKS = [
   path: string;
   title: string;
 }[];
+const WORKFLOW_PATH_LINKS = [
+  {
+    accent: COLORS.RUN,
+    body: "Notebook output, widgets, kernels, and nearby files start on the Jupyter page.",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    kicker: "Notebook",
+    title: "Computational notebook path",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Scripts, packages, services, and logs start on the Linux terminal page.",
+    href: "features/terminal",
+    icon: "terminal",
+    kicker: "Shell",
+    title: "Shared runtime path",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Prompts, patches, screenshots, and review notes start on the AI agents page.",
+    href: "features/ai",
+    icon: "robot",
+    kicker: "Agent",
+    title: "Codex context path",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Assignments, labs, handouts, and grading workflows start on the courses page.",
+    href: "features/teaching",
+    icon: "graduation-cap",
+    kicker: "Course",
+    title: "Class workspace path",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  kicker: string;
+  title: string;
+}[];
 const HERO_OUTCOMES = [
   {
     body: "The notebook, terminal, source files, and agent notes stay in the same project.",
@@ -1244,6 +1285,104 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
   );
 }
 
+function WorkflowPathRoutingSection() {
+  return (
+    <section
+      aria-label="CoCalc.ai workflow path routing"
+      style={{
+        background: `linear-gradient(135deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 62%, ${PUBLIC_COLORS.brandTint} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `32px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex vertical gap={20}>
+        <Flex align="end" justify="space-between" wrap gap={16}>
+          <div style={{ maxWidth: 760 }}>
+            <Eyebrow>Workflow paths</Eyebrow>
+            <Title level={2} style={{ margin: "8px 0 10px" }}>
+              Route by the artifact you already have.
+            </Title>
+            <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              Start from the notebook, shell, source change, or course material
+              in front of you. Each path opens the detail page for that project
+              workflow.
+            </Paragraph>
+          </div>
+          <Button
+            href={appPath("features")}
+            icon={<DecorativeButtonIcon name="overview" />}
+          >
+            Explore all features
+          </Button>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
+          }}
+        >
+          {WORKFLOW_PATH_LINKS.map((item) => (
+            <a
+              href={appPath(item.href)}
+              key={item.title}
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${alpha(item.accent, 0.24)}`,
+                borderRadius: PANEL_RADIUS,
+                boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+                color: "inherit",
+                display: "grid",
+                gap: 14,
+                gridTemplateRows: "auto 1fr auto",
+                minHeight: 220,
+                padding: 18,
+                textDecoration: "none",
+              }}
+            >
+              <Flex align="center" justify="space-between" gap={12}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(item.accent, 0.1),
+                    border: `1px solid ${alpha(item.accent, 0.26)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    flex: "0 0 46px",
+                    fontSize: 22,
+                    height: 46,
+                    justifyContent: "center",
+                    width: 46,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <Text strong style={{ color: item.accent }}>
+                  {item.kicker}
+                </Text>
+              </Flex>
+              <div>
+                <Title level={3} style={{ fontSize: 22, margin: "0 0 8px" }}>
+                  {item.title}
+                </Title>
+                <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+              </div>
+              <Flex align="center" justify="space-between" gap={10}>
+                <Text type="secondary">Open workflow detail</Text>
+                <Icon name="arrow-right" style={{ color: item.accent }} />
+              </Flex>
+            </a>
+          ))}
+        </div>
+      </Flex>
+    </section>
+  );
+}
+
 function ProjectPackageSection() {
   return (
     <section
@@ -2263,6 +2402,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
       <FirstStepRoutesSection authenticated={!!config?.is_authenticated} />
+      <WorkflowPathRoutingSection />
       <WorkflowsSection />
       <ProjectPackageSection />
       <AudienceSection />
