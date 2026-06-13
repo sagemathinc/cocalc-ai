@@ -1349,17 +1349,18 @@ export const EXTRAS: SettingsExtras = {
   },
   project_hosts_hyperstack_prefix: {
     name: "Project Hosts: Hyperstack - Resource Prefix",
-    desc: "Prepend this string to all Hyperstack resources that are created, e.g., VM names, disks, etc. If the prefix is 'cocalc', then the project host with id 17 will be called 'cocalc-17'. REQUIRED or Hyperstack will not work.",
+    desc: "Prepend this string to all Hyperstack resources that are created, e.g., VM names, disks, etc. Experimental: Hyperstack support has not been actively tested recently.",
     default: "cocalc",
     to_val: to_trimmed_str,
     show: project_hosts_hyperstack_enabled,
     tags: ["Project Hosts", "Cloud", "Hyperstack"],
     group: "Compute / Project Hosts",
     subgroup: "Hyperstack",
+    hidden: true,
   },
   hyperstack_api_key: {
     name: "Project Hosts: Hyperstack - API Key",
-    desc: "Your [Hyperstack API Key](https://console.hyperstack.cloud/api-keys). This supports managing project hosts on the [Hyperstack Cloud](https://www.hyperstack.cloud/). REQUIRED or Hyperstack will not work.",
+    desc: "Your [Hyperstack API Key](https://console.hyperstack.cloud/api-keys). Experimental: Hyperstack support has not been actively tested recently and may be broken.",
     default: "",
     password: true,
     show: project_hosts_hyperstack_enabled,
@@ -1367,6 +1368,7 @@ export const EXTRAS: SettingsExtras = {
     group: "Compute / Project Hosts",
     subgroup: "Hyperstack",
     required_when: [{ key: "project_hosts_hyperstack_enabled", equals: "yes" }],
+    hidden: true,
   },
   project_hosts_ssh_public_keys: {
     name: "Project Hosts: SSH Public Keys",
@@ -1382,7 +1384,7 @@ export const EXTRAS: SettingsExtras = {
 
   lambda_cloud_api_key: {
     name: "Project Hosts: Lambda Cloud API Key",
-    desc: "Your [Lambda Cloud](https://lambdalabs.com/service/gpu-cloud) API Key from https://cloud.lambda.ai/api-keys/cloud-api.  This supports managing project hosts on Lambda Cloud.",
+    desc: "Your [Lambda Cloud](https://lambdalabs.com/service/gpu-cloud) API Key from https://cloud.lambda.ai/api-keys/cloud-api. Experimental: Lambda Cloud support has not been actively tested recently and may be broken.",
     default: "",
     password: true,
     show: project_hosts_lambda_enabled,
@@ -1390,10 +1392,11 @@ export const EXTRAS: SettingsExtras = {
     group: "Compute / Project Hosts",
     subgroup: "Lambda Cloud",
     required_when: [{ key: "project_hosts_lambda_enabled", equals: "yes" }],
+    hidden: true,
   },
   project_hosts_lambda_prefix: {
     name: "Project Hosts: Lambda Cloud - Resource Prefix",
-    desc: "Prepend this string to all Lambda Cloud resources that are created, e.g., instance names. Keep this short. If the prefix is 'cocalc', then a project host with id 17 will be called 'cocalc-17'.",
+    desc: "Prepend this string to all Lambda Cloud resources that are created, e.g., instance names. Experimental: Lambda Cloud support has not been actively tested recently.",
     default: "cocalc-host",
     to_val: to_trimmed_str,
     show: project_hosts_lambda_enabled,
@@ -1401,6 +1404,7 @@ export const EXTRAS: SettingsExtras = {
     valid: () => true,
     group: "Compute / Project Hosts",
     subgroup: "Lambda Cloud",
+    hidden: true,
   },
   nebius_region_config_json: {
     name: "Project Hosts: Nebius - Region Config (JSON)",
@@ -1502,13 +1506,14 @@ export const EXTRAS: SettingsExtras = {
   },
   project_hosts_self_host_connector_version: {
     name: "Project Hosts: Self-Host Connector Version",
-    desc: "Optional version pin for the self-host connector (leave blank to use latest).",
+    desc: "Optional version pin for the self-host connector (leave blank to use latest). Experimental/Insecure: self-host is hidden by default and should not be enabled on normal multi-user servers yet.",
     default: "",
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "On-Prem"],
     valid: () => true,
     group: "Compute / Project Hosts",
     subgroup: "On-Prem",
+    hidden: true,
   },
   project_hosts_cloudflare_tunnel_enabled: {
     name: "Project Hosts: Cloudflare Tunnel - Enable",

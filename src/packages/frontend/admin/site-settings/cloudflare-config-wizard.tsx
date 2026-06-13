@@ -462,11 +462,11 @@ export default function CloudflareConfigWizard({
                 type="warning"
                 showIcon
                 style={{ marginTop: "10px" }}
-                title="Cloudflare tunnel settings must be applied to the running server"
+                title="Test this only after saving and applying the running tunnel"
                 description={
                   hasPendingRuntimeDraft
-                    ? "You have draft Cloudflare changes in this wizard. Save them, then use Apply Cloudflare tunnel settings now before expecting the visitor-header check to pass."
-                    : "This check only sees the currently running server configuration. After changing Cloudflare mode, domain, account ID, API token, or tunnel naming settings, save and apply the Cloudflare tunnel settings before expecting the check to pass."
+                    ? "You have draft Cloudflare changes in this wizard. Save them, then use Apply Cloudflare tunnel settings now before expecting visitor-location headers to work."
+                    : "The visitor-location diagnostic is at the bottom of this wizard. It only makes sense after the configuration is saved, cloudflared has successfully set up the tunnel, and DNS is routing through Cloudflare."
                 }
               />
               <div style={{ marginTop: "8px" }}>
@@ -491,117 +491,6 @@ If the link above does not work, search in Cloudflare for **Managed Transforms**
                   borderRadius: "6px",
                 }}
               />
-              <div style={{ marginTop: "10px" }}>
-                <Space
-                  orientation="vertical"
-                  size={8}
-                  style={{ width: "100%" }}
-                >
-                  <Button
-                    onClick={testVisitorLocationHeaders}
-                    loading={locationHeadersTesting}
-                    icon={<Icon name="check" />}
-                    disabled={hasPendingRuntimeDraft}
-                  >
-                    Test Current Visitor Location Headers
-                  </Button>
-                  <div style={{ color: "#666" }}>
-                    Checks <code>/customize</code> on the currently running
-                    server. It does not reflect draft or newly saved Cloudflare
-                    tunnel settings until they are applied to the running
-                    server.
-                  </div>
-                  {locationHeadersTestError ? (
-                    <Alert
-                      type="error"
-                      showIcon
-                      title="Visitor location header test failed"
-                      description={locationHeadersTestError}
-                    />
-                  ) : null}
-                  {locationHeadersResult ? (
-                    <Alert
-                      type={locationHeadersResult.ok ? "success" : "warning"}
-                      showIcon
-                      title={
-                        locationHeadersResult.ok
-                          ? "Visitor location headers are present"
-                          : "Location headers are incomplete"
-                      }
-                      description={
-                        <div style={{ display: "grid", rowGap: "4px" }}>
-                          <div>
-                            <b>Country:</b>{" "}
-                            <code>
-                              {locationHeadersResult.details.country ||
-                                "(missing)"}
-                            </code>
-                          </div>
-                          <div>
-                            <b>Region:</b>{" "}
-                            <code>
-                              {locationHeadersResult.details.region ||
-                                "(missing)"}
-                            </code>
-                          </div>
-                          <div>
-                            <b>Region code:</b>{" "}
-                            <code>
-                              {locationHeadersResult.details.regionCode ||
-                                "(missing)"}
-                            </code>
-                          </div>
-                          <div>
-                            <b>City:</b>{" "}
-                            <code>
-                              {locationHeadersResult.details.city ||
-                                "(missing)"}
-                            </code>
-                          </div>
-                          <div>
-                            <b>Continent:</b>{" "}
-                            <code>
-                              {locationHeadersResult.details.continent ||
-                                "(missing)"}
-                            </code>
-                          </div>
-                          <div>
-                            <b>Timezone:</b>{" "}
-                            <code>
-                              {locationHeadersResult.details.timezone ||
-                                "(missing)"}
-                            </code>
-                          </div>
-                          <div>
-                            <b>Latitude:</b>{" "}
-                            <code>
-                              {locationHeadersResult.details.latitude ||
-                                "(missing)"}
-                            </code>
-                          </div>
-                          <div>
-                            <b>Longitude:</b>{" "}
-                            <code>
-                              {locationHeadersResult.details.longitude ||
-                                "(missing)"}
-                            </code>
-                          </div>
-                          {locationHeadersResult.missing.length > 0 ? (
-                            <div>
-                              Missing required fields:{" "}
-                              <code>
-                                {locationHeadersResult.missing.join(", ")}
-                              </code>
-                            </div>
-                          ) : (
-                            <div>All required location fields are present.</div>
-                          )}
-                        </div>
-                      }
-                    />
-                  ) : null}
-                </Space>
-              </div>
             </div>
             <div>
               <strong>Step 6 - R2 backups (required)</strong>
@@ -711,85 +600,12 @@ Required R2 token permissions:
                 />
               </div>
               <div style={{ marginTop: "12px" }}>
-                <Space
-                  orientation="vertical"
-                  size={8}
-                  style={{ width: "100%" }}
-                >
-                  <Button
-                    onClick={testSavedR2Credentials}
-                    loading={r2Testing}
-                    icon={<Icon name="check" />}
-                  >
-                    Test Saved R2 Credentials
-                  </Button>
-                  <div style={{ color: "#666" }}>
-                    Uses currently saved server settings (not unsaved edits in
-                    this wizard).
-                  </div>
-                  {r2TestError ? (
-                    <Alert
-                      type="error"
-                      showIcon
-                      title="R2 test failed"
-                      description={r2TestError}
-                    />
-                  ) : null}
-                  {r2TestResult ? (
-                    <Alert
-                      type={r2TestResult.ok ? "success" : "error"}
-                      showIcon
-                      title={
-                        r2TestResult.ok
-                          ? "R2 credentials look good"
-                          : "R2 credential test found problems"
-                      }
-                      description={
-                        <div style={{ display: "grid", rowGap: "4px" }}>
-                          <div>
-                            <b>Account:</b>{" "}
-                            <code>
-                              {r2TestResult.account_id || "(missing)"}
-                            </code>
-                          </div>
-                          <div>
-                            <b>Endpoint:</b>{" "}
-                            <code>{r2TestResult.endpoint || "(missing)"}</code>
-                          </div>
-                          <div>
-                            <b>Cloudflare API token:</b>{" "}
-                            {r2TestResult.api_token.ok
-                              ? `OK (visible buckets: ${r2TestResult.api_token.bucket_count ?? 0})`
-                              : `Failed (${r2TestResult.api_token.error ?? "unknown error"})`}
-                          </div>
-                          <div>
-                            <b>R2 S3 keys:</b>{" "}
-                            {r2TestResult.s3.ok
-                              ? `OK (visible buckets: ${r2TestResult.s3.bucket_count ?? 0})`
-                              : `Failed (${r2TestResult.s3.error ?? "unknown error"})`}
-                          </div>
-                          {r2TestResult.bucket_prefix ? (
-                            <div>
-                              <b>Bucket prefix:</b>{" "}
-                              <code>{r2TestResult.bucket_prefix}</code>
-                            </div>
-                          ) : null}
-                          {r2TestResult.bucket_prefix ? (
-                            <div>
-                              <b>Matching buckets:</b>{" "}
-                              {r2TestResult.matched_buckets.length > 0
-                                ? r2TestResult.matched_buckets.join(", ")
-                                : "(none yet)"}
-                            </div>
-                          ) : null}
-                          {r2TestResult.notes?.length ? (
-                            <div>{r2TestResult.notes.join(" ")}</div>
-                          ) : null}
-                        </div>
-                      }
-                    />
-                  ) : null}
-                </Space>
+                <Alert
+                  type="info"
+                  showIcon
+                  title="Test R2 only after saving the configuration."
+                  description="The R2 diagnostic is at the bottom of this wizard. It uses saved server settings, not unsaved values in this form."
+                />
               </div>
             </div>
             <div>
@@ -840,6 +656,214 @@ Required R2 token permissions:
                   onChange={(e) => setHostSuffix(e.target.value)}
                 />
               </div>
+            </div>
+            <div>
+              <strong>Step 8 - Post-save diagnostics</strong>
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginTop: "8px" }}
+                title="These tests use the saved, currently running configuration."
+                description="Run these only after you have applied settings, saved the site configuration, clicked Apply Cloudflare tunnel settings now, and confirmed cloudflared has successfully set up the tunnel and DNS."
+              />
+              <Space
+                orientation="vertical"
+                size={12}
+                style={{ width: "100%", marginTop: "12px" }}
+              >
+                <div>
+                  <Button
+                    onClick={testSavedR2Credentials}
+                    loading={r2Testing}
+                    icon={<Icon name="check" />}
+                  >
+                    Test Saved R2 Credentials
+                  </Button>
+                  <div style={{ color: "#666", marginTop: "6px" }}>
+                    Uses saved server settings only; unsaved edits in this
+                    wizard are ignored.
+                  </div>
+                  {r2TestError ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ marginTop: "8px" }}
+                      title="R2 test failed"
+                      description={r2TestError}
+                    />
+                  ) : null}
+                  {r2TestResult ? (
+                    <Alert
+                      type={r2TestResult.ok ? "success" : "error"}
+                      showIcon
+                      style={{ marginTop: "8px" }}
+                      title={
+                        r2TestResult.ok
+                          ? "R2 credentials look good"
+                          : "R2 credential test found problems"
+                      }
+                      description={
+                        <div style={{ display: "grid", rowGap: "4px" }}>
+                          <div>
+                            <b>Account:</b>{" "}
+                            <code>
+                              {r2TestResult.account_id || "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Endpoint:</b>{" "}
+                            <code>{r2TestResult.endpoint || "(missing)"}</code>
+                          </div>
+                          <div>
+                            <b>Cloudflare API token:</b>{" "}
+                            {r2TestResult.api_token.ok
+                              ? `OK (visible buckets: ${r2TestResult.api_token.bucket_count ?? 0})`
+                              : `Failed (${r2TestResult.api_token.error ?? "unknown error"})`}
+                          </div>
+                          <div>
+                            <b>R2 S3 keys:</b>{" "}
+                            {r2TestResult.s3.ok
+                              ? `OK (visible buckets: ${r2TestResult.s3.bucket_count ?? 0})`
+                              : `Failed (${r2TestResult.s3.error ?? "unknown error"})`}
+                          </div>
+                          {r2TestResult.bucket_prefix ? (
+                            <div>
+                              <b>Bucket prefix:</b>{" "}
+                              <code>{r2TestResult.bucket_prefix}</code>
+                            </div>
+                          ) : null}
+                          {r2TestResult.bucket_prefix ? (
+                            <div>
+                              <b>Matching buckets:</b>{" "}
+                              {r2TestResult.matched_buckets.length > 0
+                                ? r2TestResult.matched_buckets.join(", ")
+                                : "(none yet)"}
+                            </div>
+                          ) : null}
+                          {r2TestResult.notes?.length ? (
+                            <div>{r2TestResult.notes.join(" ")}</div>
+                          ) : null}
+                        </div>
+                      }
+                    />
+                  ) : null}
+                </div>
+                <div>
+                  <Button
+                    onClick={testVisitorLocationHeaders}
+                    loading={locationHeadersTesting}
+                    icon={<Icon name="check" />}
+                    disabled={hasPendingRuntimeDraft}
+                  >
+                    Test Current Visitor Location Headers
+                  </Button>
+                  <div style={{ color: "#666", marginTop: "6px" }}>
+                    Checks <code>/customize</code> on the currently running
+                    server. It does not reflect draft or newly saved Cloudflare
+                    tunnel settings until they are applied to the running
+                    service.
+                  </div>
+                  {hasPendingRuntimeDraft ? (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginTop: "8px" }}
+                      title="Save and apply Cloudflare tunnel settings before testing visitor headers."
+                    />
+                  ) : null}
+                  {locationHeadersTestError ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ marginTop: "8px" }}
+                      title="Visitor location header test failed"
+                      description={locationHeadersTestError}
+                    />
+                  ) : null}
+                  {locationHeadersResult ? (
+                    <Alert
+                      type={locationHeadersResult.ok ? "success" : "warning"}
+                      showIcon
+                      style={{ marginTop: "8px" }}
+                      title={
+                        locationHeadersResult.ok
+                          ? "Visitor location headers are present"
+                          : "Location headers are incomplete"
+                      }
+                      description={
+                        <div style={{ display: "grid", rowGap: "4px" }}>
+                          <div>
+                            <b>Country:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.country ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Region:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.region ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Region code:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.regionCode ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>City:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.city ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Continent:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.continent ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Timezone:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.timezone ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Latitude:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.latitude ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Longitude:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.longitude ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          {locationHeadersResult.missing.length > 0 ? (
+                            <div>
+                              Missing required fields:{" "}
+                              <code>
+                                {locationHeadersResult.missing.join(", ")}
+                              </code>
+                            </div>
+                          ) : (
+                            <div>All required location fields are present.</div>
+                          )}
+                        </div>
+                      }
+                    />
+                  ) : null}
+                </div>
+              </Space>
             </div>
           </>
         )}
