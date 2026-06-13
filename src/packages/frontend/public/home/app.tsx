@@ -121,6 +121,47 @@ const HERO_HANDOFF_ITEMS = [
   label: string;
   title: string;
 }[];
+const PROJECT_STATE_MAP_ITEMS = [
+  {
+    accent: PUBLIC_COLORS.brand,
+    body: "Notebooks, source files, data, documents, and environment files give the work a shared source of truth.",
+    href: "features/compare",
+    icon: "files",
+    label: "Inputs",
+    title: "Project files",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Terminals, package installs, services, logs, and notebook output show what actually ran.",
+    href: "features/terminal",
+    icon: "terminal",
+    label: "Runtime",
+    title: "Execution record",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Codex prompts, patches, screenshots, and reviewer notes stay beside the files they refer to.",
+    href: "features/ai",
+    icon: "robot",
+    label: "Agent context",
+    title: "Codex trail",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "TimeTravel, snapshots, backups, and project history keep previous state close enough to inspect.",
+    href: "features/compare",
+    icon: "disk-snapshot",
+    label: "Recovery",
+    title: "Prior state",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 const WORKSPACE_BREADTH_ITEMS = [
   {
     body: "Source files, scripts, and reviews",
@@ -1012,9 +1053,8 @@ function Hero({ config }: { config?: HomeConfig }) {
                   maxWidth: 640,
                 }}
               >
-                An AI-native technical workspace where notebooks, terminals,
-                files, chat, and Codex agent work stay together in one durable
-                project.
+                A technical workspace where the notebook, shell, source tree,
+                chat, and Codex thread stay in the same recoverable project.
               </Paragraph>
             </div>
             <div
@@ -1491,6 +1531,127 @@ function ProofStripSection() {
           ))}
         </div>
       </div>
+    </section>
+  );
+}
+
+function ProjectStateMapSection() {
+  return (
+    <section
+      aria-label="CoCalc.ai project state map"
+      style={{
+        background: `linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.brandTint} 58%, ${PUBLIC_COLORS.surface} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `38px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Row align="middle" gutter={[30, 24]}>
+        <Col lg={8} xs={24}>
+          <Flex vertical gap={16}>
+            <div>
+              <Eyebrow>Project state map</Eyebrow>
+              <Title level={2} style={{ margin: "8px 0 10px" }}>
+                Show what a teammate or agent can inspect.
+              </Title>
+              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+                CoCalc projects keep the artifacts of technical work in one
+                place, so the next person or Codex turn can read the files,
+                runtime output, decisions, and recovery points together.
+              </Paragraph>
+            </div>
+            <Flex gap={12} wrap>
+              <Button
+                href={appPath("features")}
+                icon={<DecorativeButtonIcon name="overview" />}
+                type="primary"
+              >
+                Explore shared features
+              </Button>
+              <Button
+                href={appPath("features/ai")}
+                icon={<DecorativeButtonIcon name="robot" />}
+              >
+                See AI workflows
+              </Button>
+            </Flex>
+          </Flex>
+        </Col>
+        <Col lg={16} xs={24}>
+          <div
+            aria-label="Project state checkpoints"
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            }}
+          >
+            {PROJECT_STATE_MAP_ITEMS.map((item, index) => (
+              <a
+                href={appPath(item.href)}
+                key={item.title}
+                style={{
+                  background:
+                    index === 2
+                      ? PUBLIC_COLORS.warningTint
+                      : alpha(PUBLIC_COLORS.surface, 0.94),
+                  border: `1px solid ${
+                    index === 2
+                      ? PUBLIC_COLORS.warningBorder
+                      : alpha(item.accent, 0.24)
+                  }`,
+                  borderRadius: PANEL_RADIUS,
+                  boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 14,
+                  gridTemplateColumns: "50px minmax(0, 1fr)",
+                  minHeight: 176,
+                  padding: 18,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(PUBLIC_COLORS.surface, 0.84),
+                    border: `1px solid ${alpha(item.accent, 0.28)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    fontSize: 22,
+                    height: 50,
+                    justifyContent: "center",
+                    width: 50,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Tag
+                    style={{
+                      background: alpha(item.accent, 0.1),
+                      borderColor: alpha(item.accent, 0.28),
+                      color: item.accent,
+                      marginInlineEnd: 0,
+                    }}
+                  >
+                    {item.label}
+                  </Tag>
+                  <Title
+                    level={3}
+                    style={{ fontSize: 20, margin: "10px 0 8px" }}
+                  >
+                    {item.title}
+                  </Title>
+                  <Text type="secondary">{item.body}</Text>
+                </span>
+              </a>
+            ))}
+          </div>
+        </Col>
+      </Row>
     </section>
   );
 }
@@ -3998,6 +4159,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <Hero config={config} />
       <HeroHandoffStrip config={config} />
       <ProofStripSection />
+      <ProjectStateMapSection />
       <AgentReadinessSection />
       <QuickStartSection />
       <StarterRecipesSection config={config} />

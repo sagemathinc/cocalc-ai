@@ -242,6 +242,44 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Review history/i })
         .getAttribute("href"),
     ).toBe("/features/compare");
+    const stateMap = screen.getByRole("region", {
+      name: "CoCalc.ai project state map",
+    });
+    expect(
+      within(stateMap).getByRole("heading", {
+        name: "Show what a teammate or agent can inspect.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(stateMap)
+        .getByRole("link", { name: /Explore shared features/i })
+        .getAttribute("href"),
+    ).toBe("/features");
+    expect(
+      within(stateMap)
+        .getByRole("link", { name: /See AI workflows/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(stateMap)
+        .getByRole("link", { name: /Project files/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(stateMap)
+        .getByRole("link", { name: /Execution record/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(stateMap)
+        .getByRole("link", { name: /Codex trail/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(stateMap)
+        .getByRole("link", { name: /Prior state/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     const agentReady = screen.getByRole("region", {
       name: "CoCalc.ai agent-ready project checklist",
     });
@@ -422,7 +460,7 @@ describe("PublicHomeApp", () => {
     expectHomepageSectionsLabeled(container);
     expect(
       screen
-        .getByRole("link", { name: "Explore shared features" })
+        .getAllByRole("link", { name: "Explore shared features" })[0]
         .getAttribute("href"),
     ).toBe("/features");
     expect(
@@ -432,7 +470,7 @@ describe("PublicHomeApp", () => {
     ).toBe("/features");
     expect(
       screen
-        .getByRole("link", { name: "See AI workflows" })
+        .getAllByRole("link", { name: "See AI workflows" })[0]
         .getAttribute("href"),
     ).toBe("/features/ai");
     expect(screen.queryByText("Open page")).toBeNull();
