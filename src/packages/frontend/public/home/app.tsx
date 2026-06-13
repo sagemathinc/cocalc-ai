@@ -391,6 +391,49 @@ const REVIEW_TRAIL_ITEMS = [
   icon: IconName;
   label: string;
 }[];
+const BOUNDARY_LINK_ITEMS = [
+  {
+    accent: PUBLIC_COLORS.brand,
+    body: "Use the trust policy for current public trust references.",
+    href: "policies/trust",
+    icon: "lock-outlined",
+    title: "Trust policy",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Use the Plus page for local-runtime install and data-flow context.",
+    href: "products/cocalc-plus",
+    icon: "laptop",
+    title: "CoCalc Plus details",
+  },
+  {
+    accent: PUBLIC_COLORS.success,
+    body: "Use support when rollout, onboarding, or account-specific questions need a person.",
+    href: "support",
+    icon: "question-circle",
+    title: "Support path",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Use the product comparison for hosted, local, and customer-operated paths.",
+    href: "products",
+    icon: "servers",
+    title: "Deployment comparison",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Use support for hosted transition questions instead of relying on homepage copy.",
+    href: "support",
+    icon: "sync-alt",
+    title: "Hosted transition questions",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  title: string;
+}[];
 
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
@@ -2836,6 +2879,99 @@ function ProductOptionsSection() {
   );
 }
 
+function BoundaryRoutingSection() {
+  return (
+    <section
+      aria-label="Homepage boundary and detail routes"
+      style={{
+        background: PUBLIC_COLORS.surfaceMuted,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `34px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Row align="middle" gutter={[32, 24]}>
+        <Col lg={8} xs={24}>
+          <Flex vertical gap={14}>
+            <Eyebrow>Boundaries and detail pages</Eyebrow>
+            <Title level={2} style={{ margin: 0 }}>
+              Keep the operating boundaries visible.
+            </Title>
+            <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              Hosted, local, and customer-operated paths differ in operator
+              responsibility, data flow, and support path. Use the detail pages
+              for the current terms instead of treating the homepage as the
+              contract.
+            </Paragraph>
+          </Flex>
+        </Col>
+        <Col lg={16} xs={24}>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+            }}
+          >
+            {BOUNDARY_LINK_ITEMS.map((item) => (
+              <a
+                href={appPath(item.href)}
+                key={item.title}
+                style={{
+                  alignItems: "start",
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${alpha(item.accent, 0.24)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "42px minmax(0, 1fr) 18px",
+                  minHeight: 128,
+                  padding: 16,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(item.accent, 0.09),
+                    border: `1px solid ${alpha(item.accent, 0.24)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    fontSize: 20,
+                    height: 42,
+                    justifyContent: "center",
+                    width: 42,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text strong style={{ display: "block" }}>
+                    {item.title}
+                  </Text>
+                  <Text type="secondary">{item.body}</Text>
+                </span>
+                <Icon
+                  name="arrow-right"
+                  style={{
+                    color: item.accent,
+                    fontSize: 16,
+                    marginTop: 3,
+                  }}
+                />
+              </a>
+            ))}
+          </div>
+        </Col>
+      </Row>
+    </section>
+  );
+}
+
 function DifferenceSection() {
   const items = [
     {
@@ -3361,6 +3497,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <WorkflowsSection />
       <AudienceSection />
       <ProductOptionsSection />
+      <BoundaryRoutingSection />
       <DifferenceSection />
       <OperationalProofSection />
       <NewsSection initialNews={news} />

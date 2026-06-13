@@ -391,6 +391,39 @@ describe("PublicHomeApp", () => {
     expect(
       screen.getByText("Site licensing wraps the path you choose."),
     ).not.toBeNull();
+    const boundaryRoutes = screen.getByRole("region", {
+      name: "Homepage boundary and detail routes",
+    });
+    expect(
+      within(boundaryRoutes).getByRole("heading", {
+        name: "Keep the operating boundaries visible.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(boundaryRoutes)
+        .getByRole("link", { name: /Trust policy/i })
+        .getAttribute("href"),
+    ).toBe("/policies/trust");
+    expect(
+      within(boundaryRoutes)
+        .getByRole("link", { name: /CoCalc Plus details/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(boundaryRoutes)
+        .getByRole("link", { name: /Support path/i })
+        .getAttribute("href"),
+    ).toBe("/support");
+    expect(
+      within(boundaryRoutes)
+        .getByRole("link", { name: /Deployment comparison/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(boundaryRoutes)
+        .getByRole("link", { name: /Hosted transition questions/i })
+        .getAttribute("href"),
+    ).toBe("/support");
     expect(screen.getByText(/direct self-service path/i)).not.toBeNull();
     expect(screen.queryByText(/fast team starts/i)).toBeNull();
     expect(screen.queryByText(/quickest start/i)).toBeNull();
