@@ -245,85 +245,30 @@ const HERO_CONTEXT_RAIL = [
   icon: IconName;
   label: string;
 }[];
-const WORKSPACE_SCOPE_ITEMS = [
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    detail: "Source trees and patches",
-    icon: "file-code",
-    label: "Code",
-  },
-  {
-    accent: COLORS.RUN,
-    detail: "Jupyter output and notes",
-    icon: "jupyter",
-    label: "Notebooks",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    detail: "LaTeX, Markdown, handouts",
-    icon: "file-alt",
-    label: "Documents",
-  },
-  {
-    accent: PUBLIC_COLORS.success,
-    detail: "Kernels, shells, services",
-    icon: "terminal",
-    label: "Compute",
-  },
+const WORKSPACE_OVERVIEW_SIGNALS = [
   {
     accent: COLORS.BLUE_D,
-    detail: "Project files and data",
-    icon: "files",
-    label: "Files",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    detail: "Codex turns and chat",
-    icon: "robot",
-    label: "AI",
-  },
-  {
-    accent: PUBLIC_COLORS.brandActive,
-    detail: "People and shared review",
-    icon: "users",
-    label: "Collaboration",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    detail: "Snapshots and TimeTravel",
-    icon: "history",
-    label: "History",
-  },
-] satisfies {
-  accent: string;
-  detail: string;
-  icon: IconName;
-  label: string;
-}[];
-const WORKSPACE_DECISION_CUES = [
-  {
-    accent: COLORS.BLUE_D,
-    detail: "Files, notebooks, data, and notes.",
+    detail: "Files, notebooks, data, and notes stay visible.",
     icon: "files",
     label: "Material",
   },
   {
     accent: COLORS.RUN,
-    detail: "Kernels, terminals, packages, and services.",
+    detail: "Kernels, terminals, packages, and services run nearby.",
     icon: "terminal",
     label: "Runtime",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    detail: "People, Codex turns, and review notes.",
-    icon: "users",
-    label: "Collaboration",
+    detail: "People, Codex turns, and review notes share context.",
+    icon: "robot",
+    label: "Assistance",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    detail: "Hosted, local, or customer-operated path.",
-    icon: "servers",
-    label: "Operating boundary",
+    detail: "Snapshots and TimeTravel keep earlier states available.",
+    icon: "disk-snapshot",
+    label: "Review",
   },
 ] satisfies {
   accent: string;
@@ -331,11 +276,10 @@ const WORKSPACE_DECISION_CUES = [
   icon: IconName;
   label: string;
 }[];
-const WORKSPACE_START_PLANNER_STEPS = [
+const WORKSPACE_OVERVIEW_ROUTES = [
   {
     accent: COLORS.BLUE_D,
-    detail:
-      "Put source, notebooks, data, and notes in one project before choosing tools.",
+    detail: "Start from the project that holds the files and record.",
     href: ({ authenticated }: { authenticated: boolean }) =>
       authenticated ? appPath("projects") : appPath("auth/sign-up"),
     icon: "project-outlined",
@@ -345,27 +289,20 @@ const WORKSPACE_START_PLANNER_STEPS = [
   },
   {
     accent: COLORS.RUN,
-    detail: "Open a terminal or notebook where the files already live.",
-    href: () => appPath("features/terminal"),
-    icon: "terminal",
-    label: "Runtime",
-    title: () => "Add runtime",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    detail: "Use Codex or chat when the project record should inform changes.",
-    href: () => appPath("features/ai"),
-    icon: "robot",
-    label: "Assistance",
-    title: () => "Ask with context",
+    detail:
+      "Then choose a notebook, terminal, AI, teaching, or writing surface.",
+    href: () => appPath("features"),
+    icon: "overview",
+    label: "Workflows",
+    title: () => "Choose work surface",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    detail: "Check snapshots, history, or comparisons before handing off.",
-    href: () => appPath("features/compare"),
-    icon: "disk-snapshot",
-    label: "Review point",
-    title: () => "Review the state",
+    detail: "Use hosted, local, or customer-operated paths when that matters.",
+    href: () => appPath("products"),
+    icon: "servers",
+    label: "Deployment",
+    title: () => "Choose operating path",
   },
 ] satisfies {
   accent: string;
@@ -624,187 +561,6 @@ const SUPPORTING_WORKFLOW_ROUTES = [
   icon: IconName;
   label: string;
   title: string;
-}[];
-const WORKSPACE_CONTINUITY_CUES = [
-  {
-    accent: COLORS.BLUE_D,
-    body: "Notebooks, source trees, datasets, and notes enter one project before a tool opens.",
-    href: "features/compare",
-    icon: "files",
-    kept: "Files, notebooks, data",
-    label: "Material",
-    title: "Start with the material",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Shells, packages, services, and notebook kernels run beside the files they use.",
-    href: "features/terminal",
-    icon: "terminal",
-    kept: "Commands, output, services",
-    label: "Runtime",
-    title: "Run beside the files",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Codex prompts and patches stay close to the project state that explains them.",
-    href: "features/ai",
-    icon: "robot",
-    kept: "Prompts, patches, notes",
-    label: "Codex",
-    title: "Ask with project context",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    body: "Snapshots, TimeTravel, and comparison views keep changed work inspectable.",
-    href: "features/compare",
-    icon: "history",
-    kept: "Snapshots, history, review",
-    label: "Review",
-    title: "Check what changed",
-  },
-] satisfies {
-  accent: string;
-  body: string;
-  href: string;
-  icon: IconName;
-  kept: string;
-  label: string;
-  title: string;
-}[];
-const WORKSPACE_CONTINUITY_LAYERS = [
-  {
-    accent: COLORS.BLUE_D,
-    detail: "Files and notebooks establish the shared source.",
-    icon: "files",
-    label: "Source",
-  },
-  {
-    accent: COLORS.RUN,
-    detail: "Commands and kernels produce output from that source.",
-    icon: "terminal",
-    label: "Execution",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    detail: "Agent work and chat keep the reasoning nearby.",
-    icon: "robot",
-    label: "Assistance",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    detail: "Snapshots and comparisons make changes reviewable.",
-    icon: "disk-snapshot",
-    label: "Recovery",
-  },
-] satisfies {
-  accent: string;
-  detail: string;
-  icon: IconName;
-  label: string;
-}[];
-const WORKSPACE_HANDOFF_CHECKPOINTS = [
-  {
-    accent: COLORS.BLUE_D,
-    detail: "Files, notebooks, and documents are the shared reference.",
-    icon: "files",
-    label: "Source record",
-  },
-  {
-    accent: COLORS.RUN,
-    detail:
-      "Terminal output, kernels, and services show how results were produced.",
-    icon: "terminal",
-    label: "Execution context",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    detail:
-      "Codex turns, discussion, and comparison views keep decisions visible.",
-    icon: "robot",
-    label: "Review notes",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    detail:
-      "Open the next notebook, terminal, agent, or product path from the same project.",
-    icon: "arrow-right",
-    label: "Next surface",
-  },
-] satisfies {
-  accent: string;
-  detail: string;
-  icon: IconName;
-  label: string;
-}[];
-const WORKSPACE_NEXT_SURFACE_CHECKS = [
-  {
-    accent: COLORS.BLUE_D,
-    detail:
-      "Notebook, source, data, and notes are still linked from the project.",
-    icon: "files",
-    label: "Reference is visible",
-  },
-  {
-    accent: COLORS.RUN,
-    detail:
-      "Kernel, shell, package, or service notes show how the result was produced.",
-    icon: "terminal",
-    label: "Runtime is named",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    detail:
-      "Prompt, patch, and discussion context describe what the agent should use.",
-    icon: "robot",
-    label: "Agent scope is clear",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    detail:
-      "Snapshot, comparison, or review note marks the state to continue from.",
-    icon: "disk-snapshot",
-    label: "Review point is saved",
-  },
-] satisfies {
-  accent: string;
-  detail: string;
-  icon: IconName;
-  label: string;
-}[];
-const LANDING_ENTRY_ACTIONS = [
-  {
-    accent: COLORS.BLUE_D,
-    body: "Open the project boundary first when files, notebooks, terminals, and agent work need one home.",
-    href: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? appPath("projects") : appPath("auth/sign-up"),
-    icon: "project-outlined",
-    label: "Workspace",
-    next: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? "Open projects" : "Create a workspace",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Then choose the notebook, terminal, AI, teaching, or writing surface that fits the task.",
-    href: () => appPath("features"),
-    icon: "overview",
-    label: "Work surfaces",
-    next: () => "Browse workflows",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    body: "Then compare hosted, local, and customer-operated options when the runtime boundary matters.",
-    href: () => appPath("products"),
-    icon: "servers",
-    label: "Operating path",
-    next: () => "Compare deployments",
-  },
-] satisfies {
-  accent: string;
-  body: string;
-  href: (opts: { authenticated: boolean }) => string;
-  icon: IconName;
-  label: string;
-  next: (opts: { authenticated: boolean }) => string;
 }[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
@@ -2131,181 +1887,123 @@ function Hero({ config }: { config?: HomeConfig }) {
   );
 }
 
-function WorkspaceScopeStrip({ authenticated }: { authenticated: boolean }) {
+function WorkspaceOverviewSection({
+  authenticated,
+}: {
+  authenticated: boolean;
+}) {
   return (
     <section
-      aria-label="CoCalc.ai workspace scope"
+      aria-label="CoCalc.ai workspace overview"
       style={{
         background: `linear-gradient(90deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 100%)`,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
         marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
-        padding: `18px ${PUBLIC_PAGE_GUTTER}`,
+        padding: `26px ${PUBLIC_PAGE_GUTTER}`,
       }}
     >
-      <Flex vertical gap={14}>
-        <Flex align="center" gap={18} justify="space-between" wrap>
-          <div style={{ maxWidth: 430 }}>
-            <Eyebrow>Workspace scope</Eyebrow>
-            <Title level={2} style={{ fontSize: 26, margin: "6px 0 6px" }}>
-              The workspace holds the pieces technical work needs.
+      <Row align="middle" gutter={[24, 24]}>
+        <Col lg={9} xs={24}>
+          <Flex vertical gap={12}>
+            <Eyebrow>Workspace overview</Eyebrow>
+            <Title level={2} style={{ margin: 0 }}>
+              One project connects the work, tools, and operating path.
             </Title>
             <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-              Keep the common artifacts visible before choosing a notebook,
-              terminal, agent, collaboration, or deployment path.
+              Start with the project record, choose the work surface, then
+              decide whether the workspace should be hosted, local, or
+              customer-operated.
             </Paragraph>
-          </div>
+          </Flex>
+        </Col>
+        <Col lg={15} xs={24}>
           <div
-            aria-label="CoCalc.ai workspace artifacts"
+            aria-label="CoCalc.ai workspace overview signals"
             role="group"
             style={{
               display: "grid",
-              flex: "1 1 660px",
-              gap: 8,
+              gap: 10,
               gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
+                "repeat(auto-fit, minmax(min(100%, 178px), 1fr))",
             }}
           >
-            {WORKSPACE_SCOPE_ITEMS.map((item) => (
+            {WORKSPACE_OVERVIEW_SIGNALS.map((signal) => (
               <div
-                key={item.label}
+                key={signal.label}
                 style={{
                   alignItems: "start",
                   background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${alpha(item.accent, 0.22)}`,
+                  border: `1px solid ${alpha(signal.accent, 0.22)}`,
                   borderRadius: PANEL_RADIUS,
                   display: "grid",
                   gap: 9,
-                  gridTemplateColumns: "32px minmax(0, 1fr)",
-                  minHeight: 76,
-                  padding: 10,
+                  gridTemplateColumns: "34px minmax(0, 1fr)",
+                  minHeight: 88,
+                  padding: 12,
                 }}
               >
                 <span
                   aria-hidden="true"
                   style={{
                     alignItems: "center",
-                    background: alpha(item.accent, 0.08),
-                    border: `1px solid ${alpha(item.accent, 0.22)}`,
+                    background: alpha(signal.accent, 0.08),
+                    border: `1px solid ${alpha(signal.accent, 0.22)}`,
                     borderRadius: PANEL_RADIUS,
-                    color: item.accent,
+                    color: signal.accent,
                     display: "flex",
                     fontSize: 16,
-                    height: 32,
+                    height: 34,
                     justifyContent: "center",
-                    width: 32,
+                    width: 34,
                   }}
                 >
-                  <Icon name={item.icon} />
+                  <Icon name={signal.icon} />
                 </span>
                 <span style={{ minWidth: 0 }}>
-                  <Text strong style={{ display: "block" }}>
-                    {item.label}
+                  <Text
+                    strong
+                    style={{
+                      color: signal.accent,
+                      display: "block",
+                      fontSize: 12,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {signal.label}
                   </Text>
-                  <Text type="secondary">{item.detail}</Text>
+                  <Text type="secondary">{signal.detail}</Text>
                 </span>
               </div>
             ))}
           </div>
-        </Flex>
-        <div
-          aria-label="CoCalc.ai workspace decision cues"
-          role="group"
-          style={{
-            display: "grid",
-            gap: 8,
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
-          }}
-        >
-          {WORKSPACE_DECISION_CUES.map((cue) => (
-            <div
-              key={cue.label}
-              style={{
-                alignItems: "start",
-                background: alpha(cue.accent, 0.05),
-                border: `1px solid ${alpha(cue.accent, 0.22)}`,
-                borderRadius: PANEL_RADIUS,
-                display: "grid",
-                gap: 9,
-                gridTemplateColumns: "34px minmax(0, 1fr)",
-                minHeight: 70,
-                padding: 11,
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  alignItems: "center",
-                  background: alpha(cue.accent, 0.08),
-                  border: `1px solid ${alpha(cue.accent, 0.22)}`,
-                  borderRadius: PANEL_RADIUS,
-                  color: cue.accent,
-                  display: "flex",
-                  fontSize: 16,
-                  height: 34,
-                  justifyContent: "center",
-                  width: 34,
-                }}
-              >
-                <Icon name={cue.icon} />
-              </span>
-              <span style={{ minWidth: 0 }}>
-                <Text
-                  strong
-                  style={{
-                    color: cue.accent,
-                    display: "block",
-                    fontSize: 12,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {cue.label}
-                </Text>
-                <Text type="secondary">{cue.detail}</Text>
-              </span>
-            </div>
-          ))}
-        </div>
-        <div
-          aria-label="CoCalc.ai workspace start planner"
-          role="group"
-          style={{
-            borderTop: `1px solid ${PUBLIC_COLORS.border}`,
-            paddingTop: 14,
-          }}
-        >
-          <Flex align="baseline" justify="space-between" wrap gap={8}>
-            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
-              Start planner
-            </Text>
-            <Text type="secondary">
-              Follow one project through the first tool choice.
-            </Text>
-          </Flex>
           <div
+            aria-label="CoCalc.ai workspace overview routes"
+            role="group"
             style={{
+              borderTop: `1px solid ${PUBLIC_COLORS.border}`,
               display: "grid",
-              gap: 8,
+              gap: 10,
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
-              marginTop: 10,
+              marginTop: 14,
+              paddingTop: 14,
             }}
           >
-            {WORKSPACE_START_PLANNER_STEPS.map((step, index) => (
+            {WORKSPACE_OVERVIEW_ROUTES.map((route) => (
               <a
-                href={step.href({ authenticated })}
-                key={step.label}
+                href={route.href({ authenticated })}
+                key={route.label}
                 style={{
                   alignItems: "start",
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${alpha(step.accent, 0.24)}`,
+                  background: alpha(route.accent, 0.05),
+                  border: `1px solid ${alpha(route.accent, 0.22)}`,
                   borderRadius: PANEL_RADIUS,
                   color: "inherit",
                   display: "grid",
-                  gap: 9,
-                  gridTemplateColumns: "34px minmax(0, 1fr) 14px",
-                  minHeight: 108,
-                  padding: 11,
+                  gap: 10,
+                  gridTemplateColumns: "36px minmax(0, 1fr) 14px",
+                  minHeight: 112,
+                  padding: 12,
                   textDecoration: "none",
                 }}
               >
@@ -2313,481 +2011,49 @@ function WorkspaceScopeStrip({ authenticated }: { authenticated: boolean }) {
                   aria-hidden="true"
                   style={{
                     alignItems: "center",
-                    background: alpha(step.accent, 0.08),
-                    border: `1px solid ${alpha(step.accent, 0.22)}`,
+                    background: alpha(route.accent, 0.08),
+                    border: `1px solid ${alpha(route.accent, 0.22)}`,
                     borderRadius: PANEL_RADIUS,
-                    color: step.accent,
+                    color: route.accent,
                     display: "flex",
-                    flexDirection: "column",
-                    fontSize: 14,
-                    gap: 2,
-                    height: 44,
+                    fontSize: 18,
+                    height: 36,
                     justifyContent: "center",
-                    width: 34,
+                    width: 36,
                   }}
                 >
-                  <Icon name={step.icon} />
-                  <Text
-                    strong
-                    style={{ color: "inherit", fontSize: 10, lineHeight: 1 }}
-                  >
-                    {index + 1}
-                  </Text>
+                  <Icon name={route.icon} />
                 </span>
                 <span style={{ minWidth: 0 }}>
                   <Text
                     strong
                     style={{
-                      color: step.accent,
+                      color: route.accent,
                       display: "block",
                       fontSize: 12,
                       textTransform: "uppercase",
                     }}
                   >
-                    {step.label}
+                    {route.label}
                   </Text>
                   <Text strong style={{ display: "block", marginTop: 2 }}>
-                    {step.title({ authenticated })}
+                    {route.title({ authenticated })}
                   </Text>
-                  <Text type="secondary">{step.detail}</Text>
+                  <Text type="secondary">{route.detail}</Text>
                 </span>
                 <Icon
                   name="arrow-right"
                   style={{
                     alignSelf: "center",
-                    color: step.accent,
+                    color: route.accent,
                     fontSize: 12,
                   }}
                 />
               </a>
             ))}
           </div>
-        </div>
-      </Flex>
-    </section>
-  );
-}
-
-function WorkspaceContinuitySection({
-  authenticated,
-}: {
-  authenticated: boolean;
-}) {
-  return (
-    <section
-      aria-label="CoCalc.ai workspace continuity map"
-      style={{
-        background: PUBLIC_COLORS.surface,
-        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
-        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
-        padding: `26px ${PUBLIC_PAGE_GUTTER}`,
-      }}
-    >
-      <Flex align="start" justify="space-between" gap={18} wrap>
-        <div style={{ maxWidth: 470 }}>
-          <Eyebrow>Project continuity</Eyebrow>
-          <Title level={2} style={{ margin: "8px 0 8px" }}>
-            Keep the work surface connected to the work.
-          </Title>
-          <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-            The first notebook, command, prompt, or deployment choice should
-            still point back to the same project context: files, execution,
-            agent work, and review history.
-          </Paragraph>
-        </div>
-        <div
-          aria-label="CoCalc.ai continuity checkpoints"
-          role="group"
-          style={{
-            display: "grid",
-            flex: "1 1 620px",
-            gap: 10,
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-          }}
-        >
-          {WORKSPACE_CONTINUITY_CUES.map((item) => (
-            <a
-              href={appPath(item.href)}
-              key={item.label}
-              style={{
-                alignItems: "start",
-                background: PUBLIC_COLORS.surfaceMuted,
-                border: `1px solid ${alpha(item.accent, 0.22)}`,
-                borderRadius: PANEL_RADIUS,
-                color: "inherit",
-                display: "grid",
-                gap: 10,
-                gridTemplateColumns: "38px minmax(0, 1fr)",
-                minHeight: 152,
-                padding: 14,
-                textDecoration: "none",
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  alignItems: "center",
-                  background: alpha(item.accent, 0.08),
-                  border: `1px solid ${alpha(item.accent, 0.2)}`,
-                  borderRadius: PANEL_RADIUS,
-                  color: item.accent,
-                  display: "flex",
-                  fontSize: 18,
-                  height: 38,
-                  justifyContent: "center",
-                  width: 38,
-                }}
-              >
-                <Icon name={item.icon} />
-              </span>
-              <span style={{ minWidth: 0 }}>
-                <Text
-                  strong
-                  style={{
-                    color: item.accent,
-                    display: "block",
-                    fontSize: 12,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {item.label}
-                </Text>
-                <Text strong style={{ display: "block", marginTop: 2 }}>
-                  {item.title}
-                </Text>
-                <Text type="secondary">{item.body}</Text>
-                <Text
-                  style={{
-                    color: item.accent,
-                    display: "block",
-                    fontSize: 13,
-                    marginTop: 8,
-                  }}
-                >
-                  {item.kept}
-                </Text>
-              </span>
-            </a>
-          ))}
-        </div>
-        <div
-          aria-label="CoCalc.ai entry actions"
-          role="group"
-          style={{
-            display: "grid",
-            flex: "1 1 620px",
-            gap: 10,
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 230px), 1fr))",
-          }}
-        >
-          {LANDING_ENTRY_ACTIONS.map((route) => (
-            <a
-              href={route.href({ authenticated })}
-              key={route.label}
-              style={{
-                alignItems: "start",
-                background: alpha(route.accent, 0.06),
-                border: `1px solid ${alpha(route.accent, 0.22)}`,
-                borderRadius: PANEL_RADIUS,
-                color: "inherit",
-                display: "grid",
-                gap: 10,
-                gridTemplateColumns: "38px minmax(0, 1fr) 16px",
-                minHeight: 138,
-                padding: 14,
-                textDecoration: "none",
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  alignItems: "center",
-                  background: alpha(route.accent, 0.08),
-                  border: `1px solid ${alpha(route.accent, 0.22)}`,
-                  borderRadius: PANEL_RADIUS,
-                  color: route.accent,
-                  display: "flex",
-                  fontSize: 18,
-                  height: 38,
-                  justifyContent: "center",
-                  width: 38,
-                }}
-              >
-                <Icon name={route.icon} />
-              </span>
-              <span style={{ minWidth: 0 }}>
-                <Text
-                  strong
-                  style={{
-                    color: route.accent,
-                    display: "block",
-                    fontSize: 12,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {route.label}
-                </Text>
-                <Title level={3} style={{ fontSize: 21, margin: "4px 0 6px" }}>
-                  {route.next({ authenticated })}
-                </Title>
-                <Text type="secondary">{route.body}</Text>
-              </span>
-              <Icon
-                name="arrow-right"
-                style={{
-                  color: route.accent,
-                  marginTop: 4,
-                }}
-              />
-            </a>
-          ))}
-        </div>
-        <div
-          aria-label="CoCalc.ai continuity layers"
-          role="group"
-          style={{
-            background: PUBLIC_COLORS.surfaceMuted,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            flex: "1 1 100%",
-            padding: 14,
-          }}
-        >
-          <Flex align="baseline" justify="space-between" wrap gap={8}>
-            <Text strong style={{ color: PUBLIC_COLORS.heading }}>
-              Continuity layers
-            </Text>
-            <Text style={{ color: PUBLIC_COLORS.mutedText, fontSize: 12 }}>
-              Source, execution, assistance, recovery.
-            </Text>
-          </Flex>
-          <div
-            style={{
-              display: "grid",
-              gap: 8,
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
-              marginTop: 10,
-            }}
-          >
-            {WORKSPACE_CONTINUITY_LAYERS.map((step, index) => (
-              <div
-                key={step.label}
-                style={{
-                  alignItems: "start",
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${alpha(step.accent, 0.24)}`,
-                  borderRadius: PANEL_RADIUS,
-                  color: "inherit",
-                  display: "grid",
-                  gap: 9,
-                  gridTemplateColumns: "32px minmax(0, 1fr)",
-                  minHeight: 126,
-                  padding: 12,
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    alignItems: "center",
-                    background: alpha(step.accent, 0.08),
-                    border: `1px solid ${alpha(step.accent, 0.22)}`,
-                    borderRadius: PANEL_RADIUS,
-                    color: step.accent,
-                    display: "flex",
-                    flexDirection: "column",
-                    fontSize: 14,
-                    gap: 2,
-                    height: 44,
-                    justifyContent: "center",
-                    width: 32,
-                  }}
-                >
-                  <Icon name={step.icon} />
-                  <Text
-                    strong
-                    style={{ color: "inherit", fontSize: 10, lineHeight: 1 }}
-                  >
-                    {index + 1}
-                  </Text>
-                </span>
-                <span style={{ minWidth: 0 }}>
-                  <Text
-                    strong
-                    style={{
-                      color: step.accent,
-                      display: "block",
-                      fontSize: 12,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {step.label}
-                  </Text>
-                  <Text type="secondary">{step.detail}</Text>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div
-          aria-label="CoCalc.ai continuity handoff checkpoints"
-          role="group"
-          style={{
-            background: `linear-gradient(90deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 100%)`,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            flex: "1 1 100%",
-            padding: 14,
-          }}
-        >
-          <Flex align="baseline" justify="space-between" wrap gap={8}>
-            <Text strong style={{ color: PUBLIC_COLORS.heading }}>
-              Handoff checkpoints
-            </Text>
-            <Text style={{ color: PUBLIC_COLORS.mutedText, fontSize: 12 }}>
-              What should still be visible before moving on.
-            </Text>
-          </Flex>
-          <div
-            style={{
-              display: "grid",
-              gap: 8,
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
-              marginTop: 10,
-            }}
-          >
-            {WORKSPACE_HANDOFF_CHECKPOINTS.map((checkpoint) => (
-              <div
-                key={checkpoint.label}
-                style={{
-                  alignItems: "start",
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${alpha(checkpoint.accent, 0.24)}`,
-                  borderRadius: PANEL_RADIUS,
-                  display: "grid",
-                  gap: 9,
-                  gridTemplateColumns: "32px minmax(0, 1fr)",
-                  minHeight: 96,
-                  padding: 12,
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    alignItems: "center",
-                    background: alpha(checkpoint.accent, 0.08),
-                    border: `1px solid ${alpha(checkpoint.accent, 0.22)}`,
-                    borderRadius: PANEL_RADIUS,
-                    color: checkpoint.accent,
-                    display: "flex",
-                    fontSize: 16,
-                    height: 32,
-                    justifyContent: "center",
-                    width: 32,
-                  }}
-                >
-                  <Icon name={checkpoint.icon} />
-                </span>
-                <span style={{ minWidth: 0 }}>
-                  <Text
-                    strong
-                    style={{
-                      color: checkpoint.accent,
-                      display: "block",
-                      fontSize: 12,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {checkpoint.label}
-                  </Text>
-                  <Text type="secondary">{checkpoint.detail}</Text>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div
-          aria-label="CoCalc.ai next surface checks"
-          role="group"
-          style={{
-            background: PUBLIC_COLORS.surface,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            flex: "1 1 100%",
-            padding: 14,
-          }}
-        >
-          <Flex align="baseline" justify="space-between" wrap gap={8}>
-            <Text strong style={{ color: PUBLIC_COLORS.heading }}>
-              Next surface checks
-            </Text>
-            <Text style={{ color: PUBLIC_COLORS.mutedText, fontSize: 12 }}>
-              What to confirm before switching surfaces.
-            </Text>
-          </Flex>
-          <div
-            style={{
-              display: "grid",
-              gap: 8,
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
-              marginTop: 10,
-            }}
-          >
-            {WORKSPACE_NEXT_SURFACE_CHECKS.map((item) => (
-              <div
-                key={item.label}
-                style={{
-                  alignItems: "start",
-                  background: alpha(item.accent, 0.05),
-                  border: `1px solid ${alpha(item.accent, 0.22)}`,
-                  borderRadius: PANEL_RADIUS,
-                  display: "grid",
-                  gap: 9,
-                  gridTemplateColumns: "32px minmax(0, 1fr)",
-                  minHeight: 104,
-                  padding: 12,
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    alignItems: "center",
-                    background: alpha(item.accent, 0.08),
-                    border: `1px solid ${alpha(item.accent, 0.22)}`,
-                    borderRadius: PANEL_RADIUS,
-                    color: item.accent,
-                    display: "flex",
-                    fontSize: 16,
-                    height: 32,
-                    justifyContent: "center",
-                    width: 32,
-                  }}
-                >
-                  <Icon name={item.icon} />
-                </span>
-                <span style={{ minWidth: 0 }}>
-                  <Text
-                    strong
-                    style={{
-                      color: item.accent,
-                      display: "block",
-                      fontSize: 12,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {item.label}
-                  </Text>
-                  <Text type="secondary">{item.detail}</Text>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Flex>
+        </Col>
+      </Row>
     </section>
   );
 }
@@ -4366,8 +3632,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
-      <WorkspaceScopeStrip authenticated={!!config?.is_authenticated} />
-      <WorkspaceContinuitySection authenticated={!!config?.is_authenticated} />
+      <WorkspaceOverviewSection authenticated={!!config?.is_authenticated} />
       <WorkspaceContextSection authenticated={!!config?.is_authenticated} />
       <WorkflowsSection />
       <AudienceSection />
