@@ -221,6 +221,16 @@ export const MEMBERSHIP_TIER_FIELDS = [
     public: true,
   }),
   field({
+    id: "course_allowed_domains",
+    path: ["course_allowed_domains"],
+    card: "product",
+    label: "Course allowed instructor domains",
+    help: "Optional verified instructor email domains allowed to select this course tier. Leave empty for any instructor. Use example.edu for exact domains or *.example.edu for subdomains.",
+    input: "string-list",
+    valueType: "string-list",
+    risks: ["storefront"],
+  }),
+  field({
     id: "course_price",
     path: ["course_price"],
     card: "product",

@@ -7,7 +7,9 @@ REPO_ROOT="$(cd "${SRC_ROOT}/.." && pwd)"
 
 REMOTE=""
 BUNDLE_PATH=""
+HOST_SOFTWARE_BUNDLE_PATH=""
 BUILD_BUNDLE=0
+BUILD_HOST_SOFTWARE_BUNDLE=0
 STATIC_ONLY=0
 RESTART_HUB_WORKERS=0
 API_URL=""
@@ -32,6 +34,7 @@ CLI_PATH="${SRC_ROOT}/packages/cli/dist/bin/cocalc.js"
 
 REMOTE_WORK_DIR=""
 REMOTE_BUNDLE=""
+REMOTE_HOST_SOFTWARE_BUNDLE=""
 REMOTE_SCRIPT_DIR=""
 TEMP_COOKIE_FILE=""
 TEMP_COOKIE_HASH_B64=""
@@ -60,6 +63,11 @@ Required:
                               cocalc-bay-static-linux-*.tar.xz with --static-only
     or
   --build-bundle              build the bundle before upgrading
+  --host-software-bundle <tarball>
+                              local cocalc-project-host-software-linux-*.tar.xz
+                              staged into current/runtime/packages before host upgrade
+  --build-host-software-bundle
+                              build the project-host software bundle before host upgrade
   --static-only               deploy only frontend/static assets by creating a
                               new release from the current VM release and
                               flipping the current release symlink without
@@ -154,8 +162,12 @@ parse_args() {
         REMOTE="$2"; shift 2 ;;
       --bundle)
         BUNDLE_PATH="$2"; shift 2 ;;
+      --host-software-bundle)
+        HOST_SOFTWARE_BUNDLE_PATH="$2"; shift 2 ;;
       --build-bundle)
         BUILD_BUNDLE=1; shift ;;
+      --build-host-software-bundle)
+        BUILD_HOST_SOFTWARE_BUNDLE=1; shift ;;
       --static-only)
         STATIC_ONLY=1; shift ;;
       --restart-hub-workers)
@@ -212,6 +224,9 @@ validate_args() {
   if [[ "$BUILD_BUNDLE" -eq 1 && -n "$BUNDLE_PATH" ]]; then
     die "use either --bundle or --build-bundle, not both"
   fi
+  if [[ "$BUILD_HOST_SOFTWARE_BUNDLE" -eq 1 && -n "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
+    die "use either --host-software-bundle or --build-host-software-bundle, not both"
+  fi
   if [[ "$BUILD_BUNDLE" -eq 0 && -z "$BUNDLE_PATH" ]]; then
     die "specify --bundle or --build-bundle"
   fi
@@ -221,6 +236,9 @@ validate_args() {
   if [[ "$SKIP_HOST_UPGRADE" -eq 0 ]]; then
     if [[ -z "$COOKIE_HEADER" && -z "$ADMIN_ACCOUNT_ID" && -z "$ADMIN_EMAIL" ]]; then
       die "host upgrade needs --cookie, --admin-account-id, --admin-email, or --skip-host-upgrade"
+    fi
+    if [[ "$BUILD_BUNDLE" -eq 1 && -z "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
+      BUILD_HOST_SOFTWARE_BUNDLE=1
     fi
   fi
   if [[ -z "$PUBLIC_URL" ]]; then
@@ -252,6 +270,19 @@ build_bundle() {
   [[ -n "$BUNDLE_PATH" && -f "$BUNDLE_PATH" ]] || die "bundle build did not produce ${name_glob}"
 }
 
+build_host_software_bundle() {
+  log "Build project-host software bundle"
+  (cd "$REPO_ROOT" && pnpm -C src/packages --filter @cocalc/rocket run build:project-host-software-bundle)
+  HOST_SOFTWARE_BUNDLE_PATH="$(
+    find "${SRC_ROOT}/packages/rocket/build" \
+      -name 'cocalc-project-host-software-linux-*.tar.xz' \
+      -printf '%T@ %p\n' 2>/dev/null \
+      | sort -nr \
+      | awk 'NR==1 {print $2}'
+  )"
+  [[ -n "$HOST_SOFTWARE_BUNDLE_PATH" && -f "$HOST_SOFTWARE_BUNDLE_PATH" ]] || die "project-host software build did not produce cocalc-project-host-software-linux-*.tar.xz"
+}
+
 stage_release() {
   [[ -f "$BUNDLE_PATH" ]] || die "bundle not found: $BUNDLE_PATH"
   mkdir -p "$REPORT_DIR"
@@ -281,6 +312,77 @@ stage_release() {
     remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID") --worker-count $(q "$WORKER_COUNT") --public-url $(q "$PUBLIC_URL") --force-overlay --retain-releases $(q "$RETAIN_RELEASES") --start" \
       | tee "${REPORT_DIR}/stage-release.log"
   fi
+}
+
+stage_host_software() {
+  if [[ "$SKIP_HOST_UPGRADE" -ne 0 ]]; then
+    log "Skip project host software staging"
+    return 0
+  fi
+  if [[ -z "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
+    log "Check project-host software artifacts embedded in current bay release"
+    remote_exec "sudo bash -s" <<EOF | tee "${REPORT_DIR}/stage-host-software.log"
+set -euo pipefail
+current="\$(readlink -f /opt/cocalc/bay/current)"
+if [[ -z "\$current" || ! -d "\$current" ]]; then
+  echo "current bay release does not exist: /opt/cocalc/bay/current" >&2
+  exit 1
+fi
+missing=0
+for path in \
+  "\$current/runtime/packages/project-host/build/bundle-linux.tar.xz" \
+  "\$current/runtime/packages/project/build/bundle-linux.tar.xz" \
+  "\$current/runtime/packages/server/cloud/bootstrap/bootstrap.py"; do
+  if [[ ! -f "\$path" ]]; then
+    echo "missing embedded project-host software artifact: \$path" >&2
+    missing=1
+  fi
+done
+if [[ "\$missing" -ne 0 ]]; then
+  cat >&2 <<'MSG'
+This bay runtime does not embed project-host software artifacts.
+Provide --host-software-bundle <tarball> or use --build-host-software-bundle
+before running a deploy that upgrades project hosts.
+MSG
+  exit 1
+fi
+echo "project_host_software_embedded=\$current/runtime/packages"
+EOF
+    return 0
+  fi
+  [[ -f "$HOST_SOFTWARE_BUNDLE_PATH" ]] || die "project-host software bundle not found: $HOST_SOFTWARE_BUNDLE_PATH"
+  [[ -n "$REMOTE_WORK_DIR" ]] || die "remote work dir is not initialized"
+  REMOTE_HOST_SOFTWARE_BUNDLE="${REMOTE_WORK_DIR}/$(basename "$HOST_SOFTWARE_BUNDLE_PATH")"
+
+  log "Upload project-host software bundle"
+  scp "$HOST_SOFTWARE_BUNDLE_PATH" "$REMOTE:${REMOTE_HOST_SOFTWARE_BUNDLE}"
+
+  log "Stage project-host software into current bay release"
+  remote_exec "sudo bash -s" <<EOF | tee "${REPORT_DIR}/stage-host-software.log"
+set -euo pipefail
+current="\$(readlink -f /opt/cocalc/bay/current)"
+if [[ -z "\$current" || ! -d "\$current" ]]; then
+  echo "current bay release does not exist: /opt/cocalc/bay/current" >&2
+  exit 1
+fi
+extract="\$(mktemp -d /tmp/cocalc-host-software.XXXXXX)"
+cleanup() {
+  rm -rf "\$extract"
+}
+trap cleanup EXIT
+tar -xf $(q "$REMOTE_HOST_SOFTWARE_BUNDLE") -C "\$extract" --strip-components=1
+test -f "\$extract/runtime/packages/project-host/build/bundle-linux.tar.xz"
+test -f "\$extract/runtime/packages/project/build/bundle-linux.tar.xz"
+test -f "\$extract/runtime/packages/server/cloud/bootstrap/bootstrap.py"
+rm -rf "\$current/runtime/packages"
+mkdir -p "\$current/runtime"
+rsync -a --delete "\$extract/runtime/packages/" "\$current/runtime/packages/"
+if [[ -f "\$extract/project-host-software-manifest.json" ]]; then
+  cp "\$extract/project-host-software-manifest.json" "\$current/project-host-software-manifest.json"
+fi
+chown -R $(q "$BAY_USER"):$(q "$BAY_USER") "\$current/runtime/packages" "\$current/project-host-software-manifest.json" 2>/dev/null || true
+echo "project_host_software_staged=\$current/runtime/packages"
+EOF
 }
 
 restart_and_health_check() {
@@ -510,11 +612,17 @@ main() {
   if [[ "$BUILD_BUNDLE" -eq 1 ]]; then
     require_cmd pnpm
   fi
+  if [[ "$BUILD_HOST_SOFTWARE_BUNDLE" -eq 1 ]]; then
+    require_cmd pnpm
+  fi
   mkdir -p "$REPORT_DIR"
   preflight_cli_auth
 
   if [[ "$BUILD_BUNDLE" -eq 1 ]]; then
     build_bundle
+  fi
+  if [[ "$BUILD_HOST_SOFTWARE_BUNDLE" -eq 1 ]]; then
+    build_host_software_bundle
   fi
 
   log "Upgrade target"
@@ -525,10 +633,12 @@ public_url=${PUBLIC_URL}
 bay_id=${BAY_ID}
 static_only=${STATIC_ONLY}
 bundle=${BUNDLE_PATH}
+host_software_bundle=${HOST_SOFTWARE_BUNDLE_PATH}
 report_dir=${REPORT_DIR}
 EOF
 
   stage_release
+  stage_host_software
   restart_and_health_check
   upgrade_project_hosts
   verify_project_hosts

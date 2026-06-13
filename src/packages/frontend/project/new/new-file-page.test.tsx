@@ -176,6 +176,14 @@ jest.mock("../explorer/path-navigator", () => ({
   PathNavigator: () => <span>Home</span>,
 }));
 
+jest.mock("../find/find-scope-bar", () => ({
+  FindScopeBar: () => <span>Create in Home</span>,
+}));
+
+jest.mock("../home-directory", () => ({
+  getProjectHomeDirectory: () => "/home/user",
+}));
+
 jest.mock("../use-available-features", () => ({
   useAvailableFeatures: () => ({
     jupyter_notebook: true,
@@ -196,6 +204,13 @@ jest.mock("./new-file-button", () => ({
 
 jest.mock("./launcher-catalog", () => ({
   QUICK_CREATE_MAP: {},
+  getQuickCreateSpec: (id: string) => ({
+    id,
+    ext: id,
+    label: id,
+    icon: "file",
+  }),
+  isQuickCreateAvailable: () => true,
 }));
 
 jest.mock("./launcher-preferences", () => ({
@@ -209,6 +224,14 @@ jest.mock("./launcher-preferences", () => ({
 
 jest.mock("./launcher-customize-modal", () => ({
   LauncherCustomizeModal: () => null,
+}));
+
+jest.mock("./quick-create-dropdown", () => ({
+  QuickCreateDropdown: ({ onCreateFile }: any) => (
+    <button type="button" onClick={() => onCreateFile("md")}>
+      New
+    </button>
+  ),
 }));
 
 jest.mock("@cocalc/frontend/editor-tmp", () => ({

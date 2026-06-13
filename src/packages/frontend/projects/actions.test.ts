@@ -3,6 +3,7 @@ import { Map as ImmutableMap } from "immutable";
 import { ProjectsActions } from "./actions";
 import { store } from "./store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { isProjectRecentlyCreated } from "@cocalc/frontend/project/recently-created-project";
 
 jest.mock("./store", () => ({
   store: {
@@ -106,6 +107,7 @@ describe("ProjectsActions project metadata updates", () => {
   }
 
   beforeEach(() => {
+    window.sessionStorage.clear();
     mockedWebappClient.async_query.mockReset();
     mockedWebappClient.async_query.mockResolvedValue(undefined);
     mockedStore.get.mockImplementation((key) =>
@@ -122,6 +124,7 @@ describe("ProjectsActions project metadata updates", () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    window.sessionStorage.clear();
   });
 
   it.each([
@@ -488,6 +491,9 @@ describe("ProjectsActions project metadata updates", () => {
     );
     expect(mockedStore.async_wait).toHaveBeenCalled();
     expect(mockedWebappClient.async_query).not.toHaveBeenCalled();
+    expect(isProjectRecentlyCreated({ project_id: "project-created-1" })).toBe(
+      true,
+    );
   });
 
   it("falls back to a direct project query when feed wait times out", async () => {

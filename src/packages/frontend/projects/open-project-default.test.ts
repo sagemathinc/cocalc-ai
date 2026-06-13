@@ -55,13 +55,28 @@ describe("defaultOpenProjectTarget", () => {
     ).toBeUndefined();
   });
 
+  it("defaults to files/ when the restored active tab is flyout-only", () => {
+    expect(
+      defaultOpenProjectTarget({
+        target: undefined,
+        activeProjectTab: "active",
+      }),
+    ).toBe("files/");
+    expect(
+      defaultOpenProjectTarget({
+        target: undefined,
+        activeProjectTab: "users",
+      }),
+    ).toBe("files/");
+  });
+
   it("does not restore settings for an explicit project root URL", () => {
     expect(
       defaultOpenProjectTarget({
         target: "",
         activeProjectTab: "settings",
       }),
-    ).toBe("project-home");
+    ).toBe("files/");
   });
 
   it("defaults to files/ when active tab is unset", () => {

@@ -13,6 +13,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { register_file_editor as general_register_file_editor } from "@cocalc/frontend/file-editors";
+import { warnEditorLoadFailure } from "@cocalc/frontend/editor-load-diagnostics";
 import { redux_name } from "@cocalc/frontend/app-framework";
 
 interface AsyncRegister {
@@ -165,9 +166,11 @@ function withTimeoutAndRetry<T>(
           }
         } else {
           // Final attempt failed
-          console.error(
-            `frame-editor/register: failed to load ${extStr} after ${maxRetries} attempts: ${errorMsg}`,
-          );
+          warnEditorLoadFailure({
+            ext: extStr,
+            phase: `frame-tree asyncData attempt ${attempt}/${maxRetries}`,
+            error: lastError,
+          });
         }
       }
     }

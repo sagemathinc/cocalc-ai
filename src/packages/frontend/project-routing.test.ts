@@ -39,6 +39,10 @@ describe("project-routing", () => {
   });
 
   it("parses file and directory targets", () => {
+    expect(parseProjectTarget("files", { decodeDirectoryPath })).toEqual({
+      kind: "directory",
+      path: "/home/user",
+    });
     expect(parseProjectTarget("files/", { decodeDirectoryPath })).toEqual({
       kind: "directory",
       path: "/home/user",
@@ -71,13 +75,16 @@ describe("project-routing", () => {
     });
   });
 
-  it("parses fixed tabs and apps", () => {
+  it("parses legacy project-home as the files root", () => {
     expect(parseProjectTarget("project-home", { decodeDirectoryPath })).toEqual(
       {
-        kind: "tab",
-        tab: "project-home",
+        kind: "directory",
+        path: "/home/user",
       },
     );
+  });
+
+  it("parses fixed tabs and apps", () => {
     expect(parseProjectTarget("settings", { decodeDirectoryPath })).toEqual({
       kind: "tab",
       tab: "settings",

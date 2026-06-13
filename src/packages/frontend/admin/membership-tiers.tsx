@@ -24,6 +24,7 @@ import {
   Space,
   Switch,
   Table,
+  Tag,
   Typography,
 } from "antd";
 import dayjs from "dayjs";
@@ -46,6 +47,7 @@ import {
   applyMembershipTierTemplateFallbacks,
   TIER_TEMPLATES,
 } from "@cocalc/util/membership-tier-templates";
+import { normalizeMembershipTierCourseAllowedDomains } from "@cocalc/util/membership-tier-domains";
 import {
   analyzeMembershipTierPricingRisk,
   DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS,
@@ -132,6 +134,7 @@ interface Tier {
   store_highlights?: readonly string[];
   site_license_pool_description?: string;
   course_store_visible?: boolean;
+  course_allowed_domains?: string[];
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
@@ -331,6 +334,9 @@ function tierToFormValues(tier: Partial<Tier>) {
   return {
     ...tier,
     pricing_model: normalizePricingModel(tier.pricing_model),
+    course_allowed_domains: normalizeMembershipTierCourseAllowedDomains(
+      tier.course_allowed_domains,
+    ),
     store_highlights_text: storeHighlightsToText(tier.store_highlights),
     project_defaults: tier.project_defaults ?? {},
     ai_limits: tier.ai_limits ?? {},
@@ -583,6 +589,9 @@ function buildMembershipTierPayload(values): Tier {
       site_license_pool_description: normalizedOptionalString(
         values.site_license_pool_description,
       ),
+      course_allowed_domains: normalizeMembershipTierCourseAllowedDomains(
+        values.course_allowed_domains,
+      ),
       disabled: !values.active,
     },
     [
@@ -593,6 +602,7 @@ function buildMembershipTierPayload(values): Tier {
       "store_highlights",
       "site_license_pool_description",
       "course_store_visible",
+      "course_allowed_domains",
       "priority",
       "price_monthly",
       "price_yearly",
@@ -673,7 +683,9 @@ function useMembershipTiers() {
             store_visible: null,
             store_description: null,
             store_highlights: null,
+            site_license_pool_description: null,
             course_store_visible: null,
+            course_allowed_domains: null,
             priority: null,
             price_monthly: null,
             price_yearly: null,
@@ -778,6 +790,7 @@ function useMembershipTiers() {
       label: trimmedLabel,
       store_visible: false,
       course_store_visible: false,
+      course_allowed_domains: [],
       disabled: false,
     });
     const values = tierToFormValues(tier);
@@ -1496,6 +1509,20 @@ export function MembershipTiers() {
                       <Checkbox>
                         Available for course student memberships
                       </Checkbox>
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item
+                      name="course_allowed_domains"
+                      label="Course allowed instructor domains"
+                      extra="Optional. If set, only instructors whose current email address is verified and matches one of these domains can select this tier for student course memberships. Use example.edu for exact domains or *.example.edu for subdomains."
+                    >
+                      <Select
+                        mode="tags"
+                        placeholder="ucla.edu, *.school.edu"
+                        tokenSeparators={[",", ";", " ", "\n"]}
+                        style={{ width: "100%" }}
+                      />
                     </Form.Item>
                   </Col>
                   <Col {...fieldCol}>
@@ -3526,6 +3553,21 @@ export function MembershipTiers() {
             title="Course"
             dataIndex="course_store_visible"
             render={(val) => (val ? "Yes" : "")}
+          />
+          <Table.Column<Tier>
+            title="Course domains"
+            dataIndex="course_allowed_domains"
+            render={(domains) =>
+              Array.isArray(domains) && domains.length > 0 ? (
+                <Space wrap size={[4, 4]}>
+                  {domains.map((domain) => (
+                    <Tag key={domain}>{domain}</Tag>
+                  ))}
+                </Space>
+              ) : (
+                ""
+              )
+            }
           />
           <Table.Column<Tier> title="Priority" dataIndex="priority" />
           <Table.Column<Tier>

@@ -337,6 +337,7 @@ export type MembershipTierSetFields =
   | "store_highlights"
   | "site_license_pool_description"
   | "course_store_visible"
+  | "course_allowed_domains"
   | "priority"
   | "price_monthly"
   | "price_yearly"
