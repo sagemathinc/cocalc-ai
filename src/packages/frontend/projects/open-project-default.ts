@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+const FLYOUT_ONLY_PROJECT_TABS = new Set(["active", "users"]);
+
 export function defaultOpenProjectTarget({
   target,
   activeProjectTab,
@@ -22,6 +24,9 @@ export function defaultOpenProjectTarget({
     return undefined;
   }
   if (activeProjectTab == null || activeProjectTab === "files") {
+    return "files/";
+  }
+  if (FLYOUT_ONLY_PROJECT_TABS.has(activeProjectTab)) {
     return "files/";
   }
   return undefined;

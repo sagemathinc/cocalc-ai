@@ -107,9 +107,17 @@ const PAGE_STYLE: React.CSSProperties = {
   flex: 1,
   overflow: "hidden",
 } as const;
+const FULL_PAGE_FALLBACK_TAB: FixedTab = "files";
 const HIDDEN_RAIL_TOP_LEFT_WIDTH_PX = 84;
 const HIDDEN_RAIL_HOME_BUTTON_WIDTH_PX = 44;
 const { Paragraph, Text, Title } = Typography;
+
+function fullPageProjectTab(tab?: string): string | undefined {
+  if (isFixedTab(tab) && FIXED_PROJECT_TABS[tab].noFullPage) {
+    return FULL_PAGE_FALLBACK_TAB;
+  }
+  return tab;
+}
 
 interface Props {
   project_id: string;
@@ -266,17 +274,18 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       visiblePaths.includes(current.last_active_path)
         ? current.last_active_path
         : visiblePaths[0];
-    const activePath = tab_to_path(active_project_tab ?? "");
+    const activeFullPageTab = fullPageProjectTab(active_project_tab);
+    const activePath = tab_to_path(activeFullPageTab ?? "");
     const activePathIsVisible =
       !!activePath && visiblePaths.includes(activePath);
     const filesInWorkspace =
-      active_project_tab === "files" &&
+      activeFullPageTab === "files" &&
       !!current_path_abs &&
       pathMatchesWorkspace(current, current_path_abs);
     const pending =
-      (active_project_tab?.startsWith(EDITOR_PREFIX)
+      (activeFullPageTab?.startsWith(EDITOR_PREFIX)
         ? !activePathIsVisible
-        : active_project_tab !== "files" || !filesInWorkspace) &&
+        : activeFullPageTab !== "files" || !filesInWorkspace) &&
       (fallbackPath != null || workspaces.loading);
     return {
       pending,
@@ -285,7 +294,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       displayActiveTab:
         pending && fallbackPath != null
           ? path_to_tab(fallbackPath)
-          : active_project_tab,
+          : activeFullPageTab,
     };
   }, [
     active_project_tab,
