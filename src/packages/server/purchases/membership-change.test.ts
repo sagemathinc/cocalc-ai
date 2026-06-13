@@ -111,6 +111,109 @@ describe("membership change payment enforcement", () => {
     expect(purchaseRows[0]?.count).toBe(0);
   });
 
+  it("downgrades to a zero-cost tier without creating a subscription", async () => {
+    const downgradeAccount = uuid();
+    const paidTier = `paid-${uuid().slice(0, 8)}` as any;
+    const freeTier = `free-${uuid().slice(0, 8)}` as any;
+    await createTestAccount(downgradeAccount);
+    await createTestMembershipTier({
+      id: freeTier,
+      price_monthly: 0,
+      price_yearly: 0,
+      priority: 0,
+    });
+    await createTestMembershipTier({
+      id: paidTier,
+      price_monthly: 24,
+      price_yearly: 216,
+      priority: 20,
+    });
+    await createTestMembershipSubscription(downgradeAccount, {
+      class: paidTier,
+      cost: 216,
+      end: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+
+    const result = await applyMembershipChange({
+      account_id: downgradeAccount,
+      targetClass: freeTier,
+      interval: "year",
+      allowDowngrade: true,
+    });
+
+    expect(result.charge).toBe(0);
+    expect(result.subscription_id).toBeUndefined();
+    expect(result.purchase_id).toBeUndefined();
+    const { rows: activeRows } = await getPool().query(
+      `SELECT COUNT(*)::int AS count
+         FROM subscriptions
+        WHERE account_id=$1
+          AND metadata->>'type'='membership'
+          AND status != 'canceled'
+          AND current_period_end >= NOW()`,
+      [downgradeAccount],
+    );
+    expect(activeRows[0]?.count).toBe(0);
+  });
+
+  it("cancels scheduled lower-tier renewals when downgrading to a zero-cost tier", async () => {
+    const downgradeAccount = uuid();
+    const highTier = `high-${uuid().slice(0, 8)}` as any;
+    const lowTier = `low-${uuid().slice(0, 8)}` as any;
+    const freeTier = `free-${uuid().slice(0, 8)}` as any;
+    await createTestAccount(downgradeAccount);
+    await createTestMembershipTier({
+      id: freeTier,
+      price_monthly: 0,
+      price_yearly: 0,
+      priority: 0,
+    });
+    await createTestMembershipTier({
+      id: lowTier,
+      price_monthly: 8,
+      price_yearly: 72,
+      priority: 10,
+    });
+    await createTestMembershipTier({
+      id: highTier,
+      price_monthly: 24,
+      price_yearly: 216,
+      priority: 20,
+    });
+    await createTestMembershipSubscription(downgradeAccount, {
+      class: highTier,
+      cost: 216,
+      end: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+
+    const lowResult = await applyMembershipChange({
+      account_id: downgradeAccount,
+      targetClass: lowTier,
+      interval: "year",
+      allowDowngrade: true,
+    });
+    expect(lowResult.subscription_id).toBeGreaterThan(0);
+
+    const freeResult = await applyMembershipChange({
+      account_id: downgradeAccount,
+      targetClass: freeTier,
+      interval: "year",
+      allowDowngrade: true,
+    });
+
+    expect(freeResult.subscription_id).toBeUndefined();
+    const { rows: activeRows } = await getPool().query(
+      `SELECT metadata->>'class' AS class
+         FROM subscriptions
+        WHERE account_id=$1
+          AND metadata->>'type'='membership'
+          AND status != 'canceled'
+          AND current_period_end >= NOW()`,
+      [downgradeAccount],
+    );
+    expect(activeRows).toEqual([]);
+  });
+
   it("rejects free trials when billing is not ready", async () => {
     const trialAccount = uuid();
     const trialTier = `trial-${uuid().slice(0, 8)}` as any;
