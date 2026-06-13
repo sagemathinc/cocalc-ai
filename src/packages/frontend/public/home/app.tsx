@@ -1915,6 +1915,7 @@ function OperatingModelSection() {
 
   return (
     <section
+      aria-label="CoCalc.ai operating model summary"
       style={{
         background: PUBLIC_COLORS.surface,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
@@ -2007,6 +2008,7 @@ function ProjectLoopSection() {
 
   return (
     <section
+      aria-label="CoCalc.ai project work loop"
       style={{
         background: PUBLIC_COLORS.surface,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
@@ -2590,7 +2592,7 @@ function ReviewTrailSection() {
 
 function ProjectStorySection() {
   return (
-    <section>
+    <section aria-label="CoCalc.ai project story">
       <Row align="middle" gutter={[32, 32]}>
         <Col lg={12} xs={24}>
           <HomeInfographic
@@ -2599,7 +2601,7 @@ function ProjectStorySection() {
           />
         </Col>
         <Col lg={12} xs={24}>
-          <PublicSection>
+          <PublicSection ariaLabel="CoCalc.ai durable project context">
             <Eyebrow>The project is the product</Eyebrow>
             <Title level={2} style={{ margin: 0 }}>
               One place for technical work that has to last.
@@ -2662,6 +2664,7 @@ function ProjectFlowSection() {
 
   return (
     <section
+      aria-label="CoCalc.ai project workflow"
       style={{
         background: `linear-gradient(135deg, ${PUBLIC_COLORS.brandTint} 0%, ${PUBLIC_COLORS.surface} 55%, ${PUBLIC_COLORS.warningTint} 100%)`,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
@@ -2802,7 +2805,7 @@ function WorkflowsSection() {
   }).filter((item) => item != null);
 
   return (
-    <section>
+    <section aria-label="CoCalc.ai core workflows">
       <Flex align="end" justify="space-between" wrap gap={16}>
         <div style={{ maxWidth: 760 }}>
           <Eyebrow>Core technical workflows</Eyebrow>
@@ -3005,7 +3008,7 @@ function AudienceSection() {
   }[];
 
   return (
-    <section>
+    <section aria-label="CoCalc.ai audience paths">
       <Flex align="end" justify="space-between" wrap gap={16}>
         <div style={{ maxWidth: 780 }}>
           <Eyebrow>Who CoCalc is for</Eyebrow>
@@ -3140,10 +3143,10 @@ function ProductOptionsSection() {
     title: string;
   }[];
   return (
-    <section>
+    <section aria-label="CoCalc.ai product options">
       <Row align="middle" gutter={[32, 32]}>
         <Col lg={10} xs={24}>
-          <PublicSection>
+          <PublicSection ariaLabel="CoCalc.ai operating path chooser">
             <Eyebrow>Choose how CoCalc runs</Eyebrow>
             <Title level={2} style={{ margin: 0 }}>
               Pick the path first. The workspace stays familiar.
@@ -3463,6 +3466,7 @@ function DifferenceSection() {
   ] satisfies { icon: IconName; label: string }[];
   return (
     <section
+      aria-label="CoCalc.ai difference summary"
       style={{
         background: PUBLIC_COLORS.surfaceMuted,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
@@ -3730,7 +3734,7 @@ function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
   if (news.length === 0) return null;
 
   return (
-    <section>
+    <section aria-label="CoCalc.ai recent news">
       <Flex align="baseline" justify="space-between" wrap gap={12}>
         <Title level={2} style={{ margin: 0 }}>
           Recent News
@@ -3792,6 +3796,7 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
   }[];
   return (
     <section
+      aria-label="CoCalc.ai self-service entry points"
       style={{
         background: `linear-gradient(135deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 46%, ${PUBLIC_COLORS.warningTint} 100%)`,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,

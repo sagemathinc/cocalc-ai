@@ -491,14 +491,20 @@ export function PublicHero({ actions, subtitle, title }: PublicHeroProps) {
 }
 
 interface PublicSectionProps {
+  ariaLabel?: string;
   children: ReactNode;
   intro?: ReactNode;
   title?: ReactNode;
 }
 
-export function PublicSection({ children, intro, title }: PublicSectionProps) {
+export function PublicSection({
+  ariaLabel,
+  children,
+  intro,
+  title,
+}: PublicSectionProps) {
   return (
-    <section style={{ minWidth: 0 }}>
+    <section aria-label={ariaLabel} style={{ minWidth: 0 }}>
       <Flex vertical gap="middle">
         {title != null ? (
           <Title level={2} style={{ margin: 0 }}>

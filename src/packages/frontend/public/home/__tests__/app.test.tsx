@@ -38,10 +38,40 @@ const BLOCKED_HOMEPAGE_CLAIM_PATTERNS = [
   /validated demo/i,
   /benchmark/i,
 ] as const;
+const BLOCKED_HOMEPAGE_CLAIM_ATTRIBUTES = [
+  "alt",
+  "aria-label",
+  "title",
+] as const;
 
-function expectBlockedHomepageClaimsAbsent() {
+function getHomepageClaimCorpus(container: HTMLElement): string {
+  const corpus = [container.textContent ?? ""];
+
+  for (const element of Array.from(container.querySelectorAll("*"))) {
+    for (const attribute of BLOCKED_HOMEPAGE_CLAIM_ATTRIBUTES) {
+      const value = element.getAttribute(attribute);
+      if (value) {
+        corpus.push(value);
+      }
+    }
+  }
+
+  return corpus.join("\n");
+}
+
+function expectBlockedHomepageClaimsAbsent(container: HTMLElement) {
+  const corpus = getHomepageClaimCorpus(container);
   for (const pattern of BLOCKED_HOMEPAGE_CLAIM_PATTERNS) {
-    expect(screen.queryByText(pattern)).toBeNull();
+    expect(corpus).not.toMatch(pattern);
+  }
+}
+
+function expectHomepageSectionsLabeled(container: HTMLElement) {
+  const sections = Array.from(container.querySelectorAll("section"));
+  expect(sections.length).toBeGreaterThan(0);
+
+  for (const section of sections) {
+    expect(section.getAttribute("aria-label")?.trim()).toBeTruthy();
   }
 }
 
@@ -79,7 +109,7 @@ describe("PublicHomeApp", () => {
         },
       ],
     }) as typeof fetch;
-    render(
+    const { container } = render(
       <PublicHomeApp
         config={{ site_name: "Launchpad", site_description: "Hello world" }}
       />,
@@ -368,7 +398,8 @@ describe("PublicHomeApp", () => {
         );
       }),
     ).toBe(true);
-    expectBlockedHomepageClaimsAbsent();
+    expectBlockedHomepageClaimsAbsent(container);
+    expectHomepageSectionsLabeled(container);
     expect(
       screen
         .getByRole("link", { name: "Explore shared features" })
