@@ -88,6 +88,11 @@ describe("PublicHomeApp", () => {
         name: "Built for technical groups.",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "The hard parts are already in the workspace.",
+      }),
+    ).not.toBeNull();
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "Recent News" }),
@@ -109,6 +114,11 @@ describe("PublicHomeApp", () => {
     expect(
       screen
         .getByRole("link", { name: "Explore shared features" })
+        .getAttribute("href"),
+    ).toBe("/features");
+    expect(
+      screen
+        .getByRole("link", { name: "Browse feature map" })
         .getAttribute("href"),
     ).toBe("/features");
     expect(
@@ -161,6 +171,16 @@ describe("PublicHomeApp", () => {
     expect(screen.getByText("Runtime path chooser")).not.toBeNull();
     expect(
       screen.getByText("Site licensing wraps the path you choose."),
+    ).not.toBeNull();
+    const proofPoints = screen.getByRole("region", {
+      name: "Operational proof points for CoCalc.ai",
+    });
+    expect(within(proofPoints).getByText("Full Linux runtime")).not.toBeNull();
+    expect(
+      within(proofPoints).getByText("Project history nearby"),
+    ).not.toBeNull();
+    expect(
+      within(proofPoints).getByText("People and agents share context"),
     ).not.toBeNull();
     expect(
       screen

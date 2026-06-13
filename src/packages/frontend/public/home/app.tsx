@@ -1887,6 +1887,140 @@ function DifferenceSection() {
   );
 }
 
+function OperationalProofSection() {
+  const proofPoints = [
+    {
+      accent: COLORS.ANTD_LINK_BLUE_DARK,
+      body: "Use terminals, packages, services, and notebooks against the same files instead of exporting work to a side machine.",
+      icon: "linux",
+      label: "Run",
+      title: "Full Linux runtime",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      body: "TimeTravel, snapshots, and backups make changes inspectable when work needs to be reproduced or unwound.",
+      icon: "disk-snapshot",
+      label: "Recover",
+      title: "Project history nearby",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      body: "Collaborators and Codex see source, output, prompts, patches, and support notes in the same project.",
+      icon: "robot",
+      label: "Review",
+      title: "People and agents share context",
+    },
+    {
+      accent: PUBLIC_COLORS.success,
+      body: "Start hosted, local, or on a public VM, then move toward private deployments without changing the project workflow.",
+      icon: "servers",
+      label: "Operate",
+      title: "Choose the operating model",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    icon: IconName;
+    label: string;
+    title: string;
+  }[];
+
+  return (
+    <section
+      aria-label="Operational proof points for CoCalc.ai"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `38px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex vertical gap={24}>
+        <Flex align="end" justify="space-between" wrap gap={18}>
+          <div style={{ maxWidth: 780 }}>
+            <Eyebrow>Operational proof</Eyebrow>
+            <Title level={2} style={{ margin: "8px 0 10px" }}>
+              The hard parts are already in the workspace.
+            </Title>
+            <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              CoCalc packages the pieces technical groups usually assemble
+              themselves: Linux runtime, project history, collaborative review,
+              and deployment paths.
+            </Paragraph>
+          </div>
+          <Button
+            href={appPath("features")}
+            icon={<DecorativeButtonIcon name="overview" />}
+          >
+            Browse feature map
+          </Button>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          }}
+        >
+          {proofPoints.map((item) => (
+            <div
+              key={item.title}
+              style={{
+                background: `linear-gradient(180deg, ${alpha(
+                  item.accent,
+                  0.08,
+                )} 0%, ${PUBLIC_COLORS.surface} 48%)`,
+                border: `1px solid ${alpha(item.accent, 0.24)}`,
+                borderRadius: PANEL_RADIUS,
+                minHeight: 220,
+                padding: 20,
+              }}
+            >
+              <Flex vertical gap={14} style={{ height: "100%" }}>
+                <Flex align="center" justify="space-between">
+                  <div
+                    style={{
+                      alignItems: "center",
+                      background: alpha(PUBLIC_COLORS.surface, 0.82),
+                      border: `1px solid ${alpha(item.accent, 0.28)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: item.accent,
+                      display: "flex",
+                      fontSize: 24,
+                      height: 52,
+                      justifyContent: "center",
+                      width: 52,
+                    }}
+                  >
+                    <Icon name={item.icon} />
+                  </div>
+                  <Tag
+                    style={{
+                      background: alpha(item.accent, 0.1),
+                      borderColor: alpha(item.accent, 0.28),
+                      color: item.accent,
+                      marginInlineEnd: 0,
+                    }}
+                  >
+                    {item.label}
+                  </Tag>
+                </Flex>
+                <div>
+                  <Title level={3} style={{ fontSize: 21, margin: "0 0 10px" }}>
+                    {item.title}
+                  </Title>
+                  <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+                </div>
+              </Flex>
+            </div>
+          ))}
+        </div>
+      </Flex>
+    </section>
+  );
+}
+
 function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
   const news = (initialNews ?? []).slice(0, 3);
   if (news.length === 0) return null;
@@ -2095,6 +2229,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <AudienceSection />
       <ProductOptionsSection />
       <DifferenceSection />
+      <OperationalProofSection />
       <NewsSection initialNews={news} />
       <BottomCallout config={config} />
     </PublicPage>
