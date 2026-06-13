@@ -146,6 +146,26 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectPreview).getByText("pytest passed in run.term"),
     ).not.toBeNull();
+    expect(
+      within(projectPreview)
+        .getByRole("link", { name: /Start a project/i })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(projectPreview)
+        .getByRole("link", { name: /Run Linux terminal/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(projectPreview)
+        .getByRole("link", { name: /Ask Agent turn/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(projectPreview)
+        .getByRole("link", { name: /Review History trail/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     const handoffPath = screen.getByRole("region", {
       name: "CoCalc.ai project handoff path",
     });
@@ -618,6 +638,11 @@ describe("PublicHomeApp", () => {
     expect(
       screen.getAllByRole("link", { name: "Open projects" }).length,
     ).toBeGreaterThan(0);
+    expect(
+      within(screen.getByRole("group", { name: "Live CoCalc project preview" }))
+        .getByRole("link", { name: "Open projects" })
+        .getAttribute("href"),
+    ).toBe("/projects");
     expect(
       within(
         screen.getByRole("region", {

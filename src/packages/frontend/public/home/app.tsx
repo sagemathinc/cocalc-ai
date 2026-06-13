@@ -232,11 +232,31 @@ const WORKSPACE_PREVIEW_TRAIL = [
   label: string;
 }[];
 const WORKSPACE_PREVIEW_TABS = [
-  { icon: "files", label: "Files" },
-  { icon: "terminal", label: "Terminal" },
-  { icon: "robot", label: "Codex" },
-  { icon: "history", label: "History" },
-] satisfies { icon: IconName; label: string }[];
+  {
+    href: "features/compare",
+    icon: "files",
+    label: "Files",
+    title: "File tree",
+  },
+  {
+    href: "features/terminal",
+    icon: "terminal",
+    label: "Run",
+    title: "Linux terminal",
+  },
+  {
+    href: "features/ai",
+    icon: "robot",
+    label: "Ask",
+    title: "Agent turn",
+  },
+  {
+    href: "features/compare",
+    icon: "history",
+    label: "Review",
+    title: "History trail",
+  },
+] satisfies { href: string; icon: IconName; label: string; title: string }[];
 const AGENT_READINESS_ITEMS = [
   {
     accent: PUBLIC_COLORS.brand,
@@ -635,7 +655,10 @@ function DecorativeButtonIcon({ name }: { name: IconName }) {
   );
 }
 
-function WorkspacePreview() {
+function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
+  const projectHref = authenticated ? "projects" : "auth/sign-up";
+  const projectLabel = authenticated ? "Open projects" : "Start a project";
+
   return (
     <div
       aria-label="Live CoCalc project preview"
@@ -809,8 +832,28 @@ function WorkspacePreview() {
           marginTop: 12,
         }}
       >
+        <a
+          href={appPath(projectHref)}
+          style={{
+            alignItems: "center",
+            background: alpha(PUBLIC_COLORS.surface, 0.16),
+            border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.3)}`,
+            borderRadius: PANEL_RADIUS,
+            color: PUBLIC_COLORS.surface,
+            display: "inline-flex",
+            gap: 7,
+            justifyContent: "center",
+            minHeight: 36,
+            padding: "7px 8px",
+            textDecoration: "none",
+          }}
+        >
+          <DecorativeButtonIcon name="project-outlined" />
+          <Text style={{ color: "inherit" }}>{projectLabel}</Text>
+        </a>
         {WORKSPACE_PREVIEW_TABS.map((tab) => (
-          <span
+          <a
+            href={appPath(tab.href)}
             key={tab.label}
             style={{
               alignItems: "center",
@@ -823,11 +866,25 @@ function WorkspacePreview() {
               justifyContent: "center",
               minHeight: 36,
               padding: "7px 8px",
+              textDecoration: "none",
             }}
           >
-            <Icon name={tab.icon} />
-            <Text style={{ color: "inherit" }}>{tab.label}</Text>
-          </span>
+            <DecorativeButtonIcon name={tab.icon} />
+            <span style={{ minWidth: 0 }}>
+              <Text style={{ color: "inherit", display: "block" }}>
+                {tab.label}
+              </Text>
+              <Text
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.68),
+                  display: "block",
+                  fontSize: 12,
+                }}
+              >
+                {tab.title}
+              </Text>
+            </span>
+          </a>
         ))}
       </div>
       <div
@@ -1125,7 +1182,7 @@ function Hero({ config }: { config?: HomeConfig }) {
           </Flex>
         </div>
         <div style={{ justifySelf: "end", maxWidth: 540, width: "100%" }}>
-          <WorkspacePreview />
+          <WorkspacePreview authenticated={authenticated} />
         </div>
       </div>
     </section>
