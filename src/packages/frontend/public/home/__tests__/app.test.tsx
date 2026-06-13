@@ -155,33 +155,20 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero).queryByRole("link", { name: "Discuss site licensing" }),
     ).toBeNull();
-    const operatingModes = within(hero).getByRole("group", {
-      name: "CoCalc.ai operating modes",
-    });
     expect(
-      within(operatingModes)
-        .getByRole("link", { name: /Hosted workspace/i })
-        .getAttribute("href"),
-    ).toBe("/auth/sign-up");
-    expect(
-      within(operatingModes)
-        .getByRole("link", { name: /Local runtime/i })
-        .getAttribute("href"),
-    ).toBe("/products/cocalc-plus");
-    expect(
-      within(operatingModes)
-        .getByRole("link", { name: /Private deployment/i })
-        .getAttribute("href"),
-    ).toBe("/products");
+      within(hero).queryByRole("group", {
+        name: "CoCalc.ai operating modes",
+      }),
+    ).toBeNull();
     const projectOutcomes = screen.getByRole("group", {
       name: "CoCalc.ai project outcomes",
     });
-    expect(within(projectOutcomes).getByText("Shared context")).not.toBeNull();
     expect(
-      within(projectOutcomes).getByText("Visible validation"),
+      within(projectOutcomes).getByText("One place to work"),
     ).not.toBeNull();
+    expect(within(projectOutcomes).getByText("Real compute")).not.toBeNull();
     expect(
-      within(projectOutcomes).getByText("Recoverable state"),
+      within(projectOutcomes).getByText("A lasting record"),
     ).not.toBeNull();
     const projectPreview = screen.getByRole("group", {
       name: "CoCalc project context preview",
@@ -190,17 +177,15 @@ describe("PublicHomeApp", () => {
       within(projectPreview).getByText("research-workspace"),
     ).not.toBeNull();
     expect(within(projectPreview).getByText("Codex thread")).not.toBeNull();
-    expect(within(projectPreview).getByText("Project context")).not.toBeNull();
-    expect(within(projectPreview).getByText("Handoff queue")).not.toBeNull();
-    expect(within(projectPreview).getByText("Notebook state")).not.toBeNull();
-    expect(within(projectPreview).getByText("Agent request")).not.toBeNull();
-    expect(within(projectPreview).getByText("Review notes")).not.toBeNull();
-    expect(within(projectPreview).getByText("Project record")).not.toBeNull();
-    expect(within(projectPreview).getByText("Notebook output")).not.toBeNull();
     expect(
-      within(projectPreview).getByText("run.term logs stay beside the change."),
+      within(projectPreview).getByText("Project workspace"),
     ).not.toBeNull();
-    expect(within(projectPreview).getByText("Recovery marker")).not.toBeNull();
+    expect(within(projectPreview).getByText("Project files")).not.toBeNull();
+    expect(
+      within(projectPreview).getByText("Shared project state"),
+    ).not.toBeNull();
+    expect(within(projectPreview).queryByText("Handoff queue")).toBeNull();
+    expect(within(projectPreview).queryByText("Project record")).toBeNull();
     expect(
       within(projectPreview)
         .getByRole("link", { name: /Start a project/i })
@@ -221,138 +206,6 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Review History trail/i })
         .getAttribute("href"),
     ).toBe("/features/compare");
-    const firstStepRoutes = screen.getByRole("region", {
-      name: "CoCalc.ai first-step routes",
-    });
-    expect(
-      within(firstStepRoutes).getByRole("heading", {
-        name: "Choose the next page by intent.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(firstStepRoutes)
-        .getByRole("link", { name: /Start a project/i })
-        .getAttribute("href"),
-    ).toBe("/auth/sign-up");
-    expect(
-      within(firstStepRoutes)
-        .getByRole("link", { name: /Explore workflows/i })
-        .getAttribute("href"),
-    ).toBe("/features");
-    expect(
-      within(firstStepRoutes)
-        .getByRole("link", { name: /Compare runtimes/i })
-        .getAttribute("href"),
-    ).toBe("/products");
-    expect(
-      within(firstStepRoutes)
-        .getByRole("link", { name: /Contact support/i })
-        .getAttribute("href"),
-    ).toBe("/support");
-    expect(within(firstStepRoutes).getAllByText("Next decision")).toHaveLength(
-      4,
-    );
-    expect(
-      within(firstStepRoutes).getByText("Open or create the project record."),
-    ).not.toBeNull();
-    expect(
-      within(firstStepRoutes).getByText(
-        "Choose the workflow that owns the artifact.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(firstStepRoutes).getByText(
-        "Pick the operator and runtime boundary.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(firstStepRoutes).getByText(
-        "Describe the rollout or account question.",
-      ),
-    ).not.toBeNull();
-    const startingSignals = within(firstStepRoutes).getByRole("group", {
-      name: "CoCalc.ai starting signal routes",
-    });
-    expect(
-      within(startingSignals).getByText("Starting signals"),
-    ).not.toBeNull();
-    expect(
-      within(startingSignals)
-        .getByRole("link", { name: /Notebook output/i })
-        .getAttribute("href"),
-    ).toBe("/features/jupyter-notebook");
-    expect(
-      within(startingSignals)
-        .getByRole("link", { name: /Terminal trace/i })
-        .getAttribute("href"),
-    ).toBe("/features/terminal");
-    expect(
-      within(startingSignals)
-        .getByRole("link", { name: /Source change/i })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(startingSignals)
-        .getByRole("link", { name: /Course material/i })
-        .getAttribute("href"),
-    ).toBe("/features/teaching");
-    expect(within(startingSignals).getAllByText("Route carries")).toHaveLength(
-      4,
-    );
-    expect(
-      within(startingSignals).getByText("Notebook file, data files, output"),
-    ).not.toBeNull();
-    expect(
-      within(startingSignals).getByText(
-        "Command log, package state, service output",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(startingSignals).getByText("Patch, prompt, review notes"),
-    ).not.toBeNull();
-    expect(
-      within(startingSignals).getByText(
-        "Assignment files, class projects, grading context",
-      ),
-    ).not.toBeNull();
-    const handoffChecklist = within(firstStepRoutes).getByRole("group", {
-      name: "CoCalc.ai handoff checklist",
-    });
-    expect(
-      within(handoffChecklist).getByText("Handoff checklist"),
-    ).not.toBeNull();
-    expect(within(handoffChecklist).getByText("Artifact named")).not.toBeNull();
-    expect(
-      within(handoffChecklist).getByText("Boundary chosen"),
-    ).not.toBeNull();
-    expect(
-      within(handoffChecklist).getByText("Owner identified"),
-    ).not.toBeNull();
-    expect(within(handoffChecklist).queryAllByRole("link")).toHaveLength(0);
-    const routeHandoff = within(firstStepRoutes).getByRole("group", {
-      name: "CoCalc.ai route handoff summary",
-    });
-    expect(within(routeHandoff).getByText("Route handoff")).not.toBeNull();
-    expect(
-      within(routeHandoff).getByText(
-        /Carry the artifact, runtime boundary, and account context/i,
-      ),
-    ).not.toBeNull();
-    expect(
-      within(routeHandoff)
-        .getByRole("link", { name: /Artifact inventory/i })
-        .getAttribute("href"),
-    ).toBe("/features");
-    expect(
-      within(routeHandoff)
-        .getByRole("link", { name: /Runtime boundary/i })
-        .getAttribute("href"),
-    ).toBe("/products");
-    expect(
-      within(routeHandoff)
-        .getByRole("link", { name: /Account context/i })
-        .getAttribute("href"),
-    ).toBe("/support");
     const removedDuplicateRegions = [
       "CoCalc.ai project handoff path",
       "CoCalc.ai intent router",
@@ -364,6 +217,9 @@ describe("PublicHomeApp", () => {
       "Common CoCalc.ai starting points",
       "CoCalc.ai starter project recipes",
       "CoCalc.ai workflow path routing",
+      "CoCalc.ai first-step routes",
+      "Homepage boundary and detail routes",
+      "Why CoCalc keeps work in projects",
     ];
     for (const name of removedDuplicateRegions) {
       expect(screen.queryByRole("region", { name })).toBeNull();
@@ -372,6 +228,15 @@ describe("PublicHomeApp", () => {
       screen.queryByRole("group", {
         name: "CoCalc.ai artifact route shortcuts",
       }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("group", { name: "CoCalc.ai starting signal routes" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("group", { name: "CoCalc.ai handoff checklist" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("group", { name: "CoCalc.ai route handoff summary" }),
     ).toBeNull();
     const coreWorkflows = screen.getByRole("region", {
       name: "CoCalc.ai core workflows",
@@ -390,25 +255,16 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/features/compare");
     expect(
-      within(coreWorkflows)
-        .getByRole("link", { name: /LaTeX Editor/i })
-        .getAttribute("href"),
-    ).toBe("/features/latex-editor");
+      within(coreWorkflows).queryByRole("link", { name: /LaTeX Editor/i }),
+    ).toBeNull();
     expect(
-      within(coreWorkflows)
-        .getByRole("link", { name: /Technical Courses and Labs/i })
-        .getAttribute("href"),
-    ).toBe("/features/teaching");
+      within(coreWorkflows).queryByRole("link", { name: /Whiteboard/i }),
+    ).toBeNull();
     expect(
-      within(coreWorkflows)
-        .getByRole("link", { name: /Whiteboard/i })
-        .getAttribute("href"),
-    ).toBe("/features/whiteboard");
-    expect(
-      screen.getByRole("heading", {
+      screen.queryByRole("heading", {
         name: "Not another isolated notebook, IDE, or agent console.",
       }),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(
       screen.getByRole("heading", {
         name: "Built for technical groups.",
@@ -463,43 +319,13 @@ describe("PublicHomeApp", () => {
       ),
     ).toBe(true);
     expect(screen.queryByText("Open page")).toBeNull();
-    const projectPackage = screen.getByRole("region", {
-      name: "Why CoCalc keeps work in projects",
-    });
-    expect(within(projectPackage).getByText("Split tools")).not.toBeNull();
+    expect(screen.queryByText("Split tools")).toBeNull();
+    expect(screen.queryByText("CoCalc project context")).toBeNull();
     expect(
-      within(projectPackage).getByText("CoCalc project context"),
-    ).not.toBeNull();
-    expect(
-      within(projectPackage).getByText(
+      screen.queryByText(
         /The point is not that every workflow uses every tool/i,
       ),
-    ).not.toBeNull();
-    expect(
-      within(projectPackage)
-        .getByRole("link", { name: /Files and tools/i })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
-    expect(
-      within(projectPackage)
-        .getByRole("link", { name: /Linux runtime/i })
-        .getAttribute("href"),
-    ).toBe("/features/terminal");
-    expect(
-      within(projectPackage)
-        .getByRole("link", { name: /People and agents/i })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(projectPackage)
-        .getByRole("link", { name: /Recovery and operations/i })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
-    expect(
-      within(projectPackage)
-        .getByRole("link", { name: "Compare CoCalc" })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
+    ).toBeNull();
     expect(
       within(coreWorkflows)
         .getByRole("link", { name: /Jupyter Notebooks/i })
@@ -535,39 +361,6 @@ describe("PublicHomeApp", () => {
     expect(
       screen.getByText("Site licensing wraps the path you choose."),
     ).not.toBeNull();
-    const boundaryRoutes = screen.getByRole("region", {
-      name: "Homepage boundary and detail routes",
-    });
-    expect(
-      within(boundaryRoutes).getByRole("heading", {
-        name: "Keep the operating boundaries visible.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(boundaryRoutes)
-        .getByRole("link", { name: /Trust policy/i })
-        .getAttribute("href"),
-    ).toBe("/policies/trust");
-    expect(
-      within(boundaryRoutes)
-        .getByRole("link", { name: /CoCalc Plus details/i })
-        .getAttribute("href"),
-    ).toBe("/products/cocalc-plus");
-    expect(
-      within(boundaryRoutes)
-        .getByRole("link", { name: /Support path/i })
-        .getAttribute("href"),
-    ).toBe("/support");
-    expect(
-      within(boundaryRoutes)
-        .getByRole("link", { name: /Deployment comparison/i })
-        .getAttribute("href"),
-    ).toBe("/products");
-    expect(
-      within(boundaryRoutes)
-        .getByRole("link", { name: /Hosted transition questions/i })
-        .getAttribute("href"),
-    ).toBe("/support");
     expect(screen.getByText(/direct self-service path/i)).not.toBeNull();
     expect(screen.getByText("Local runtime for one user.")).not.toBeNull();
     expect(
@@ -651,19 +444,8 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/projects");
     expect(
-      within(
-        screen.getByRole("region", { name: "CoCalc.ai first-step routes" }),
-      )
-        .getByRole("link", { name: /Open projects/i })
-        .getAttribute("href"),
-    ).toBe("/projects");
-    expect(
-      within(
-        screen.getByRole("group", {
-          name: "CoCalc.ai handoff checklist",
-        }),
-      ).queryAllByRole("link"),
-    ).toHaveLength(0);
+      screen.queryByRole("region", { name: "CoCalc.ai first-step routes" }),
+    ).toBeNull();
     expect(
       screen.getAllByRole("link", { name: "Support" }).length,
     ).toBeGreaterThan(0);
