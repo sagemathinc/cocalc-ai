@@ -35,6 +35,7 @@ Table({
           store_highlights: null,
           site_license_pool_description: null,
           course_store_visible: null,
+          course_allowed_domains: null,
           priority: null,
           price_monthly: null,
           price_yearly: null,
@@ -63,6 +64,7 @@ Table({
           store_highlights: null,
           site_license_pool_description: null,
           course_store_visible: null,
+          course_allowed_domains: null,
           priority: null,
           price_monthly: null,
           price_yearly: null,
@@ -117,6 +119,11 @@ Table({
     course_store_visible: {
       type: "boolean",
       desc: "Whether this tier can be selected as a course student membership.",
+    },
+    course_allowed_domains: {
+      type: "array",
+      pg_type: "TEXT[]",
+      desc: "Optional verified instructor email domains allowed to select this course student membership tier. Empty means any verified or unverified instructor can select it.",
     },
     priority: {
       type: "number",
