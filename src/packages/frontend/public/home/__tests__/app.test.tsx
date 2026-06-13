@@ -296,27 +296,20 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Course material/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
-    const decisionCheckpoints = within(firstStepRoutes).getByRole("group", {
-      name: "CoCalc.ai homepage decision checkpoints",
+    const handoffChecklist = within(firstStepRoutes).getByRole("group", {
+      name: "CoCalc.ai handoff checklist",
     });
     expect(
-      within(decisionCheckpoints).getByText("Decision checkpoint"),
+      within(handoffChecklist).getByText("Handoff checklist"),
+    ).not.toBeNull();
+    expect(within(handoffChecklist).getByText("Artifact named")).not.toBeNull();
+    expect(
+      within(handoffChecklist).getByText("Boundary chosen"),
     ).not.toBeNull();
     expect(
-      within(decisionCheckpoints)
-        .getByRole("link", { name: /Project work/i })
-        .getAttribute("href"),
-    ).toBe("/auth/sign-up");
-    expect(
-      within(decisionCheckpoints)
-        .getByRole("link", { name: /Workflow detail/i })
-        .getAttribute("href"),
-    ).toBe("/features");
-    expect(
-      within(decisionCheckpoints)
-        .getByRole("link", { name: /Runtime boundary/i })
-        .getAttribute("href"),
-    ).toBe("/products");
+      within(handoffChecklist).getByText("Owner identified"),
+    ).not.toBeNull();
+    expect(within(handoffChecklist).queryAllByRole("link")).toHaveLength(0);
     const routeHandoff = within(firstStepRoutes).getByRole("group", {
       name: "CoCalc.ai route handoff summary",
     });
@@ -648,12 +641,10 @@ describe("PublicHomeApp", () => {
     expect(
       within(
         screen.getByRole("group", {
-          name: "CoCalc.ai homepage decision checkpoints",
+          name: "CoCalc.ai handoff checklist",
         }),
-      )
-        .getByRole("link", { name: /Project work/i })
-        .getAttribute("href"),
-    ).toBe("/projects");
+      ).queryAllByRole("link"),
+    ).toHaveLength(0);
     expect(
       screen.getAllByRole("link", { name: "Support" }).length,
     ).toBeGreaterThan(0);

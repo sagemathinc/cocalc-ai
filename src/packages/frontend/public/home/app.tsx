@@ -154,31 +154,25 @@ const FIRST_STEP_LINKS = [
   path: string;
   title: string;
 }[];
-const FIRST_STEP_CHECKPOINTS = [
+const HANDOFF_CHECKLIST_ITEMS = [
   {
-    authenticatedPath: "projects",
-    body: "Open or create the project before choosing individual tools.",
+    body: "Notebook, terminal trace, source change, course material, or document.",
     icon: "project-outlined",
-    path: "auth/sign-up",
-    title: "Project work",
+    title: "Artifact named",
   },
   {
-    body: "Use feature pages for notebooks, terminals, AI, courses, writing, and whiteboards.",
-    icon: "overview",
-    path: "features",
-    title: "Workflow detail",
-  },
-  {
-    body: "Use product pages when the question is hosted, local, or customer-operated runtime.",
+    body: "Hosted, local, or customer-operated runtime boundary.",
     icon: "servers",
-    path: "products",
-    title: "Runtime boundary",
+    title: "Boundary chosen",
+  },
+  {
+    body: "Self-service, support, or purchasing path for the next step.",
+    icon: "clipboard-check",
+    title: "Owner identified",
   },
 ] satisfies {
-  authenticatedPath?: string;
   body: string;
   icon: IconName;
-  path: string;
   title: string;
 }[];
 const ROUTE_HANDOFF_ITEMS = [
@@ -1263,15 +1257,6 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
         ? item.authenticatedTitle
         : item.title,
   }));
-  const checkpoints = FIRST_STEP_CHECKPOINTS.map((item) => ({
-    ...item,
-    href: appPath(
-      authenticated && item.authenticatedPath
-        ? item.authenticatedPath
-        : item.path,
-    ),
-  }));
-
   return (
     <section
       aria-label="CoCalc.ai first-step routes"
@@ -1484,7 +1469,7 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
         </div>
       </div>
       <div
-        aria-label="CoCalc.ai homepage decision checkpoints"
+        aria-label="CoCalc.ai handoff checklist"
         role="group"
         style={{
           background: alpha(PUBLIC_COLORS.brandTint, 0.82),
@@ -1519,11 +1504,11 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
           </span>
           <span>
             <Text strong style={{ color: PUBLIC_COLORS.brand }}>
-              Decision checkpoint
+              Handoff checklist
             </Text>
             <Paragraph style={{ margin: "4px 0 0" }}>
-              Use the homepage as the entry route, then move to the page that
-              owns the next decision.
+              Carry these details into the next page so the route stays tied to
+              the work, runtime, and account context.
             </Paragraph>
           </span>
         </Flex>
@@ -1535,9 +1520,8 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
               "repeat(auto-fit, minmax(min(100%, 180px), 1fr))",
           }}
         >
-          {checkpoints.map((item) => (
-            <a
-              href={item.href}
+          {HANDOFF_CHECKLIST_ITEMS.map((item) => (
+            <div
               key={item.title}
               style={{
                 alignItems: "start",
@@ -1548,9 +1532,8 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
                 display: "grid",
                 gap: 8,
                 gridTemplateColumns: "30px minmax(0, 1fr)",
-                minHeight: 104,
+                minHeight: 86,
                 padding: 11,
-                textDecoration: "none",
               }}
             >
               <span
@@ -1575,15 +1558,7 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
                 </Text>
                 <Text type="secondary">{item.body}</Text>
               </span>
-              <Icon
-                name="arrow-right"
-                style={{
-                  color: PUBLIC_COLORS.brand,
-                  gridColumn: "1 / 3",
-                  justifySelf: "end",
-                }}
-              />
-            </a>
+            </div>
           ))}
         </div>
       </div>
