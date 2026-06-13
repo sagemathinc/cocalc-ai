@@ -1028,7 +1028,7 @@ function Hero({ config }: { config?: HomeConfig }) {
           <Flex vertical gap={22}>
             <Eyebrow>
               <span style={{ color: PUBLIC_COLORS.accent }}>
-                Persistent projects for people and AI agents
+                AI-native technical workspace
               </span>
             </Eyebrow>
             <div>
@@ -1175,7 +1175,7 @@ function Hero({ config }: { config?: HomeConfig }) {
                   "Site license",
                   "I want to discuss a CoCalc site license.",
                 )}
-                icon={<DecorativeButtonIcon name="credit-card" />}
+                icon={<DecorativeButtonIcon name="bank" />}
                 size="large"
               >
                 Discuss site licensing
@@ -3497,7 +3497,7 @@ function ProductOptionsSection() {
                       width: 42,
                     }}
                   >
-                    <Icon name="credit-card" />
+                    <Icon name="bank" />
                   </div>
                   <div>
                     <Text strong style={{ display: "block" }}>

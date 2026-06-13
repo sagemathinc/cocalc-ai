@@ -33,6 +33,8 @@ const BLOCKED_HOMEPAGE_CLAIM_PATTERNS = [
   /automatic project transfer/i,
   /automatic migration/i,
   /grandfathered hosted prices/i,
+  /credit-card/i,
+  /credit card/i,
   /card payment/i,
   /Stripe/i,
   /validated demo/i,
@@ -126,6 +128,32 @@ describe("PublicHomeApp", () => {
         name: "CoCalc.ai",
       }),
     ).not.toBeNull();
+    const hero = screen.getByRole("region", {
+      name: "CoCalc.ai technical workspace",
+    });
+    expect(
+      within(hero).getByText("AI-native technical workspace"),
+    ).not.toBeNull();
+    expect(
+      within(hero)
+        .getByRole("link", { name: "Start on CoCalc.ai" })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(hero)
+        .getByRole("link", { name: "Install CoCalc Plus" })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(hero)
+        .getByRole("link", { name: "Compare deployment options" })
+        .getAttribute("href"),
+    ).toBe("/products");
+    const heroSiteLicenseHref = within(hero)
+      .getByRole("link", { name: "Discuss site licensing" })
+      .getAttribute("href");
+    expect(heroSiteLicenseHref).toMatch(/^\/support\/new\?/);
+    expect(heroSiteLicenseHref).toContain("subject=Site+license");
     const projectOutcomes = screen.getByRole("group", {
       name: "CoCalc.ai project outcomes",
     });
