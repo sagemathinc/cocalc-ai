@@ -848,7 +848,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
         </div>
       </div>
       <div
-        aria-label="CoCalc.ai context carried forward"
+        aria-label="CoCalc.ai workspace record"
         role="group"
         style={{
           background: alpha(PUBLIC_COLORS.brandDark, 0.36),
@@ -860,7 +860,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
       >
         <Flex align="baseline" justify="space-between" wrap gap={8}>
           <Text strong style={{ color: PUBLIC_COLORS.surface }}>
-            What stays attached
+            Workspace record
           </Text>
           <Text
             style={{
@@ -868,143 +868,136 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
               fontSize: 12,
             }}
           >
-            Work can be resumed from context
+            Context stays with the project
           </Text>
         </Flex>
         <div
           style={{
             display: "grid",
-            gap: 8,
+            gap: 14,
             gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
+              "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
             marginTop: 10,
           }}
         >
-          {WORKSPACE_PREVIEW_RECORD.map((item) => (
-            <div
-              key={item.label}
+          <div>
+            <Text
+              strong
               style={{
-                background: alpha(PUBLIC_COLORS.surface, 0.11),
-                border: `1px solid ${alpha(item.accent, 0.36)}`,
-                borderRadius: PANEL_RADIUS,
-                color: PUBLIC_COLORS.surface,
-                minHeight: 104,
-                padding: 11,
+                color: alpha(PUBLIC_COLORS.surface, 0.82),
+                display: "block",
+                marginBottom: 8,
               }}
             >
-              <Flex align="center" gap={8}>
-                <span
-                  aria-hidden="true"
+              What stays attached
+            </Text>
+            <Flex vertical gap={8}>
+              {WORKSPACE_PREVIEW_RECORD.map((item) => (
+                <div
+                  key={item.label}
                   style={{
-                    alignItems: "center",
-                    background: `${item.accent}1f`,
-                    border: `1px solid ${item.accent}42`,
-                    borderRadius: PANEL_RADIUS,
-                    color: item.accent,
-                    display: "flex",
-                    flex: "0 0 28px",
-                    height: 28,
-                    justifyContent: "center",
-                    width: 28,
+                    alignItems: "start",
+                    borderTop: `1px solid ${alpha(item.accent, 0.28)}`,
+                    color: PUBLIC_COLORS.surface,
+                    display: "grid",
+                    gap: 9,
+                    gridTemplateColumns: "28px minmax(0, 1fr)",
+                    paddingTop: 8,
                   }}
                 >
-                  <Icon name={item.icon} />
-                </span>
-                <Text strong style={{ color: "inherit" }}>
-                  {item.label}
-                </Text>
-              </Flex>
-              <Text
-                style={{
-                  color: alpha(PUBLIC_COLORS.surface, 0.68),
-                  display: "block",
-                  marginTop: 8,
-                }}
-              >
-                {item.detail}
-              </Text>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div
-        aria-label="CoCalc.ai active project work"
-        role="group"
-        style={{
-          background: alpha(PUBLIC_COLORS.brandDark, 0.36),
-          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
-          borderRadius: PANEL_RADIUS,
-          marginTop: 14,
-          padding: 14,
-        }}
-      >
-        <Flex align="baseline" justify="space-between" wrap gap={8}>
-          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
-            Active project work
-          </Text>
-          <Text
-            style={{
-              color: alpha(PUBLIC_COLORS.surface, 0.68),
-              fontSize: 12,
-            }}
-          >
-            Durable context
-          </Text>
-        </Flex>
-        <div
-          style={{
-            display: "grid",
-            gap: 8,
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 154px), 1fr))",
-            marginTop: 10,
-          }}
-        >
-          {WORKSPACE_PREVIEW_STATUS.map((item) => (
-            <div
-              key={item.label}
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      alignItems: "center",
+                      background: `${item.accent}1f`,
+                      border: `1px solid ${item.accent}42`,
+                      borderRadius: PANEL_RADIUS,
+                      color: item.accent,
+                      display: "flex",
+                      height: 28,
+                      justifyContent: "center",
+                      marginTop: 1,
+                      width: 28,
+                    }}
+                  >
+                    <Icon name={item.icon} />
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <Text strong style={{ color: "inherit", display: "block" }}>
+                      {item.label}
+                    </Text>
+                    <Text
+                      style={{
+                        color: alpha(PUBLIC_COLORS.surface, 0.68),
+                        display: "block",
+                      }}
+                    >
+                      {item.detail}
+                    </Text>
+                  </span>
+                </div>
+              ))}
+            </Flex>
+          </div>
+          <div>
+            <Text
+              strong
               style={{
-                background: alpha(PUBLIC_COLORS.surface, 0.12),
-                border: `1px solid ${alpha(item.accent, 0.36)}`,
-                borderRadius: PANEL_RADIUS,
-                color: PUBLIC_COLORS.surface,
-                minHeight: 106,
-                padding: 11,
+                color: alpha(PUBLIC_COLORS.surface, 0.82),
+                display: "block",
+                marginBottom: 8,
               }}
             >
-              <Flex align="center" gap={8}>
-                <span
-                  aria-hidden="true"
+              Active work
+            </Text>
+            <Flex vertical gap={8}>
+              {WORKSPACE_PREVIEW_STATUS.map((item) => (
+                <div
+                  key={item.label}
                   style={{
-                    alignItems: "center",
-                    background: `${item.accent}1f`,
-                    border: `1px solid ${item.accent}42`,
-                    borderRadius: PANEL_RADIUS,
-                    color: item.accent,
-                    display: "flex",
-                    flex: "0 0 28px",
-                    height: 28,
-                    justifyContent: "center",
-                    width: 28,
+                    alignItems: "start",
+                    borderTop: `1px solid ${alpha(item.accent, 0.28)}`,
+                    color: PUBLIC_COLORS.surface,
+                    display: "grid",
+                    gap: 9,
+                    gridTemplateColumns: "28px minmax(0, 1fr)",
+                    paddingTop: 8,
                   }}
                 >
-                  <Icon name={item.icon} />
-                </span>
-                <Text strong style={{ color: "inherit" }}>
-                  {item.label}
-                </Text>
-              </Flex>
-              <Text
-                style={{
-                  color: alpha(PUBLIC_COLORS.surface, 0.68),
-                  display: "block",
-                  marginTop: 8,
-                }}
-              >
-                {item.detail}
-              </Text>
-            </div>
-          ))}
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      alignItems: "center",
+                      background: `${item.accent}1f`,
+                      border: `1px solid ${item.accent}42`,
+                      borderRadius: PANEL_RADIUS,
+                      color: item.accent,
+                      display: "flex",
+                      height: 28,
+                      justifyContent: "center",
+                      marginTop: 1,
+                      width: 28,
+                    }}
+                  >
+                    <Icon name={item.icon} />
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <Text strong style={{ color: "inherit", display: "block" }}>
+                      {item.label}
+                    </Text>
+                    <Text
+                      style={{
+                        color: alpha(PUBLIC_COLORS.surface, 0.68),
+                        display: "block",
+                      }}
+                    >
+                      {item.detail}
+                    </Text>
+                  </span>
+                </div>
+              ))}
+            </Flex>
+          </div>
         </div>
       </div>
       <div

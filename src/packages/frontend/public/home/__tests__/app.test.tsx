@@ -247,70 +247,77 @@ describe("PublicHomeApp", () => {
         "Output, snapshots, and TimeTravel keep review nearby.",
       ),
     ).not.toBeNull();
-    const contextCarriedForward = within(projectPreview).getByRole("group", {
-      name: "CoCalc.ai context carried forward",
+    const workspaceRecord = within(projectPreview).getByRole("group", {
+      name: "CoCalc.ai workspace record",
     });
     expect(
-      within(contextCarriedForward).getByText("What stays attached"),
+      within(workspaceRecord).getByText("Workspace record"),
     ).not.toBeNull();
     expect(
-      within(contextCarriedForward).getByText(
-        "Work can be resumed from context",
-      ),
+      within(workspaceRecord).getByText("Context stays with the project"),
     ).not.toBeNull();
-    expect(within(contextCarriedForward).getByText("Inputs")).not.toBeNull();
-    expect(within(contextCarriedForward).getByText("Execution")).not.toBeNull();
-    expect(within(contextCarriedForward).getByText("Decisions")).not.toBeNull();
-    expect(within(contextCarriedForward).getByText("Recovery")).not.toBeNull();
     expect(
-      within(contextCarriedForward).getByText(
+      within(workspaceRecord).getByText("What stays attached"),
+    ).not.toBeNull();
+    expect(within(workspaceRecord).getByText("Active work")).not.toBeNull();
+    expect(within(workspaceRecord).getByText("Inputs")).not.toBeNull();
+    expect(within(workspaceRecord).getByText("Execution")).not.toBeNull();
+    expect(within(workspaceRecord).getByText("Decisions")).not.toBeNull();
+    expect(within(workspaceRecord).getByText("Recovery")).not.toBeNull();
+    expect(
+      within(workspaceRecord).getByText(
         "Files, notebooks, data, and prompts stay in the same workspace.",
       ),
     ).not.toBeNull();
     expect(
-      within(contextCarriedForward).getByText(
+      within(workspaceRecord).getByText(
         "Notebook output and terminal sessions remain close to the work.",
       ),
     ).not.toBeNull();
     expect(
-      within(contextCarriedForward).getByText(
+      within(workspaceRecord).getByText(
         "Chat, agent turns, and review notes carry the reasoning forward.",
       ),
     ).not.toBeNull();
     expect(
-      within(contextCarriedForward).getByText(
+      within(workspaceRecord).getByText(
         "Snapshots and TimeTravel keep earlier states available.",
       ),
     ).not.toBeNull();
-    const activeWork = within(projectPreview).getByRole("group", {
-      name: "CoCalc.ai active project work",
-    });
-    expect(within(activeWork).getByText("Active project work")).not.toBeNull();
-    expect(within(activeWork).getByText("Durable context")).not.toBeNull();
-    expect(within(activeWork).getByText("Notebook run")).not.toBeNull();
-    expect(within(activeWork).getByText("Shell session")).not.toBeNull();
-    expect(within(activeWork).getByText("Codex turn")).not.toBeNull();
-    expect(within(activeWork).getByText("Review trail")).not.toBeNull();
+    expect(within(workspaceRecord).getByText("Notebook run")).not.toBeNull();
+    expect(within(workspaceRecord).getByText("Shell session")).not.toBeNull();
+    expect(within(workspaceRecord).getByText("Codex turn")).not.toBeNull();
+    expect(within(workspaceRecord).getByText("Review trail")).not.toBeNull();
     expect(
-      within(activeWork).getByText(
+      within(workspaceRecord).getByText(
         "Output and notes remain next to the notebook.",
       ),
     ).not.toBeNull();
     expect(
-      within(activeWork).getByText(
+      within(workspaceRecord).getByText(
         "Package installs and service output stay with the project.",
       ),
     ).not.toBeNull();
     expect(
-      within(activeWork).getByText(
+      within(workspaceRecord).getByText(
         "Prompt, patch, and review notes stay attached.",
       ),
     ).not.toBeNull();
     expect(
-      within(activeWork).getByText(
+      within(workspaceRecord).getByText(
         "Snapshots and TimeTravel keep earlier states nearby.",
       ),
     ).not.toBeNull();
+    expect(
+      within(projectPreview).queryByRole("group", {
+        name: "CoCalc.ai context carried forward",
+      }),
+    ).toBeNull();
+    expect(
+      within(projectPreview).queryByRole("group", {
+        name: "CoCalc.ai active project work",
+      }),
+    ).toBeNull();
     expect(within(projectPreview).queryByText("Handoff queue")).toBeNull();
     expect(within(projectPreview).queryByText("Project record")).toBeNull();
     expect(
