@@ -46,10 +46,11 @@ import {
   useProjectMapField,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { useFsWithRefresh } from "@cocalc/frontend/project/listing/use-fs";
 import useListing, {
+  sortListingEntries,
   type SortField,
 } from "@cocalc/frontend/project/listing/use-listing";
+import useProjectActionsFilesystem from "@cocalc/frontend/project/listing/use-project-actions-fs";
 import useBackupsListing, {
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
@@ -100,6 +101,8 @@ import {
   shouldShowWrongAccountListingError,
 } from "./listing-error";
 
+type ActiveFileSort = ReturnType<typeof normalizeActiveFileSort>;
+
 const FLEX_ROW_STYLE = {
   display: "flex",
   flexFlow: "row wrap",
@@ -116,12 +119,14 @@ const ERROR_STYLE: CSSProperties = {
   boxShadow: "5px 5px 5px grey",
 } as const;
 
+const LIFECYCLE_LISTING_REFRESH_DELAYS_MS = [0, 1000, 2000, 5000] as const;
+
 function isMissingProjectVolumeError(error: unknown): boolean {
   const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
   return text.includes("project volume does not exist");
 }
 
-function sortDesc(active_file_sort?): {
+function sortDesc(active_file_sort?: ActiveFileSort): {
   sortField: SortField;
   sortDirection: "desc" | "asc";
 } {
@@ -137,6 +142,22 @@ function sortDesc(active_file_sort?): {
     sortField: column_name as SortField,
     sortDirection: is_descending ? "desc" : "asc",
   };
+}
+
+function sortAndMaskListing({
+  listing,
+  active_file_sort,
+  mask,
+}: {
+  listing: DirectoryListingEntry[] | null;
+  active_file_sort?: ActiveFileSort;
+  mask?: boolean;
+}): DirectoryListingEntry[] | null {
+  if (listing == null) {
+    return null;
+  }
+  const { sortField, sortDirection } = sortDesc(active_file_sort);
+  return sortListingEntries({ listing, sortField, sortDirection, mask });
 }
 
 export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
@@ -200,6 +221,9 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   );
   const host_id = useProjectMapField<string>(project_id, "host_id");
   const projectStateValue = useProjectMapField(project_id, "state");
+  const projectStateName = `${projectStateValue?.get?.("state") ?? ""}`
+    .trim()
+    .toLowerCase();
   const lastBackup = useProjectMapField(project_id, "last_backup");
   const hostInfo = useHostInfo(host_id);
   const hostOperational = useMemo(
@@ -217,10 +241,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
       DEFAULT_ACTIVE_FILE_SORT,
   );
 
-  const { fs, refreshFs } = useFsWithRefresh({
-    project_id,
-    viewer: readOnlyViewer,
-  });
+  const fs = useProjectActionsFilesystem({ actions, project_id });
   const inBackupsPath = isBackupsPath(effective_current_path);
   const inSnapshotsPath = isSnapshotsPath(effective_current_path);
   const homePath =
@@ -233,16 +254,12 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   });
   let {
     refresh,
-    listing,
+    listing: rawListing,
     error: listingError,
   } = useListing({
     fs: inBackupsPath ? null : fs,
     path: listingPath,
-    ...sortDesc(active_file_sort),
-    cacheId: actions?.getCacheId(),
-    mask,
     watch: !readOnlyViewer,
-    refreshFs,
   });
   const {
     listing: backupsListing,
@@ -251,7 +268,6 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   } = useBackupsListing({
     project_id,
     path: effective_current_path,
-    ...sortDesc(active_file_sort),
   });
   const backupOps = useTypedRedux({ project_id }, "backup_ops");
   const prevBackupStatuses = useRef<Map<string, string>>(new Map());
@@ -285,11 +301,11 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     }
   }, [backupOps, refreshBackups]);
   if (inBackupsPath && !readOnlyViewer) {
-    listing = backupsListing;
+    rawListing = backupsListing;
     listingError = backupsError;
     refresh = refreshBackups;
   } else if (inBackupsPath && readOnlyViewer) {
-    listing = null;
+    rawListing = null;
     listingError = new Error("Viewers cannot browse project backups.");
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
@@ -328,10 +344,19 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     [applyNavigationWorkspaceSelection, navigateExplorerRaw, navHistory],
   );
 
-  listing = listingError
+  const sortedListing = useMemo(
+    () =>
+      sortAndMaskListing({
+        listing: rawListing,
+        active_file_sort,
+        mask,
+      }),
+    [rawListing, active_file_sort, mask],
+  );
+  const listing = listingError
     ? null
     : filterListing({
-        listing,
+        listing: sortedListing,
         search: file_search,
         showHidden,
       });
@@ -538,6 +563,47 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     const timer = setTimeout(() => refresh(), 1200);
     return () => clearTimeout(timer);
   }, [listingError, moveLro, effective_current_path, refresh]);
+
+  useEffect(() => {
+    if (!isVisible) return;
+    if (listing != null || listingError != null) return;
+    if (projectStateName !== "running" && projectStateName !== "opened") {
+      return;
+    }
+
+    let canceled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const refreshAfterDelay = (attempt: number): void => {
+      const delay =
+        LIFECYCLE_LISTING_REFRESH_DELAYS_MS[
+          Math.min(attempt, LIFECYCLE_LISTING_REFRESH_DELAYS_MS.length - 1)
+        ];
+      timer = setTimeout(() => {
+        if (canceled) return;
+        refresh();
+        if (attempt + 1 < LIFECYCLE_LISTING_REFRESH_DELAYS_MS.length) {
+          refreshAfterDelay(attempt + 1);
+        }
+      }, delay);
+    };
+
+    refreshAfterDelay(0);
+
+    return () => {
+      canceled = true;
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [
+    isVisible,
+    listing,
+    listingError,
+    projectStateName,
+    effective_current_path,
+    refresh,
+  ]);
 
   const clearedTransientProjectErrorRef = useRef<string>("");
   useEffect(() => {

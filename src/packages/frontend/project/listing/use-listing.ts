@@ -70,7 +70,7 @@ export default function useListing({
 
   const listing = useMemo<null | DirectoryListingEntry[]>(() => {
     return filesToListing({ files, sortField, sortDirection, mask });
-  }, [sortField, sortDirection, files]);
+  }, [sortField, sortDirection, files, mask]);
 
   return { listing, error, refresh };
 }
@@ -89,13 +89,28 @@ function filesToListing({
   if (files == null) {
     return null;
   }
-  if (files == null) {
-    return null;
-  }
   const v: DirectoryListingEntry[] = [];
   for (const name in files) {
     v.push({ name, ...files[name] });
   }
+  return sortListingEntries({ listing: v, sortField, sortDirection, mask });
+}
+
+export function sortListingEntries({
+  listing,
+  sortField = "name",
+  sortDirection = "asc",
+  mask,
+}: {
+  listing: DirectoryListingEntry[] | null | undefined;
+  sortField?: SortField;
+  sortDirection?: SortDirection;
+  mask?: boolean;
+}): null | DirectoryListingEntry[] {
+  if (listing == null) {
+    return null;
+  }
+  const v = listing.map((entry) => ({ ...entry }));
   if (
     sortField != "name" &&
     sortField != "mtime" &&
