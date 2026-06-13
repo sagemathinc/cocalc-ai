@@ -124,6 +124,7 @@ import {
   resolveRenderedMessageValue,
   shouldLoadCodexPreviewBody,
   shouldShowCodexShowActivityButton,
+  shouldShowAcpResubmitToAgentButton,
   shouldShowQueuedMessageEditedVersionSent,
   shouldSuppressAcpPlaceholderBody,
   shouldUseSelectableMessageBody,
@@ -475,6 +476,9 @@ export default function Message({
   );
   const [openCommitSelectionRequestToken, setOpenCommitSelectionRequestToken] =
     useState(0);
+  const [resubmittingAgentParentId, setResubmittingAgentParentId] = useState<
+    string | undefined
+  >(undefined);
 
   const replyMessageRef = useRef<string>("");
   const replyMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
@@ -906,6 +910,95 @@ export default function Message({
         : linkifyCommitHashes(renderedMessageValue),
     [is_viewers_message, renderedMessageValue],
   );
+  const acpResubmitParentMessage = (() => {
+    if (!actions) return undefined;
+    const parentId = parentMessageId(message);
+    if (!parentId) return undefined;
+    const parentMessage = actions.getMessageById(parentId);
+    if (parentMessage == null) return undefined;
+    const messageId = field<string>(message, "message_id");
+    const parentMessageIdValue =
+      field<string>(parentMessage, "message_id") ?? parentId;
+    const acpStore = actions.store?.get("acpState") as any;
+    const parentAcpState = `${
+      acpStore?.get?.(`message:${parentMessageIdValue}`) ??
+      field<string>(parentMessage, "acp_state") ??
+      ""
+    }`;
+    const threadState =
+      messageThreadId && typeof actions.syncdb?.get_one === "function"
+        ? actions.syncdb.get_one({
+            event: "chat-thread-state",
+            thread_id: messageThreadId,
+          })
+        : undefined;
+    const terminalThreadErrorActive =
+      `${field<string>(threadState, "state") ?? ""}`.trim() === "error" &&
+      `${field<string>(threadState, "active_message_id") ?? ""}`.trim() ===
+        messageId;
+    if (
+      !shouldShowAcpResubmitToAgentButton({
+        hasActions: true,
+        hasParentMessage: true,
+        isViewersMessage: is_viewers_message,
+        parentAcpState,
+        readOnly: read_only,
+        renderedValue: renderedMessageValue,
+        terminalThreadErrorActive,
+      })
+    ) {
+      return undefined;
+    }
+    return parentMessage;
+  })();
+  const acpResubmitParentMessageId = acpResubmitParentMessage
+    ? field<string>(acpResubmitParentMessage, "message_id")
+    : undefined;
+
+  async function handleResubmitToAgent() {
+    if (!actions || !acpResubmitParentMessage) return;
+    setResubmittingAgentParentId(acpResubmitParentMessageId);
+    try {
+      const ok = await resendCanceledAcpTurn({
+        actions,
+        message: acpResubmitParentMessage,
+      });
+      if (!ok) {
+        antdMessage.error("Unable to resubmit this request to Agent.");
+      }
+    } catch (err) {
+      antdMessage.error(`Unable to resubmit this request to Agent: ${err}`);
+    } finally {
+      setResubmittingAgentParentId((current) =>
+        current === acpResubmitParentMessageId ? undefined : current,
+      );
+    }
+  }
+
+  function renderResubmitToAgentButton() {
+    if (!acpResubmitParentMessage) return null;
+    return (
+      <div style={{ marginTop: "8px" }}>
+        <Tooltip title="Resubmit the original request, including hidden agent context.">
+          <Button
+            size="small"
+            type="primary"
+            loading={
+              acpResubmitParentMessageId != null &&
+              resubmittingAgentParentId === acpResubmitParentMessageId
+            }
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void handleResubmitToAgent();
+            }}
+          >
+            <Icon name="paper-plane" /> Resubmit to Agent
+          </Button>
+        </Tooltip>
+      </div>
+    );
+  }
 
   const threadLookup = useMemo(
     () =>
@@ -2096,6 +2189,7 @@ export default function Message({
         {!showCodexActivity ? (
           <AttachedSteerStatusList attachedSteers={attachedSteers} />
         ) : null}
+        {renderResubmitToAgentButton()}
       </>
     );
   }

@@ -300,6 +300,14 @@ jest.mock("@cocalc/frontend/chat/thread-badge", () => ({
   ThreadBadge: () => <div />,
 }));
 
+jest.mock("@cocalc/frontend/users/user", () => ({
+  User: ({ account_id }: { account_id: string }) => (
+    <span data-testid={`agent-session-owner-${account_id}`}>
+      User {account_id}
+    </span>
+  ),
+}));
+
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   Loading: () => <div>Loading...</div>,
@@ -437,6 +445,38 @@ describe("AgentsPanel session cards", () => {
     render(<AgentsPanel project_id="project-1" layout="page" />);
 
     await waitFor(() => expect(screen.getByText("idle")).toBeTruthy());
+  });
+
+  it("shows only non-current users in the Other Users scope", async () => {
+    mockSessions = [
+      ...mockSessions,
+      {
+        session_id: "session-2",
+        project_id: "project-1",
+        account_id: "acct-2",
+        chat_path: "/home/user/other-agent.chat",
+        thread_key: "thread-other",
+        title: "Other agent session",
+        status: "idle",
+        created_at: "2026-03-12T09:00:00.000Z",
+        updated_at: "2026-03-12T09:10:00.000Z",
+        entrypoint: "file",
+        model: "gpt-5-codex",
+      },
+    ];
+
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() => expect(screen.getByText("Agent session")).toBeTruthy());
+    expect(screen.queryByText("Other agent session")).toBeNull();
+
+    fireEvent.click(screen.getByText("Other Users"));
+
+    await waitFor(() =>
+      expect(screen.getByText("Other agent session")).toBeTruthy(),
+    );
+    expect(screen.queryByText("Agent session")).toBeNull();
+    expect(screen.getByTestId("agent-session-owner-acct-2")).toBeTruthy();
   });
 
   it("does not leave the session list loading forever if the watcher stalls", async () => {

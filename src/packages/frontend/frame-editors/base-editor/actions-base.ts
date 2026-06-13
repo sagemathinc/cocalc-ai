@@ -2856,7 +2856,7 @@ export class BaseEditorActions<
   }
 
   private formatError = (error?: object | string): string | undefined => {
-    if (error === undefined) {
+    if (error === undefined || error === "") {
       return "";
     }
     if (isTimeoutCallingProject(error)) {

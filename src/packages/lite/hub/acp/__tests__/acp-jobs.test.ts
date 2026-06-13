@@ -760,4 +760,39 @@ describe("acp job queue ordering", () => {
     });
     expect(claimed?.op_id).toBe(queued.op_id);
   });
+
+  it("can resend a terminal error job", async () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-resend-error-1",
+        assistantMessageId: "assistant-resend-error-1",
+        assistantDate: "2026-03-08T00:00:05.000Z",
+      }),
+    );
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "error",
+      error: "Codex authentication expired.",
+    });
+    const failed = getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(failed?.state).toBe("error");
+
+    const resent = resendCanceledAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(resent?.state).toBe("queued");
+
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+    });
+    expect(claimed?.op_id).toBe(queued.op_id);
+  });
 });

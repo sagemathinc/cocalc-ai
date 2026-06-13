@@ -7961,7 +7961,7 @@ async function handleAcpControlRequest(
   }
   if (request.action === "resend") {
     const current = getAcpJob({ project_id, path, user_message_id });
-    if (!current || current.state !== "canceled") {
+    if (!current || !["canceled", "error"].includes(current.state)) {
       return { ok: false, state: current?.state ?? "missing" };
     }
     const currentRequest = decodeAcpJobRequest(current);
