@@ -150,6 +150,47 @@ const QUICK_START_ACTIONS = [
   icon: IconName;
   label: string;
 }[];
+const PROJECT_PACKAGE_ITEMS = [
+  {
+    accent: PUBLIC_COLORS.brand,
+    body: "Notebooks, editors, documents, whiteboards, and chat open around one project tree.",
+    href: "features/compare",
+    icon: "files",
+    items: ["Files", "Documents", "Project chat"],
+    title: "Files and tools",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Terminals, package installs, scripts, services, and notebooks use the same working directory.",
+    href: "features/terminal",
+    icon: "terminal",
+    items: ["Linux shell", "Packages", "Services"],
+    title: "Linux runtime",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Codex threads, prompts, patches, screenshots, and collaborator decisions stay attached.",
+    href: "features/ai",
+    icon: "robot",
+    items: ["Codex", "Reviews", "Support notes"],
+    title: "People and agents",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "TimeTravel, snapshots, backups, and product paths keep work inspectable and movable.",
+    href: "features/compare",
+    icon: "disk-snapshot",
+    items: ["TimeTravel", "Snapshots", "Backups"],
+    title: "Recovery and operations",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  items: string[];
+  title: string;
+}[];
 
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
@@ -727,6 +768,114 @@ function QuickStartSection() {
           })}
         </div>
       </div>
+    </section>
+  );
+}
+
+function ProjectPackageSection() {
+  return (
+    <section
+      aria-label="What every CoCalc project includes"
+      style={{
+        background: `linear-gradient(135deg, ${PUBLIC_COLORS.brandTint} 0%, ${PUBLIC_COLORS.surface} 58%, ${PUBLIC_COLORS.warningTint} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `38px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex vertical gap={22}>
+        <Flex align="end" justify="space-between" wrap gap={16}>
+          <div style={{ maxWidth: 760 }}>
+            <Eyebrow>What travels with a project</Eyebrow>
+            <Title level={2} style={{ margin: "8px 0 10px" }}>
+              Every project brings the workspace with it.
+            </Title>
+            <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              CoCalc keeps technical work packaged around the project instead of
+              spreading context across separate notebook, terminal, chat,
+              recovery, and deployment systems.
+            </Paragraph>
+          </div>
+          <Button
+            href={appPath("features/compare")}
+            icon={<DecorativeButtonIcon name="overview" />}
+          >
+            Compare CoCalc
+          </Button>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          }}
+        >
+          {PROJECT_PACKAGE_ITEMS.map((item) => (
+            <a
+              href={appPath(item.href)}
+              key={item.title}
+              style={{
+                background: alpha(PUBLIC_COLORS.surface, 0.9),
+                border: `1px solid ${alpha(item.accent, 0.24)}`,
+                borderRadius: PANEL_RADIUS,
+                boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+                color: "inherit",
+                display: "block",
+                minHeight: 248,
+                padding: 20,
+                textDecoration: "none",
+              }}
+            >
+              <Flex vertical gap={14} style={{ height: "100%" }}>
+                <Flex align="center" justify="space-between">
+                  <div
+                    style={{
+                      alignItems: "center",
+                      background: alpha(item.accent, 0.1),
+                      border: `1px solid ${alpha(item.accent, 0.28)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: item.accent,
+                      display: "flex",
+                      fontSize: 24,
+                      height: 52,
+                      justifyContent: "center",
+                      width: 52,
+                    }}
+                  >
+                    <Icon name={item.icon} />
+                  </div>
+                  <Icon
+                    name="arrow-right"
+                    style={{ color: item.accent, fontSize: 18 }}
+                  />
+                </Flex>
+                <div>
+                  <Title level={3} style={{ fontSize: 21, margin: "0 0 10px" }}>
+                    {item.title}
+                  </Title>
+                  <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+                </div>
+                <Flex gap={8} wrap style={{ marginTop: "auto" }}>
+                  {item.items.map((label) => (
+                    <Text
+                      key={label}
+                      style={{
+                        background: alpha(item.accent, 0.08),
+                        border: `1px solid ${alpha(item.accent, 0.18)}`,
+                        borderRadius: PANEL_RADIUS,
+                        color: PUBLIC_COLORS.heading,
+                        padding: "4px 8px",
+                      }}
+                    >
+                      {label}
+                    </Text>
+                  ))}
+                </Flex>
+              </Flex>
+            </a>
+          ))}
+        </div>
+      </Flex>
     </section>
   );
 }
@@ -2221,6 +2370,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <Hero config={config} />
       <QuickStartSection />
+      <ProjectPackageSection />
       <OperatingModelSection />
       <ProjectLoopSection />
       <ProjectStorySection />

@@ -75,6 +75,11 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
+        name: "Every project brings the workspace with it.",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
         name: "See the work loop inside a project.",
       }),
     ).not.toBeNull();
@@ -150,6 +155,34 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Course workspace/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
+    const projectPackage = screen.getByRole("region", {
+      name: "What every CoCalc project includes",
+    });
+    expect(
+      within(projectPackage)
+        .getByRole("link", { name: /Files and tools/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(projectPackage)
+        .getByRole("link", { name: /Linux runtime/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(projectPackage)
+        .getByRole("link", { name: /People and agents/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(projectPackage)
+        .getByRole("link", { name: /Recovery and operations/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(projectPackage)
+        .getByRole("link", { name: "Compare CoCalc" })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     expect(
       screen
         .getByRole("link", { name: /Jupyter Notebooks/i })
