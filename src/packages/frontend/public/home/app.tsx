@@ -408,6 +408,45 @@ const NEXT_ACTION_ROUTES = [
   signal: string;
   title: string;
 }[];
+const LANDING_ROUTE_MAP = [
+  {
+    accent: COLORS.BLUE_D,
+    body: "Create or open a project when the immediate need is a place for notebooks, files, terminals, and agent work.",
+    href: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? appPath("projects") : appPath("auth/sign-up"),
+    icon: "project-outlined",
+    label: "Project first",
+    next: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? "Open projects" : "Create a workspace",
+    title: "Start a workspace",
+  },
+  {
+    accent: COLORS.RUN,
+    body: "Use the feature pages when you are choosing between notebooks, terminal sessions, AI agents, teaching, or writing tools.",
+    href: () => appPath("features"),
+    icon: "overview",
+    label: "Workflow first",
+    next: () => "Explore workflows",
+    title: "Pick a work surface",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Use product pages when the main question is hosted service, one-user local runtime, or customer-operated deployment.",
+    href: () => appPath("products"),
+    icon: "servers",
+    label: "Operations first",
+    next: () => "Choose operating path",
+    title: "Decide where CoCalc runs",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: (opts: { authenticated: boolean }) => string;
+  icon: IconName;
+  label: string;
+  next: (opts: { authenticated: boolean }) => string;
+  title: string;
+}[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
     return `rgba(255, 255, 255, ${opacity})`;
@@ -1457,6 +1496,116 @@ function Hero({ config }: { config?: HomeConfig }) {
         </Flex>
         <HeroWorkspaceSnapshot authenticated={authenticated} />
       </div>
+    </section>
+  );
+}
+
+function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
+  return (
+    <section
+      aria-label="CoCalc.ai landing route map"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `22px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex align="start" justify="space-between" gap={18} wrap>
+        <div style={{ maxWidth: 430 }}>
+          <Eyebrow>Find the right entry point</Eyebrow>
+          <Title level={2} style={{ margin: "8px 0 8px" }}>
+            Route by what you need next.
+          </Title>
+          <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+            Start with the workspace, a specific technical surface, or the
+            operating path. Each route keeps the project model visible.
+          </Paragraph>
+        </div>
+        <div
+          aria-label="CoCalc.ai primary landing routes"
+          role="group"
+          style={{
+            display: "grid",
+            flex: "1 1 620px",
+            gap: 10,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 230px), 1fr))",
+          }}
+        >
+          {LANDING_ROUTE_MAP.map((route) => (
+            <a
+              href={route.href({ authenticated })}
+              key={route.title}
+              style={{
+                alignItems: "start",
+                background: alpha(route.accent, 0.06),
+                border: `1px solid ${alpha(route.accent, 0.22)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "38px minmax(0, 1fr) 16px",
+                minHeight: 138,
+                padding: 14,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(route.accent, 0.08),
+                  border: `1px solid ${alpha(route.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: route.accent,
+                  display: "flex",
+                  fontSize: 18,
+                  height: 38,
+                  justifyContent: "center",
+                  width: 38,
+                }}
+              >
+                <Icon name={route.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: route.accent,
+                    display: "block",
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {route.label}
+                </Text>
+                <Title level={3} style={{ fontSize: 21, margin: "4px 0 6px" }}>
+                  {route.title}
+                </Title>
+                <Text type="secondary">{route.body}</Text>
+                <Text
+                  strong
+                  style={{
+                    color: route.accent,
+                    display: "block",
+                    marginTop: 10,
+                  }}
+                >
+                  {route.next({ authenticated })}
+                </Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{
+                  color: route.accent,
+                  marginTop: 4,
+                }}
+              />
+            </a>
+          ))}
+        </div>
+      </Flex>
     </section>
   );
 }
@@ -2860,6 +3009,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
+      <LandingRouteMapSection authenticated={!!config?.is_authenticated} />
       <WorkspaceContextSection authenticated={!!config?.is_authenticated} />
       <WorkflowsSection />
       <NextActionSection />

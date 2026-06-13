@@ -242,6 +242,44 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: "Create a workspace" })
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
+    const routeMap = screen.getByRole("region", {
+      name: "CoCalc.ai landing route map",
+    });
+    expect(
+      within(routeMap).getByRole("heading", {
+        name: "Route by what you need next.",
+      }),
+    ).not.toBeNull();
+    const primaryLandingRoutes = within(routeMap).getByRole("group", {
+      name: "CoCalc.ai primary landing routes",
+    });
+    expect(
+      within(primaryLandingRoutes)
+        .getByRole("link", { name: /Start a workspace/i })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(primaryLandingRoutes)
+        .getByRole("link", { name: /Pick a work surface/i })
+        .getAttribute("href"),
+    ).toBe("/features");
+    expect(
+      within(primaryLandingRoutes)
+        .getByRole("link", { name: /Decide where CoCalc runs/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(primaryLandingRoutes).getByText("Project first"),
+    ).not.toBeNull();
+    expect(
+      within(primaryLandingRoutes).getByText("Workflow first"),
+    ).not.toBeNull();
+    expect(
+      within(primaryLandingRoutes).getByText("Operations first"),
+    ).not.toBeNull();
+    expect(
+      within(primaryLandingRoutes).getByText("Choose operating path"),
+    ).not.toBeNull();
     const workspacePreview = screen.getByRole("region", {
       name: "CoCalc.ai workspace preview",
     });
@@ -933,6 +971,15 @@ describe("PublicHomeApp", () => {
         screen.getByRole("group", { name: "CoCalc project context preview" }),
       )
         .getByRole("link", { name: "Open projects" })
+        .getAttribute("href"),
+    ).toBe("/projects");
+    expect(
+      within(
+        screen.getByRole("group", {
+          name: "CoCalc.ai primary landing routes",
+        }),
+      )
+        .getByRole("link", { name: /Start a workspace/i })
         .getAttribute("href"),
     ).toBe("/projects");
     expect(
