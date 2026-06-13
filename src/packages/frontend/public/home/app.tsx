@@ -87,6 +87,10 @@ const HOME_PAGE_CSS = `
   }
 
   @media (max-width: 520px) {
+    .cocalc-public-home-hero-trail-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
     .cocalc-public-home-hero-snapshot-grid {
       grid-template-columns: minmax(0, 1fr) !important;
     }
@@ -277,6 +281,37 @@ const HERO_WORKSPACE_SIGNALS = [
     detail: "snapshot ready",
     icon: "history",
     label: "History checkpoint",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
+const HERO_WORKSPACE_TRAIL = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Files",
+    icon: "files",
+    label: "Capture",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Runtime",
+    icon: "terminal",
+    label: "Run",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Agent work",
+    icon: "robot",
+    label: "Ask",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "History",
+    icon: "history",
+    label: "Review",
   },
 ] satisfies {
   accent: string;
@@ -971,6 +1006,101 @@ function HeroWorkspaceSnapshot({ authenticated }: { authenticated: boolean }) {
           Persistent
         </Tag>
       </Flex>
+      <div
+        aria-label="CoCalc.ai hero workspace trail"
+        role="group"
+        style={{
+          background: alpha(PUBLIC_COLORS.surface, 0.1),
+          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 12,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+            Workspace trail
+          </Text>
+          <Text
+            style={{
+              color: alpha(PUBLIC_COLORS.surface, 0.68),
+              fontSize: 12,
+            }}
+          >
+            Files, runtime, agent work, review.
+          </Text>
+        </Flex>
+        <div
+          className="cocalc-public-home-hero-trail-grid"
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {HERO_WORKSPACE_TRAIL.map((step, index) => (
+            <div
+              key={step.label}
+              style={{
+                background: alpha(step.accent, 0.14),
+                border: `1px solid ${alpha(step.accent, 0.36)}`,
+                borderRadius: PANEL_RADIUS,
+                minHeight: 72,
+                padding: 8,
+              }}
+            >
+              <Flex align="center" gap={6}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(PUBLIC_COLORS.surface, 0.11),
+                    borderRadius: PANEL_RADIUS,
+                    color: step.accent,
+                    display: "flex",
+                    flex: "0 0 22px",
+                    height: 22,
+                    justifyContent: "center",
+                    width: 22,
+                  }}
+                >
+                  <Icon name={step.icon} />
+                </span>
+                <Text
+                  strong
+                  style={{
+                    color: PUBLIC_COLORS.surface,
+                    fontSize: 11,
+                    lineHeight: 1,
+                  }}
+                >
+                  {index + 1}
+                </Text>
+              </Flex>
+              <Text
+                strong
+                style={{
+                  color: PUBLIC_COLORS.surface,
+                  display: "block",
+                  marginTop: 7,
+                }}
+              >
+                {step.label}
+              </Text>
+              <Text
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.66),
+                  display: "block",
+                  fontSize: 12,
+                }}
+              >
+                {step.detail}
+              </Text>
+            </div>
+          ))}
+        </div>
+      </div>
       <div
         className="cocalc-public-home-hero-snapshot-grid"
         style={{
