@@ -469,6 +469,54 @@ describe("PublicApp", () => {
     ).not.toBeNull();
   });
 
+  it("keeps pricing useful when hosted plans are unavailable", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({ tiers: [] }),
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={pricingRoute}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        name: "CoCalc.ai Pricing and Licensing",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Hosted plan prices are not published here yet."),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/^Hosted memberships are the managed CoCalc\.ai/),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Not sure which path fits?" })
+        .getAttribute("href"),
+    ).toBe("/products");
+    const hostedPlansLink = screen.getByRole("link", {
+      name: "Ask about hosted plans",
+    });
+    expect(hostedPlansLink.getAttribute("href")).toContain("/support/new?");
+    expect(hostedPlansLink.getAttribute("href")).toContain(
+      "subject=Hosted+plans",
+    );
+    expect(
+      screen.getByRole("heading", {
+        name: "Buying paths beyond hosted plans",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.queryByText(/No public hosted plans are currently configured/i),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/membership tiers are currently configured/i),
+    ).toBeNull();
+  });
+
   it("hides the shared Policies nav item when public policies are disabled", async () => {
     await renderPublicApp(
       <PublicApp

@@ -25,6 +25,7 @@ import {
 } from "antd";
 
 import type { MembershipTierWithPresentation } from "@cocalc/frontend/account/membership-tier-benefits";
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   PublicGrid,
@@ -62,6 +63,14 @@ function supportPurchasePath(subject: string, body: string): string {
     type: "purchase",
   });
   return `${appPath("support/new")}?${params.toString()}`;
+}
+
+function DecorativeButtonIcon({ name }: { name: IconName }) {
+  return (
+    <span aria-hidden="true" style={{ display: "inline-flex" }}>
+      <Icon name={name} />
+    </span>
+  );
 }
 
 async function loadMembershipTiers(): Promise<
@@ -653,6 +662,45 @@ function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
   );
 }
 
+function HostedPlansFallback({
+  billingInterval,
+  hasPublicTiers,
+}: {
+  billingInterval: BillingInterval;
+  hasPublicTiers: boolean;
+}) {
+  const intervalLabel = billingInterval === "month" ? "monthly" : "annual";
+  const message = hasPublicTiers
+    ? `No ${intervalLabel} hosted plan prices are published here yet.`
+    : "Hosted plan prices are not published here yet.";
+  const description = hasPublicTiers
+    ? "The available hosted plans do not include pricing for this billing interval in this environment. Compare product paths or ask sales about hosted memberships and organizational buying."
+    : "Hosted memberships are the managed CoCalc.ai account path. Compare product paths for hosted, local, and customer-operated choices, or ask sales about memberships, site licensing, and quotes.";
+
+  return (
+    <PublicSection>
+      <Alert description={description} showIcon title={message} type="info" />
+      <Flex gap={12} style={{ marginTop: 16 }} wrap>
+        <Button
+          href={appPath("products")}
+          icon={<DecorativeButtonIcon name="servers" />}
+        >
+          Not sure which path fits?
+        </Button>
+        <Button
+          href={supportPurchasePath(
+            "Hosted plans",
+            "I want to ask about CoCalc.ai hosted plans, memberships, or organizational buying.",
+          )}
+          icon={<DecorativeButtonIcon name="support" />}
+        >
+          Ask about hosted plans
+        </Button>
+      </Flex>
+    </PublicSection>
+  );
+}
+
 export default function PricingPage({
   isAuthenticated = false,
 }: {
@@ -698,12 +746,18 @@ export default function PricingPage({
             licensing instead.
           </Paragraph>
           <Flex gap={12} wrap>
-            <Button href={appPath("products")}>Compare product paths</Button>
+            <Button
+              href={appPath("products")}
+              icon={<DecorativeButtonIcon name="servers" />}
+            >
+              Compare product paths
+            </Button>
             <Button
               href={supportPurchasePath(
                 "Site license",
                 "I want to discuss a CoCalc site license.",
               )}
+              icon={<DecorativeButtonIcon name="bank" />}
             >
               Discuss site licensing
             </Button>
@@ -730,23 +784,17 @@ export default function PricingPage({
                 <PricingComparisonTable tiers={visibleTiers} />
               </>
             ) : (
-              <PublicSection>
-                <Alert
-                  title={`No ${billingInterval === "month" ? "monthly" : "annual"} membership tiers are currently configured.`}
-                  showIcon
-                  type="info"
-                />
-              </PublicSection>
+              <HostedPlansFallback
+                billingInterval={billingInterval}
+                hasPublicTiers
+              />
             )}
           </>
         ) : loaded ? (
-          <PublicSection>
-            <Alert
-              title="No public hosted plans are currently configured."
-              showIcon
-              type="info"
-            />
-          </PublicSection>
+          <HostedPlansFallback
+            billingInterval={billingInterval}
+            hasPublicTiers={false}
+          />
         ) : null}
       </Flex>
 
