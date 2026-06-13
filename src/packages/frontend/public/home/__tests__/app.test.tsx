@@ -1333,6 +1333,7 @@ describe("PublicHomeApp", () => {
     });
     expectLinkHrefs(boundaryDetailRouteLinks, [
       "/policies/trust",
+      "/pricing",
       "/products/cocalc-plus",
       "/products",
       "/support",
@@ -1343,6 +1344,16 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Trust policy/i })
         .getAttribute("href"),
     ).toBe("/policies/trust");
+    expect(
+      within(detailRoutes)
+        .getByRole("link", { name: /Hosted pricing/i })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(
+      within(detailRoutes).getByText(
+        "Review hosted memberships and account upgrade choices.",
+      ),
+    ).not.toBeNull();
     expect(
       within(detailRoutes)
         .getByRole("link", { name: /CoCalc Plus details/i })

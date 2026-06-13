@@ -3858,6 +3858,12 @@ function DetailRoutesSection() {
       label: "Trust policy",
     },
     {
+      body: "Review hosted memberships and account upgrade choices.",
+      href: appPath("pricing"),
+      icon: "percentage",
+      label: "Hosted pricing",
+    },
+    {
       body: "Review local-runtime details on the CoCalc Plus page.",
       href: appPath("products/cocalc-plus"),
       icon: "laptop",
@@ -3909,8 +3915,9 @@ function DetailRoutesSection() {
             Use detail pages for boundary questions.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Boundaries differ by deployment path. Keep trust, support, Plus,
-            deployment, and hosted-service questions on their controlled routes.
+            Boundaries differ by deployment path. Keep trust, pricing, support,
+            Plus, deployment, and hosted-service questions on their controlled
+            routes.
           </Paragraph>
         </div>
       </Flex>
