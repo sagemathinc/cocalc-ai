@@ -32,8 +32,7 @@ export interface Cost {
   cost_sub_year: number;
   quantity: number;
   // if buying a subscription, the cost for the first period
-  // may be less than cost_sub_month / cost_sub_year, depending
-  // on the closing statement date of the user.
+  // may be less than cost_sub_month / cost_sub_year.
   cost_sub_first_period?: number;
   period: Period;
 }

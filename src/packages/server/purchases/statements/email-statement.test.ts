@@ -96,14 +96,7 @@ describe("creates an account, then creates statements and corresponding emails a
   });
 
   it("Statement balance is not negative -- makes a monthly statement, which doesn't ask the user to make a payment since balance isn't low", async () => {
-    // we won't get a statement if our closing date isn't today!
-    // We directly set in database since the setClosingDay function only works on days 1-28, and we want to run
-    // tests on any day!
     const pool = getPool();
-    await pool.query(
-      "UPDATE accounts SET purchase_closing_day = $1 WHERE account_id = $2",
-      [new Date().getDate(), account_id],
-    );
     // delete existing statements so that a new statement will get created.
     await pool.query("DELETE FROM statements WHERE account_id = $1", [
       account_id,

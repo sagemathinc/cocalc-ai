@@ -55,7 +55,15 @@ function AddressModal({ onClose }) {
   );
 }
 
-function StripeAddressElement({ style, onFinished }: { style?; onFinished? }) {
+export function StripeAddressElement({
+  style,
+  onFinished,
+  showCancel = true,
+}: {
+  style?;
+  onFinished?;
+  showCancel?: boolean;
+}) {
   const [error, setError] = useState<string>("");
   const [customerSession, setCustomerSession] =
     useState<CustomerSessionSecret | null>(null);
@@ -102,6 +110,7 @@ function StripeAddressElement({ style, onFinished }: { style?; onFinished? }) {
       <AddressForm
         style={style}
         onFinished={onFinished}
+        showCancel={showCancel}
         customer={customer}
         runFreshAuthAction={runFreshAuthAction}
       />
@@ -110,7 +119,13 @@ function StripeAddressElement({ style, onFinished }: { style?; onFinished? }) {
   );
 }
 
-function AddressForm({ style, onFinished, customer, runFreshAuthAction }) {
+function AddressForm({
+  style,
+  onFinished,
+  showCancel,
+  customer,
+  runFreshAuthAction,
+}) {
   const [error, setError] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -139,10 +154,11 @@ function AddressForm({ style, onFinished, customer, runFreshAuthAction }) {
         await runFreshAuthAction(async () => {
           await setStripeCustomer(value);
           setSuccess(true);
-          onFinished();
+          onFinished?.();
         });
         return;
       }
+      setError("Complete billing name and address before continuing.");
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -172,7 +188,7 @@ function AddressForm({ style, onFinished, customer, runFreshAuthAction }) {
               onClick={handleSubmit}
               success={success}
               isSubmitting={isSubmitting}
-              onCancel={() => onFinished()}
+              onCancel={showCancel ? () => onFinished?.() : undefined}
             />
           )}
         </Space>

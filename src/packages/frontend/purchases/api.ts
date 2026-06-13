@@ -103,14 +103,6 @@ export async function getBalanceAdmin(account_id: string): Promise<MoneyValue> {
   return await api("purchases/get-balance-admin", { account_id });
 }
 
-export async function getClosingDates(): Promise<{ last: Date; next: Date }> {
-  return await api("purchases/get-closing-dates");
-}
-
-export async function resetClosingDate() {
-  return await api("purchases/reset-closing-date");
-}
-
 export async function isPurchaseAllowed(
   service: Service,
   cost?: MoneyValue,
@@ -289,8 +281,14 @@ export async function createPaymentIntent(opts: {
   return await api("purchases/stripe/create-payment-intent", opts);
 }
 
-export async function processPaymentIntents(): Promise<{ count: number }> {
-  return await api("purchases/stripe/process-payment-intents");
+export async function processPaymentIntents(
+  opts: {
+    checkout_session_id?: string;
+    payment_intent_id?: string;
+    strict?: boolean;
+  } = {},
+): Promise<{ count: number }> {
+  return await api("purchases/stripe/process-payment-intents", opts);
 }
 
 export async function createSetupIntent(opts: {
@@ -328,6 +326,7 @@ export interface MembershipChangeQuote {
   current_period_end?: Date | string;
   trial_days?: number;
   trial_available?: boolean;
+  trial_requires_billing_details?: boolean;
   trial_requires_payment_method?: boolean;
   trial_email?: string;
   trial_reason?: string;
@@ -350,7 +349,7 @@ export async function applyMembershipChange(opts: {
   interval: "month" | "year";
   allow_downgrade?: boolean;
 }): Promise<
-  MembershipChangeQuote & { subscription_id: number; purchase_id: number }
+  MembershipChangeQuote & { subscription_id?: number; purchase_id?: number }
 > {
   return await api("purchases/membership-change", opts);
 }
