@@ -15,14 +15,18 @@ function hasBundleMarkers(dir) {
   );
 }
 
-function resolveBundleDir(initialDir, fallbackDir) {
+function resolveBundleDir(initialDir, fallbackDirs) {
   const candidates = [];
   if (initialDir) {
     candidates.push(initialDir);
     candidates.push(join(initialDir, ".."));
   }
-  if (fallbackDir) {
-    candidates.push(fallbackDir);
+  for (const fallbackDir of Array.isArray(fallbackDirs)
+    ? fallbackDirs
+    : [fallbackDirs]) {
+    if (fallbackDir) {
+      candidates.push(fallbackDir);
+    }
   }
   candidates.push(process.cwd());
 
@@ -32,7 +36,7 @@ function resolveBundleDir(initialDir, fallbackDir) {
     }
   }
 
-  return initialDir ?? fallbackDir ?? process.cwd();
+  return initialDir ?? candidates.find(Boolean) ?? process.cwd();
 }
 
 function prependPath(dir) {
@@ -60,12 +64,19 @@ function setIfExists(envName, candidates) {
     process.env.COCALC_DISABLE_NEXT ??= "1";
     process.env.NO_RSPACK_DEV_SERVER ??= "1";
 
-    const bundledRootCandidate = join(__dirname, "..", "..", "..");
+    const bundledRootCandidates = [
+      join(__dirname, ".."),
+      join(__dirname, "..", "..", ".."),
+    ];
     const bundleDir = resolveBundleDir(
       process.env.COCALC_BUNDLE_DIR,
-      bundledRootCandidate,
+      bundledRootCandidates,
     );
     process.env.COCALC_BUNDLE_DIR = bundleDir;
+
+    setIfExists("COCALC_API_V2_ROUTES_BUNDLE", [
+      join(bundleDir, "api-v2-routes", "index.js"),
+    ]);
 
     setIfExists("COCALC_API_V2_ROOT", [
       join(bundleDir, "http-api-dist", "pages", "api", "v2"),

@@ -10,14 +10,12 @@ import { getTransactionClient } from "@cocalc/database/pool";
 import { getSubscription, addInterval } from "./renew-subscription";
 import dayjs from "dayjs";
 import send, { support, url, name } from "@cocalc/server/messages/send";
-import {
-  type MembershipClass,
-  RENEW_DAYS_BEFORE_END,
-} from "@cocalc/util/db-schema/subscriptions";
+import type { MembershipClass } from "@cocalc/util/db-schema/subscriptions";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import getBalance from "./get-balance";
 import createPurchase from "./create-purchase";
 import { toDecimal } from "@cocalc/util/money";
+import { formatRenewalDate } from "./subscription-renewal-notice";
 
 interface Options {
   account_id: string;
@@ -76,7 +74,7 @@ export default async function resumeSubscription({
       body: `
 You have successfully manually resumed subscription id=${subscription_id} which covers your ${metadata.type}
 
-Your subscription will automatically renew ${RENEW_DAYS_BEFORE_END} days before ${end.toDateString()}.
+Your subscription will automatically renew on ${formatRenewalDate(end)}.
 
 - [Your Membership](${await url(`/settings/membership`)})
 

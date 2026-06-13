@@ -164,7 +164,7 @@ export async function claimMembershipTrial({
   email_address: string;
   membership_class: string;
   subscription_id: number;
-  purchase_id: number;
+  purchase_id?: number | null;
   client: PoolClient;
 }): Promise<void> {
   const normalized = normalizeEmailAddress(email_address);

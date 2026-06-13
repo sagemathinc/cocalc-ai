@@ -4,8 +4,9 @@
  */
 
 import { Alert, Button, Flex, Modal, Space, Spin, Typography } from "antd";
+import { delay } from "awaiting";
 import dayjs from "dayjs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   FreshAuthModal,
@@ -14,13 +15,12 @@ import {
 import api from "@cocalc/frontend/client/api";
 import { Icon } from "@cocalc/frontend/components";
 import StripePayment, {
-  AddPaymentMethodModal,
+  BillingSetupModal,
 } from "@cocalc/frontend/purchases/stripe-payment";
 import {
   useEmailVerificationRequired,
   VerifyEmailRequiredPanel,
 } from "@cocalc/frontend/app/verify-email-banner";
-import Payments from "@cocalc/frontend/purchases/payments";
 import {
   applyMembershipChange,
   getMembershipChangeQuote,
@@ -41,11 +41,17 @@ import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-
 import { currency } from "@cocalc/util/misc";
 import { moneyRound2Up, toDecimal, type MoneyValue } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
-import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
+import type {
+  MembershipDetails,
+  MembershipResolution,
+} from "@cocalc/conat/hub/api/purchases";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const { Text } = Typography;
+const MEMBERSHIP_FINALIZATION_TIMEOUT_MS = 30_000;
+const MEMBERSHIP_FINALIZATION_POLL_MS = 1_000;
 
 interface MembershipTier extends MembershipPricingTier {
   id: string;
@@ -60,6 +66,11 @@ interface MembershipTier extends MembershipPricingTier {
 
 interface MembershipTiersResponse {
   tiers?: MembershipTier[];
+}
+
+interface MembershipSnapshot {
+  details?: MembershipDetails | null;
+  membership: MembershipResolution;
 }
 
 function billingAdjective(interval: BillingInterval): string {
@@ -171,17 +182,18 @@ function MembershipPurchaseModalInner({
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [quoteError, setQuoteError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
-  const [addPaymentMethodOpen, setAddPaymentMethodOpen] =
-    useState<boolean>(false);
+  const [paymentSubmitting, setPaymentSubmitting] = useState<boolean>(false);
+  const [billingSetupOpen, setBillingSetupOpen] = useState<boolean>(false);
   const [quoteRefreshKey, setQuoteRefreshKey] = useState<number>(0);
   const [place, setPlace] = useState<
     "choose" | "checkout" | "processing" | "done"
   >("choose");
-  const numPaymentsRef = useRef<number | null>(null);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ showLoading = true } = {}) => {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError("");
     try {
       const [membershipResult, tiersResult] = await Promise.all([
@@ -190,11 +202,27 @@ function MembershipPurchaseModalInner({
       ]);
       setMembership(membershipResult as MembershipResolution);
       setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
+      return membershipResult as MembershipResolution;
     } catch (err) {
       setError(`${err}`);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
+  };
+
+  const refreshMembershipSnapshot = async (): Promise<MembershipSnapshot> => {
+    const [membershipResult, detailsResult] = await Promise.all([
+      api("purchases/get-membership"),
+      webapp_client.conat_client.hub.purchases.getMembershipDetails(),
+    ]);
+    const nextMembership = membershipResult as MembershipResolution;
+    setMembership(nextMembership);
+    return {
+      details: (detailsResult as MembershipDetails) ?? null,
+      membership: nextMembership,
+    };
   };
 
   useEffect(() => {
@@ -203,8 +231,9 @@ function MembershipPurchaseModalInner({
     setQuote(null);
     setQuoteError("");
     setInterval("year");
-    setAddPaymentMethodOpen(false);
+    setBillingSetupOpen(false);
     setQuoteRefreshKey(0);
+    setPaymentSubmitting(false);
     setPlace("choose");
     load();
   }, [open]);
@@ -339,6 +368,18 @@ function MembershipPurchaseModalInner({
       : undefined;
   const confirmChangeLabel =
     quote?.change === "downgrade" ? "Confirm downgrade" : "Confirm change";
+  const trialRequiresBillingDetails =
+    quote?.allowed === false && !!quote.trial_requires_billing_details;
+  const trialRequiresPaymentMethod =
+    quote?.allowed === false && !!quote.trial_requires_payment_method;
+  const trialSetupRequired =
+    trialRequiresBillingDetails || trialRequiresPaymentMethod;
+  const trialSetupButtonLabel =
+    trialRequiresBillingDetails && trialRequiresPaymentMethod
+      ? "Add billing details and payment method to start free trial"
+      : trialRequiresBillingDetails
+        ? "Add billing details to start free trial"
+        : "Add payment method to start free trial";
 
   function isCurrentChoice(tier: MembershipTier): boolean {
     if (tier.id !== currentPersonalClass) return false;
@@ -353,6 +394,7 @@ function MembershipPurchaseModalInner({
     setSelectedTierId(tier.id);
     setQuote(null);
     setQuoteError("");
+    setPaymentSubmitting(false);
     setPlace("checkout");
   }
 
@@ -360,7 +402,46 @@ function MembershipPurchaseModalInner({
     setSelectedTierId(null);
     setQuote(null);
     setQuoteError("");
+    setPaymentSubmitting(false);
     setPlace("choose");
+  }
+
+  function snapshotHasSelectedPersonalMembership({
+    details,
+    membership,
+  }: MembershipSnapshot): boolean {
+    if (selectedTierId == null) return false;
+    if (
+      membership.source === "subscription" &&
+      membership.class === selectedTierId &&
+      (membership.subscription_interval == null ||
+        membership.subscription_interval === interval)
+    ) {
+      return true;
+    }
+    return (
+      details?.candidates.some(
+        (candidate) =>
+          candidate.source === "subscription" &&
+          candidate.class === selectedTierId &&
+          candidate.subscription_status !== "canceled" &&
+          (candidate.subscription_interval == null ||
+            candidate.subscription_interval === interval),
+      ) ?? false
+    );
+  }
+
+  async function waitForSelectedPersonalMembership(): Promise<boolean> {
+    const deadline = Date.now() + MEMBERSHIP_FINALIZATION_TIMEOUT_MS;
+    while (Date.now() <= deadline) {
+      const snapshot = await refreshMembershipSnapshot();
+      onChanged?.();
+      if (snapshotHasSelectedPersonalMembership(snapshot)) {
+        return true;
+      }
+      await delay(MEMBERSHIP_FINALIZATION_POLL_MS);
+    }
+    return false;
   }
 
   const directChange = async () => {
@@ -388,9 +469,27 @@ function MembershipPurchaseModalInner({
     }
   };
 
-  const refreshStatus = async () => {
-    await load();
-    onChanged?.();
+  const finalizePaidChange = async () => {
+    setActionLoading(true);
+    setQuoteError("");
+    setPlace("processing");
+    try {
+      await load({ showLoading: false });
+      onChanged?.();
+      if (await waitForSelectedPersonalMembership()) {
+        setPlace("done");
+        return;
+      }
+      setQuoteError(
+        "Payment was submitted, but CoCalc could not confirm the membership update. Please check again shortly or contact support if the membership does not update.",
+      );
+    } catch (err) {
+      await load({ showLoading: false });
+      onChanged?.();
+      setQuoteError(`${err}`);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const modalWidth = place === "choose" ? 1180 : 600;
@@ -472,10 +571,27 @@ function MembershipPurchaseModalInner({
             </Space>
           }
         />
-        <Button onClick={backToChooser}>Change selection</Button>
-        {quote.trial_requires_payment_method && quote.allowed === false && (
-          <Button onClick={() => setAddPaymentMethodOpen(true)} type="primary">
-            Add payment method to start free trial
+        {paymentSubmitting && (
+          <Alert
+            showIcon
+            type="info"
+            message="Processing payment"
+            description="Creating the invoice and charging your saved payment method. This can take a few seconds."
+          />
+        )}
+        <Button
+          disabled={paymentSubmitting || actionLoading}
+          onClick={backToChooser}
+        >
+          Change selection
+        </Button>
+        {trialSetupRequired && (
+          <Button
+            disabled={paymentSubmitting || actionLoading}
+            onClick={() => setBillingSetupOpen(true)}
+            type="primary"
+          >
+            {trialSetupButtonLabel}
           </Button>
         )}
         {canProceed && quoteChargeValue.gt(0) && chargeAmountValue.gt(0) && (
@@ -493,11 +609,12 @@ function MembershipPurchaseModalInner({
               membership_interval: interval,
               allow_downgrade: "true",
             }}
+            onSubmittingChange={setPaymentSubmitting}
             onFinished={async (total) => {
               if (!total) {
                 await directChange();
               } else {
-                setPlace("processing");
+                await finalizePaidChange();
               }
             }}
           />
@@ -519,23 +636,32 @@ function MembershipPurchaseModalInner({
   }
 
   function renderProcessingStep() {
-    return (
-      <Space vertical size="middle">
-        <Alert
-          type="info"
-          title="Payment is processing. Your membership will update once the payment completes."
-        />
-        <Payments
-          purpose={MEMBERSHIP_CHANGE}
-          numPaymentsRef={numPaymentsRef}
-          limit={5}
-        />
-        <Space>
-          <Button onClick={refreshStatus}>Refresh membership</Button>
+    if (quoteError) {
+      return (
+        <Space align="center" vertical size="middle" style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="error"
+            message="Membership update not confirmed"
+            description={quoteError}
+          />
           <Button type="primary" onClick={onClose}>
             Close
           </Button>
         </Space>
+      );
+    }
+    return (
+      <Space align="center" vertical size="middle" style={{ width: "100%" }}>
+        <Alert
+          type="info"
+          message="Finalizing membership change"
+          description="Payment was submitted. CoCalc is updating your membership and confirming the new state."
+        />
+        <Spin />
+        <Button type="primary" onClick={onClose}>
+          Close
+        </Button>
       </Space>
     );
   }
@@ -545,14 +671,14 @@ function MembershipPurchaseModalInner({
     return (
       <Space vertical size="middle" style={{ width: "100%" }}>
         {quoteLoading && <Spin />}
-        {quoteError && <Alert type="error" title={quoteError} />}
+        {quoteError && place !== "processing" && (
+          <Alert type="error" title={quoteError} />
+        )}
         {quote &&
           quote.allowed === false &&
           quote.reason &&
           !paymentRequired &&
-          !quote.trial_requires_payment_method && (
-            <Alert type="error" title={quote.reason} />
-          )}
+          !trialSetupRequired && <Alert type="error" title={quote.reason} />}
         {place === "checkout" && renderCheckoutStep()}
         {place === "processing" && renderProcessingStep()}
         {place === "done" && (
@@ -595,13 +721,14 @@ function MembershipPurchaseModalInner({
       title="Change Membership"
     >
       {renderModalBody()}
-      {addPaymentMethodOpen ? (
-        <AddPaymentMethodModal
-          onCancel={() => setAddPaymentMethodOpen(false)}
+      {billingSetupOpen ? (
+        <BillingSetupModal
+          onCancel={() => setBillingSetupOpen(false)}
           onFinished={() => {
-            setAddPaymentMethodOpen(false);
+            setBillingSetupOpen(false);
             setQuoteRefreshKey((value) => value + 1);
           }}
+          requirePaymentMethod={trialRequiresPaymentMethod}
         />
       ) : null}
       <FreshAuthModal {...freshAuthModalProps} />

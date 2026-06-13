@@ -11,8 +11,8 @@ import createSubscription from "@cocalc/server/purchases/create-subscription";
 import { MembershipClass } from "@cocalc/conat/hub/api/purchases";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
-import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
 import { claimMembershipTrial } from "@cocalc/server/membership/trials";
+import { assertBillingReady } from "@cocalc/server/purchases/stripe/billing-readiness";
 
 interface MembershipChangeOptions {
   account_id: string;
@@ -35,7 +35,7 @@ export async function applyMembershipChange({
   paymentAmount,
   client,
 }: MembershipChangeOptions): Promise<
-  MembershipChangeResult & { subscription_id: number; purchase_id: number }
+  MembershipChangeResult & { subscription_id?: number; purchase_id?: number }
 > {
   const transaction = client ?? (await getTransactionClient());
   const useTransaction = client == null;
@@ -76,16 +76,6 @@ export async function applyMembershipChange({
       }
     }
 
-    if (change.existing_subscription_id) {
-      await transaction.query(
-        "UPDATE subscriptions SET status='canceled', canceled_at=NOW(), canceled_reason=$1 WHERE id=$2",
-        [
-          `Changed membership to ${targetClass}`,
-          change.existing_subscription_id,
-        ],
-      );
-    }
-
     const start = dayjs().toDate();
     const existingEnd = change.current_period_end;
     const trialDays = change.trial_days ?? 0;
@@ -93,8 +83,8 @@ export async function applyMembershipChange({
       change.change == "new" &&
       change.trial_available === true &&
       trialDays > 0;
-    if (isTrial && !(await hasPaymentMethod(account_id))) {
-      throw Error("A payment method is required to start a free trial.");
+    if (isTrial) {
+      await assertBillingReady(account_id);
     }
     const end = isTrial
       ? dayjs(start).add(trialDays, "day").toDate()
@@ -106,55 +96,66 @@ export async function applyMembershipChange({
           ? dayjs(start).add(1, "month").toDate()
           : dayjs(start).add(1, "year").toDate();
 
-    const subscription_id = await createSubscription(
-      {
-        account_id,
-        cost: change.price,
-        interval,
-        current_period_start: start,
-        current_period_end: end,
-        latest_purchase_id: 0,
-        status: "active",
-        metadata: {
-          type: "membership",
-          class: targetClass,
-          ...(isTrial
-            ? {
-                trial: true,
-                trial_days: trialDays,
-                trial_email: change.trial_email,
-                trial_ends_at: end.toISOString(),
-              }
-            : {}),
-        },
-      },
-      transaction,
-    );
-
-    const purchase_id = await createPurchase({
+    await cancelRenewableMembershipSubscriptions({
       account_id,
-      cost: chargeValue,
-      unrounded_cost: chargeValue,
-      service: "membership",
-      description: {
-        type: "membership",
-        subscription_id,
-        class: targetClass,
-        interval,
-        ...(isTrial ? { trial_days: trialDays } : {}),
-      },
-      tag: "membership-change",
-      period_start: start,
-      period_end: end,
+      targetClass,
       client: transaction,
     });
 
-    await transaction.query(
-      "UPDATE subscriptions SET latest_purchase_id=$1 WHERE id=$2",
-      [purchase_id, subscription_id],
-    );
+    let subscription_id: number | undefined = undefined;
+    let purchase_id: number | undefined = undefined;
+    if (toDecimal(change.price).gt(0)) {
+      subscription_id = await createSubscription(
+        {
+          account_id,
+          cost: change.price,
+          interval,
+          current_period_start: start,
+          current_period_end: end,
+          status: "active",
+          metadata: {
+            type: "membership",
+            class: targetClass,
+            ...(isTrial
+              ? {
+                  trial: true,
+                  trial_days: trialDays,
+                  trial_email: change.trial_email,
+                  trial_ends_at: end.toISOString(),
+                }
+              : {}),
+          },
+        },
+        transaction,
+      );
 
-    if (isTrial) {
+      if (chargeValue.gt(0)) {
+        purchase_id = await createPurchase({
+          account_id,
+          cost: chargeValue,
+          unrounded_cost: chargeValue,
+          service: "membership",
+          description: {
+            type: "membership",
+            subscription_id,
+            class: targetClass,
+            interval,
+            ...(isTrial ? { trial_days: trialDays } : {}),
+          },
+          tag: "membership-change",
+          period_start: start,
+          period_end: end,
+          client: transaction,
+        });
+
+        await transaction.query(
+          "UPDATE subscriptions SET latest_purchase_id=$1 WHERE id=$2",
+          [purchase_id, subscription_id],
+        );
+      }
+    }
+
+    if (isTrial && subscription_id != null) {
       await claimMembershipTrial({
         account_id,
         email_address: change.trial_email ?? "",
@@ -180,4 +181,26 @@ export async function applyMembershipChange({
       transaction.release();
     }
   }
+}
+
+async function cancelRenewableMembershipSubscriptions({
+  account_id,
+  targetClass,
+  client,
+}: {
+  account_id: string;
+  targetClass: MembershipClass;
+  client: PoolClient;
+}): Promise<void> {
+  await client.query(
+    `UPDATE subscriptions
+        SET status='canceled',
+            canceled_at=COALESCE(canceled_at, NOW()),
+            canceled_reason=$2
+      WHERE account_id=$1
+        AND metadata->>'type'='membership'
+        AND status != 'canceled'
+        AND current_period_end >= NOW()`,
+    [account_id, `Changed membership to ${targetClass}`],
+  );
 }

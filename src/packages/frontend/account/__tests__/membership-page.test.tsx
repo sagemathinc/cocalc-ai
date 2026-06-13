@@ -9,6 +9,7 @@ import { MembershipPage } from "../membership-page";
 
 const useMembershipSettingsData = jest.fn();
 const mockClaimableMembershipPackagesPanel = jest.fn();
+const mockMembershipPurchaseModal = jest.fn();
 const refresh = jest.fn();
 
 jest.mock("../membership-settings-data", () => ({
@@ -50,7 +51,10 @@ jest.mock("../membership-package-manager", () => ({
   SiteLicenseReverificationPanel: () => null,
 }));
 
-jest.mock("../membership-purchase-modal", () => () => null);
+jest.mock("../membership-purchase-modal", () => (props: unknown) => {
+  mockMembershipPurchaseModal(props);
+  return null;
+});
 
 jest.mock("../balance-toward-subs", () => ({
   UseBalance: () => <div>balance-renewal-control</div>,
@@ -136,6 +140,40 @@ function baseData(overrides: Record<string, unknown>) {
 describe("MembershipPage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("refreshes membership state after personal membership changes", async () => {
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        membership: { class: "free", source: "free" },
+      }),
+    );
+    const dispatchEvent = jest.spyOn(window, "dispatchEvent");
+
+    render(<MembershipPage />);
+    await screen.findByText("Claim site license");
+    const props = mockMembershipPurchaseModal.mock.calls[0][0] as {
+      onClose: () => void;
+      onChanged: () => void;
+    };
+    props.onChanged();
+
+    expect(refresh).toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledWith(expect.any(Event));
+    expect(dispatchEvent.mock.calls.at(-1)?.[0].type).toBe(
+      "cocalc:membership-changed",
+    );
+
+    refresh.mockClear();
+    dispatchEvent.mockClear();
+    props.onClose();
+
+    expect(refresh).toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledWith(expect.any(Event));
   });
 
   it("shows the free effective membership without raw technical details", async () => {

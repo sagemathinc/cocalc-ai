@@ -10,7 +10,8 @@ BAY_GROUP="cocalc-bay"
 BAY_ROOT_BASE="/mnt/cocalc/bays"
 INSTALL_BASE="/opt/cocalc/bay"
 RELEASE_ID=""
-WORKER_COUNT=2
+WORKER_COUNT=""
+WORKER_COUNT_EXPLICIT=0
 ENABLE_WORKERS=1
 START_BAY=0
 FORCE_ENV=0
@@ -44,7 +45,8 @@ Options:
   --bay-root-base <dir>    base dir for bay state (default: /mnt/cocalc/bays)
   --install-base <dir>     install base for releases/current (default: /opt/cocalc/bay)
   --release-id <id>        explicit release id (default: timestamp-gitshort)
-  --worker-count <n>       worker count to write into bay-workers.env (default: 2)
+  --worker-count <n>       worker count to write into bay-workers.env; default
+                           preserves existing value, or 2 on first install
   --router-port <n>        router port (default: 9102)
   --persist-port <n>       persist port (default: 9202)
   --hub-base-port <n>      base port for hub workers (default: 9300)
@@ -371,7 +373,6 @@ validate_release() {
     for required_file in \
       "${TARGET_RELEASE}/runtime/project-host/index.js" \
       "${TARGET_RELEASE}/runtime/control-plane/bundle/index.js" \
-      "${TARGET_RELEASE}/runtime/control-plane/api-v2-routes/index.js" \
       "${TARGET_RELEASE}/runtime/control-plane/http-api-dist/pages/api/v2/index.js" \
       "${TARGET_RELEASE}/runtime/migrate-schema/index.js"; do
       if [[ ! -f "$required_file" ]]; then
@@ -504,6 +505,7 @@ main() {
         ;;
       --worker-count)
         WORKER_COUNT="$2"
+        WORKER_COUNT_EXPLICIT=1
         shift 2
         ;;
       --router-port)
@@ -607,6 +609,19 @@ main() {
   BAY_SECRETS_ENV_EXAMPLE="${ENV_DIR}/bay-secrets.env.example"
   BAY_TOPOLOGY_ENV_EXAMPLE="${ENV_DIR}/bay-topology.env.example"
   BAY_OVERLAY_ENV_EXAMPLE="${ENV_DIR}/bay-${OVERLAY_MODE}-overlay.env.example"
+  if [[ -z "$WORKER_COUNT" && -f "${ENV_DIR}/bay-workers.env" ]]; then
+    WORKER_COUNT="$(
+      sed -n 's/^COCALC_BAY_WORKER_COUNT=//p' "${ENV_DIR}/bay-workers.env" \
+        | tail -n1
+    )"
+  fi
+  if [[ -z "$WORKER_COUNT" ]]; then
+    WORKER_COUNT=2
+  fi
+  if [[ ! "$WORKER_COUNT" =~ ^[0-9]+$ || "$WORKER_COUNT" -lt 1 ]]; then
+    echo "--worker-count must be a positive integer; got '${WORKER_COUNT}'" >&2
+    exit 2
+  fi
   POSTGRES_BIN="$(find_postgres)"
   PG_CTL_BIN="$(find_pg_ctl)"
   PSQL_BIN="$(find_psql)"
@@ -703,6 +718,11 @@ COCALC_BAY_HUB_BIND_HOST=127.0.0.1
 COCALC_BAY_HUB_BASE_PORT=${HUB_BASE_PORT}
 COCALC_BAY_HUB_HEALTH_PATH=/alive
 
+COCALC_BAY_FRONTDOOR_HOST=127.0.0.1
+COCALC_BAY_FRONTDOOR_PORT=9400
+COCALC_BAY_FRONTDOOR_HEALTH_PATH=/_cocalc/frontdoor/healthz
+COCALC_BAY_FRONTDOOR_DRAIN_FILE=${BAY_ROOT}/state/frontdoor-drain-workers
+
 COCALC_BAY_MIN_HEALTHY_WORKERS=1
 COCALC_BAY_HEALTH_TIMEOUT_S=15
 COCALC_BAY_MIN_FREE_MB=1024
@@ -731,6 +751,13 @@ EOF
   if [[ -n "$PUBLIC_URL" ]]; then
     set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_PUBLIC_URL" "$PUBLIC_URL"
   fi
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BUNDLE_DIR" "/opt/cocalc/bay/current/runtime/control-plane"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_API_V2_ROOT" "/opt/cocalc/bay/current/runtime/control-plane/http-api-dist/pages/api/v2"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_API_V2_ROUTES_BUNDLE" "/opt/cocalc/bay/current/runtime/control-plane/api-v2-routes/index.js"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_HOST" "127.0.0.1"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_PORT" "9400"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_HEALTH_PATH" "/_cocalc/frontdoor/healthz"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_DRAIN_FILE" "${BAY_ROOT}/state/frontdoor-drain-workers"
   if [[ -z "$PROJECT_HOST_SOFTWARE_BASE_URL" && -n "$PUBLIC_URL" ]]; then
     PROJECT_HOST_SOFTWARE_BASE_URL="${PUBLIC_URL%/}/software"
   fi
@@ -744,6 +771,9 @@ COCALC_BAY_WORKER_COUNT=${WORKER_COUNT}
 COCALC_BAY_WORKER_NODE_OPTIONS=
 COCALC_BAY_WORKER_EXTRA_ENV=
 EOF
+  if [[ "$WORKER_COUNT_EXPLICIT" -eq 1 ]]; then
+    set_env_var "${ENV_DIR}/bay-workers.env" "COCALC_BAY_WORKER_COUNT" "$WORKER_COUNT"
+  fi
 
   render_if_missing_or_forced "${ENV_DIR}/bay-topology.env" "$BAY_TOPOLOGY_ENV_EXAMPLE" <<EOF
 COCALC_CLUSTER_ID=standalone
@@ -782,6 +812,7 @@ EOF
   fi
 
   run systemctl enable cocalc-bay.target
+  run systemctl enable cocalc-bay-frontdoor.service
   run systemctl enable cocalc-bay-cloudflared.service
   if [[ "$ENABLE_WORKERS" -eq 1 ]]; then
     for worker_id in $(seq 1 "$WORKER_COUNT"); do
@@ -792,6 +823,8 @@ EOF
   if [[ "$START_BAY" -eq 1 ]]; then
     validate_site_master_key
     run systemctl start cocalc-bay.target
+    run systemctl start cocalc-bay-frontdoor.service
+    run systemctl start cocalc-bay-cloudflared.service
   fi
   prune_old_releases
 

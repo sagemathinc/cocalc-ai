@@ -19,6 +19,7 @@ import {
   TEAM_LICENSES_SETTINGS_PAGE,
 } from "./licenses/licenses-page";
 import { MEMBERSHIP_SETTINGS_PAGE } from "./membership-page";
+import { BALANCE_SETTINGS_PAGE } from "@cocalc/frontend/purchases/balance-page";
 import { PAYMENT_METHODS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payment-methods-page";
 import { PAYMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payments-page";
 import { PURCHASES_SETTINGS_PAGE } from "@cocalc/frontend/purchases/purchases-page";
@@ -39,6 +40,7 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   keys: ACCOUNT_PREFERENCES_SECURITY_PAGE,
   membership: MEMBERSHIP_SETTINGS_PAGE,
   other: ACCOUNT_PREFERENCES_OTHER_PAGE,
+  balance: BALANCE_SETTINGS_PAGE,
   "payment-methods": PAYMENT_METHODS_SETTINGS_PAGE,
   payments: PAYMENTS_SETTINGS_PAGE,
   profile: ACCOUNT_PREFERENCES_PROFILE_PAGE,

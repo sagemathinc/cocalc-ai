@@ -249,7 +249,7 @@ export function buildDefaultDraft(
       name: DEFAULT_NAME,
       provider: firstEnabledProvider(context),
       start_after_create: true,
-      region_preference: "balanced",
+      region_preference: "cheapest",
       price_display: "hourly",
       pricing_model: "on_demand",
       interruption_restore_policy: defaultRestorePolicy("on_demand"),
@@ -280,7 +280,7 @@ export function buildSimilarDraft(
       name: similarName(host.name),
       provider,
       start_after_create: true,
-      region_preference: "balanced",
+      region_preference: "cheapest",
       price_display: "hourly",
       funding_mode: host.funding_mode,
       cpu: readPositiveInteger(host.machine?.metadata?.cpu),
@@ -338,10 +338,11 @@ export function normalizeDraft(
     funding_mode: input.funding_mode,
     start_after_create: input.start_after_create !== false,
     region_preference:
+      input.region_preference === "balanced" ||
       input.region_preference === "closest" ||
       input.region_preference === "cheapest"
         ? input.region_preference
-        : "balanced",
+        : "cheapest",
     price_display: input.price_display === "monthly" ? "monthly" : "hourly",
     pricing_model: input.pricing_model === "spot" ? "spot" : "on_demand",
     interruption_restore_policy:
@@ -420,6 +421,10 @@ export function normalizeDraft(
     draft.disk_gb = undefined;
     draft.disk = undefined;
     draft.disk_type = undefined;
+    draft.auto_grow_enabled = false;
+    draft.auto_grow_max_disk_gb = undefined;
+    draft.auto_grow_growth_step_gb = undefined;
+    draft.auto_grow_min_grow_interval_minutes = undefined;
   } else {
     const diskTypeOptions = getDiskTypeOptions(provider);
     if (!draft.disk_type || !inOptions(draft.disk_type, diskTypeOptions)) {
@@ -430,6 +435,27 @@ export function normalizeDraft(
       draft.disk_gb = diskGb;
       draft.disk = diskGb;
     }
+  }
+
+  if (
+    provider !== "gcp" ||
+    draft.storage_mode === "ephemeral" ||
+    !storageSupport.growable
+  ) {
+    draft.auto_grow_enabled = false;
+    draft.auto_grow_max_disk_gb = undefined;
+    draft.auto_grow_growth_step_gb = undefined;
+    draft.auto_grow_min_grow_interval_minutes = undefined;
+  } else if (draft.auto_grow_enabled) {
+    const diskGb = draft.disk_gb ?? draft.disk ?? DEFAULT_DISK_GB;
+    draft.auto_grow_max_disk_gb = Math.max(
+      readPositiveInteger(draft.auto_grow_max_disk_gb) ?? 500,
+      diskGb,
+    );
+    draft.auto_grow_growth_step_gb =
+      readPositiveInteger(draft.auto_grow_growth_step_gb) ?? 50;
+    draft.auto_grow_min_grow_interval_minutes =
+      readPositiveInteger(draft.auto_grow_min_grow_interval_minutes) ?? 60;
   }
 
   if (provider !== "nebius" && provider !== "gcp") {

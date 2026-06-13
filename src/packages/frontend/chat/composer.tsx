@@ -521,31 +521,33 @@ export function ChatRoomComposer({
               </Button>
             </Tooltip>
             {hasActiveAcpTurn && isSelectedThreadAI ? (
-              <Button
-                onClick={handleSend}
-                disabled={!hasInput}
-                type="primary"
-                data-testid="chat-composer-send"
-                icon={<Icon name="paper-plane" />}
+              <Tooltip
+                title={
+                  <FormattedMessage
+                    id="chatroom.chat_input.queue_button.tooltip"
+                    defaultMessage={"Queue message (Shift+Enter)"}
+                  />
+                }
               >
-                {hasActiveAcpTurn && isSelectedThreadAI ? (
+                <Button
+                  onClick={handleSend}
+                  disabled={!hasInput}
+                  type="primary"
+                  data-testid="chat-composer-send"
+                  icon={<Icon name="paper-plane" />}
+                >
                   <FormattedMessage
                     id="chatroom.chat_input.queue_button.label"
                     defaultMessage={"Queue"}
                   />
-                ) : (
-                  <FormattedMessage
-                    id="chatroom.chat_input.send_button.label"
-                    defaultMessage={"Send"}
-                  />
-                )}
-              </Button>
+                </Button>
+              </Tooltip>
             ) : (
               <Tooltip
                 title={
                   <FormattedMessage
                     id="chatroom.chat_input.send_button.tooltip"
-                    defaultMessage={"Send message (shift+enter)"}
+                    defaultMessage={"Send message (Shift+Enter)"}
                   />
                 }
               >
@@ -566,14 +568,23 @@ export function ChatRoomComposer({
             {hasActiveAcpTurn && isSelectedThreadAI ? (
               <>
                 <div style={{ height: "5px" }} />
-                <Button
-                  onClick={handleSendImmediately}
-                  disabled={!hasInput}
-                  type="default"
-                  icon={<Icon name="bolt" />}
+                <Tooltip
+                  title={
+                    <FormattedMessage
+                      id="chatroom.chat_input.steer_button.tooltip"
+                      defaultMessage={"Steer running turn (Ctrl+Enter)"}
+                    />
+                  }
                 >
-                  Steer
-                </Button>
+                  <Button
+                    onClick={handleSendImmediately}
+                    disabled={!hasInput}
+                    type="default"
+                    icon={<Icon name="bolt" />}
+                  >
+                    Steer
+                  </Button>
+                </Tooltip>
               </>
             ) : null}
           </>

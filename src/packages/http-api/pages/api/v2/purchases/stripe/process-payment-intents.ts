@@ -1,4 +1,5 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import processPaymentIntents from "@cocalc/server/purchases/stripe/process-payment-intents";
 import throttle from "@cocalc/util/api/throttle";
 
@@ -23,5 +24,24 @@ async function get(req) {
     account_id,
     endpoint: "purchases/stripe/process-payment-intents",
   });
-  return { count: await processPaymentIntents({ account_id }), success: true };
+  const { checkout_session_id, payment_intent_id, strict } = getParams(req);
+  const opts: {
+    account_id: string;
+    checkout_session_id?: string;
+    payment_intent_id?: string;
+    strict?: boolean;
+  } = { account_id };
+  if (checkout_session_id != null) {
+    opts.checkout_session_id = checkout_session_id;
+  }
+  if (payment_intent_id != null) {
+    opts.payment_intent_id = payment_intent_id;
+  }
+  if (strict != null) {
+    opts.strict = strict === true || strict === "true";
+  }
+  return {
+    count: await processPaymentIntents(opts),
+    success: true,
+  };
 }

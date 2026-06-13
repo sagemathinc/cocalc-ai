@@ -13,7 +13,7 @@ Also important: balance at a point in time is NOT constant when there are
 import { getTransactionClient } from "@cocalc/database/pool";
 import { Service, MAX_API_LIMIT } from "@cocalc/util/db-schema/purchases";
 import type { Purchase } from "@cocalc/util/db-schema/purchases";
-import { getLastClosingDate } from "./closing-date";
+import { calendarMonthStart } from "./billing-period";
 import { COST_OR_METERED_COST } from "./get-balance";
 import getBalance from "./get-balance";
 import type { MoneyValue } from "@cocalc/util/money";
@@ -108,7 +108,7 @@ export default async function getPurchases({
     if (account_id == null) {
       throw Error("account_id is required when thisMonth is true");
     }
-    const date = await getLastClosingDate(account_id);
+    const date = calendarMonthStart();
     params.push(date);
     conditions.push(`p.time >= $${params.length}`);
   }

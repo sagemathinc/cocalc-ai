@@ -9,7 +9,12 @@ jest.mock("@cocalc/frontend/app-framework", () => {
   const actual = jest.requireActual("@cocalc/frontend/app-framework");
   return {
     ...actual,
-    useTypedRedux: () => false,
+    useTypedRedux: (_store: string, field: string) => {
+      if (field === "country") return "US";
+      if (field === "cloudflare_region") return "Washington";
+      if (field === "cloudflare_region_code") return "WA";
+      return false;
+    },
   };
 });
 
@@ -39,7 +44,9 @@ function TestHostCreateForm() {
               },
             ],
           },
-          labels: {},
+          labels: {
+            region: "Google Region",
+          },
           tooltips: {},
         },
         storage: {
@@ -112,6 +119,16 @@ describe("HostCreateForm", () => {
 
     expect(html).toContain("Storage mode");
     expect(html).toContain("Disk type");
+  });
+
+  it("shows compact region context and GCP main disk auto-grow at create time", () => {
+    const html = renderToStaticMarkup(<TestHostCreateForm />);
+
+    expect(html).not.toContain("Cloudflare location");
+    expect(html).toContain("Google Region");
+    expect(html).toContain("your region:");
+    expect(html).toContain("Western North America");
+    expect(html).toContain("Enable guarded auto-grow");
   });
 
   it("shows monthly per-GB disk prices in disk type options", () => {

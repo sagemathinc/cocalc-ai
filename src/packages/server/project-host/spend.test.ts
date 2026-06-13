@@ -9,7 +9,6 @@ import { uuid } from "@cocalc/util/misc";
 import { toDecimal } from "@cocalc/util/money";
 import { after, before } from "@cocalc/server/test";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
-import { setClosingDay } from "@cocalc/server/purchases/closing-date";
 import {
   closeDedicatedHostPurchaseSessionLocal,
   estimateDedicatedHostRateUsdPerHour,
@@ -362,15 +361,14 @@ describe("dedicated host spend accounting", () => {
     }
   });
 
-  it("rotates open postpaid host segments at the account closing boundary", async () => {
+  it("rotates open postpaid host segments at the calendar-month boundary", async () => {
     const account_id = uuid();
     const host_id = uuid();
     await getPool().query(
       "INSERT INTO accounts (account_id, email_address) VALUES ($1, $2)",
       [account_id, `${account_id}@example.com`],
     );
-    await setClosingDay(account_id, 5);
-    const started_at = new Date(Date.UTC(2026, 4, 4, 23, 0, 0));
+    const started_at = new Date(Date.UTC(2026, 4, 31, 23, 0, 0));
 
     await reconcileDedicatedHostPurchaseSessionLocal({
       account_id,
@@ -397,7 +395,7 @@ describe("dedicated host spend accounting", () => {
       pricing_model: "on_demand",
       funding_lane: "credit",
       hourly_cost_usd: "12",
-      started_at: new Date(Date.UTC(2026, 4, 5, 1, 0, 0)),
+      started_at: new Date(Date.UTC(2026, 5, 1, 1, 0, 0)),
     });
 
     const { rows } = await getPool().query(
@@ -413,7 +411,9 @@ describe("dedicated host spend accounting", () => {
     );
     expect(rows).toHaveLength(2);
     expect(rows[0].period_end).not.toBeNull();
+    expect(rows[0].period_end.toISOString()).toBe("2026-06-01T00:00:00.000Z");
     expect(rows[0].cost).not.toBeNull();
+    expect(rows[1].period_start.toISOString()).toBe("2026-06-01T00:00:00.000Z");
     expect(rows[1].period_end).toBeNull();
   });
 });
