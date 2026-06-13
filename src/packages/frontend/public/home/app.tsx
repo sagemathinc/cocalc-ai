@@ -116,24 +116,28 @@ const FIRST_STEP_LINKS = [
     authenticatedTitle: "Open projects",
     body: "Use the hosted workspace for managed accounts and projects.",
     icon: "project-outlined",
+    nextDecision: "Open or create the project record.",
     path: "auth/sign-up",
     title: "Start a project",
   },
   {
     body: "Scan notebooks, terminals, AI, teaching, and writing pages.",
     icon: "overview",
+    nextDecision: "Choose the workflow that owns the artifact.",
     path: "features",
     title: "Explore workflows",
   },
   {
     body: "Compare hosted, local, and customer-operated runtimes.",
     icon: "servers",
+    nextDecision: "Pick the operator and runtime boundary.",
     path: "products",
     title: "Compare runtimes",
   },
   {
     body: "Use support for purchase, onboarding, or account-specific questions.",
     icon: "question-circle",
+    nextDecision: "Describe the rollout or account question.",
     path: "support",
     title: "Contact support",
   },
@@ -142,6 +146,7 @@ const FIRST_STEP_LINKS = [
   authenticatedTitle?: string;
   body: string;
   icon: IconName;
+  nextDecision: string;
   path: string;
   title: string;
 }[];
@@ -1389,6 +1394,24 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
                   {link.title}
                 </Text>
                 <Text type="secondary">{link.body}</Text>
+                <span style={{ display: "block", marginTop: 8 }}>
+                  <Tag
+                    style={{
+                      background: PUBLIC_COLORS.surface,
+                      borderColor: PUBLIC_COLORS.border,
+                      color: PUBLIC_COLORS.brand,
+                      marginInlineEnd: 0,
+                    }}
+                  >
+                    Next decision
+                  </Tag>
+                  <Text
+                    type="secondary"
+                    style={{ display: "block", marginTop: 4 }}
+                  >
+                    {link.nextDecision}
+                  </Text>
+                </span>
               </span>
               <Icon
                 name="arrow-right"

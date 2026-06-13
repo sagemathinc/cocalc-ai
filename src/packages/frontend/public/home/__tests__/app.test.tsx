@@ -249,6 +249,27 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Contact support/i })
         .getAttribute("href"),
     ).toBe("/support");
+    expect(within(firstStepRoutes).getAllByText("Next decision")).toHaveLength(
+      4,
+    );
+    expect(
+      within(firstStepRoutes).getByText("Open or create the project record."),
+    ).not.toBeNull();
+    expect(
+      within(firstStepRoutes).getByText(
+        "Choose the workflow that owns the artifact.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(firstStepRoutes).getByText(
+        "Pick the operator and runtime boundary.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(firstStepRoutes).getByText(
+        "Describe the rollout or account question.",
+      ),
+    ).not.toBeNull();
     const startingSignals = within(firstStepRoutes).getByRole("group", {
       name: "CoCalc.ai starting signal routes",
     });
