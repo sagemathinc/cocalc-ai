@@ -1,14 +1,13 @@
 /*
 UPCOMING NOTIFICATIONS:
   For each subscription that has status not 'canceled' and current_period_end
-  is within the next 7 days, send a message that the subscription will be renewed
-  in two days.  Include a link to pay now for the renewal using the method of your
-  choice, or to pause or edit the subscription.
+  is within the next 7 days, send a message that the subscription will renew on
+  its current period end date. Include a link to cancel or edit the subscription.
 
 CREATE PAYMENTS:
-  For each subscription that has status not 'canceled' and current_period_end
-  is within the next {RENEW_DAYS_BEFORE_END} days, and there isn't already a renewal process happening
-  for that subscription, we do the following:
+  For each subscription that has status not 'canceled', current_period_end is
+  due, and there isn't already a renewal process happening for that
+  subscription, we do the following:
 
   - Create a payment intent for the amount to renew the subscription for the next
     period. The metadata says what this payment is for and what should happen
@@ -70,7 +69,10 @@ import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { getUser } from "@cocalc/server/purchases/statements/email-statement";
 import { moneyToCurrency } from "@cocalc/util/money";
-import { RENEW_DAYS_BEFORE_END } from "@cocalc/util/db-schema/subscriptions";
+import {
+  formatRenewalDate,
+  getRenewalPaymentNotice,
+} from "./subscription-renewal-notice";
 
 const logger = getLogger("purchases:maintain-subscriptions");
 
@@ -111,7 +113,7 @@ export async function sendUpcomingRenewalNotifications() {
   const pool = getPool();
   const cutoff = "1 week";
   const query = `
-    SELECT id, cost, interval, metadata, account_id
+    SELECT id, cost, interval, metadata, account_id, current_period_end
     FROM subscriptions
     WHERE
       status != 'canceled' AND
@@ -126,16 +128,30 @@ export async function sendUpcomingRenewalNotifications() {
     "subscriptions",
   );
 
-  for (const { id, cost, interval, metadata, account_id } of rows) {
+  for (const {
+    id,
+    cost,
+    interval,
+    metadata,
+    account_id,
+    current_period_end,
+  } of rows) {
     const subject = `Upcoming ${site_name} Subscription Renewal - Id ${id}`;
     const { name } = await getUser(account_id);
+    const renewalDate = formatRenewalDate(current_period_end);
+    const paymentNotice = await getRenewalPaymentNotice({
+      account_id,
+      cost,
+      current_period_end,
+    });
     const body = `
 Hello ${name},
 
-You have a ${interval}ly subscription that will **automatically renew**.
-If you do nothing you will be automatically billed two days from now,
-and can continue using your subscription.  You can also cancel or
-change your subscription:
+Your ${interval}ly subscription will **automatically renew** on ${renewalDate}.
+
+${paymentNotice}
+
+You can also cancel or change your subscription:
 
 [Manage Membership](${await url(`/settings/membership`)})
 
@@ -175,15 +191,14 @@ export async function createPayments() {
   );
   // Do a query for each subscription that:
   //    - has status not 'canceled', and
-  //    - current_period_end is within the next RENEW_DAYS_BEFORE_END days, and
+  //    - current_period_end is due, and
   //    - there isn't already an outstanding payment for this subscription
   const pool = getPool();
   const { rows } = await pool.query(
     `
   SELECT id as subscription_id, account_id FROM subscriptions WHERE
       status != 'canceled' AND
-      current_period_end <= NOW() + interval '${RENEW_DAYS_BEFORE_END} days' AND
-      (metadata->>'trial_ends_at' IS NULL OR current_period_end <= NOW()) AND
+      current_period_end <= NOW() AND
       coalesce(payment#>>'{status}','') != 'active'
   `,
   );

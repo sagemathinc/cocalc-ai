@@ -11,10 +11,6 @@ import dayjs from "dayjs";
 import { ALLOWED_SLACK } from "@cocalc/server/purchases/allowed-slack";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import createPaymentIntent from "./create-payment-intent";
-import {
-  USE_BALANCE_TOWARD_SUBSCRIPTIONS,
-  USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT,
-} from "@cocalc/util/db-schema/accounts";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import send, { support, url } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
@@ -22,6 +18,7 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { sendCancelNotification } from "../cancel-subscription";
 import getConn from "@cocalc/server/stripe/connection";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
+import { useBalanceTowardSubscriptions } from "../subscription-renewal-notice";
 
 // nothing should ever be this small, but just in case:
 const MIN_SUBSCRIPTION_AMOUNT = 1;
@@ -323,24 +320,6 @@ function subtractInterval(expires: Date, interval: "month" | "year"): Date {
   }
   let newExpires = dayjs(expires);
   return newExpires.subtract(1, interval).toDate();
-}
-
-export async function useBalanceTowardSubscriptions(
-  account_id: string,
-): Promise<boolean> {
-  const pool = getPool("long");
-  const { rows } = await pool.query(
-    `SELECT other_settings#>>'{${USE_BALANCE_TOWARD_SUBSCRIPTIONS}}' as use_balance FROM accounts WHERE account_id=$1`,
-    [account_id],
-  );
-  switch (rows[0]?.use_balance) {
-    case "true":
-      return true;
-    case "false":
-      return false;
-    default:
-      return USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT;
-  }
 }
 
 // We set payment status to canceled *and* cancel the subscription --
