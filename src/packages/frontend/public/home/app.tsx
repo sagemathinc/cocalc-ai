@@ -2952,21 +2952,12 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
     },
     {
       accent: PUBLIC_COLORS.warning,
-      body: "Customer-operated private deployment for pilots, labs, and workshops.",
-      button: "Review Launchpad",
-      href: appPath("products/cocalc-launchpad"),
+      body: "Compare hosted, local, and customer-operated paths before choosing private operation.",
+      button: "Compare deployment options",
+      href: appPath("products"),
       icon: "servers",
-      route: "Private",
-      title: "CoCalc Launchpad",
-    },
-    {
-      accent: COLORS.ANTD_LINK_BLUE_DARK,
-      body: "Plan a customer-operated private cloud path with CoCalc guidance.",
-      button: "Plan Rocket",
-      href: appPath("products/cocalc-rocket"),
-      icon: "rocket",
-      route: "Private cloud",
-      title: "CoCalc Rocket",
+      route: "Deployment",
+      title: "Deployment options",
     },
   ] satisfies {
     accent: string;
@@ -3009,9 +3000,9 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 maxWidth: 760,
               }}
             >
-              Start hosted, install CoCalc Plus, review Launchpad, or plan
-              Rocket. Use site licensing for procurement, governance, support,
-              and rollout once the operating path is clear.
+              Start hosted, install CoCalc Plus, or compare deployment options.
+              Use site licensing for procurement, governance, support, and
+              rollout once the operating path is clear.
             </Paragraph>
           </Col>
         </Row>
