@@ -874,6 +874,21 @@ describe("PublicHomeApp", () => {
     expect(within(nextActionRoutes).getByText("Runtime")).not.toBeNull();
     expect(within(nextActionRoutes).getByText("Codex")).not.toBeNull();
     expect(within(nextActionRoutes).getByText("Operation")).not.toBeNull();
+    expect(
+      within(nextActionRoutes).getAllByText("Project carry-forward"),
+    ).toHaveLength(4);
+    expect(
+      within(nextActionRoutes).getByText("Output, files, and notes"),
+    ).not.toBeNull();
+    expect(
+      within(nextActionRoutes).getByText("Commands, logs, and services"),
+    ).not.toBeNull();
+    expect(
+      within(nextActionRoutes).getByText("Prompts, patches, and tests"),
+    ).not.toBeNull();
+    expect(
+      within(nextActionRoutes).getByText("Runtime choice and support notes"),
+    ).not.toBeNull();
     const audiencePaths = screen.getByRole("region", {
       name: "CoCalc.ai audience paths",
     });

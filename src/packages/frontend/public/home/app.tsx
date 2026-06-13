@@ -402,6 +402,7 @@ const NEXT_ACTION_ROUTES = [
     accent: COLORS.RUN,
     action: "Open notebook workflow",
     body: "Open Jupyter in a project so output, files, terminals, and notes stay nearby.",
+    context: "Output, files, and notes",
     href: "features/jupyter-notebook",
     icon: "jupyter",
     signal: "Compute",
@@ -411,6 +412,7 @@ const NEXT_ACTION_ROUTES = [
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     action: "Use terminal workflow",
     body: "Use a browser terminal for scripts, packages, services, and project logs.",
+    context: "Commands, logs, and services",
     href: "features/terminal",
     icon: "terminal",
     signal: "Runtime",
@@ -420,6 +422,7 @@ const NEXT_ACTION_ROUTES = [
     accent: COLORS.AI_ASSISTANT_FONT,
     action: "See Codex workflow",
     body: "Ask Codex from the project so prompts, patches, tests, and review notes remain attached.",
+    context: "Prompts, patches, and tests",
     href: "features/ai",
     icon: "robot",
     signal: "Codex",
@@ -429,6 +432,7 @@ const NEXT_ACTION_ROUTES = [
     accent: PUBLIC_COLORS.warning,
     action: "Compare options",
     body: "Compare hosted, local, and customer-operated paths after the workspace model is clear.",
+    context: "Runtime choice and support notes",
     href: "products",
     icon: "servers",
     signal: "Operation",
@@ -438,6 +442,7 @@ const NEXT_ACTION_ROUTES = [
   accent: string;
   action: string;
   body: string;
+  context: string;
   href: string;
   icon: IconName;
   signal: string;
@@ -2452,6 +2457,39 @@ function NextActionSection() {
               {route.title}
             </Title>
             <Paragraph style={{ margin: 0 }}>{route.body}</Paragraph>
+            <Flex
+              align="start"
+              gap={8}
+              style={{
+                borderTop: `1px solid ${alpha(route.accent, 0.18)}`,
+                marginTop: 14,
+                paddingTop: 12,
+              }}
+            >
+              <Icon
+                aria-hidden="true"
+                name="clipboard-check"
+                style={{
+                  color: route.accent,
+                  flex: "0 0 auto",
+                  marginTop: 3,
+                }}
+              />
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: route.accent,
+                    display: "block",
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Project carry-forward
+                </Text>
+                <Text type="secondary">{route.context}</Text>
+              </span>
+            </Flex>
             <Text
               strong
               style={{
