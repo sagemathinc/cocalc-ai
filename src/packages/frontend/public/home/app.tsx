@@ -212,6 +212,7 @@ const STARTING_SIGNAL_LINKS = [
   {
     accent: COLORS.RUN,
     body: "Open the notebook workflow when the next decision starts from output, kernels, or nearby data files.",
+    context: "Notebook file, data files, output",
     href: "features/jupyter-notebook",
     icon: "jupyter",
     route: "Jupyter notebooks",
@@ -220,6 +221,7 @@ const STARTING_SIGNAL_LINKS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Open the terminal workflow when commands, services, packages, or logs are the active artifact.",
+    context: "Command log, package state, service output",
     href: "features/terminal",
     icon: "terminal",
     route: "Linux terminal",
@@ -228,6 +230,7 @@ const STARTING_SIGNAL_LINKS = [
   {
     accent: COLORS.AI_ASSISTANT_FONT,
     body: "Open the AI agents page when a source change, prompt, or review question needs project context.",
+    context: "Patch, prompt, review notes",
     href: "features/ai",
     icon: "robot",
     route: "AI agents",
@@ -236,6 +239,7 @@ const STARTING_SIGNAL_LINKS = [
   {
     accent: PUBLIC_COLORS.warning,
     body: "Open teaching when the work is organized around assignments, labs, grading, or class projects.",
+    context: "Assignment files, class projects, grading context",
     href: "features/teaching",
     icon: "graduation-cap",
     route: "Teaching",
@@ -244,6 +248,7 @@ const STARTING_SIGNAL_LINKS = [
 ] satisfies {
   accent: string;
   body: string;
+  context: string;
   href: string;
   icon: IconName;
   route: string;
@@ -1456,6 +1461,24 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
               <Text type="secondary" style={{ gridColumn: "1 / 3", margin: 0 }}>
                 {item.body}
               </Text>
+              <span style={{ gridColumn: "1 / 3" }}>
+                <Tag
+                  style={{
+                    background: alpha(item.accent, 0.08),
+                    borderColor: alpha(item.accent, 0.24),
+                    color: item.accent,
+                    marginInlineEnd: 0,
+                  }}
+                >
+                  Route carries
+                </Tag>
+                <Text
+                  type="secondary"
+                  style={{ display: "block", marginTop: 4 }}
+                >
+                  {item.context}
+                </Text>
+              </span>
               <Icon
                 name="arrow-right"
                 style={{

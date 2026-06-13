@@ -296,6 +296,25 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Course material/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
+    expect(within(startingSignals).getAllByText("Route carries")).toHaveLength(
+      4,
+    );
+    expect(
+      within(startingSignals).getByText("Notebook file, data files, output"),
+    ).not.toBeNull();
+    expect(
+      within(startingSignals).getByText(
+        "Command log, package state, service output",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(startingSignals).getByText("Patch, prompt, review notes"),
+    ).not.toBeNull();
+    expect(
+      within(startingSignals).getByText(
+        "Assignment files, class projects, grading context",
+      ),
+    ).not.toBeNull();
     const handoffChecklist = within(firstStepRoutes).getByRole("group", {
       name: "CoCalc.ai handoff checklist",
     });
