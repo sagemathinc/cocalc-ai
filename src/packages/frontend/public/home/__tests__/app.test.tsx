@@ -214,6 +214,21 @@ describe("PublicHomeApp", () => {
         name: "CoCalc project context preview",
       }),
     ).toBeNull();
+    const heroSnapshot = within(hero).getByRole("complementary", {
+      name: "CoCalc.ai live workspace snapshot",
+    });
+    expect(
+      within(heroSnapshot).getByText("Live project snapshot"),
+    ).not.toBeNull();
+    expect(within(heroSnapshot).getByText("Notebook output")).not.toBeNull();
+    expect(within(heroSnapshot).getByText("Terminal state")).not.toBeNull();
+    expect(within(heroSnapshot).getByText("Codex patch")).not.toBeNull();
+    expect(within(heroSnapshot).getByText("History checkpoint")).not.toBeNull();
+    expect(
+      within(heroSnapshot)
+        .getByRole("link", { name: "Create a workspace" })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
     const workspacePreview = screen.getByRole("region", {
       name: "CoCalc.ai workspace preview",
     });

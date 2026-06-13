@@ -75,6 +75,23 @@ const HOME_PAGE_CSS = `
 
   }
 
+  @media (max-width: 960px) {
+    .cocalc-public-home-hero-inner {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .cocalc-public-home-hero-snapshot {
+      justify-self: start !important;
+      max-width: 640px !important;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .cocalc-public-home-hero-snapshot-grid {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+  }
+
   @media (max-width: 840px) {
     .cocalc-public-home-audience-header {
       display: none !important;
@@ -194,6 +211,37 @@ const WORKSPACE_PREVIEW_ACTIVITY = [
     detail: "Snapshots and TimeTravel keep recovery nearby.",
     icon: "history",
     label: "History",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
+const HERO_WORKSPACE_SIGNALS = [
+  {
+    accent: COLORS.RUN,
+    detail: "analysis.ipynb",
+    icon: "jupyter",
+    label: "Notebook output",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    detail: "run.term",
+    icon: "terminal",
+    label: "Terminal state",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "codex.patch",
+    icon: "robot",
+    label: "Codex patch",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "snapshot ready",
+    icon: "history",
+    label: "History checkpoint",
   },
 ] satisfies {
   accent: string;
@@ -533,6 +581,142 @@ function HeroContextStrip() {
         ))}
       </div>
     </div>
+  );
+}
+
+function HeroWorkspaceSnapshot({ authenticated }: { authenticated: boolean }) {
+  return (
+    <aside
+      aria-label="CoCalc.ai live workspace snapshot"
+      className="cocalc-public-home-hero-snapshot"
+      style={{
+        alignSelf: "center",
+        background: alpha(PUBLIC_COLORS.brandDark, 0.5),
+        border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.28)}`,
+        borderRadius: PANEL_RADIUS,
+        boxShadow: `0 24px 60px ${alpha(PUBLIC_COLORS.brandDark, 0.28)}`,
+        color: PUBLIC_COLORS.surface,
+        justifySelf: "end",
+        maxWidth: 430,
+        padding: 16,
+        width: "100%",
+      }}
+    >
+      <Flex align="center" justify="space-between" gap={12} wrap>
+        <Flex align="center" gap={10}>
+          <span
+            aria-hidden="true"
+            style={{
+              alignItems: "center",
+              background: alpha(PUBLIC_COLORS.accent, 0.14),
+              border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.32)}`,
+              borderRadius: PANEL_RADIUS,
+              color: PUBLIC_COLORS.accent,
+              display: "flex",
+              flex: "0 0 40px",
+              fontSize: 19,
+              height: 40,
+              justifyContent: "center",
+              width: 40,
+            }}
+          >
+            <Icon name="project-outlined" />
+          </span>
+          <span>
+            <Text strong style={{ color: "inherit", display: "block" }}>
+              Live project snapshot
+            </Text>
+            <Text
+              style={{
+                color: alpha(PUBLIC_COLORS.surface, 0.7),
+                display: "block",
+              }}
+            >
+              Shared state in one workspace
+            </Text>
+          </span>
+        </Flex>
+        <Tag
+          style={{
+            background: alpha(PUBLIC_COLORS.surface, 0.12),
+            borderColor: alpha(PUBLIC_COLORS.surface, 0.26),
+            color: PUBLIC_COLORS.surface,
+            marginInlineEnd: 0,
+          }}
+        >
+          Persistent
+        </Tag>
+      </Flex>
+      <div
+        className="cocalc-public-home-hero-snapshot-grid"
+        style={{
+          display: "grid",
+          gap: 9,
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          marginTop: 15,
+        }}
+      >
+        {HERO_WORKSPACE_SIGNALS.map((signal) => (
+          <div
+            key={signal.label}
+            style={{
+              alignItems: "start",
+              background: alpha(PUBLIC_COLORS.surface, 0.12),
+              border: `1px solid ${alpha(signal.accent, 0.38)}`,
+              borderRadius: PANEL_RADIUS,
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "30px minmax(0, 1fr)",
+              minHeight: 72,
+              padding: 10,
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                alignItems: "center",
+                background: alpha(signal.accent, 0.14),
+                border: `1px solid ${alpha(signal.accent, 0.28)}`,
+                borderRadius: PANEL_RADIUS,
+                color: signal.accent,
+                display: "flex",
+                height: 30,
+                justifyContent: "center",
+                width: 30,
+              }}
+            >
+              <Icon name={signal.icon} />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <Text
+                strong
+                style={{ color: PUBLIC_COLORS.surface, display: "block" }}
+              >
+                {signal.label}
+              </Text>
+              <Text
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.66),
+                  display: "block",
+                  fontSize: 12,
+                }}
+              >
+                {signal.detail}
+              </Text>
+            </span>
+          </div>
+        ))}
+      </div>
+      <Button
+        block
+        ghost
+        href={appPath(authenticated ? "projects" : "auth/sign-up")}
+        icon={<DecorativeButtonIcon name="rocket" />}
+        style={{ marginTop: 14 }}
+      >
+        {authenticated ? "Open your workspace" : "Create a workspace"}
+      </Button>
+    </aside>
   );
 }
 
@@ -1101,8 +1285,12 @@ function Hero({ config }: { config?: HomeConfig }) {
       }}
     >
       <div
+        className="cocalc-public-home-hero-inner"
         style={{
-          maxWidth: 760,
+          alignItems: "center",
+          display: "grid",
+          gap: 32,
+          gridTemplateColumns: "minmax(0, 760px) minmax(320px, 430px)",
           width: "100%",
         }}
       >
@@ -1252,6 +1440,7 @@ function Hero({ config }: { config?: HomeConfig }) {
           </Flex>
           <HeroContextStrip />
         </Flex>
+        <HeroWorkspaceSnapshot authenticated={authenticated} />
       </div>
     </section>
   );
