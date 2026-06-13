@@ -462,6 +462,31 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(within(heroInspectableRecord).getByText(item)).not.toBeNull();
     }
+    const heroNextHandoff = within(heroSnapshot).getByRole("group", {
+      name: "CoCalc.ai hero next handoff",
+    });
+    expectLinkHrefs(heroNextHandoff, [
+      "/auth/sign-up",
+      "/features",
+      "/products",
+    ]);
+    expect(within(heroNextHandoff).getByText("Next handoff")).not.toBeNull();
+    expect(
+      within(heroNextHandoff).getByText("Choose where the project goes next."),
+    ).not.toBeNull();
+    for (const handoff of [
+      "Workspace handoff",
+      "Workflow handoff",
+      "Boundary handoff",
+      "Continue in the project",
+      "Pick the next surface",
+      "Choose operating path",
+      "Open the workspace that keeps the project record together.",
+      "Choose notebook, terminal, AI, writing, or teaching next.",
+      "Review hosted, local, or customer-operated boundaries.",
+    ]) {
+      expect(within(heroNextHandoff).getByText(handoff)).not.toBeNull();
+    }
     expect(
       within(heroSnapshot)
         .getByRole("link", { name: "Create a workspace" })
@@ -1647,6 +1672,12 @@ describe("PublicHomeApp", () => {
     expectLinkHrefs(
       screen.getByRole("group", {
         name: "CoCalc.ai hero route chooser",
+      }),
+      ["/projects", "/features", "/products"],
+    );
+    expectLinkHrefs(
+      screen.getByRole("group", {
+        name: "CoCalc.ai hero next handoff",
       }),
       ["/projects", "/features", "/products"],
     );

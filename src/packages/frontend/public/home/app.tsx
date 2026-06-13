@@ -438,6 +438,40 @@ const HERO_INSPECTABLE_RECORD = [
   icon: IconName;
   label: string;
 }[];
+const HERO_SNAPSHOT_HANDOFFS = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Open the workspace that keeps the project record together.",
+    href: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? appPath("projects") : appPath("auth/sign-up"),
+    icon: "project-outlined",
+    label: "Workspace handoff",
+    title: "Continue in the project",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Choose notebook, terminal, AI, writing, or teaching next.",
+    href: () => appPath("features"),
+    icon: "overview",
+    label: "Workflow handoff",
+    title: "Pick the next surface",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Review hosted, local, or customer-operated boundaries.",
+    href: () => appPath("products"),
+    icon: "servers",
+    label: "Boundary handoff",
+    title: "Choose operating path",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  href: (opts: { authenticated: boolean }) => string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 const HERO_WORKSPACE_TRAIL = [
   {
     accent: COLORS.BLUE_D,
@@ -1371,6 +1405,112 @@ function HeroWorkspaceSnapshot({ authenticated }: { authenticated: boolean }) {
                 </Text>
               </span>
             </span>
+          ))}
+        </div>
+      </div>
+      <div
+        aria-label="CoCalc.ai hero next handoff"
+        role="group"
+        style={{
+          background: alpha(PUBLIC_COLORS.brandDark, 0.34),
+          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 12,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+            Next handoff
+          </Text>
+          <Text
+            style={{
+              color: alpha(PUBLIC_COLORS.surface, 0.68),
+              fontSize: 12,
+            }}
+          >
+            Choose where the project goes next.
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 118px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {HERO_SNAPSHOT_HANDOFFS.map((handoff) => (
+            <a
+              href={handoff.href({ authenticated })}
+              key={handoff.label}
+              style={{
+                alignItems: "start",
+                background: alpha(PUBLIC_COLORS.surface, 0.1),
+                border: `1px solid ${alpha(handoff.accent, 0.34)}`,
+                borderRadius: PANEL_RADIUS,
+                color: PUBLIC_COLORS.surface,
+                display: "grid",
+                gap: 7,
+                gridTemplateColumns: "26px minmax(0, 1fr) 12px",
+                minHeight: 118,
+                padding: 9,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: `${handoff.accent}1f`,
+                  border: `1px solid ${handoff.accent}42`,
+                  borderRadius: PANEL_RADIUS,
+                  color: handoff.accent,
+                  display: "flex",
+                  height: 26,
+                  justifyContent: "center",
+                  marginTop: 1,
+                  width: 26,
+                }}
+              >
+                <Icon name={handoff.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: handoff.accent,
+                    display: "block",
+                    fontSize: 11,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {handoff.label}
+                </Text>
+                <Text strong style={{ color: "inherit", display: "block" }}>
+                  {handoff.title}
+                </Text>
+                <Text
+                  style={{
+                    color: alpha(PUBLIC_COLORS.surface, 0.66),
+                    display: "block",
+                    fontSize: 12,
+                    marginTop: 4,
+                  }}
+                >
+                  {handoff.detail}
+                </Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{
+                  alignSelf: "center",
+                  color: alpha(PUBLIC_COLORS.surface, 0.58),
+                  fontSize: 11,
+                }}
+              />
+            </a>
           ))}
         </div>
       </div>
