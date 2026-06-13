@@ -308,28 +308,6 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Prior state/i })
         .getAttribute("href"),
     ).toBe("/features/compare");
-    const agentReady = screen.getByRole("region", {
-      name: "CoCalc.ai agent-ready project checklist",
-    });
-    expect(
-      within(agentReady).getByRole("heading", {
-        name: "Give Codex the evidence, not just the prompt.",
-      }),
-    ).not.toBeNull();
-    expect(within(agentReady).getByText("Source context")).not.toBeNull();
-    expect(within(agentReady).getByText("Execution evidence")).not.toBeNull();
-    expect(within(agentReady).getByText("Agent trail")).not.toBeNull();
-    expect(within(agentReady).getByText("Rollback points")).not.toBeNull();
-    expect(
-      within(agentReady)
-        .getByRole("link", { name: "Codex in CoCalc" })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(agentReady)
-        .getByRole("link", { name: "Review workflow" })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
     expect(
       screen.getByRole("heading", {
         name: "Start with the work surface you need.",
@@ -352,101 +330,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "See the work loop inside a project.",
-      }),
-    ).not.toBeNull();
-    const agentHandoff = screen.getByRole("region", {
-      name: "Human and Codex handoff workflow",
-    });
-    expect(
-      within(agentHandoff).getByRole("heading", {
-        name: "Handoff from human work to agent work.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(agentHandoff)
-        .getByRole("link", { name: "See Codex workflows" })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(agentHandoff)
-        .getByRole("link", { name: "Compare workflow" })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
-    expect(within(agentHandoff).getByText("Notebook state")).not.toBeNull();
-    expect(within(agentHandoff).getByText("Review notes")).not.toBeNull();
-    const agentEvidence = screen.getByRole("region", {
-      name: "CoCalc.ai agent turn evidence checklist",
-    });
-    expect(
-      within(agentEvidence).getByRole("heading", {
-        name: "Give Codex the artifacts a reviewer would ask for.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(agentEvidence)
-        .getByRole("link", { name: "Open Codex workflows" })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(agentEvidence)
-        .getByRole("link", { name: "Terminal workflow" })
-        .getAttribute("href"),
-    ).toBe("/features/terminal");
-    expect(
-      within(agentEvidence)
-        .getByRole("link", { name: /Project files/i })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
-    expect(
-      within(agentEvidence)
-        .getByRole("link", { name: /Execution record/i })
-        .getAttribute("href"),
-    ).toBe("/features/terminal");
-    expect(
-      within(agentEvidence)
-        .getByRole("link", { name: /Notebook evidence/i })
-        .getAttribute("href"),
-    ).toBe("/features/jupyter-notebook");
-    expect(
-      within(agentEvidence)
-        .getByRole("link", { name: /Codex review/i })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    const reviewTrail = screen.getByRole("region", {
-      name: "Review trail for technical work",
-    });
-    expect(
-      within(reviewTrail).getByRole("heading", {
-        name: "Make technical work inspectable before it moves on.",
-      }),
-    ).not.toBeNull();
-    expect(within(reviewTrail).getByText("Terminal output")).not.toBeNull();
-    expect(within(reviewTrail).getByText("Agent changes")).not.toBeNull();
-    expect(within(reviewTrail).getByText("Recovery points")).not.toBeNull();
-    expect(
-      within(reviewTrail)
-        .getByRole("link", { name: "Review collaboration" })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
-    expect(
-      within(reviewTrail)
-        .getByRole("link", { name: "Agent workflow" })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      screen.getByRole("heading", {
-        name: "From first file to reviewed result.",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
         name: "Built for technical groups.",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "Keep the operating pieces in one workspace.",
       }),
     ).not.toBeNull();
     await waitFor(() =>
@@ -493,7 +377,7 @@ describe("PublicHomeApp", () => {
     ).toBe("/features");
     expect(
       screen
-        .getByRole("link", { name: "Browse feature map" })
+        .getByRole("link", { name: "Explore all features" })
         .getAttribute("href"),
     ).toBe("/features");
     expect(
@@ -646,22 +530,37 @@ describe("PublicHomeApp", () => {
     ).toBe("/support");
     expect(screen.getByText(/direct self-service path/i)).not.toBeNull();
     expect(screen.getByText("Local runtime for one user.")).not.toBeNull();
-    const signalPoints = screen.getByRole("region", {
-      name: "Operational workspace signals for CoCalc.ai",
-    });
-    expect(within(signalPoints).getByText("Full Linux runtime")).not.toBeNull();
-    expect(
-      within(signalPoints).getByText("Project history nearby"),
-    ).not.toBeNull();
-    expect(
-      within(signalPoints).getByText("People and agents share context"),
-    ).not.toBeNull();
     expect(
       screen
         .getByRole("link", { name: /CoCalc Launchpad Customer/i })
         .getAttribute("href"),
     ).toBe("/products/cocalc-launchpad");
     expect(screen.getByRole("link", { name: "All news" })).not.toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "CoCalc.ai agent-ready project checklist",
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "Human and Codex handoff workflow",
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "CoCalc.ai agent turn evidence checklist",
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "Review trail for technical work",
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "Operational workspace signals for CoCalc.ai",
+      }),
+    ).toBeNull();
   });
 
   it("uses CoCalc marketing branding for the default hosted Launchpad preview", async () => {
