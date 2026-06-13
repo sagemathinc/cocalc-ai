@@ -182,6 +182,7 @@ const manifest = {
     migrateSchema: "runtime/migrate-schema/index.js",
     cloudflared: "runtime/cloudflared/index.js",
     apiV2Root: "runtime/control-plane/http-api-dist/pages/api/v2",
+    apiV2Routes: "runtime/control-plane/api-v2-routes/index.js",
   },
   scaffold: "scripts/bay-systemd",
 };
@@ -192,6 +193,7 @@ NODE
 echo "- Validate runtime bundle"
 validate_file "$OUT/runtime/project-host/index.js"
 validate_file "$OUT/runtime/control-plane/bundle/index.js"
+validate_file "$OUT/runtime/control-plane/api-v2-routes/index.js"
 validate_file "$OUT/runtime/migrate-schema/index.js"
 validate_file "$OUT/runtime/cloudflared/index.js"
 validate_file "$OUT/runtime/control-plane/http-api-dist/pages/api/v2/index.js"

@@ -11,7 +11,9 @@ load_bay_env() {
     "${COCALC_BAY_SECRETS_ENV_FILE:-/etc/cocalc/bay-secrets.env}"; do
     if [[ -r "$env_file" ]]; then
       # shellcheck disable=SC1090
+      set -a
       source "$env_file"
+      set +a
     fi
   done
 }
@@ -37,6 +39,10 @@ load_bay_env
 : "${COCALC_BAY_HUB_BIND_HOST:=127.0.0.1}"
 : "${COCALC_BAY_HUB_BASE_PORT:=9300}"
 : "${COCALC_BAY_HUB_HEALTH_PATH:=/alive}"
+: "${COCALC_BAY_FRONTDOOR_HOST:=127.0.0.1}"
+: "${COCALC_BAY_FRONTDOOR_PORT:=9400}"
+: "${COCALC_BAY_FRONTDOOR_HEALTH_PATH:=/_cocalc/frontdoor/healthz}"
+: "${COCALC_BAY_FRONTDOOR_DRAIN_FILE:=${COCALC_BAY_STATE_DIR}/frontdoor-drain-workers}"
 : "${COCALC_BAY_PEER_HEALTH_HOST:=127.0.0.1}"
 : "${COCALC_BAY_PEER_HEALTH_PORT:=9402}"
 : "${COCALC_BAY_PEER_HEALTH_PATH:=/peer-health}"
@@ -59,6 +65,12 @@ load_bay_env
 : "${COCALC_CLUSTER_SEED_CONAT_SERVER:=}"
 : "${COCALC_INTER_BAY_CONAT_SERVER:=}"
 : "${COCALC_CLUSTER_PEER_HEALTH_URLS:=}"
+
+export \
+  COCALC_BAY_FRONTDOOR_HOST \
+  COCALC_BAY_FRONTDOOR_PORT \
+  COCALC_BAY_FRONTDOOR_HEALTH_PATH \
+  COCALC_BAY_FRONTDOOR_DRAIN_FILE
 
 if [[ -x "$COCALC_BAY_NODE_BIN" ]]; then
   export PATH="$(dirname "$COCALC_BAY_NODE_BIN"):${PATH}"
@@ -142,6 +154,13 @@ worker_url() {
     "$COCALC_BAY_HUB_BIND_HOST" \
     "$(worker_port "$worker_id")" \
     "$COCALC_BAY_HUB_HEALTH_PATH"
+}
+
+frontdoor_url() {
+  printf 'http://%s:%s%s' \
+    "$COCALC_BAY_FRONTDOOR_HOST" \
+    "$COCALC_BAY_FRONTDOOR_PORT" \
+    "$COCALC_BAY_FRONTDOOR_HEALTH_PATH"
 }
 
 persist_url() {

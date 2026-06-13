@@ -12,11 +12,13 @@ BUILD_BUNDLE=0
 BUILD_HOST_SOFTWARE_BUNDLE=0
 STATIC_ONLY=0
 RESTART_HUB_WORKERS=0
+RESTART_SHARED_SERVICES=0
+RESTART_CLOUDFLARED=0
 API_URL=""
 PUBLIC_URL=""
 BAY_ID="bay-0"
 BAY_USER="cocalc-bay"
-WORKER_COUNT=2
+WORKER_COUNT=""
 RETAIN_RELEASES=3
 REMOTE_PSQL="/usr/lib/postgresql/16/bin/psql"
 REMOTE_PGHOST="/mnt/cocalc/bays/bay-0/run/postgres"
@@ -51,7 +53,7 @@ optionally upgrade all online project hosts through the site's CLI API.
 This is an operational wrapper around the proven manual lifecycle:
   1. copy bay-systemd scaffold and runtime tarball to the VM
   2. stage a versioned release with bay-bootstrap-release.sh
-  3. restart bay services and run bay-health
+  3. run migrations, roll hub workers, and run bay-health
   4. run cocalc host upgrade --all-online --wait
   5. verify project_hosts software/rollout state
   6. remove temporary auth/session and upload artifacts
@@ -86,7 +88,8 @@ Options:
   --public-url <url>          public bay URL for release env (default: --api)
   --bay-id <id>               bay id (default: bay-0)
   --bay-user <user>           bay service/db user (default: cocalc-bay)
-  --worker-count <n>          hub worker count (default: 2)
+  --worker-count <n>          hub worker count override; default preserves the
+                              bay's existing /etc/cocalc/bay-workers.env value
   --retain-releases <n>       release retention passed to bootstrap (default: 3)
   --remote-psql <path>        remote psql path (default: /usr/lib/postgresql/16/bin/psql)
   --remote-pghost <path>      remote Postgres socket dir
@@ -96,6 +99,10 @@ Options:
   --cli <path>                local cocalc CLI path
   --report-dir <dir>          write JSON/text reports here
   --skip-host-upgrade         only upgrade bay services
+  --restart-shared-services   restart router/persist/peer-health during bay
+                              deploy; default only rolls hub workers
+  --restart-cloudflared       restart the Cloudflare tunnel after frontdoor
+                              startup to apply tunnel origin/config changes
   --keep-remote-artifacts     leave uploaded /tmp artifacts on the VM
   --cleanup-local-bundle      remove the local bundle after upload
   -h, --help                  show help
@@ -172,6 +179,10 @@ parse_args() {
         STATIC_ONLY=1; shift ;;
       --restart-hub-workers)
         RESTART_HUB_WORKERS=1; shift ;;
+      --restart-shared-services)
+        RESTART_SHARED_SERVICES=1; shift ;;
+      --restart-cloudflared)
+        RESTART_CLOUDFLARED=1; shift ;;
       --api)
         API_URL="$2"; shift 2 ;;
       --public-url)
@@ -244,6 +255,10 @@ validate_args() {
   if [[ -z "$PUBLIC_URL" ]]; then
     PUBLIC_URL="$API_URL"
   fi
+  if [[ -n "$WORKER_COUNT" ]]; then
+    [[ "$WORKER_COUNT" =~ ^[0-9]+$ ]] || die "--worker-count must be an integer"
+    [[ "$WORKER_COUNT" -ge 1 ]] || die "--worker-count must be at least 1"
+  fi
   if [[ -z "$REPORT_DIR" ]]; then
     REPORT_DIR="${REPO_ROOT}/tmp/bay-upgrade-$(date -u +%Y%m%dT%H%M%SZ)"
   fi
@@ -283,9 +298,48 @@ build_host_software_bundle() {
   [[ -n "$HOST_SOFTWARE_BUNDLE_PATH" && -f "$HOST_SOFTWARE_BUNDLE_PATH" ]] || die "project-host software build did not produce cocalc-project-host-software-linux-*.tar.xz"
 }
 
+bundle_contains_embedded_host_software() {
+  [[ -f "$BUNDLE_PATH" ]] || return 1
+  local listing
+  listing="$(tar -tf "$BUNDLE_PATH")"
+  grep -q '^[^/]*/runtime/packages/project-host/build/bundle-linux\.tar\.xz$' <<<"$listing" &&
+    grep -q '^[^/]*/runtime/packages/project/build/bundle-linux\.tar\.xz$' <<<"$listing" &&
+    grep -q '^[^/]*/runtime/packages/server/cloud/bootstrap/bootstrap\.py$' <<<"$listing"
+}
+
+preflight_project_host_software_artifacts() {
+  if [[ "$SKIP_HOST_UPGRADE" -ne 0 ]]; then
+    return 0
+  fi
+  if [[ -n "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
+    [[ -f "$HOST_SOFTWARE_BUNDLE_PATH" ]] || die "project-host software bundle not found: $HOST_SOFTWARE_BUNDLE_PATH"
+    return 0
+  fi
+  if bundle_contains_embedded_host_software; then
+    return 0
+  fi
+  cat >&2 <<EOF
+ERROR: project-host upgrade requested, but no project-host software artifact was provided.
+
+The bay runtime bundle does not embed the /software payload needed by project
+hosts. This check runs before uploading or staging the bay release so a split
+runtime cannot partially deploy and then fail during the host-upgrade phase.
+
+Fix one of these ways:
+  - add --host-software-bundle <cocalc-project-host-software-linux-*.tar.xz>
+  - use --build-host-software-bundle
+  - use --skip-host-upgrade or --static-only if you only want to update the bay
+EOF
+  exit 1
+}
+
 stage_release() {
   [[ -f "$BUNDLE_PATH" ]] || die "bundle not found: $BUNDLE_PATH"
   mkdir -p "$REPORT_DIR"
+  local worker_count_arg=""
+  if [[ -n "$WORKER_COUNT" ]]; then
+    worker_count_arg=" --worker-count $(q "$WORKER_COUNT")"
+  fi
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     cp "${SRC_ROOT}/packages/rocket/build/bay-static/bay-static-manifest.json" \
       "${REPORT_DIR}/bay-static-manifest.json" 2>/dev/null || true
@@ -305,11 +359,11 @@ stage_release() {
 
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     log "Stage bay static/frontend release"
-    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --static-bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID") --worker-count $(q "$WORKER_COUNT") --public-url $(q "$PUBLIC_URL") --retain-releases $(q "$RETAIN_RELEASES")" \
+    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --static-bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID")${worker_count_arg} --public-url $(q "$PUBLIC_URL") --retain-releases $(q "$RETAIN_RELEASES")" \
       | tee "${REPORT_DIR}/stage-release.log"
   else
     log "Stage bay release"
-    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID") --worker-count $(q "$WORKER_COUNT") --public-url $(q "$PUBLIC_URL") --force-overlay --retain-releases $(q "$RETAIN_RELEASES") --start" \
+    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID")${worker_count_arg} --public-url $(q "$PUBLIC_URL") --force-overlay --retain-releases $(q "$RETAIN_RELEASES") --start" \
       | tee "${REPORT_DIR}/stage-release.log"
   fi
 }
@@ -389,25 +443,86 @@ restart_and_health_check() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     if [[ "$RESTART_HUB_WORKERS" -eq 0 ]]; then
       log "Run health checks without restarting hub workers"
-      remote_exec "sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
+      remote_exec "sudo systemctl start cocalc-bay-frontdoor.service && sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
         | tee "${REPORT_DIR}/bay-health.txt"
       return 0
     fi
-    local restart_command="sudo systemctl daemon-reload"
-    local worker_id
-    for worker_id in $(seq 1 "$WORKER_COUNT"); do
-      restart_command+=" && sudo systemctl restart cocalc-bay-hub@${worker_id}.service"
-      restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-worker-health ${worker_id}"
-    done
-    restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-status"
-    restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-health"
     log "Restart hub workers one at a time and run health checks"
-    remote_exec "$restart_command" \
-      | tee "${REPORT_DIR}/bay-health.txt"
+    remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+set -euo pipefail
+source /etc/cocalc/bay-workers.env
+systemctl daemon-reload
+systemctl start cocalc-bay-frontdoor.service
+roll_worker() {
+  local worker_id="$1"
+  /opt/cocalc/bay/current/bin/bay-frontdoor-drain "$worker_id"
+  if systemctl restart "cocalc-bay-hub@${worker_id}.service" \
+    && /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"; then
+    /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id"
+    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    return 0
+  fi
+  local status=$?
+  /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id" || true
+  return "$status"
+}
+for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
+  roll_worker "$worker_id"
+done
+/opt/cocalc/bay/current/bin/bay-status
+/opt/cocalc/bay/current/bin/bay-health
+EOF
   else
-    log "Restart bay services and run health checks"
-    remote_exec "sudo systemctl daemon-reload && sudo systemctl restart cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-conat-router.service cocalc-bay-conat-persist.service cocalc-bay-hub@1.service cocalc-bay-hub@2.service && sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
-      | tee "${REPORT_DIR}/bay-health.txt"
+    log "Run migrations, roll hub workers, and run health checks"
+    remote_exec "sudo env RESTART_SHARED_SERVICES=$(q "$RESTART_SHARED_SERVICES") RESTART_CLOUDFLARED=$(q "$RESTART_CLOUDFLARED") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+set -euo pipefail
+source /etc/cocalc/bay-workers.env
+systemctl daemon-reload
+systemctl start cocalc-bay.target
+systemctl start cocalc-bay-frontdoor.service
+if [[ "$RESTART_CLOUDFLARED" -eq 1 ]]; then
+  systemctl restart cocalc-bay-cloudflared.service
+  systemctl is-active --quiet cocalc-bay-cloudflared.service
+fi
+
+credential_dir="$(mktemp -d /run/cocalc-bay-deploy-credentials.XXXXXX)"
+cleanup() {
+  rm -rf "$credential_dir"
+}
+trap cleanup EXIT
+install -o "$BAY_USER" -g "$BAY_USER" -m 0700 -d "$credential_dir"
+install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
+  /etc/cocalc/site-master-key "$credential_dir/site-master-key"
+runuser -u "$BAY_USER" -- env \
+  CREDENTIALS_DIRECTORY="$credential_dir" \
+  COCALC_REQUIRE_SITE_MASTER_KEY=1 \
+  /opt/cocalc/bay/current/bin/bay-migrate
+
+if [[ "$RESTART_SHARED_SERVICES" -eq 1 ]]; then
+  systemctl restart cocalc-bay-conat-router.service
+  systemctl restart cocalc-bay-conat-persist.service
+  systemctl restart cocalc-bay-peer-health.service
+fi
+
+roll_worker() {
+  local worker_id="$1"
+  /opt/cocalc/bay/current/bin/bay-frontdoor-drain "$worker_id"
+  if systemctl restart "cocalc-bay-hub@${worker_id}.service" \
+    && /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"; then
+    /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id"
+    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    return 0
+  fi
+  local status=$?
+  /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id" || true
+  return "$status"
+}
+for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
+  roll_worker "$worker_id"
+done
+/opt/cocalc/bay/current/bin/bay-status
+/opt/cocalc/bay/current/bin/bay-health
+EOF
   fi
 }
 
@@ -624,6 +739,7 @@ main() {
   if [[ "$BUILD_HOST_SOFTWARE_BUNDLE" -eq 1 ]]; then
     build_host_software_bundle
   fi
+  preflight_project_host_software_artifacts
 
   log "Upgrade target"
   cat <<EOF | tee "${REPORT_DIR}/upgrade-target.txt"
@@ -634,6 +750,9 @@ bay_id=${BAY_ID}
 static_only=${STATIC_ONLY}
 bundle=${BUNDLE_PATH}
 host_software_bundle=${HOST_SOFTWARE_BUNDLE_PATH}
+worker_count_override=${WORKER_COUNT}
+restart_shared_services=${RESTART_SHARED_SERVICES}
+restart_cloudflared=${RESTART_CLOUDFLARED}
 report_dir=${REPORT_DIR}
 EOF
 

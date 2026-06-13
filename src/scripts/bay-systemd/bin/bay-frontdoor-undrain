@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+worker_id="${1:-}"
+if [[ ! "$worker_id" =~ ^[0-9]+$ ]]; then
+  bay_log "usage: bay-frontdoor-undrain <worker-id>"
+  exit 1
+fi
+
+ensure_dirs
+if [[ ! -f "$COCALC_BAY_FRONTDOOR_DRAIN_FILE" ]]; then
+  exit 0
+fi
+tmp="$(mktemp "${COCALC_BAY_FRONTDOOR_DRAIN_FILE}.XXXXXX")"
+awk -v target="$worker_id" '$0 != target && $0 ~ /^[0-9]+$/ { print }' \
+  "$COCALC_BAY_FRONTDOOR_DRAIN_FILE" > "$tmp"
+chmod 0644 "$tmp"
+mv "$tmp" "$COCALC_BAY_FRONTDOOR_DRAIN_FILE"
+bay_log "frontdoor undrained worker ${worker_id}"

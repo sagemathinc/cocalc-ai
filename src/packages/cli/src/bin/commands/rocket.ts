@@ -63,6 +63,8 @@ type DeployOptions = {
   cli?: string;
   script?: string;
   restartHubWorkers?: boolean;
+  restartSharedServices?: boolean;
+  restartCloudflared?: boolean;
   keepRemoteArtifacts?: boolean;
   cleanupLocalBundle?: boolean;
   allowDirty?: boolean;
@@ -216,7 +218,7 @@ export function registerRocketCommand(
       "admin account id for temporary deploy auth",
     )
     .option("--cookie <header>", "cookie header for deploy auth")
-    .option("--worker-count <n>", "hub worker count")
+    .option("--worker-count <n>", "hub worker count override")
     .option("--bay-id <id>", "bay id")
     .option("--retain-releases <n>", "release retention")
     .option("--report-dir <dir>", "directory for deploy reports")
@@ -225,6 +227,16 @@ export function registerRocketCommand(
     .option(
       "--restart-hub-workers",
       "restart hub workers one at a time for static deploys",
+      false,
+    )
+    .option(
+      "--restart-shared-services",
+      "restart bay router/persist/peer-health during bay deploys",
+      false,
+    )
+    .option(
+      "--restart-cloudflared",
+      "restart the bay Cloudflare tunnel during deploys",
       false,
     )
     .option("--keep-remote-artifacts", "do not delete remote /tmp artifacts")
@@ -409,11 +421,6 @@ function buildDeployPlan({
       "Rocket bay deploy requires --api or clusters.<name>.hub_url",
     );
   }
-  if (!workerCount) {
-    throw new Error(
-      "Rocket bay deploy requires --worker-count or clusters.<name>.bay.worker_count",
-    );
-  }
   if (!opts.build && !opts.bundle) {
     throw new Error("Rocket bay deploy requires --build or --bundle <path>");
   }
@@ -459,7 +466,9 @@ function buildDeployPlan({
   }
   args.push("--public-url", publicUrl ?? api);
   args.push("--bay-id", bayId);
-  args.push("--worker-count", `${workerCount}`);
+  if (workerCount) {
+    args.push("--worker-count", `${workerCount}`);
+  }
   if (retainReleases) {
     args.push("--retain-releases", `${retainReleases}`);
   }
@@ -489,6 +498,12 @@ function buildDeployPlan({
   }
   if (opts.keepRemoteArtifacts) {
     args.push("--keep-remote-artifacts");
+  }
+  if (opts.restartSharedServices) {
+    args.push("--restart-shared-services");
+  }
+  if (opts.restartCloudflared) {
+    args.push("--restart-cloudflared");
   }
   if (opts.cleanupLocalBundle) {
     args.push("--cleanup-local-bundle");
