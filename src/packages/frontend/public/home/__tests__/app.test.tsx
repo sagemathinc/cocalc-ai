@@ -675,7 +675,7 @@ describe("PublicHomeApp", () => {
       ),
     ).not.toBeNull();
     expect(screen.getByText("Start hosted")).not.toBeNull();
-    expect(screen.getByText("Review Launchpad")).not.toBeNull();
+    expect(screen.getAllByText("Review Launchpad").length).toBeGreaterThan(0);
     expect(
       screen.getByText("Site licensing wraps the path you choose."),
     ).not.toBeNull();
@@ -719,14 +719,56 @@ describe("PublicHomeApp", () => {
     expect(
       screen.getByRole("region", { name: "CoCalc.ai final calls to action" }),
     ).not.toBeNull();
-    expect(screen.getByText("Start where your team is.")).not.toBeNull();
-    expect(screen.getByText("Local runtime for one user.")).not.toBeNull();
+    const finalCallsToAction = screen.getByRole("region", {
+      name: "CoCalc.ai final calls to action",
+    });
     expect(
-      screen.getByText("Compare customer-operated private deployment paths."),
+      within(finalCallsToAction).getByText("Start where CoCalc should run."),
     ).not.toBeNull();
     expect(
-      screen.getByText("Discuss procurement, governance, and rollout."),
+      within(finalCallsToAction).getByText(
+        "Local runtime for one user on Linux or Mac.",
+      ),
     ).not.toBeNull();
+    expect(
+      within(finalCallsToAction).getByText(
+        "Customer-operated private deployment for pilots, labs, and workshops.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(finalCallsToAction).getByText(
+        "Plan a customer-operated private cloud path with CoCalc guidance.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(finalCallsToAction).getByText(
+        "Site licensing is the organizational wrapper.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(finalCallsToAction)
+        .getByRole("link", { name: "Review Launchpad" })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-launchpad");
+    expect(
+      within(finalCallsToAction)
+        .getByRole("link", { name: "Plan Rocket" })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-rocket");
+    expect(
+      within(finalCallsToAction)
+        .getByRole("link", { name: "Compare deployment options" })
+        .getAttribute("href"),
+    ).toBe("/products");
+    const finalSiteLicenseLink = within(finalCallsToAction).getByRole("link", {
+      name: "Discuss site licensing",
+    });
+    expect(finalSiteLicenseLink.getAttribute("href")).toContain(
+      "/support/new?",
+    );
+    expect(finalSiteLicenseLink.getAttribute("href")).toContain(
+      "subject=Site+license",
+    );
     expect(
       screen
         .getByRole("link", { name: /CoCalc Launchpad/i })

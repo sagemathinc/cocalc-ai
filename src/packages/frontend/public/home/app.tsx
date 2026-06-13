@@ -2603,47 +2603,59 @@ function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
 }
 
 function BottomCallout({ config }: { config?: HomeConfig }) {
-  const paths = [
+  const deploymentPaths = [
     {
-      body: "Hosted, managed, self-service.",
+      accent: PUBLIC_COLORS.brand,
+      body: "Managed hosted workspace for accounts, projects, and teams.",
       button: config?.is_authenticated ? "Open projects" : "Start on CoCalc.ai",
       href: config?.is_authenticated
         ? appPath("projects")
         : appPath("auth/sign-up"),
       icon: "cloud",
+      route: "Hosted",
       title: "CoCalc.ai",
     },
     {
-      body: "Local runtime for one user.",
+      accent: PUBLIC_COLORS.success,
+      body: "Local runtime for one user on Linux or Mac.",
       button: "Install CoCalc Plus",
       href: "https://software.cocalc.ai/software/cocalc-plus/index.html",
       icon: "laptop",
+      route: "Local",
       title: "CoCalc Plus",
     },
     {
-      body: "Compare customer-operated private deployment paths.",
-      button: "Compare deployment options",
-      href: appPath("products"),
+      accent: PUBLIC_COLORS.warning,
+      body: "Customer-operated private deployment for pilots, labs, and workshops.",
+      button: "Review Launchpad",
+      href: appPath("products/cocalc-launchpad"),
       icon: "servers",
-      title: "Deployment options",
+      route: "Private",
+      title: "CoCalc Launchpad",
     },
     {
-      body: "Discuss procurement, governance, and rollout.",
-      button: "Discuss site licensing",
-      href: supportPurchasePath(
-        "Site license",
-        "I want to discuss a CoCalc site license.",
-      ),
-      icon: "bank",
-      title: "Site licensing",
+      accent: COLORS.ANTD_LINK_BLUE_DARK,
+      body: "Plan a customer-operated private cloud path with CoCalc guidance.",
+      button: "Plan Rocket",
+      href: appPath("products/cocalc-rocket"),
+      icon: "rocket",
+      route: "Private cloud",
+      title: "CoCalc Rocket",
     },
   ] satisfies {
+    accent: string;
     body: string;
     button: string;
     href: string;
     icon: IconName;
+    route: string;
     title: string;
   }[];
+  const siteLicenseHref = supportPurchasePath(
+    "Site license",
+    "I want to discuss a CoCalc site license.",
+  );
+
   return (
     <section
       aria-label="CoCalc.ai final calls to action"
@@ -2661,7 +2673,7 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
           <Col xs={24}>
             <Eyebrow>Start here</Eyebrow>
             <Title level={2} style={{ margin: "8px 0 0" }}>
-              Start where your team is.
+              Start where CoCalc should run.
             </Title>
             <Paragraph
               style={{
@@ -2671,9 +2683,9 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 maxWidth: 760,
               }}
             >
-              Start hosted, install CoCalc Plus, compare customer-operated
-              deployment options, or discuss site licensing when organizational
-              rollout becomes the next question.
+              Start hosted, install CoCalc Plus, review Launchpad, or plan
+              Rocket. Use site licensing for procurement, governance, support,
+              and rollout once the operating path is clear.
             </Paragraph>
           </Col>
         </Row>
@@ -2681,30 +2693,30 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
           style={{
             display: "grid",
             gap: 12,
-            gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
           }}
         >
-          {paths.map((path, index) => (
+          {deploymentPaths.map((path, index) => (
             <div
               key={path.title}
               style={{
                 background: PUBLIC_COLORS.surface,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
+                border: `1px solid ${alpha(path.accent, 0.24)}`,
                 borderRadius: PANEL_RADIUS,
                 display: "flex",
                 flexDirection: "column",
-                minHeight: 160,
+                minHeight: 190,
                 padding: 18,
               }}
             >
-              <Flex align="start" gap={12}>
+              <Flex align="start" gap={12} style={{ marginBottom: 14 }}>
                 <div
                   style={{
                     alignItems: "center",
-                    background: PUBLIC_COLORS.surfaceMuted,
-                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    background: alpha(path.accent, 0.08),
+                    border: `1px solid ${alpha(path.accent, 0.22)}`,
                     borderRadius: PANEL_RADIUS,
-                    color: PUBLIC_COLORS.brand,
+                    color: path.accent,
                     display: "flex",
                     flex: "0 0 44px",
                     fontSize: 20,
@@ -2715,13 +2727,24 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 >
                   <Icon name={path.icon} />
                 </div>
-                <div>
+                <div style={{ minWidth: 0 }}>
+                  <Tag
+                    style={{
+                      background: alpha(path.accent, 0.08),
+                      borderColor: alpha(path.accent, 0.22),
+                      color: path.accent,
+                      marginBottom: 8,
+                      marginInlineEnd: 0,
+                    }}
+                  >
+                    {path.route}
+                  </Tag>
                   <Title level={4} style={{ margin: "0 0 6px" }}>
                     {path.title}
                   </Title>
-                  <Paragraph style={{ margin: 0 }}>{path.body}</Paragraph>
                 </div>
               </Flex>
+              <Paragraph style={{ margin: 0 }}>{path.body}</Paragraph>
               <Button
                 href={path.href}
                 icon={<DecorativeButtonIcon name={path.icon} />}
@@ -2735,29 +2758,60 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
             </div>
           ))}
         </div>
-        <Flex align="center" justify="space-between" wrap gap={14}>
-          <Text type="secondary">
-            Use the product chooser for deployment detail and site-license
-            discussion for organizational rollout.
-          </Text>
-          <Flex gap={10} wrap>
-            <Button
-              href={appPath("products")}
-              icon={<DecorativeButtonIcon name="servers" />}
-            >
-              Compare deployment options
-            </Button>
-            <Button
-              href={supportPurchasePath(
-                "Site license",
-                "I want to discuss a CoCalc site license.",
-              )}
-              icon={<DecorativeButtonIcon name="bank" />}
-            >
-              Discuss site licensing
-            </Button>
+        <div
+          style={{
+            background: alpha(PUBLIC_COLORS.surface, 0.82),
+            border: `1px solid ${PUBLIC_COLORS.warningBorder}`,
+            borderRadius: PANEL_RADIUS,
+            padding: 18,
+          }}
+        >
+          <Flex align="center" gap={16} justify="space-between" wrap>
+            <Flex align="start" gap={12} style={{ maxWidth: 760 }}>
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: PUBLIC_COLORS.warningTint,
+                  border: `1px solid ${PUBLIC_COLORS.warningBorder}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: PUBLIC_COLORS.warning,
+                  display: "flex",
+                  flex: "0 0 44px",
+                  fontSize: 20,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <Icon name="bank" />
+              </span>
+              <span>
+                <Text strong style={{ display: "block" }}>
+                  Site licensing is the organizational wrapper.
+                </Text>
+                <Text type="secondary">
+                  Use it for procurement, governance, support, rollout, and
+                  broader deployment rights after the runtime path is clear.
+                </Text>
+              </span>
+            </Flex>
+            <Flex gap={10} wrap>
+              <Button
+                href={appPath("products")}
+                icon={<DecorativeButtonIcon name="servers" />}
+              >
+                Compare deployment options
+              </Button>
+              <Button
+                href={siteLicenseHref}
+                icon={<DecorativeButtonIcon name="bank" />}
+              >
+                Discuss site licensing
+              </Button>
+            </Flex>
           </Flex>
-        </Flex>
+        </div>
       </Flex>
     </section>
   );
