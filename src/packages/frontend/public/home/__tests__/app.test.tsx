@@ -65,6 +65,11 @@ describe("PublicHomeApp", () => {
     expect(within(projectPreview).getByText("Live context")).not.toBeNull();
     expect(
       screen.getByRole("heading", {
+        name: "Start with the work surface you need.",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
         name: "Start where the work begins.",
       }),
     ).not.toBeNull();
@@ -112,6 +117,29 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/features/ai");
     expect(screen.queryByText("Open page")).toBeNull();
+    const quickStart = screen.getByRole("region", {
+      name: "Common CoCalc.ai starting points",
+    });
+    expect(
+      within(quickStart)
+        .getByRole("link", { name: /Notebook project/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      within(quickStart)
+        .getByRole("link", { name: /Terminal session/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(quickStart)
+        .getByRole("link", { name: /Codex thread/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(quickStart)
+        .getByRole("link", { name: /Course workspace/i })
+        .getAttribute("href"),
+    ).toBe("/features/teaching");
     expect(
       screen
         .getByRole("link", { name: /Jupyter Notebooks/i })

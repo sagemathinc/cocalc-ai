@@ -119,6 +119,37 @@ const WORKSPACE_PREVIEW_TABS = [
   { icon: "robot", label: "Codex" },
   { icon: "history", label: "History" },
 ] satisfies { icon: IconName; label: string }[];
+const QUICK_START_ACTIONS = [
+  {
+    body: "Run Jupyter with files, terminals, chat, and history in the same project.",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    label: "Notebook project",
+  },
+  {
+    body: "Use a persistent Linux shell for packages, scripts, services, and debugging.",
+    href: "features/terminal",
+    icon: "terminal",
+    label: "Terminal session",
+  },
+  {
+    body: "Ask Codex from project files, terminal output, screenshots, and review notes.",
+    href: "features/ai",
+    icon: "robot",
+    label: "Codex thread",
+  },
+  {
+    body: "Distribute files, collect work, and grade notebooks from course projects.",
+    href: "features/teaching",
+    icon: "graduation-cap",
+    label: "Course workspace",
+  },
+] satisfies {
+  body: string;
+  href: string;
+  icon: IconName;
+  label: string;
+}[];
 
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
@@ -583,6 +614,117 @@ function Hero({ config }: { config?: HomeConfig }) {
         </div>
         <div style={{ justifySelf: "end", maxWidth: 540, width: "100%" }}>
           <WorkspacePreview />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function QuickStartSection() {
+  return (
+    <section
+      aria-label="Common CoCalc.ai starting points"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `24px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <div
+        style={{
+          alignItems: "center",
+          display: "grid",
+          gap: 18,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 420px), 1fr))",
+        }}
+      >
+        <div>
+          <Eyebrow>Common starting points</Eyebrow>
+          <Title level={2} style={{ fontSize: 28, margin: "8px 0 8px" }}>
+            Start with the work surface you need.
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Create one project, then add notebooks, shells, Codex threads, or
+            course files around the same durable state.
+          </Paragraph>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          }}
+        >
+          {QUICK_START_ACTIONS.map((action, index) => {
+            const featured = index === 2;
+            const accent = featured
+              ? COLORS.AI_ASSISTANT_FONT
+              : index === 3
+                ? PUBLIC_COLORS.warning
+                : PUBLIC_COLORS.brand;
+
+            return (
+              <a
+                href={appPath(action.href)}
+                key={action.label}
+                style={{
+                  alignItems: "start",
+                  background: featured
+                    ? PUBLIC_COLORS.warningTint
+                    : PUBLIC_COLORS.surfaceMuted,
+                  border: `1px solid ${
+                    featured
+                      ? PUBLIC_COLORS.warningBorder
+                      : PUBLIC_COLORS.border
+                  }`,
+                  borderRadius: PANEL_RADIUS,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "42px minmax(0, 1fr) 18px",
+                  minHeight: 126,
+                  padding: 14,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(PUBLIC_COLORS.surface, 0.82),
+                    border: `1px solid ${alpha(accent, 0.24)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: accent,
+                    display: "flex",
+                    fontSize: 20,
+                    height: 42,
+                    justifyContent: "center",
+                    width: 42,
+                  }}
+                >
+                  <Icon name={action.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text strong style={{ display: "block" }}>
+                    {action.label}
+                  </Text>
+                  <Text type="secondary">{action.body}</Text>
+                </span>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    color: accent,
+                    marginTop: 4,
+                  }}
+                >
+                  <Icon name="arrow-right" />
+                </span>
+              </a>
+            );
+          })}
         </div>
       </div>
     </section>
@@ -1944,6 +2086,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   return (
     <PublicPage active="home" config={marketingConfig}>
       <Hero config={config} />
+      <QuickStartSection />
       <OperatingModelSection />
       <ProjectLoopSection />
       <ProjectStorySection />
