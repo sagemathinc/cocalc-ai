@@ -41,6 +41,7 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
 import { evaluateHostOperational, hostLabel } from "./host-operational";
 import { getProjectUrlPath } from "@cocalc/frontend/project-routing";
+import { markProjectRecentlyCreated } from "@cocalc/frontend/project/recently-created-project";
 import {
   invalidateProjectFields,
   publishProjectDetailInvalidation,
@@ -3000,6 +3001,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
 
     const project_id = await webapp_client.project_client.create(opts2);
+    markProjectRecentlyCreated(project_id);
 
     // At this point we know the project_id and that the project exists.
     // However, various code (e.g., setting the title) depends on the
