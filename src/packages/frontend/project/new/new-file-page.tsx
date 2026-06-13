@@ -43,7 +43,9 @@ import {
 } from "@cocalc/util/misc";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import type { NewFilenameTypes } from "@cocalc/util/db-schema/defaults";
-import { PathNavigator } from "../explorer/path-navigator";
+import { FindScopeBar } from "../find/find-scope-bar";
+import type { FindScopeMode } from "../find/types";
+import { getProjectHomeDirectory } from "../home-directory";
 import { useAvailableFeatures } from "../use-available-features";
 import { NewFileButton } from "./new-file-button";
 import { getQuickCreateSpec, isQuickCreateAvailable } from "./launcher-catalog";
@@ -58,6 +60,7 @@ import {
 } from "./launcher-preferences";
 import { LauncherCustomizeModal } from "./launcher-customize-modal";
 import { QuickCreateDropdown } from "./quick-create-dropdown";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -138,6 +141,7 @@ export default function NewFilePage(props: Props) {
   const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   const [showFolderModal, setShowFolderModal] = useState<boolean>(false);
+  const [scopeMode, setScopeMode] = useState<FindScopeMode>("current");
   const [folderName, setFolderName] = useState<string>("");
   const [creatingFolder, setCreatingFolder] = useState<boolean>(false);
   const file_creation_error = useTypedRedux(
@@ -146,6 +150,10 @@ export default function NewFilePage(props: Props) {
   );
 
   const siteLauncherDefaults = getSiteLauncherDefaults(site_launcher_quick);
+  const homePath = useMemo(
+    () => getProjectHomeDirectory(project_id),
+    [project_id],
+  );
   const accountLauncherPrefs = getAccountLauncherPrefs(launcherSettings);
   const mergedLauncher = getEffectiveLauncher({
     accountPrefs: accountLauncherPrefs,
@@ -431,17 +439,28 @@ export default function NewFilePage(props: Props) {
     );
   }
 
-  function renderPathNavigator(fontSize: string) {
+  function changeCurrentPath(path: string) {
+    actions?.set_current_path(normalizeAbsolutePath(path || "/", homePath));
+    actions?.set_active_tab("new");
+  }
+
+  function renderCreateScopeBar() {
     return (
-      <PathNavigator
+      <FindScopeBar
+        mode={mode === "flyout" ? "flyout" : "project"}
         project_id={project_id}
-        style={{ display: "inline-block", fontSize }}
+        homePath={homePath}
         currentPath={effective_current_path}
-        historyPath={effective_current_path}
-        onNavigate={(path) => {
-          actions?.set_current_path(path);
-          actions?.set_active_tab("new");
-        }}
+        scopePath={effective_current_path}
+        scopeMode={scopeMode}
+        scopePinned={false}
+        history={[]}
+        label="Create in"
+        selectorTitle="Select Folder"
+        selectorOkText="Use this folder"
+        onScopeModeChange={setScopeMode}
+        onScopePathChange={changeCurrentPath}
+        onScopePinnedChange={() => undefined}
       />
     );
   }
@@ -456,7 +475,7 @@ export default function NewFilePage(props: Props) {
           marginBottom: 14,
         }}
       >
-        {renderPathNavigator("16px")}
+        {renderCreateScopeBar()}
         <Space size={6} wrap>
           <QuickCreateDropdown
             quickCreateIds={mergedLauncher.quickCreate}
@@ -497,13 +516,13 @@ export default function NewFilePage(props: Props) {
             &nbsp;
             <FormattedMessage
               id="project.new-file-page.title"
-              defaultMessage={"Create"}
+              defaultMessage={"New"}
             />
           </span>
           {renderActionButtons()}
         </div>
       }
-      subtitle={<div>{renderPathNavigator("20px")}</div>}
+      subtitle={renderCreateScopeBar()}
       close={mode === "flyout" ? undefined : closeNewPage}
       bodyStyle={mode === "flyout" ? { padding: 12 } : undefined}
     >

@@ -176,6 +176,14 @@ jest.mock("../explorer/path-navigator", () => ({
   PathNavigator: () => <span>Home</span>,
 }));
 
+jest.mock("../find/find-scope-bar", () => ({
+  FindScopeBar: () => <span>Create in Home</span>,
+}));
+
+jest.mock("../home-directory", () => ({
+  getProjectHomeDirectory: () => "/home/user",
+}));
+
 jest.mock("../use-available-features", () => ({
   useAvailableFeatures: () => ({
     jupyter_notebook: true,
