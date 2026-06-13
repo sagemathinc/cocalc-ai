@@ -624,6 +624,29 @@ describe("PublicHomeApp", () => {
         within(continuityHandoffCheckpoints).getByText(checkpoint),
       ).not.toBeNull();
     }
+    const nextSurfaceChecks = within(continuityMap).getByRole("group", {
+      name: "CoCalc.ai next surface checks",
+    });
+    expect(
+      within(nextSurfaceChecks).getByText("Next surface checks"),
+    ).not.toBeNull();
+    expect(
+      within(nextSurfaceChecks).getByText(
+        "What to confirm before switching surfaces.",
+      ),
+    ).not.toBeNull();
+    for (const check of [
+      "Reference is visible",
+      "Runtime is named",
+      "Agent scope is clear",
+      "Review point is saved",
+      "Notebook, source, data, and notes are still linked from the project.",
+      "Kernel, shell, package, or service notes show how the result was produced.",
+      "Prompt, patch, and discussion context describe what the agent should use.",
+      "Snapshot, comparison, or review note marks the state to continue from.",
+    ]) {
+      expect(within(nextSurfaceChecks).getByText(check)).not.toBeNull();
+    }
     expect(
       screen.queryByRole("region", {
         name: "CoCalc.ai landing route map",

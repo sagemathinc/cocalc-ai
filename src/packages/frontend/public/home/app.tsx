@@ -634,6 +634,41 @@ const WORKSPACE_HANDOFF_CHECKPOINTS = [
   icon: IconName;
   label: string;
 }[];
+const WORKSPACE_NEXT_SURFACE_CHECKS = [
+  {
+    accent: COLORS.BLUE_D,
+    detail:
+      "Notebook, source, data, and notes are still linked from the project.",
+    icon: "files",
+    label: "Reference is visible",
+  },
+  {
+    accent: COLORS.RUN,
+    detail:
+      "Kernel, shell, package, or service notes show how the result was produced.",
+    icon: "terminal",
+    label: "Runtime is named",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail:
+      "Prompt, patch, and discussion context describe what the agent should use.",
+    icon: "robot",
+    label: "Agent scope is clear",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail:
+      "Snapshot, comparison, or review note marks the state to continue from.",
+    icon: "disk-snapshot",
+    label: "Review point is saved",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const LANDING_ENTRY_ACTIONS = [
   {
     accent: COLORS.BLUE_D,
@@ -2381,6 +2416,84 @@ function WorkspaceContinuitySection({
                     {checkpoint.label}
                   </Text>
                   <Text type="secondary">{checkpoint.detail}</Text>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div
+          aria-label="CoCalc.ai next surface checks"
+          role="group"
+          style={{
+            background: PUBLIC_COLORS.surface,
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: PANEL_RADIUS,
+            flex: "1 1 100%",
+            padding: 14,
+          }}
+        >
+          <Flex align="baseline" justify="space-between" wrap gap={8}>
+            <Text strong style={{ color: PUBLIC_COLORS.heading }}>
+              Next surface checks
+            </Text>
+            <Text style={{ color: PUBLIC_COLORS.mutedText, fontSize: 12 }}>
+              What to confirm before switching surfaces.
+            </Text>
+          </Flex>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
+              marginTop: 10,
+            }}
+          >
+            {WORKSPACE_NEXT_SURFACE_CHECKS.map((item) => (
+              <div
+                key={item.label}
+                style={{
+                  alignItems: "start",
+                  background: alpha(item.accent, 0.05),
+                  border: `1px solid ${alpha(item.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  display: "grid",
+                  gap: 9,
+                  gridTemplateColumns: "32px minmax(0, 1fr)",
+                  minHeight: 104,
+                  padding: 12,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(item.accent, 0.08),
+                    border: `1px solid ${alpha(item.accent, 0.22)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    fontSize: 16,
+                    height: 32,
+                    justifyContent: "center",
+                    width: 32,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text
+                    strong
+                    style={{
+                      color: item.accent,
+                      display: "block",
+                      fontSize: 12,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {item.label}
+                  </Text>
+                  <Text type="secondary">{item.detail}</Text>
                 </span>
               </div>
             ))}
