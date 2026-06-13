@@ -160,6 +160,13 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: "Compare deployment options" })
         .getAttribute("href"),
     ).toBe("/products");
+    const heroActions = hero.querySelector(".cocalc-public-home-hero-actions");
+    expect(heroActions).not.toBeNull();
+    expect(
+      within(heroActions as HTMLElement)
+        .getAllByRole("link")
+        .map((link) => link.textContent?.trim()),
+    ).toEqual(["Start on CoCalc.ai", "Compare deployment options"]);
     expect(
       within(hero).queryByRole("link", { name: "Install CoCalc Plus" }),
     ).toBeNull();
