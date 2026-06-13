@@ -5,7 +5,19 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import PublicHomeApp from "../app";
 
 const originalFetch = global.fetch;
+const BLOCKED_HOMEPAGE_CATEGORY_PATTERNS = [
+  /AI[- ]?IDE/i,
+  /AI coding tool/i,
+  /agent console/i,
+  /cloud coding agent/i,
+  /isolated notebook/i,
+  /notebook platform/i,
+  /prompt[- ]to[- ]app/i,
+  /sandbox API/i,
+  /sovereign cloud/i,
+] as const;
 const BLOCKED_HOMEPAGE_CLAIM_PATTERNS = [
+  ...BLOCKED_HOMEPAGE_CATEGORY_PATTERNS,
   /CoCalc Star/i,
   /Install CoCalc Star/i,
   /Review Star/i,
