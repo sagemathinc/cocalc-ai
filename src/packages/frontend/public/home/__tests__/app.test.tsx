@@ -724,6 +724,54 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectSurfaceLinks).getByText("Snapshots and TimeTravel"),
     ).not.toBeNull();
+    const collaborationReview = screen.getByRole("region", {
+      name: "CoCalc.ai collaboration review path",
+    });
+    expect(
+      within(collaborationReview).getByRole("heading", {
+        name: "Review shared work before the next step.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(collaborationReview)
+        .getByRole("link", { name: "Compare review tools" })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    const collaborationReviewSteps = within(collaborationReview).getByRole(
+      "group",
+      {
+        name: "CoCalc.ai collaboration review steps",
+      },
+    );
+    expectLinkHrefs(collaborationReviewSteps, [
+      "/features/teaching",
+      "/features/ai",
+      "/features/compare",
+    ]);
+    expect(
+      within(collaborationReviewSteps)
+        .getByRole("link", { name: /Collaborate in the project/i })
+        .getAttribute("href"),
+    ).toBe("/features/teaching");
+    expect(
+      within(collaborationReviewSteps)
+        .getByRole("link", { name: /Ask with visible context/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(collaborationReviewSteps)
+        .getByRole("link", { name: /Compare before moving on/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(collaborationReviewSteps).getByText("Shared workspace"),
+    ).not.toBeNull();
+    expect(
+      within(collaborationReviewSteps).getByText("Prompts and patches"),
+    ).not.toBeNull();
+    expect(
+      within(collaborationReviewSteps).getByText("History and diffs"),
+    ).not.toBeNull();
     const workInputRoutes = screen.getByRole("region", {
       name: "CoCalc.ai work input routes",
     });

@@ -645,6 +645,43 @@ const LANDING_ENTRY_ACTIONS = [
   label: string;
   next: (opts: { authenticated: boolean }) => string;
 }[];
+const COLLABORATION_REVIEW_STEPS = [
+  {
+    accent: PUBLIC_COLORS.brandActive,
+    body: "Bring people around the same notebooks, files, terminals, documents, and decisions.",
+    href: "features/teaching",
+    icon: "users",
+    label: "People",
+    signal: "Shared workspace",
+    title: "Collaborate in the project",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Let Codex work near the source, terminal output, notes, and patches that explain the task.",
+    href: "features/ai",
+    icon: "robot",
+    label: "Agent",
+    signal: "Prompts and patches",
+    title: "Ask with visible context",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Use snapshots, TimeTravel, and comparisons to keep changed work readable.",
+    href: "features/compare",
+    icon: "history",
+    label: "Review",
+    signal: "History and diffs",
+    title: "Compare before moving on",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  label: string;
+  signal: string;
+  title: string;
+}[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
     return `rgba(255, 255, 255, ${opacity})`;
@@ -2302,6 +2339,118 @@ function WorkspaceContextSection({
   );
 }
 
+function CollaborationReviewSection() {
+  return (
+    <section
+      aria-label="CoCalc.ai collaboration review path"
+      style={{
+        background: `linear-gradient(90deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `28px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex align="end" gap={18} justify="space-between" wrap>
+        <div style={{ maxWidth: 720 }}>
+          <Eyebrow>Shared review</Eyebrow>
+          <Title level={2} style={{ margin: "8px 0 10px" }}>
+            Review shared work before the next step.
+          </Title>
+          <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+            A project gives teammates and Codex the same files, output,
+            discussion, and history to inspect before work continues.
+          </Paragraph>
+        </div>
+        <Button
+          href={appPath("features/compare")}
+          icon={<DecorativeButtonIcon name="history" />}
+        >
+          Compare review tools
+        </Button>
+      </Flex>
+      <div
+        aria-label="CoCalc.ai collaboration review steps"
+        role="group"
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          marginTop: 22,
+        }}
+      >
+        {COLLABORATION_REVIEW_STEPS.map((step) => (
+          <a
+            href={appPath(step.href)}
+            key={step.label}
+            style={{
+              alignItems: "start",
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${alpha(step.accent, 0.24)}`,
+              borderRadius: PANEL_RADIUS,
+              color: "inherit",
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "42px minmax(0, 1fr) 16px",
+              minHeight: 154,
+              padding: 16,
+              textDecoration: "none",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                alignItems: "center",
+                background: alpha(step.accent, 0.08),
+                border: `1px solid ${alpha(step.accent, 0.22)}`,
+                borderRadius: PANEL_RADIUS,
+                color: step.accent,
+                display: "flex",
+                fontSize: 20,
+                height: 42,
+                justifyContent: "center",
+                width: 42,
+              }}
+            >
+              <Icon name={step.icon} />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <Text
+                strong
+                style={{
+                  color: step.accent,
+                  display: "block",
+                  fontSize: 12,
+                  textTransform: "uppercase",
+                }}
+              >
+                {step.label}
+              </Text>
+              <Title level={3} style={{ fontSize: 22, margin: "4px 0 8px" }}>
+                {step.title}
+              </Title>
+              <Paragraph style={{ margin: 0 }}>{step.body}</Paragraph>
+              <Text
+                style={{
+                  color: step.accent,
+                  display: "block",
+                  fontSize: 13,
+                  marginTop: 12,
+                }}
+              >
+                {step.signal}
+              </Text>
+            </span>
+            <Icon
+              name="arrow-right"
+              style={{ color: step.accent, marginTop: 4 }}
+            />
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function WorkInputSection() {
   return (
     <section
@@ -3643,6 +3792,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <WorkspaceScopeStrip />
       <WorkspaceContinuitySection authenticated={!!config?.is_authenticated} />
       <WorkspaceContextSection authenticated={!!config?.is_authenticated} />
+      <CollaborationReviewSection />
       <WorkInputSection />
       <WorkflowsSection />
       <AudienceSection />
