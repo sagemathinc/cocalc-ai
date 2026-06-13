@@ -1143,6 +1143,52 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(within(courseHandoff).getByText(routeText)).not.toBeNull();
     }
+    const audienceOperatingHandoff = within(audiencePaths).getByRole("group", {
+      name: "CoCalc.ai audience operating handoff",
+    });
+    expectLinkHrefs(audienceOperatingHandoff, [
+      "/pricing",
+      "/products/cocalc-plus",
+      "/products",
+    ]);
+    expect(
+      within(audienceOperatingHandoff).getByText("Confirm the operating path"),
+    ).not.toBeNull();
+    expect(
+      within(audienceOperatingHandoff).getByText(
+        "After the audience route, choose who runs the workspace.",
+      ),
+    ).not.toBeNull();
+    for (const handoff of [
+      "Hosted team",
+      "Local individual",
+      "Customer-operated group",
+      "Use hosted pricing when accounts and project upgrades are the question.",
+      "Use CoCalc Plus when one person needs the workspace on their own Linux or Mac machine.",
+      "Use products when a customer team will operate the workspace.",
+      "Review hosted pricing",
+      "Review CoCalc Plus",
+      "Compare deployment paths",
+    ]) {
+      expect(
+        within(audienceOperatingHandoff).getByText(handoff),
+      ).not.toBeNull();
+    }
+    expect(
+      within(audienceOperatingHandoff)
+        .getByRole("link", { name: /Hosted team/i })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(
+      within(audienceOperatingHandoff)
+        .getByRole("link", { name: /Local individual/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(audienceOperatingHandoff)
+        .getByRole("link", { name: /Customer-operated group/i })
+        .getAttribute("href"),
+    ).toBe("/products");
     expect(screen.getByText("Operating path chooser")).not.toBeNull();
     expect(screen.getByText("Choose who runs the workspace")).not.toBeNull();
     const operatingBoundaryShortcuts = screen.getByRole("group", {

@@ -647,6 +647,41 @@ const SUPPORTING_WORKFLOW_ROUTES = [
   label: string;
   title: string;
 }[];
+const AUDIENCE_OPERATING_HANDOFFS = [
+  {
+    accent: COLORS.BLUE_D,
+    action: "Review hosted pricing",
+    detail:
+      "Use hosted pricing when accounts and project upgrades are the question.",
+    href: "pricing",
+    icon: "percentage",
+    label: "Hosted team",
+  },
+  {
+    accent: PUBLIC_COLORS.success,
+    action: "Review CoCalc Plus",
+    detail:
+      "Use CoCalc Plus when one person needs the workspace on their own Linux or Mac machine.",
+    href: "products/cocalc-plus",
+    icon: "laptop",
+    label: "Local individual",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    action: "Compare deployment paths",
+    detail: "Use products when a customer team will operate the workspace.",
+    href: "products",
+    icon: "servers",
+    label: "Customer-operated group",
+  },
+] satisfies {
+  accent: string;
+  action: string;
+  detail: string;
+  href: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKFLOW_REVIEW_STEPS = [
   {
     accent: COLORS.BLUE_D,
@@ -3151,6 +3186,104 @@ function AudienceSection() {
             />
           </a>
         ))}
+      </div>
+      <div
+        aria-label="CoCalc.ai audience operating handoff"
+        role="group"
+        style={{
+          background: PUBLIC_COLORS.surfaceMuted,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 14,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+            Confirm the operating path
+          </Text>
+          <Text type="secondary">
+            After the audience route, choose who runs the workspace.
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {AUDIENCE_OPERATING_HANDOFFS.map((handoff) => (
+            <a
+              href={appPath(handoff.href)}
+              key={handoff.label}
+              style={{
+                alignItems: "start",
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${alpha(handoff.accent, 0.24)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 9,
+                gridTemplateColumns: "32px minmax(0, 1fr) 14px",
+                minHeight: 112,
+                padding: 12,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(handoff.accent, 0.08),
+                  border: `1px solid ${alpha(handoff.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: handoff.accent,
+                  display: "flex",
+                  height: 32,
+                  justifyContent: "center",
+                  width: 32,
+                }}
+              >
+                <Icon name={handoff.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: handoff.accent,
+                    display: "block",
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {handoff.label}
+                </Text>
+                <Text type="secondary">{handoff.detail}</Text>
+                <Text
+                  strong
+                  style={{
+                    color: handoff.accent,
+                    display: "block",
+                    marginTop: 4,
+                  }}
+                >
+                  {handoff.action}
+                </Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{
+                  alignSelf: "center",
+                  color: handoff.accent,
+                  fontSize: 12,
+                }}
+              />
+            </a>
+          ))}
+        </div>
       </div>
     </section>
   );
