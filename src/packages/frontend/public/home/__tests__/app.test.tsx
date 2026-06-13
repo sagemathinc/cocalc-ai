@@ -687,6 +687,25 @@ describe("PublicHomeApp", () => {
         "Snapshots and TimeTravel keep earlier states available when work changes.",
       ),
     ).not.toBeNull();
+    const reviewAnchors = within(projectPreview).getByRole("group", {
+      name: "CoCalc.ai review anchors",
+    });
+    expect(within(reviewAnchors).getByText("Review anchors")).not.toBeNull();
+    expect(
+      within(reviewAnchors).getByText("Check what changed before continuing."),
+    ).not.toBeNull();
+    for (const anchor of [
+      "File state",
+      "Runtime output",
+      "Agent notes",
+      "Recovery point",
+      "Code, notebooks, data, and notes are visible before continuing.",
+      "Notebook output and terminal logs stay near the files that produced them.",
+      "Codex turns and chat keep the reason for a change nearby.",
+      "Snapshots and TimeTravel give a prior state to compare against.",
+    ]) {
+      expect(within(reviewAnchors).getByText(anchor)).not.toBeNull();
+    }
     expect(
       within(projectPreview).queryByRole("group", {
         name: "CoCalc.ai workspace record",
