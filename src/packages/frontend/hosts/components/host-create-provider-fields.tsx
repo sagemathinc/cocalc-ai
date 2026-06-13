@@ -484,7 +484,7 @@ export const HostCreateProviderFields: React.FC<
               />
             </Form.Item>
             <div style={{ marginBottom: 12 }}>
-              <Tag>Cloudflare region: {r2Label}</Tag>
+              <Tag>CoCalc Region: {r2Label}</Tag>
             </div>
           </Col>
         );

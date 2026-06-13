@@ -183,6 +183,7 @@ export function HostOptionsSelect({
   size,
 }: HostOptionsSelectProps) {
   const groupedOptions = groupHostOptions(options);
+  const hasDetailLabels = options?.some((option) => !!option.detailLabel);
   return (
     <Select
       options={groupedOptions as any}
@@ -211,7 +212,7 @@ export function HostOptionsSelect({
           .toLowerCase();
         return haystack.includes(input.trim().toLowerCase());
       }}
-      popupMatchSelectWidth={false}
+      popupMatchSelectWidth={hasDetailLabels ? 760 : false}
       optionRender={(option: any) => {
         const data = option.data as HostFieldOption | undefined;
         const mainLabel =
@@ -231,8 +232,8 @@ export function HostOptionsSelect({
                     display: "grid",
                     gap: 12,
                     gridTemplateColumns: detail
-                      ? "minmax(220px, 1fr) 180px max-content"
-                      : "minmax(220px, 1fr) 180px",
+                      ? "360px 170px 110px"
+                      : "360px 170px",
                     width: "100%",
                   }
                 : {
@@ -295,9 +296,12 @@ export function HostOptionsSelect({
                 style={{
                   color: data?.priceLabel ? COLORS.GRAY_D : COLORS.GRAY_M,
                   fontVariantNumeric: "tabular-nums",
+                  overflow: "hidden",
                   textAlign: "right",
+                  textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
+                title={detail}
               >
                 {detail}
               </span>
