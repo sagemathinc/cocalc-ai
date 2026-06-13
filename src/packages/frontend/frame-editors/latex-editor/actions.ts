@@ -727,6 +727,39 @@ export class Actions extends BaseActions<LatexEditorState> {
     }
   }
 
+  private get_streamed_latex_output(): BuildLog | undefined {
+    const log = this.store.getIn(["build_logs", "latex"]) as any;
+    const output = typeof log?.toJS === "function" ? log.toJS() : log;
+    if (output == null || typeof output !== "object") return;
+    if (!`${output.stdout ?? ""}`.trim() && !`${output.stderr ?? ""}`.trim()) {
+      return;
+    }
+    return {
+      ...output,
+      time: typeof output.time === "number" ? output.time : Date.now(),
+    } as BuildLog;
+  }
+
+  private is_generic_latex_transport_error(err: unknown): boolean {
+    let message =
+      err instanceof Error
+        ? err.message
+        : typeof err === "string"
+          ? err
+          : `${(err as any)?.message ?? err ?? ""}`;
+    message = message
+      .replace(/^unable to run the compilation\.?\s*/i, "")
+      .replace(/^error\s*:?\s*/i, "")
+      .replace(/\.+$/, "")
+      .trim()
+      .toLowerCase();
+    return (
+      !message ||
+      message === "an error occurred" ||
+      message === "error occurred"
+    );
+  }
+
   _forget_pdf_document(): void {
     void import("./pdfjs-doc-cache").then(({ forgetDocument, url_to_pdf }) => {
       forgetDocument(
@@ -1071,9 +1104,17 @@ export class Actions extends BaseActions<LatexEditorState> {
       );
       // console.log(output);
     } catch (err) {
-      //console.info("LaTeX Editor/actions/run_latex error=", err);
-      this.set_error(err);
-      return;
+      const streamedOutput = this.get_streamed_latex_output();
+      if (
+        streamedOutput != null &&
+        this.is_generic_latex_transport_error(err)
+      ) {
+        output = streamedOutput;
+      } else {
+        //console.info("LaTeX Editor/actions/run_latex error=", err);
+        this.set_error(err);
+        return;
+      }
     } finally {
       // In all cases, we want the status info to clear
       this.set_status("");
