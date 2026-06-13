@@ -168,16 +168,52 @@ describe("PublicHomeApp", () => {
     ).toBe("/auth/sign-up");
     expect(
       within(hero)
-        .getByRole("link", { name: "Compare deployment options" })
+        .getByRole("link", { name: "Explore workflows" })
         .getAttribute("href"),
-    ).toBe("/products");
+    ).toBe("/features");
     const heroActions = hero.querySelector(".cocalc-public-home-hero-actions");
     expect(heroActions).not.toBeNull();
     expect(
       within(heroActions as HTMLElement)
         .getAllByRole("link")
         .map((link) => link.textContent?.trim()),
-    ).toEqual(["Start on CoCalc.ai", "Compare deployment options"]);
+    ).toEqual(["Start on CoCalc.ai", "Explore workflows"]);
+    const heroRouteChooser = within(hero).getByRole("group", {
+      name: "CoCalc.ai hero route chooser",
+    });
+    expectLinkHrefs(heroRouteChooser, [
+      "/auth/sign-up",
+      "/features",
+      "/products",
+    ]);
+    expect(
+      within(heroRouteChooser).getByText("Choose your starting point"),
+    ).not.toBeNull();
+    expect(
+      within(heroRouteChooser).getByText("Workspace, workflow, or deployment."),
+    ).not.toBeNull();
+    expect(within(heroRouteChooser).getByText("Workspace")).not.toBeNull();
+    expect(within(heroRouteChooser).getByText("Workflows")).not.toBeNull();
+    expect(within(heroRouteChooser).getByText("Deployment")).not.toBeNull();
+    expect(
+      within(heroRouteChooser).getByText("Start a workspace"),
+    ).not.toBeNull();
+    expect(
+      within(heroRouteChooser).getByText("Explore workflows"),
+    ).not.toBeNull();
+    expect(
+      within(heroRouteChooser).getByText("Compare deployments"),
+    ).not.toBeNull();
+    expect(
+      within(heroRouteChooser).getByText(
+        "Create the project that holds files, notebooks, terminals, and Codex work.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(heroRouteChooser).getByText(
+        "Choose hosted service, local runtime, or customer-operated CoCalc.",
+      ),
+    ).not.toBeNull();
     expect(
       within(hero).queryByRole("link", { name: "Install CoCalc Plus" }),
     ).toBeNull();
@@ -297,45 +333,6 @@ describe("PublicHomeApp", () => {
     expect(
       within(firstDecisionFlow).getByText(
         "Create or open the project that will hold files, output, terminals, and notes.",
-      ),
-    ).not.toBeNull();
-    const routeConfirmationChecks = within(routeMap).getByRole("group", {
-      name: "CoCalc.ai route confirmation checks",
-    });
-    expectLinkHrefs(routeConfirmationChecks, [
-      "/auth/sign-up",
-      "/features",
-      "/products",
-    ]);
-    expect(
-      within(routeConfirmationChecks).getByText("Confirm the route"),
-    ).not.toBeNull();
-    expect(
-      within(routeConfirmationChecks).getByText(
-        "Match the next question before moving deeper.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(routeConfirmationChecks).getByText("I need a place for work"),
-    ).not.toBeNull();
-    expect(
-      within(routeConfirmationChecks).getByText("I need the right surface"),
-    ).not.toBeNull();
-    expect(
-      within(routeConfirmationChecks).getByText("I need an operating path"),
-    ).not.toBeNull();
-    expect(
-      within(routeConfirmationChecks).getByText("Create a workspace"),
-    ).not.toBeNull();
-    expect(
-      within(routeConfirmationChecks).getByText("Browse features"),
-    ).not.toBeNull();
-    expect(
-      within(routeConfirmationChecks).getByText("Compare products"),
-    ).not.toBeNull();
-    expect(
-      within(routeConfirmationChecks).getByText(
-        "Files, output, and review history need a project before workflow details matter.",
       ),
     ).not.toBeNull();
     const primaryLandingRoutes = within(routeMap).getByRole("group", {
@@ -651,6 +648,11 @@ describe("PublicHomeApp", () => {
     ).toBeNull();
     expect(
       screen.queryByRole("group", { name: "CoCalc.ai route handoff summary" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("group", {
+        name: "CoCalc.ai route confirmation checks",
+      }),
     ).toBeNull();
     const coreWorkflows = screen.getByRole("region", {
       name: "CoCalc.ai core workflows",
@@ -1173,10 +1175,22 @@ describe("PublicHomeApp", () => {
     );
     expectLinkHrefs(
       screen.getByRole("group", {
-        name: "CoCalc.ai route confirmation checks",
+        name: "CoCalc.ai hero route chooser",
       }),
       ["/projects", "/features", "/products"],
     );
+    expect(
+      within(
+        screen.getByRole("group", {
+          name: "CoCalc.ai hero route chooser",
+        }),
+      ).getByText("Open projects"),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("group", {
+        name: "CoCalc.ai route confirmation checks",
+      }),
+    ).toBeNull();
     expect(
       screen.queryByRole("region", { name: "CoCalc.ai first-step routes" }),
     ).toBeNull();

@@ -176,6 +176,41 @@ const HERO_CONTEXT_SIGNALS = [
     label: "Review",
   },
 ] satisfies { body: string; href: string; icon: IconName; label: string }[];
+const HERO_ROUTE_CHOICES = [
+  {
+    accent: PUBLIC_COLORS.accent,
+    body: "Create the project that holds files, notebooks, terminals, and Codex work.",
+    href: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? appPath("projects") : appPath("auth/sign-up"),
+    icon: "project-outlined",
+    label: "Workspace",
+    title: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? "Open projects" : "Start a workspace",
+  },
+  {
+    accent: COLORS.RUN,
+    body: "Find notebook, terminal, AI, teaching, writing, and comparison paths.",
+    href: () => appPath("features"),
+    icon: "overview",
+    label: "Workflows",
+    title: () => "Explore workflows",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Choose hosted service, local runtime, or customer-operated CoCalc.",
+    href: () => appPath("products"),
+    icon: "servers",
+    label: "Deployment",
+    title: () => "Compare deployments",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: (opts: { authenticated: boolean }) => string;
+  icon: IconName;
+  label: string;
+  title: (opts: { authenticated: boolean }) => string;
+}[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -535,41 +570,6 @@ const LANDING_DECISION_FLOW = [
   label: string;
   title: string;
 }[];
-const ROUTE_CONFIRMATION_CHECKS = [
-  {
-    accent: COLORS.BLUE_D,
-    body: "Files, output, and review history need a project before workflow details matter.",
-    href: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? appPath("projects") : appPath("auth/sign-up"),
-    icon: "project-outlined",
-    label: "I need a place for work",
-    next: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? "Open projects" : "Create a workspace",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Choose notebooks, terminals, AI, teaching, writing, or comparison pages by the work surface.",
-    href: () => appPath("features"),
-    icon: "overview",
-    label: "I need the right surface",
-    next: () => "Browse features",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    body: "Compare hosted service, local runtime, and customer-operated paths before planning rollout.",
-    href: () => appPath("products"),
-    icon: "servers",
-    label: "I need an operating path",
-    next: () => "Compare products",
-  },
-] satisfies {
-  accent: string;
-  body: string;
-  href: (opts: { authenticated: boolean }) => string;
-  icon: IconName;
-  label: string;
-  next: (opts: { authenticated: boolean }) => string;
-}[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
     return `rgba(255, 255, 255, ${opacity})`;
@@ -741,6 +741,116 @@ function HeroContextStrip() {
               style={{
                 alignSelf: "center",
                 color: alpha(PUBLIC_COLORS.surface, 0.64),
+                fontSize: 12,
+              }}
+            />
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HeroRouteChooser({ authenticated }: { authenticated: boolean }) {
+  return (
+    <div
+      aria-label="CoCalc.ai hero route chooser"
+      role="group"
+      style={{
+        background: alpha(PUBLIC_COLORS.brandDark, 0.5),
+        border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.24)}`,
+        borderRadius: PANEL_RADIUS,
+        maxWidth: 740,
+        padding: 12,
+      }}
+    >
+      <Flex align="baseline" justify="space-between" wrap gap={8}>
+        <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+          Choose your starting point
+        </Text>
+        <Text
+          style={{
+            color: alpha(PUBLIC_COLORS.surface, 0.7),
+            fontSize: 12,
+          }}
+        >
+          Workspace, workflow, or deployment.
+        </Text>
+      </Flex>
+      <div
+        style={{
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 176px), 1fr))",
+          marginTop: 10,
+        }}
+      >
+        {HERO_ROUTE_CHOICES.map((choice) => (
+          <a
+            href={choice.href({ authenticated })}
+            key={choice.label}
+            style={{
+              alignItems: "start",
+              background: alpha(PUBLIC_COLORS.surface, 0.12),
+              border: `1px solid ${alpha(choice.accent, 0.36)}`,
+              borderRadius: PANEL_RADIUS,
+              color: PUBLIC_COLORS.surface,
+              display: "grid",
+              gap: 9,
+              gridTemplateColumns: "32px minmax(0, 1fr) 14px",
+              minHeight: 112,
+              padding: 11,
+              textDecoration: "none",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                alignItems: "center",
+                background: alpha(choice.accent, 0.14),
+                border: `1px solid ${alpha(choice.accent, 0.3)}`,
+                borderRadius: PANEL_RADIUS,
+                color: choice.accent,
+                display: "flex",
+                fontSize: 16,
+                height: 32,
+                justifyContent: "center",
+                width: 32,
+              }}
+            >
+              <Icon name={choice.icon} />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <Text
+                strong
+                style={{
+                  color: choice.accent,
+                  display: "block",
+                  fontSize: 12,
+                  textTransform: "uppercase",
+                }}
+              >
+                {choice.label}
+              </Text>
+              <Text strong style={{ color: "inherit", display: "block" }}>
+                {choice.title({ authenticated })}
+              </Text>
+              <Text
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.68),
+                  display: "block",
+                  marginTop: 4,
+                }}
+              >
+                {choice.body}
+              </Text>
+            </span>
+            <Icon
+              name="arrow-right"
+              style={{
+                alignSelf: "center",
+                color: alpha(PUBLIC_COLORS.surface, 0.58),
                 fontSize: 12,
               }}
             />
@@ -1606,15 +1716,16 @@ function Hero({ config }: { config?: HomeConfig }) {
                 </Button>
                 <Button
                   ghost
-                  href={appPath("products")}
-                  icon={<DecorativeButtonIcon name="project-outlined" />}
+                  href={appPath("features")}
+                  icon={<DecorativeButtonIcon name="overview" />}
                   size="large"
                 >
-                  Compare deployment options
+                  Explore workflows
                 </Button>
               </>
             )}
           </Flex>
+          <HeroRouteChooser authenticated={authenticated} />
           <HeroContextStrip />
         </Flex>
         <HeroWorkspaceSnapshot authenticated={authenticated} />
@@ -1719,97 +1830,6 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
               </span>
             </a>
           ))}
-        </div>
-        <div
-          aria-label="CoCalc.ai route confirmation checks"
-          role="group"
-          style={{
-            background: PUBLIC_COLORS.surfaceMuted,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            flex: "1 1 100%",
-            padding: 14,
-          }}
-        >
-          <Flex align="baseline" justify="space-between" wrap gap={8}>
-            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
-              Confirm the route
-            </Text>
-            <Text type="secondary">
-              Match the next question before moving deeper.
-            </Text>
-          </Flex>
-          <div
-            style={{
-              display: "grid",
-              gap: 8,
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-              marginTop: 10,
-            }}
-          >
-            {ROUTE_CONFIRMATION_CHECKS.map((check) => (
-              <a
-                href={check.href({ authenticated })}
-                key={check.label}
-                style={{
-                  alignItems: "start",
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${alpha(check.accent, 0.22)}`,
-                  borderRadius: PANEL_RADIUS,
-                  color: "inherit",
-                  display: "grid",
-                  gap: 10,
-                  gridTemplateColumns: "34px minmax(0, 1fr) 14px",
-                  minHeight: 96,
-                  padding: 12,
-                  textDecoration: "none",
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    alignItems: "center",
-                    background: alpha(check.accent, 0.08),
-                    border: `1px solid ${alpha(check.accent, 0.2)}`,
-                    borderRadius: PANEL_RADIUS,
-                    color: check.accent,
-                    display: "flex",
-                    fontSize: 17,
-                    height: 34,
-                    justifyContent: "center",
-                    width: 34,
-                  }}
-                >
-                  <Icon name={check.icon} />
-                </span>
-                <span style={{ minWidth: 0 }}>
-                  <Text strong style={{ display: "block" }}>
-                    {check.label}
-                  </Text>
-                  <Text type="secondary">{check.body}</Text>
-                  <Text
-                    strong
-                    style={{
-                      color: check.accent,
-                      display: "block",
-                      marginTop: 8,
-                    }}
-                  >
-                    {check.next({ authenticated })}
-                  </Text>
-                </span>
-                <Icon
-                  name="arrow-right"
-                  style={{
-                    alignSelf: "center",
-                    color: check.accent,
-                    fontSize: 12,
-                  }}
-                />
-              </a>
-            ))}
-          </div>
         </div>
         <div
           aria-label="CoCalc.ai primary landing routes"
