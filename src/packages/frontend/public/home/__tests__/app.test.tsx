@@ -486,6 +486,39 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(within(workspaceDecisionCues).getByText(cue)).not.toBeNull();
     }
+    const workspaceStartPlanner = within(workspaceScope).getByRole("group", {
+      name: "CoCalc.ai workspace start planner",
+    });
+    expectLinkHrefs(workspaceStartPlanner, [
+      "/auth/sign-up",
+      "/features/terminal",
+      "/features/ai",
+      "/features/compare",
+    ]);
+    expect(
+      within(workspaceStartPlanner).getByText("Start planner"),
+    ).not.toBeNull();
+    expect(
+      within(workspaceStartPlanner).getByText(
+        "Follow one project through the first tool choice.",
+      ),
+    ).not.toBeNull();
+    for (const step of [
+      "Workspace",
+      "Runtime",
+      "Assistance",
+      "Review point",
+      "Create workspace",
+      "Add runtime",
+      "Ask with context",
+      "Review the state",
+      "Put source, notebooks, data, and notes in one project before choosing tools.",
+      "Open a terminal or notebook where the files already live.",
+      "Use Codex or chat when the project record should inform changes.",
+      "Check snapshots, history, or comparisons before handing off.",
+    ]) {
+      expect(within(workspaceStartPlanner).getByText(step)).not.toBeNull();
+    }
     const continuityMap = screen.getByRole("region", {
       name: "CoCalc.ai workspace continuity map",
     });
@@ -1492,6 +1525,21 @@ describe("PublicHomeApp", () => {
       }),
       ["/projects", "/features", "/products"],
     );
+    expectLinkHrefs(
+      screen.getByRole("group", {
+        name: "CoCalc.ai workspace start planner",
+      }),
+      ["/projects", "/features/terminal", "/features/ai", "/features/compare"],
+    );
+    expect(
+      within(
+        screen.getByRole("group", {
+          name: "CoCalc.ai workspace start planner",
+        }),
+      )
+        .getByRole("link", { name: /Open projects/i })
+        .getAttribute("href"),
+    ).toBe("/projects");
     expectLinkHrefs(
       screen.getByRole("group", {
         name: "CoCalc.ai hero route chooser",

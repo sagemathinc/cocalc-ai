@@ -306,6 +306,50 @@ const WORKSPACE_DECISION_CUES = [
   icon: IconName;
   label: string;
 }[];
+const WORKSPACE_START_PLANNER_STEPS = [
+  {
+    accent: COLORS.BLUE_D,
+    detail:
+      "Put source, notebooks, data, and notes in one project before choosing tools.",
+    href: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? appPath("projects") : appPath("auth/sign-up"),
+    icon: "project-outlined",
+    label: "Workspace",
+    title: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? "Open projects" : "Create workspace",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Open a terminal or notebook where the files already live.",
+    href: () => appPath("features/terminal"),
+    icon: "terminal",
+    label: "Runtime",
+    title: () => "Add runtime",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Use Codex or chat when the project record should inform changes.",
+    href: () => appPath("features/ai"),
+    icon: "robot",
+    label: "Assistance",
+    title: () => "Ask with context",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Check snapshots, history, or comparisons before handing off.",
+    href: () => appPath("features/compare"),
+    icon: "disk-snapshot",
+    label: "Review point",
+    title: () => "Review the state",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  href: (opts: { authenticated: boolean }) => string;
+  icon: IconName;
+  label: string;
+  title: (opts: { authenticated: boolean }) => string;
+}[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -1940,7 +1984,7 @@ function Hero({ config }: { config?: HomeConfig }) {
   );
 }
 
-function WorkspaceScopeStrip() {
+function WorkspaceScopeStrip({ authenticated }: { authenticated: boolean }) {
   return (
     <section
       aria-label="CoCalc.ai workspace scope"
@@ -2074,6 +2118,103 @@ function WorkspaceScopeStrip() {
               </span>
             </div>
           ))}
+        </div>
+        <div
+          aria-label="CoCalc.ai workspace start planner"
+          role="group"
+          style={{
+            borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+            paddingTop: 14,
+          }}
+        >
+          <Flex align="baseline" justify="space-between" wrap gap={8}>
+            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+              Start planner
+            </Text>
+            <Text type="secondary">
+              Follow one project through the first tool choice.
+            </Text>
+          </Flex>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
+              marginTop: 10,
+            }}
+          >
+            {WORKSPACE_START_PLANNER_STEPS.map((step, index) => (
+              <a
+                href={step.href({ authenticated })}
+                key={step.label}
+                style={{
+                  alignItems: "start",
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${alpha(step.accent, 0.24)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 9,
+                  gridTemplateColumns: "34px minmax(0, 1fr) 14px",
+                  minHeight: 108,
+                  padding: 11,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(step.accent, 0.08),
+                    border: `1px solid ${alpha(step.accent, 0.22)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: step.accent,
+                    display: "flex",
+                    flexDirection: "column",
+                    fontSize: 14,
+                    gap: 2,
+                    height: 44,
+                    justifyContent: "center",
+                    width: 34,
+                  }}
+                >
+                  <Icon name={step.icon} />
+                  <Text
+                    strong
+                    style={{ color: "inherit", fontSize: 10, lineHeight: 1 }}
+                  >
+                    {index + 1}
+                  </Text>
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text
+                    strong
+                    style={{
+                      color: step.accent,
+                      display: "block",
+                      fontSize: 12,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {step.label}
+                  </Text>
+                  <Text strong style={{ display: "block", marginTop: 2 }}>
+                    {step.title({ authenticated })}
+                  </Text>
+                  <Text type="secondary">{step.detail}</Text>
+                </span>
+                <Icon
+                  name="arrow-right"
+                  style={{
+                    alignSelf: "center",
+                    color: step.accent,
+                    fontSize: 12,
+                  }}
+                />
+              </a>
+            ))}
+          </div>
         </div>
       </Flex>
     </section>
@@ -3980,7 +4121,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
-      <WorkspaceScopeStrip />
+      <WorkspaceScopeStrip authenticated={!!config?.is_authenticated} />
       <WorkspaceContinuitySection authenticated={!!config?.is_authenticated} />
       <WorkspaceContextSection authenticated={!!config?.is_authenticated} />
       <WorkflowsSection />
