@@ -136,25 +136,29 @@ const HERO_OUTCOMES = [
 const HERO_CONTEXT_SIGNALS = [
   {
     body: "Source, notebooks, data",
+    href: "features/compare",
     icon: "files",
     label: "Files",
   },
   {
     body: "Shells, packages, services",
+    href: "features/terminal",
     icon: "terminal",
     label: "Runtime",
   },
   {
     body: "Agent prompts and patches",
+    href: "features/ai",
     icon: "robot",
     label: "Codex",
   },
   {
     body: "Snapshots and TimeTravel",
+    href: "features/compare",
     icon: "history",
     label: "Review",
   },
-] satisfies { body: string; icon: IconName; label: string }[];
+] satisfies { body: string; href: string; icon: IconName; label: string }[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -467,18 +471,21 @@ function HeroContextStrip() {
         }}
       >
         {HERO_CONTEXT_SIGNALS.map((item) => (
-          <div
+          <a
+            href={appPath(item.href)}
             key={item.label}
             style={{
               alignItems: "start",
               background: alpha(PUBLIC_COLORS.surface, 0.12),
               border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
               borderRadius: PANEL_RADIUS,
+              color: PUBLIC_COLORS.surface,
               display: "grid",
               gap: 8,
-              gridTemplateColumns: "26px minmax(0, 1fr)",
+              gridTemplateColumns: "26px minmax(0, 1fr) 14px",
               minHeight: 62,
               padding: "9px 10px",
+              textDecoration: "none",
             }}
           >
             <span
@@ -514,7 +521,15 @@ function HeroContextStrip() {
                 {item.body}
               </Text>
             </span>
-          </div>
+            <Icon
+              name="arrow-right"
+              style={{
+                alignSelf: "center",
+                color: alpha(PUBLIC_COLORS.surface, 0.64),
+                fontSize: 12,
+              }}
+            />
+          </a>
         ))}
       </div>
     </div>

@@ -190,6 +190,26 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(within(contextCues).getByText("Review")).not.toBeNull();
     expect(
+      within(contextCues)
+        .getByRole("link", { name: /Files/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(contextCues)
+        .getByRole("link", { name: /Runtime/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(contextCues)
+        .getByRole("link", { name: /Codex/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(contextCues)
+        .getByRole("link", { name: /Review/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
       within(hero).queryByRole("group", {
         name: "CoCalc project context preview",
       }),
