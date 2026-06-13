@@ -23,6 +23,7 @@ interface Props {
   label?: string | React.JSX.Element;
   name?: string;
   on_click?: () => void;
+  ariaLabel?: string;
   style?: CSS;
   tooltip?: string;
 }
@@ -40,6 +41,7 @@ export const NavTab: React.FC<Props> = React.memo((props: Props) => {
     label,
     name,
     on_click,
+    ariaLabel,
     style = {},
     tooltip,
   } = props;
@@ -133,6 +135,10 @@ export const NavTab: React.FC<Props> = React.memo((props: Props) => {
       onClick={onClick}
       style={outer_style}
       className={TOP_BAR_ELEMENT_CLASS}
+      aria-label={
+        ariaLabel ??
+        (hide_label && typeof label === "string" ? label : undefined)
+      }
       {...(is_project && name != null ? { "data-node-key": name } : {})}
     >
       {renderInner()}
