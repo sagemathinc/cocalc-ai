@@ -16,7 +16,7 @@ Goal: turn the newest beta tester reports into a release-focused work queue. Fix
 
 ## P0: Release Blockers / Data Loss / Stuck Core Workflows / Cost Abuse
 
-### P0-A: Project Compression Can Produce Silently Broken Archives
+### (done) P0-A: Project Compression Can Produce Silently Broken Archives
 
 Symptom: selecting several folders and using project file compression, or downloading multiple selected files through automatic compression, can produce a `.tar.gz` that appears successful but is truncated or otherwise broken when compression takes too long.
 
@@ -48,7 +48,7 @@ Validation:
 - Manual smoke with a large selected folder set: archive succeeds and `tar -tzf` is valid, or fails visibly with no final tarball.
 - Manual smoke for stopped project multi-file download: project does not start, `/tmp` is created if needed, archive downloads, and the temporary tarball is removed after successful download.
 
-### P0-B: Jupyter Evaluate Uses Stale Running Kernel After Project Stop
+### (done) P0-B: Jupyter Evaluate Uses Stale Running Kernel After Project Stop
 
 Symptom: run a notebook so the kernel is running, stop the project, then evaluate a cell. The frontend still believes the kernel is running and the cell appears stuck.
 
@@ -75,7 +75,7 @@ Validation:
 - Focused Jupyter actions test for stopped project plus stale kernel state.
 - Browser smoke: run cell, stop project, run cell again, project starts and execution continues or shows an actionable error.
 
-### P0-C: Email Verification Enforcement Is Incomplete For Project Actions
+### (done) P0-C: Email Verification Enforcement Is Incomplete For Project Actions
 
 Symptom: when email verification is enabled, an unverified user can still create or start projects, and may be able to create project hosts. The reporter saw this while impersonating another user; impersonation should reproduce the target user's restrictions exactly.
 
@@ -104,7 +104,7 @@ Validation:
 - Browser smoke: unverified account sees actionable verify-email error; verified account can create/start normally.
 - Impersonation smoke: support/admin acting as an unverified user gets the same verification error.
 
-### P0-D: Admins Need A Supported Customer Balance Adjustment Flow
+### (done) P0-D: Admins Need A Supported Customer Balance Adjustment Flow
 
 Symptom: admins need a safe way to add or remove customer account balance directly, with fresh 2FA, audit logging, user-visible notes, admin-only notes, and a central list of edits. Current voucher-based workarounds are operationally risky; recent voucher-related abuse on the legacy site makes this a release blocker because this feature lets us remove voucher functionality.
 
@@ -138,7 +138,7 @@ Validation:
 
 ## P1: Compatibility / High-Frequency UX / Core Editing
 
-### P1-A: CoCalc.com Jupyter Markdown Needs One-Time Escaped Delimiter Migration
+### (done) P1-A: CoCalc.com Jupyter Markdown Needs One-Time Escaped Delimiter Migration
 
 Symptom: notebooks edited on cocalc.com may contain markdown with escaped parentheses/brackets such as `\(`, `\)`, `\[`, and `\]` that were literal-safe markdown there but become math delimiters in cocalc-ai.
 
@@ -167,7 +167,7 @@ Validation:
 - Idempotence test: opening a migrated notebook twice does not rewrite the markdown a second time.
 - Browser smoke: legacy notebook renders literal parens/brackets correctly after first open/save.
 
-### P1-B: Create Snapshot Modal Does Not Close After Creating Snapshot
+### (done) P1-B: Create Snapshot Modal Does Not Close After Creating Snapshot
 
 Symptom: the create snapshot modal stays open after clicking the blue create button, even though a snapshot is created in the background. Users can click again and create duplicate snapshots.
 
@@ -192,7 +192,7 @@ Validation:
 - Focused modal test if available.
 - Browser smoke: click create once, modal closes, one snapshot appears; failure keeps modal open with an error.
 
-### P1-C: Membership Page Does Not Explain Verify-Email Requirement For Claimable Site License
+### (done) P1-C: Membership Page Does Not Explain Verify-Email Requirement For Claimable Site License
 
 Symptom: if a user has an unverified email address and a site-license membership they could claim after verification, the membership page does not clearly tell them to verify email to claim it. The app-level verify-email modal also does not explain that a site license may be waiting or that unverified accounts cannot create/start projects.
 
@@ -217,7 +217,7 @@ Validation:
 - Focused membership page rendering test for unverified account with claimable license.
 - Browser smoke: click resend verification from the membership page and from the app-level verification prompt.
 
-### P1-D: Closing The Last Editor Frame Should Close The File
+### (done) P1-D: Closing The Last Editor Frame Should Close The File
 
 Symptom: clicking the `X` in the upper-right of a frame title bar closes frames until the last frame, then resets all frames to the default layout instead of closing the file.
 
@@ -242,7 +242,7 @@ Validation:
 - Focused frame-tree action test for single-frame close.
 - Browser smoke: close last frame closes the file tab; reopening uses default layout.
 
-### P1-E: Open Files List Mode Has No Close Button
+### (done) P1-E: Open Files List Mode Has No Close Button
 
 Symptom: when the top navigation for files is in list mode, open files cannot be closed from the list because there is no close button, unlike the projects list.
 
@@ -267,7 +267,7 @@ Validation:
 - Component test if the list-mode component is isolated.
 - Browser smoke: list mode shows close button, closes one file, leaves other open files intact.
 
-### P1-F: Whiteboard Slate/CodeMirror Text Editor Scrolls Instead Of Growing
+### (done) P1-F: Whiteboard Slate/CodeMirror Text Editor Scrolls Instead Of Growing
 
 Symptom: editing a whiteboard note with enough content causes the Slate/CodeMirror editor to switch to internal scrolling and stop growing. The whiteboard measures the editor height for static display, so the note renders with the wrong height.
 
@@ -294,7 +294,7 @@ Validation:
 
 ## P2: Polish / Operational UX
 
-### P2-A: LaTeX Error Toast Gives No Useful Details
+### (done) P2-A: LaTeX Error Toast Gives No Useful Details
 
 Symptom: opening a LaTeX file sometimes shows a toast/modal saying only "An error occurred" or similar, with no details or path to inspect the underlying error.
 

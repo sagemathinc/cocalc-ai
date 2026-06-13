@@ -1,4 +1,4 @@
-# Beta Bug/UI Triage Plan - 2026-06-12
+# (done) Beta Bug/UI Triage Plan - 2026-06-12
 
 Source list: `/home/user/wstein-todo/wstein.tasks.md`.
 
@@ -16,7 +16,7 @@ Goal: turn the latest beta tester UI and release-readiness reports into a concre
 
 ## P0: Release Policy / Core Navigation / High-Confusion Workflows
 
-### P0-A: Disable AI Must Hide All New AI Entry Points
+### (done) P0-A: Disable AI Must Hide All New AI Entry Points
 
 Symptom: project/course/account settings that disable AI only partially work. Old assistant buttons disappear, but the Agents flyout remains, new chats still offer AI mode by default, the Jupyter AI-agent kernel install button remains, and project-home is still AI-centric.
 
@@ -49,7 +49,7 @@ Validation:
 - Browser smoke with course/student-project AI disabled.
 - Browser smoke with AI enabled to verify entry points still appear.
 
-### P0-B: Replace Project Home With Full Page Files At `/home/user`
+### (done) P0-B: Replace Project Home With Full Page Files At `/home/user`
 
 Symptom: the Home button opens the project-home agent page. This creates three overlapping agent surfaces: project-home, Agents flyout, and `.chat` files. The project-home page is the least polished and makes it harder to reach the full page file explorer.
 
@@ -78,7 +78,7 @@ Validation:
 - Browser smoke: reload project URL lands in files view instead of project-home when no specific file/page is requested.
 - Frontend typecheck/lint to catch deleted route imports.
 
-### P0-C: CPU Warning Must Reflect Project Processes, Not Host Load
+### (done) P0-C: CPU Warning Must Reflect Project Processes, Not Host Load
 
 Symptom: the red CPU warning square next to the project icon can appear because the project host has high load, even when the current project processes are idle. The warning popover also has no explanatory content.
 
@@ -109,7 +109,7 @@ Validation:
 
 ## P1: Core File Explorer / Agents / Admin Configuration
 
-### P1-A: Restore Parent Directory Row In Full Page File Explorer
+### (done) P1-A: Restore Parent Directory Row In Full Page File Explorer
 
 Symptom: the `..` parent directory row is missing in the full page file explorer, though it appears in the flyout file explorer.
 
@@ -136,7 +136,7 @@ Validation:
 - Browser smoke: `..` cannot be selected or included in delete/download/copy/move actions.
 - Browser smoke: root directory does not show a broken parent row.
 
-### P1-B: Unify `+ New` Quick Create Dropdown Across Full Page And Flyout
+### (done) P1-B: Unify `+ New` Quick Create Dropdown Across Full Page And Flyout
 
 Symptom: the full page file explorer has a useful `+ New` dropdown, but the flyout does not. The quick-create dropdown contains inconsistent labels, random extra file types, deprecated `.sagews`, and differs from the customize modal.
 
@@ -167,7 +167,7 @@ Validation:
 - Browser smoke: changing customize preferences changes the dropdown.
 - Regression smoke: creating common file types from both dropdowns works.
 
-### P1-C: Make `+ New` Breadcrumb And Title Match Find
+### (done) P1-C: Make `+ New` Breadcrumb And Title Match Find
 
 Symptom: the breadcrumb/current-directory path at the top of `+ New` is worse than the Find path component. The actual flyout title says `+ Create` instead of `+ New`.
 
@@ -193,7 +193,7 @@ Validation:
 - Browser smoke: title says `+ New`.
 - Mobile/narrow smoke if the breadcrumb wraps or truncates.
 
-### P1-D: AI Assistant Modal Needs Agent Selector And Persistent Default
+### (done) P1-D: AI Assistant Modal Needs Agent Selector And Persistent Default
 
 Symptom: clicking an AI assistant button, e.g. in Jupyter, uses a default agent without letting the user choose among their agents.
 
@@ -224,7 +224,7 @@ Validation:
 - Browser smoke: reopening the modal remembers the selected default.
 - Browser smoke: no user agents falls back to current default behavior.
 
-### P1-E: Agents Panel `All Users` Should Become `Other Users`
+### (done) P1-E: Agents Panel `All Users` Should Become `Other Users`
 
 Symptom: the Agents panel `All Users` button shows raw `account_id` for other users, and it includes the current user's agents.
 
@@ -251,7 +251,7 @@ Validation:
 - Verify current user's agents do not appear in `Other Users`.
 - Verify other users render as names/emails/avatar component instead of raw UUIDs.
 
-### P1-F: Dedicated Host Creation Needs Cloudflare Region And GCP Disk Autogrow
+### (done) P1-F: Dedicated Host Creation Needs Cloudflare Region And GCP Disk Autogrow
 
 Symptom: when creating dedicated hosts, the UI does not show the Cloudflare region. GCP main disk autogrow is available in the edit modal after creation but missing during original creation.
 
@@ -280,7 +280,7 @@ Validation:
 - Browser smoke: create-host modal shows Cloudflare region and GCP autogrow controls.
 - If safe in dev, create a host config and verify fields appear in the resulting host edit modal.
 
-### P1-G: Target Course/Student Membership Tiers By Verified Instructor Domain
+### (done) P1-G: Target Course/Student Membership Tiers By Verified Instructor Domain
 
 Symptom: there is no way to offer a special course/student membership tier only to instructors with a verified institutional domain such as UCLA, without showing it to all instructors.
 
@@ -310,7 +310,7 @@ Validation:
 - Browser smoke as instructor with matching verified domain: targeted tier appears for student selection.
 - Browser smoke as instructor with nonmatching domain: targeted tier is hidden.
 
-### P1-H: Invite Acceptance Page Should Show Signed-In User
+### (done) P1-H: Invite Acceptance Page Should Show Signed-In User
 
 Symptom: the "Accept project invite for CoCalc Launchpad" page does not show who is signed in, so users may accidentally accept an invite as the wrong account.
 
@@ -339,7 +339,7 @@ Validation:
 
 ## P2: Polish / Easy UI Consistency
 
-### P2-A: Move Jupyter Hover Tools To The Right
+### (done) P2-A: Move Jupyter Hover Tools To The Right
 
 Symptom: Jupyter cell hover tools `Run`, `Agent`, and `Format` clutter the left side of cells. CoCalc.com places them on the right, which is cleaner.
 
@@ -363,7 +363,7 @@ Validation:
 - Browser smoke on a notebook with code and markdown cells.
 - Visual check against the cocalc.com screenshot expectation.
 
-### P2-B: Make Top-Right Docs Tab Icon-Only
+### (done) P2-B: Make Top-Right Docs Tab Icon-Only
 
 Symptom: `Docs` is the only top-right tab with a word label; the others are icons.
 
@@ -386,7 +386,7 @@ Validation:
 - Browser smoke: Docs tab appears as an icon and still opens docs.
 - Accessibility check: title/aria-label communicates "Docs".
 
-### P2-C: Add Keyboard Shortcut Tooltips To Chat Queue/Send/Steer Buttons
+### (done) P2-C: Add Keyboard Shortcut Tooltips To Chat Queue/Send/Steer Buttons
 
 Symptom: chat queue/send/steer buttons do not consistently advertise keyboard shortcuts. Users will not discover Shift+Enter for queue/send and Ctrl+Enter for steer.
 
@@ -414,3 +414,4 @@ Validation:
 - Browser smoke normal chat state: Send tooltip shows `Shift+Enter`.
 - Browser smoke queued/running Codex state: Queue/Steer tooltips show shortcuts.
 - Keyboard smoke: shortcuts still work.
+
