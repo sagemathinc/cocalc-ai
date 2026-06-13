@@ -1,6 +1,9 @@
 /** @jest-environment jsdom */
 
-import { computeAcpStateToRender } from "../message-state";
+import {
+  computeAcpStateToRender,
+  shouldShowAcpResubmitToAgentButton,
+} from "../message-state";
 
 describe("computeAcpStateToRender", () => {
   it("hides queue state for non-viewer messages", () => {
@@ -102,5 +105,44 @@ describe("computeAcpStateToRender", () => {
       generating: true,
     });
     expect(state).toBe("");
+  });
+});
+
+describe("shouldShowAcpResubmitToAgentButton", () => {
+  const base = {
+    hasActions: true,
+    hasParentMessage: true,
+    isViewersMessage: false,
+    parentAcpState: "not-sent",
+    readOnly: false,
+    renderedValue: "Codex authentication expired.",
+  };
+
+  it("shows on assistant replies to failed ACP submissions", () => {
+    expect(shouldShowAcpResubmitToAgentButton(base)).toBe(true);
+  });
+
+  it("hides unless the parent user message is still not-sent", () => {
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        parentAcpState: "queue",
+      }),
+    ).toBe(false);
+  });
+
+  it("hides for viewer messages and read-only chats", () => {
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        isViewersMessage: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        readOnly: true,
+      }),
+    ).toBe(false);
   });
 });
