@@ -93,6 +93,17 @@ function expectHomepageSectionsLabeled(container: HTMLElement) {
   }
 }
 
+function expectLinkHrefs(
+  container: HTMLElement,
+  expectedHrefs: Array<unknown>,
+) {
+  expect(
+    within(container)
+      .getAllByRole("link")
+      .map((link) => link.getAttribute("href")),
+  ).toEqual(expectedHrefs);
+}
+
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -191,6 +202,12 @@ describe("PublicHomeApp", () => {
     const contextCues = within(hero).getByRole("group", {
       name: "CoCalc.ai workspace context cues",
     });
+    expectLinkHrefs(contextCues, [
+      "/features/compare",
+      "/features/terminal",
+      "/features/ai",
+      "/features/compare",
+    ]);
     expect(
       within(contextCues).getByText("Project context kept together"),
     ).not.toBeNull();
@@ -258,6 +275,11 @@ describe("PublicHomeApp", () => {
     const primaryLandingRoutes = within(routeMap).getByRole("group", {
       name: "CoCalc.ai primary landing routes",
     });
+    expectLinkHrefs(primaryLandingRoutes, [
+      "/auth/sign-up",
+      "/features",
+      "/products",
+    ]);
     expect(
       within(primaryLandingRoutes)
         .getByRole("link", { name: /Start a workspace/i })
@@ -334,6 +356,12 @@ describe("PublicHomeApp", () => {
     const projectSequence = within(projectPreview).getByRole("group", {
       name: "CoCalc.ai project work sequence",
     });
+    expectLinkHrefs(projectSequence, [
+      "/features/compare",
+      "/features/terminal",
+      "/features/ai",
+      "/features/compare",
+    ]);
     expect(
       within(projectSequence).getByText("Project work sequence"),
     ).not.toBeNull();
@@ -447,6 +475,13 @@ describe("PublicHomeApp", () => {
     const projectSurfaceLinks = within(projectPreview).getByRole("group", {
       name: "CoCalc.ai project surface links",
     });
+    expectLinkHrefs(projectSurfaceLinks, [
+      "/auth/sign-up",
+      "/features/compare",
+      "/features/terminal",
+      "/features/ai",
+      "/features/compare",
+    ]);
     expect(
       within(projectSurfaceLinks)
         .getByRole("link", { name: "Open files" })
@@ -498,11 +533,7 @@ describe("PublicHomeApp", () => {
     const materialRouteCards = within(workInputRoutes).getByRole("group", {
       name: "CoCalc.ai material route cards",
     });
-    expect(
-      within(materialRouteCards)
-        .getAllByRole("link")
-        .map((link) => link.getAttribute("href")),
-    ).toEqual([
+    expectLinkHrefs(materialRouteCards, [
       "/features/jupyter-notebook",
       "/features/terminal",
       "/features/python",
@@ -574,11 +605,7 @@ describe("PublicHomeApp", () => {
     const coreWorkflowCards = within(coreWorkflows).getByRole("group", {
       name: "CoCalc.ai core workflow cards",
     });
-    expect(
-      within(coreWorkflowCards)
-        .getAllByRole("link")
-        .map((link) => link.getAttribute("href")),
-    ).toEqual([
+    expectLinkHrefs(coreWorkflowCards, [
       "/features/jupyter-notebook",
       "/features/terminal",
       "/features/ai",
@@ -676,11 +703,7 @@ describe("PublicHomeApp", () => {
     const nextActionCards = within(nextActionRoutes).getByRole("group", {
       name: "CoCalc.ai next action cards",
     });
-    expect(
-      within(nextActionCards)
-        .getAllByRole("link")
-        .map((link) => link.getAttribute("href")),
-    ).toEqual([
+    expectLinkHrefs(nextActionCards, [
       "/features/jupyter-notebook",
       "/features/terminal",
       "/features/ai",
@@ -724,11 +747,7 @@ describe("PublicHomeApp", () => {
     const audienceRouteRows = within(audiencePaths).getByRole("group", {
       name: "CoCalc.ai audience route rows",
     });
-    expect(
-      within(audienceRouteRows)
-        .getAllByRole("link")
-        .map((link) => link.getAttribute("href")),
-    ).toEqual([
+    expectLinkHrefs(audienceRouteRows, [
       "/features/ai",
       "/features/jupyter-notebook",
       "/features/teaching",
@@ -775,11 +794,11 @@ describe("PublicHomeApp", () => {
     const operatingBoundaryShortcuts = screen.getByRole("group", {
       name: "CoCalc.ai operating boundary shortcuts",
     });
-    expect(
-      within(operatingBoundaryShortcuts)
-        .getAllByRole("link")
-        .map((link) => link.getAttribute("href")),
-    ).toEqual(["/", "/products/cocalc-plus", "/products"]);
+    expectLinkHrefs(operatingBoundaryShortcuts, [
+      "/",
+      "/products/cocalc-plus",
+      "/products",
+    ]);
     expect(
       within(operatingBoundaryShortcuts)
         .getByRole("link", { name: /Managed CoCalc\.ai/i })
@@ -806,11 +825,7 @@ describe("PublicHomeApp", () => {
     const deploymentPathCards = within(productOptions).getByRole("group", {
       name: "CoCalc.ai deployment path cards",
     });
-    expect(
-      within(deploymentPathCards)
-        .getAllByRole("link")
-        .map((link) => link.getAttribute("href")),
-    ).toEqual([
+    expectLinkHrefs(deploymentPathCards, [
       "/",
       "/products/cocalc-plus",
       "/products/cocalc-launchpad",
@@ -885,11 +900,7 @@ describe("PublicHomeApp", () => {
     const boundaryDetailRouteLinks = within(detailRoutes).getByRole("group", {
       name: "CoCalc.ai boundary detail route links",
     });
-    expect(
-      within(boundaryDetailRouteLinks)
-        .getAllByRole("link")
-        .map((link) => link.getAttribute("href")),
-    ).toEqual([
+    expectLinkHrefs(boundaryDetailRouteLinks, [
       "/policies/trust",
       "/products/cocalc-plus",
       "/products",
@@ -937,11 +948,7 @@ describe("PublicHomeApp", () => {
         name: "CoCalc.ai final deployment path actions",
       },
     );
-    expect(
-      within(finalDeploymentPathActions)
-        .getAllByRole("link")
-        .map((link) => link.getAttribute("href")),
-    ).toEqual([
+    expectLinkHrefs(finalDeploymentPathActions, [
       "/auth/sign-up",
       "https://software.cocalc.ai/software/cocalc-plus/index.html",
       "/products",
