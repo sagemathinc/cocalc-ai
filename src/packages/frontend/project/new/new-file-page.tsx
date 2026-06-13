@@ -46,7 +46,7 @@ import type { NewFilenameTypes } from "@cocalc/util/db-schema/defaults";
 import { PathNavigator } from "../explorer/path-navigator";
 import { useAvailableFeatures } from "../use-available-features";
 import { NewFileButton } from "./new-file-button";
-import { QUICK_CREATE_MAP } from "./launcher-catalog";
+import { getQuickCreateSpec, isQuickCreateAvailable } from "./launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import {
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
@@ -57,6 +57,7 @@ import {
   updateAccountLauncherPrefs,
 } from "./launcher-preferences";
 import { LauncherCustomizeModal } from "./launcher-customize-modal";
+import { QuickCreateDropdown } from "./quick-create-dropdown";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -151,39 +152,10 @@ export default function NewFilePage(props: Props) {
     siteDefaults: siteLauncherDefaults,
   });
 
-  function isQuickCreateAvailable(id: string): boolean {
-    switch (id) {
-      case "ipynb":
-        return availableFeatures.jupyter_notebook;
-      case "sage":
-        return availableFeatures.sage;
-      case "tex":
-        return availableFeatures.latex;
-      case "qmd":
-        return availableFeatures.qmd;
-      case "rmd":
-        return availableFeatures.rmd;
-      default:
-        return true;
-    }
-  }
-
   const quickCreateIds = mergedLauncher.quickCreate
     .filter((id) => id !== "sage")
-    .filter(isQuickCreateAvailable);
-  const quickCreateSpecs = quickCreateIds
-    .map((id) => {
-      const spec = QUICK_CREATE_MAP[id];
-      if (spec) return spec;
-      const data = file_options(`x.${id}`);
-      return {
-        id,
-        ext: id,
-        label: launcherLabel(data.name ?? id),
-        icon: data.icon ?? "file",
-      };
-    })
-    .filter(Boolean);
+    .filter((id) => isQuickCreateAvailable(id, availableFeatures));
+  const quickCreateSpecs = quickCreateIds.map(getQuickCreateSpec);
 
   const moreFileTypeOptions = useMemo(() => {
     const list = keys(file_associations).sort();
@@ -485,7 +457,22 @@ export default function NewFilePage(props: Props) {
         }}
       >
         {renderPathNavigator("16px")}
-        {renderActionButtons()}
+        <Space size={6} wrap>
+          <QuickCreateDropdown
+            quickCreateIds={mergedLauncher.quickCreate}
+            availableFeatures={availableFeatures}
+            onCreateFile={quickCreate}
+            onCreateFolder={openFolderModal}
+            onCustomize={() => setShowCustomizeModal(true)}
+            size="small"
+          />
+          <Button size="small" onClick={() => setShowUploadModal(true)}>
+            <Icon name="cloud-upload" /> Upload
+          </Button>
+          <Button size="small" onClick={openFolderModal}>
+            <Icon name="folder" /> Folder
+          </Button>
+        </Space>
       </div>
     );
   }

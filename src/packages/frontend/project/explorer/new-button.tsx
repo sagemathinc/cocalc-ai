@@ -3,14 +3,15 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, type MenuProps, Space } from "antd";
+import { Button, Space } from "antd";
 import { useIntl } from "react-intl";
 import {
   React,
+  redux,
   useAccountOtherSetting,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { DropdownMenu, Icon } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
@@ -18,12 +19,12 @@ import {
   getAccountLauncherPrefs,
   getEffectiveLauncher,
   getSiteLauncherDefaults,
+  updateAccountLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
+import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
+import { QuickCreateDropdown } from "@cocalc/frontend/project/new/quick-create-dropdown";
+import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
 import { ProjectActions } from "@cocalc/frontend/project_store";
-import { COLORS } from "@cocalc/util/theme";
-import { EXTs as ALL_FILE_BUTTON_TYPES } from "./file-listing/utils";
-import { file_options } from "@cocalc/frontend/editor-tmp";
-import { file_associations } from "@cocalc/frontend/file-associations";
 
 interface Props {
   project_id: string;
@@ -37,6 +38,7 @@ interface Props {
 }
 
 export const NewButton: React.FC<Props> = ({
+  project_id,
   file_search = "",
   actions,
   create_folder,
@@ -45,6 +47,9 @@ export const NewButton: React.FC<Props> = ({
   disabled,
 }: Props) => {
   const intl = useIntl();
+  const [showCustomizeModal, setShowCustomizeModal] =
+    React.useState<boolean>(false);
+  const availableFeatures = useAvailableFeatures(project_id);
   const launcherSettings = useAccountOtherSetting(LAUNCHER_SETTINGS_KEY);
   const site_launcher_quick = useTypedRedux(
     "customize",
@@ -57,18 +62,16 @@ export const NewButton: React.FC<Props> = ({
     siteDefaults: siteLauncherDefaults,
   });
 
-  function new_file_button_types() {
+  function getDisabledExtensions(): string[] {
     if (configuration != undefined) {
       const { disabled_ext } = configuration.get("main", {
         disabled_ext: undefined,
       });
       if (disabled_ext != undefined) {
-        return ALL_FILE_BUTTON_TYPES.filter(
-          (ext) => !disabled_ext.includes(ext),
-        );
+        return disabled_ext;
       }
     }
-    return ALL_FILE_BUTTON_TYPES;
+    return [];
   }
 
   function file_dropdown_icon(): React.JSX.Element {
@@ -77,38 +80,6 @@ export const NewButton: React.FC<Props> = ({
         <Icon name="plus-circle" /> {intl.formatMessage(labels.new)}
       </span>
     );
-  }
-
-  function file_dropdown_item(ext: string) {
-    const canonicalExt = canonical_extension(ext);
-    const data = file_options("x." + canonicalExt);
-    return {
-      key: canonicalExt,
-      onClick: () => on_dropdown_entry_clicked(canonicalExt),
-      label: (
-        <span style={{ whiteSpace: "nowrap" }}>
-          <Icon name={data.icon} />{" "}
-          <span style={{ textTransform: "capitalize" }}>{data.name} </span>{" "}
-          <span style={{ color: COLORS.GRAY_D }}>(.{canonicalExt})</span>
-        </span>
-      ),
-    };
-  }
-
-  function canonical_extension(ext: string): string {
-    const assoc = file_associations[ext];
-    if (assoc?.ext) return assoc.ext;
-    if (ext.startsWith("sage-")) {
-      const withoutPrefix = ext.slice(5);
-      if (
-        withoutPrefix &&
-        file_associations[withoutPrefix] != null &&
-        file_associations[withoutPrefix] === assoc
-      ) {
-        return withoutPrefix;
-      }
-    }
-    return ext;
   }
 
   function choose_extension(ext: string): void {
@@ -128,16 +99,6 @@ export const NewButton: React.FC<Props> = ({
     }
   }
 
-  function on_dropdown_entry_clicked(key: string) {
-    switch (key) {
-      case "folder":
-        on_create_folder_button_clicked();
-        break;
-      default:
-        choose_extension(key);
-    }
-  }
-
   // Go to new file tab if no file is specified
   function on_create_button_clicked(): void {
     if (file_search.length === 0) {
@@ -149,82 +110,36 @@ export const NewButton: React.FC<Props> = ({
     }
   }
 
-  const allowedTypes = React.useMemo(() => {
-    const seen = new Set<string>();
-    const canonicalized: string[] = [];
-    for (const ext of new_file_button_types() as string[]) {
-      const canonical = canonical_extension(ext);
-      if (seen.has(canonical)) continue;
-      seen.add(canonical);
-      canonicalized.push(canonical);
-    }
-    return canonicalized;
-  }, [configuration]);
-  const quickExtensions = React.useMemo(() => {
-    const allowed = new Set<string>(allowedTypes);
-    return mergedLauncher.quickCreate
-      .filter((ext) => allowed.has(ext))
-      .filter((ext, idx, arr) => arr.indexOf(ext) === idx);
-  }, [mergedLauncher.quickCreate, allowedTypes]);
-  const fullListExtensions = React.useMemo(() => {
-    const quickSet = new Set<string>(quickExtensions);
-    return allowedTypes.filter((ext) => !quickSet.has(ext));
-  }, [allowedTypes, quickExtensions]);
-
-  const items: MenuProps["items"] = [
-    ...React.useMemo(() => {
-      const quick = quickExtensions.map((ext) => {
-        const data = file_options("x." + ext);
-        return {
-          key: `quick:${ext}`,
-          onClick: () => on_dropdown_entry_clicked(ext),
-          label: (
-            <span style={{ whiteSpace: "nowrap" }}>
-              <Icon name={data.icon} />{" "}
-              <span style={{ textTransform: "capitalize" }}>{data.name} </span>{" "}
-              <span style={{ color: COLORS.GRAY_D }}>(.{ext})</span>
-            </span>
-          ),
-        };
-      });
-      if (quick.length === 0) return [];
-      return [
-        {
-          key: "__quick_create__",
-          disabled: true,
-          label: (
-            <span style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
-              Quick Create
-            </span>
-          ),
-        },
-        ...quick,
-        { type: "divider" as const },
-      ];
-    }, [quickExtensions]),
-    ...fullListExtensions.map(file_dropdown_item),
-    { type: "divider" },
-    {
-      key: "folder",
-      onClick: () => on_dropdown_entry_clicked("folder"),
-      label: (
-        <span style={{ whiteSpace: "nowrap" }}>
-          <Icon name="folder" />{" "}
-          <span style={{ textTransform: "capitalize" }}>
-            {intl.formatMessage(labels.folder)}
-          </span>
-        </span>
-      ),
-    },
-  ];
+  function saveUserLauncherPrefs(prefs: any | null) {
+    const next = updateAccountLauncherPrefs(launcherSettings, prefs);
+    redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
+  }
 
   return (
-    <Space.Compact>
-      <Button onClick={on_create_button_clicked} disabled={disabled}>
-        {file_dropdown_icon()}{" "}
-      </Button>
+    <>
+      <Space.Compact>
+        <Button onClick={on_create_button_clicked} disabled={disabled}>
+          {file_dropdown_icon()}{" "}
+        </Button>
 
-      <DropdownMenu title={""} button={true} items={items} />
-    </Space.Compact>
+        <QuickCreateDropdown
+          title=""
+          button
+          showDown
+          quickCreateIds={mergedLauncher.quickCreate}
+          availableFeatures={availableFeatures}
+          disabledExtensions={getDisabledExtensions()}
+          onCreateFile={choose_extension}
+          onCreateFolder={on_create_folder_button_clicked}
+          onCustomize={() => setShowCustomizeModal(true)}
+        />
+      </Space.Compact>
+      <LauncherCustomizeModal
+        open={showCustomizeModal}
+        onClose={() => setShowCustomizeModal(false)}
+        initialQuickCreate={mergedLauncher.quickCreate}
+        onSave={saveUserLauncherPrefs}
+      />
+    </>
   );
 };

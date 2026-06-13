@@ -196,6 +196,13 @@ jest.mock("./new-file-button", () => ({
 
 jest.mock("./launcher-catalog", () => ({
   QUICK_CREATE_MAP: {},
+  getQuickCreateSpec: (id: string) => ({
+    id,
+    ext: id,
+    label: id,
+    icon: "file",
+  }),
+  isQuickCreateAvailable: () => true,
 }));
 
 jest.mock("./launcher-preferences", () => ({
@@ -209,6 +216,14 @@ jest.mock("./launcher-preferences", () => ({
 
 jest.mock("./launcher-customize-modal", () => ({
   LauncherCustomizeModal: () => null,
+}));
+
+jest.mock("./quick-create-dropdown", () => ({
+  QuickCreateDropdown: ({ onCreateFile }: any) => (
+    <button type="button" onClick={() => onCreateFile("md")}>
+      New
+    </button>
+  ),
 }));
 
 jest.mock("@cocalc/frontend/editor-tmp", () => ({
