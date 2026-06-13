@@ -394,6 +394,38 @@ describe("PublicHomeApp", () => {
         "The operating boundary stays explicit before detail pages.",
       ),
     ).not.toBeNull();
+    const workspaceRouteLoop = within(routeMap).getByRole("group", {
+      name: "CoCalc.ai workspace route loop",
+    });
+    expectLinkHrefs(workspaceRouteLoop, [
+      "/auth/sign-up",
+      "/features",
+      "/features/ai",
+      "/features/compare",
+    ]);
+    expect(
+      within(workspaceRouteLoop).getByText("Workspace loop"),
+    ).not.toBeNull();
+    expect(
+      within(workspaceRouteLoop).getByText("Place, surface, context, review."),
+    ).not.toBeNull();
+    expect(
+      within(workspaceRouteLoop).getByText("Open the workspace"),
+    ).not.toBeNull();
+    expect(
+      within(workspaceRouteLoop).getByText("Pick the tool"),
+    ).not.toBeNull();
+    expect(
+      within(workspaceRouteLoop).getByText("Work with the record"),
+    ).not.toBeNull();
+    expect(
+      within(workspaceRouteLoop).getByText("Check what changed"),
+    ).not.toBeNull();
+    expect(
+      within(workspaceRouteLoop).getByText(
+        "Keep prompts, code changes, commands, and output attached to the same record.",
+      ),
+    ).not.toBeNull();
     const workspacePreview = screen.getByRole("region", {
       name: "CoCalc.ai workspace preview",
     });
@@ -1178,6 +1210,12 @@ describe("PublicHomeApp", () => {
         name: "CoCalc.ai hero route chooser",
       }),
       ["/projects", "/features", "/products"],
+    );
+    expectLinkHrefs(
+      screen.getByRole("group", {
+        name: "CoCalc.ai workspace route loop",
+      }),
+      ["/projects", "/features", "/features/ai", "/features/compare"],
     );
     expect(
       within(

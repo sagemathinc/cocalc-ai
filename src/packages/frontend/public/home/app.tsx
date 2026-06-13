@@ -570,6 +570,48 @@ const LANDING_DECISION_FLOW = [
   label: string;
   title: string;
 }[];
+const LANDING_WORKSPACE_LOOP = [
+  {
+    accent: COLORS.BLUE_D,
+    body: "Put notebooks, source, data, and notes in the project first.",
+    href: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? appPath("projects") : appPath("auth/sign-up"),
+    icon: "project-outlined",
+    label: "Place",
+    title: "Open the workspace",
+  },
+  {
+    accent: COLORS.RUN,
+    body: "Choose the notebook, terminal, AI, teaching, or writing surface from there.",
+    href: () => appPath("features"),
+    icon: "overview",
+    label: "Surface",
+    title: "Pick the tool",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Keep prompts, code changes, commands, and output attached to the same record.",
+    href: () => appPath("features/ai"),
+    icon: "robot",
+    label: "Context",
+    title: "Work with the record",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Use snapshots, file history, and comparison views when the work changes.",
+    href: () => appPath("features/compare"),
+    icon: "history",
+    label: "Review",
+    title: "Check what changed",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: (opts: { authenticated: boolean }) => string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
     return `rgba(255, 255, 255, ${opacity})`;
@@ -1933,6 +1975,98 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
               />
             </a>
           ))}
+        </div>
+        <div
+          aria-label="CoCalc.ai workspace route loop"
+          role="group"
+          style={{
+            background: PUBLIC_COLORS.surfaceMuted,
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: PANEL_RADIUS,
+            flex: "1 1 100%",
+            padding: 14,
+          }}
+        >
+          <Flex align="baseline" justify="space-between" wrap gap={8}>
+            <Text strong style={{ color: PUBLIC_COLORS.heading }}>
+              Workspace loop
+            </Text>
+            <Text style={{ color: PUBLIC_COLORS.mutedText, fontSize: 12 }}>
+              Place, surface, context, review.
+            </Text>
+          </Flex>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+              marginTop: 10,
+            }}
+          >
+            {LANDING_WORKSPACE_LOOP.map((step, index) => (
+              <a
+                href={step.href({ authenticated })}
+                key={step.label}
+                style={{
+                  alignItems: "start",
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${alpha(step.accent, 0.24)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 9,
+                  gridTemplateColumns: "32px minmax(0, 1fr)",
+                  minHeight: 126,
+                  padding: 12,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(step.accent, 0.08),
+                    border: `1px solid ${alpha(step.accent, 0.22)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: step.accent,
+                    display: "flex",
+                    flexDirection: "column",
+                    fontSize: 14,
+                    gap: 2,
+                    height: 44,
+                    justifyContent: "center",
+                    width: 32,
+                  }}
+                >
+                  <Icon name={step.icon} />
+                  <Text
+                    strong
+                    style={{ color: "inherit", fontSize: 10, lineHeight: 1 }}
+                  >
+                    {index + 1}
+                  </Text>
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text
+                    strong
+                    style={{
+                      color: step.accent,
+                      display: "block",
+                      fontSize: 12,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {step.label}
+                  </Text>
+                  <Text strong style={{ display: "block", marginTop: 2 }}>
+                    {step.title}
+                  </Text>
+                  <Text type="secondary">{step.body}</Text>
+                </span>
+              </a>
+            ))}
+          </div>
         </div>
       </Flex>
     </section>
