@@ -316,6 +316,7 @@ describe("host-create-draft", () => {
       machine_type: "n2d-standard-4",
       funding_mode: "account-postpaid",
       storage_mode: "persistent",
+      region_preference: "cheapest",
       disk_gb: 100,
       start_after_create: true,
     });

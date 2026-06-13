@@ -204,8 +204,9 @@ export function HostOptionsSelect({
         const mainLabel =
           data?.mainLabel ?? data?.selectionLabel ?? data?.label;
         const subLabel = data?.subLabel;
+        const detailLabel = data?.detailLabel;
         const detail = data?.priceLabel ?? data?.stateLabel;
-        if (!detail && !subLabel) {
+        if (!detail && !subLabel && !detailLabel) {
           return <span>{mainLabel}</span>;
         }
         return (
@@ -224,9 +225,19 @@ export function HostOptionsSelect({
                 flexDirection: "column",
                 gap: subLabel ? 2 : 0,
                 minWidth: 0,
+                maxWidth: detailLabel ? 300 : undefined,
               }}
             >
-              <span>{mainLabel}</span>
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={typeof mainLabel === "string" ? mainLabel : undefined}
+              >
+                {mainLabel}
+              </span>
               {subLabel ? (
                 <span
                   style={{
@@ -239,6 +250,22 @@ export function HostOptionsSelect({
                 </span>
               ) : null}
             </div>
+            {detailLabel ? (
+              <span
+                style={{
+                  color: COLORS.GRAY_M,
+                  flex: "0 0 180px",
+                  fontSize: "12px",
+                  lineHeight: 1.3,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={detailLabel}
+              >
+                {detailLabel}
+              </span>
+            ) : null}
             {detail ? (
               <span
                 style={{

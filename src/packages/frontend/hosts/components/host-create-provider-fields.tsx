@@ -111,7 +111,6 @@ export const HostCreateProviderFields: React.FC<
     "project_hosts_self_host_alpha_enabled",
   );
   const cloudflareCountry = useTypedRedux("customize", "country");
-  const cloudflareRegion = useTypedRedux("customize", "cloudflare_region");
   const cloudflareRegionCode = useTypedRedux(
     "customize",
     "cloudflare_region_code",
@@ -120,6 +119,7 @@ export const HostCreateProviderFields: React.FC<
     () => mapCountryRegionToR2Region(cloudflareCountry, cloudflareRegionCode),
     [cloudflareCountry, cloudflareRegionCode],
   );
+  const preferredR2RegionLabel = R2_REGION_LABELS[preferredR2Region];
   const [machineTypeSortMode, setMachineTypeSortMode] =
     useMachineTypeSortMode();
   const supportsMachineBenchmarks = selectedProvider === "gcp";
@@ -399,7 +399,18 @@ export const HostCreateProviderFields: React.FC<
     ) {
       return null;
     }
-    const fieldOptions = displayOptions[field] ?? [];
+    const showCloudflareRegionColumn =
+      field === "region" &&
+      (selectedProvider === "gcp" || selectedProvider === "nebius");
+    const fieldOptions = showCloudflareRegionColumn
+      ? (displayOptions[field] ?? []).map((opt) => {
+          const r2Region = mapCloudRegionToR2Region(opt.value);
+          return {
+            ...opt,
+            detailLabel: `Cloudflare: ${R2_REGION_LABELS[r2Region]}`,
+          };
+        })
+      : (displayOptions[field] ?? []);
     const label =
       labels[field] ??
       field
@@ -473,7 +484,7 @@ export const HostCreateProviderFields: React.FC<
               />
             </Form.Item>
             <div style={{ marginBottom: 12 }}>
-              <Tag>Backup region: {r2Label}</Tag>
+              <Tag>Cloudflare region: {r2Label}</Tag>
             </div>
           </Col>
         );
@@ -507,7 +518,7 @@ export const HostCreateProviderFields: React.FC<
               <Form.Item
                 name="region_preference"
                 label="Region preference"
-                initialValue={draftManaged ? undefined : "balanced"}
+                initialValue={draftManaged ? undefined : "cheapest"}
                 extra="Sort by location and price."
               >
                 <Select
@@ -536,33 +547,17 @@ export const HostCreateProviderFields: React.FC<
               </Form.Item>
             </Col>
           )}
-          {showRegionPreference && cloudflareRegionCode && (
-            <Col xs={24}>
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 10 }}
-                title="Cloudflare location"
-                description={
-                  <>
-                    Cloudflare sees this browser near{" "}
-                    <Typography.Text strong>
-                      {cloudflareRegion || cloudflareRegionCode}
-                    </Typography.Text>{" "}
-                    ({cloudflareRegionCode}). Closest-region sorting uses{" "}
-                    <Typography.Text strong>
-                      {R2_REGION_LABELS[preferredR2Region]}
-                    </Typography.Text>
-                    .
-                  </>
-                }
-              />
-            </Col>
-          )}
         </Row>
       </div>
       <div style={FIELD_GROUP_STYLE}>
-        <Typography.Text strong>Location and compute</Typography.Text>
+        <Typography.Text strong>
+          Location and compute{" "}
+          {showRegionPreference ? (
+            <Typography.Text type="secondary" style={{ fontWeight: "normal" }}>
+              (your region: {preferredR2RegionLabel})
+            </Typography.Text>
+          ) : null}
+        </Typography.Text>
         <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
           {schema.primary.map(renderField)}
         </Row>

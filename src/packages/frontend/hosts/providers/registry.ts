@@ -65,6 +65,7 @@ export type HostFieldOption<T = unknown> = {
   selectionLabel?: string;
   mainLabel?: string;
   subLabel?: string;
+  detailLabel?: string;
   priceLabel?: string;
   hourlyRate?: number;
   benchmarkCpuScore?: number;
@@ -2401,6 +2402,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       primary: ["region", "zone", "gpu_type", "machine_type"],
       advanced: [],
       labels: {
+        region: "Google Region",
         machine_type: "Machine type",
         gpu_type: "GPU",
       },
@@ -2600,6 +2602,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       primary: ["region", "machine_type"],
       advanced: [],
       labels: {
+        region: "Nebius Region",
         machine_type: "Instance type",
       },
     },
