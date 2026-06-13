@@ -249,31 +249,33 @@ describe("PublicHomeApp", () => {
       "/products",
     ]);
     expect(
-      within(heroRouteChooser).getByText("Choose your starting point"),
+      within(heroRouteChooser).getByText("Start from the project"),
     ).not.toBeNull();
     expect(
-      within(heroRouteChooser).getByText("Workspace, workflow, or deployment."),
+      within(heroRouteChooser).getByText(
+        "Then pick the workflow or operating path.",
+      ),
     ).not.toBeNull();
     expect(within(heroRouteChooser).getByText("Workspace")).not.toBeNull();
     expect(within(heroRouteChooser).getByText("Workflows")).not.toBeNull();
     expect(within(heroRouteChooser).getByText("Deployment")).not.toBeNull();
     expect(
-      within(heroRouteChooser).getByText("Start a workspace"),
+      within(heroRouteChooser).getByText("Create a project"),
     ).not.toBeNull();
     expect(
-      within(heroRouteChooser).getByText("Explore workflows"),
+      within(heroRouteChooser).getByText("Browse workflows"),
     ).not.toBeNull();
     expect(
-      within(heroRouteChooser).getByText("Compare deployments"),
+      within(heroRouteChooser).getByText("Choose deployment path"),
     ).not.toBeNull();
     expect(
       within(heroRouteChooser).getByText(
-        "Create the project that holds files, notebooks, terminals, and Codex work.",
+        "Start with the project that holds files, notebooks, terminals, and Codex work.",
       ),
     ).not.toBeNull();
     expect(
       within(heroRouteChooser).getByText(
-        "Choose hosted service, local runtime, or customer-operated CoCalc.",
+        "Use products when the question is hosted, local, or customer-operated.",
       ),
     ).not.toBeNull();
     expect(
@@ -297,46 +299,14 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectOutcomes).getByText("A lasting record"),
     ).not.toBeNull();
-    const contextCues = within(hero).getByRole("group", {
-      name: "CoCalc.ai workspace context cues",
-    });
-    expectLinkHrefs(contextCues, [
-      "/features/compare",
-      "/features/terminal",
-      "/features/ai",
-      "/features/compare",
-    ]);
     expect(
-      within(contextCues).getByText("Project context kept together"),
-    ).not.toBeNull();
-    expect(within(contextCues).getByText("Files")).not.toBeNull();
+      within(hero).queryByRole("group", {
+        name: "CoCalc.ai workspace context cues",
+      }),
+    ).toBeNull();
     expect(
-      within(contextCues).getByText("Shells, packages, services"),
-    ).not.toBeNull();
-    expect(
-      within(contextCues).getByText("Agent prompts and patches"),
-    ).not.toBeNull();
-    expect(within(contextCues).getByText("Review")).not.toBeNull();
-    expect(
-      within(contextCues)
-        .getByRole("link", { name: /Files/i })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
-    expect(
-      within(contextCues)
-        .getByRole("link", { name: /Runtime/i })
-        .getAttribute("href"),
-    ).toBe("/features/terminal");
-    expect(
-      within(contextCues)
-        .getByRole("link", { name: /Codex/i })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(contextCues)
-        .getByRole("link", { name: /Review/i })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
+      within(hero).queryByText("Project context kept together"),
+    ).toBeNull();
     expect(
       within(hero).queryByRole("group", {
         name: "CoCalc project context preview",

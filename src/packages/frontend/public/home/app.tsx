@@ -154,58 +154,32 @@ const HERO_OUTCOMES = [
     title: "A lasting record",
   },
 ] satisfies { body: string; icon: IconName; title: string }[];
-const HERO_CONTEXT_SIGNALS = [
-  {
-    body: "Source, notebooks, data",
-    href: "features/compare",
-    icon: "files",
-    label: "Files",
-  },
-  {
-    body: "Shells, packages, services",
-    href: "features/terminal",
-    icon: "terminal",
-    label: "Runtime",
-  },
-  {
-    body: "Agent prompts and patches",
-    href: "features/ai",
-    icon: "robot",
-    label: "Codex",
-  },
-  {
-    body: "Snapshots and TimeTravel",
-    href: "features/compare",
-    icon: "history",
-    label: "Review",
-  },
-] satisfies { body: string; href: string; icon: IconName; label: string }[];
 const HERO_ROUTE_CHOICES = [
   {
     accent: PUBLIC_COLORS.accent,
-    body: "Create the project that holds files, notebooks, terminals, and Codex work.",
+    body: "Start with the project that holds files, notebooks, terminals, and Codex work.",
     href: ({ authenticated }: { authenticated: boolean }) =>
       authenticated ? appPath("projects") : appPath("auth/sign-up"),
     icon: "project-outlined",
     label: "Workspace",
     title: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? "Open projects" : "Start a workspace",
+      authenticated ? "Open projects" : "Create a project",
   },
   {
     accent: COLORS.RUN,
-    body: "Find notebook, terminal, AI, teaching, writing, and comparison paths.",
+    body: "Then choose a notebook, terminal, AI, teaching, writing, or comparison workflow.",
     href: () => appPath("features"),
     icon: "overview",
     label: "Workflows",
-    title: () => "Explore workflows",
+    title: () => "Browse workflows",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    body: "Choose hosted service, local runtime, or customer-operated CoCalc.",
+    body: "Use products when the question is hosted, local, or customer-operated.",
     href: () => appPath("products"),
     icon: "servers",
     label: "Deployment",
-    title: () => "Compare deployments",
+    title: () => "Choose deployment path",
   },
 ] satisfies {
   accent: string;
@@ -767,118 +741,22 @@ function DecorativeButtonIcon({ name }: { name: IconName }) {
   );
 }
 
-function HeroContextStrip() {
-  return (
-    <div
-      aria-label="CoCalc.ai workspace context cues"
-      role="group"
-      style={{
-        background: alpha(PUBLIC_COLORS.brandDark, 0.42),
-        border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.22)}`,
-        borderRadius: PANEL_RADIUS,
-        maxWidth: 740,
-        padding: 12,
-      }}
-    >
-      <Text
-        strong
-        style={{
-          color: PUBLIC_COLORS.surface,
-          display: "block",
-          marginBottom: 9,
-        }}
-      >
-        Project context kept together
-      </Text>
-      <div
-        style={{
-          display: "grid",
-          gap: 8,
-          gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))",
-        }}
-      >
-        {HERO_CONTEXT_SIGNALS.map((item) => (
-          <a
-            href={appPath(item.href)}
-            key={item.label}
-            style={{
-              alignItems: "start",
-              background: alpha(PUBLIC_COLORS.surface, 0.12),
-              border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
-              borderRadius: PANEL_RADIUS,
-              color: PUBLIC_COLORS.surface,
-              display: "grid",
-              gap: 8,
-              gridTemplateColumns: "26px minmax(0, 1fr) 14px",
-              minHeight: 62,
-              padding: "9px 10px",
-              textDecoration: "none",
-            }}
-          >
-            <span
-              aria-hidden="true"
-              style={{
-                alignItems: "center",
-                color: PUBLIC_COLORS.accent,
-                display: "flex",
-                height: 26,
-                justifyContent: "center",
-                width: 26,
-              }}
-            >
-              <Icon name={item.icon} />
-            </span>
-            <span style={{ minWidth: 0 }}>
-              <Text
-                strong
-                style={{
-                  color: PUBLIC_COLORS.surface,
-                  display: "block",
-                }}
-              >
-                {item.label}
-              </Text>
-              <Text
-                style={{
-                  color: alpha(PUBLIC_COLORS.surface, 0.68),
-                  display: "block",
-                  fontSize: 12,
-                }}
-              >
-                {item.body}
-              </Text>
-            </span>
-            <Icon
-              name="arrow-right"
-              style={{
-                alignSelf: "center",
-                color: alpha(PUBLIC_COLORS.surface, 0.64),
-                fontSize: 12,
-              }}
-            />
-          </a>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function HeroRouteChooser({ authenticated }: { authenticated: boolean }) {
   return (
     <div
       aria-label="CoCalc.ai hero route chooser"
       role="group"
       style={{
-        background: alpha(PUBLIC_COLORS.brandDark, 0.5),
-        border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.24)}`,
+        background: alpha(PUBLIC_COLORS.brandDark, 0.46),
+        border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.25)}`,
         borderRadius: PANEL_RADIUS,
         maxWidth: 740,
-        padding: 12,
+        padding: 10,
       }}
     >
       <Flex align="baseline" justify="space-between" wrap gap={8}>
         <Text strong style={{ color: PUBLIC_COLORS.surface }}>
-          Choose your starting point
+          Start from the project
         </Text>
         <Text
           style={{
@@ -886,7 +764,7 @@ function HeroRouteChooser({ authenticated }: { authenticated: boolean }) {
             fontSize: 12,
           }}
         >
-          Workspace, workflow, or deployment.
+          Then pick the workflow or operating path.
         </Text>
       </Flex>
       <div
@@ -910,9 +788,9 @@ function HeroRouteChooser({ authenticated }: { authenticated: boolean }) {
               color: PUBLIC_COLORS.surface,
               display: "grid",
               gap: 9,
-              gridTemplateColumns: "32px minmax(0, 1fr) 14px",
-              minHeight: 112,
-              padding: 11,
+              gridTemplateColumns: "30px minmax(0, 1fr) 14px",
+              minHeight: 92,
+              padding: 10,
               textDecoration: "none",
             }}
           >
@@ -926,9 +804,9 @@ function HeroRouteChooser({ authenticated }: { authenticated: boolean }) {
                 color: choice.accent,
                 display: "flex",
                 fontSize: 16,
-                height: 32,
+                height: 30,
                 justifyContent: "center",
-                width: 32,
+                width: 30,
               }}
             >
               <Icon name={choice.icon} />
@@ -1933,7 +1811,6 @@ function Hero({ config }: { config?: HomeConfig }) {
             )}
           </Flex>
           <HeroRouteChooser authenticated={authenticated} />
-          <HeroContextStrip />
         </Flex>
         <HeroWorkspaceSnapshot authenticated={authenticated} />
       </div>
