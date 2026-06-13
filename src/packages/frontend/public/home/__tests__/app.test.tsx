@@ -57,6 +57,12 @@ describe("PublicHomeApp", () => {
         name: "CoCalc.ai",
       }),
     ).not.toBeNull();
+    const projectPreview = screen.getByRole("group", {
+      name: "Live CoCalc project preview",
+    });
+    expect(within(projectPreview).getByText("research-demo")).not.toBeNull();
+    expect(within(projectPreview).getByText("Codex thread")).not.toBeNull();
+    expect(within(projectPreview).getByText("Live context")).not.toBeNull();
     expect(
       screen.getByRole("heading", {
         name: "Start where the work begins.",

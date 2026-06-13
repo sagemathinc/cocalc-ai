@@ -71,6 +71,54 @@ const HERO_SIGNALS = [
     title: "Recoverable work",
   },
 ] satisfies { body: string; icon: IconName; title: string }[];
+const WORKSPACE_PREVIEW_FILES = [
+  {
+    icon: "jupyter",
+    meta: "Output saved",
+    name: "analysis.ipynb",
+  },
+  {
+    icon: "terminal",
+    meta: "Long-running shell",
+    name: "run.term",
+  },
+  {
+    icon: "file-code",
+    meta: "Patch ready",
+    name: "src/model.py",
+  },
+] satisfies { icon: IconName; meta: string; name: string }[];
+const WORKSPACE_PREVIEW_ACTIVITY = [
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    detail: "Tests, packages, and logs use the project files.",
+    icon: "terminal",
+    label: "Terminal",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Prompts, patches, screenshots, and review notes stay attached.",
+    icon: "robot",
+    label: "Codex thread",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Snapshots and TimeTravel keep recovery nearby.",
+    icon: "history",
+    label: "History",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
+const WORKSPACE_PREVIEW_TABS = [
+  { icon: "files", label: "Files" },
+  { icon: "terminal", label: "Terminal" },
+  { icon: "robot", label: "Codex" },
+  { icon: "history", label: "History" },
+] satisfies { icon: IconName; label: string }[];
 
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
@@ -179,6 +227,205 @@ function DecorativeButtonIcon({ name }: { name: IconName }) {
   );
 }
 
+function WorkspacePreview() {
+  return (
+    <div
+      aria-label="Live CoCalc project preview"
+      role="group"
+      style={{
+        backdropFilter: "blur(14px)",
+        background: alpha(PUBLIC_COLORS.surface, 0.18),
+        border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.34)}`,
+        borderRadius: PANEL_RADIUS,
+        boxShadow: `0 24px 54px ${alpha(PUBLIC_COLORS.brandDark, 0.22)}`,
+        color: PUBLIC_COLORS.surface,
+        padding: 16,
+      }}
+    >
+      <Flex align="center" justify="space-between" wrap gap={10}>
+        <Flex align="center" gap={10}>
+          <span
+            style={{
+              alignItems: "center",
+              background: alpha(PUBLIC_COLORS.surface, 0.16),
+              border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.28)}`,
+              borderRadius: PANEL_RADIUS,
+              color: PUBLIC_COLORS.accent,
+              display: "flex",
+              flex: "0 0 42px",
+              fontSize: 20,
+              height: 42,
+              justifyContent: "center",
+              width: 42,
+            }}
+          >
+            <Icon name="project-outlined" />
+          </span>
+          <span>
+            <Text strong style={{ color: "inherit", display: "block" }}>
+              research-demo
+            </Text>
+            <Text style={{ color: alpha(PUBLIC_COLORS.surface, 0.74) }}>
+              Persistent project
+            </Text>
+          </span>
+        </Flex>
+        <Tag
+          style={{
+            background: alpha(PUBLIC_COLORS.accent, 0.18),
+            borderColor: alpha(PUBLIC_COLORS.accent, 0.45),
+            color: PUBLIC_COLORS.surface,
+            marginInlineEnd: 0,
+          }}
+        >
+          Live context
+        </Tag>
+      </Flex>
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+          marginTop: 16,
+        }}
+      >
+        <div
+          style={{
+            background: alpha(PUBLIC_COLORS.brandDark, 0.48),
+            border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+            borderRadius: PANEL_RADIUS,
+            padding: 14,
+          }}
+        >
+          <Text
+            strong
+            style={{
+              color: alpha(PUBLIC_COLORS.surface, 0.86),
+              display: "block",
+              marginBottom: 10,
+            }}
+          >
+            Project files
+          </Text>
+          <Flex vertical gap={8}>
+            {WORKSPACE_PREVIEW_FILES.map((file) => (
+              <Flex align="center" gap={9} key={file.name}>
+                <span
+                  style={{
+                    alignItems: "center",
+                    background: alpha(PUBLIC_COLORS.surface, 0.13),
+                    borderRadius: PANEL_RADIUS,
+                    color: PUBLIC_COLORS.accent,
+                    display: "flex",
+                    flex: "0 0 30px",
+                    height: 30,
+                    justifyContent: "center",
+                    width: 30,
+                  }}
+                >
+                  <Icon name={file.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text
+                    style={{
+                      color: PUBLIC_COLORS.surface,
+                      display: "block",
+                    }}
+                  >
+                    {file.name}
+                  </Text>
+                  <Text style={{ color: alpha(PUBLIC_COLORS.surface, 0.68) }}>
+                    {file.meta}
+                  </Text>
+                </span>
+              </Flex>
+            ))}
+          </Flex>
+        </div>
+        <div
+          style={{
+            background: alpha(PUBLIC_COLORS.surface, 0.94),
+            border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.26)}`,
+            borderRadius: PANEL_RADIUS,
+            color: PUBLIC_COLORS.heading,
+            padding: 14,
+          }}
+        >
+          <Text
+            strong
+            style={{
+              color: PUBLIC_COLORS.heading,
+              display: "block",
+              marginBottom: 10,
+            }}
+          >
+            Shared project state
+          </Text>
+          <Flex vertical gap={9}>
+            {WORKSPACE_PREVIEW_ACTIVITY.map((item) => (
+              <Flex align="start" gap={9} key={item.label}>
+                <span
+                  style={{
+                    alignItems: "center",
+                    background: `${item.accent}14`,
+                    border: `1px solid ${item.accent}33`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    flex: "0 0 30px",
+                    height: 30,
+                    justifyContent: "center",
+                    marginTop: 1,
+                    width: 30,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <span>
+                  <Text strong style={{ display: "block" }}>
+                    {item.label}
+                  </Text>
+                  <Text type="secondary">{item.detail}</Text>
+                </span>
+              </Flex>
+            ))}
+          </Flex>
+        </div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))",
+          marginTop: 12,
+        }}
+      >
+        {WORKSPACE_PREVIEW_TABS.map((tab) => (
+          <span
+            key={tab.label}
+            style={{
+              alignItems: "center",
+              background: alpha(PUBLIC_COLORS.surface, 0.13),
+              border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+              borderRadius: PANEL_RADIUS,
+              color: PUBLIC_COLORS.surface,
+              display: "inline-flex",
+              gap: 7,
+              justifyContent: "center",
+              minHeight: 36,
+              padding: "7px 8px",
+            }}
+          >
+            <Icon name={tab.icon} />
+            <Text style={{ color: "inherit" }}>{tab.label}</Text>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Hero({ config }: { config?: HomeConfig }) {
   const authenticated = !!config?.is_authenticated;
   return (
@@ -196,134 +443,147 @@ function Hero({ config }: { config?: HomeConfig }) {
         backgroundPosition: "center",
         backgroundSize: "cover",
         color: PUBLIC_COLORS.surface,
-        display: "flex",
         marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
         minHeight: "66vh",
         padding: `56px ${PUBLIC_PAGE_GUTTER}`,
       }}
     >
-      <div style={{ maxWidth: 720 }}>
-        <Flex vertical gap={22}>
-          <Eyebrow>
-            <span style={{ color: PUBLIC_COLORS.accent }}>
-              Persistent projects for people and AI agents
-            </span>
-          </Eyebrow>
-          <div>
-            <Title
-              level={1}
-              style={{
-                color: PUBLIC_COLORS.surface,
-                fontSize: 58,
-                letterSpacing: 0,
-                lineHeight: 1.02,
-                margin: 0,
-              }}
-            >
-              CoCalc.ai
-            </Title>
-            <Paragraph
-              style={{
-                color: alpha(PUBLIC_COLORS.surface, 0.9),
-                fontSize: 21,
-                lineHeight: 1.45,
-                margin: "16px 0 0",
-                maxWidth: 640,
-              }}
-            >
-              An AI-native technical workspace where notebooks, terminals,
-              files, chat, and Codex agent work stay together in one durable
-              project.
-            </Paragraph>
-          </div>
-          <Flex gap={12} wrap>
-            {authenticated ? (
-              <>
-                <Button
-                  href={appPath("projects")}
-                  icon={<DecorativeButtonIcon name="project-outlined" />}
-                  size="large"
-                  type="primary"
-                >
-                  Open projects
-                </Button>
-                <Button
-                  ghost
-                  href={appPath("features")}
-                  icon={<DecorativeButtonIcon name="overview" />}
-                  size="large"
-                >
-                  Explore features
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  href={appPath("auth/sign-up")}
-                  icon={<DecorativeButtonIcon name="rocket" />}
-                  size="large"
-                  type="primary"
-                >
-                  Start on CoCalc.ai
-                </Button>
-                <Button
-                  ghost
-                  href={appPath("products")}
-                  icon={<DecorativeButtonIcon name="project-outlined" />}
-                  size="large"
-                >
-                  Compare product paths
-                </Button>
-              </>
-            )}
-            <Button
-              ghost
-              href={appPath("products/cocalc-plus")}
-              icon={<DecorativeButtonIcon name="laptop" />}
-              size="large"
-            >
-              Install CoCalc Plus
-            </Button>
-          </Flex>
-          <div
-            style={{
-              display: "grid",
-              gap: 10,
-              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-              marginTop: 8,
-              maxWidth: 680,
-            }}
-          >
-            {HERO_SIGNALS.map((item) => (
-              <div
-                key={item.title}
+      <div
+        style={{
+          alignItems: "center",
+          display: "grid",
+          gap: 32,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 380px), 1fr))",
+          width: "100%",
+        }}
+      >
+        <div style={{ maxWidth: 720 }}>
+          <Flex vertical gap={22}>
+            <Eyebrow>
+              <span style={{ color: PUBLIC_COLORS.accent }}>
+                Persistent projects for people and AI agents
+              </span>
+            </Eyebrow>
+            <div>
+              <Title
+                level={1}
                 style={{
-                  background: alpha(PUBLIC_COLORS.surface, 0.14),
-                  border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.28)}`,
-                  borderRadius: PANEL_RADIUS,
                   color: PUBLIC_COLORS.surface,
-                  display: "flex",
-                  gap: 12,
-                  minHeight: 82,
-                  padding: "12px 14px",
+                  fontSize: 58,
+                  letterSpacing: 0,
+                  lineHeight: 1.02,
+                  margin: 0,
                 }}
               >
-                <Icon
-                  name={item.icon}
-                  style={{ flex: "0 0 auto", fontSize: 20, marginTop: 2 }}
-                />
-                <div>
-                  <Text strong style={{ color: "inherit", display: "block" }}>
-                    {item.title}
-                  </Text>
-                  <Text style={{ color: alpha(PUBLIC_COLORS.surface, 0.78) }}>
-                    {item.body}
-                  </Text>
+                CoCalc.ai
+              </Title>
+              <Paragraph
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.9),
+                  fontSize: 21,
+                  lineHeight: 1.45,
+                  margin: "16px 0 0",
+                  maxWidth: 640,
+                }}
+              >
+                An AI-native technical workspace where notebooks, terminals,
+                files, chat, and Codex agent work stay together in one durable
+                project.
+              </Paragraph>
+            </div>
+            <Flex gap={12} wrap>
+              {authenticated ? (
+                <>
+                  <Button
+                    href={appPath("projects")}
+                    icon={<DecorativeButtonIcon name="project-outlined" />}
+                    size="large"
+                    type="primary"
+                  >
+                    Open projects
+                  </Button>
+                  <Button
+                    ghost
+                    href={appPath("features")}
+                    icon={<DecorativeButtonIcon name="overview" />}
+                    size="large"
+                  >
+                    Explore features
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    href={appPath("auth/sign-up")}
+                    icon={<DecorativeButtonIcon name="rocket" />}
+                    size="large"
+                    type="primary"
+                  >
+                    Start on CoCalc.ai
+                  </Button>
+                  <Button
+                    ghost
+                    href={appPath("products")}
+                    icon={<DecorativeButtonIcon name="project-outlined" />}
+                    size="large"
+                  >
+                    Compare product paths
+                  </Button>
+                </>
+              )}
+              <Button
+                ghost
+                href={appPath("products/cocalc-plus")}
+                icon={<DecorativeButtonIcon name="laptop" />}
+                size="large"
+              >
+                Install CoCalc Plus
+              </Button>
+            </Flex>
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                marginTop: 8,
+                maxWidth: 680,
+              }}
+            >
+              {HERO_SIGNALS.map((item) => (
+                <div
+                  key={item.title}
+                  style={{
+                    background: alpha(PUBLIC_COLORS.surface, 0.14),
+                    border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.28)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: PUBLIC_COLORS.surface,
+                    display: "flex",
+                    gap: 12,
+                    minHeight: 82,
+                    padding: "12px 14px",
+                  }}
+                >
+                  <Icon
+                    name={item.icon}
+                    style={{ flex: "0 0 auto", fontSize: 20, marginTop: 2 }}
+                  />
+                  <div>
+                    <Text strong style={{ color: "inherit", display: "block" }}>
+                      {item.title}
+                    </Text>
+                    <Text style={{ color: alpha(PUBLIC_COLORS.surface, 0.78) }}>
+                      {item.body}
+                    </Text>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </Flex>
+              ))}
+            </div>
+          </Flex>
+        </div>
+        <div style={{ justifySelf: "end", maxWidth: 540, width: "100%" }}>
+          <WorkspacePreview />
+        </div>
       </div>
     </section>
   );
