@@ -398,6 +398,28 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Technical courses/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
+    const engineeringCues = within(audiencePaths).getByRole("group", {
+      name: "Engineering teams workflow cues",
+    });
+    expect(within(engineeringCues).getByText("Source")).not.toBeNull();
+    expect(
+      within(engineeringCues).getByText("Services and tests"),
+    ).not.toBeNull();
+    expect(
+      within(engineeringCues).getByText("Patches and review"),
+    ).not.toBeNull();
+    const researchCues = within(audiencePaths).getByRole("group", {
+      name: "Research labs workflow cues",
+    });
+    expect(within(researchCues).getByText("Notebooks")).not.toBeNull();
+    expect(within(researchCues).getByText("Data")).not.toBeNull();
+    expect(within(researchCues).getByText("Snapshots")).not.toBeNull();
+    const courseCues = within(audiencePaths).getByRole("group", {
+      name: "Technical courses workflow cues",
+    });
+    expect(within(courseCues).getByText("Coursework")).not.toBeNull();
+    expect(within(courseCues).getByText("Student projects")).not.toBeNull();
+    expect(within(courseCues).getByText("Notebook grading")).not.toBeNull();
     expect(screen.getByText("Operating path chooser")).not.toBeNull();
     expect(screen.getByText("Choose who runs the workspace")).not.toBeNull();
     expect(screen.getByText("Deployment path")).not.toBeNull();

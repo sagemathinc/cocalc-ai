@@ -1120,6 +1120,11 @@ function AudienceSection() {
       ],
       href: appPath("features/ai"),
       icon: "code-outlined",
+      signals: [
+        { icon: "files", label: "Source", value: "Files and config" },
+        { icon: "terminal", label: "Runtime", value: "Services and tests" },
+        { icon: "robot", label: "Codex", value: "Patches and review" },
+      ],
       title: "Engineering teams",
     },
     {
@@ -1132,6 +1137,11 @@ function AudienceSection() {
       ],
       href: appPath("features/jupyter-notebook"),
       icon: "experiment",
+      signals: [
+        { icon: "jupyter", label: "Notebooks", value: "Output and notes" },
+        { icon: "database", label: "Data", value: "Project files" },
+        { icon: "history", label: "Record", value: "Snapshots" },
+      ],
       title: "Research labs",
     },
     {
@@ -1144,6 +1154,11 @@ function AudienceSection() {
       ],
       href: appPath("features/teaching"),
       icon: "graduation-cap",
+      signals: [
+        { icon: "graduation-cap", label: "Coursework", value: "Assignments" },
+        { icon: "users", label: "Class", value: "Student projects" },
+        { icon: "jupyter", label: "Review", value: "Notebook grading" },
+      ],
       title: "Technical courses",
     },
   ] satisfies {
@@ -1152,6 +1167,7 @@ function AudienceSection() {
     bullets: string[];
     href: string;
     icon: IconName;
+    signals: { icon: IconName; label: string; value: string }[];
     title: string;
   }[];
 
@@ -1195,7 +1211,7 @@ function AudienceSection() {
               boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
               color: "inherit",
               display: "block",
-              minHeight: 270,
+              minHeight: 360,
               padding: 22,
               textDecoration: "none",
             }}
@@ -1228,6 +1244,47 @@ function AudienceSection() {
                   {audience.title}
                 </Title>
                 <Paragraph style={{ margin: 0 }}>{audience.body}</Paragraph>
+              </div>
+              <div
+                aria-label={`${audience.title} workflow cues`}
+                role="group"
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(min(100%, 132px), 1fr))",
+                }}
+              >
+                {audience.signals.map((signal) => (
+                  <span
+                    key={signal.label}
+                    style={{
+                      alignItems: "start",
+                      background: `${audience.accent}0d`,
+                      border: `1px solid ${audience.accent}26`,
+                      borderRadius: PANEL_RADIUS,
+                      display: "grid",
+                      gap: 8,
+                      gridTemplateColumns: "22px minmax(0, 1fr)",
+                      minHeight: 62,
+                      padding: "9px 10px",
+                    }}
+                  >
+                    <Icon
+                      name={signal.icon}
+                      style={{
+                        color: audience.accent,
+                        marginTop: 2,
+                      }}
+                    />
+                    <span style={{ minWidth: 0 }}>
+                      <Text strong style={{ display: "block" }}>
+                        {signal.label}
+                      </Text>
+                      <Text type="secondary">{signal.value}</Text>
+                    </span>
+                  </span>
+                ))}
               </div>
               <div
                 style={{
