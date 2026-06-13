@@ -1,5 +1,6 @@
 import { BaseEditorActions } from "../actions-base";
 import type { AppRedux } from "@cocalc/util/redux/types";
+import { EventEmitter } from "events";
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -20,6 +21,27 @@ describe("BaseEditorActions reconnect coordination", () => {
       removeActions: jest.fn(),
     } as unknown as AppRedux;
   }
+
+  it("waits for any non-ready syncdoc state before proceeding", async () => {
+    const syncdoc = new EventEmitter() as any;
+    syncdoc.is_fake = false;
+    syncdoc.get_state = jest.fn(() => "loading");
+    const target: any = {
+      isClosed: jest.fn(() => false),
+    };
+
+    const promise = BaseEditorActions.prototype.wait_until_syncdoc_ready.call(
+      target,
+      syncdoc,
+    );
+    await Promise.resolve();
+    expect(syncdoc.get_state).toHaveBeenCalled();
+
+    syncdoc.get_state = jest.fn(() => "ready");
+    syncdoc.emit("ready");
+
+    await expect(promise).resolves.toBe(true);
+  });
 
   it("requests reconnect when a visible editor becomes visible but is not live", async () => {
     const requestReconnect = jest.fn();

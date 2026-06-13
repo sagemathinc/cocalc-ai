@@ -46,7 +46,6 @@ import {
   project_api,
   server_time,
 } from "@cocalc/frontend/frame-editors/generic/client";
-import { once } from "@cocalc/util/async-utils";
 import { ExecOutput } from "@cocalc/util/db-schema/projects";
 import {
   change_filename_extension,
@@ -347,16 +346,9 @@ export class Actions extends BaseActions<LatexEditorState> {
     // https://github.com/sagemathinc/cocalc/issues/2839
     if (this.engine_config !== undefined) return;
 
-    // Wait until the syncstring is loaded from disk.
-    if (this._syncstring.get_state() == "init") {
-      try {
-        await once(this._syncstring, "ready");
-      } catch {
-        // closed before finished opening
-        return;
-      }
-    }
-    if (this._state == "closed") {
+    // Wait until the syncstring is loaded from disk. During fast-open and
+    // reconnects it can be non-ready without being in the old "init" state.
+    if (!(await this.wait_until_syncdoc_ready(this._syncstring))) {
       return;
     }
 
@@ -426,15 +418,7 @@ export class Actions extends BaseActions<LatexEditorState> {
     if (this._syncdb == null) {
       throw Error("syncdb must be defined");
     }
-    if (this._syncdb.get_state() == "init") {
-      try {
-        await once(this._syncdb, "ready");
-      } catch {
-        // user closed it
-        return;
-      }
-      if (this._state == "closed") return;
-    }
+    if (!(await this.wait_until_syncdoc_ready(this._syncdb))) return;
 
     // If the build command is NOT already
     // set in syncdb, we wait for file to load,
