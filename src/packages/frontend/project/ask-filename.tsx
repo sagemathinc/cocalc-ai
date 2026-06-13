@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Row, Space } from "antd";
+import { Button, Modal, Space } from "antd";
 import { useEffect } from "react";
 import {
   useAccountOtherSetting,
@@ -83,6 +83,7 @@ export default function AskNewFilename({ project_id }: Props) {
   };
 
   const filename = () => {
+    if (ext_selection == "/") return "folder";
     const data: FileSpec = file_options(`foo.${ext_selection}`);
     return data.name;
   };
@@ -91,65 +92,51 @@ export default function AskNewFilename({ project_id }: Props) {
     actions.set_new_filename_family(family);
   };
 
+  const targetDescription =
+    ext_selection == "/" ? "folder" : `${filename()} file`;
+
   return (
-    <div style={{ marginBottom: "10px" }}>
-      <div
-        style={{
-          margin: "auto",
-          maxWidth: "500px",
-          border: "1px solid #ccc",
-          padding: "15px",
-          borderRadius: "5px",
-          background: "#f8f8f8",
-        }}
-      >
-        <div>
-          Enter name for new {filename()}{" "}
-          {ext_selection == "/" ? "folder" : "file"}
-        </div>
-        <div style={{ marginTop: "5px" }}>
-          <SearchInput
-            autoFocus={!IS_TOUCH}
-            autoSelect={!IS_TOUCH}
-            value={new_filename}
-            placeholder={"Enter filename..."}
-            on_submit={submit}
-            on_escape={cancel}
-            on_change={change}
-          />
-          <Row style={{ marginTop: "15px" }}>
-            <Col md={10}>
-              <SelectorInput
-                selected={selected}
-                options={NewFilenameFamilies}
-                on_change={change_family}
-              />
-            </Col>
-            <Col md={14}>
-              <Space
-                style={{
-                  float: "right",
-                  whiteSpace: "nowrap",
-                  padding: "0",
-                  marginLeft: "15px",
-                }}
-              >
-                <Button onClick={cancel}>Cancel</Button>
-                <Button onClick={shuffle}>
-                  <Icon name={"sync-alt"} />
-                </Button>
-                <Button
-                  type={"primary"}
-                  onClick={create_click}
-                  disabled={new_filename.length == 0}
-                >
-                  <Icon name={"plus-circle"} /> Create
-                </Button>
-              </Space>
-            </Col>
-          </Row>
-        </div>
+    <Modal
+      open
+      title={`Create new ${targetDescription}`}
+      onCancel={cancel}
+      footer={
+        <Space>
+          <Button onClick={cancel}>Cancel</Button>
+          <Button onClick={shuffle}>
+            <Icon name={"sync-alt"} /> New name
+          </Button>
+          <Button
+            type={"primary"}
+            onClick={create_click}
+            disabled={new_filename.length == 0}
+          >
+            <Icon name={"plus-circle"} /> Create
+          </Button>
+        </Space>
+      }
+      destroyOnHidden
+    >
+      <div style={{ marginBottom: "8px" }}>
+        Enter name for the new {targetDescription}.
       </div>
-    </div>
+      <SearchInput
+        autoFocus={!IS_TOUCH}
+        autoSelect={!IS_TOUCH}
+        value={new_filename}
+        placeholder={"Enter filename..."}
+        on_submit={submit}
+        on_escape={cancel}
+        on_change={change}
+      />
+      <div style={{ marginTop: "15px" }}>
+        <div style={{ marginBottom: "6px" }}>Filename generator</div>
+        <SelectorInput
+          selected={selected}
+          options={NewFilenameFamilies}
+          on_change={change_family}
+        />
+      </div>
+    </Modal>
   );
 }
