@@ -1084,7 +1084,8 @@ describe("PublicHomeApp", () => {
     expectLinkHrefs(finalDeploymentPathActions, [
       "/auth/sign-up",
       "https://software.cocalc.ai/software/cocalc-plus/index.html",
-      "/products",
+      "/products/cocalc-launchpad",
+      "/products/cocalc-rocket",
     ]);
     expect(
       within(finalDeploymentPathActions).getByRole("link", {
@@ -1098,21 +1099,23 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(finalDeploymentPathActions).getByRole("link", {
-        name: "Compare deployment options",
+        name: "Review Launchpad",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(finalDeploymentPathActions).getByRole("link", {
+        name: "Plan Rocket",
       }),
     ).not.toBeNull();
     expect(
       within(finalDeploymentPathActions).queryByRole("link", {
-        name: "Review Launchpad",
+        name: "Compare deployment options",
       }),
     ).toBeNull();
     expect(
-      within(finalDeploymentPathActions).queryByRole("link", {
-        name: "Plan Rocket",
-      }),
-    ).toBeNull();
-    expect(
-      within(finalCallsToAction).getByText("Start where CoCalc should run."),
+      within(finalCallsToAction).getByText(
+        "Choose a hosted, local, or private path.",
+      ),
     ).not.toBeNull();
     expect(
       within(finalCallsToAction).getByText(
@@ -1121,7 +1124,12 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(finalCallsToAction).getByText(
-        "Compare hosted, local, and customer-operated paths before choosing private operation.",
+        "Lightweight customer-operated private deployment for a team.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(finalCallsToAction).getByText(
+        "Private cloud planning path with customer-operated infrastructure boundaries.",
       ),
     ).not.toBeNull();
     expect(
@@ -1133,7 +1141,7 @@ describe("PublicHomeApp", () => {
       within(finalCallsToAction)
         .getAllByRole("link", { name: "Compare deployment options" })
         .map((link) => link.getAttribute("href")),
-    ).toEqual(["/products", "/products"]);
+    ).toEqual(["/products"]);
     const finalSiteLicenseLink = within(finalCallsToAction).getByRole("link", {
       name: "Discuss site licensing",
     });
