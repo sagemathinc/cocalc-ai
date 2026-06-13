@@ -385,6 +385,31 @@ const HERO_WORKSPACE_SIGNALS = [
   icon: IconName;
   label: string;
 }[];
+const HERO_INSPECTABLE_RECORD = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Files, notebooks, and datasets",
+    icon: "files",
+    label: "Source and data",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Output, logs, and services",
+    icon: "terminal",
+    label: "Runtime record",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Prompts, patches, review notes",
+    icon: "robot",
+    label: "Agent decisions",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const HERO_WORKSPACE_TRAIL = [
   {
     accent: COLORS.BLUE_D,
@@ -1136,6 +1161,91 @@ function HeroWorkspaceSnapshot({ authenticated }: { authenticated: boolean }) {
             </span>
           </div>
         ))}
+      </div>
+      <div
+        aria-label="CoCalc.ai hero inspectable record"
+        role="group"
+        style={{
+          background: alpha(PUBLIC_COLORS.surface, 0.1),
+          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 12,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+            Inspectable record
+          </Text>
+          <Text
+            style={{
+              color: alpha(PUBLIC_COLORS.surface, 0.68),
+              fontSize: 12,
+            }}
+          >
+            What stays near the next step
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 118px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {HERO_INSPECTABLE_RECORD.map((item) => (
+            <span
+              key={item.label}
+              style={{
+                alignItems: "start",
+                background: alpha(item.accent, 0.13),
+                border: `1px solid ${alpha(item.accent, 0.32)}`,
+                borderRadius: PANEL_RADIUS,
+                display: "grid",
+                gap: 7,
+                gridTemplateColumns: "24px minmax(0, 1fr)",
+                minHeight: 78,
+                padding: 9,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(PUBLIC_COLORS.surface, 0.1),
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  height: 24,
+                  justifyContent: "center",
+                  marginTop: 1,
+                  width: 24,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{ color: PUBLIC_COLORS.surface, display: "block" }}
+                >
+                  {item.label}
+                </Text>
+                <Text
+                  style={{
+                    color: alpha(PUBLIC_COLORS.surface, 0.66),
+                    display: "block",
+                    fontSize: 12,
+                  }}
+                >
+                  {item.detail}
+                </Text>
+              </span>
+            </span>
+          ))}
+        </div>
       </div>
       <Button
         block

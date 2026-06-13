@@ -443,6 +443,25 @@ describe("PublicHomeApp", () => {
     expect(within(heroWorkspaceTrail).getByText("Run")).not.toBeNull();
     expect(within(heroWorkspaceTrail).getByText("Ask")).not.toBeNull();
     expect(within(heroWorkspaceTrail).getByText("Review")).not.toBeNull();
+    const heroInspectableRecord = within(heroSnapshot).getByRole("group", {
+      name: "CoCalc.ai hero inspectable record",
+    });
+    expect(
+      within(heroInspectableRecord).getByText("Inspectable record"),
+    ).not.toBeNull();
+    expect(
+      within(heroInspectableRecord).getByText("What stays near the next step"),
+    ).not.toBeNull();
+    for (const item of [
+      "Source and data",
+      "Runtime record",
+      "Agent decisions",
+      "Files, notebooks, and datasets",
+      "Output, logs, and services",
+      "Prompts, patches, review notes",
+    ]) {
+      expect(within(heroInspectableRecord).getByText(item)).not.toBeNull();
+    }
     expect(
       within(heroSnapshot)
         .getByRole("link", { name: "Create a workspace" })
