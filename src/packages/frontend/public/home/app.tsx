@@ -1528,16 +1528,6 @@ function ProductOptionsSection() {
       title: "CoCalc Plus",
     },
     {
-      bestFor: "A lab, class, GPU box, agent sandbox, or small team",
-      cues: ["Public VM", "Self-managed host"],
-      href: appPath("products/cocalc-star"),
-      icon: "star",
-      nextStep: "Review Star",
-      operator: "Run by VM owner",
-      route: "Public VM appliance",
-      title: "CoCalc Star",
-    },
-    {
       bestFor: "A lightweight private deployment with customer control",
       cues: ["Private team", "Customer operated"],
       href: appPath("products/cocalc-launchpad"),
@@ -1584,14 +1574,6 @@ function ProductOptionsSection() {
       icon: "laptop",
       label: "Local",
       title: "One-user local",
-    },
-    {
-      accent: PUBLIC_COLORS.warning,
-      body: "Use CoCalc Star when one public VM is the right boundary.",
-      href: appPath("products/cocalc-star"),
-      icon: "star",
-      label: "Public VM",
-      title: "Single-VM appliance",
     },
     {
       accent: COLORS.AI_ASSISTANT_FONT,
@@ -1789,16 +1771,16 @@ function ProductOptionsSection() {
                         style={{
                           alignItems: "center",
                           background:
-                            index === 3
+                            index === 2
                               ? PUBLIC_COLORS.warningTint
                               : PUBLIC_COLORS.surfaceMuted,
                           border:
-                            index === 3
+                            index === 2
                               ? `1px solid ${PUBLIC_COLORS.warningBorder}`
                               : `1px solid ${PUBLIC_COLORS.border}`,
                           borderRadius: PANEL_RADIUS,
                           color:
-                            index === 3
+                            index === 2
                               ? PUBLIC_COLORS.warning
                               : PUBLIC_COLORS.brand,
                           display: "flex",
@@ -1822,15 +1804,15 @@ function ProductOptionsSection() {
                               key={cue}
                               style={{
                                 background:
-                                  index === 3
+                                  index === 2
                                     ? PUBLIC_COLORS.warningTint
                                     : PUBLIC_COLORS.surfaceMuted,
                                 borderColor:
-                                  index === 3
+                                  index === 2
                                     ? PUBLIC_COLORS.warningBorder
                                     : PUBLIC_COLORS.border,
                                 color:
-                                  index === 3
+                                  index === 2
                                     ? PUBLIC_COLORS.warning
                                     : PUBLIC_COLORS.brand,
                                 marginInlineEnd: 0,
@@ -1882,7 +1864,7 @@ function ProductOptionsSection() {
                         style={{
                           alignSelf: "center",
                           color:
-                            index === 3
+                            index === 2
                               ? PUBLIC_COLORS.warning
                               : PUBLIC_COLORS.brand,
                           justifySelf: "start",
@@ -1896,7 +1878,7 @@ function ProductOptionsSection() {
                       style={{
                         alignSelf: "center",
                         color:
-                          index === 3
+                          index === 2
                             ? PUBLIC_COLORS.warning
                             : PUBLIC_COLORS.brand,
                         justifySelf: "end",
@@ -2042,11 +2024,21 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
       title: "CoCalc Plus",
     },
     {
-      body: "Single public VM appliance.",
-      button: "Run CoCalc Star",
-      href: appPath("products/cocalc-star"),
-      icon: "star",
-      title: "CoCalc Star",
+      body: "Compare customer-operated private deployment paths.",
+      button: "Compare deployment options",
+      href: appPath("products"),
+      icon: "servers",
+      title: "Deployment options",
+    },
+    {
+      body: "Discuss procurement, governance, and rollout.",
+      button: "Discuss site licensing",
+      href: supportPurchasePath(
+        "Site license",
+        "I want to discuss a CoCalc site license.",
+      ),
+      icon: "bank",
+      title: "Site licensing",
     },
   ] satisfies {
     body: string;
@@ -2057,7 +2049,7 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
   }[];
   return (
     <section
-      aria-label="CoCalc.ai self-service entry points"
+      aria-label="CoCalc.ai final calls to action"
       style={{
         background: `linear-gradient(135deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 46%, ${PUBLIC_COLORS.warningTint} 100%)`,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
@@ -2070,9 +2062,9 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
       <Flex vertical gap={22}>
         <Row align="bottom" gutter={[32, 24]}>
           <Col xs={24}>
-            <Eyebrow>Self-service entry points</Eyebrow>
+            <Eyebrow>Start here</Eyebrow>
             <Title level={2} style={{ margin: "8px 0 0" }}>
-              Start with a self-service path.
+              Start where your team is.
             </Title>
             <Paragraph
               style={{
@@ -2082,10 +2074,9 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 maxWidth: 760,
               }}
             >
-              Use CoCalc.ai, CoCalc Plus, or CoCalc Star when you want a direct
-              self-service path. Compare deployment options and site licensing
-              when organizational control, procurement, or private operation
-              becomes the next question.
+              Start hosted, install CoCalc Plus, compare customer-operated
+              deployment options, or discuss site licensing when organizational
+              rollout becomes the next question.
             </Paragraph>
           </Col>
         </Row>
@@ -2149,8 +2140,8 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
         </div>
         <Flex align="center" justify="space-between" wrap gap={14}>
           <Text type="secondary">
-            Need private deployment beyond one VM or site licensing? Move from
-            the self-service entry points to the product chooser.
+            Use the product chooser for deployment detail and site-license
+            discussion for organizational rollout.
           </Text>
           <Flex gap={10} wrap>
             <Button

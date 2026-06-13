@@ -6,7 +6,13 @@ import PublicHomeApp from "../app";
 
 const originalFetch = global.fetch;
 const BLOCKED_HOMEPAGE_CLAIM_PATTERNS = [
+  /CoCalc Star/i,
   /Install CoCalc Star/i,
+  /Review Star/i,
+  /Run CoCalc Star/i,
+  /Single-VM appliance/i,
+  /Public VM/i,
+  /Run by VM owner/i,
   /fast team starts/i,
   /quickest start/i,
   /Free local runtime/i,
@@ -390,6 +396,7 @@ describe("PublicHomeApp", () => {
       }),
     ).toBe(true);
     expectBlockedHomepageClaimsAbsent(container);
+    expect(container.querySelector('a[href*="cocalc-star"]')).toBeNull();
     expectHomepageSectionsLabeled(container);
     expect(
       screen
@@ -475,11 +482,6 @@ describe("PublicHomeApp", () => {
     ).toBe("/products/cocalc-plus");
     expect(
       within(operatingBoundaryShortcuts)
-        .getByRole("link", { name: /Single-VM appliance/i })
-        .getAttribute("href"),
-    ).toBe("/products/cocalc-star");
-    expect(
-      within(operatingBoundaryShortcuts)
         .getByRole("link", { name: /Customer-operated/i })
         .getAttribute("href"),
     ).toBe("/products");
@@ -494,7 +496,6 @@ describe("PublicHomeApp", () => {
     expect(screen.getAllByText("Best fit").length).toBeGreaterThan(0);
     expect(screen.getByText("Run by CoCalc")).not.toBeNull();
     expect(screen.getByText("Run by you")).not.toBeNull();
-    expect(screen.getByText("Run by VM owner")).not.toBeNull();
     expect(screen.getByText("Run by your team")).not.toBeNull();
     expect(screen.getByText("Run with CoCalc")).not.toBeNull();
     for (const productCue of [
@@ -502,8 +503,6 @@ describe("PublicHomeApp", () => {
       "Hosted projects",
       "One-user local",
       "Browser workspace",
-      "Public VM",
-      "Self-managed host",
       "Private team",
       "Customer operated",
       "Infrastructure plan",
@@ -515,32 +514,26 @@ describe("PublicHomeApp", () => {
       screen.getByText("Managed accounts, hosted projects, and team access"),
     ).not.toBeNull();
     expect(
-      screen.getByText("A lab, class, GPU box, agent sandbox, or small team"),
-    ).not.toBeNull();
-    expect(
       screen.getByText(
         "Private cloud planning with customer-operated infrastructure boundaries",
       ),
     ).not.toBeNull();
     expect(screen.getByText("Start hosted")).not.toBeNull();
-    expect(screen.getByText("Review Star")).not.toBeNull();
     expect(screen.getByText("Review Launchpad")).not.toBeNull();
     expect(
       screen.getByText("Site licensing wraps the path you choose."),
     ).not.toBeNull();
-    expect(screen.getByText(/direct self-service path/i)).not.toBeNull();
+    expect(
+      screen.getByRole("region", { name: "CoCalc.ai final calls to action" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Start where your team is.")).not.toBeNull();
     expect(screen.getByText("Local runtime for one user.")).not.toBeNull();
-    expect(screen.getByText("Single public VM appliance.")).not.toBeNull();
     expect(
-      screen
-        .getByRole("link", { name: "Run CoCalc Star" })
-        .getAttribute("href"),
-    ).toBe("/products/cocalc-star");
+      screen.getByText("Compare customer-operated private deployment paths."),
+    ).not.toBeNull();
     expect(
-      screen
-        .getByRole("link", { name: /CoCalc Star: Public VM appliance/i })
-        .getAttribute("href"),
-    ).toBe("/products/cocalc-star");
+      screen.getByText("Discuss procurement, governance, and rollout."),
+    ).not.toBeNull();
     expect(
       screen
         .getByRole("link", { name: /CoCalc Launchpad/i })
