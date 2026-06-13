@@ -40,42 +40,43 @@ function titleForRoute(route: PublicProductsRoute): string {
 function ProductsOverviewPage() {
   const paths = [
     {
-      bestFor: "Managed accounts, hosted projects, and quick team starts",
+      chooseIf: "You want managed hosted projects and accounts run by CoCalc.",
       href: appPath(""),
       icon: "cloud",
       operator: "Vendor-operated hosted service",
       title: "CoCalc.ai",
     },
     {
-      bestFor: "One person using CoCalc locally on Linux or Mac",
+      chooseIf: "You want a one-user local workspace on Linux or Mac.",
       href: publicPath("products/cocalc-plus"),
       icon: "laptop",
       operator: "Individual-operated local runtime",
       title: "CoCalc Plus",
     },
     {
-      bestFor: "A lab, class, GPU box, agent sandbox, or small team",
+      chooseIf: "You want one public Ubuntu VM that you operate directly.",
       href: publicPath("products/cocalc-star"),
       icon: "star",
-      operator: "Single public VM owner",
+      operator: "Operator-owned public VM",
       title: "CoCalc Star",
     },
     {
-      bestFor: "A lightweight private deployment with customer control",
+      chooseIf: "You need a lightweight customer-operated private deployment.",
       href: publicPath("products/cocalc-launchpad"),
       icon: "servers",
       operator: "Customer-operated private deployment",
       title: "CoCalc Launchpad",
     },
     {
-      bestFor: "Production private cloud and multi-bay operations",
+      chooseIf:
+        "You are planning a customer-operated private-cloud deployment.",
       href: publicPath("products/cocalc-rocket"),
       icon: "rocket",
       operator: "Customer-operated private cloud",
       title: "CoCalc Rocket",
     },
   ] satisfies {
-    bestFor: string;
+    chooseIf: string;
     href: string;
     icon: IconName;
     operator: string;
@@ -107,7 +108,8 @@ function ProductsOverviewPage() {
           Product path chooser
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Start with who operates the environment. The workspace model stays
+          Use this as a decision table: pick who operates CoCalc, then use
+          pricing or support for buying details. The workspace model stays
           project-centered; the product path changes the operating boundary.
         </Paragraph>
         <div style={{ overflowX: "auto" }}>
@@ -122,22 +124,25 @@ function ProductsOverviewPage() {
           >
             <thead>
               <tr>
-                {["Path", "Operator model", "Best fit", "Next step"].map(
-                  (label) => (
-                    <th
-                      key={label}
-                      scope="col"
-                      style={{
-                        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
-                        color: PUBLIC_COLORS.brand,
-                        padding: "0 14px 12px",
-                        textAlign: "left",
-                      }}
-                    >
-                      {label}
-                    </th>
-                  ),
-                )}
+                {[
+                  "Path",
+                  "Operator model",
+                  "Choose this if...",
+                  "Next step",
+                ].map((label) => (
+                  <th
+                    key={label}
+                    scope="col"
+                    style={{
+                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+                      color: PUBLIC_COLORS.brand,
+                      padding: "0 14px 12px",
+                      textAlign: "left",
+                    }}
+                  >
+                    {label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -198,7 +203,7 @@ function ProductsOverviewPage() {
                       verticalAlign: "top",
                     }}
                   >
-                    {path.bestFor}
+                    {path.chooseIf}
                   </td>
                   <td
                     style={{
@@ -243,11 +248,11 @@ function CocalcRocketPage() {
         </Title>
         <Paragraph style={{ margin: 0 }}>
           CoCalc Rocket is the private cloud deployment path for teams that need
-          production multi-user CoCalc on infrastructure they control.
+          private multi-user CoCalc on infrastructure they control.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          Use it for private cloud, multi-bay architecture, and operational
-          requirements beyond Star or Launchpad.
+          Use it when a private deployment needs more planning, operating
+          boundaries, and CoCalc guidance than Star or Launchpad.
         </Paragraph>
       </PublicSection>
       <PublicSection>
@@ -277,7 +282,7 @@ function CocalcRocketPage() {
         </Title>
         <Paragraph style={{ margin: 0 }}>
           Rocket is the right path when private infrastructure, governance, or
-          production operations matter. Contact us to discuss infrastructure,
+          operational planning matter. Contact us to discuss infrastructure,
           rollout, support, and site license options.
         </Paragraph>
         <Flex gap={12} wrap>
@@ -388,8 +393,8 @@ function CocalcLaunchpadPage() {
             deployment automation without the full Rocket architecture.
           </Paragraph>
           <Paragraph style={{ margin: 0 }}>
-            If your goal is a one-command public VM that people can use through
-            HTTPS immediately, start with CoCalc Star instead.
+            If your goal is one public Ubuntu VM that you operate directly,
+            start with CoCalc Star instead.
           </Paragraph>
         </PublicSection>
         <PublicSection>

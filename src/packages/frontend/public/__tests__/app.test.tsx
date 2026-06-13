@@ -989,6 +989,16 @@ describe("PublicApp", () => {
       screen.getByRole("table", { name: "CoCalc product path chooser" }),
     ).not.toBeNull();
     expect(screen.getByText("Vendor-operated hosted service")).not.toBeNull();
+    expect(screen.getByText("Choose this if...")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "You want managed hosted projects and accounts run by CoCalc.",
+      ),
+    ).not.toBeNull();
+    expect(screen.getByText("Operator-owned public VM")).not.toBeNull();
+    expect(screen.queryByText(/quick team starts/i)).toBeNull();
+    expect(screen.queryByText(/Production private cloud/i)).toBeNull();
+    expect(screen.queryByText(/multi-bay operations/i)).toBeNull();
     expect(
       screen.getByRole("link", { name: "Open CoCalc Rocket" }),
     ).toHaveAttribute("href", "/products/cocalc-rocket");
@@ -1054,6 +1064,11 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByText("What CoCalc Rocket is")).not.toBeNull();
+    expect(screen.getByText(/private multi-user CoCalc/i)).not.toBeNull();
+    expect(screen.getByText(/operational planning matter/i)).not.toBeNull();
+    expect(screen.queryByText(/production multi-user CoCalc/i)).toBeNull();
+    expect(screen.queryByText(/multi-bay architecture/i)).toBeNull();
+    expect(screen.queryByText(/production operations matter/i)).toBeNull();
     expect(screen.getByText("Talk with us")).not.toBeNull();
   });
 });
