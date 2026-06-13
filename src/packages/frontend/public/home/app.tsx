@@ -478,132 +478,117 @@ const WORK_INPUT_ROUTES = [
   route: string;
   title: string;
 }[];
-const LANDING_ROUTE_MAP = [
+const WORKSPACE_CONTINUITY_CUES = [
   {
     accent: COLORS.BLUE_D,
-    body: "Create or open a project when the immediate need is a place for notebooks, files, terminals, and agent work.",
-    continuity: "Files, output, and review history stay with the project.",
-    href: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? appPath("projects") : appPath("auth/sign-up"),
-    icon: "project-outlined",
-    label: "Project first",
-    next: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? "Open projects" : "Create a workspace",
-    prompt: "I have work to put somewhere",
-    title: "Start a workspace",
+    body: "Notebooks, source trees, datasets, and notes enter one project before a tool opens.",
+    href: "features/compare",
+    icon: "files",
+    kept: "Files, notebooks, data",
+    label: "Material",
+    title: "Start with the material",
   },
   {
     accent: COLORS.RUN,
-    body: "Use the feature pages when you are choosing between notebooks, terminal sessions, AI agents, teaching, or writing tools.",
-    continuity: "Each surface opens around the same project context.",
-    href: () => appPath("features"),
-    icon: "overview",
-    label: "Workflow first",
-    next: () => "Explore workflows",
-    prompt: "I need the right work surface",
-    title: "Pick a work surface",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    body: "Use product pages when the main question is hosted service, one-user local runtime, or customer-operated deployment.",
-    continuity: "The operating boundary stays explicit before detail pages.",
-    href: () => appPath("products"),
-    icon: "servers",
-    label: "Operations first",
-    next: () => "Choose operating path",
-    prompt: "I need to decide where it runs",
-    title: "Decide where CoCalc runs",
-  },
-] satisfies {
-  accent: string;
-  body: string;
-  continuity: string;
-  href: (opts: { authenticated: boolean }) => string;
-  icon: IconName;
-  label: string;
-  next: (opts: { authenticated: boolean }) => string;
-  prompt: string;
-  title: string;
-}[];
-const LANDING_DECISION_FLOW = [
-  {
-    accent: COLORS.BLUE_D,
-    body: "Create or open the project that will hold files, output, terminals, and notes.",
-    href: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? appPath("projects") : appPath("auth/sign-up"),
-    icon: "project-outlined",
-    label: "Place",
-    next: "Then choose the work surface from that project.",
-    title: "Where does the work live?",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Choose the notebook, terminal, AI, teaching, or writing surface that fits the task.",
-    href: () => appPath("features"),
-    icon: "overview",
-    label: "Surface",
-    next: "Then keep files, output, and notes in one project.",
-    title: "What opens it?",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    body: "Compare hosted, local, and customer-operated paths before choosing the runtime boundary.",
-    href: () => appPath("products"),
-    icon: "servers",
-    label: "Boundary",
-    next: "Then open the matching hosted, local, or private path.",
-    title: "Who runs it?",
-  },
-] satisfies {
-  accent: string;
-  body: string;
-  href: (opts: { authenticated: boolean }) => string;
-  icon: IconName;
-  label: string;
-  next: string;
-  title: string;
-}[];
-const LANDING_WORKSPACE_LOOP = [
-  {
-    accent: COLORS.BLUE_D,
-    body: "Put notebooks, source, data, and notes in the project first.",
-    href: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? appPath("projects") : appPath("auth/sign-up"),
-    icon: "project-outlined",
-    label: "Place",
-    title: "Open the workspace",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Choose the notebook, terminal, AI, teaching, or writing surface from there.",
-    href: () => appPath("features"),
-    icon: "overview",
-    label: "Surface",
-    title: "Pick the tool",
+    body: "Shells, packages, services, and notebook kernels run beside the files they use.",
+    href: "features/terminal",
+    icon: "terminal",
+    kept: "Commands, output, services",
+    label: "Runtime",
+    title: "Run beside the files",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Keep prompts, code changes, commands, and output attached to the same record.",
-    href: () => appPath("features/ai"),
+    body: "Codex prompts and patches stay close to the project state that explains them.",
+    href: "features/ai",
     icon: "robot",
-    label: "Context",
-    title: "Work with the record",
+    kept: "Prompts, patches, notes",
+    label: "Codex",
+    title: "Ask with project context",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    body: "Use snapshots, file history, and comparison views when the work changes.",
-    href: () => appPath("features/compare"),
+    body: "Snapshots, TimeTravel, and comparison views keep changed work inspectable.",
+    href: "features/compare",
     icon: "history",
+    kept: "Snapshots, history, review",
     label: "Review",
     title: "Check what changed",
   },
 ] satisfies {
   accent: string;
   body: string;
+  href: string;
+  icon: IconName;
+  kept: string;
+  label: string;
+  title: string;
+}[];
+const WORKSPACE_CONTINUITY_LAYERS = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Files and notebooks establish the shared source.",
+    icon: "files",
+    label: "Source",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Commands and kernels produce output from that source.",
+    icon: "terminal",
+    label: "Execution",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Agent work and chat keep the reasoning nearby.",
+    icon: "robot",
+    label: "Assistance",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Snapshots and comparisons make changes reviewable.",
+    icon: "disk-snapshot",
+    label: "Recovery",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
+const LANDING_ENTRY_ACTIONS = [
+  {
+    accent: COLORS.BLUE_D,
+    body: "Open the project boundary first when files, notebooks, terminals, and agent work need one home.",
+    href: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? appPath("projects") : appPath("auth/sign-up"),
+    icon: "project-outlined",
+    label: "Workspace",
+    next: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? "Open projects" : "Create a workspace",
+  },
+  {
+    accent: COLORS.RUN,
+    body: "Then choose the notebook, terminal, AI, teaching, or writing surface that fits the task.",
+    href: () => appPath("features"),
+    icon: "overview",
+    label: "Work surfaces",
+    next: () => "Browse workflows",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Then compare hosted, local, and customer-operated options when the runtime boundary matters.",
+    href: () => appPath("products"),
+    icon: "servers",
+    label: "Operating path",
+    next: () => "Compare deployments",
+  },
+] satisfies {
+  accent: string;
+  body: string;
   href: (opts: { authenticated: boolean }) => string;
   icon: IconName;
   label: string;
-  title: string;
+  next: (opts: { authenticated: boolean }) => string;
 }[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
@@ -1864,43 +1849,47 @@ function Hero({ config }: { config?: HomeConfig }) {
   );
 }
 
-function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
+function WorkspaceContinuitySection({
+  authenticated,
+}: {
+  authenticated: boolean;
+}) {
   return (
     <section
-      aria-label="CoCalc.ai landing route map"
+      aria-label="CoCalc.ai workspace continuity map"
       style={{
         background: PUBLIC_COLORS.surface,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
         marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
-        padding: `22px ${PUBLIC_PAGE_GUTTER}`,
+        padding: `26px ${PUBLIC_PAGE_GUTTER}`,
       }}
     >
       <Flex align="start" justify="space-between" gap={18} wrap>
-        <div style={{ maxWidth: 430 }}>
-          <Eyebrow>Find the right entry point</Eyebrow>
+        <div style={{ maxWidth: 470 }}>
+          <Eyebrow>Project continuity</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 8px" }}>
-            Route by what you need next.
+            Keep the work surface connected to the work.
           </Title>
           <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-            Choose by the question in front of you: where the work should live,
-            which surface should open it, or who should operate the workspace.
-            Each route keeps the project model visible.
+            The first notebook, command, prompt, or deployment choice should
+            still point back to the same project context: files, execution,
+            agent work, and review history.
           </Paragraph>
         </div>
         <div
-          aria-label="CoCalc.ai first decision flow"
+          aria-label="CoCalc.ai continuity checkpoints"
           role="group"
           style={{
             display: "grid",
             flex: "1 1 620px",
-            gap: 8,
+            gap: 10,
             gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+              "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
           }}
         >
-          {LANDING_DECISION_FLOW.map((item, index) => (
+          {WORKSPACE_CONTINUITY_CUES.map((item) => (
             <a
-              href={item.href({ authenticated })}
+              href={appPath(item.href)}
               key={item.label}
               style={{
                 alignItems: "start",
@@ -1910,9 +1899,9 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                 color: "inherit",
                 display: "grid",
                 gap: 10,
-                gridTemplateColumns: "34px minmax(0, 1fr)",
-                minHeight: 142,
-                padding: 12,
+                gridTemplateColumns: "38px minmax(0, 1fr)",
+                minHeight: 152,
+                padding: 14,
                 textDecoration: "none",
               }}
             >
@@ -1925,21 +1914,13 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                   borderRadius: PANEL_RADIUS,
                   color: item.accent,
                   display: "flex",
-                  flexDirection: "column",
-                  fontSize: 15,
-                  gap: 2,
-                  height: 46,
+                  fontSize: 18,
+                  height: 38,
                   justifyContent: "center",
-                  width: 34,
+                  width: 38,
                 }}
               >
                 <Icon name={item.icon} />
-                <Text
-                  strong
-                  style={{ color: "inherit", fontSize: 10, lineHeight: 1 }}
-                >
-                  {index + 1}
-                </Text>
               </span>
               <span style={{ minWidth: 0 }}>
                 <Text
@@ -1958,23 +1939,21 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                 </Text>
                 <Text type="secondary">{item.body}</Text>
                 <Text
-                  strong
                   style={{
                     color: item.accent,
-                    display: "inline-flex",
-                    gap: 6,
+                    display: "block",
+                    fontSize: 13,
                     marginTop: 8,
                   }}
                 >
-                  <Icon name="arrow-right" />
-                  {item.next}
+                  {item.kept}
                 </Text>
               </span>
             </a>
           ))}
         </div>
         <div
-          aria-label="CoCalc.ai primary landing routes"
+          aria-label="CoCalc.ai entry actions"
           role="group"
           style={{
             display: "grid",
@@ -1984,10 +1963,10 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
               "repeat(auto-fit, minmax(min(100%, 230px), 1fr))",
           }}
         >
-          {LANDING_ROUTE_MAP.map((route) => (
+          {LANDING_ENTRY_ACTIONS.map((route) => (
             <a
               href={route.href({ authenticated })}
-              key={route.title}
+              key={route.label}
               style={{
                 alignItems: "start",
                 background: alpha(route.accent, 0.06),
@@ -2031,40 +2010,10 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                 >
                   {route.label}
                 </Text>
-                <Text
-                  style={{
-                    color: PUBLIC_COLORS.mutedText,
-                    display: "block",
-                    fontSize: 13,
-                    marginTop: 2,
-                  }}
-                >
-                  {route.prompt}
-                </Text>
                 <Title level={3} style={{ fontSize: 21, margin: "4px 0 6px" }}>
-                  {route.title}
+                  {route.next({ authenticated })}
                 </Title>
                 <Text type="secondary">{route.body}</Text>
-                <Text
-                  style={{
-                    color: PUBLIC_COLORS.mutedText,
-                    display: "block",
-                    fontSize: 13,
-                    marginTop: 8,
-                  }}
-                >
-                  {route.continuity}
-                </Text>
-                <Text
-                  strong
-                  style={{
-                    color: route.accent,
-                    display: "block",
-                    marginTop: 10,
-                  }}
-                >
-                  {route.next({ authenticated })}
-                </Text>
               </span>
               <Icon
                 name="arrow-right"
@@ -2077,7 +2026,7 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
           ))}
         </div>
         <div
-          aria-label="CoCalc.ai workspace route loop"
+          aria-label="CoCalc.ai continuity layers"
           role="group"
           style={{
             background: PUBLIC_COLORS.surfaceMuted,
@@ -2089,10 +2038,10 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
         >
           <Flex align="baseline" justify="space-between" wrap gap={8}>
             <Text strong style={{ color: PUBLIC_COLORS.heading }}>
-              Workspace loop
+              Continuity layers
             </Text>
             <Text style={{ color: PUBLIC_COLORS.mutedText, fontSize: 12 }}>
-              Place, surface, context, review.
+              Source, execution, assistance, recovery.
             </Text>
           </Flex>
           <div
@@ -2104,9 +2053,8 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
               marginTop: 10,
             }}
           >
-            {LANDING_WORKSPACE_LOOP.map((step, index) => (
-              <a
-                href={step.href({ authenticated })}
+            {WORKSPACE_CONTINUITY_LAYERS.map((step, index) => (
+              <div
                 key={step.label}
                 style={{
                   alignItems: "start",
@@ -2119,7 +2067,6 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                   gridTemplateColumns: "32px minmax(0, 1fr)",
                   minHeight: 126,
                   padding: 12,
-                  textDecoration: "none",
                 }}
               >
                 <span
@@ -2159,12 +2106,9 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                   >
                     {step.label}
                   </Text>
-                  <Text strong style={{ display: "block", marginTop: 2 }}>
-                    {step.title}
-                  </Text>
-                  <Text type="secondary">{step.body}</Text>
+                  <Text type="secondary">{step.detail}</Text>
                 </span>
-              </a>
+              </div>
             ))}
           </div>
         </div>
@@ -3562,7 +3506,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
-      <LandingRouteMapSection authenticated={!!config?.is_authenticated} />
+      <WorkspaceContinuitySection authenticated={!!config?.is_authenticated} />
       <WorkspaceContextSection authenticated={!!config?.is_authenticated} />
       <WorkInputSection />
       <WorkflowsSection />

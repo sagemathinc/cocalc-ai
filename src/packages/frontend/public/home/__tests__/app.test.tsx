@@ -372,152 +372,136 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: "Create a workspace" })
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
-    const routeMap = screen.getByRole("region", {
-      name: "CoCalc.ai landing route map",
+    const continuityMap = screen.getByRole("region", {
+      name: "CoCalc.ai workspace continuity map",
     });
     expect(
-      within(routeMap).getByRole("heading", {
-        name: "Route by what you need next.",
+      within(continuityMap).getByRole("heading", {
+        name: "Keep the work surface connected to the work.",
       }),
     ).not.toBeNull();
     expect(
-      within(routeMap).getByText(
-        /where the work should live, which surface should open it, or who should operate the workspace/i,
+      within(continuityMap).getByText(
+        /first notebook, command, prompt, or deployment choice/i,
       ),
     ).not.toBeNull();
-    const firstDecisionFlow = within(routeMap).getByRole("group", {
-      name: "CoCalc.ai first decision flow",
+    const continuityCheckpoints = within(continuityMap).getByRole("group", {
+      name: "CoCalc.ai continuity checkpoints",
     });
-    expectLinkHrefs(firstDecisionFlow, [
-      "/auth/sign-up",
-      "/features",
-      "/products",
-    ]);
-    expect(
-      within(firstDecisionFlow).getByRole("link", {
-        name: /Where does the work live/i,
-      }),
-    ).not.toBeNull();
-    expect(
-      within(firstDecisionFlow).getByRole("link", { name: /What opens it/i }),
-    ).not.toBeNull();
-    expect(
-      within(firstDecisionFlow).getByRole("link", { name: /Who runs it/i }),
-    ).not.toBeNull();
-    expect(within(firstDecisionFlow).getByText("Place")).not.toBeNull();
-    expect(within(firstDecisionFlow).getByText("Surface")).not.toBeNull();
-    expect(within(firstDecisionFlow).getByText("Boundary")).not.toBeNull();
-    expect(
-      within(firstDecisionFlow).getByText(
-        "Create or open the project that will hold files, output, terminals, and notes.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(firstDecisionFlow).getByText(
-        "Then choose the work surface from that project.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(firstDecisionFlow).getByText(
-        "Then keep files, output, and notes in one project.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(firstDecisionFlow).getByText(
-        "Then open the matching hosted, local, or private path.",
-      ),
-    ).not.toBeNull();
-    const primaryLandingRoutes = within(routeMap).getByRole("group", {
-      name: "CoCalc.ai primary landing routes",
-    });
-    expectLinkHrefs(primaryLandingRoutes, [
-      "/auth/sign-up",
-      "/features",
-      "/products",
-    ]);
-    expect(
-      within(primaryLandingRoutes)
-        .getByRole("link", { name: /Start a workspace/i })
-        .getAttribute("href"),
-    ).toBe("/auth/sign-up");
-    expect(
-      within(primaryLandingRoutes)
-        .getByRole("link", { name: /Pick a work surface/i })
-        .getAttribute("href"),
-    ).toBe("/features");
-    expect(
-      within(primaryLandingRoutes)
-        .getByRole("link", { name: /Decide where CoCalc runs/i })
-        .getAttribute("href"),
-    ).toBe("/products");
-    expect(
-      within(primaryLandingRoutes).getByText("Project first"),
-    ).not.toBeNull();
-    expect(
-      within(primaryLandingRoutes).getByText("Workflow first"),
-    ).not.toBeNull();
-    expect(
-      within(primaryLandingRoutes).getByText("Operations first"),
-    ).not.toBeNull();
-    expect(
-      within(primaryLandingRoutes).getByText("Choose operating path"),
-    ).not.toBeNull();
-    expect(
-      within(primaryLandingRoutes).getByText("I have work to put somewhere"),
-    ).not.toBeNull();
-    expect(
-      within(primaryLandingRoutes).getByText("I need the right work surface"),
-    ).not.toBeNull();
-    expect(
-      within(primaryLandingRoutes).getByText("I need to decide where it runs"),
-    ).not.toBeNull();
-    expect(
-      within(primaryLandingRoutes).getByText(
-        "Files, output, and review history stay with the project.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(primaryLandingRoutes).getByText(
-        "Each surface opens around the same project context.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(primaryLandingRoutes).getByText(
-        "The operating boundary stays explicit before detail pages.",
-      ),
-    ).not.toBeNull();
-    const workspaceRouteLoop = within(routeMap).getByRole("group", {
-      name: "CoCalc.ai workspace route loop",
-    });
-    expectLinkHrefs(workspaceRouteLoop, [
-      "/auth/sign-up",
-      "/features",
+    expectLinkHrefs(continuityCheckpoints, [
+      "/features/compare",
+      "/features/terminal",
       "/features/ai",
       "/features/compare",
     ]);
     expect(
-      within(workspaceRouteLoop).getByText("Workspace loop"),
+      within(continuityCheckpoints)
+        .getByRole("link", { name: /Start with the material/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(continuityCheckpoints)
+        .getByRole("link", { name: /Run beside the files/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(continuityCheckpoints)
+        .getByRole("link", { name: /Ask with project context/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(within(continuityCheckpoints).getByText("Material")).not.toBeNull();
+    expect(within(continuityCheckpoints).getByText("Runtime")).not.toBeNull();
+    expect(within(continuityCheckpoints).getByText("Codex")).not.toBeNull();
+    expect(within(continuityCheckpoints).getByText("Review")).not.toBeNull();
+    expect(
+      within(continuityCheckpoints).getByText("Files, notebooks, data"),
     ).not.toBeNull();
     expect(
-      within(workspaceRouteLoop).getByText("Place, surface, context, review."),
+      within(continuityCheckpoints).getByText("Commands, output, services"),
     ).not.toBeNull();
     expect(
-      within(workspaceRouteLoop).getByText("Open the workspace"),
+      within(continuityCheckpoints).getByText("Prompts, patches, notes"),
     ).not.toBeNull();
     expect(
-      within(workspaceRouteLoop).getByText("Pick the tool"),
+      within(continuityCheckpoints).getByText("Snapshots, history, review"),
     ).not.toBeNull();
+    const entryActions = within(continuityMap).getByRole("group", {
+      name: "CoCalc.ai entry actions",
+    });
+    expectLinkHrefs(entryActions, ["/auth/sign-up", "/features", "/products"]);
     expect(
-      within(workspaceRouteLoop).getByText("Work with the record"),
-    ).not.toBeNull();
+      within(entryActions)
+        .getByRole("link", { name: /Create a workspace/i })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
     expect(
-      within(workspaceRouteLoop).getByText("Check what changed"),
-    ).not.toBeNull();
+      within(entryActions)
+        .getByRole("link", { name: /Browse workflows/i })
+        .getAttribute("href"),
+    ).toBe("/features");
     expect(
-      within(workspaceRouteLoop).getByText(
-        "Keep prompts, code changes, commands, and output attached to the same record.",
+      within(entryActions)
+        .getByRole("link", { name: /Compare deployments/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(within(entryActions).getByText("Workspace")).not.toBeNull();
+    expect(within(entryActions).getByText("Work surfaces")).not.toBeNull();
+    expect(within(entryActions).getByText("Operating path")).not.toBeNull();
+    expect(
+      within(entryActions).getByText(
+        "Open the project boundary first when files, notebooks, terminals, and agent work need one home.",
       ),
     ).not.toBeNull();
+    expect(
+      within(entryActions).getByText(
+        "Then choose the notebook, terminal, AI, teaching, or writing surface that fits the task.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(entryActions).getByText(
+        "Then compare hosted, local, and customer-operated options when the runtime boundary matters.",
+      ),
+    ).not.toBeNull();
+    const continuityLayers = within(continuityMap).getByRole("group", {
+      name: "CoCalc.ai continuity layers",
+    });
+    expect(
+      within(continuityLayers).getByText("Continuity layers"),
+    ).not.toBeNull();
+    expect(
+      within(continuityLayers).getByText(
+        "Source, execution, assistance, recovery.",
+      ),
+    ).not.toBeNull();
+    expect(within(continuityLayers).getByText("Source")).not.toBeNull();
+    expect(within(continuityLayers).getByText("Execution")).not.toBeNull();
+    expect(within(continuityLayers).getByText("Assistance")).not.toBeNull();
+    expect(within(continuityLayers).getByText("Recovery")).not.toBeNull();
+    expect(
+      within(continuityLayers).getByText(
+        "Files and notebooks establish the shared source.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "CoCalc.ai landing route map",
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("group", {
+        name: "CoCalc.ai primary landing routes",
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("group", {
+        name: "CoCalc.ai first decision flow",
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("group", {
+        name: "CoCalc.ai workspace route loop",
+      }),
+    ).toBeNull();
     const workspacePreview = screen.getByRole("region", {
       name: "CoCalc.ai workspace preview",
     });
@@ -1252,15 +1236,15 @@ describe("PublicHomeApp", () => {
     expect(
       within(
         screen.getByRole("group", {
-          name: "CoCalc.ai primary landing routes",
+          name: "CoCalc.ai entry actions",
         }),
       )
-        .getByRole("link", { name: /Start a workspace/i })
+        .getByRole("link", { name: /Open projects/i })
         .getAttribute("href"),
     ).toBe("/projects");
     expectLinkHrefs(
       screen.getByRole("group", {
-        name: "CoCalc.ai first decision flow",
+        name: "CoCalc.ai entry actions",
       }),
       ["/projects", "/features", "/products"],
     );
@@ -1272,9 +1256,14 @@ describe("PublicHomeApp", () => {
     );
     expectLinkHrefs(
       screen.getByRole("group", {
-        name: "CoCalc.ai workspace route loop",
+        name: "CoCalc.ai continuity checkpoints",
       }),
-      ["/projects", "/features", "/features/ai", "/features/compare"],
+      [
+        "/features/compare",
+        "/features/terminal",
+        "/features/ai",
+        "/features/compare",
+      ],
     );
     expect(
       within(
