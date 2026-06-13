@@ -509,7 +509,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
 
   return (
     <div
-      aria-label="Live CoCalc project preview"
+      aria-label="CoCalc project context preview"
       role="group"
       style={{
         backdropFilter: "blur(14px)",
@@ -542,7 +542,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
           </span>
           <span>
             <Text strong style={{ color: "inherit", display: "block" }}>
-              research-demo
+              research-workspace
             </Text>
             <Text style={{ color: alpha(PUBLIC_COLORS.surface, 0.74) }}>
               Persistent project
@@ -557,7 +557,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
             marginInlineEnd: 0,
           }}
         >
-          Live context
+          Project context
         </Tag>
       </Flex>
       <div
@@ -1314,9 +1314,9 @@ function WorkflowsSection() {
             Start where the work begins.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Open a notebook, a shell, or an agent thread without setting up a
-            separate system. Writing, teaching, whiteboards, and more stay close
-            when the workflow expands.
+            Open a notebook, a shell, or an agent thread without moving the work
+            into a separate system. Writing, teaching, whiteboards, and more
+            stay close when the workflow expands.
           </Paragraph>
         </div>
         <Button href={appPath("features")}>Explore all features</Button>
@@ -1424,7 +1424,11 @@ function AudienceSection() {
     {
       accent: PUBLIC_COLORS.warning,
       body: "Run courses and workshops with one browser-based environment for assignments, notebooks, Linux, grading, and student support.",
-      bullets: ["Course projects", "Notebook grading", "Consistent lab setup"],
+      bullets: [
+        "Course projects",
+        "Notebook grading",
+        "Consistent lab environment",
+      ],
       href: appPath("features/teaching"),
       icon: "graduation-cap",
       title: "Technical courses",

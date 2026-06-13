@@ -38,6 +38,11 @@ const BLOCKED_HOMEPAGE_CLAIM_PATTERNS = [
   /card payment/i,
   /Stripe/i,
   /validated demo/i,
+  /research-demo/i,
+  /Live CoCalc project preview/i,
+  /Live context/i,
+  /without setting up/i,
+  /Consistent lab setup/i,
   /benchmark/i,
 ] as const;
 const BLOCKED_HOMEPAGE_CLAIM_ATTRIBUTES = [
@@ -165,11 +170,13 @@ describe("PublicHomeApp", () => {
       within(projectOutcomes).getByText("Recoverable state"),
     ).not.toBeNull();
     const projectPreview = screen.getByRole("group", {
-      name: "Live CoCalc project preview",
+      name: "CoCalc project context preview",
     });
-    expect(within(projectPreview).getByText("research-demo")).not.toBeNull();
+    expect(
+      within(projectPreview).getByText("research-workspace"),
+    ).not.toBeNull();
     expect(within(projectPreview).getByText("Codex thread")).not.toBeNull();
-    expect(within(projectPreview).getByText("Live context")).not.toBeNull();
+    expect(within(projectPreview).getByText("Project context")).not.toBeNull();
     expect(within(projectPreview).getByText("Handoff queue")).not.toBeNull();
     expect(within(projectPreview).getByText("Notebook state")).not.toBeNull();
     expect(within(projectPreview).getByText("Agent request")).not.toBeNull();
@@ -466,7 +473,9 @@ describe("PublicHomeApp", () => {
       screen.getAllByRole("link", { name: "Open projects" }).length,
     ).toBeGreaterThan(0);
     expect(
-      within(screen.getByRole("group", { name: "Live CoCalc project preview" }))
+      within(
+        screen.getByRole("group", { name: "CoCalc project context preview" }),
+      )
         .getByRole("link", { name: "Open projects" })
         .getAttribute("href"),
     ).toBe("/projects");
