@@ -1095,6 +1095,58 @@ describe("PublicHomeApp", () => {
         within(operatingBoundaryQuestions).getByText(question),
       ).not.toBeNull();
     }
+    const operatingDecisionRoutes = within(productOptions).getByRole("group", {
+      name: "CoCalc.ai operating decision routes",
+    });
+    expectLinkHrefs(operatingDecisionRoutes, [
+      "/pricing",
+      "/products/cocalc-plus",
+      "/products",
+      "/policies/trust",
+    ]);
+    expect(
+      within(operatingDecisionRoutes).getByText("Route the question"),
+    ).not.toBeNull();
+    expect(
+      within(operatingDecisionRoutes).getByText(
+        "Pick the controlled page before choosing.",
+      ),
+    ).not.toBeNull();
+    for (const route of [
+      "Hosted accounts",
+      "Local runtime",
+      "Customer operation",
+      "Policy review",
+      "Use pricing when the question is hosted memberships or account upgrades.",
+      "Use Plus when one person wants CoCalc on their own Linux or Mac machine.",
+      "Use products when a customer team will operate the workspace.",
+      "Use trust policy when review needs policy references before routing.",
+      "CoCalc Plus details",
+      "Deployment comparison",
+      "Trust policy",
+    ]) {
+      expect(within(operatingDecisionRoutes).getByText(route)).not.toBeNull();
+    }
+    expect(
+      within(operatingDecisionRoutes)
+        .getByRole("link", { name: /Hosted accounts/i })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(
+      within(operatingDecisionRoutes)
+        .getByRole("link", { name: /Local runtime/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(operatingDecisionRoutes)
+        .getByRole("link", { name: /Customer operation/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(operatingDecisionRoutes)
+        .getByRole("link", { name: /Policy review/i })
+        .getAttribute("href"),
+    ).toBe("/policies/trust");
     const sharedOperatingContext = within(productOptions).getByRole("group", {
       name: "CoCalc.ai shared operating context",
     });

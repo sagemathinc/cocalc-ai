@@ -2761,6 +2761,47 @@ function ProductOptionsSection() {
     icon: IconName;
     question: string;
   }[];
+  const operatingDecisionRoutes = [
+    {
+      accent: COLORS.BLUE_D,
+      body: "Use pricing when the question is hosted memberships or account upgrades.",
+      href: appPath("pricing"),
+      icon: "percentage",
+      label: "Hosted accounts",
+      next: "Hosted pricing",
+    },
+    {
+      accent: PUBLIC_COLORS.success,
+      body: "Use Plus when one person wants CoCalc on their own Linux or Mac machine.",
+      href: appPath("products/cocalc-plus"),
+      icon: "laptop",
+      label: "Local runtime",
+      next: "CoCalc Plus details",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      body: "Use products when a customer team will operate the workspace.",
+      href: appPath("products"),
+      icon: "servers",
+      label: "Customer operation",
+      next: "Deployment comparison",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      body: "Use trust policy when review needs policy references before routing.",
+      href: appPath("policies/trust"),
+      icon: "lock",
+      label: "Policy review",
+      next: "Trust policy",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    href: string;
+    icon: IconName;
+    label: string;
+    next: string;
+  }[];
 
   return (
     <section aria-label="CoCalc.ai product options">
@@ -2946,6 +2987,103 @@ function ProductOptionsSection() {
                         <Text type="secondary">{item.answer}</Text>
                       </span>
                     </span>
+                  ))}
+                </div>
+              </div>
+              <div
+                aria-label="CoCalc.ai operating decision routes"
+                role="group"
+                style={{
+                  background: alpha(PUBLIC_COLORS.surface, 0.86),
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  padding: 14,
+                }}
+              >
+                <Flex align="baseline" justify="space-between" wrap gap={8}>
+                  <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                    Route the question
+                  </Text>
+                  <Text type="secondary">
+                    Pick the controlled page before choosing.
+                  </Text>
+                </Flex>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(min(100%, 184px), 1fr))",
+                    marginTop: 10,
+                  }}
+                >
+                  {operatingDecisionRoutes.map((route) => (
+                    <a
+                      href={route.href}
+                      key={route.label}
+                      style={{
+                        alignItems: "start",
+                        background: alpha(route.accent, 0.06),
+                        border: `1px solid ${alpha(route.accent, 0.22)}`,
+                        borderRadius: PANEL_RADIUS,
+                        color: "inherit",
+                        display: "grid",
+                        gap: 8,
+                        gridTemplateColumns: "30px minmax(0, 1fr) 14px",
+                        minHeight: 112,
+                        padding: 10,
+                        textDecoration: "none",
+                      }}
+                    >
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          alignItems: "center",
+                          background: alpha(route.accent, 0.08),
+                          border: `1px solid ${alpha(route.accent, 0.22)}`,
+                          borderRadius: PANEL_RADIUS,
+                          color: route.accent,
+                          display: "flex",
+                          height: 30,
+                          justifyContent: "center",
+                          width: 30,
+                        }}
+                      >
+                        <Icon name={route.icon} />
+                      </span>
+                      <span style={{ minWidth: 0 }}>
+                        <Text
+                          strong
+                          style={{
+                            color: route.accent,
+                            display: "block",
+                            fontSize: 12,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {route.label}
+                        </Text>
+                        <Text type="secondary">{route.body}</Text>
+                        <Text
+                          strong
+                          style={{
+                            color: route.accent,
+                            display: "block",
+                            marginTop: 4,
+                          }}
+                        >
+                          {route.next}
+                        </Text>
+                      </span>
+                      <Icon
+                        name="arrow-right"
+                        style={{
+                          alignSelf: "center",
+                          color: route.accent,
+                          fontSize: 12,
+                        }}
+                      />
+                    </a>
                   ))}
                 </div>
               </div>
