@@ -651,6 +651,40 @@ const WORKSPACE_CONTINUITY_LAYERS = [
   icon: IconName;
   label: string;
 }[];
+const WORKSPACE_HANDOFF_CHECKPOINTS = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Files, notebooks, and documents are the shared reference.",
+    icon: "files",
+    label: "Source record",
+  },
+  {
+    accent: COLORS.RUN,
+    detail:
+      "Terminal output, kernels, and services show how results were produced.",
+    icon: "terminal",
+    label: "Execution context",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail:
+      "Codex turns, discussion, and comparison views keep decisions visible.",
+    icon: "robot",
+    label: "Review notes",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail:
+      "Open the next notebook, terminal, agent, or product path from the same project.",
+    icon: "arrow-right",
+    label: "Next surface",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const LANDING_ENTRY_ACTIONS = [
   {
     accent: COLORS.BLUE_D,
@@ -2357,6 +2391,84 @@ function WorkspaceContinuitySection({
                     {step.label}
                   </Text>
                   <Text type="secondary">{step.detail}</Text>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div
+          aria-label="CoCalc.ai continuity handoff checkpoints"
+          role="group"
+          style={{
+            background: `linear-gradient(90deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 100%)`,
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: PANEL_RADIUS,
+            flex: "1 1 100%",
+            padding: 14,
+          }}
+        >
+          <Flex align="baseline" justify="space-between" wrap gap={8}>
+            <Text strong style={{ color: PUBLIC_COLORS.heading }}>
+              Handoff checkpoints
+            </Text>
+            <Text style={{ color: PUBLIC_COLORS.mutedText, fontSize: 12 }}>
+              What should still be visible before moving on.
+            </Text>
+          </Flex>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
+              marginTop: 10,
+            }}
+          >
+            {WORKSPACE_HANDOFF_CHECKPOINTS.map((checkpoint) => (
+              <div
+                key={checkpoint.label}
+                style={{
+                  alignItems: "start",
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${alpha(checkpoint.accent, 0.24)}`,
+                  borderRadius: PANEL_RADIUS,
+                  display: "grid",
+                  gap: 9,
+                  gridTemplateColumns: "32px minmax(0, 1fr)",
+                  minHeight: 96,
+                  padding: 12,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(checkpoint.accent, 0.08),
+                    border: `1px solid ${alpha(checkpoint.accent, 0.22)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: checkpoint.accent,
+                    display: "flex",
+                    fontSize: 16,
+                    height: 32,
+                    justifyContent: "center",
+                    width: 32,
+                  }}
+                >
+                  <Icon name={checkpoint.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text
+                    strong
+                    style={{
+                      color: checkpoint.accent,
+                      display: "block",
+                      fontSize: 12,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {checkpoint.label}
+                  </Text>
+                  <Text type="secondary">{checkpoint.detail}</Text>
                 </span>
               </div>
             ))}

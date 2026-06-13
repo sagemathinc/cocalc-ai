@@ -584,6 +584,34 @@ describe("PublicHomeApp", () => {
         "Files and notebooks establish the shared source.",
       ),
     ).not.toBeNull();
+    const continuityHandoffCheckpoints = within(continuityMap).getByRole(
+      "group",
+      {
+        name: "CoCalc.ai continuity handoff checkpoints",
+      },
+    );
+    expect(
+      within(continuityHandoffCheckpoints).getByText("Handoff checkpoints"),
+    ).not.toBeNull();
+    expect(
+      within(continuityHandoffCheckpoints).getByText(
+        "What should still be visible before moving on.",
+      ),
+    ).not.toBeNull();
+    for (const checkpoint of [
+      "Source record",
+      "Execution context",
+      "Review notes",
+      "Next surface",
+      "Files, notebooks, and documents are the shared reference.",
+      "Terminal output, kernels, and services show how results were produced.",
+      "Codex turns, discussion, and comparison views keep decisions visible.",
+      "Open the next notebook, terminal, agent, or product path from the same project.",
+    ]) {
+      expect(
+        within(continuityHandoffCheckpoints).getByText(checkpoint),
+      ).not.toBeNull();
+    }
     expect(
       screen.queryByRole("region", {
         name: "CoCalc.ai landing route map",
