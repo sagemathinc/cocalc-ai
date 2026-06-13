@@ -1183,6 +1183,27 @@ describe("PublicHomeApp", () => {
         within(operatingBoundaryQuestions).getByText(question),
       ).not.toBeNull();
     }
+    const operatingPathReview = within(productOptions).getByRole("group", {
+      name: "CoCalc.ai operating path review",
+    });
+    expect(
+      within(operatingPathReview).getByText("Review before choosing"),
+    ).not.toBeNull();
+    expect(
+      within(operatingPathReview).getByText(
+        "Keep route, workspace, and detail page aligned.",
+      ),
+    ).not.toBeNull();
+    for (const reviewItem of [
+      "Scope",
+      "Workspace model",
+      "Next page",
+      "Hosted accounts, local use, private teams, and policy questions use different routes.",
+      "Projects still hold files, notebooks, terminals, AI work, and history.",
+      "Use pricing, Plus, products, trust, or support for the boundary question.",
+    ]) {
+      expect(within(operatingPathReview).getByText(reviewItem)).not.toBeNull();
+    }
     const operatingDecisionRoutes = within(productOptions).getByRole("group", {
       name: "CoCalc.ai operating decision routes",
     });

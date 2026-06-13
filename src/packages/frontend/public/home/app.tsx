@@ -3200,6 +3200,34 @@ function ProductOptionsSection() {
     icon: IconName;
     question: string;
   }[];
+  const operatingPathReview = [
+    {
+      accent: COLORS.BLUE_D,
+      detail:
+        "Hosted accounts, local use, private teams, and policy questions use different routes.",
+      icon: "users",
+      label: "Scope",
+    },
+    {
+      accent: COLORS.RUN,
+      detail:
+        "Projects still hold files, notebooks, terminals, AI work, and history.",
+      icon: "project-outlined",
+      label: "Workspace model",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      detail:
+        "Use pricing, Plus, products, trust, or support for the boundary question.",
+      icon: "arrow-right",
+      label: "Next page",
+    },
+  ] satisfies {
+    accent: string;
+    detail: string;
+    icon: IconName;
+    label: string;
+  }[];
   const operatingDecisionRoutes = [
     {
       accent: COLORS.BLUE_D,
@@ -3424,6 +3452,95 @@ function ProductOptionsSection() {
                           {item.question}
                         </Text>
                         <Text type="secondary">{item.answer}</Text>
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div
+                aria-label="CoCalc.ai operating path review"
+                role="group"
+                style={{
+                  background: alpha(PUBLIC_COLORS.surface, 0.86),
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  padding: 14,
+                }}
+              >
+                <Flex align="baseline" justify="space-between" wrap gap={8}>
+                  <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                    Review before choosing
+                  </Text>
+                  <Text type="secondary">
+                    Keep route, workspace, and detail page aligned.
+                  </Text>
+                </Flex>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+                    marginTop: 10,
+                  }}
+                >
+                  {operatingPathReview.map((item, index) => (
+                    <span
+                      key={item.label}
+                      style={{
+                        alignItems: "start",
+                        background: alpha(item.accent, 0.06),
+                        border: `1px solid ${alpha(item.accent, 0.22)}`,
+                        borderRadius: PANEL_RADIUS,
+                        display: "grid",
+                        gap: 9,
+                        gridTemplateColumns: "30px minmax(0, 1fr)",
+                        minHeight: 98,
+                        padding: 10,
+                      }}
+                    >
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          alignItems: "center",
+                          background: alpha(item.accent, 0.08),
+                          border: `1px solid ${alpha(item.accent, 0.22)}`,
+                          borderRadius: PANEL_RADIUS,
+                          color: item.accent,
+                          display: "flex",
+                          flexDirection: "column",
+                          fontSize: 14,
+                          gap: 2,
+                          height: 42,
+                          justifyContent: "center",
+                          width: 30,
+                        }}
+                      >
+                        <Icon name={item.icon} />
+                        <Text
+                          strong
+                          style={{
+                            color: "inherit",
+                            fontSize: 10,
+                            lineHeight: 1,
+                          }}
+                        >
+                          {index + 1}
+                        </Text>
+                      </span>
+                      <span style={{ minWidth: 0 }}>
+                        <Text
+                          strong
+                          style={{
+                            color: item.accent,
+                            display: "block",
+                            fontSize: 12,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {item.label}
+                        </Text>
+                        <Text type="secondary">{item.detail}</Text>
                       </span>
                     </span>
                   ))}
