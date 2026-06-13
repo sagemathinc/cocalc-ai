@@ -61,6 +61,9 @@ const BLOCKED_HOMEPAGE_CLAIM_ATTRIBUTES = [
   "aria-label",
   "title",
 ] as const;
+const ALLOWED_EXTERNAL_HOMEPAGE_HREFS = [
+  "https://software.cocalc.ai/software/cocalc-plus/index.html",
+] as const;
 
 function getHomepageClaimCorpus(container: HTMLElement): string {
   const corpus = [container.textContent ?? ""];
@@ -90,6 +93,25 @@ function expectHomepageSectionsLabeled(container: HTMLElement) {
 
   for (const section of sections) {
     expect(section.getAttribute("aria-label")?.trim()).toBeTruthy();
+  }
+}
+
+function expectHomepageLinkTargetsControlled(container: HTMLElement) {
+  const links = Array.from(container.querySelectorAll<HTMLAnchorElement>("a"));
+  expect(links.length).toBeGreaterThan(0);
+
+  for (const link of links) {
+    const href = link.getAttribute("href");
+    expect(href).toBeTruthy();
+    if (href == null) continue;
+
+    const isExternal =
+      /^https?:\/\//i.test(href) || /^(mailto|tel):/i.test(href);
+    if (isExternal) {
+      expect(ALLOWED_EXTERNAL_HOMEPAGE_HREFS).toContain(href);
+    } else {
+      expect(href.startsWith("/") || href.startsWith("#")).toBe(true);
+    }
   }
 }
 
@@ -768,6 +790,7 @@ describe("PublicHomeApp", () => {
       }),
     ).toBe(true);
     expectBlockedHomepageClaimsAbsent(container);
+    expectHomepageLinkTargetsControlled(container);
     expect(container.querySelector('a[href*="cocalc-star"]')).toBeNull();
     expectHomepageSectionsLabeled(container);
     expect(
