@@ -340,7 +340,8 @@ function proxyHttp(req, res) {
     upstream.destroy(new Error("upstream timeout"));
   });
   upstream.on("error", (err) => {
-    worker.healthy = false;
+    // Client/proxy request failures are not health checks. The poller owns
+    // worker health so one reset/timeout cannot briefly remove the whole bay.
     worker.lastError = err.message;
     if (!res.headersSent) {
       res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
@@ -391,7 +392,8 @@ function proxyUpgrade(req, socket, head) {
     upstream.destroy(new Error("upstream timeout"));
   });
   upstream.on("error", (err) => {
-    worker.healthy = false;
+    // Client/proxy upgrade failures are not health checks. The poller owns
+    // worker health so one reset/timeout cannot briefly remove the whole bay.
     worker.lastError = err.message;
     if (!socket.destroyed) {
       rejectUpgrade(socket, 502, "upstream hub worker failed");
