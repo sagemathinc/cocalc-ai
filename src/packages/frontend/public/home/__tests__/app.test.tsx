@@ -272,6 +272,33 @@ describe("PublicHomeApp", () => {
         /where the work should live, which surface should open it, or who should operate the workspace/i,
       ),
     ).not.toBeNull();
+    const firstDecisionFlow = within(routeMap).getByRole("group", {
+      name: "CoCalc.ai first decision flow",
+    });
+    expectLinkHrefs(firstDecisionFlow, [
+      "/auth/sign-up",
+      "/features",
+      "/products",
+    ]);
+    expect(
+      within(firstDecisionFlow).getByRole("link", {
+        name: /Where does the work live/i,
+      }),
+    ).not.toBeNull();
+    expect(
+      within(firstDecisionFlow).getByRole("link", { name: /What opens it/i }),
+    ).not.toBeNull();
+    expect(
+      within(firstDecisionFlow).getByRole("link", { name: /Who runs it/i }),
+    ).not.toBeNull();
+    expect(within(firstDecisionFlow).getByText("Place")).not.toBeNull();
+    expect(within(firstDecisionFlow).getByText("Surface")).not.toBeNull();
+    expect(within(firstDecisionFlow).getByText("Boundary")).not.toBeNull();
+    expect(
+      within(firstDecisionFlow).getByText(
+        "Create or open the project that will hold files, output, terminals, and notes.",
+      ),
+    ).not.toBeNull();
     const primaryLandingRoutes = within(routeMap).getByRole("group", {
       name: "CoCalc.ai primary landing routes",
     });
@@ -1099,6 +1126,12 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Start a workspace/i })
         .getAttribute("href"),
     ).toBe("/projects");
+    expectLinkHrefs(
+      screen.getByRole("group", {
+        name: "CoCalc.ai first decision flow",
+      }),
+      ["/projects", "/features", "/products"],
+    );
     expect(
       screen.queryByRole("region", { name: "CoCalc.ai first-step routes" }),
     ).toBeNull();

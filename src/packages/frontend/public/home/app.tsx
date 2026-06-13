@@ -501,6 +501,40 @@ const LANDING_ROUTE_MAP = [
   prompt: string;
   title: string;
 }[];
+const LANDING_DECISION_FLOW = [
+  {
+    accent: COLORS.BLUE_D,
+    body: "Create or open the project that will hold files, output, terminals, and notes.",
+    href: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? appPath("projects") : appPath("auth/sign-up"),
+    icon: "project-outlined",
+    label: "Place",
+    title: "Where does the work live?",
+  },
+  {
+    accent: COLORS.RUN,
+    body: "Choose the notebook, terminal, AI, teaching, or writing surface that fits the task.",
+    href: () => appPath("features"),
+    icon: "overview",
+    label: "Surface",
+    title: "What opens it?",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Compare hosted, local, and customer-operated paths before choosing the runtime boundary.",
+    href: () => appPath("products"),
+    icon: "servers",
+    label: "Boundary",
+    title: "Who runs it?",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: (opts: { authenticated: boolean }) => string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
     return `rgba(255, 255, 255, ${opacity})`;
@@ -1576,6 +1610,80 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
             which surface should open it, or who should operate the workspace.
             Each route keeps the project model visible.
           </Paragraph>
+        </div>
+        <div
+          aria-label="CoCalc.ai first decision flow"
+          role="group"
+          style={{
+            display: "grid",
+            flex: "1 1 620px",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+          }}
+        >
+          {LANDING_DECISION_FLOW.map((item, index) => (
+            <a
+              href={item.href({ authenticated })}
+              key={item.label}
+              style={{
+                alignItems: "start",
+                background: PUBLIC_COLORS.surfaceMuted,
+                border: `1px solid ${alpha(item.accent, 0.22)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "34px minmax(0, 1fr)",
+                minHeight: 116,
+                padding: 12,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(item.accent, 0.08),
+                  border: `1px solid ${alpha(item.accent, 0.2)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  flexDirection: "column",
+                  fontSize: 15,
+                  gap: 2,
+                  height: 46,
+                  justifyContent: "center",
+                  width: 34,
+                }}
+              >
+                <Icon name={item.icon} />
+                <Text
+                  strong
+                  style={{ color: "inherit", fontSize: 10, lineHeight: 1 }}
+                >
+                  {index + 1}
+                </Text>
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: item.accent,
+                    display: "block",
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {item.label}
+                </Text>
+                <Text strong style={{ display: "block", marginTop: 2 }}>
+                  {item.title}
+                </Text>
+                <Text type="secondary">{item.body}</Text>
+              </span>
+            </a>
+          ))}
         </div>
         <div
           aria-label="CoCalc.ai primary landing routes"
