@@ -1484,6 +1484,59 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Policy review/i })
         .getAttribute("href"),
     ).toBe("/policies/trust");
+    const productPathHandoffGuide = within(productOptions).getByRole("group", {
+      name: "CoCalc.ai product path handoff guide",
+    });
+    expectLinkHrefs(productPathHandoffGuide, [
+      "/pricing",
+      "/products/cocalc-plus",
+      "/products/cocalc-launchpad",
+      "/products/cocalc-rocket",
+    ]);
+    expect(
+      within(productPathHandoffGuide).getByText("Map path to next page"),
+    ).not.toBeNull();
+    expect(
+      within(productPathHandoffGuide).getByText(
+        "Keep each operating question on its product route.",
+      ),
+    ).not.toBeNull();
+    for (const handoff of [
+      "Hosted service",
+      "Local runtime",
+      "Private team",
+      "Private cloud",
+      "Use hosted pricing when CoCalc runs the service and accounts need upgrades.",
+      "Use Plus when one person runs the workspace on a Linux or Mac machine.",
+      "Use Launchpad when a customer-operated team needs a lightweight private deployment.",
+      "Use Rocket when the next step is private cloud planning with CoCalc guidance.",
+      "Review hosted pricing",
+      "Open CoCalc Plus",
+      "Review Launchpad",
+      "Plan Rocket",
+    ]) {
+      expect(within(productPathHandoffGuide).getByText(handoff)).not.toBeNull();
+    }
+    expect(
+      within(productPathHandoffGuide)
+        .getByRole("link", { name: /Hosted service/i })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(
+      within(productPathHandoffGuide)
+        .getByRole("link", { name: /Local runtime/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(productPathHandoffGuide)
+        .getByRole("link", { name: /Private team/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-launchpad");
+    expect(
+      within(productPathHandoffGuide)
+        .getByRole("link", { name: /Private cloud/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-rocket");
     const sharedOperatingContext = within(productOptions).getByRole("group", {
       name: "CoCalc.ai shared operating context",
     });

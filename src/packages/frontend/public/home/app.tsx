@@ -4094,6 +4094,47 @@ function ProductOptionsSection() {
     label: string;
     next: string;
   }[];
+  const productPathHandoffs = [
+    {
+      accent: COLORS.BLUE_D,
+      body: "Use hosted pricing when CoCalc runs the service and accounts need upgrades.",
+      href: appPath("pricing"),
+      icon: "cloud",
+      label: "Hosted service",
+      next: "Review hosted pricing",
+    },
+    {
+      accent: PUBLIC_COLORS.success,
+      body: "Use Plus when one person runs the workspace on a Linux or Mac machine.",
+      href: appPath("products/cocalc-plus"),
+      icon: "laptop",
+      label: "Local runtime",
+      next: "Open CoCalc Plus",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      body: "Use Launchpad when a customer-operated team needs a lightweight private deployment.",
+      href: appPath("products/cocalc-launchpad"),
+      icon: "servers",
+      label: "Private team",
+      next: "Review Launchpad",
+    },
+    {
+      accent: COLORS.ANTD_LINK_BLUE_DARK,
+      body: "Use Rocket when the next step is private cloud planning with CoCalc guidance.",
+      href: appPath("products/cocalc-rocket"),
+      icon: "rocket",
+      label: "Private cloud",
+      next: "Plan Rocket",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    href: string;
+    icon: IconName;
+    label: string;
+    next: string;
+  }[];
 
   return (
     <section aria-label="CoCalc.ai product options">
@@ -4461,6 +4502,103 @@ function ProductOptionsSection() {
                         style={{
                           alignSelf: "center",
                           color: route.accent,
+                          fontSize: 12,
+                        }}
+                      />
+                    </a>
+                  ))}
+                </div>
+              </div>
+              <div
+                aria-label="CoCalc.ai product path handoff guide"
+                role="group"
+                style={{
+                  background: alpha(PUBLIC_COLORS.surface, 0.86),
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  padding: 14,
+                }}
+              >
+                <Flex align="baseline" justify="space-between" wrap gap={8}>
+                  <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                    Map path to next page
+                  </Text>
+                  <Text type="secondary">
+                    Keep each operating question on its product route.
+                  </Text>
+                </Flex>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(min(100%, 184px), 1fr))",
+                    marginTop: 10,
+                  }}
+                >
+                  {productPathHandoffs.map((handoff) => (
+                    <a
+                      href={handoff.href}
+                      key={handoff.label}
+                      style={{
+                        alignItems: "start",
+                        background: alpha(handoff.accent, 0.06),
+                        border: `1px solid ${alpha(handoff.accent, 0.22)}`,
+                        borderRadius: PANEL_RADIUS,
+                        color: "inherit",
+                        display: "grid",
+                        gap: 8,
+                        gridTemplateColumns: "30px minmax(0, 1fr) 14px",
+                        minHeight: 112,
+                        padding: 10,
+                        textDecoration: "none",
+                      }}
+                    >
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          alignItems: "center",
+                          background: alpha(handoff.accent, 0.08),
+                          border: `1px solid ${alpha(handoff.accent, 0.22)}`,
+                          borderRadius: PANEL_RADIUS,
+                          color: handoff.accent,
+                          display: "flex",
+                          height: 30,
+                          justifyContent: "center",
+                          width: 30,
+                        }}
+                      >
+                        <Icon name={handoff.icon} />
+                      </span>
+                      <span style={{ minWidth: 0 }}>
+                        <Text
+                          strong
+                          style={{
+                            color: handoff.accent,
+                            display: "block",
+                            fontSize: 12,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {handoff.label}
+                        </Text>
+                        <Text type="secondary">{handoff.body}</Text>
+                        <Text
+                          strong
+                          style={{
+                            color: handoff.accent,
+                            display: "block",
+                            marginTop: 4,
+                          }}
+                        >
+                          {handoff.next}
+                        </Text>
+                      </span>
+                      <Icon
+                        name="arrow-right"
+                        style={{
+                          alignSelf: "center",
+                          color: handoff.accent,
                           fontSize: 12,
                         }}
                       />
