@@ -163,24 +163,30 @@ const WORKSPACE_PREVIEW_ACTIVITY = [
   icon: IconName;
   label: string;
 }[];
-const WORKSPACE_PREVIEW_TRAIL = [
+const WORKSPACE_PREVIEW_RECORD = [
   {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    detail: "Patch against src/model.py",
-    icon: "robot",
-    label: "Codex proposed",
+    accent: COLORS.RUN,
+    detail: "analysis.ipynb output remains near source files.",
+    icon: "jupyter",
+    label: "Notebook output",
   },
   {
-    accent: PUBLIC_COLORS.success,
-    detail: "pytest passed in run.term",
-    icon: "check-circle",
-    label: "Validation",
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    detail: "run.term logs stay beside the change.",
+    icon: "terminal",
+    label: "Terminal logs",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Prompt, patch, and reviewer notes stay attached.",
+    icon: "robot",
+    label: "Codex notes",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    detail: "Snapshot ready before merge",
+    detail: "Snapshot marker keeps prior state visible.",
     icon: "disk-snapshot",
-    label: "Recovery",
+    label: "Recovery marker",
   },
 ] satisfies {
   accent: string;
@@ -800,10 +806,10 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
       >
         <Flex align="center" justify="space-between" wrap gap={8}>
           <Text strong style={{ color: PUBLIC_COLORS.surface }}>
-            Current trail
+            Project record
           </Text>
           <Text style={{ color: alpha(PUBLIC_COLORS.surface, 0.68) }}>
-            Prompt to reviewed state
+            Files, output, notes, recovery
           </Text>
         </Flex>
         <div
@@ -814,7 +820,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
             marginTop: 10,
           }}
         >
-          {WORKSPACE_PREVIEW_TRAIL.map((item) => (
+          {WORKSPACE_PREVIEW_RECORD.map((item) => (
             <Flex align="start" gap={8} key={item.label}>
               <span
                 aria-hidden="true"

@@ -181,10 +181,12 @@ describe("PublicHomeApp", () => {
     expect(within(projectPreview).getByText("Notebook state")).not.toBeNull();
     expect(within(projectPreview).getByText("Agent request")).not.toBeNull();
     expect(within(projectPreview).getByText("Review notes")).not.toBeNull();
-    expect(within(projectPreview).getByText("Current trail")).not.toBeNull();
+    expect(within(projectPreview).getByText("Project record")).not.toBeNull();
+    expect(within(projectPreview).getByText("Notebook output")).not.toBeNull();
     expect(
-      within(projectPreview).getByText("pytest passed in run.term"),
+      within(projectPreview).getByText("run.term logs stay beside the change."),
     ).not.toBeNull();
+    expect(within(projectPreview).getByText("Recovery marker")).not.toBeNull();
     expect(
       within(projectPreview)
         .getByRole("link", { name: /Start a project/i })
