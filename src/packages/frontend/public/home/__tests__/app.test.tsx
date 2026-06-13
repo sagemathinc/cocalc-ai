@@ -992,6 +992,35 @@ describe("PublicHomeApp", () => {
     expect(
       within(coreWorkflows).queryByRole("link", { name: /Whiteboard/i }),
     ).toBeNull();
+    const supportingWorkflowGuide = within(coreWorkflows).getByRole("group", {
+      name: "CoCalc.ai supporting workflow guide",
+    });
+    expectLinkHrefs(supportingWorkflowGuide, [
+      "/features/latex-editor",
+      "/features/teaching",
+      "/features/compare",
+    ]);
+    expect(
+      within(supportingWorkflowGuide).getByText("Supporting workflows"),
+    ).not.toBeNull();
+    expect(
+      within(supportingWorkflowGuide).getByText(
+        "Pick the next surface after the project is clear.",
+      ),
+    ).not.toBeNull();
+    for (const route of [
+      "Writing",
+      "Teaching",
+      "Review",
+      "Technical writing",
+      "Course work",
+      "Compare CoCalc",
+      "Edit papers, notes, and handouts beside project files.",
+      "Keep assignments, notebooks, and grading near the shared project.",
+      "Use comparison pages when the question is project context and reviewability.",
+    ]) {
+      expect(within(supportingWorkflowGuide).getByText(route)).not.toBeNull();
+    }
     expect(
       screen.queryByRole("heading", {
         name: "Not another isolated notebook, IDE, or agent console.",

@@ -592,6 +592,39 @@ const WORKFLOW_CONTEXT_ITEMS = [
   { icon: "users", label: "People" },
   { icon: "disk-snapshot", label: "Recovery" },
 ] satisfies { icon: IconName; label: string }[];
+const SUPPORTING_WORKFLOW_ROUTES = [
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Edit papers, notes, and handouts beside project files.",
+    href: "features/latex-editor",
+    icon: "tex",
+    label: "Writing",
+    title: "Technical writing",
+  },
+  {
+    accent: PUBLIC_COLORS.success,
+    body: "Keep assignments, notebooks, and grading near the shared project.",
+    href: "features/teaching",
+    icon: "graduation-cap",
+    label: "Teaching",
+    title: "Course work",
+  },
+  {
+    accent: COLORS.BLUE_D,
+    body: "Use comparison pages when the question is project context and reviewability.",
+    href: "features/compare",
+    icon: "overview",
+    label: "Review",
+    title: "Compare CoCalc",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 const WORKSPACE_CONTINUITY_CUES = [
   {
     accent: COLORS.BLUE_D,
@@ -2930,6 +2963,97 @@ function WorkflowsSection() {
                 </Flex>
               </a>
             ))}
+          </div>
+          <div
+            aria-label="CoCalc.ai supporting workflow guide"
+            role="group"
+            style={{
+              background: PUBLIC_COLORS.surfaceMuted,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              marginTop: 14,
+              padding: 14,
+            }}
+          >
+            <Flex align="baseline" justify="space-between" wrap gap={8}>
+              <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                Supporting workflows
+              </Text>
+              <Text type="secondary">
+                Pick the next surface after the project is clear.
+              </Text>
+            </Flex>
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 180px), 1fr))",
+                marginTop: 10,
+              }}
+            >
+              {SUPPORTING_WORKFLOW_ROUTES.map((route) => (
+                <a
+                  href={appPath(route.href)}
+                  key={route.label}
+                  style={{
+                    alignItems: "start",
+                    background: PUBLIC_COLORS.surface,
+                    border: `1px solid ${alpha(route.accent, 0.24)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: "inherit",
+                    display: "grid",
+                    gap: 9,
+                    gridTemplateColumns: "32px minmax(0, 1fr) 14px",
+                    minHeight: 104,
+                    padding: 12,
+                    textDecoration: "none",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      alignItems: "center",
+                      background: alpha(route.accent, 0.08),
+                      border: `1px solid ${alpha(route.accent, 0.22)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: route.accent,
+                      display: "flex",
+                      height: 32,
+                      justifyContent: "center",
+                      width: 32,
+                    }}
+                  >
+                    <Icon name={route.icon} />
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <Text
+                      strong
+                      style={{
+                        color: route.accent,
+                        display: "block",
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {route.label}
+                    </Text>
+                    <Text strong style={{ display: "block" }}>
+                      {route.title}
+                    </Text>
+                    <Text type="secondary">{route.body}</Text>
+                  </span>
+                  <Icon
+                    name="arrow-right"
+                    style={{
+                      alignSelf: "center",
+                      color: route.accent,
+                      fontSize: 12,
+                    }}
+                  />
+                </a>
+              ))}
+            </div>
           </div>
         </Col>
       </Row>
