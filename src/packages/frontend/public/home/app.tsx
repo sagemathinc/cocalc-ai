@@ -3409,21 +3409,12 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
     },
     {
       accent: PUBLIC_COLORS.warning,
-      body: "Lightweight customer-operated private deployment for a team.",
-      button: "Review Launchpad",
-      href: appPath("products/cocalc-launchpad"),
+      body: "Compare hosted, local, and customer-operated paths before choosing a runtime boundary.",
+      button: "Compare deployment options",
+      href: appPath("products"),
       icon: "servers",
-      route: "Private",
-      title: "CoCalc Launchpad",
-    },
-    {
-      accent: COLORS.ANTD_LINK_BLUE_DARK,
-      body: "Private cloud planning path with customer-operated infrastructure boundaries.",
-      button: "Plan Rocket",
-      href: appPath("products/cocalc-rocket"),
-      icon: "rocket",
-      route: "Private cloud",
-      title: "CoCalc Rocket",
+      route: "Deployment",
+      title: "Deployment comparison",
     },
   ] satisfies {
     accent: string;
@@ -3466,9 +3457,9 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 maxWidth: 760,
               }}
             >
-              Start hosted, install CoCalc Plus, review Launchpad, or plan
-              Rocket. Use site licensing for procurement, governance, support,
-              and rollout once the operating path is clear.
+              Start hosted, install CoCalc Plus, or compare deployment options.
+              Use site licensing for procurement, governance, support, and
+              rollout once the operating path is clear.
             </Paragraph>
           </Col>
         </Row>
@@ -3582,12 +3573,6 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
               </span>
             </Flex>
             <Flex gap={10} wrap>
-              <Button
-                href={appPath("products")}
-                icon={<DecorativeButtonIcon name="servers" />}
-              >
-                Compare deployment options
-              </Button>
               <Button
                 href={siteLicenseHref}
                 icon={<DecorativeButtonIcon name="bank" />}

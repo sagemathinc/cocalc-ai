@@ -1099,8 +1099,7 @@ describe("PublicHomeApp", () => {
     expectLinkHrefs(finalDeploymentPathActions, [
       "/auth/sign-up",
       "https://software.cocalc.ai/software/cocalc-plus/index.html",
-      "/products/cocalc-launchpad",
-      "/products/cocalc-rocket",
+      "/products",
     ]);
     expect(
       within(finalDeploymentPathActions).getByRole("link", {
@@ -1114,17 +1113,17 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(finalDeploymentPathActions).getByRole("link", {
-        name: "Review Launchpad",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(finalDeploymentPathActions).getByRole("link", {
-        name: "Plan Rocket",
+        name: "Compare deployment options",
       }),
     ).not.toBeNull();
     expect(
       within(finalDeploymentPathActions).queryByRole("link", {
-        name: "Compare deployment options",
+        name: "Review Launchpad",
+      }),
+    ).toBeNull();
+    expect(
+      within(finalDeploymentPathActions).queryByRole("link", {
+        name: "Plan Rocket",
       }),
     ).toBeNull();
     expect(
@@ -1139,12 +1138,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(finalCallsToAction).getByText(
-        "Lightweight customer-operated private deployment for a team.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(finalCallsToAction).getByText(
-        "Private cloud planning path with customer-operated infrastructure boundaries.",
+        "Compare hosted, local, and customer-operated paths before choosing a runtime boundary.",
       ),
     ).not.toBeNull();
     expect(
