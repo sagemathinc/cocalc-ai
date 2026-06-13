@@ -11,7 +11,9 @@ load_bay_env() {
     "${COCALC_BAY_SECRETS_ENV_FILE:-/etc/cocalc/bay-secrets.env}"; do
     if [[ -r "$env_file" ]]; then
       # shellcheck disable=SC1090
+      set -a
       source "$env_file"
+      set +a
     fi
   done
 }
@@ -63,6 +65,12 @@ load_bay_env
 : "${COCALC_CLUSTER_SEED_CONAT_SERVER:=}"
 : "${COCALC_INTER_BAY_CONAT_SERVER:=}"
 : "${COCALC_CLUSTER_PEER_HEALTH_URLS:=}"
+
+export \
+  COCALC_BAY_FRONTDOOR_HOST \
+  COCALC_BAY_FRONTDOOR_PORT \
+  COCALC_BAY_FRONTDOOR_HEALTH_PATH \
+  COCALC_BAY_FRONTDOOR_DRAIN_FILE
 
 if [[ -x "$COCALC_BAY_NODE_BIN" ]]; then
   export PATH="$(dirname "$COCALC_BAY_NODE_BIN"):${PATH}"
