@@ -853,6 +853,20 @@ describe("PublicHomeApp", () => {
         name: "Use detail pages for boundary questions.",
       }),
     ).not.toBeNull();
+    const boundaryDetailRouteLinks = within(detailRoutes).getByRole("group", {
+      name: "CoCalc.ai boundary detail route links",
+    });
+    expect(
+      within(boundaryDetailRouteLinks)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "/policies/trust",
+      "/products/cocalc-plus",
+      "/products",
+      "/support",
+      expect.stringContaining("/support/new?"),
+    ]);
     expect(
       within(detailRoutes)
         .getByRole("link", { name: /Trust policy/i })

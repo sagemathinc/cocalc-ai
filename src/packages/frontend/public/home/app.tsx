@@ -2836,6 +2836,8 @@ function DetailRoutesSection() {
         </div>
       </Flex>
       <div
+        aria-label="CoCalc.ai boundary detail route links"
+        role="group"
         style={{
           display: "grid",
           gap: 10,
