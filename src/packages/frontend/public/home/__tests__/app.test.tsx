@@ -117,6 +117,21 @@ function expectHomepageSectionsLabeled(container: HTMLElement) {
   }
 }
 
+function getHomepageTopLevelSectionLabels(container: HTMLElement): string[] {
+  const contentFlex = container.querySelector(
+    ".cocalc-public-content",
+  )?.firstElementChild;
+  expect(contentFlex).not.toBeNull();
+
+  return Array.from(contentFlex?.children ?? [])
+    .filter(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement &&
+        element.tagName.toLowerCase() === "section",
+    )
+    .map((section) => section.getAttribute("aria-label") ?? "");
+}
+
 function expectHomepageLinkTargetsControlled(container: HTMLElement) {
   const links = Array.from(container.querySelectorAll<HTMLAnchorElement>("a"));
   expect(links.length).toBeGreaterThan(0);
@@ -909,6 +924,20 @@ describe("PublicHomeApp", () => {
         screen.getByRole("heading", { name: "Recent News" }),
       ).not.toBeNull(),
     );
+    expect(getHomepageTopLevelSectionLabels(container)).toEqual([
+      "CoCalc.ai technical workspace",
+      "CoCalc.ai workspace scope",
+      "CoCalc.ai workspace continuity map",
+      "CoCalc.ai workspace preview",
+      "CoCalc.ai collaboration review path",
+      "CoCalc.ai work input routes",
+      "CoCalc.ai core workflows",
+      "CoCalc.ai audience paths",
+      "CoCalc.ai product options",
+      "CoCalc.ai controlled detail routes",
+      "CoCalc.ai recent news",
+      "CoCalc.ai final calls to action",
+    ]);
     expect(
       screen
         .getAllByRole("link", { name: "Install CoCalc Plus" })
