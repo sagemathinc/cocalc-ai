@@ -76,6 +76,24 @@ const HOME_PAGE_CSS = `
   }
 
   @media (max-width: 840px) {
+    .cocalc-public-home-audience-header {
+      display: none !important;
+    }
+
+    .cocalc-public-home-audience-row {
+      grid-template-columns: 44px minmax(0, 1fr) 18px !important;
+    }
+
+    .cocalc-public-home-audience-row-context,
+    .cocalc-public-home-audience-row-use {
+      grid-column: 1 / -1 !important;
+    }
+
+    .cocalc-public-home-audience-row-next {
+      grid-column: 1 / 3 !important;
+      justify-self: start !important;
+    }
+
     .cocalc-public-home-product-header {
       display: none !important;
     }
@@ -1112,7 +1130,7 @@ function AudienceSection() {
   const audiences = [
     {
       accent: COLORS.ANTD_LINK_BLUE_DARK,
-      body: "Keep source files, service terminals, notebooks, reviews, and Codex threads in the same project when a technical issue needs full context.",
+      body: "Debug, review, and ship from a project where source, services, notebooks, and Codex threads share context.",
       bullets: [
         "Shared debugging",
         "Agent-assisted patches",
@@ -1125,11 +1143,12 @@ function AudienceSection() {
         { icon: "terminal", label: "Runtime", value: "Services and tests" },
         { icon: "robot", label: "Codex", value: "Patches and review" },
       ],
+      nextStep: "See AI workflows",
       title: "Engineering teams",
     },
     {
       accent: PUBLIC_COLORS.success,
-      body: "Preserve computational environments, notebook output, data files, and collaborator decisions so research work can be inspected later.",
+      body: "Keep computational environments, notebook output, data files, and collaborator decisions inspectable later.",
       bullets: [
         "Long-running sessions",
         "Snapshots and backups",
@@ -1142,11 +1161,12 @@ function AudienceSection() {
         { icon: "database", label: "Data", value: "Project files" },
         { icon: "history", label: "Record", value: "Snapshots" },
       ],
+      nextStep: "Open notebooks",
       title: "Research labs",
     },
     {
       accent: PUBLIC_COLORS.warning,
-      body: "Run courses and workshops with one browser-based environment for assignments, notebooks, Linux, grading, and student support.",
+      body: "Run classes and workshops with one browser environment for assignments, notebooks, Linux, grading, and support.",
       bullets: [
         "Course projects",
         "Notebook grading",
@@ -1159,6 +1179,7 @@ function AudienceSection() {
         { icon: "users", label: "Class", value: "Student projects" },
         { icon: "jupyter", label: "Review", value: "Notebook grading" },
       ],
+      nextStep: "Explore teaching",
       title: "Technical courses",
     },
   ] satisfies {
@@ -1167,6 +1188,7 @@ function AudienceSection() {
     bullets: string[];
     href: string;
     icon: IconName;
+    nextStep: string;
     signals: { icon: IconName; label: string; value: string }[];
     title: string;
   }[];
@@ -1177,11 +1199,11 @@ function AudienceSection() {
         <div style={{ maxWidth: 780 }}>
           <Eyebrow>Who CoCalc is for</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Built for technical groups.
+            Route by the work your group does.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            CoCalc works best when a group needs real compute, persistent
-            project state, collaboration, and review in one place instead of a
+            CoCalc is a fit when real compute, persistent project state,
+            collaboration, and review need to stay in one place instead of a
             stack of disconnected tools.
           </Paragraph>
         </div>
@@ -1194,119 +1216,177 @@ function AudienceSection() {
       </Flex>
       <div
         style={{
-          display: "grid",
-          gap: 16,
-          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          background: PUBLIC_COLORS.surface,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
           marginTop: 26,
+          overflow: "hidden",
         }}
       >
+        <div
+          aria-hidden="true"
+          className="cocalc-public-home-audience-header"
+          style={{
+            background: PUBLIC_COLORS.surfaceMuted,
+            color: PUBLIC_COLORS.brand,
+            display: "grid",
+            fontSize: 12,
+            fontWeight: 600,
+            gap: 14,
+            gridTemplateColumns:
+              "minmax(240px, 1fr) minmax(220px, 1fr) minmax(220px, 0.95fr) minmax(120px, 0.45fr) 18px",
+            padding: "12px 16px",
+            textTransform: "uppercase",
+          }}
+        >
+          <Text style={{ color: "inherit", fontSize: "inherit" }}>
+            Audience
+          </Text>
+          <Text style={{ color: "inherit", fontSize: "inherit" }}>
+            Project context
+          </Text>
+          <Text style={{ color: "inherit", fontSize: "inherit" }}>
+            Common use
+          </Text>
+          <Text style={{ color: "inherit", fontSize: "inherit" }}>
+            Next step
+          </Text>
+          <span />
+        </div>
         {audiences.map((audience) => (
           <a
+            className="cocalc-public-home-audience-row"
             href={audience.href}
             key={audience.title}
             style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
+              borderTop: `1px solid ${PUBLIC_COLORS.border}`,
               color: "inherit",
-              display: "block",
-              minHeight: 360,
-              padding: 22,
+              display: "grid",
+              gap: 14,
+              gridTemplateColumns:
+                "minmax(240px, 1fr) minmax(220px, 1fr) minmax(220px, 0.95fr) minmax(120px, 0.45fr) 18px",
+              minHeight: 118,
+              padding: 16,
               textDecoration: "none",
             }}
           >
-            <Flex vertical gap={16} style={{ height: "100%" }}>
-              <Flex align="center" justify="space-between">
-                <div
-                  style={{
-                    alignItems: "center",
-                    background: `${audience.accent}14`,
-                    border: `1px solid ${audience.accent}33`,
-                    borderRadius: PANEL_RADIUS,
-                    color: audience.accent,
-                    display: "flex",
-                    fontSize: 24,
-                    height: 52,
-                    justifyContent: "center",
-                    width: 52,
-                  }}
-                >
-                  <Icon name={audience.icon} />
-                </div>
-                <Icon
-                  name="arrow-right"
-                  style={{ color: audience.accent, fontSize: 18 }}
-                />
-              </Flex>
-              <div>
-                <Title level={3} style={{ fontSize: 23, margin: "0 0 10px" }}>
+            <div
+              style={{
+                alignItems: "start",
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "44px minmax(0, 1fr)",
+                minWidth: 0,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: `${audience.accent}14`,
+                  border: `1px solid ${audience.accent}33`,
+                  borderRadius: PANEL_RADIUS,
+                  color: audience.accent,
+                  display: "flex",
+                  fontSize: 22,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <Icon name={audience.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Title level={3} style={{ fontSize: 22, margin: "0 0 6px" }}>
                   {audience.title}
                 </Title>
                 <Paragraph style={{ margin: 0 }}>{audience.body}</Paragraph>
-              </div>
-              <div
-                aria-label={`${audience.title} workflow cues`}
-                role="group"
-                style={{
-                  display: "grid",
-                  gap: 8,
-                  gridTemplateColumns:
-                    "repeat(auto-fit, minmax(min(100%, 132px), 1fr))",
-                }}
-              >
-                {audience.signals.map((signal) => (
-                  <span
-                    key={signal.label}
+              </span>
+            </div>
+            <div
+              aria-label={`${audience.title} project context cues`}
+              className="cocalc-public-home-audience-row-context"
+              role="group"
+              style={{
+                alignSelf: "center",
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 138px), 1fr))",
+              }}
+            >
+              {audience.signals.map((signal) => (
+                <span
+                  key={signal.label}
+                  style={{
+                    alignItems: "start",
+                    background: `${audience.accent}0d`,
+                    border: `1px solid ${audience.accent}24`,
+                    borderRadius: PANEL_RADIUS,
+                    display: "grid",
+                    gap: 7,
+                    gridTemplateColumns: "20px minmax(0, 1fr)",
+                    minHeight: 54,
+                    padding: "8px 9px",
+                  }}
+                >
+                  <Icon
+                    name={signal.icon}
                     style={{
-                      alignItems: "start",
-                      background: `${audience.accent}0d`,
-                      border: `1px solid ${audience.accent}26`,
-                      borderRadius: PANEL_RADIUS,
-                      display: "grid",
-                      gap: 8,
-                      gridTemplateColumns: "22px minmax(0, 1fr)",
-                      minHeight: 62,
-                      padding: "9px 10px",
+                      color: audience.accent,
+                      marginTop: 2,
                     }}
-                  >
-                    <Icon
-                      name={signal.icon}
-                      style={{
-                        color: audience.accent,
-                        marginTop: 2,
-                      }}
-                    />
-                    <span style={{ minWidth: 0 }}>
-                      <Text strong style={{ display: "block" }}>
-                        {signal.label}
-                      </Text>
-                      <Text type="secondary">{signal.value}</Text>
-                    </span>
+                  />
+                  <span style={{ minWidth: 0 }}>
+                    <Text strong style={{ display: "block" }}>
+                      {signal.label}
+                    </Text>
+                    <Text type="secondary">{signal.value}</Text>
                   </span>
-                ))}
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gap: 8,
-                  marginTop: "auto",
-                }}
-              >
-                {audience.bullets.map((bullet) => (
-                  <Flex align="center" gap={8} key={bullet}>
-                    <Icon
-                      name="check-circle"
-                      style={{
-                        color: audience.accent,
-                        flex: "0 0 auto",
-                      }}
-                    />
-                    <Text>{bullet}</Text>
-                  </Flex>
-                ))}
-              </div>
-            </Flex>
+                </span>
+              ))}
+            </div>
+            <div
+              className="cocalc-public-home-audience-row-use"
+              style={{
+                alignSelf: "center",
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              {audience.bullets.map((bullet) => (
+                <Flex align="center" gap={8} key={bullet}>
+                  <Icon
+                    name="check-circle"
+                    style={{
+                      color: audience.accent,
+                      flex: "0 0 auto",
+                    }}
+                  />
+                  <Text>{bullet}</Text>
+                </Flex>
+              ))}
+            </div>
+            <Text
+              className="cocalc-public-home-audience-row-next"
+              strong
+              style={{
+                alignSelf: "center",
+                color: audience.accent,
+                justifySelf: "start",
+              }}
+            >
+              {audience.nextStep}
+            </Text>
+            <Icon
+              name="arrow-right"
+              style={{
+                alignSelf: "center",
+                color: audience.accent,
+                justifySelf: "end",
+              }}
+            />
           </a>
         ))}
       </div>

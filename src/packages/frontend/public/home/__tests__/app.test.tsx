@@ -316,8 +316,17 @@ describe("PublicHomeApp", () => {
     ).toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "Built for technical groups.",
+        name: "Route by the work your group does.",
       }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: /See AI workflows/i }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: /Open notebooks/i }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: /Explore teaching/i }),
     ).not.toBeNull();
     await waitFor(() =>
       expect(
@@ -399,7 +408,7 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/features/teaching");
     const engineeringCues = within(audiencePaths).getByRole("group", {
-      name: "Engineering teams workflow cues",
+      name: "Engineering teams project context cues",
     });
     expect(within(engineeringCues).getByText("Source")).not.toBeNull();
     expect(
@@ -409,13 +418,13 @@ describe("PublicHomeApp", () => {
       within(engineeringCues).getByText("Patches and review"),
     ).not.toBeNull();
     const researchCues = within(audiencePaths).getByRole("group", {
-      name: "Research labs workflow cues",
+      name: "Research labs project context cues",
     });
     expect(within(researchCues).getByText("Notebooks")).not.toBeNull();
     expect(within(researchCues).getByText("Data")).not.toBeNull();
     expect(within(researchCues).getByText("Snapshots")).not.toBeNull();
     const courseCues = within(audiencePaths).getByRole("group", {
-      name: "Technical courses workflow cues",
+      name: "Technical courses project context cues",
     });
     expect(within(courseCues).getByText("Coursework")).not.toBeNull();
     expect(within(courseCues).getByText("Student projects")).not.toBeNull();
@@ -451,7 +460,7 @@ describe("PublicHomeApp", () => {
       ),
     ).not.toBeNull();
     expect(screen.getByText("Deployment path")).not.toBeNull();
-    expect(screen.getByText("Next step")).not.toBeNull();
+    expect(screen.getAllByText("Next step").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Operator").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Best fit").length).toBeGreaterThan(0);
     expect(screen.getByText("Run by CoCalc")).not.toBeNull();
