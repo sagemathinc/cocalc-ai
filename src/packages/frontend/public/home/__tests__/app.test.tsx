@@ -372,6 +372,42 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: "Create a workspace" })
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
+    const workspaceScope = screen.getByRole("region", {
+      name: "CoCalc.ai workspace scope",
+    });
+    expect(
+      within(workspaceScope).getByRole("heading", {
+        name: "The workspace holds the pieces technical work needs.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(workspaceScope).getByText(
+        /common artifacts visible before choosing a notebook/i,
+      ),
+    ).not.toBeNull();
+    const workspaceArtifacts = within(workspaceScope).getByRole("group", {
+      name: "CoCalc.ai workspace artifacts",
+    });
+    for (const artifact of [
+      "Code",
+      "Notebooks",
+      "Documents",
+      "Compute",
+      "Files",
+      "AI",
+      "Collaboration",
+      "History",
+      "Source trees and patches",
+      "Jupyter output and notes",
+      "LaTeX, Markdown, handouts",
+      "Kernels, shells, services",
+      "Project files and data",
+      "Codex turns and chat",
+      "People and shared review",
+      "Snapshots and TimeTravel",
+    ]) {
+      expect(within(workspaceArtifacts).getByText(artifact)).not.toBeNull();
+    }
     const continuityMap = screen.getByRole("region", {
       name: "CoCalc.ai workspace continuity map",
     });

@@ -215,6 +215,61 @@ const HERO_ROUTE_CHOICES = [
   label: string;
   title: (opts: { authenticated: boolean }) => string;
 }[];
+const WORKSPACE_SCOPE_ITEMS = [
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    detail: "Source trees and patches",
+    icon: "file-code",
+    label: "Code",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Jupyter output and notes",
+    icon: "jupyter",
+    label: "Notebooks",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "LaTeX, Markdown, handouts",
+    icon: "file-alt",
+    label: "Documents",
+  },
+  {
+    accent: PUBLIC_COLORS.success,
+    detail: "Kernels, shells, services",
+    icon: "terminal",
+    label: "Compute",
+  },
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Project files and data",
+    icon: "files",
+    label: "Files",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Codex turns and chat",
+    icon: "robot",
+    label: "AI",
+  },
+  {
+    accent: PUBLIC_COLORS.brandActive,
+    detail: "People and shared review",
+    icon: "users",
+    label: "Collaboration",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Snapshots and TimeTravel",
+    icon: "history",
+    label: "History",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -1845,6 +1900,85 @@ function Hero({ config }: { config?: HomeConfig }) {
         </Flex>
         <HeroWorkspaceSnapshot authenticated={authenticated} />
       </div>
+    </section>
+  );
+}
+
+function WorkspaceScopeStrip() {
+  return (
+    <section
+      aria-label="CoCalc.ai workspace scope"
+      style={{
+        background: `linear-gradient(90deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `18px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex align="center" gap={18} justify="space-between" wrap>
+        <div style={{ maxWidth: 430 }}>
+          <Eyebrow>Workspace scope</Eyebrow>
+          <Title level={2} style={{ fontSize: 26, margin: "6px 0 6px" }}>
+            The workspace holds the pieces technical work needs.
+          </Title>
+          <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+            Keep the common artifacts visible before choosing a notebook,
+            terminal, agent, collaboration, or deployment path.
+          </Paragraph>
+        </div>
+        <div
+          aria-label="CoCalc.ai workspace artifacts"
+          role="group"
+          style={{
+            display: "grid",
+            flex: "1 1 660px",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
+          }}
+        >
+          {WORKSPACE_SCOPE_ITEMS.map((item) => (
+            <div
+              key={item.label}
+              style={{
+                alignItems: "start",
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${alpha(item.accent, 0.22)}`,
+                borderRadius: PANEL_RADIUS,
+                display: "grid",
+                gap: 9,
+                gridTemplateColumns: "32px minmax(0, 1fr)",
+                minHeight: 76,
+                padding: 10,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(item.accent, 0.08),
+                  border: `1px solid ${alpha(item.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  fontSize: 16,
+                  height: 32,
+                  justifyContent: "center",
+                  width: 32,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ display: "block" }}>
+                  {item.label}
+                </Text>
+                <Text type="secondary">{item.detail}</Text>
+              </span>
+            </div>
+          ))}
+        </div>
+      </Flex>
     </section>
   );
 }
@@ -3506,6 +3640,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
+      <WorkspaceScopeStrip />
       <WorkspaceContinuitySection authenticated={!!config?.is_authenticated} />
       <WorkspaceContextSection authenticated={!!config?.is_authenticated} />
       <WorkInputSection />
