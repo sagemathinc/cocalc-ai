@@ -2865,8 +2865,7 @@ function AudienceSection() {
 function ProductOptionsSection() {
   const options = [
     {
-      bestFor:
-        "Managed accounts, hosted projects, and self-service team starts",
+      bestFor: "Managed accounts, hosted projects, and team access",
       href: appPath(""),
       icon: "cloud",
       operator: "CoCalc",
@@ -3525,7 +3524,7 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
       title: "CoCalc.ai",
     },
     {
-      body: "Free local runtime for one user.",
+      body: "Local runtime for one user.",
       button: "Install CoCalc Plus",
       href: "https://software.cocalc.ai/software/cocalc-plus/index.html",
       icon: "laptop",
