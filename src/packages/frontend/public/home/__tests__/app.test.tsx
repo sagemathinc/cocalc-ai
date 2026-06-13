@@ -341,60 +341,6 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Account context/i })
         .getAttribute("href"),
     ).toBe("/support");
-    const workflowPathRoutes = screen.getByRole("region", {
-      name: "CoCalc.ai workflow path routing",
-    });
-    expect(
-      within(workflowPathRoutes).getByRole("heading", {
-        name: "Route by the artifact you already have.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(workflowPathRoutes)
-        .getByRole("link", { name: /Computational notebook path/i })
-        .getAttribute("href"),
-    ).toBe("/features/jupyter-notebook");
-    expect(
-      within(workflowPathRoutes)
-        .getByRole("link", { name: /Shared runtime path/i })
-        .getAttribute("href"),
-    ).toBe("/features/terminal");
-    expect(
-      within(workflowPathRoutes)
-        .getByRole("link", { name: /Codex context path/i })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(workflowPathRoutes)
-        .getByRole("link", { name: /Class workspace path/i })
-        .getAttribute("href"),
-    ).toBe("/features/teaching");
-    const artifactRoutes = within(workflowPathRoutes).getByRole("group", {
-      name: "CoCalc.ai artifact route shortcuts",
-    });
-    expect(
-      within(artifactRoutes).getByText("Common artifacts and detail pages"),
-    ).not.toBeNull();
-    expect(
-      within(artifactRoutes)
-        .getByRole("link", { name: /Jupyter notebooks/i })
-        .getAttribute("href"),
-    ).toBe("/features/jupyter-notebook");
-    expect(
-      within(artifactRoutes)
-        .getByRole("link", { name: /Linux terminal/i })
-        .getAttribute("href"),
-    ).toBe("/features/terminal");
-    expect(
-      within(artifactRoutes)
-        .getByRole("link", { name: /AI agents/i })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(artifactRoutes)
-        .getByRole("link", { name: /Deployment options/i })
-        .getAttribute("href"),
-    ).toBe("/products");
     const removedDuplicateRegions = [
       "CoCalc.ai project handoff path",
       "CoCalc.ai intent router",
@@ -405,10 +351,16 @@ describe("PublicHomeApp", () => {
       "CoCalc.ai project state map",
       "Common CoCalc.ai starting points",
       "CoCalc.ai starter project recipes",
+      "CoCalc.ai workflow path routing",
     ];
     for (const name of removedDuplicateRegions) {
       expect(screen.queryByRole("region", { name })).toBeNull();
     }
+    expect(
+      screen.queryByRole("group", {
+        name: "CoCalc.ai artifact route shortcuts",
+      }),
+    ).toBeNull();
     const coreWorkflows = screen.getByRole("region", {
       name: "CoCalc.ai core workflows",
     });
