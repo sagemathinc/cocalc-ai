@@ -75,6 +75,14 @@ const HOME_PAGE_CSS = `
     .cocalc-public-home-workflow-visual {
       padding: 12px !important;
     }
+
+    .cocalc-public-home-project-comparison-row {
+      grid-template-columns: 1fr !important;
+    }
+
+    .cocalc-public-home-project-comparison-arrow {
+      justify-self: start !important;
+    }
   }
 `;
 const HERO_SIGNALS = [
@@ -465,45 +473,53 @@ const QUICK_START_ACTIONS = [
   icon: IconName;
   label: string;
 }[];
-const PROJECT_PACKAGE_ITEMS = [
+const PROJECT_CONTEXT_COMPARISON_ITEMS = [
   {
     accent: PUBLIC_COLORS.brand,
-    body: "Notebooks, editors, documents, whiteboards, and chat open around one project tree.",
+    connected:
+      "Files, notebooks, documents, whiteboards, and project chat share one source of truth.",
+    disconnected:
+      "Notebook files, documents, and discussion drift into separate places.",
     href: "features/compare",
     icon: "files",
-    items: ["Files", "Documents", "Project chat"],
     title: "Files and tools",
   },
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Terminals, package installs, scripts, services, and notebooks use the same working directory.",
+    connected:
+      "Terminals, package installs, scripts, services, and notebooks use the same working directory.",
+    disconnected:
+      "Shell output, installs, services, and logs must be copied back into the work record.",
     href: "features/terminal",
     icon: "terminal",
-    items: ["Linux shell", "Packages", "Services"],
     title: "Linux runtime",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Codex threads, prompts, patches, screenshots, and collaborator decisions stay attached.",
+    connected:
+      "Codex threads, prompts, patches, screenshots, and collaborator decisions stay attached.",
+    disconnected:
+      "Agent prompts and reviews lose the files, terminal output, and decisions they refer to.",
     href: "features/ai",
     icon: "robot",
-    items: ["Codex", "Reviews", "Support notes"],
     title: "People and agents",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    body: "TimeTravel, snapshots, backups, and product paths keep work inspectable and movable.",
+    connected:
+      "TimeTravel, snapshots, backups, and product paths keep previous state close enough to inspect.",
+    disconnected:
+      "Recovery depends on remembering which tool held the old state.",
     href: "features/compare",
     icon: "disk-snapshot",
-    items: ["TimeTravel", "Snapshots", "Backups"],
     title: "Recovery and operations",
   },
 ] satisfies {
   accent: string;
-  body: string;
+  connected: string;
+  disconnected: string;
   href: string;
   icon: IconName;
-  items: string[];
   title: string;
 }[];
 const PROJECT_RECIPE_ITEMS = [
@@ -2282,7 +2298,7 @@ function StarterRecipesSection({ config }: { config?: HomeConfig }) {
 function ProjectPackageSection() {
   return (
     <section
-      aria-label="What every CoCalc project includes"
+      aria-label="Why CoCalc keeps work in projects"
       style={{
         background: `linear-gradient(135deg, ${PUBLIC_COLORS.brandTint} 0%, ${PUBLIC_COLORS.surface} 58%, ${PUBLIC_COLORS.warningTint} 100%)`,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
@@ -2293,14 +2309,14 @@ function ProjectPackageSection() {
       <Flex vertical gap={22}>
         <Flex align="end" justify="space-between" wrap gap={16}>
           <div style={{ maxWidth: 760 }}>
-            <Eyebrow>What travels with a project</Eyebrow>
+            <Eyebrow>Project-centered work</Eyebrow>
             <Title level={2} style={{ margin: "8px 0 10px" }}>
-              Every project brings the workspace with it.
+              Not another isolated notebook, IDE, or agent console.
             </Title>
             <Paragraph style={{ fontSize: 18, margin: 0 }}>
-              CoCalc keeps technical work packaged around the project instead of
-              spreading context across separate notebook, terminal, chat,
-              recovery, and deployment systems.
+              CoCalc is built around the project as the durable unit of work:
+              files, compute, collaborators, Codex context, and recovery history
+              stay readable together.
             </Paragraph>
           </div>
           <Button
@@ -2312,75 +2328,135 @@ function ProjectPackageSection() {
         </Flex>
         <div
           style={{
-            display: "grid",
-            gap: 14,
-            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            background: alpha(PUBLIC_COLORS.surface, 0.92),
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: PANEL_RADIUS,
+            boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+            overflow: "hidden",
           }}
         >
-          {PROJECT_PACKAGE_ITEMS.map((item) => (
+          <div
+            className="cocalc-public-home-project-comparison-row"
+            style={{
+              background: PUBLIC_COLORS.surface,
+              borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+              display: "grid",
+              gap: 14,
+              gridTemplateColumns:
+                "minmax(180px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr) 24px",
+              padding: "13px 16px",
+            }}
+          >
+            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+              Work surface
+            </Text>
+            <Text strong style={{ color: PUBLIC_COLORS.mutedText }}>
+              Split tools
+            </Text>
+            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+              CoCalc project context
+            </Text>
+            <span aria-hidden="true" />
+          </div>
+          {PROJECT_CONTEXT_COMPARISON_ITEMS.map((item) => (
             <a
+              className="cocalc-public-home-project-comparison-row"
               href={appPath(item.href)}
               key={item.title}
               style={{
-                background: alpha(PUBLIC_COLORS.surface, 0.9),
-                border: `1px solid ${alpha(item.accent, 0.24)}`,
-                borderRadius: PANEL_RADIUS,
-                boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+                alignItems: "start",
+                borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
                 color: "inherit",
-                display: "block",
-                minHeight: 248,
-                padding: 20,
+                display: "grid",
+                gap: 14,
+                gridTemplateColumns:
+                  "minmax(180px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr) 24px",
+                minHeight: 104,
+                padding: "16px",
                 textDecoration: "none",
               }}
             >
-              <Flex vertical gap={14} style={{ height: "100%" }}>
-                <Flex align="center" justify="space-between">
-                  <div
-                    style={{
-                      alignItems: "center",
-                      background: alpha(item.accent, 0.1),
-                      border: `1px solid ${alpha(item.accent, 0.28)}`,
-                      borderRadius: PANEL_RADIUS,
-                      color: item.accent,
-                      display: "flex",
-                      fontSize: 24,
-                      height: 52,
-                      justifyContent: "center",
-                      width: 52,
-                    }}
-                  >
-                    <Icon name={item.icon} />
-                  </div>
-                  <Icon
-                    name="arrow-right"
-                    style={{ color: item.accent, fontSize: 18 }}
-                  />
-                </Flex>
-                <div>
-                  <Title level={3} style={{ fontSize: 21, margin: "0 0 10px" }}>
+              <Flex align="start" gap={12}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(item.accent, 0.1),
+                    border: `1px solid ${alpha(item.accent, 0.28)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    flex: "0 0 44px",
+                    fontSize: 20,
+                    height: 44,
+                    justifyContent: "center",
+                    width: 44,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text strong style={{ display: "block" }}>
                     {item.title}
-                  </Title>
-                  <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
-                </div>
-                <Flex gap={8} wrap style={{ marginTop: "auto" }}>
-                  {item.items.map((label) => (
-                    <Text
-                      key={label}
-                      style={{
-                        background: alpha(item.accent, 0.08),
-                        border: `1px solid ${alpha(item.accent, 0.18)}`,
-                        borderRadius: PANEL_RADIUS,
-                        color: PUBLIC_COLORS.heading,
-                        padding: "4px 8px",
-                      }}
-                    >
-                      {label}
-                    </Text>
-                  ))}
-                </Flex>
+                  </Text>
+                  <Text style={{ color: item.accent }}>Open detail</Text>
+                </span>
               </Flex>
+              <Text type="secondary">{item.disconnected}</Text>
+              <Flex align="start" gap={9}>
+                <Icon
+                  name="check-circle"
+                  style={{
+                    color: item.accent,
+                    flex: "0 0 auto",
+                    marginTop: 3,
+                  }}
+                />
+                <Text>{item.connected}</Text>
+              </Flex>
+              <Icon
+                className="cocalc-public-home-project-comparison-arrow"
+                name="arrow-right"
+                style={{
+                  color: item.accent,
+                  justifySelf: "end",
+                  marginTop: 4,
+                }}
+              />
             </a>
           ))}
+          <div
+            style={{
+              alignItems: "center",
+              display: "grid",
+              gap: 14,
+              gridTemplateColumns: "42px minmax(0, 1fr)",
+              padding: "16px",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                alignItems: "center",
+                background: PUBLIC_COLORS.warningTint,
+                border: `1px solid ${PUBLIC_COLORS.warningBorder}`,
+                borderRadius: PANEL_RADIUS,
+                color: PUBLIC_COLORS.warning,
+                display: "flex",
+                fontSize: 20,
+                height: 42,
+                justifyContent: "center",
+                width: 42,
+              }}
+            >
+              <Icon name="project-outlined" />
+            </span>
+            <Paragraph style={{ margin: 0 }}>
+              The point is not that every workflow uses every tool. The point is
+              that the project keeps enough state for the next human or Codex
+              turn to understand what happened.
+            </Paragraph>
+          </div>
         </div>
       </Flex>
     </section>

@@ -416,7 +416,7 @@ describe("PublicHomeApp", () => {
     ).toBe("/features/compare");
     expect(
       screen.getByRole("heading", {
-        name: "Every project brings the workspace with it.",
+        name: "Not another isolated notebook, IDE, or agent console.",
       }),
     ).not.toBeNull();
     expect(
@@ -538,8 +538,17 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/features/teaching");
     const projectPackage = screen.getByRole("region", {
-      name: "What every CoCalc project includes",
+      name: "Why CoCalc keeps work in projects",
     });
+    expect(within(projectPackage).getByText("Split tools")).not.toBeNull();
+    expect(
+      within(projectPackage).getByText("CoCalc project context"),
+    ).not.toBeNull();
+    expect(
+      within(projectPackage).getByText(
+        /The point is not that every workflow uses every tool/i,
+      ),
+    ).not.toBeNull();
     expect(
       within(projectPackage)
         .getByRole("link", { name: /Files and tools/i })
