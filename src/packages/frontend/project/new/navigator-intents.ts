@@ -64,6 +64,28 @@ export interface NavigatorSubmitPromptDetail {
   createNewThread?: boolean;
 }
 
+export type NavigatorAgentSessionTarget = Pick<
+  AgentSessionRecord,
+  | "session_id"
+  | "project_id"
+  | "account_id"
+  | "chat_path"
+  | "thread_key"
+  | "title"
+  | "created_at"
+  | "updated_at"
+  | "status"
+  | "entrypoint"
+  | "working_directory"
+  | "mode"
+  | "model"
+  | "reasoning"
+  | "thread_color"
+  | "thread_accent_color"
+  | "thread_icon"
+  | "thread_image"
+>;
+
 function normalizeOptionalTitle(value?: string): string | undefined {
   const title = `${value ?? ""}`.trim();
   return title || undefined;
@@ -541,6 +563,7 @@ async function writeNavigatorPromptInWorkspaceChat(
     path?: string;
     openFloating?: boolean;
     waitForAgent?: boolean;
+    agentSession?: NavigatorAgentSessionTarget;
   },
   submitToAgent: boolean,
 ): Promise<boolean> {
@@ -560,58 +583,89 @@ async function writeNavigatorPromptInWorkspaceChat(
 
     const account_id =
       `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
-    const workspaceTarget = await resolveWorkspaceTarget({
-      project_id,
-      account_id,
-      path: opts.path,
-      timeoutMs:
-        opts.waitForAgent === false
-          ? NAVIGATOR_FAST_WORKSPACE_RESOLVE_TIMEOUT_MS
-          : undefined,
-    });
+    const selectedAgentSession =
+      opts.agentSession?.project_id === project_id &&
+      `${opts.agentSession.chat_path ?? ""}`.trim().length > 0 &&
+      `${opts.agentSession.thread_key ?? ""}`.trim().length > 0
+        ? opts.agentSession
+        : undefined;
+    const workspaceTarget = selectedAgentSession
+      ? null
+      : await resolveWorkspaceTarget({
+          project_id,
+          account_id,
+          path: opts.path,
+          timeoutMs:
+            opts.waitForAgent === false
+              ? NAVIGATOR_FAST_WORKSPACE_RESOLVE_TIMEOUT_MS
+              : undefined,
+        });
     const targetChatPath =
+      selectedAgentSession?.chat_path ??
       workspaceTarget?.chat_path ??
       (await resolveNavigatorChatPathForFilesystem(project_id));
     const preferredThreadKey = loadNavigatorSelectedThreadKey(
       project_id,
       targetChatPath,
     );
+    const targetThreadKey =
+      `${selectedAgentSession?.thread_key ?? ""}`.trim() || preferredThreadKey;
     const fallbackWorkingDirectory =
+      selectedAgentSession?.working_directory ??
       workspaceTarget?.workspace.root_path ??
       resolveNavigatorWorkingDirectory(project_id, opts.path);
     const fallbackSession: AgentSessionRecord = {
       session_id:
-        workspaceTarget?.workspace.workspace_id != null
+        selectedAgentSession?.session_id ??
+        (workspaceTarget?.workspace.workspace_id != null
           ? `workspace-${workspaceTarget.workspace.workspace_id}`
-          : `navigator-${project_id}`,
+          : `navigator-${project_id}`),
       project_id,
-      account_id,
+      account_id: selectedAgentSession?.account_id ?? account_id,
       chat_path: targetChatPath,
-      thread_key: `${preferredThreadKey ?? ""}`.trim(),
-      title: workspaceTarget?.workspace.theme.title?.trim() || "Navigator",
-      created_at: new Date().toISOString(),
+      thread_key: `${targetThreadKey ?? ""}`.trim(),
+      title:
+        selectedAgentSession?.title ??
+        workspaceTarget?.workspace.theme.title?.trim() ??
+        "Navigator",
+      created_at: selectedAgentSession?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      status: "active",
-      entrypoint: workspaceTarget ? "file" : "global",
-      model: requestedModel,
+      status: selectedAgentSession?.status ?? "active",
+      entrypoint:
+        selectedAgentSession?.entrypoint ??
+        (workspaceTarget ? "file" : "global"),
+      model: requestedModel ?? selectedAgentSession?.model,
+      reasoning: selectedAgentSession?.reasoning,
+      mode: selectedAgentSession?.mode,
       working_directory: fallbackWorkingDirectory,
-      thread_color: workspaceTarget?.workspace.theme.color ?? undefined,
+      thread_color:
+        selectedAgentSession?.thread_color ??
+        workspaceTarget?.workspace.theme.color ??
+        undefined,
       thread_accent_color:
-        workspaceTarget?.workspace.theme.accent_color ?? undefined,
-      thread_icon: workspaceTarget?.workspace.theme.icon ?? undefined,
-      thread_image: workspaceTarget?.workspace.theme.image_blob ?? undefined,
+        selectedAgentSession?.thread_accent_color ??
+        workspaceTarget?.workspace.theme.accent_color ??
+        undefined,
+      thread_icon:
+        selectedAgentSession?.thread_icon ??
+        workspaceTarget?.workspace.theme.icon ??
+        undefined,
+      thread_image:
+        selectedAgentSession?.thread_image ??
+        workspaceTarget?.workspace.theme.image_blob ??
+        undefined,
     };
     if (
       opts.openFloating === true &&
       opts.waitForAgent === false &&
-      preferredThreadKey
+      targetThreadKey
     ) {
       revealAgentSession(
         project_id,
         {
           ...fallbackSession,
-          session_id: preferredThreadKey,
-          thread_key: preferredThreadKey,
+          session_id: targetThreadKey,
+          thread_key: targetThreadKey,
           title: requestedTitle ?? fallbackSession.title ?? "Navigator",
           updated_at: new Date().toISOString(),
           status: "active",
@@ -641,9 +695,10 @@ async function writeNavigatorPromptInWorkspaceChat(
           : fallbackSession;
       let replyThreadKey = chooseThreadKeyFromIndex({
         actions,
-        preferredThreadKey: openedReadyChat.opened.thread_key,
+        preferredThreadKey:
+          targetThreadKey ?? openedReadyChat.opened.thread_key,
         fallbackThreadKey:
-          `${openedReadyChat.opened.thread_key ?? preferredThreadKey ?? ""}`.trim(),
+          `${openedReadyChat.opened.thread_key ?? targetThreadKey ?? ""}`.trim(),
       });
       let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
       if (
@@ -780,7 +835,7 @@ async function writeNavigatorPromptInWorkspaceChat(
     const sessions = await sessionsPromise;
     const indexedSession = pickNavigatorSession({
       records: sessions,
-      preferredThreadKey,
+      preferredThreadKey: targetThreadKey,
       chatPath: targetChatPath,
     });
     const session: AgentSessionRecord = indexedSession
@@ -822,25 +877,25 @@ async function writeNavigatorPromptInWorkspaceChat(
 
     let resolvedThreadKey = chooseThreadKeyFromIndex({
       actions,
-      preferredThreadKey,
+      preferredThreadKey: targetThreadKey,
       fallbackThreadKey: `${session.thread_key ?? ""}`.trim(),
     });
     if (
-      preferredThreadKey &&
-      isOpaqueThreadKey(preferredThreadKey) &&
-      resolvedThreadKey !== preferredThreadKey &&
-      !resolveThreadIdFromIndex(actions, preferredThreadKey)
+      targetThreadKey &&
+      isOpaqueThreadKey(targetThreadKey) &&
+      resolvedThreadKey !== targetThreadKey &&
+      !resolveThreadIdFromIndex(actions, targetThreadKey)
     ) {
       // A freshly cleared workspace thread may be selected in localStorage
       // before the chat index has loaded it. Keep using that UUID instead of
       // snapping back to the previous indexed thread.
-      resolvedThreadKey = preferredThreadKey;
+      resolvedThreadKey = targetThreadKey;
     }
     let replyThreadKey = resolvedThreadKey;
     let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
     if (replyThreadKey) {
       const storedThreadKey =
-        `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
+        `${targetThreadKey ?? session.thread_key ?? ""}`.trim();
       if (
         !replyThreadId &&
         replyThreadKey === storedThreadKey &&
@@ -1027,6 +1082,7 @@ export async function submitNavigatorPromptInWorkspaceChat(opts: {
   path?: string;
   openFloating?: boolean;
   waitForAgent?: boolean;
+  agentSession?: NavigatorAgentSessionTarget;
 }): Promise<boolean> {
   return await writeNavigatorPromptInWorkspaceChat(opts, true);
 }

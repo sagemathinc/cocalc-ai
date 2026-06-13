@@ -14,6 +14,7 @@ import type {
   CodeEditorState,
 } from "../base-editor/actions-base";
 import { AI_ASSIST_TAG } from "./consts";
+import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 
 export interface Options {
   codegen?: boolean;
@@ -21,7 +22,30 @@ export interface Options {
   allowEmpty?: boolean;
   tag?: string;
   model: string;
+  agentSession?: AssistantAgentSessionTarget;
 }
+
+export type AssistantAgentSessionTarget = Pick<
+  AgentSessionRecord,
+  | "session_id"
+  | "project_id"
+  | "account_id"
+  | "chat_path"
+  | "thread_key"
+  | "title"
+  | "created_at"
+  | "updated_at"
+  | "status"
+  | "entrypoint"
+  | "working_directory"
+  | "mode"
+  | "model"
+  | "reasoning"
+  | "thread_color"
+  | "thread_accent_color"
+  | "thread_icon"
+  | "thread_image"
+>;
 
 interface TerminalAssistantContext {
   terminal_session_id?: string;
@@ -83,6 +107,7 @@ export default async function createChat({
     tag: intent,
     forceCodex: true,
     codexConfig: { model: codexModel },
+    agentSession: options.agentSession,
     openFloating: true,
     waitForAgent: false,
   });
