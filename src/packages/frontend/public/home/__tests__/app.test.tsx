@@ -146,19 +146,33 @@ describe("PublicHomeApp", () => {
     ).toBe("/auth/sign-up");
     expect(
       within(hero)
-        .getByRole("link", { name: "Install CoCalc Plus" })
-        .getAttribute("href"),
-    ).toBe("/products/cocalc-plus");
-    expect(
-      within(hero)
         .getByRole("link", { name: "Compare deployment options" })
         .getAttribute("href"),
     ).toBe("/products");
-    const heroSiteLicenseHref = within(hero)
-      .getByRole("link", { name: "Discuss site licensing" })
-      .getAttribute("href");
-    expect(heroSiteLicenseHref).toMatch(/^\/support\/new\?/);
-    expect(heroSiteLicenseHref).toContain("subject=Site+license");
+    expect(
+      within(hero).queryByRole("link", { name: "Install CoCalc Plus" }),
+    ).toBeNull();
+    expect(
+      within(hero).queryByRole("link", { name: "Discuss site licensing" }),
+    ).toBeNull();
+    const operatingModes = within(hero).getByRole("group", {
+      name: "CoCalc.ai operating modes",
+    });
+    expect(
+      within(operatingModes)
+        .getByRole("link", { name: /Hosted workspace/i })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(operatingModes)
+        .getByRole("link", { name: /Local runtime/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(operatingModes)
+        .getByRole("link", { name: /Private deployment/i })
+        .getAttribute("href"),
+    ).toBe("/products");
     const projectOutcomes = screen.getByRole("group", {
       name: "CoCalc.ai project outcomes",
     });
@@ -238,6 +252,21 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/features/compare");
     expect(
+      within(coreWorkflows)
+        .getByRole("link", { name: /LaTeX Editor/i })
+        .getAttribute("href"),
+    ).toBe("/features/latex-editor");
+    expect(
+      within(coreWorkflows)
+        .getByRole("link", { name: /Technical Courses and Labs/i })
+        .getAttribute("href"),
+    ).toBe("/features/teaching");
+    expect(
+      within(coreWorkflows)
+        .getByRole("link", { name: /Whiteboard/i })
+        .getAttribute("href"),
+    ).toBe("/features/whiteboard");
+    expect(
       screen.getByRole("heading", {
         name: "Not another isolated notebook, IDE, or agent console.",
       }),
@@ -256,10 +285,7 @@ describe("PublicHomeApp", () => {
       screen
         .getAllByRole("link", { name: "Install CoCalc Plus" })
         .map((link) => link.getAttribute("href")),
-    ).toEqual([
-      "/products/cocalc-plus",
-      "https://software.cocalc.ai/software/cocalc-plus/index.html",
-    ]);
+    ).toEqual(["https://software.cocalc.ai/software/cocalc-plus/index.html"]);
     const deploymentLinks = screen.getAllByRole("link", {
       name: "Compare deployment options",
     });
@@ -341,16 +367,21 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Jupyter Notebooks/i })
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
+    const audiencePaths = screen.getByRole("region", {
+      name: "CoCalc.ai audience paths",
+    });
     expect(
-      screen
+      within(audiencePaths)
         .getByRole("link", { name: /Engineering teams/i })
         .getAttribute("href"),
     ).toBe("/features/ai");
     expect(
-      screen.getByRole("link", { name: /Research labs/i }).getAttribute("href"),
+      within(audiencePaths)
+        .getByRole("link", { name: /Research labs/i })
+        .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
     expect(
-      screen
+      within(audiencePaths)
         .getByRole("link", { name: /Technical courses/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");

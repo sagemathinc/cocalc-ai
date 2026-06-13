@@ -43,6 +43,7 @@ interface HomeConfig {
 }
 
 const PRIMARY_WORKFLOWS = ["jupyter-notebook", "terminal", "ai"] as const;
+const SECONDARY_WORKFLOWS = ["latex-editor", "teaching", "whiteboard"] as const;
 const HERO_IMAGE_URL = "/public/landing/home-hero.jpg";
 const WORKFLOW_IMAGE_URL = "/public/landing/project-workflows.jpg";
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
@@ -82,28 +83,33 @@ const HOME_PAGE_CSS = `
     }
   }
 `;
-const HERO_SIGNALS = [
+const HERO_RUN_MODES = [
   {
-    body: "Files, compute, chat, and history",
-    icon: "project-outlined",
-    title: "Project context",
+    authenticatedPath: "projects",
+    body: "Managed CoCalc.ai projects",
+    icon: "cloud",
+    path: "auth/sign-up",
+    title: "Hosted workspace",
   },
   {
-    body: "Notebooks, shells, packages, and services",
-    icon: "terminal",
-    title: "Real Linux",
+    body: "Single-user local runtime",
+    icon: "laptop",
+    path: "products/cocalc-plus",
+    title: "Local runtime",
   },
   {
-    body: "Codex works beside the source of truth",
-    icon: "robot",
-    title: "Agents in context",
+    body: "Customer-operated paths",
+    icon: "servers",
+    path: "products",
+    title: "Private deployment",
   },
-  {
-    body: "TimeTravel, snapshots, and backups",
-    icon: "history",
-    title: "Recoverable work",
-  },
-] satisfies { body: string; icon: IconName; title: string }[];
+] satisfies {
+  authenticatedPath?: string;
+  body: string;
+  icon: IconName;
+  path: string;
+  title: string;
+}[];
 const HERO_OUTCOMES = [
   {
     body: "The notebook, terminal, source files, and agent notes stay in the same project.",
@@ -861,6 +867,15 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
 
 function Hero({ config }: { config?: HomeConfig }) {
   const authenticated = !!config?.is_authenticated;
+  const runModes = HERO_RUN_MODES.map((mode) => ({
+    ...mode,
+    href: appPath(
+      authenticated && mode.authenticatedPath
+        ? mode.authenticatedPath
+        : mode.path,
+    ),
+  }));
+
   return (
     <section
       aria-label="CoCalc.ai technical workspace"
@@ -1036,52 +1051,38 @@ function Hero({ config }: { config?: HomeConfig }) {
                   </Button>
                 </>
               )}
-              <Button
-                ghost
-                href={appPath("products/cocalc-plus")}
-                icon={<DecorativeButtonIcon name="laptop" />}
-                size="large"
-              >
-                Install CoCalc Plus
-              </Button>
-              <Button
-                ghost
-                href={supportPurchasePath(
-                  "Site license",
-                  "I want to discuss a CoCalc site license.",
-                )}
-                icon={<DecorativeButtonIcon name="bank" />}
-                size="large"
-              >
-                Discuss site licensing
-              </Button>
             </Flex>
             <div
+              aria-label="CoCalc.ai operating modes"
+              role="group"
               style={{
                 display: "grid",
-                gap: 10,
-                gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                gap: 8,
+                gridTemplateColumns: "repeat(auto-fit, minmax(178px, 1fr))",
                 marginTop: 8,
                 maxWidth: 680,
               }}
             >
-              {HERO_SIGNALS.map((item) => (
-                <div
+              {runModes.map((item) => (
+                <a
+                  href={item.href}
                   key={item.title}
                   style={{
+                    alignItems: "center",
                     background: alpha(PUBLIC_COLORS.surface, 0.14),
                     border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.28)}`,
                     borderRadius: PANEL_RADIUS,
                     color: PUBLIC_COLORS.surface,
                     display: "flex",
-                    gap: 12,
-                    minHeight: 82,
-                    padding: "12px 14px",
+                    gap: 10,
+                    minHeight: 62,
+                    padding: "10px 12px",
+                    textDecoration: "none",
                   }}
                 >
                   <Icon
                     name={item.icon}
-                    style={{ flex: "0 0 auto", fontSize: 20, marginTop: 2 }}
+                    style={{ flex: "0 0 auto", fontSize: 19 }}
                   />
                   <div>
                     <Text strong style={{ color: "inherit", display: "block" }}>
@@ -1091,7 +1092,7 @@ function Hero({ config }: { config?: HomeConfig }) {
                       {item.body}
                     </Text>
                   </div>
-                </div>
+                </a>
               ))}
             </div>
           </Flex>
@@ -1394,6 +1395,63 @@ function WorkflowsSection() {
                 </Flex>
               </a>
             ))}
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+              marginTop: 14,
+            }}
+          >
+            {SECONDARY_WORKFLOWS.map((slug) => {
+              const page = getFeaturePage(slug);
+              if (page == null) return null;
+              const meta = workflowMeta[slug];
+              return (
+                <a
+                  href={appPath(`features/${page.slug}`)}
+                  key={page.slug}
+                  style={{
+                    alignItems: "center",
+                    background: alpha(meta.accent, 0.06),
+                    border: `1px solid ${alpha(meta.accent, 0.2)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: "inherit",
+                    display: "grid",
+                    gap: 10,
+                    gridTemplateColumns: "34px minmax(0, 1fr) 16px",
+                    minHeight: 58,
+                    padding: "10px 12px",
+                    textDecoration: "none",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      alignItems: "center",
+                      background: PUBLIC_COLORS.surface,
+                      border: `1px solid ${alpha(meta.accent, 0.22)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: meta.accent,
+                      display: "flex",
+                      height: 34,
+                      justifyContent: "center",
+                      width: 34,
+                    }}
+                  >
+                    <Icon name={meta.icon} />
+                  </span>
+                  <span>
+                    <Text strong style={{ display: "block" }}>
+                      {page.title}
+                    </Text>
+                    <Text type="secondary">{meta.label}</Text>
+                  </span>
+                  <Icon name="arrow-right" style={{ color: meta.accent }} />
+                </a>
+              );
+            })}
           </div>
         </Col>
       </Row>
@@ -1919,13 +1977,6 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
       icon: "laptop",
       title: "CoCalc Plus",
     },
-    {
-      body: "Hosted, local, or customer-operated private paths.",
-      button: "Compare deployment options",
-      href: appPath("products"),
-      icon: "servers",
-      title: "Deployment options",
-    },
   ] satisfies {
     body: string;
     button: string;
@@ -1950,7 +2001,7 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
           <Col xs={24}>
             <Eyebrow>Self-service entry points</Eyebrow>
             <Title level={2} style={{ margin: "8px 0 0" }}>
-              Start with the simplest path.
+              Start with a self-service path.
             </Title>
             <Paragraph
               style={{
@@ -1961,7 +2012,7 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
               }}
             >
               Use CoCalc.ai or CoCalc Plus when you want a direct self-service
-              path. Compare deployment options and site licensing when
+              path. Compare deployment options and site licensing after
               organizational control, procurement, or private operation becomes
               the next question.
             </Paragraph>
@@ -1991,17 +2042,10 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 <div
                   style={{
                     alignItems: "center",
-                    background:
-                      index === 2
-                        ? PUBLIC_COLORS.warningTint
-                        : PUBLIC_COLORS.surfaceMuted,
-                    border:
-                      index === 2
-                        ? `1px solid ${PUBLIC_COLORS.warningBorder}`
-                        : `1px solid ${PUBLIC_COLORS.border}`,
+                    background: PUBLIC_COLORS.surfaceMuted,
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
                     borderRadius: PANEL_RADIUS,
-                    color:
-                      index === 2 ? PUBLIC_COLORS.warning : PUBLIC_COLORS.brand,
+                    color: PUBLIC_COLORS.brand,
                     display: "flex",
                     flex: "0 0 44px",
                     fontSize: 20,
@@ -2033,8 +2077,8 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
         </div>
         <Flex align="center" justify="space-between" wrap gap={14}>
           <Text type="secondary">
-            Need a private deployment or site licensing? Compare operating
-            models or ask sales about organizational rollout.
+            Need private deployment or site licensing? Move from the
+            self-service entry points to the product chooser.
           </Text>
           <Flex gap={10} wrap>
             <Button href={appPath("products")}>
