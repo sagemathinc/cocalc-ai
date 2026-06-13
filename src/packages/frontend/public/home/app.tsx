@@ -1318,6 +1318,7 @@ function ProductOptionsSection() {
   const options = [
     {
       bestFor: "Managed accounts, hosted projects, and team access",
+      cues: ["Managed service", "Hosted projects"],
       href: appPath(""),
       icon: "cloud",
       nextStep: "Start hosted",
@@ -1327,6 +1328,7 @@ function ProductOptionsSection() {
     },
     {
       bestFor: "One person running CoCalc on their own Linux or Mac machine",
+      cues: ["One-user local", "Browser workspace"],
       href: appPath("products/cocalc-plus"),
       icon: "laptop",
       nextStep: "Install locally",
@@ -1336,6 +1338,7 @@ function ProductOptionsSection() {
     },
     {
       bestFor: "A lab, class, GPU box, agent sandbox, or small team",
+      cues: ["Public VM", "Self-managed host"],
       href: appPath("products/cocalc-star"),
       icon: "star",
       nextStep: "Review Star",
@@ -1345,6 +1348,7 @@ function ProductOptionsSection() {
     },
     {
       bestFor: "A lightweight private deployment with customer control",
+      cues: ["Private team", "Customer operated"],
       href: appPath("products/cocalc-launchpad"),
       icon: "servers",
       nextStep: "Review Launchpad",
@@ -1355,6 +1359,7 @@ function ProductOptionsSection() {
     {
       bestFor:
         "Private cloud planning with customer-operated infrastructure boundaries",
+      cues: ["Infrastructure plan", "CoCalc guidance"],
       href: appPath("products/cocalc-rocket"),
       icon: "rocket",
       nextStep: "Plan Rocket",
@@ -1364,6 +1369,7 @@ function ProductOptionsSection() {
     },
   ] satisfies {
     bestFor: string;
+    cues: string[];
     href: string;
     icon: IconName;
     nextStep: string;
@@ -1514,6 +1520,30 @@ function ProductOptionsSection() {
                           {option.title}
                         </Text>
                         <Text type="secondary">{option.route}</Text>
+                        <Flex gap={6} style={{ marginTop: 6 }} wrap>
+                          {option.cues.map((cue) => (
+                            <Tag
+                              key={cue}
+                              style={{
+                                background:
+                                  index === 3
+                                    ? PUBLIC_COLORS.warningTint
+                                    : PUBLIC_COLORS.surfaceMuted,
+                                borderColor:
+                                  index === 3
+                                    ? PUBLIC_COLORS.warningBorder
+                                    : PUBLIC_COLORS.border,
+                                color:
+                                  index === 3
+                                    ? PUBLIC_COLORS.warning
+                                    : PUBLIC_COLORS.brand,
+                                marginInlineEnd: 0,
+                              }}
+                            >
+                              {cue}
+                            </Tag>
+                          ))}
+                        </Flex>
                       </span>
                     </div>
                     <div

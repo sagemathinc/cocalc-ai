@@ -431,6 +431,20 @@ describe("PublicHomeApp", () => {
     expect(screen.getByText("Run by VM owner")).not.toBeNull();
     expect(screen.getByText("Run by your team")).not.toBeNull();
     expect(screen.getByText("Run with CoCalc")).not.toBeNull();
+    for (const productCue of [
+      "Managed service",
+      "Hosted projects",
+      "One-user local",
+      "Browser workspace",
+      "Public VM",
+      "Self-managed host",
+      "Private team",
+      "Customer operated",
+      "Infrastructure plan",
+      "CoCalc guidance",
+    ]) {
+      expect(screen.getByText(productCue)).not.toBeNull();
+    }
     expect(
       screen.getByText("Managed accounts, hosted projects, and team access"),
     ).not.toBeNull();
