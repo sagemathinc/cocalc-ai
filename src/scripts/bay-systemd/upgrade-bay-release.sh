@@ -288,6 +288,41 @@ build_host_software_bundle() {
   [[ -n "$HOST_SOFTWARE_BUNDLE_PATH" && -f "$HOST_SOFTWARE_BUNDLE_PATH" ]] || die "project-host software build did not produce cocalc-project-host-software-linux-*.tar.xz"
 }
 
+bundle_contains_embedded_host_software() {
+  [[ -f "$BUNDLE_PATH" ]] || return 1
+  local listing
+  listing="$(tar -tf "$BUNDLE_PATH")"
+  grep -q '^[^/]*/runtime/packages/project-host/build/bundle-linux\.tar\.xz$' <<<"$listing" &&
+    grep -q '^[^/]*/runtime/packages/project/build/bundle-linux\.tar\.xz$' <<<"$listing" &&
+    grep -q '^[^/]*/runtime/packages/server/cloud/bootstrap/bootstrap\.py$' <<<"$listing"
+}
+
+preflight_project_host_software_artifacts() {
+  if [[ "$SKIP_HOST_UPGRADE" -ne 0 ]]; then
+    return 0
+  fi
+  if [[ -n "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
+    [[ -f "$HOST_SOFTWARE_BUNDLE_PATH" ]] || die "project-host software bundle not found: $HOST_SOFTWARE_BUNDLE_PATH"
+    return 0
+  fi
+  if bundle_contains_embedded_host_software; then
+    return 0
+  fi
+  cat >&2 <<EOF
+ERROR: project-host upgrade requested, but no project-host software artifact was provided.
+
+The bay runtime bundle does not embed the /software payload needed by project
+hosts. This check runs before uploading or staging the bay release so a split
+runtime cannot partially deploy and then fail during the host-upgrade phase.
+
+Fix one of these ways:
+  - add --host-software-bundle <cocalc-project-host-software-linux-*.tar.xz>
+  - use --build-host-software-bundle
+  - use --skip-host-upgrade or --static-only if you only want to update the bay
+EOF
+  exit 1
+}
+
 stage_release() {
   [[ -f "$BUNDLE_PATH" ]] || die "bundle not found: $BUNDLE_PATH"
   mkdir -p "$REPORT_DIR"
@@ -647,6 +682,7 @@ main() {
   if [[ "$BUILD_HOST_SOFTWARE_BUNDLE" -eq 1 ]]; then
     build_host_software_bundle
   fi
+  preflight_project_host_software_artifacts
 
   log "Upgrade target"
   cat <<EOF | tee "${REPORT_DIR}/upgrade-target.txt"
