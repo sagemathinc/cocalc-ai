@@ -80,6 +80,11 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
+        name: "Pick a starter recipe, then grow the project.",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
         name: "See the work loop inside a project.",
       }),
     ).not.toBeNull();
@@ -173,6 +178,34 @@ describe("PublicHomeApp", () => {
     expect(
       within(quickStart)
         .getByRole("link", { name: /Course workspace/i })
+        .getAttribute("href"),
+    ).toBe("/features/teaching");
+    const starterRecipes = screen.getByRole("region", {
+      name: "CoCalc.ai starter project recipes",
+    });
+    expect(
+      within(starterRecipes)
+        .getByRole("link", { name: "Start a project" })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(starterRecipes)
+        .getByRole("link", { name: /Analyze data/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      within(starterRecipes)
+        .getByRole("link", { name: /Debug a service/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(starterRecipes)
+        .getByRole("link", { name: /Ship a patch/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(starterRecipes)
+        .getByRole("link", { name: /Run a lab/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
     const projectPackage = screen.getByRole("region", {
@@ -283,6 +316,15 @@ describe("PublicHomeApp", () => {
     expect(
       screen.getAllByRole("link", { name: "Open projects" }).length,
     ).toBeGreaterThan(0);
+    expect(
+      within(
+        screen.getByRole("region", {
+          name: "CoCalc.ai starter project recipes",
+        }),
+      )
+        .getByRole("link", { name: "Open projects" })
+        .getAttribute("href"),
+    ).toBe("/projects");
     expect(
       screen.getAllByRole("link", { name: "Support" }).length,
     ).toBeGreaterThan(0);

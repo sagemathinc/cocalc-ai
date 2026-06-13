@@ -191,6 +191,63 @@ const PROJECT_PACKAGE_ITEMS = [
   items: string[];
   title: string;
 }[];
+const PROJECT_RECIPE_ITEMS = [
+  {
+    accent: COLORS.RUN,
+    body: "Keep the notebook, data files, package installs, plots, and review notes together.",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    steps: [
+      "Upload data and open a notebook.",
+      "Run packages and scripts beside the same files.",
+      "Save outputs, comments, and recovery history.",
+    ],
+    title: "Analyze data",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Use a persistent shell with source files, logs, services, and fixes in one project.",
+    href: "features/terminal",
+    icon: "terminal",
+    steps: [
+      "Open a terminal in the project tree.",
+      "Install packages, run services, and inspect logs.",
+      "Keep the debug trail with the changed files.",
+    ],
+    title: "Debug a service",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Ask Codex from the project where code, output, screenshots, and decisions live.",
+    href: "features/ai",
+    icon: "robot",
+    steps: [
+      "Describe the change with the files nearby.",
+      "Review patches against terminal output.",
+      "Leave notes for the next human or agent turn.",
+    ],
+    title: "Ship a patch",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Give students one browser-based place for files, notebooks, Linux, grading, and help.",
+    href: "features/teaching",
+    icon: "graduation-cap",
+    steps: [
+      "Create course and student projects.",
+      "Distribute notebooks and supporting files.",
+      "Collect, grade, and support from project context.",
+    ],
+    title: "Run a lab",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  steps: string[];
+  title: string;
+}[];
 
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
@@ -768,6 +825,131 @@ function QuickStartSection() {
           })}
         </div>
       </div>
+    </section>
+  );
+}
+
+function StarterRecipesSection({ config }: { config?: HomeConfig }) {
+  const projectHref = config?.is_authenticated
+    ? appPath("projects")
+    : appPath("auth/sign-up");
+  const projectLabel = config?.is_authenticated
+    ? "Open projects"
+    : "Start a project";
+
+  return (
+    <section
+      aria-label="CoCalc.ai starter project recipes"
+      style={{
+        background: `linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.brandTint} 58%, ${PUBLIC_COLORS.warningTint} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `36px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex vertical gap={22}>
+        <Flex align="end" justify="space-between" wrap gap={16}>
+          <div style={{ maxWidth: 780 }}>
+            <Eyebrow>Starter project recipes</Eyebrow>
+            <Title level={2} style={{ margin: "8px 0 10px" }}>
+              Pick a starter recipe, then grow the project.
+            </Title>
+            <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              CoCalc projects do not force an early choice between notebook,
+              terminal, course, or agent workflows. Start with the first job,
+              then add the surrounding tools as the work gets real.
+            </Paragraph>
+          </div>
+          <Button
+            href={projectHref}
+            icon={<DecorativeButtonIcon name="project-outlined" />}
+            type="primary"
+          >
+            {projectLabel}
+          </Button>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+          }}
+        >
+          {PROJECT_RECIPE_ITEMS.map((recipe) => (
+            <a
+              href={appPath(recipe.href)}
+              key={recipe.title}
+              style={{
+                background: alpha(PUBLIC_COLORS.surface, 0.92),
+                border: `1px solid ${alpha(recipe.accent, 0.24)}`,
+                borderRadius: PANEL_RADIUS,
+                boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+                color: "inherit",
+                display: "block",
+                minHeight: 286,
+                padding: 20,
+                textDecoration: "none",
+              }}
+            >
+              <Flex vertical gap={15} style={{ height: "100%" }}>
+                <Flex align="center" justify="space-between" gap={12}>
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      alignItems: "center",
+                      background: alpha(recipe.accent, 0.1),
+                      border: `1px solid ${alpha(recipe.accent, 0.28)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: recipe.accent,
+                      display: "flex",
+                      flex: "0 0 52px",
+                      fontSize: 24,
+                      height: 52,
+                      justifyContent: "center",
+                      width: 52,
+                    }}
+                  >
+                    <Icon name={recipe.icon} />
+                  </span>
+                  <Icon
+                    name="arrow-right"
+                    style={{ color: recipe.accent, fontSize: 18 }}
+                  />
+                </Flex>
+                <div>
+                  <Title level={3} style={{ fontSize: 22, margin: "0 0 8px" }}>
+                    {recipe.title}
+                  </Title>
+                  <Paragraph style={{ margin: 0 }}>{recipe.body}</Paragraph>
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    marginTop: "auto",
+                  }}
+                >
+                  {recipe.steps.map((step, index) => (
+                    <Flex align="start" gap={8} key={step}>
+                      <Text
+                        strong
+                        style={{
+                          color: recipe.accent,
+                          flex: "0 0 22px",
+                          fontFamily: PUBLIC_DISPLAY_FONT_FAMILY,
+                        }}
+                      >
+                        {index + 1}
+                      </Text>
+                      <Text>{step}</Text>
+                    </Flex>
+                  ))}
+                </div>
+              </Flex>
+            </a>
+          ))}
+        </div>
+      </Flex>
     </section>
   );
 }
@@ -2594,6 +2776,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <Hero config={config} />
       <QuickStartSection />
+      <StarterRecipesSection config={config} />
       <ProjectPackageSection />
       <OperatingModelSection />
       <ProjectLoopSection />
