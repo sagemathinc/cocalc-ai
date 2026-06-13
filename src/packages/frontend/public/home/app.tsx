@@ -3306,6 +3306,37 @@ function ProductOptionsSection() {
     { accent: COLORS.AI_ASSISTANT_FONT, icon: "overview", label: "Workflows" },
     { accent: PUBLIC_COLORS.warning, icon: "history", label: "History" },
   ] satisfies { accent: string; icon: IconName; label: string }[];
+  const operatingBoundaryQuestions = [
+    {
+      accent: COLORS.BLUE_D,
+      answer: "CoCalc, one local user, or a customer team.",
+      icon: "users",
+      question: "Who operates it?",
+    },
+    {
+      accent: COLORS.RUN,
+      answer: "Hosted service, local machine, or private deployment.",
+      icon: "servers",
+      question: "Where does it run?",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      answer: "Individual, project team, course, lab, or organization.",
+      icon: "project-outlined",
+      question: "Who needs access?",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      answer: "Product page, trust policy, or support conversation.",
+      icon: "question-circle",
+      question: "What needs review?",
+    },
+  ] satisfies {
+    accent: string;
+    answer: string;
+    icon: IconName;
+    question: string;
+  }[];
 
   return (
     <section aria-label="CoCalc.ai product options">
@@ -3417,6 +3448,82 @@ function ProductOptionsSection() {
                     </span>
                   </a>
                 ))}
+              </div>
+              <div
+                aria-label="CoCalc.ai operating boundary questions"
+                role="group"
+                style={{
+                  background: alpha(PUBLIC_COLORS.surface, 0.86),
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  padding: 14,
+                }}
+              >
+                <Flex align="baseline" justify="space-between" wrap gap={8}>
+                  <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                    Operating boundary questions
+                  </Text>
+                  <Text type="secondary">
+                    Choose the path by responsibility.
+                  </Text>
+                </Flex>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(min(100%, 170px), 1fr))",
+                    marginTop: 10,
+                  }}
+                >
+                  {operatingBoundaryQuestions.map((item) => (
+                    <span
+                      key={item.question}
+                      style={{
+                        alignItems: "start",
+                        background: alpha(item.accent, 0.06),
+                        border: `1px solid ${alpha(item.accent, 0.2)}`,
+                        borderRadius: PANEL_RADIUS,
+                        display: "grid",
+                        gap: 8,
+                        gridTemplateColumns: "30px minmax(0, 1fr)",
+                        minHeight: 84,
+                        padding: 10,
+                      }}
+                    >
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          alignItems: "center",
+                          background: alpha(item.accent, 0.08),
+                          border: `1px solid ${alpha(item.accent, 0.22)}`,
+                          borderRadius: PANEL_RADIUS,
+                          color: item.accent,
+                          display: "flex",
+                          height: 30,
+                          justifyContent: "center",
+                          width: 30,
+                        }}
+                      >
+                        <Icon name={item.icon} />
+                      </span>
+                      <span style={{ minWidth: 0 }}>
+                        <Text
+                          strong
+                          style={{
+                            color: item.accent,
+                            display: "block",
+                            fontSize: 12,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {item.question}
+                        </Text>
+                        <Text type="secondary">{item.answer}</Text>
+                      </span>
+                    </span>
+                  ))}
+                </div>
               </div>
               <div
                 aria-label="CoCalc.ai shared operating context"

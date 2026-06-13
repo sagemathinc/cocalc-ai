@@ -1240,6 +1240,36 @@ describe("PublicHomeApp", () => {
     const productOptions = screen.getByRole("region", {
       name: "CoCalc.ai product options",
     });
+    const operatingBoundaryQuestions = within(productOptions).getByRole(
+      "group",
+      {
+        name: "CoCalc.ai operating boundary questions",
+      },
+    );
+    expect(
+      within(operatingBoundaryQuestions).getByText(
+        "Operating boundary questions",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(operatingBoundaryQuestions).getByText(
+        "Choose the path by responsibility.",
+      ),
+    ).not.toBeNull();
+    for (const question of [
+      "Who operates it?",
+      "Where does it run?",
+      "Who needs access?",
+      "What needs review?",
+      "CoCalc, one local user, or a customer team.",
+      "Hosted service, local machine, or private deployment.",
+      "Individual, project team, course, lab, or organization.",
+      "Product page, trust policy, or support conversation.",
+    ]) {
+      expect(
+        within(operatingBoundaryQuestions).getByText(question),
+      ).not.toBeNull();
+    }
     const sharedOperatingContext = within(productOptions).getByRole("group", {
       name: "CoCalc.ai shared operating context",
     });
