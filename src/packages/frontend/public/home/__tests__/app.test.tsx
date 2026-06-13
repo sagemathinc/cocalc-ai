@@ -318,6 +318,22 @@ describe("PublicHomeApp", () => {
         name: "Start where the work begins.",
       }),
     ).not.toBeNull();
+    const coreWorkflows = screen.getByRole("region", {
+      name: "CoCalc.ai core workflows",
+    });
+    expect(
+      within(coreWorkflows)
+        .getByRole("img", { name: "CoCalc project workflow map" })
+        .getAttribute("src"),
+    ).toBe("/public/landing/project-workflows.jpg");
+    expect(
+      within(coreWorkflows).getByText("Project-centered workflow map"),
+    ).not.toBeNull();
+    expect(
+      within(coreWorkflows)
+        .getByRole("link", { name: "Map project context" })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     expect(
       screen.getByRole("heading", {
         name: "Every project brings the workspace with it.",

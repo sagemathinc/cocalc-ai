@@ -47,8 +47,36 @@ interface HomeConfig {
 
 const PRIMARY_WORKFLOWS = ["jupyter-notebook", "terminal", "ai"] as const;
 const HERO_IMAGE_URL = "/public/landing/home-hero.jpg";
+const WORKFLOW_IMAGE_URL = "/public/landing/project-workflows.jpg";
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
 const PANEL_RADIUS = 8;
+const HOME_PAGE_CSS = `
+  @media (max-width: 720px) {
+    .cocalc-public-home-hero {
+      min-height: auto !important;
+      padding-bottom: 36px !important;
+      padding-top: 36px !important;
+    }
+
+    .cocalc-public-home-hero-title {
+      font-size: 44px !important;
+      line-height: 1.08 !important;
+    }
+
+    .cocalc-public-home-hero-copy {
+      font-size: 18px !important;
+    }
+
+    .cocalc-public-home-hero-actions .ant-btn {
+      justify-content: center;
+      width: 100%;
+    }
+
+    .cocalc-public-home-workflow-visual {
+      padding: 12px !important;
+    }
+  }
+`;
 const HERO_SIGNALS = [
   {
     body: "Files, compute, chat, and history",
@@ -298,6 +326,12 @@ const WORKSPACE_PREVIEW_TABS = [
     title: "History trail",
   },
 ] satisfies { href: string; icon: IconName; label: string; title: string }[];
+const WORKFLOW_CONTEXT_ITEMS = [
+  { icon: "files", label: "Files" },
+  { icon: "history", label: "History" },
+  { icon: "users", label: "People" },
+  { icon: "disk-snapshot", label: "Recovery" },
+] satisfies { icon: IconName; label: string }[];
 const QUICK_START_ACTIONS = [
   {
     body: "Run Jupyter with files, terminals, chat, and history in the same project.",
@@ -553,6 +587,86 @@ function DecorativeButtonIcon({ name }: { name: IconName }) {
     <span aria-hidden="true" style={{ display: "inline-flex" }}>
       <Icon name={name} />
     </span>
+  );
+}
+
+function WorkflowVisualPanel() {
+  return (
+    <figure
+      aria-label="CoCalc project workflow visual"
+      className="cocalc-public-home-workflow-visual"
+      style={{
+        background: `linear-gradient(145deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 54%, ${PUBLIC_COLORS.warningTint} 100%)`,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: PANEL_RADIUS,
+        boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.08)}`,
+        margin: 0,
+        overflow: "hidden",
+        padding: 14,
+      }}
+    >
+      <img
+        alt="CoCalc project workflow map"
+        decoding="async"
+        loading="lazy"
+        src={WORKFLOW_IMAGE_URL}
+        style={{
+          aspectRatio: "16 / 10",
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          display: "block",
+          objectFit: "cover",
+          objectPosition: "center",
+          width: "100%",
+        }}
+      />
+      <figcaption style={{ marginTop: 14 }}>
+        <Flex vertical gap={12}>
+          <div>
+            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+              Project-centered workflow map
+            </Text>
+            <Paragraph style={{ margin: "4px 0 0" }}>
+              The same project can hold notebooks, terminal sessions, chat,
+              review context, collaborators, and recovery history.
+            </Paragraph>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "repeat(auto-fit, minmax(124px, 1fr))",
+            }}
+          >
+            {WORKFLOW_CONTEXT_ITEMS.map((item) => (
+              <div
+                key={item.label}
+                style={{
+                  alignItems: "center",
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: PUBLIC_COLORS.brand,
+                  display: "flex",
+                  gap: 8,
+                  minHeight: 42,
+                  padding: "10px 12px",
+                }}
+              >
+                <Icon name={item.icon} />
+                <Text>{item.label}</Text>
+              </div>
+            ))}
+          </div>
+          <Button
+            href={appPath("features/compare")}
+            icon={<DecorativeButtonIcon name="overview" />}
+          >
+            Map project context
+          </Button>
+        </Flex>
+      </figcaption>
+    </figure>
   );
 }
 
@@ -857,6 +971,7 @@ function Hero({ config }: { config?: HomeConfig }) {
   return (
     <section
       aria-label="CoCalc.ai technical workspace"
+      className="cocalc-public-home-hero"
       style={{
         alignItems: "center",
         backgroundImage: `linear-gradient(90deg, ${alpha(
@@ -893,6 +1008,7 @@ function Hero({ config }: { config?: HomeConfig }) {
             </Eyebrow>
             <div>
               <Title
+                className="cocalc-public-home-hero-title"
                 level={1}
                 style={{
                   color: PUBLIC_COLORS.surface,
@@ -905,6 +1021,7 @@ function Hero({ config }: { config?: HomeConfig }) {
                 CoCalc.ai
               </Title>
               <Paragraph
+                className="cocalc-public-home-hero-copy"
                 style={{
                   color: alpha(PUBLIC_COLORS.surface, 0.9),
                   fontSize: 21,
@@ -981,7 +1098,12 @@ function Hero({ config }: { config?: HomeConfig }) {
                 </div>
               ))}
             </div>
-            <Flex gap={12} style={{ maxWidth: 740 }} wrap>
+            <Flex
+              className="cocalc-public-home-hero-actions"
+              gap={12}
+              style={{ maxWidth: 740 }}
+              wrap
+            >
               {authenticated ? (
                 <>
                   <Button
@@ -1916,80 +2038,10 @@ function WorkflowsSection() {
         <Button href={appPath("features")}>Explore all features</Button>
       </Flex>
       <Row gutter={[18, 18]} style={{ marginTop: 26 }}>
-        <Col lg={6} xs={24}>
-          <div
-            style={{
-              background: `linear-gradient(145deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 54%, ${PUBLIC_COLORS.warningTint} 100%)`,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.08)}`,
-              height: "100%",
-              padding: 22,
-            }}
-          >
-            <Flex vertical gap={18}>
-              <Flex align="center" gap={12}>
-                <div
-                  style={{
-                    alignItems: "center",
-                    background: PUBLIC_COLORS.surfaceMuted,
-                    border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: PANEL_RADIUS,
-                    color: PUBLIC_COLORS.brand,
-                    display: "flex",
-                    fontSize: 26,
-                    height: 58,
-                    justifyContent: "center",
-                    width: 58,
-                  }}
-                >
-                  <Icon name="project-outlined" />
-                </div>
-                <div>
-                  <Text strong style={{ color: PUBLIC_COLORS.brand }}>
-                    Project context
-                  </Text>
-                  <Paragraph style={{ margin: "3px 0 0" }}>
-                    Files, people, history, and recovery travel with each
-                    workflow.
-                  </Paragraph>
-                </div>
-              </Flex>
-              <div
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))",
-                }}
-              >
-                {[
-                  { icon: "files", label: "Files" },
-                  { icon: "history", label: "History" },
-                  { icon: "users", label: "People" },
-                  { icon: "disk-snapshot", label: "Recovery" },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    style={{
-                      alignItems: "center",
-                      background: PUBLIC_COLORS.surface,
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: PANEL_RADIUS,
-                      color: PUBLIC_COLORS.brand,
-                      display: "flex",
-                      gap: 8,
-                      padding: "10px 12px",
-                    }}
-                  >
-                    <Icon name={item.icon as IconName} />
-                    <Text>{item.label}</Text>
-                  </div>
-                ))}
-              </div>
-            </Flex>
-          </div>
+        <Col lg={8} xs={24}>
+          <WorkflowVisualPanel />
         </Col>
-        <Col lg={18} xs={24}>
+        <Col lg={16} xs={24}>
           <div
             style={{
               display: "grid",
@@ -2731,6 +2783,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
 
   return (
     <PublicPage active="home" config={marketingConfig}>
+      <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
       <HeroHandoffStrip config={config} />
       <ProofStripSection />
