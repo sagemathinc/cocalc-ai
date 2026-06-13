@@ -291,7 +291,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "The hard parts are already in the workspace.",
+        name: "Keep the operating pieces in one workspace.",
       }),
     ).not.toBeNull();
     await waitFor(() =>
@@ -496,16 +496,17 @@ describe("PublicHomeApp", () => {
     expect(screen.queryByText(/multi-bay deployments/i)).toBeNull();
     expect(screen.getByText("Local runtime for one user.")).not.toBeNull();
     expect(screen.queryByText(/Free local runtime/i)).toBeNull();
-    const proofPoints = screen.getByRole("region", {
-      name: "Operational proof points for CoCalc.ai",
+    const signalPoints = screen.getByRole("region", {
+      name: "Operational workspace signals for CoCalc.ai",
     });
-    expect(within(proofPoints).getByText("Full Linux runtime")).not.toBeNull();
+    expect(within(signalPoints).getByText("Full Linux runtime")).not.toBeNull();
     expect(
-      within(proofPoints).getByText("Project history nearby"),
+      within(signalPoints).getByText("Project history nearby"),
     ).not.toBeNull();
     expect(
-      within(proofPoints).getByText("People and agents share context"),
+      within(signalPoints).getByText("People and agents share context"),
     ).not.toBeNull();
+    expect(screen.queryByText("Operational proof")).toBeNull();
     expect(
       screen
         .getByRole("link", { name: /CoCalc Launchpad Customer/i })

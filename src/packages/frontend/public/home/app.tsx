@@ -3584,8 +3584,8 @@ function DifferenceSection() {
   );
 }
 
-function OperationalProofSection() {
-  const proofPoints = [
+function OperationalSignalsSection() {
+  const signalPoints = [
     {
       accent: COLORS.ANTD_LINK_BLUE_DARK,
       body: "Use terminals, packages, services, and notebooks against the same files instead of exporting work to a side machine.",
@@ -3624,7 +3624,7 @@ function OperationalProofSection() {
 
   return (
     <section
-      aria-label="Operational proof points for CoCalc.ai"
+      aria-label="Operational workspace signals for CoCalc.ai"
       style={{
         background: PUBLIC_COLORS.surface,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
@@ -3636,13 +3636,13 @@ function OperationalProofSection() {
       <Flex vertical gap={24}>
         <Flex align="end" justify="space-between" wrap gap={18}>
           <div style={{ maxWidth: 780 }}>
-            <Eyebrow>Operational proof</Eyebrow>
+            <Eyebrow>Workspace signals</Eyebrow>
             <Title level={2} style={{ margin: "8px 0 10px" }}>
-              The hard parts are already in the workspace.
+              Keep the operating pieces in one workspace.
             </Title>
             <Paragraph style={{ fontSize: 18, margin: 0 }}>
-              CoCalc packages the pieces technical groups usually assemble
-              themselves: Linux runtime, project history, collaborative review,
+              CoCalc brings together the pieces technical groups usually need
+              close by: Linux runtime, project history, collaborative review,
               and deployment paths.
             </Paragraph>
           </div>
@@ -3660,7 +3660,7 @@ function OperationalProofSection() {
             gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
           }}
         >
-          {proofPoints.map((item) => (
+          {signalPoints.map((item) => (
             <div
               key={item.title}
               style={{
@@ -3945,7 +3945,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <ProductOptionsSection />
       <BoundaryRoutingSection />
       <DifferenceSection />
-      <OperationalProofSection />
+      <OperationalSignalsSection />
       <NewsSection initialNews={news} />
       <BottomCallout config={config} />
     </PublicPage>
