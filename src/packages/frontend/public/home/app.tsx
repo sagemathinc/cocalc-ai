@@ -312,6 +312,34 @@ const WORKSPACE_OVERVIEW_ROUTES = [
   label: string;
   title: (opts: { authenticated: boolean }) => string;
 }[];
+const WORKSPACE_DECISION_CHECKS = [
+  {
+    accent: COLORS.BLUE_D,
+    detail:
+      "Identify the files, notebooks, data, and notes that define the work.",
+    icon: "files",
+    label: "Material to keep",
+  },
+  {
+    accent: COLORS.RUN,
+    detail:
+      "Choose the first surface: notebook, terminal, AI, writing, or teaching.",
+    icon: "overview",
+    label: "Surface to open",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail:
+      "Decide whether the workspace should be hosted, local, or customer-operated.",
+    icon: "servers",
+    label: "Operating boundary",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -2024,6 +2052,66 @@ function WorkspaceOverviewSection({
               decide whether the workspace should be hosted, local, or
               customer-operated.
             </Paragraph>
+            <div
+              aria-label="CoCalc.ai workspace decision checks"
+              role="group"
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                display: "grid",
+                gap: 8,
+                marginTop: 4,
+                padding: 10,
+              }}
+            >
+              <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                First workspace decision checks
+              </Text>
+              {WORKSPACE_DECISION_CHECKS.map((check) => (
+                <span
+                  key={check.label}
+                  style={{
+                    alignItems: "start",
+                    display: "grid",
+                    gap: 9,
+                    gridTemplateColumns: "28px minmax(0, 1fr)",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      alignItems: "center",
+                      background: alpha(check.accent, 0.08),
+                      border: `1px solid ${alpha(check.accent, 0.22)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: check.accent,
+                      display: "flex",
+                      height: 28,
+                      justifyContent: "center",
+                      marginTop: 1,
+                      width: 28,
+                    }}
+                  >
+                    <Icon name={check.icon} />
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <Text
+                      strong
+                      style={{
+                        color: check.accent,
+                        display: "block",
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {check.label}
+                    </Text>
+                    <Text type="secondary">{check.detail}</Text>
+                  </span>
+                </span>
+              ))}
+            </div>
           </Flex>
         </Col>
         <Col lg={15} xs={24}>

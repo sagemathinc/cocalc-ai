@@ -478,6 +478,23 @@ describe("PublicHomeApp", () => {
     expect(
       within(workspaceOverview).getByText(/Start with the project record/i),
     ).not.toBeNull();
+    const workspaceDecisionChecks = within(workspaceOverview).getByRole(
+      "group",
+      {
+        name: "CoCalc.ai workspace decision checks",
+      },
+    );
+    for (const check of [
+      "First workspace decision checks",
+      "Material to keep",
+      "Surface to open",
+      "Operating boundary",
+      "Identify the files, notebooks, data, and notes that define the work.",
+      "Choose the first surface: notebook, terminal, AI, writing, or teaching.",
+      "Decide whether the workspace should be hosted, local, or customer-operated.",
+    ]) {
+      expect(within(workspaceDecisionChecks).getByText(check)).not.toBeNull();
+    }
     const workspaceOverviewSignals = within(workspaceOverview).getByRole(
       "group",
       {
