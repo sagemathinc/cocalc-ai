@@ -186,6 +186,47 @@ const WORKFLOW_PATH_LINKS = [
   kicker: string;
   title: string;
 }[];
+const ARTIFACT_ROUTE_LINKS = [
+  {
+    accent: COLORS.RUN,
+    artifact: "Notebook + dataset",
+    body: "Notebook output, kernels, and data files stay close to project state.",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    route: "Jupyter notebooks",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    artifact: "Shell output + logs",
+    body: "Commands, packages, services, and terminal logs live in the project.",
+    href: "features/terminal",
+    icon: "terminal",
+    route: "Linux terminal",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    artifact: "Prompt + patch",
+    body: "Codex threads can refer to files, terminal output, and review notes.",
+    href: "features/ai",
+    icon: "robot",
+    route: "AI agents",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    artifact: "Runtime boundary",
+    body: "Hosted, local, and customer-operated paths are separated on product pages.",
+    href: "products",
+    icon: "servers",
+    route: "Deployment options",
+  },
+] satisfies {
+  accent: string;
+  artifact: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  route: string;
+}[];
 const HERO_OUTCOMES = [
   {
     body: "The notebook, terminal, source files, and agent notes stay in the same project.",
@@ -1377,6 +1418,88 @@ function WorkflowPathRoutingSection() {
               </Flex>
             </a>
           ))}
+        </div>
+        <div
+          aria-label="CoCalc.ai artifact route shortcuts"
+          role="group"
+          style={{
+            background: alpha(PUBLIC_COLORS.surface, 0.88),
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: PANEL_RADIUS,
+            boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
+            padding: 16,
+          }}
+        >
+          <div>
+            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+              Common artifacts and detail pages
+            </Text>
+            <Paragraph style={{ margin: "6px 0 0" }}>
+              Files, terminal traces, agent tasks, and deployment boundaries
+              each point to a focused detail page while staying framed around
+              project context.
+            </Paragraph>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+            }}
+          >
+            {ARTIFACT_ROUTE_LINKS.map((item) => (
+              <a
+                href={appPath(item.href)}
+                key={item.route}
+                style={{
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${alpha(item.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 9,
+                  gridTemplateColumns: "34px minmax(0, 1fr)",
+                  minHeight: 126,
+                  padding: 12,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(item.accent, 0.1),
+                    border: `1px solid ${alpha(item.accent, 0.25)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    height: 34,
+                    justifyContent: "center",
+                    width: 34,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text strong style={{ display: "block" }}>
+                    {item.route}
+                  </Text>
+                  <Text style={{ color: item.accent }}>{item.artifact}</Text>
+                </span>
+                <Text
+                  type="secondary"
+                  style={{ gridColumn: "1 / 3", margin: 0 }}
+                >
+                  {item.body}
+                </Text>
+              </a>
+            ))}
+          </div>
         </div>
       </Flex>
     </section>
