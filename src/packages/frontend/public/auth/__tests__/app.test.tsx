@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import api from "@cocalc/frontend/client/api";
 import {
+  getControlPlaneAuthBootstrap,
   isMfaRequiredAuthResponse,
   postAuthApi,
   signOutAuthSession,
@@ -20,6 +21,7 @@ import { resolveAuthRedirectPath } from "../forms";
 
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
 jest.mock("@cocalc/frontend/auth/api", () => ({
+  getControlPlaneAuthBootstrap: jest.fn(),
   postAuthApi: jest.fn(),
   signOutAuthSession: jest.fn(),
   isMfaRequiredAuthResponse: jest.fn(() => false),
@@ -28,6 +30,9 @@ jest.mock("@cocalc/frontend/auth/api", () => ({
 }));
 
 const mockedApi = jest.mocked(api);
+const mockedGetControlPlaneAuthBootstrap = jest.mocked(
+  getControlPlaneAuthBootstrap,
+);
 const mockedPostAuthApi = jest.mocked(postAuthApi);
 const mockedSignOutAuthSession = jest.mocked(signOutAuthSession);
 const mockedIsMfaRequiredAuthResponse = jest.mocked(isMfaRequiredAuthResponse);
@@ -54,6 +59,10 @@ beforeAll(() => {
 
 beforeEach(() => {
   mockedApi.mockReset();
+  mockedGetControlPlaneAuthBootstrap.mockReset();
+  mockedGetControlPlaneAuthBootstrap.mockRejectedValue(
+    new Error("auth bootstrap unavailable in test"),
+  );
   mockedPostAuthApi.mockReset();
   mockedSignOutAuthSession.mockReset();
   mockedIsMfaRequiredAuthResponse.mockReset();
@@ -769,13 +778,16 @@ describe("PublicAuthApp", () => {
       },
     } as any);
     mockedSignOutAuthSession.mockResolvedValueOnce(undefined);
+    mockedGetControlPlaneAuthBootstrap.mockResolvedValueOnce({
+      account_id: "acct-alice",
+      display_name: "Alice Example",
+      email_address: "alice@example.com",
+      signed_in: true,
+    });
 
     render(
       <PublicAuthApp
         config={config({
-          account_display_name: "Alice Example",
-          account_email_address: "alice@example.com",
-          account_id: "acct-alice",
           is_authenticated: true,
         })}
         initialRoute={{
@@ -789,7 +801,7 @@ describe("PublicAuthApp", () => {
     expect(screen.getByText("Email:")).not.toBeNull();
     expect(screen.getByText("alice@example.com")).not.toBeNull();
     expect(screen.getByText("Name:")).not.toBeNull();
-    expect(screen.getByText("Alice Example")).not.toBeNull();
+    expect(screen.getAllByText("Alice Example").length).toBeGreaterThan(0);
     expect(
       screen.getByText(
         "Accepting this invite will add this account to the project.",

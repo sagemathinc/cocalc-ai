@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { MenuOutlined } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 
-import { Button, Drawer, Flex, Menu, Space, theme } from "antd";
+import { Button, Drawer, Flex, Menu, Space, Typography, theme } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   arePublicPoliciesVisible,
@@ -38,6 +38,7 @@ export type PublicTopNavActiveKey = PublicInfoPageKey | "auth";
 type PublicTopNavItemKey = PublicInfoPageKey;
 
 const COMPACT_NAV_MEDIA_QUERY = "(max-width: 875px)";
+const { Text } = Typography;
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -130,6 +131,7 @@ export default function PublicTopNav({
   const config = usePublicConfig();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isAuthenticated = !!config?.is_authenticated;
+  const accountDisplayName = config?.account_display_name?.trim();
   const isCompact = useCompactNav();
   const logoSquare = getLogoSquare(config);
   const showPolicies = arePublicPoliciesVisible(config);
@@ -190,6 +192,16 @@ export default function PublicTopNav({
   );
   const appActions = isAuthenticated ? (
     <>
+      {accountDisplayName ? (
+        <Text
+          ellipsis
+          style={{
+            maxWidth: isCompact ? 110 : 180,
+          }}
+        >
+          {accountDisplayName}
+        </Text>
+      ) : null}
       <Button
         href={appPath("projects")}
         size={isCompact ? "small" : "middle"}
