@@ -10,7 +10,8 @@ BAY_GROUP="cocalc-bay"
 BAY_ROOT_BASE="/mnt/cocalc/bays"
 INSTALL_BASE="/opt/cocalc/bay"
 RELEASE_ID=""
-WORKER_COUNT=2
+WORKER_COUNT=""
+WORKER_COUNT_EXPLICIT=0
 ENABLE_WORKERS=1
 START_BAY=0
 FORCE_ENV=0
@@ -44,7 +45,8 @@ Options:
   --bay-root-base <dir>    base dir for bay state (default: /mnt/cocalc/bays)
   --install-base <dir>     install base for releases/current (default: /opt/cocalc/bay)
   --release-id <id>        explicit release id (default: timestamp-gitshort)
-  --worker-count <n>       worker count to write into bay-workers.env (default: 2)
+  --worker-count <n>       worker count to write into bay-workers.env; default
+                           preserves existing value, or 2 on first install
   --router-port <n>        router port (default: 9102)
   --persist-port <n>       persist port (default: 9202)
   --hub-base-port <n>      base port for hub workers (default: 9300)
@@ -503,6 +505,7 @@ main() {
         ;;
       --worker-count)
         WORKER_COUNT="$2"
+        WORKER_COUNT_EXPLICIT=1
         shift 2
         ;;
       --router-port)
@@ -606,6 +609,19 @@ main() {
   BAY_SECRETS_ENV_EXAMPLE="${ENV_DIR}/bay-secrets.env.example"
   BAY_TOPOLOGY_ENV_EXAMPLE="${ENV_DIR}/bay-topology.env.example"
   BAY_OVERLAY_ENV_EXAMPLE="${ENV_DIR}/bay-${OVERLAY_MODE}-overlay.env.example"
+  if [[ -z "$WORKER_COUNT" && -f "${ENV_DIR}/bay-workers.env" ]]; then
+    WORKER_COUNT="$(
+      sed -n 's/^COCALC_BAY_WORKER_COUNT=//p' "${ENV_DIR}/bay-workers.env" \
+        | tail -n1
+    )"
+  fi
+  if [[ -z "$WORKER_COUNT" ]]; then
+    WORKER_COUNT=2
+  fi
+  if [[ ! "$WORKER_COUNT" =~ ^[0-9]+$ || "$WORKER_COUNT" -lt 1 ]]; then
+    echo "--worker-count must be a positive integer; got '${WORKER_COUNT}'" >&2
+    exit 2
+  fi
   POSTGRES_BIN="$(find_postgres)"
   PG_CTL_BIN="$(find_pg_ctl)"
   PSQL_BIN="$(find_psql)"
@@ -743,6 +759,9 @@ COCALC_BAY_WORKER_COUNT=${WORKER_COUNT}
 COCALC_BAY_WORKER_NODE_OPTIONS=
 COCALC_BAY_WORKER_EXTRA_ENV=
 EOF
+  if [[ "$WORKER_COUNT_EXPLICIT" -eq 1 ]]; then
+    set_env_var "${ENV_DIR}/bay-workers.env" "COCALC_BAY_WORKER_COUNT" "$WORKER_COUNT"
+  fi
 
   render_if_missing_or_forced "${ENV_DIR}/bay-topology.env" "$BAY_TOPOLOGY_ENV_EXAMPLE" <<EOF
 COCALC_CLUSTER_ID=standalone

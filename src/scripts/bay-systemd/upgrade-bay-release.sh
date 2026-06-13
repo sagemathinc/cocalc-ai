@@ -16,7 +16,7 @@ API_URL=""
 PUBLIC_URL=""
 BAY_ID="bay-0"
 BAY_USER="cocalc-bay"
-WORKER_COUNT=2
+WORKER_COUNT=""
 RETAIN_RELEASES=3
 REMOTE_PSQL="/usr/lib/postgresql/16/bin/psql"
 REMOTE_PGHOST="/mnt/cocalc/bays/bay-0/run/postgres"
@@ -86,7 +86,8 @@ Options:
   --public-url <url>          public bay URL for release env (default: --api)
   --bay-id <id>               bay id (default: bay-0)
   --bay-user <user>           bay service/db user (default: cocalc-bay)
-  --worker-count <n>          hub worker count (default: 2)
+  --worker-count <n>          hub worker count override; default preserves the
+                              bay's existing /etc/cocalc/bay-workers.env value
   --retain-releases <n>       release retention passed to bootstrap (default: 3)
   --remote-psql <path>        remote psql path (default: /usr/lib/postgresql/16/bin/psql)
   --remote-pghost <path>      remote Postgres socket dir
@@ -244,6 +245,10 @@ validate_args() {
   if [[ -z "$PUBLIC_URL" ]]; then
     PUBLIC_URL="$API_URL"
   fi
+  if [[ -n "$WORKER_COUNT" ]]; then
+    [[ "$WORKER_COUNT" =~ ^[0-9]+$ ]] || die "--worker-count must be an integer"
+    [[ "$WORKER_COUNT" -ge 1 ]] || die "--worker-count must be at least 1"
+  fi
   if [[ -z "$REPORT_DIR" ]]; then
     REPORT_DIR="${REPO_ROOT}/tmp/bay-upgrade-$(date -u +%Y%m%dT%H%M%SZ)"
   fi
@@ -286,6 +291,10 @@ build_host_software_bundle() {
 stage_release() {
   [[ -f "$BUNDLE_PATH" ]] || die "bundle not found: $BUNDLE_PATH"
   mkdir -p "$REPORT_DIR"
+  local worker_count_arg=""
+  if [[ -n "$WORKER_COUNT" ]]; then
+    worker_count_arg=" --worker-count $(q "$WORKER_COUNT")"
+  fi
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     cp "${SRC_ROOT}/packages/rocket/build/bay-static/bay-static-manifest.json" \
       "${REPORT_DIR}/bay-static-manifest.json" 2>/dev/null || true
@@ -305,11 +314,11 @@ stage_release() {
 
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     log "Stage bay static/frontend release"
-    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --static-bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID") --worker-count $(q "$WORKER_COUNT") --public-url $(q "$PUBLIC_URL") --retain-releases $(q "$RETAIN_RELEASES")" \
+    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --static-bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID")${worker_count_arg} --public-url $(q "$PUBLIC_URL") --retain-releases $(q "$RETAIN_RELEASES")" \
       | tee "${REPORT_DIR}/stage-release.log"
   else
     log "Stage bay release"
-    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID") --worker-count $(q "$WORKER_COUNT") --public-url $(q "$PUBLIC_URL") --force-overlay --retain-releases $(q "$RETAIN_RELEASES") --start" \
+    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID")${worker_count_arg} --public-url $(q "$PUBLIC_URL") --force-overlay --retain-releases $(q "$RETAIN_RELEASES") --start" \
       | tee "${REPORT_DIR}/stage-release.log"
   fi
 }
@@ -393,21 +402,35 @@ restart_and_health_check() {
         | tee "${REPORT_DIR}/bay-health.txt"
       return 0
     fi
-    local restart_command="sudo systemctl daemon-reload"
-    local worker_id
-    for worker_id in $(seq 1 "$WORKER_COUNT"); do
-      restart_command+=" && sudo systemctl restart cocalc-bay-hub@${worker_id}.service"
-      restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-worker-health ${worker_id}"
-    done
-    restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-status"
-    restart_command+=" && sudo /opt/cocalc/bay/current/bin/bay-health"
     log "Restart hub workers one at a time and run health checks"
-    remote_exec "$restart_command" \
-      | tee "${REPORT_DIR}/bay-health.txt"
+    remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+set -euo pipefail
+source /etc/cocalc/bay-workers.env
+systemctl daemon-reload
+for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
+  systemctl restart "cocalc-bay-hub@${worker_id}.service"
+  /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"
+done
+/opt/cocalc/bay/current/bin/bay-status
+/opt/cocalc/bay/current/bin/bay-health
+EOF
   else
     log "Restart bay services and run health checks"
-    remote_exec "sudo systemctl daemon-reload && sudo systemctl restart cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-conat-router.service cocalc-bay-conat-persist.service cocalc-bay-hub@1.service cocalc-bay-hub@2.service && sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
-      | tee "${REPORT_DIR}/bay-health.txt"
+    remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+set -euo pipefail
+source /etc/cocalc/bay-workers.env
+systemctl daemon-reload
+systemctl restart \
+  cocalc-bay-postgres.service \
+  cocalc-bay-migrations.service \
+  cocalc-bay-conat-router.service \
+  cocalc-bay-conat-persist.service
+for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
+  systemctl restart "cocalc-bay-hub@${worker_id}.service"
+done
+/opt/cocalc/bay/current/bin/bay-status
+/opt/cocalc/bay/current/bin/bay-health
+EOF
   fi
 }
 
@@ -634,6 +657,7 @@ bay_id=${BAY_ID}
 static_only=${STATIC_ONLY}
 bundle=${BUNDLE_PATH}
 host_software_bundle=${HOST_SOFTWARE_BUNDLE_PATH}
+worker_count_override=${WORKER_COUNT}
 report_dir=${REPORT_DIR}
 EOF
 

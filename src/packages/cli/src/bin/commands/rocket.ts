@@ -216,7 +216,7 @@ export function registerRocketCommand(
       "admin account id for temporary deploy auth",
     )
     .option("--cookie <header>", "cookie header for deploy auth")
-    .option("--worker-count <n>", "hub worker count")
+    .option("--worker-count <n>", "hub worker count override")
     .option("--bay-id <id>", "bay id")
     .option("--retain-releases <n>", "release retention")
     .option("--report-dir <dir>", "directory for deploy reports")
@@ -409,11 +409,6 @@ function buildDeployPlan({
       "Rocket bay deploy requires --api or clusters.<name>.hub_url",
     );
   }
-  if (!workerCount) {
-    throw new Error(
-      "Rocket bay deploy requires --worker-count or clusters.<name>.bay.worker_count",
-    );
-  }
   if (!opts.build && !opts.bundle) {
     throw new Error("Rocket bay deploy requires --build or --bundle <path>");
   }
@@ -459,7 +454,9 @@ function buildDeployPlan({
   }
   args.push("--public-url", publicUrl ?? api);
   args.push("--bay-id", bayId);
-  args.push("--worker-count", `${workerCount}`);
+  if (workerCount) {
+    args.push("--worker-count", `${workerCount}`);
+  }
   if (retainReleases) {
     args.push("--retain-releases", `${retainReleases}`);
   }

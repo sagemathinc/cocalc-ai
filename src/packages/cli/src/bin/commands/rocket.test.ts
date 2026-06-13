@@ -223,8 +223,6 @@ test("rocket deploy --scope bay wraps upgrade-bay-release with host upgrade skip
     "ubuntu@10.206.0.38",
     "--api",
     "https://cocalc.ai",
-    "--worker-count",
-    "4",
     "--retain-releases",
     "5",
     "--yes",
@@ -242,13 +240,7 @@ test("rocket deploy --scope bay wraps upgrade-bay-release with host upgrade skip
     ),
     ["--remote", "ubuntu@10.206.0.38"],
   );
-  assert.deepEqual(
-    runs[0].args.slice(
-      runs[0].args.indexOf("--worker-count"),
-      runs[0].args.indexOf("--worker-count") + 2,
-    ),
-    ["--worker-count", "4"],
-  );
+  assert.equal(runs[0].args.includes("--worker-count"), false);
 });
 
 test("rocket deploy --static-only keeps compatibility with static deploys", async () => {
@@ -266,8 +258,6 @@ test("rocket deploy --static-only keeps compatibility with static deploys", asyn
     "ubuntu@10.206.0.38",
     "--api",
     "https://cocalc.ai",
-    "--worker-count",
-    "4",
     "--restart-hub-workers",
     "--yes",
   ]);
@@ -294,8 +284,6 @@ test("rocket deploy --scope all builds bay and host software separately", async 
     "ubuntu@10.206.0.38",
     "--api",
     "https://cocalc.ai",
-    "--worker-count",
-    "4",
     "--admin-email",
     "admin@example.com",
     "--yes",
@@ -332,8 +320,6 @@ test("rocket deploy --scope all accepts explicit host software bundle", async ()
     "ubuntu@10.206.0.38",
     "--api",
     "https://cocalc.ai",
-    "--worker-count",
-    "4",
     "--admin-email",
     "admin@example.com",
     "--yes",
@@ -450,6 +436,13 @@ test("rocket deploy loads documented yaml cluster config", async () => {
     ),
     ["--retain-releases", "5"],
   );
+  assert.deepEqual(
+    runs[0].args.slice(
+      runs[0].args.indexOf("--worker-count"),
+      runs[0].args.indexOf("--worker-count") + 2,
+    ),
+    ["--worker-count", "4"],
+  );
 });
 
 test("rocket deploy requires an explicit scope", async () => {
@@ -468,8 +461,6 @@ test("rocket deploy requires an explicit scope", async () => {
         "ubuntu@10.206.0.38",
         "--api",
         "https://cocalc.ai",
-        "--worker-count",
-        "4",
         "--yes",
       ]),
     /explicit --scope/,
@@ -498,8 +489,6 @@ test("rocket deploy refuses dirty worktree builds by default", async () => {
         "ubuntu@10.206.0.38",
         "--api",
         "https://cocalc.ai",
-        "--worker-count",
-        "4",
         "--yes",
       ]),
     /dirty git worktree/,
