@@ -779,6 +779,40 @@ describe("PublicHomeApp", () => {
     expect(
       within(materialRouteCards).getByText("Review Python support"),
     ).not.toBeNull();
+    const notebookRouteContext = within(materialRouteCards).getByRole("group", {
+      name: "Notebook or data table carried context",
+    });
+    expect(
+      within(notebookRouteContext).getByText("Notebook output"),
+    ).not.toBeNull();
+    expect(within(notebookRouteContext).getByText("Data files")).not.toBeNull();
+    expect(
+      within(notebookRouteContext).getByText("Environment notes"),
+    ).not.toBeNull();
+    const terminalRouteContext = within(materialRouteCards).getByRole("group", {
+      name: "Command or service carried context",
+    });
+    expect(
+      within(terminalRouteContext).getByText("Shell history"),
+    ).not.toBeNull();
+    expect(
+      within(terminalRouteContext).getByText("Package state"),
+    ).not.toBeNull();
+    expect(
+      within(terminalRouteContext).getByText("Service logs"),
+    ).not.toBeNull();
+    const pythonRouteContext = within(materialRouteCards).getByRole("group", {
+      name: "Script or source tree carried context",
+    });
+    expect(within(pythonRouteContext).getByText("Source files")).not.toBeNull();
+    expect(within(pythonRouteContext).getByText("Plots")).not.toBeNull();
+    expect(within(pythonRouteContext).getByText("Test output")).not.toBeNull();
+    const latexRouteContext = within(materialRouteCards).getByRole("group", {
+      name: "Paper or handout carried context",
+    });
+    expect(within(latexRouteContext).getByText("Source text")).not.toBeNull();
+    expect(within(latexRouteContext).getByText("PDF output")).not.toBeNull();
+    expect(within(latexRouteContext).getByText("Review notes")).not.toBeNull();
     const removedDuplicateRegions = [
       "CoCalc.ai project handoff path",
       "CoCalc.ai intent router",

@@ -465,6 +465,7 @@ const WORK_INPUT_ROUTES = [
   {
     accent: COLORS.RUN,
     body: "Use Jupyter when the first item is an .ipynb file, data table, or computation that should keep output beside the source.",
+    carries: ["Notebook output", "Data files", "Environment notes"],
     href: "features/jupyter-notebook",
     icon: "jupyter",
     label: "Notebook",
@@ -474,6 +475,7 @@ const WORK_INPUT_ROUTES = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Use a terminal when the work starts from a command, package install, service, or log that belongs with project files.",
+    carries: ["Shell history", "Package state", "Service logs"],
     href: "features/terminal",
     icon: "terminal",
     label: "Shell",
@@ -483,6 +485,7 @@ const WORK_INPUT_ROUTES = [
   {
     accent: PUBLIC_COLORS.success,
     body: "Use the Python path when scripts, modules, plots, or scientific packages are the center of the project.",
+    carries: ["Source files", "Plots", "Test output"],
     href: "features/python",
     icon: "python",
     label: "Code",
@@ -492,6 +495,7 @@ const WORK_INPUT_ROUTES = [
   {
     accent: PUBLIC_COLORS.warning,
     body: "Use the LaTeX path when papers, notes, handouts, or technical writing need the same project history and collaboration.",
+    carries: ["Source text", "PDF output", "Review notes"],
     href: "features/latex-editor",
     icon: "file-code",
     label: "Writing",
@@ -501,6 +505,7 @@ const WORK_INPUT_ROUTES = [
 ] satisfies {
   accent: string;
   body: string;
+  carries: string[];
   href: string;
   icon: IconName;
   label: string;
@@ -2418,6 +2423,30 @@ function WorkInputSection() {
                 {route.title}
               </Title>
               <Paragraph style={{ margin: 0 }}>{route.body}</Paragraph>
+              <div
+                aria-label={`${route.title} carried context`}
+                role="group"
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  marginTop: 12,
+                }}
+              >
+                {route.carries.map((item) => (
+                  <Tag
+                    key={item}
+                    style={{
+                      background: PUBLIC_COLORS.surface,
+                      borderColor: alpha(route.accent, 0.22),
+                      color: route.accent,
+                      marginInlineEnd: 0,
+                    }}
+                  >
+                    {item}
+                  </Tag>
+                ))}
+              </div>
               <Text
                 strong
                 style={{
