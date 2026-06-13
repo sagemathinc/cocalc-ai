@@ -407,7 +407,7 @@ export const HostCreateProviderFields: React.FC<
           const r2Region = mapCloudRegionToR2Region(opt.value);
           return {
             ...opt,
-            detailLabel: `Cloudflare: ${R2_REGION_LABELS[r2Region]}`,
+            detailLabel: R2_REGION_LABELS[r2Region],
           };
         })
       : (displayOptions[field] ?? []);

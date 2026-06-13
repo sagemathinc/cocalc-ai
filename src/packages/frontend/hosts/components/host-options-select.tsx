@@ -193,11 +193,24 @@ export function HostOptionsSelect({
       size={size}
       showSearch
       optionFilterProp="label"
-      filterOption={(input, option) =>
-        String(option?.label ?? "")
-          .toLowerCase()
-          .includes(input.trim().toLowerCase())
-      }
+      filterOption={(input, option) => {
+        const data = option?.data as HostFieldOption | undefined;
+        const haystack = [
+          option?.label,
+          option?.value,
+          data?.label,
+          data?.selectionLabel,
+          data?.mainLabel,
+          data?.subLabel,
+          data?.detailLabel,
+          data?.priceLabel,
+          data?.stateLabel,
+        ]
+          .filter((value) => value != null)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(input.trim().toLowerCase());
+      }}
       popupMatchSelectWidth={false}
       optionRender={(option: any) => {
         const data = option.data as HostFieldOption | undefined;
@@ -211,13 +224,25 @@ export function HostOptionsSelect({
         }
         return (
           <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 16,
-              width: "100%",
-            }}
+            style={
+              detailLabel
+                ? {
+                    alignItems: "center",
+                    display: "grid",
+                    gap: 12,
+                    gridTemplateColumns: detail
+                      ? "minmax(220px, 1fr) 180px max-content"
+                      : "minmax(220px, 1fr) 180px",
+                    width: "100%",
+                  }
+                : {
+                    alignItems: "center",
+                    display: "flex",
+                    gap: 16,
+                    justifyContent: "space-between",
+                    width: "100%",
+                  }
+            }
           >
             <div
               style={{
@@ -225,7 +250,6 @@ export function HostOptionsSelect({
                 flexDirection: "column",
                 gap: subLabel ? 2 : 0,
                 minWidth: 0,
-                maxWidth: detailLabel ? 300 : undefined,
               }}
             >
               <span
@@ -254,10 +278,10 @@ export function HostOptionsSelect({
               <span
                 style={{
                   color: COLORS.GRAY_M,
-                  flex: "0 0 180px",
                   fontSize: "12px",
                   lineHeight: 1.3,
                   overflow: "hidden",
+                  textAlign: "left",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
