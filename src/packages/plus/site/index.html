@@ -3,17 +3,28 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Install CoCalc Plus, the single-machine CoCalc runtime with a bundled set of local tools."
+    />
     <title>CoCalc Plus (Alpha)</title>
     <style>
       :root {
-        --bg: #f7f8fb;
-        --panel: #ffffff;
+        --page: #f6f7f9;
+        --surface: #ffffff;
+        --surface-soft: #f1f5f9;
         --text: #1f2933;
         --muted: #52606d;
-        --accent: #2563eb;
-        --accent-dark: #1d4ed8;
-        --border: #e5e7eb;
-        --mono: "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco,
+        --subtle: #7b8794;
+        --border: #d9e2ec;
+        --accent: #0f766e;
+        --accent-strong: #115e59;
+        --accent-soft: #d9f5f0;
+        --link: #1d4ed8;
+        --terminal: #13222a;
+        --terminal-text: #d7f3ee;
+        --mono:
+          "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco,
           Consolas, "Liberation Mono", "Courier New", monospace;
         --sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
       }
@@ -24,92 +35,260 @@
 
       body {
         margin: 0;
-        background: linear-gradient(160deg, #eef2ff 0%, #f7f8fb 60%);
+        background: var(--page);
         color: var(--text);
         font-family: var(--sans);
+        letter-spacing: 0;
       }
 
       main {
-        max-width: 860px;
+        max-width: 1080px;
         margin: 0 auto;
-        padding: 64px 24px 80px;
+        padding: 40px 24px 56px;
       }
 
       .hero {
-        margin-bottom: 32px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 28px;
+        padding: 8px 0 28px;
+      }
+
+      .eyebrow {
+        color: var(--accent-strong);
+        font-size: 0.82rem;
+        font-weight: 700;
+        margin: 0 0 10px;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
       }
 
       h1 {
-        font-size: 2.4rem;
-        margin: 0 0 8px;
+        font-size: 2.55rem;
+        line-height: 1.08;
+        margin-bottom: 14px;
       }
 
-      p {
-        margin: 0 0 16px;
+      h2 {
+        font-size: 1.2rem;
+        line-height: 1.3;
+      }
+
+      .lead {
+        color: var(--muted);
+        font-size: 1.08rem;
+        line-height: 1.65;
+        max-width: 760px;
+      }
+
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 20px;
+      }
+
+      .badge {
+        align-items: center;
+        background: var(--accent-soft);
+        border: 1px solid #b6e8df;
+        border-radius: 8px;
+        color: var(--accent-strong);
+        display: inline-flex;
+        font-size: 0.88rem;
+        font-weight: 650;
+        min-height: 32px;
+        padding: 6px 10px;
+      }
+
+      .layout {
+        align-items: start;
+        display: grid;
+        gap: 24px;
+        grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+      }
+
+      .panel,
+      .step-list,
+      .note {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+
+      .panel {
+        padding: 22px;
+      }
+
+      .section-header {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 18px;
+      }
+
+      .section-header p,
+      .direct-link,
+      .note,
+      .footer {
         color: var(--muted);
         line-height: 1.6;
       }
 
-      .card {
-        background: var(--panel);
-        border-radius: 16px;
-        border: 1px solid var(--border);
-        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
-        padding: 24px;
-        margin-bottom: 24px;
-      }
-
       .command-box {
-        display: flex;
-        flex-wrap: wrap;
+        align-items: stretch;
+        background: var(--surface-soft);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: grid;
         gap: 12px;
-        align-items: center;
-        border-radius: 12px;
-        border: 1px dashed var(--border);
-        background: #f8fafc;
-        padding: 16px;
+        grid-template-columns: minmax(0, 1fr) auto;
+        padding: 12px;
       }
 
       code {
+        color: #0f172a;
         font-family: var(--mono);
         font-size: 0.95rem;
-        color: #0f172a;
-        word-break: break-all;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+      }
+
+      .command-box code {
+        align-items: center;
+        display: flex;
+        min-height: 42px;
       }
 
       button {
-        cursor: pointer;
-        border: none;
-        border-radius: 999px;
-        padding: 10px 16px;
-        font-weight: 600;
         background: var(--accent);
-        color: white;
-        transition: background 0.15s ease;
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        color: #ffffff;
+        cursor: pointer;
+        font-weight: 700;
+        min-height: 42px;
+        min-width: 88px;
+        padding: 9px 14px;
+        transition:
+          background 0.15s ease,
+          border-color 0.15s ease;
       }
 
-      button:hover {
-        background: var(--accent-dark);
+      button:hover,
+      button:focus-visible {
+        background: var(--accent-strong);
+        border-color: var(--accent-strong);
       }
 
-      .meta {
+      button:focus-visible,
+      a:focus-visible {
+        outline: 3px solid #9ed9d2;
+        outline-offset: 2px;
+      }
+
+      .copy-status {
+        color: var(--accent-strong);
+        display: block;
+        font-size: 0.88rem;
+        font-weight: 650;
+        min-height: 22px;
+        padding-top: 8px;
+      }
+
+      .direct-link {
+        margin-top: 14px;
+      }
+
+      .terminal {
+        background: var(--terminal);
+        border-radius: 8px;
+        margin-top: 18px;
+        overflow: hidden;
+      }
+
+      .terminal-bar {
+        align-items: center;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        display: flex;
+        gap: 6px;
+        height: 34px;
+        padding: 0 12px;
+      }
+
+      .terminal-dot {
+        background: #9fb3c8;
+        border-radius: 50%;
+        height: 8px;
+        width: 8px;
+      }
+
+      .terminal pre {
+        margin: 0;
+        padding: 16px;
+        white-space: pre-wrap;
+      }
+
+      .terminal code {
+        color: var(--terminal-text);
+      }
+
+      .step-list {
+        counter-reset: steps;
         display: grid;
-        gap: 12px;
-        margin-top: 16px;
-      }
-
-      .meta strong {
-        color: #0f172a;
-      }
-
-      ul {
-        margin: 12px 0 0 18px;
+        gap: 0;
+        list-style: none;
+        margin: 0;
         padding: 0;
+      }
+
+      .step-list li {
+        counter-increment: steps;
+        display: grid;
+        gap: 6px;
+        grid-template-columns: 38px minmax(0, 1fr);
+        padding: 18px;
+      }
+
+      .step-list li + li {
+        border-top: 1px solid var(--border);
+      }
+
+      .step-list li::before {
+        align-items: center;
+        background: var(--accent-soft);
+        border-radius: 8px;
+        color: var(--accent-strong);
+        content: counter(steps);
+        display: inline-flex;
+        font-weight: 800;
+        height: 30px;
+        justify-content: center;
+        width: 30px;
+      }
+
+      .step-copy {
         color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .step-copy strong {
+        color: var(--text);
+        display: block;
+        margin-bottom: 2px;
+      }
+
+      .note {
+        margin-top: 24px;
+        padding: 18px;
       }
 
       a {
-        color: var(--accent);
+        color: var(--link);
+        font-weight: 650;
         text-decoration: none;
       }
 
@@ -118,80 +297,161 @@
       }
 
       .footer {
-        font-size: 0.9rem;
-        color: var(--muted);
+        font-size: 0.92rem;
+        margin-top: 32px;
         text-align: center;
-        margin-top: 36px;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          padding: 30px 16px 42px;
+        }
+
+        h1 {
+          font-size: 2.05rem;
+        }
+
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .command-box {
+          grid-template-columns: 1fr;
+        }
+
+        button {
+          width: 100%;
+        }
       }
     </style>
   </head>
   <body>
     <main>
-      <section class="hero">
-        <h1>CoCalc Plus (Alpha)</h1>
-        <p>
-          Install the CoCalc Plus single-file runtime and a small, curated tools
-          bundle (rg, fd, ouch) in one command. This is an early alpha intended
-          for fast testing.
+      <header class="hero">
+        <p class="eyebrow">Alpha distribution</p>
+        <h1>CoCalc Plus</h1>
+        <p class="lead">
+          A single-machine CoCalc runtime with a small, curated tools bundle.
+          Install the SEA binary and command-line launcher with one terminal
+          command.
         </p>
-      </section>
-
-      <section class="card">
-        <h2>Install</h2>
-        <p>Copy and run this in your terminal:</p>
-        <div class="command-box">
-          <code id="install-command">
-            curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash
-          </code>
-          <button id="copy-btn" type="button">Copy</button>
+        <div class="badges" aria-label="Supported platforms and requirements">
+          <span class="badge">Linux x64/arm64</span>
+          <span class="badge">macOS arm64</span>
+          <span class="badge">Includes rg, fd, ouch</span>
         </div>
-        <div class="meta">
-          <p>
+      </header>
+
+      <div class="layout">
+        <section class="panel" aria-labelledby="install-heading">
+          <div class="section-header">
+            <h2 id="install-heading">Install</h2>
+            <p>Run this command in a terminal:</p>
+          </div>
+          <div class="command-box">
+            <code
+              id="install-command"
+              data-command="curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash"
+              >curl -fsSL
+              https://software.cocalc.ai/software/cocalc-plus/install.sh |
+              bash</code
+            >
+            <button
+              id="copy-install"
+              type="button"
+              aria-label="Copy install command"
+            >
+              Copy
+            </button>
+          </div>
+          <span
+            class="copy-status"
+            id="install-copy-status"
+            role="status"
+            aria-live="polite"
+          ></span>
+          <p class="direct-link">
             Direct link:
-            <a href="https://software.cocalc.ai/software/cocalc-plus/install.sh">
+            <a
+              href="https://software.cocalc.ai/software/cocalc-plus/install.sh"
+            >
               install.sh
             </a>
           </p>
-          <p>
-            Supported: Linux (x64/arm64), macOS (arm64). Requires curl.
-          </p>
+
+          <div class="terminal" aria-label="CoCalc Plus command preview">
+            <div class="terminal-bar" aria-hidden="true">
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+            </div>
+            <pre><code>$ cocalc-plus
+CoCalc Plus starts with the bundled tools on PATH.</code></pre>
+          </div>
+        </section>
+
+        <section aria-labelledby="does-heading">
+          <div class="section-header">
+            <h2 id="does-heading">What this does</h2>
+            <p>The installer keeps the runtime and bundled tools together.</p>
+          </div>
+          <ol class="step-list">
+            <li>
+              <span class="step-copy">
+                <strong>Downloads the runtime.</strong>
+                It selects the current CoCalc Plus SEA binary for your operating
+                system and CPU architecture.
+              </span>
+            </li>
+            <li>
+              <span class="step-copy">
+                <strong>Installs local tools.</strong>
+                The minimal bundle adds <code>rg</code>, <code>fd</code>, and
+                <code>ouch</code> for a useful local shell environment.
+              </span>
+            </li>
+            <li>
+              <span class="step-copy">
+                <strong>Creates a launcher.</strong>
+                Linux installs under
+                <code>~/.local/share/cocalc-plus</code> with
+                <code>~/.local/bin/cocalc-plus</code>. macOS installs under
+                <code>~/Library/Application Support/cocalc-plus</code>.
+              </span>
+            </li>
+          </ol>
+        </section>
+      </div>
+
+      <section class="panel note" aria-labelledby="uninstall-heading">
+        <div class="section-header">
+          <h2 id="uninstall-heading">Uninstall</h2>
+          <p>Remove the install directory and launcher:</p>
         </div>
-      </section>
-
-      <section class="card">
-        <h2>What this does</h2>
-        <ul>
-          <li>Downloads the platform-specific SEA binary.</li>
-          <li>Downloads the minimal tools bundle (rg, fd, ouch).</li>
-          <li>
-            Installs into <code>~/.local/share/cocalc-plus</code> on Linux, or
-            <code>~/Library/Application Support/cocalc-plus</code> on macOS.
-          </li>
-          <li>
-            Creates launcher at <code>~/.local/bin/cocalc-plus</code> on Linux,
-            or <code>~/Library/Application Support/cocalc-plus/bin/cocalc-plus</code>
-            on macOS, and adds it to PATH if needed.
-          </li>
-        </ul>
-      </section>
-
-      <section class="card">
-        <h2>Uninstall</h2>
-        <p>Remove the install directory and launcher (command auto-selected):</p>
         <div class="command-box">
           <code id="uninstall-command"></code>
-          <button id="copy-uninstall" type="button">Copy</button>
+          <button
+            id="copy-uninstall"
+            type="button"
+            aria-label="Copy uninstall command"
+          >
+            Copy
+          </button>
         </div>
-        <p style="margin-top: 12px;">
+        <span
+          class="copy-status"
+          id="uninstall-copy-status"
+          role="status"
+          aria-live="polite"
+        ></span>
+        <p class="direct-link">
           If the installer added PATH modifications, remove the line it appended
-          to your shell rc file (e.g. <code>~/.bashrc</code>,
-          <code>~/.zshrc</code>, or <code>~/.config/fish/config.fish</code>).
+          to your shell rc file, such as <code>~/.bashrc</code>,
+          <code>~/.zshrc</code>, or <code>~/.config/fish/config.fish</code>.
         </p>
       </section>
 
-      <div class="footer">
-        Questions? Reach out to the CoCalc team.
-      </div>
+      <div class="footer">Questions? Reach out to the CoCalc team.</div>
     </main>
 
     <script>
@@ -202,26 +462,55 @@
         }
         const input = document.createElement("textarea");
         input.value = text;
+        input.setAttribute("readonly", "");
+        input.style.position = "absolute";
+        input.style.left = "-9999px";
         document.body.appendChild(input);
         input.select();
         document.execCommand("copy");
         document.body.removeChild(input);
       };
 
-      const installCommand = document.getElementById("install-command").innerText.trim();
-      document.getElementById("copy-btn").addEventListener("click", () => {
-        copyText(installCommand);
-      });
+      const setCopied = (button, status, label) => {
+        button.textContent = label;
+        status.textContent = label === "Copied" ? "Copied." : "";
+        window.clearTimeout(button.resetTimer);
+        button.resetTimer = window.setTimeout(() => {
+          button.textContent = "Copy";
+          status.textContent = "";
+        }, 1800);
+      };
 
-      const isMac = `${navigator.platform || ""}`.toLowerCase().includes("mac");
-      const uninstallCommand =
-        isMac
-          ? 'rm -rf "$HOME/Library/Application Support/cocalc-plus"'
-          : "rm -rf ~/.local/share/cocalc-plus ~/.local/bin/cocalc-plus";
-      document.getElementById("uninstall-command").innerText = uninstallCommand;
-      document.getElementById("copy-uninstall").addEventListener("click", () => {
-        copyText(uninstallCommand);
-      });
+      const wireCopy = (buttonId, commandId, statusId) => {
+        const button = document.getElementById(buttonId);
+        const command = document.getElementById(commandId);
+        const status = document.getElementById(statusId);
+        button.addEventListener("click", async () => {
+          try {
+            await copyText(
+              command.dataset.command || command.textContent.trim(),
+            );
+            setCopied(button, status, "Copied");
+          } catch (err) {
+            status.textContent = "Copy failed.";
+          }
+        });
+      };
+
+      const platform = `${
+        navigator.userAgentData?.platform || navigator.platform || ""
+      }`.toLowerCase();
+      const isMac = platform.includes("mac");
+      const uninstallCommand = isMac
+        ? 'rm -rf "$HOME/Library/Application Support/cocalc-plus"'
+        : "rm -rf ~/.local/share/cocalc-plus ~/.local/bin/cocalc-plus";
+
+      const installCommand = document.getElementById("install-command");
+      installCommand.textContent = installCommand.dataset.command;
+      document.getElementById("uninstall-command").textContent =
+        uninstallCommand;
+      wireCopy("copy-install", "install-command", "install-copy-status");
+      wireCopy("copy-uninstall", "uninstall-command", "uninstall-copy-status");
     </script>
   </body>
 </html>
