@@ -392,6 +392,19 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectOutcomes).getByText("A lasting record"),
     ).not.toBeNull();
+    const heroFirstChoices = within(hero).getByRole("group", {
+      name: "CoCalc.ai hero first choices",
+    });
+    for (const choice of [
+      "Project first",
+      "Pick a surface",
+      "Set the boundary",
+      "Put files, notebooks, terminals, AI, and review in one project.",
+      "Open the notebook, shell, agent, teaching, or writing surface.",
+      "Use hosted, local, or customer-operated paths when that matters.",
+    ]) {
+      expect(within(heroFirstChoices).getByText(choice)).not.toBeNull();
+    }
     expect(
       within(hero).queryByRole("group", {
         name: "CoCalc.ai workspace context cues",

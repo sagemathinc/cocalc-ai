@@ -154,6 +154,31 @@ const HERO_OUTCOMES = [
     title: "A lasting record",
   },
 ] satisfies { body: string; icon: IconName; title: string }[];
+const HERO_FIRST_CHOICES = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Put files, notebooks, terminals, AI, and review in one project.",
+    icon: "project-outlined",
+    label: "Project first",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Open the notebook, shell, agent, teaching, or writing surface.",
+    icon: "overview",
+    label: "Pick a surface",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Use hosted, local, or customer-operated paths when that matters.",
+    icon: "servers",
+    label: "Set the boundary",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const HERO_ROUTE_CHOICES = [
   {
     accent: PUBLIC_COLORS.accent,
@@ -830,6 +855,94 @@ function DecorativeButtonIcon({ name }: { name: IconName }) {
     <span aria-hidden="true" style={{ display: "inline-flex" }}>
       <Icon name={name} />
     </span>
+  );
+}
+
+function HeroFirstChoices() {
+  return (
+    <div
+      aria-label="CoCalc.ai hero first choices"
+      role="group"
+      style={{
+        background: alpha(PUBLIC_COLORS.brandDark, 0.38),
+        border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+        borderRadius: PANEL_RADIUS,
+        display: "grid",
+        gap: 8,
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 188px), 1fr))",
+        maxWidth: 700,
+        padding: 10,
+      }}
+    >
+      {HERO_FIRST_CHOICES.map((choice, index) => (
+        <div
+          key={choice.label}
+          style={{
+            alignItems: "start",
+            background: alpha(PUBLIC_COLORS.surface, 0.1),
+            border: `1px solid ${alpha(choice.accent, 0.3)}`,
+            borderRadius: PANEL_RADIUS,
+            display: "grid",
+            gap: 9,
+            gridTemplateColumns: "30px minmax(0, 1fr)",
+            minHeight: 96,
+            padding: "10px 11px",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              alignItems: "center",
+              background: alpha(choice.accent, 0.14),
+              border: `1px solid ${alpha(choice.accent, 0.28)}`,
+              borderRadius: PANEL_RADIUS,
+              color: choice.accent,
+              display: "flex",
+              flexDirection: "column",
+              fontSize: 14,
+              gap: 2,
+              height: 42,
+              justifyContent: "center",
+              width: 30,
+            }}
+          >
+            <Icon name={choice.icon} />
+            <Text
+              strong
+              style={{
+                color: "inherit",
+                fontSize: 10,
+                lineHeight: 1,
+              }}
+            >
+              {index + 1}
+            </Text>
+          </span>
+          <span style={{ minWidth: 0 }}>
+            <Text
+              strong
+              style={{
+                color: choice.accent,
+                display: "block",
+                fontSize: 12,
+                textTransform: "uppercase",
+              }}
+            >
+              {choice.label}
+            </Text>
+            <Text
+              style={{
+                color: alpha(PUBLIC_COLORS.surface, 0.74),
+                display: "block",
+                marginTop: 4,
+              }}
+            >
+              {choice.detail}
+            </Text>
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1930,6 +2043,7 @@ function Hero({ config }: { config?: HomeConfig }) {
               </div>
             ))}
           </div>
+          <HeroFirstChoices />
           <Flex
             className="cocalc-public-home-hero-actions"
             gap={12}
