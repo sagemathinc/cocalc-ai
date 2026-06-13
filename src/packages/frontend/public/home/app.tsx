@@ -584,6 +584,7 @@ const LANDING_DECISION_FLOW = [
       authenticated ? appPath("projects") : appPath("auth/sign-up"),
     icon: "project-outlined",
     label: "Place",
+    next: "Then choose the work surface from that project.",
     title: "Where does the work live?",
   },
   {
@@ -592,6 +593,7 @@ const LANDING_DECISION_FLOW = [
     href: () => appPath("features"),
     icon: "overview",
     label: "Surface",
+    next: "Then keep files, output, and notes in one project.",
     title: "What opens it?",
   },
   {
@@ -600,6 +602,7 @@ const LANDING_DECISION_FLOW = [
     href: () => appPath("products"),
     icon: "servers",
     label: "Boundary",
+    next: "Then open the matching hosted, local, or private path.",
     title: "Who runs it?",
   },
 ] satisfies {
@@ -608,6 +611,7 @@ const LANDING_DECISION_FLOW = [
   href: (opts: { authenticated: boolean }) => string;
   icon: IconName;
   label: string;
+  next: string;
   title: string;
 }[];
 const LANDING_WORKSPACE_LOOP = [
@@ -1958,7 +1962,7 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                 display: "grid",
                 gap: 10,
                 gridTemplateColumns: "34px minmax(0, 1fr)",
-                minHeight: 116,
+                minHeight: 142,
                 padding: 12,
                 textDecoration: "none",
               }}
@@ -2004,6 +2008,18 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                   {item.title}
                 </Text>
                 <Text type="secondary">{item.body}</Text>
+                <Text
+                  strong
+                  style={{
+                    color: item.accent,
+                    display: "inline-flex",
+                    gap: 6,
+                    marginTop: 8,
+                  }}
+                >
+                  <Icon name="arrow-right" />
+                  {item.next}
+                </Text>
               </span>
             </a>
           ))}

@@ -382,6 +382,21 @@ describe("PublicHomeApp", () => {
         "Create or open the project that will hold files, output, terminals, and notes.",
       ),
     ).not.toBeNull();
+    expect(
+      within(firstDecisionFlow).getByText(
+        "Then choose the work surface from that project.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(firstDecisionFlow).getByText(
+        "Then keep files, output, and notes in one project.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(firstDecisionFlow).getByText(
+        "Then open the matching hosted, local, or private path.",
+      ),
+    ).not.toBeNull();
     const primaryLandingRoutes = within(routeMap).getByRole("group", {
       name: "CoCalc.ai primary landing routes",
     });
