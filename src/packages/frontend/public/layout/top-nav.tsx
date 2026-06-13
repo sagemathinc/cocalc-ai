@@ -193,16 +193,25 @@ export default function PublicTopNav({
   const appActions = isAuthenticated ? (
     <>
       {accountDisplayName ? (
-        <Text
-          ellipsis
+        <span
           style={{
             alignItems: "center",
             display: "inline-flex",
             maxWidth: isCompact ? 110 : 180,
           }}
         >
-          {accountDisplayName}
-        </Text>
+          <Text
+            title={accountDisplayName}
+            style={{
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {accountDisplayName}
+          </Text>
+        </span>
       ) : null}
       <Button
         href={appPath("projects")}
