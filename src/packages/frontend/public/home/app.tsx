@@ -71,6 +71,23 @@ const HERO_SIGNALS = [
     title: "Recoverable work",
   },
 ] satisfies { body: string; icon: IconName; title: string }[];
+const HERO_OUTCOMES = [
+  {
+    body: "The notebook, terminal, source files, and agent notes stay in the same project.",
+    icon: "project-outlined",
+    title: "Shared context",
+  },
+  {
+    body: "Commands, logs, screenshots, and test output remain close to the proposed change.",
+    icon: "check-circle",
+    title: "Visible validation",
+  },
+  {
+    body: "TimeTravel, snapshots, and backups make prior project state inspectable.",
+    icon: "disk-snapshot",
+    title: "Recoverable state",
+  },
+] satisfies { body: string; icon: IconName; title: string }[];
 const HERO_HANDOFF_ITEMS = [
   {
     accent: COLORS.RUN,
@@ -901,6 +918,70 @@ function Hero({ config }: { config?: HomeConfig }) {
                 files, chat, and Codex agent work stay together in one durable
                 project.
               </Paragraph>
+            </div>
+            <div
+              aria-label="CoCalc.ai project outcomes"
+              role="group"
+              style={{
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+                maxWidth: 700,
+              }}
+            >
+              {HERO_OUTCOMES.map((item) => (
+                <div
+                  key={item.title}
+                  style={{
+                    alignItems: "start",
+                    background: alpha(PUBLIC_COLORS.brandDark, 0.34),
+                    border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.3)}`,
+                    borderRadius: PANEL_RADIUS,
+                    display: "grid",
+                    gap: 9,
+                    gridTemplateColumns: "28px minmax(0, 1fr)",
+                    minHeight: 102,
+                    padding: "12px 13px",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      alignItems: "center",
+                      background: alpha(PUBLIC_COLORS.accent, 0.14),
+                      border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.28)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: PUBLIC_COLORS.accent,
+                      display: "flex",
+                      height: 28,
+                      justifyContent: "center",
+                      marginTop: 1,
+                      width: 28,
+                    }}
+                  >
+                    <Icon name={item.icon} />
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <Text
+                      strong
+                      style={{
+                        color: PUBLIC_COLORS.surface,
+                        display: "block",
+                      }}
+                    >
+                      {item.title}
+                    </Text>
+                    <Text
+                      style={{
+                        color: alpha(PUBLIC_COLORS.surface, 0.76),
+                        display: "block",
+                      }}
+                    >
+                      {item.body}
+                    </Text>
+                  </span>
+                </div>
+              ))}
             </div>
             <Flex gap={12} style={{ maxWidth: 740 }} wrap>
               {authenticated ? (

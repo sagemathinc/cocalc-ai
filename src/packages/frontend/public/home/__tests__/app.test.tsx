@@ -57,6 +57,16 @@ describe("PublicHomeApp", () => {
         name: "CoCalc.ai",
       }),
     ).not.toBeNull();
+    const projectOutcomes = screen.getByRole("group", {
+      name: "CoCalc.ai project outcomes",
+    });
+    expect(within(projectOutcomes).getByText("Shared context")).not.toBeNull();
+    expect(
+      within(projectOutcomes).getByText("Visible validation"),
+    ).not.toBeNull();
+    expect(
+      within(projectOutcomes).getByText("Recoverable state"),
+    ).not.toBeNull();
     const projectPreview = screen.getByRole("group", {
       name: "Live CoCalc project preview",
     });
