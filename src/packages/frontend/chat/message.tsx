@@ -2725,13 +2725,15 @@ export default function Message({
               Edit
             </Button>
           ) : null}
-          <Button
-            size="small"
-            type="text"
-            onClick={handleSendQueuedImmediately}
-          >
-            Steer
-          </Button>
+          <Tooltip title="Steer running turn (Ctrl+Enter)">
+            <Button
+              size="small"
+              type="text"
+              onClick={handleSendQueuedImmediately}
+            >
+              Steer
+            </Button>
+          </Tooltip>
           <Button size="small" type="text" onClick={handleCancelQueued}>
             Cancel
           </Button>
