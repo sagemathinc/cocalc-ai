@@ -236,6 +236,49 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Keep the trail/i })
         .getAttribute("href"),
     ).toBe("/features/compare");
+    const intentRouter = screen.getByRole("region", {
+      name: "CoCalc.ai intent router",
+    });
+    expect(
+      within(intentRouter).getByRole("heading", {
+        name: "Route by the work in front of you.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(intentRouter)
+        .getByRole("link", { name: "Create a project" })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    const intentSiteLicenseHref = within(intentRouter)
+      .getByRole("link", { name: "Discuss site licensing" })
+      .getAttribute("href");
+    expect(intentSiteLicenseHref).toMatch(/^\/support\/new\?/);
+    expect(intentSiteLicenseHref).toContain("subject=Site+license");
+    expect(
+      within(intentRouter)
+        .getByRole("link", { name: /Notebook project/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      within(intentRouter)
+        .getByRole("link", { name: /Linux terminal/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(intentRouter)
+        .getByRole("link", { name: /Codex in context/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(intentRouter)
+        .getByRole("link", { name: /Course workspace/i })
+        .getAttribute("href"),
+    ).toBe("/features/teaching");
+    expect(
+      within(intentRouter)
+        .getByRole("link", { name: /Deployment options/i })
+        .getAttribute("href"),
+    ).toBe("/products");
     const firstWorkspaceChoice = screen.getByRole("region", {
       name: "CoCalc.ai first workspace choice",
     });
@@ -723,6 +766,15 @@ describe("PublicHomeApp", () => {
     ).toBe("/projects");
     expect(
       within(screen.getByRole("group", { name: "Live CoCalc project preview" }))
+        .getByRole("link", { name: "Open projects" })
+        .getAttribute("href"),
+    ).toBe("/projects");
+    expect(
+      within(
+        screen.getByRole("region", {
+          name: "CoCalc.ai intent router",
+        }),
+      )
         .getByRole("link", { name: "Open projects" })
         .getAttribute("href"),
     ).toBe("/projects");

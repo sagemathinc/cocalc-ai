@@ -157,6 +157,55 @@ const HERO_HANDOFF_ITEMS = [
   label: string;
   title: string;
 }[];
+const INTENT_ROUTE_ITEMS = [
+  {
+    accent: COLORS.RUN,
+    body: "Keep data, plots, package installs, and notebook output in one project.",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    label: "Analyze data",
+    title: "Notebook project",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Run scripts, packages, services, and logs from the project file tree.",
+    href: "features/terminal",
+    icon: "terminal",
+    label: "Run code",
+    title: "Linux terminal",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Ask Codex with files, terminal output, screenshots, and notes already nearby.",
+    href: "features/ai",
+    icon: "robot",
+    label: "Use an agent",
+    title: "Codex in context",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Distribute files, collect work, grade notebooks, and support students from course projects.",
+    href: "features/teaching",
+    icon: "graduation-cap",
+    label: "Teach",
+    title: "Course workspace",
+  },
+  {
+    accent: PUBLIC_COLORS.success,
+    body: "Choose between hosted, local, Launchpad, Rocket, and broader licensing paths.",
+    href: "products",
+    icon: "servers",
+    label: "Choose deployment",
+    title: "Deployment options",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 const FIRST_OPEN_ITEMS = [
   {
     accent: COLORS.RUN,
@@ -1603,6 +1652,143 @@ function HeroHandoffStrip({ config }: { config?: HomeConfig }) {
           </div>
         </div>
       </Flex>
+    </section>
+  );
+}
+
+function IntentRouterSection({ config }: { config?: HomeConfig }) {
+  const projectHref = config?.is_authenticated
+    ? appPath("projects")
+    : appPath("auth/sign-up");
+  const projectLabel = config?.is_authenticated
+    ? "Open projects"
+    : "Create a project";
+
+  return (
+    <section
+      aria-label="CoCalc.ai intent router"
+      style={{
+        background: `linear-gradient(135deg, ${PUBLIC_COLORS.brandTint} 0%, ${PUBLIC_COLORS.surface} 52%, ${PUBLIC_COLORS.surfaceMuted} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `30px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <div
+        style={{
+          alignItems: "start",
+          display: "grid",
+          gap: 22,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 310px), 1fr))",
+        }}
+      >
+        <div style={{ maxWidth: 440 }}>
+          <Eyebrow>I am here to</Eyebrow>
+          <Title level={2} style={{ margin: "8px 0 10px" }}>
+            Route by the work in front of you.
+          </Title>
+          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+            Start with a notebook, shell, agent thread, course, or deployment
+            decision. Each path still lands in the same project-centered
+            workspace model.
+          </Paragraph>
+          <Flex gap={12} style={{ marginTop: 18 }} wrap>
+            <Button
+              href={projectHref}
+              icon={<DecorativeButtonIcon name="project-outlined" />}
+              type="primary"
+            >
+              {projectLabel}
+            </Button>
+            <Button
+              href={supportPurchasePath(
+                "Site license",
+                "I want to discuss a CoCalc site license.",
+              )}
+              icon={<DecorativeButtonIcon name="bank" />}
+            >
+              Discuss site licensing
+            </Button>
+          </Flex>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+            width: "100%",
+          }}
+        >
+          {INTENT_ROUTE_ITEMS.map((item) => (
+            <a
+              href={appPath(item.href)}
+              key={item.title}
+              style={{
+                alignItems: "start",
+                background:
+                  item.title === "Codex in context"
+                    ? PUBLIC_COLORS.warningTint
+                    : PUBLIC_COLORS.surface,
+                border: `1px solid ${
+                  item.title === "Codex in context"
+                    ? PUBLIC_COLORS.warningBorder
+                    : alpha(item.accent, 0.22)
+                }`,
+                borderRadius: PANEL_RADIUS,
+                boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+                color: "inherit",
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "44px minmax(0, 1fr) 18px",
+                minHeight: 142,
+                padding: 15,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(item.accent, 0.1),
+                  border: `1px solid ${alpha(item.accent, 0.26)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  fontSize: 21,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: item.accent,
+                    display: "block",
+                    fontSize: 12,
+                    letterSpacing: 0,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {item.label}
+                </Text>
+                <Title level={3} style={{ fontSize: 20, margin: "6px 0 8px" }}>
+                  {item.title}
+                </Title>
+                <Text type="secondary">{item.body}</Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{ color: item.accent, fontSize: 16, marginTop: 3 }}
+              />
+            </a>
+          ))}
+        </div>
+      </div>
     </section>
   );
 }
@@ -3267,6 +3453,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
       <HeroHandoffStrip config={config} />
+      <IntentRouterSection config={config} />
       <FirstOpenSection config={config} />
       <HandoffChecklistSection config={config} />
       <ProofStripSection />
