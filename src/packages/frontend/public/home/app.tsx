@@ -1777,7 +1777,7 @@ function AudienceSection() {
       bullets: [
         "Course projects",
         "Notebook grading",
-        "Consistent lab environment",
+        "Shared course environment",
       ],
       href: appPath("features/teaching"),
       icon: "graduation-cap",
@@ -2044,7 +2044,7 @@ function ProductOptionsSection() {
       href: appPath("products/cocalc-rocket"),
       icon: "rocket",
       nextStep: "Plan Rocket",
-      operator: "Run with CoCalc",
+      operator: "Customer-operated with CoCalc guidance",
       route: "Private cloud",
       title: "CoCalc Rocket",
     },

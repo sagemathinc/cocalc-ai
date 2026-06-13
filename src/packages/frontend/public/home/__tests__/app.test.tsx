@@ -52,6 +52,8 @@ const BLOCKED_HOMEPAGE_CLAIM_PATTERNS = [
   /demo surface/i,
   /without setting up/i,
   /Consistent lab setup/i,
+  /Consistent lab environment/i,
+  /Run with CoCalc/i,
   /benchmark/i,
 ] as const;
 const BLOCKED_HOMEPAGE_CLAIM_ATTRIBUTES = [
@@ -653,7 +655,9 @@ describe("PublicHomeApp", () => {
     expect(screen.getByText("Run by CoCalc")).not.toBeNull();
     expect(screen.getByText("Run by you")).not.toBeNull();
     expect(screen.getByText("Run by your team")).not.toBeNull();
-    expect(screen.getByText("Run with CoCalc")).not.toBeNull();
+    expect(
+      screen.getByText("Customer-operated with CoCalc guidance"),
+    ).not.toBeNull();
     for (const productCue of [
       "Managed service",
       "Hosted projects",
@@ -666,6 +670,7 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(screen.getAllByText(productCue).length).toBeGreaterThan(0);
     }
+    expect(screen.getByText("Shared course environment")).not.toBeNull();
     expect(
       screen.getByText("Managed accounts, hosted projects, and team access"),
     ).not.toBeNull();
