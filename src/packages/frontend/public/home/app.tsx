@@ -274,6 +274,42 @@ const WORKSPACE_BREADTH_ITEMS = [
   icon: IconName;
   title: string;
 }[];
+const HANDOFF_CHECKLIST_ITEMS = [
+  {
+    accent: PUBLIC_COLORS.brand,
+    body: "Keep the notebook, script, data file, or document that started the work in the project tree.",
+    href: "features/compare",
+    icon: "files",
+    title: "Source material",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Leave terminal output, package installs, logs, and notebook results where reviewers can inspect them.",
+    href: "features/terminal",
+    icon: "terminal",
+    title: "Runtime evidence",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Attach the Codex prompt, proposed patch, screenshots, and review notes to the same project context.",
+    href: "features/ai",
+    icon: "robot",
+    title: "Agent trail",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Use TimeTravel, snapshots, and backups so the previous project state remains reachable.",
+    href: "features/compare",
+    icon: "disk-snapshot",
+    title: "Recovery point",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  title: string;
+}[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -1770,6 +1806,122 @@ function FirstOpenSection({ config }: { config?: HomeConfig }) {
   );
 }
 
+function HandoffChecklistSection({ config }: { config?: HomeConfig }) {
+  const projectHref = config?.is_authenticated
+    ? appPath("projects")
+    : appPath("auth/sign-up");
+  const projectLabel = config?.is_authenticated
+    ? "Open projects"
+    : "Start a project";
+
+  return (
+    <section
+      aria-label="CoCalc.ai review handoff checklist"
+      style={{
+        background: `linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 52%, ${PUBLIC_COLORS.warningTint} 100%)`,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `34px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Row align="middle" gutter={[32, 24]}>
+        <Col lg={8} xs={24}>
+          <Flex vertical gap={16}>
+            <div>
+              <Eyebrow>Before the next handoff</Eyebrow>
+              <Title level={2} style={{ margin: "8px 0 10px" }}>
+                Make the project easy for the next person or Codex turn to read.
+              </Title>
+              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+                A good project handoff keeps source material, runtime evidence,
+                agent work, and recovery points close enough to inspect
+                together.
+              </Paragraph>
+            </div>
+            <Flex gap={12} wrap>
+              <Button
+                href={projectHref}
+                icon={<DecorativeButtonIcon name="project-outlined" />}
+                type="primary"
+              >
+                {projectLabel}
+              </Button>
+              <Button
+                href={appPath("features/ai")}
+                icon={<DecorativeButtonIcon name="robot" />}
+              >
+                See AI workflows
+              </Button>
+            </Flex>
+          </Flex>
+        </Col>
+        <Col lg={16} xs={24}>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+            }}
+          >
+            {HANDOFF_CHECKLIST_ITEMS.map((item) => (
+              <a
+                href={appPath(item.href)}
+                key={item.title}
+                style={{
+                  alignItems: "start",
+                  background: alpha(PUBLIC_COLORS.surface, 0.9),
+                  border: `1px solid ${alpha(item.accent, 0.24)}`,
+                  borderRadius: PANEL_RADIUS,
+                  boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "44px minmax(0, 1fr) 18px",
+                  minHeight: 154,
+                  padding: 16,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(item.accent, 0.1),
+                    border: `1px solid ${alpha(item.accent, 0.26)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    fontSize: 21,
+                    height: 44,
+                    justifyContent: "center",
+                    width: 44,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text strong style={{ display: "block" }}>
+                    {item.title}
+                  </Text>
+                  <Text type="secondary">{item.body}</Text>
+                </span>
+                <Icon
+                  name="arrow-right"
+                  style={{
+                    color: item.accent,
+                    fontSize: 16,
+                    marginTop: 3,
+                  }}
+                />
+              </a>
+            ))}
+          </div>
+        </Col>
+      </Row>
+    </section>
+  );
+}
+
 function ProjectStateMapSection() {
   return (
     <section
@@ -3040,6 +3192,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <Hero config={config} />
       <HeroHandoffStrip config={config} />
       <FirstOpenSection config={config} />
+      <HandoffChecklistSection config={config} />
       <ProofStripSection />
       <ProjectStateMapSection />
       <QuickStartSection />

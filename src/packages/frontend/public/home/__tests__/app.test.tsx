@@ -274,6 +274,44 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Create course projects/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
+    const handoffChecklist = screen.getByRole("region", {
+      name: "CoCalc.ai review handoff checklist",
+    });
+    expect(
+      within(handoffChecklist).getByRole("heading", {
+        name: "Make the project easy for the next person or Codex turn to read.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(handoffChecklist)
+        .getByRole("link", { name: "Start a project" })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(handoffChecklist)
+        .getByRole("link", { name: "See AI workflows" })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(handoffChecklist)
+        .getByRole("link", { name: /Source material/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(handoffChecklist)
+        .getByRole("link", { name: /Runtime evidence/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(handoffChecklist)
+        .getByRole("link", { name: /Agent trail/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(handoffChecklist)
+        .getByRole("link", { name: /Recovery point/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     const workspaceBreadth = screen.getByRole("region", {
       name: "CoCalc.ai workspace breadth",
     });
@@ -683,6 +721,15 @@ describe("PublicHomeApp", () => {
       within(
         screen.getByRole("region", {
           name: "CoCalc.ai starter project recipes",
+        }),
+      )
+        .getByRole("link", { name: "Open projects" })
+        .getAttribute("href"),
+    ).toBe("/projects");
+    expect(
+      within(
+        screen.getByRole("region", {
+          name: "CoCalc.ai review handoff checklist",
         }),
       )
         .getByRole("link", { name: "Open projects" })
