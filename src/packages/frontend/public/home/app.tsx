@@ -228,6 +228,37 @@ const WORKSPACE_PREVIEW_RECORD = [
   icon: IconName;
   label: string;
 }[];
+const WORKSPACE_PREVIEW_FLOW = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Notebooks, code, data, and notes enter the project.",
+    icon: "files",
+    label: "Capture",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Shells and notebooks work against the same files.",
+    icon: "terminal",
+    label: "Run",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Codex can use the project record when helping.",
+    icon: "robot",
+    label: "Ask",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Output, snapshots, and TimeTravel keep review nearby.",
+    icon: "history",
+    label: "Review",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_PREVIEW_STATUS = [
   {
     accent: COLORS.RUN,
@@ -718,6 +749,102 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
               </Flex>
             ))}
           </Flex>
+        </div>
+      </div>
+      <div
+        aria-label="CoCalc.ai project work sequence"
+        role="group"
+        style={{
+          background: alpha(PUBLIC_COLORS.surface, 0.1),
+          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 14,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+            Project work sequence
+          </Text>
+          <Text
+            style={{
+              color: alpha(PUBLIC_COLORS.surface, 0.68),
+              fontSize: 12,
+            }}
+          >
+            Files to review
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 138px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {WORKSPACE_PREVIEW_FLOW.map((item, index) => (
+            <div
+              key={item.label}
+              style={{
+                alignItems: "start",
+                background: alpha(PUBLIC_COLORS.brandDark, 0.24),
+                border: `1px solid ${alpha(item.accent, 0.36)}`,
+                borderRadius: PANEL_RADIUS,
+                color: PUBLIC_COLORS.surface,
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns: "30px minmax(0, 1fr)",
+                minHeight: 112,
+                padding: 10,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: `${item.accent}1f`,
+                  border: `1px solid ${item.accent}42`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  flexDirection: "column",
+                  fontSize: 14,
+                  gap: 2,
+                  height: 48,
+                  justifyContent: "center",
+                  width: 30,
+                }}
+              >
+                <Icon name={item.icon} />
+                <Text
+                  strong
+                  style={{
+                    color: "inherit",
+                    fontSize: 10,
+                    lineHeight: 1,
+                  }}
+                >
+                  {index + 1}
+                </Text>
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ color: "inherit", display: "block" }}>
+                  {item.label}
+                </Text>
+                <Text
+                  style={{
+                    color: alpha(PUBLIC_COLORS.surface, 0.68),
+                    display: "block",
+                    marginTop: 5,
+                  }}
+                >
+                  {item.detail}
+                </Text>
+              </span>
+            </div>
+          ))}
         </div>
       </div>
       <div

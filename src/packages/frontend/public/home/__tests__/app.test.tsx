@@ -216,6 +216,37 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectPreview).getByText("Shared project state"),
     ).not.toBeNull();
+    const projectSequence = within(projectPreview).getByRole("group", {
+      name: "CoCalc.ai project work sequence",
+    });
+    expect(
+      within(projectSequence).getByText("Project work sequence"),
+    ).not.toBeNull();
+    expect(within(projectSequence).getByText("Files to review")).not.toBeNull();
+    expect(within(projectSequence).getByText("Capture")).not.toBeNull();
+    expect(within(projectSequence).getByText("Run")).not.toBeNull();
+    expect(within(projectSequence).getByText("Ask")).not.toBeNull();
+    expect(within(projectSequence).getByText("Review")).not.toBeNull();
+    expect(
+      within(projectSequence).getByText(
+        "Notebooks, code, data, and notes enter the project.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(projectSequence).getByText(
+        "Shells and notebooks work against the same files.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(projectSequence).getByText(
+        "Codex can use the project record when helping.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(projectSequence).getByText(
+        "Output, snapshots, and TimeTravel keep review nearby.",
+      ),
+    ).not.toBeNull();
     const contextCarriedForward = within(projectPreview).getByRole("group", {
       name: "CoCalc.ai context carried forward",
     });
