@@ -317,6 +317,30 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Runtime boundary/i })
         .getAttribute("href"),
     ).toBe("/products");
+    const routeHandoff = within(firstStepRoutes).getByRole("group", {
+      name: "CoCalc.ai route handoff summary",
+    });
+    expect(within(routeHandoff).getByText("Route handoff")).not.toBeNull();
+    expect(
+      within(routeHandoff).getByText(
+        /Carry the artifact, runtime boundary, and account context/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      within(routeHandoff)
+        .getByRole("link", { name: /Artifact inventory/i })
+        .getAttribute("href"),
+    ).toBe("/features");
+    expect(
+      within(routeHandoff)
+        .getByRole("link", { name: /Runtime boundary/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(routeHandoff)
+        .getByRole("link", { name: /Account context/i })
+        .getAttribute("href"),
+    ).toBe("/support");
     const workflowPathRoutes = screen.getByRole("region", {
       name: "CoCalc.ai workflow path routing",
     });

@@ -177,6 +177,39 @@ const FIRST_STEP_CHECKPOINTS = [
   path: string;
   title: string;
 }[];
+const ROUTE_HANDOFF_ITEMS = [
+  {
+    accent: PUBLIC_COLORS.brand,
+    body: "Name the notebook, terminal trace, source change, course material, or document that starts the work.",
+    href: "features",
+    icon: "files",
+    route: "Workflow pages",
+    title: "Artifact inventory",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Keep hosted, local, and customer-operated choices on the product detail pages.",
+    href: "products",
+    icon: "servers",
+    route: "Product pages",
+    title: "Runtime boundary",
+  },
+  {
+    accent: PUBLIC_COLORS.success,
+    body: "Use the support path when the next question depends on rollout, accounts, or purchase context.",
+    href: "support",
+    icon: "question-circle",
+    route: "Support pages",
+    title: "Account context",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  route: string;
+  title: string;
+}[];
 const STARTING_SIGNAL_LINKS = [
   {
     accent: COLORS.RUN,
@@ -1628,6 +1661,106 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
                   justifySelf: "end",
                 }}
               />
+            </a>
+          ))}
+        </div>
+      </div>
+      <div
+        aria-label="CoCalc.ai route handoff summary"
+        role="group"
+        style={{
+          background: PUBLIC_COLORS.surface,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          boxShadow: `0 12px 28px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+          display: "grid",
+          gap: 14,
+          gridTemplateColumns:
+            "minmax(min(100%, 260px), 0.85fr) minmax(min(100%, 420px), 1.15fr)",
+          marginTop: 16,
+          padding: 14,
+        }}
+      >
+        <Flex align="start" gap={12}>
+          <span
+            aria-hidden="true"
+            style={{
+              alignItems: "center",
+              background: PUBLIC_COLORS.surfaceMuted,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              color: PUBLIC_COLORS.brand,
+              display: "flex",
+              flex: "0 0 38px",
+              fontSize: 18,
+              height: 38,
+              justifyContent: "center",
+              width: 38,
+            }}
+          >
+            <Icon name="share-square" />
+          </span>
+          <span>
+            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+              Route handoff
+            </Text>
+            <Paragraph style={{ margin: "4px 0 0" }}>
+              Carry the artifact, runtime boundary, and account context into the
+              next page instead of making the homepage answer every detail.
+            </Paragraph>
+          </span>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+          }}
+        >
+          {ROUTE_HANDOFF_ITEMS.map((item) => (
+            <a
+              href={appPath(item.href)}
+              key={item.title}
+              style={{
+                alignItems: "start",
+                background: alpha(item.accent, 0.06),
+                border: `1px solid ${alpha(item.accent, 0.22)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 9,
+                gridTemplateColumns: "32px minmax(0, 1fr)",
+                minHeight: 124,
+                padding: 12,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${alpha(item.accent, 0.24)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  height: 32,
+                  justifyContent: "center",
+                  width: 32,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ display: "block" }}>
+                  {item.title}
+                </Text>
+                <Text style={{ color: item.accent }}>{item.route}</Text>
+              </span>
+              <Text type="secondary" style={{ gridColumn: "1 / 3" }}>
+                {item.body}
+              </Text>
             </a>
           ))}
         </div>
