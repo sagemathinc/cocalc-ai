@@ -385,15 +385,24 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Technical courses/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
-    expect(screen.getByText("Runtime path chooser")).not.toBeNull();
+    expect(screen.getByText("Operating path chooser")).not.toBeNull();
+    expect(screen.getByText("Choose who runs the workspace")).not.toBeNull();
+    expect(screen.getAllByText("Operator").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Best fit").length).toBeGreaterThan(0);
+    expect(screen.getByText("Run by CoCalc")).not.toBeNull();
+    expect(screen.getByText("Run by you")).not.toBeNull();
+    expect(screen.getByText("Run by your team")).not.toBeNull();
+    expect(screen.getByText("Run with CoCalc")).not.toBeNull();
     expect(
       screen.getByText("Managed accounts, hosted projects, and team access"),
     ).not.toBeNull();
     expect(
       screen.getByText(
-        "Enterprise private deployment planning with customer-operated infrastructure boundaries",
+        "Private cloud planning with customer-operated infrastructure boundaries",
       ),
     ).not.toBeNull();
+    expect(screen.getByText("Start hosted")).not.toBeNull();
+    expect(screen.getByText("Review Launchpad")).not.toBeNull();
     expect(
       screen.getByText("Site licensing wraps the path you choose."),
     ).not.toBeNull();
@@ -401,7 +410,7 @@ describe("PublicHomeApp", () => {
     expect(screen.getByText("Local runtime for one user.")).not.toBeNull();
     expect(
       screen
-        .getByRole("link", { name: /CoCalc Launchpad Customer/i })
+        .getByRole("link", { name: /CoCalc Launchpad/i })
         .getAttribute("href"),
     ).toBe("/products/cocalc-launchpad");
     expect(screen.getByRole("link", { name: "All news" })).not.toBeNull();

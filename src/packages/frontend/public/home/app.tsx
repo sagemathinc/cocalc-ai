@@ -1133,36 +1133,46 @@ function ProductOptionsSection() {
       bestFor: "Managed accounts, hosted projects, and team access",
       href: appPath(""),
       icon: "cloud",
-      operator: "CoCalc",
+      nextStep: "Start hosted",
+      operator: "Run by CoCalc",
+      route: "Hosted service",
       title: "CoCalc.ai",
     },
     {
-      bestFor: "One person running the workspace model on their own machine",
+      bestFor: "One person running CoCalc on their own Linux or Mac machine",
       href: appPath("products/cocalc-plus"),
       icon: "laptop",
-      operator: "Individual",
+      nextStep: "Install locally",
+      operator: "Run by you",
+      route: "Local runtime",
       title: "CoCalc Plus",
     },
     {
-      bestFor: "A private deployment with lightweight customer operations",
+      bestFor: "A lightweight private deployment with customer control",
       href: appPath("products/cocalc-launchpad"),
       icon: "servers",
-      operator: "Customer",
+      nextStep: "Review Launchpad",
+      operator: "Run by your team",
+      route: "Private deployment",
       title: "CoCalc Launchpad",
     },
     {
       bestFor:
-        "Enterprise private deployment planning with customer-operated infrastructure boundaries",
+        "Private cloud planning with customer-operated infrastructure boundaries",
       href: appPath("products/cocalc-rocket"),
       icon: "rocket",
-      operator: "Customer cloud",
+      nextStep: "Plan Rocket",
+      operator: "Run with CoCalc",
+      route: "Private cloud",
       title: "CoCalc Rocket",
     },
   ] satisfies {
     bestFor: string;
     href: string;
     icon: IconName;
+    nextStep: string;
     operator: string;
+    route: string;
     title: string;
   }[];
   return (
@@ -1209,9 +1219,9 @@ function ProductOptionsSection() {
             <Flex vertical gap={18}>
               <Flex align="center" justify="space-between" wrap gap={12}>
                 <Text strong style={{ color: PUBLIC_COLORS.brand }}>
-                  Runtime path chooser
+                  Operating path chooser
                 </Text>
-                <Text type="secondary">Choose by operator and scope</Text>
+                <Text type="secondary">Choose who runs the workspace</Text>
               </Flex>
               <div
                 style={{
@@ -1224,7 +1234,6 @@ function ProductOptionsSection() {
                     href={option.href}
                     key={option.title}
                     style={{
-                      alignItems: "center",
                       background: PUBLIC_COLORS.surface,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
                       borderRadius: PANEL_RADIUS,
@@ -1265,11 +1274,56 @@ function ProductOptionsSection() {
                       <Text strong style={{ display: "block" }}>
                         {option.title}
                       </Text>
-                      <Text type="secondary">{option.operator}</Text>
+                      <Text type="secondary">{option.route}</Text>
                     </span>
-                    <Text style={{ gridColumn: "2 / 4", gridRow: 2 }}>
-                      {option.bestFor}
-                    </Text>
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 8,
+                        gridColumn: "2 / 4",
+                        gridRow: 2,
+                      }}
+                    >
+                      <div>
+                        <Text
+                          strong
+                          style={{
+                            color: PUBLIC_COLORS.brand,
+                            display: "block",
+                            fontSize: 12,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          Operator
+                        </Text>
+                        <Text>{option.operator}</Text>
+                      </div>
+                      <div>
+                        <Text
+                          strong
+                          style={{
+                            color: PUBLIC_COLORS.brand,
+                            display: "block",
+                            fontSize: 12,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          Best fit
+                        </Text>
+                        <Text>{option.bestFor}</Text>
+                      </div>
+                      <Text
+                        strong
+                        style={{
+                          color:
+                            index === 2
+                              ? PUBLIC_COLORS.warning
+                              : PUBLIC_COLORS.brand,
+                        }}
+                      >
+                        {option.nextStep}
+                      </Text>
+                    </div>
                     <Icon
                       name="arrow-right"
                       style={{
