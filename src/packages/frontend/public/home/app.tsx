@@ -197,30 +197,34 @@ const WORKSPACE_PREVIEW_ACTIVITY = [
   icon: IconName;
   label: string;
 }[];
-const WORKSPACE_PREVIEW_RECORD = [
+const WORKSPACE_PREVIEW_CONTINUITY = [
   {
     accent: COLORS.BLUE_D,
-    detail: "Files, notebooks, data, and prompts stay in the same workspace.",
+    detail:
+      "Files, notebooks, data, prompts, and notes stay in one inspectable project.",
     icon: "files",
-    label: "Inputs",
+    label: "Project context",
   },
   {
     accent: COLORS.RUN,
-    detail: "Notebook output and terminal sessions remain close to the work.",
+    detail:
+      "Notebook output and terminal sessions remain near the code that produced them.",
     icon: "terminal",
-    label: "Execution",
+    label: "Execution trail",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    detail: "Chat, agent turns, and review notes carry the reasoning forward.",
+    detail:
+      "Chat, Codex turns, and review notes preserve why changes were made.",
     icon: "robot",
-    label: "Decisions",
+    label: "Decision trail",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    detail: "Snapshots and TimeTravel keep earlier states available.",
+    detail:
+      "Snapshots and TimeTravel keep earlier states available when work changes.",
     icon: "history",
-    label: "Recovery",
+    label: "Recovery trail",
   },
 ] satisfies {
   accent: string;
@@ -252,37 +256,6 @@ const WORKSPACE_PREVIEW_FLOW = [
     detail: "Output, snapshots, and TimeTravel keep review nearby.",
     icon: "history",
     label: "Review",
-  },
-] satisfies {
-  accent: string;
-  detail: string;
-  icon: IconName;
-  label: string;
-}[];
-const WORKSPACE_PREVIEW_STATUS = [
-  {
-    accent: COLORS.RUN,
-    detail: "Output and notes remain next to the notebook.",
-    icon: "jupyter",
-    label: "Notebook run",
-  },
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    detail: "Package installs and service output stay with the project.",
-    icon: "terminal",
-    label: "Shell session",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    detail: "Prompt, patch, and review notes stay attached.",
-    icon: "robot",
-    label: "Codex turn",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    detail: "Snapshots and TimeTravel keep earlier states nearby.",
-    icon: "history",
-    label: "Review trail",
   },
 ] satisfies {
   accent: string;
@@ -848,7 +821,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
         </div>
       </div>
       <div
-        aria-label="CoCalc.ai workspace record"
+        aria-label="CoCalc.ai continuity cues"
         role="group"
         style={{
           background: alpha(PUBLIC_COLORS.brandDark, 0.36),
@@ -860,7 +833,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
       >
         <Flex align="baseline" justify="space-between" wrap gap={8}>
           <Text strong style={{ color: PUBLIC_COLORS.surface }}>
-            Workspace record
+            Continuity cues
           </Text>
           <Text
             style={{
@@ -868,136 +841,67 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
               fontSize: 12,
             }}
           >
-            Context stays with the project
+            What carries forward
           </Text>
         </Flex>
         <div
           style={{
             display: "grid",
-            gap: 14,
+            gap: 8,
             gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
+              "repeat(auto-fit, minmax(min(100%, 164px), 1fr))",
             marginTop: 10,
           }}
         >
-          <div>
-            <Text
-              strong
+          {WORKSPACE_PREVIEW_CONTINUITY.map((item) => (
+            <div
+              key={item.label}
               style={{
-                color: alpha(PUBLIC_COLORS.surface, 0.82),
-                display: "block",
-                marginBottom: 8,
+                alignItems: "start",
+                background: alpha(PUBLIC_COLORS.surface, 0.08),
+                border: `1px solid ${alpha(item.accent, 0.32)}`,
+                borderRadius: PANEL_RADIUS,
+                color: PUBLIC_COLORS.surface,
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns: "28px minmax(0, 1fr)",
+                minHeight: 118,
+                padding: 10,
               }}
             >
-              What stays attached
-            </Text>
-            <Flex vertical gap={8}>
-              {WORKSPACE_PREVIEW_RECORD.map((item) => (
-                <div
-                  key={item.label}
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: `${item.accent}1f`,
+                  border: `1px solid ${item.accent}42`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  height: 28,
+                  justifyContent: "center",
+                  marginTop: 1,
+                  width: 28,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ color: "inherit", display: "block" }}>
+                  {item.label}
+                </Text>
+                <Text
                   style={{
-                    alignItems: "start",
-                    borderTop: `1px solid ${alpha(item.accent, 0.28)}`,
-                    color: PUBLIC_COLORS.surface,
-                    display: "grid",
-                    gap: 9,
-                    gridTemplateColumns: "28px minmax(0, 1fr)",
-                    paddingTop: 8,
+                    color: alpha(PUBLIC_COLORS.surface, 0.68),
+                    display: "block",
+                    marginTop: 4,
                   }}
                 >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      alignItems: "center",
-                      background: `${item.accent}1f`,
-                      border: `1px solid ${item.accent}42`,
-                      borderRadius: PANEL_RADIUS,
-                      color: item.accent,
-                      display: "flex",
-                      height: 28,
-                      justifyContent: "center",
-                      marginTop: 1,
-                      width: 28,
-                    }}
-                  >
-                    <Icon name={item.icon} />
-                  </span>
-                  <span style={{ minWidth: 0 }}>
-                    <Text strong style={{ color: "inherit", display: "block" }}>
-                      {item.label}
-                    </Text>
-                    <Text
-                      style={{
-                        color: alpha(PUBLIC_COLORS.surface, 0.68),
-                        display: "block",
-                      }}
-                    >
-                      {item.detail}
-                    </Text>
-                  </span>
-                </div>
-              ))}
-            </Flex>
-          </div>
-          <div>
-            <Text
-              strong
-              style={{
-                color: alpha(PUBLIC_COLORS.surface, 0.82),
-                display: "block",
-                marginBottom: 8,
-              }}
-            >
-              Active work
-            </Text>
-            <Flex vertical gap={8}>
-              {WORKSPACE_PREVIEW_STATUS.map((item) => (
-                <div
-                  key={item.label}
-                  style={{
-                    alignItems: "start",
-                    borderTop: `1px solid ${alpha(item.accent, 0.28)}`,
-                    color: PUBLIC_COLORS.surface,
-                    display: "grid",
-                    gap: 9,
-                    gridTemplateColumns: "28px minmax(0, 1fr)",
-                    paddingTop: 8,
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      alignItems: "center",
-                      background: `${item.accent}1f`,
-                      border: `1px solid ${item.accent}42`,
-                      borderRadius: PANEL_RADIUS,
-                      color: item.accent,
-                      display: "flex",
-                      height: 28,
-                      justifyContent: "center",
-                      marginTop: 1,
-                      width: 28,
-                    }}
-                  >
-                    <Icon name={item.icon} />
-                  </span>
-                  <span style={{ minWidth: 0 }}>
-                    <Text strong style={{ color: "inherit", display: "block" }}>
-                      {item.label}
-                    </Text>
-                    <Text
-                      style={{
-                        color: alpha(PUBLIC_COLORS.surface, 0.68),
-                        display: "block",
-                      }}
-                    >
-                      {item.detail}
-                    </Text>
-                  </span>
-                </div>
-              ))}
-            </Flex>
-          </div>
+                  {item.detail}
+                </Text>
+              </span>
+            </div>
+          ))}
         </div>
       </div>
       <div
