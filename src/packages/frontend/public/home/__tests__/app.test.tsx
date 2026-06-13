@@ -436,6 +436,29 @@ describe("PublicHomeApp", () => {
     expect(
       within(heroSnapshot).getByText("Project context snapshot"),
     ).not.toBeNull();
+    const heroProjectFrame = within(heroSnapshot).getByRole("group", {
+      name: "CoCalc.ai hero project frame",
+    });
+    expect(within(heroProjectFrame).getByText("Project frame")).not.toBeNull();
+    expect(
+      within(heroProjectFrame).getByText("Static workspace preview"),
+    ).not.toBeNull();
+    expect(
+      within(heroProjectFrame).getByText("research-workspace"),
+    ).not.toBeNull();
+    expect(within(heroProjectFrame).getByText("Project state")).not.toBeNull();
+    for (const frameItem of [
+      "Files",
+      "Runtime",
+      "Agent notes",
+      "History",
+      "analysis.ipynb, src/model.py",
+      "run.term, package notes",
+      "prompt, patch, review",
+      "snapshot, TimeTravel",
+    ]) {
+      expect(within(heroProjectFrame).getByText(frameItem)).not.toBeNull();
+    }
     expect(within(heroSnapshot).getByText("Notebook output")).not.toBeNull();
     expect(within(heroSnapshot).getByText("Terminal state")).not.toBeNull();
     expect(within(heroSnapshot).getByText("Codex patch")).not.toBeNull();

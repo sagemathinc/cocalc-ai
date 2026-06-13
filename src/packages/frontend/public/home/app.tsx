@@ -251,6 +251,37 @@ const HERO_CONTEXT_RAIL = [
   icon: IconName;
   label: string;
 }[];
+const HERO_PROJECT_FRAME = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "analysis.ipynb, src/model.py",
+    icon: "files",
+    label: "Files",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "run.term, package notes",
+    icon: "terminal",
+    label: "Runtime",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "prompt, patch, review",
+    icon: "robot",
+    label: "Agent notes",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "snapshot, TimeTravel",
+    icon: "history",
+    label: "History",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_OVERVIEW_SIGNALS = [
   {
     accent: COLORS.BLUE_D,
@@ -1277,6 +1308,127 @@ function HeroWorkspaceSnapshot({ authenticated }: { authenticated: boolean }) {
           Persistent
         </Tag>
       </Flex>
+      <div
+        aria-label="CoCalc.ai hero project frame"
+        role="group"
+        style={{
+          background: alpha(PUBLIC_COLORS.surface, 0.1),
+          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 12,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+            Project frame
+          </Text>
+          <Text
+            style={{
+              color: alpha(PUBLIC_COLORS.surface, 0.68),
+              fontSize: 12,
+            }}
+          >
+            Static workspace preview
+          </Text>
+        </Flex>
+        <div
+          style={{
+            background: alpha(PUBLIC_COLORS.brandDark, 0.35),
+            border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.18)}`,
+            borderRadius: PANEL_RADIUS,
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns: "18px minmax(0, 1fr) auto",
+            marginTop: 10,
+            padding: "9px 10px",
+          }}
+        >
+          <Icon
+            name="project-outlined"
+            style={{ color: PUBLIC_COLORS.accent, marginTop: 2 }}
+          />
+          <Text
+            strong
+            style={{
+              color: PUBLIC_COLORS.surface,
+              overflowWrap: "anywhere",
+            }}
+          >
+            research-workspace
+          </Text>
+          <Tag
+            style={{
+              background: alpha(PUBLIC_COLORS.accent, 0.14),
+              borderColor: alpha(PUBLIC_COLORS.accent, 0.34),
+              color: PUBLIC_COLORS.surface,
+              marginInlineEnd: 0,
+            }}
+          >
+            Project state
+          </Tag>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 132px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {HERO_PROJECT_FRAME.map((item) => (
+            <span
+              key={item.label}
+              style={{
+                alignItems: "start",
+                background: alpha(item.accent, 0.13),
+                border: `1px solid ${alpha(item.accent, 0.32)}`,
+                borderRadius: PANEL_RADIUS,
+                display: "grid",
+                gap: 7,
+                gridTemplateColumns: "24px minmax(0, 1fr)",
+                minHeight: 68,
+                padding: 9,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(PUBLIC_COLORS.surface, 0.1),
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  height: 24,
+                  justifyContent: "center",
+                  marginTop: 1,
+                  width: 24,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{ color: PUBLIC_COLORS.surface, display: "block" }}
+                >
+                  {item.label}
+                </Text>
+                <Text
+                  style={{
+                    color: alpha(PUBLIC_COLORS.surface, 0.66),
+                    display: "block",
+                    fontSize: 12,
+                  }}
+                >
+                  {item.detail}
+                </Text>
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
       <div
         aria-label="CoCalc.ai hero workspace trail"
         role="group"
