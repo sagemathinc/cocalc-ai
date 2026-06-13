@@ -2725,11 +2725,37 @@ function ProductOptionsSection() {
     title: string;
   }[];
   const sharedOperatingContext = [
-    { accent: COLORS.BLUE_D, icon: "project-outlined", label: "Projects" },
-    { accent: PUBLIC_COLORS.success, icon: "files", label: "Files" },
-    { accent: COLORS.AI_ASSISTANT_FONT, icon: "overview", label: "Workflows" },
-    { accent: PUBLIC_COLORS.warning, icon: "history", label: "History" },
-  ] satisfies { accent: string; icon: IconName; label: string }[];
+    {
+      accent: COLORS.BLUE_D,
+      detail: "The project remains the organizing unit.",
+      icon: "project-outlined",
+      label: "Projects",
+    },
+    {
+      accent: PUBLIC_COLORS.success,
+      detail: "Notebooks, source, data, and notes stay in project files.",
+      icon: "files",
+      label: "Files",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      detail:
+        "Notebook, terminal, AI, writing, and teaching surfaces still start from the project.",
+      icon: "overview",
+      label: "Workflows",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      detail: "Snapshots and TimeTravel stay near the work record.",
+      icon: "history",
+      label: "History",
+    },
+  ] satisfies {
+    accent: string;
+    detail: string;
+    icon: IconName;
+    label: string;
+  }[];
   const operatingBoundaryQuestions = [
     {
       accent: COLORS.BLUE_D,
@@ -3101,14 +3127,17 @@ function ProductOptionsSection() {
                   <Text strong style={{ color: PUBLIC_COLORS.brand }}>
                     Same workspace model
                   </Text>
-                  <Text type="secondary">Visible across operating paths.</Text>
+                  <Text type="secondary">
+                    Operating path changes who runs it, not how work is
+                    organized.
+                  </Text>
                 </Flex>
                 <div
                   style={{
                     display: "grid",
                     gap: 8,
                     gridTemplateColumns:
-                      "repeat(auto-fit, minmax(min(100%, 124px), 1fr))",
+                      "repeat(auto-fit, minmax(min(100%, 178px), 1fr))",
                     marginTop: 10,
                   }}
                 >
@@ -3120,17 +3149,44 @@ function ProductOptionsSection() {
                         background: alpha(item.accent, 0.07),
                         border: `1px solid ${alpha(item.accent, 0.22)}`,
                         borderRadius: PANEL_RADIUS,
-                        color: item.accent,
-                        display: "flex",
+                        display: "grid",
                         gap: 8,
-                        minHeight: 42,
-                        padding: "8px 10px",
+                        gridTemplateColumns: "28px minmax(0, 1fr)",
+                        minHeight: 86,
+                        padding: 10,
                       }}
                     >
-                      <Icon name={item.icon} />
-                      <Text strong style={{ color: "inherit" }}>
-                        {item.label}
-                      </Text>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          alignItems: "center",
+                          background: alpha(item.accent, 0.08),
+                          border: `1px solid ${alpha(item.accent, 0.22)}`,
+                          borderRadius: PANEL_RADIUS,
+                          color: item.accent,
+                          display: "flex",
+                          height: 28,
+                          justifyContent: "center",
+                          marginTop: 1,
+                          width: 28,
+                        }}
+                      >
+                        <Icon name={item.icon} />
+                      </span>
+                      <span style={{ minWidth: 0 }}>
+                        <Text
+                          strong
+                          style={{
+                            color: item.accent,
+                            display: "block",
+                            fontSize: 12,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {item.label}
+                        </Text>
+                        <Text type="secondary">{item.detail}</Text>
+                      </span>
                     </span>
                   ))}
                 </div>

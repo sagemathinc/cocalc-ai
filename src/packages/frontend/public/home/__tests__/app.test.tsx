@@ -1155,10 +1155,19 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(sharedOperatingContext).getByText(
-        "Visible across operating paths.",
+        "Operating path changes who runs it, not how work is organized.",
       ),
     ).not.toBeNull();
-    for (const context of ["Projects", "Files", "Workflows", "History"]) {
+    for (const context of [
+      "Projects",
+      "Files",
+      "Workflows",
+      "History",
+      "The project remains the organizing unit.",
+      "Notebooks, source, data, and notes stay in project files.",
+      "Notebook, terminal, AI, writing, and teaching surfaces still start from the project.",
+      "Snapshots and TimeTravel stay near the work record.",
+    ]) {
       expect(within(sharedOperatingContext).getByText(context)).not.toBeNull();
     }
     const deploymentPathCards = within(productOptions).getByRole("group", {
