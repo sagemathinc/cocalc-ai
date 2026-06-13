@@ -189,6 +189,31 @@ const WORKSPACE_PREVIEW_ACTIVITY = [
   icon: IconName;
   label: string;
 }[];
+const WORKSPACE_PREVIEW_TRAIL = [
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Patch against src/model.py",
+    icon: "robot",
+    label: "Codex proposed",
+  },
+  {
+    accent: PUBLIC_COLORS.success,
+    detail: "pytest passed in run.term",
+    icon: "check-circle",
+    label: "Validation",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Snapshot ready before merge",
+    icon: "disk-snapshot",
+    label: "Recovery",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_PREVIEW_TABS = [
   { icon: "files", label: "Files" },
   { icon: "terminal", label: "Terminal" },
@@ -747,6 +772,66 @@ function WorkspacePreview() {
           </span>
         ))}
       </div>
+      <div
+        style={{
+          background: alpha(PUBLIC_COLORS.brandDark, 0.42),
+          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 12,
+          padding: 12,
+        }}
+      >
+        <Flex align="center" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+            Current trail
+          </Text>
+          <Text style={{ color: alpha(PUBLIC_COLORS.surface, 0.68) }}>
+            Prompt to reviewed state
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {WORKSPACE_PREVIEW_TRAIL.map((item) => (
+            <Flex align="start" gap={8} key={item.label}>
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(item.accent, 0.18),
+                  border: `1px solid ${alpha(item.accent, 0.34)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  flex: "0 0 28px",
+                  height: 28,
+                  justifyContent: "center",
+                  marginTop: 1,
+                  width: 28,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{ color: PUBLIC_COLORS.surface, display: "block" }}
+                >
+                  {item.label}
+                </Text>
+                <Text style={{ color: alpha(PUBLIC_COLORS.surface, 0.72) }}>
+                  {item.detail}
+                </Text>
+              </span>
+            </Flex>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -925,7 +1010,46 @@ function Hero({ config }: { config?: HomeConfig }) {
   );
 }
 
-function HeroHandoffStrip() {
+function HeroHandoffStrip({ config }: { config?: HomeConfig }) {
+  const authenticated = !!config?.is_authenticated;
+  const entryPoints = [
+    {
+      accent: PUBLIC_COLORS.brand,
+      action: authenticated ? "Open hosted projects" : "Start hosted project",
+      body: "Managed projects for notebooks, terminals, files, collaborators, and Codex without operating infrastructure.",
+      href: authenticated ? "projects" : "auth/sign-up",
+      icon: "cloud",
+      label: "Hosted",
+      title: "CoCalc.ai",
+    },
+    {
+      accent: COLORS.ANTD_LINK_BLUE_DARK,
+      action: "Review local runtime",
+      body: "A local single-user path when the workspace should run on your own computer.",
+      href: "products/cocalc-plus",
+      icon: "laptop",
+      label: "Local",
+      title: "CoCalc Plus",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      action: "Compare deployment paths",
+      body: "Hosted, local, Launchpad, Rocket, and licensing paths when the operator boundary matters.",
+      href: "products",
+      icon: "servers",
+      label: "Organization",
+      title: "Deployment options",
+    },
+  ] satisfies {
+    accent: string;
+    action: string;
+    body: string;
+    href: string;
+    icon: IconName;
+    label: string;
+    title: string;
+  }[];
+
   return (
     <section
       aria-label="CoCalc.ai project handoff path"
@@ -933,54 +1057,37 @@ function HeroHandoffStrip() {
         background: PUBLIC_COLORS.surface,
         borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
         marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
-        padding: `20px ${PUBLIC_PAGE_GUTTER}`,
+        padding: `22px ${PUBLIC_PAGE_GUTTER}`,
       }}
     >
-      <div
-        style={{
-          alignItems: "center",
-          display: "grid",
-          gap: 18,
-          gridTemplateColumns:
-            "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
-        }}
-      >
-        <div>
-          <Eyebrow>Project handoff path</Eyebrow>
-          <Title level={2} style={{ fontSize: 24, margin: "6px 0 0" }}>
-            Move from context to agent work without leaving the project.
-          </Title>
-        </div>
+      <Flex vertical gap={18}>
         <div
           style={{
+            alignItems: "stretch",
             display: "grid",
-            gap: 10,
+            gap: 12,
             gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+              "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
           }}
         >
-          {HERO_HANDOFF_ITEMS.map((item, index) => (
+          {entryPoints.map((item) => (
             <a
               href={appPath(item.href)}
               key={item.title}
               style={{
                 alignItems: "start",
                 background:
-                  index === 1
+                  item.title === "Deployment options"
                     ? PUBLIC_COLORS.warningTint
                     : PUBLIC_COLORS.surfaceMuted,
-                border: `1px solid ${
-                  index === 1
-                    ? PUBLIC_COLORS.warningBorder
-                    : alpha(item.accent, 0.22)
-                }`,
+                border: `1px solid ${alpha(item.accent, 0.24)}`,
                 borderRadius: PANEL_RADIUS,
                 color: "inherit",
                 display: "grid",
                 gap: 12,
-                gridTemplateColumns: "42px minmax(0, 1fr)",
-                minHeight: 134,
-                padding: 14,
+                gridTemplateColumns: "44px minmax(0, 1fr)",
+                minHeight: 136,
+                padding: 15,
                 textDecoration: "none",
               }}
             >
@@ -988,15 +1095,15 @@ function HeroHandoffStrip() {
                 aria-hidden="true"
                 style={{
                   alignItems: "center",
-                  background: alpha(PUBLIC_COLORS.surface, 0.84),
+                  background: alpha(PUBLIC_COLORS.surface, 0.86),
                   border: `1px solid ${alpha(item.accent, 0.26)}`,
                   borderRadius: PANEL_RADIUS,
                   color: item.accent,
                   display: "flex",
-                  fontSize: 20,
-                  height: 42,
+                  fontSize: 21,
+                  height: 44,
                   justifyContent: "center",
-                  width: 42,
+                  width: 44,
                 }}
               >
                 <Icon name={item.icon} />
@@ -1014,15 +1121,115 @@ function HeroHandoffStrip() {
                 >
                   {item.label}
                 </Text>
-                <Text strong style={{ display: "block", marginTop: 4 }}>
+                <Title level={3} style={{ fontSize: 19, margin: "4px 0 6px" }}>
                   {item.title}
-                </Text>
+                </Title>
                 <Text type="secondary">{item.body}</Text>
+                <Text
+                  strong
+                  style={{
+                    alignItems: "center",
+                    color: item.accent,
+                    display: "inline-flex",
+                    gap: 6,
+                    marginTop: 10,
+                  }}
+                >
+                  {item.action}
+                  <Icon name="arrow-right" />
+                </Text>
               </span>
             </a>
           ))}
         </div>
-      </div>
+        <div
+          style={{
+            alignItems: "center",
+            display: "grid",
+            gap: 18,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+          }}
+        >
+          <div>
+            <Eyebrow>Project handoff path</Eyebrow>
+            <Title level={2} style={{ fontSize: 24, margin: "6px 0 0" }}>
+              Move from context to agent work without leaving the project.
+            </Title>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+            }}
+          >
+            {HERO_HANDOFF_ITEMS.map((item, index) => (
+              <a
+                href={appPath(item.href)}
+                key={item.title}
+                style={{
+                  alignItems: "start",
+                  background:
+                    index === 1
+                      ? PUBLIC_COLORS.warningTint
+                      : PUBLIC_COLORS.surfaceMuted,
+                  border: `1px solid ${
+                    index === 1
+                      ? PUBLIC_COLORS.warningBorder
+                      : alpha(item.accent, 0.22)
+                  }`,
+                  borderRadius: PANEL_RADIUS,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "42px minmax(0, 1fr)",
+                  minHeight: 134,
+                  padding: 14,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(PUBLIC_COLORS.surface, 0.84),
+                    border: `1px solid ${alpha(item.accent, 0.26)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    fontSize: 20,
+                    height: 42,
+                    justifyContent: "center",
+                    width: 42,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text
+                    strong
+                    style={{
+                      color: item.accent,
+                      display: "block",
+                      fontSize: 12,
+                      letterSpacing: 0,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {item.label}
+                  </Text>
+                  <Text strong style={{ display: "block", marginTop: 4 }}>
+                    {item.title}
+                  </Text>
+                  <Text type="secondary">{item.body}</Text>
+                </span>
+              </a>
+            ))}
+          </div>
+        </div>
+      </Flex>
     </section>
   );
 }
@@ -3482,7 +3689,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   return (
     <PublicPage active="home" config={marketingConfig}>
       <Hero config={config} />
-      <HeroHandoffStrip />
+      <HeroHandoffStrip config={config} />
       <ProofStripSection />
       <AgentReadinessSection />
       <QuickStartSection />

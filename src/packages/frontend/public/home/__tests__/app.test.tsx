@@ -63,6 +63,10 @@ describe("PublicHomeApp", () => {
     expect(within(projectPreview).getByText("research-demo")).not.toBeNull();
     expect(within(projectPreview).getByText("Codex thread")).not.toBeNull();
     expect(within(projectPreview).getByText("Live context")).not.toBeNull();
+    expect(within(projectPreview).getByText("Current trail")).not.toBeNull();
+    expect(
+      within(projectPreview).getByText("pytest passed in run.term"),
+    ).not.toBeNull();
     const handoffPath = screen.getByRole("region", {
       name: "CoCalc.ai project handoff path",
     });
@@ -71,6 +75,21 @@ describe("PublicHomeApp", () => {
         name: "Move from context to agent work without leaving the project.",
       }),
     ).not.toBeNull();
+    expect(
+      within(handoffPath)
+        .getByRole("link", { name: /Start hosted project/i })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(handoffPath)
+        .getByRole("link", { name: /Review local runtime/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(handoffPath)
+        .getByRole("link", { name: /Compare deployment paths/i })
+        .getAttribute("href"),
+    ).toBe("/products");
     expect(
       within(handoffPath)
         .getByRole("link", { name: /Gather the work/i })
@@ -493,6 +512,15 @@ describe("PublicHomeApp", () => {
         }),
       )
         .getByRole("link", { name: "Open projects" })
+        .getAttribute("href"),
+    ).toBe("/projects");
+    expect(
+      within(
+        screen.getByRole("region", {
+          name: "CoCalc.ai project handoff path",
+        }),
+      )
+        .getByRole("link", { name: /Open hosted projects/i })
         .getAttribute("href"),
     ).toBe("/projects");
     expect(
