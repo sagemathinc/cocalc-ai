@@ -1,6 +1,7 @@
 import { COLORS } from "@cocalc/util/theme";
 import {
   getFocusMessageButtonStyle,
+  safeRenderSyncdbGetOne,
   SELECTABLE_MARKDOWN_STYLE,
 } from "../message";
 import {
@@ -99,5 +100,29 @@ describe("message action layout", () => {
     expect(SELECTABLE_MARKDOWN_STYLE["--cocalc-slate-link"]).toBe(
       COLORS.ANTD_LINK_BLUE,
     );
+  });
+
+  it("does not read render-time syncdb records before the syncdoc is ready", () => {
+    const syncdb = {
+      get_state: () => "loading",
+      get_one: jest.fn(() => {
+        throw Error("doc must be set");
+      }),
+    };
+
+    expect(safeRenderSyncdbGetOne(syncdb, { event: "draft" })).toBeUndefined();
+    expect(syncdb.get_one).not.toHaveBeenCalled();
+  });
+
+  it("treats render-time syncdb get_one throws as unavailable data", () => {
+    const syncdb = {
+      get_state: () => "ready",
+      get_one: jest.fn(() => {
+        throw Error("doc must be set");
+      }),
+    };
+
+    expect(safeRenderSyncdbGetOne(syncdb, { event: "draft" })).toBeUndefined();
+    expect(syncdb.get_one).toHaveBeenCalledWith({ event: "draft" });
   });
 });

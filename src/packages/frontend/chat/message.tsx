@@ -170,6 +170,21 @@ export function resolveThreadMetadataLookup({
   };
 }
 
+export function safeRenderSyncdbGetOne(
+  syncdb: any,
+  where: Record<string, unknown>,
+): any | undefined {
+  if (syncdb == null || typeof syncdb.get_one !== "function") return undefined;
+  const state =
+    typeof syncdb.get_state === "function" ? syncdb.get_state() : undefined;
+  if (state != null && state !== "ready") return undefined;
+  try {
+    return syncdb.get_one(where);
+  } catch {
+    return undefined;
+  }
+}
+
 export function resolveForkThreadNavigation({
   actions,
   message,
@@ -437,7 +452,7 @@ export default function Message({
     const replyThreadKey =
       `${field<string>(message, "thread_id") ?? ""}`.trim() || `${date}`;
     const replyDate = stableDraftKeyFromThreadKey(replyThreadKey);
-    const draft = actions?.syncdb?.get_one({
+    const draft = safeRenderSyncdbGetOne(actions?.syncdb, {
       event: "draft",
       sender_id: account_id,
       date: replyDate,
@@ -925,13 +940,12 @@ export default function Message({
       field<string>(parentMessage, "acp_state") ??
       ""
     }`;
-    const threadState =
-      messageThreadId && typeof actions.syncdb?.get_one === "function"
-        ? actions.syncdb.get_one({
-            event: "chat-thread-state",
-            thread_id: messageThreadId,
-          })
-        : undefined;
+    const threadState = messageThreadId
+      ? safeRenderSyncdbGetOne(actions.syncdb, {
+          event: "chat-thread-state",
+          thread_id: messageThreadId,
+        })
+      : undefined;
     const terminalThreadErrorActive =
       `${field<string>(threadState, "state") ?? ""}`.trim() === "error" &&
       `${field<string>(threadState, "active_message_id") ?? ""}`.trim() ===
