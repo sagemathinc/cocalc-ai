@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import type { ClaimableMembershipPackage } from "@cocalc/conat/hub/api/purchases";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import api from "@cocalc/frontend/client/api";
 import {
   MembershipTierBenefits,
@@ -21,6 +22,7 @@ import { Icon } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { getClaimableMembershipPackages } from "@cocalc/frontend/purchases/api";
 import { currency } from "@cocalc/util/misc";
+import { membershipTierVisibleForVerifiedInstructorEmail } from "@cocalc/util/membership-tier-domains";
 import { COLORS } from "@cocalc/util/theme";
 import { InstitutePaySection } from "./institute-pay";
 
@@ -32,6 +34,7 @@ interface CourseMembershipTier extends MembershipTierWithPresentation {
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
+  course_allowed_domains?: readonly string[] | null;
   disabled?: boolean;
 }
 
@@ -43,6 +46,11 @@ const DEFAULT_GRACE_DAYS = 14;
 
 export default function StudentPay({ actions, settings, project_id }) {
   const intl = useIntl();
+  const emailAddress = useTypedRedux("account", "email_address");
+  const emailAddressVerified = useTypedRedux(
+    "account",
+    "email_address_verified",
+  );
   const [tiers, setTiers] = useState<CourseMembershipTier[]>([]);
   const [claimablePackages, setClaimablePackages] = useState<
     ClaimableMembershipPackage[]
@@ -75,15 +83,32 @@ export default function StudentPay({ actions, settings, project_id }) {
   }, []);
 
   const courseTiers = useMemo(() => {
+    const currentEmailIsVerified =
+      !!emailAddress && !!(emailAddressVerified as any)?.get?.(emailAddress);
     return tiers
       .filter((tier) => tier.course_store_visible && !tier.disabled)
+      .filter((tier) =>
+        membershipTierVisibleForVerifiedInstructorEmail({
+          emailAddress,
+          emailVerified: currentEmailIsVerified,
+          tier,
+        }),
+      )
       .sort((a, b) => {
         const ap = a.priority ?? 0;
         const bp = b.priority ?? 0;
         if (ap !== bp) return ap - bp;
         return a.id.localeCompare(b.id);
       });
-  }, [tiers]);
+  }, [emailAddress, emailAddressVerified, tiers]);
+  const courseVisibleTierCount = useMemo(
+    () =>
+      tiers.filter((tier) => tier.course_store_visible && !tier.disabled)
+        .length,
+    [tiers],
+  );
+  const hiddenByInstructorDomainCount =
+    courseVisibleTierCount - courseTiers.length;
 
   const selectedTierId = `${settings?.get("required_membership_class") ?? ""}`;
   const selectedTier =
@@ -192,8 +217,16 @@ export default function StudentPay({ actions, settings, project_id }) {
         <Alert
           type="warning"
           showIcon
-          title="No course memberships are configured"
-          description="An admin must mark at least one membership tier as course-visible before courses can use student pay or instructor-paid seats."
+          title={
+            hiddenByInstructorDomainCount > 0
+              ? "No course memberships are available for your verified email domain"
+              : "No course memberships are configured"
+          }
+          description={
+            hiddenByInstructorDomainCount > 0
+              ? "Some course membership tiers are limited to instructors with specific verified email domains. Verify your institutional email address, or ask an admin to update the tier domain allowlist."
+              : "An admin must mark at least one membership tier as course-visible before courses can use student pay or instructor-paid seats."
+          }
         />
       ) : (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
