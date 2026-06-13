@@ -4973,6 +4973,47 @@ function DetailRoutesSection() {
     icon: IconName;
     label: string;
   }[];
+  const checkpoints = [
+    {
+      accent: COLORS.BLUE_D,
+      body: "Use trust when review needs policy references before choosing a path.",
+      href: appPath("policies/trust"),
+      icon: "lock",
+      label: "Policy references",
+      next: "Open trust policy",
+    },
+    {
+      accent: PUBLIC_COLORS.success,
+      body: "Use pricing when hosted accounts or memberships define the next question.",
+      href: appPath("pricing"),
+      icon: "percentage",
+      label: "Hosted account choices",
+      next: "Review hosted pricing",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      body: "Use products when the question is local or customer-operated.",
+      href: appPath("products"),
+      icon: "servers",
+      label: "Operating model",
+      next: "Compare product paths",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      body: "Use support when scope, rollout, or purchasing needs a conversation.",
+      href: appPath("support"),
+      icon: "support",
+      label: "Conversation path",
+      next: "Open support",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    href: string;
+    icon: IconName;
+    label: string;
+    next: string;
+  }[];
 
   return (
     <section
@@ -5050,6 +5091,104 @@ function DetailRoutesSection() {
             </span>
           </a>
         ))}
+      </div>
+      <div
+        aria-label="CoCalc.ai boundary route checkpoints"
+        role="group"
+        style={{
+          background: PUBLIC_COLORS.surface,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 14,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+            Boundary route checkpoints
+          </Text>
+          <Text type="secondary">
+            Move from review question to controlled page.
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 206px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {checkpoints.map((checkpoint) => (
+            <a
+              href={checkpoint.href}
+              key={checkpoint.label}
+              style={{
+                alignItems: "start",
+                background: alpha(checkpoint.accent, 0.05),
+                border: `1px solid ${alpha(checkpoint.accent, 0.22)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 9,
+                gridTemplateColumns: "32px minmax(0, 1fr) 14px",
+                minHeight: 116,
+                padding: 12,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(checkpoint.accent, 0.08),
+                  border: `1px solid ${alpha(checkpoint.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: checkpoint.accent,
+                  display: "flex",
+                  height: 32,
+                  justifyContent: "center",
+                  width: 32,
+                }}
+              >
+                <Icon name={checkpoint.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: checkpoint.accent,
+                    display: "block",
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {checkpoint.label}
+                </Text>
+                <Text type="secondary">{checkpoint.body}</Text>
+                <Text
+                  strong
+                  style={{
+                    color: checkpoint.accent,
+                    display: "block",
+                    marginTop: 4,
+                  }}
+                >
+                  {checkpoint.next}
+                </Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{
+                  alignSelf: "center",
+                  color: checkpoint.accent,
+                  fontSize: 12,
+                }}
+              />
+            </a>
+          ))}
+        </div>
       </div>
     </section>
   );

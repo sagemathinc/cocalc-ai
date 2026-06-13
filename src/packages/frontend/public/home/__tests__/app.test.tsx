@@ -1647,12 +1647,12 @@ describe("PublicHomeApp", () => {
       expect.stringContaining("/support/new?"),
     ]);
     expect(
-      within(detailRoutes)
+      within(boundaryDetailRouteLinks)
         .getByRole("link", { name: /Trust policy/i })
         .getAttribute("href"),
     ).toBe("/policies/trust");
     expect(
-      within(detailRoutes)
+      within(boundaryDetailRouteLinks)
         .getByRole("link", { name: /Hosted pricing/i })
         .getAttribute("href"),
     ).toBe("/pricing");
@@ -1662,29 +1662,87 @@ describe("PublicHomeApp", () => {
       ),
     ).not.toBeNull();
     expect(
-      within(detailRoutes)
+      within(boundaryDetailRouteLinks)
         .getByRole("link", { name: /CoCalc Plus details/i })
         .getAttribute("href"),
     ).toBe("/products/cocalc-plus");
     expect(
-      within(detailRoutes)
+      within(boundaryDetailRouteLinks)
         .getByRole("link", { name: /Deployment comparison/i })
         .getAttribute("href"),
     ).toBe("/products");
     expect(
-      within(detailRoutes)
+      within(boundaryDetailRouteLinks)
         .getByRole("link", { name: /Support/i })
         .getAttribute("href"),
     ).toBe("/support");
-    const hostedTransitionLink = within(detailRoutes).getByRole("link", {
-      name: /Hosted transition questions/i,
-    });
+    const hostedTransitionLink = within(boundaryDetailRouteLinks).getByRole(
+      "link",
+      {
+        name: /Hosted transition questions/i,
+      },
+    );
     expect(hostedTransitionLink.getAttribute("href")).toContain(
       "/support/new?",
     );
     expect(hostedTransitionLink.getAttribute("href")).toContain(
       "subject=Hosted+transition",
     );
+    const boundaryRouteCheckpoints = within(detailRoutes).getByRole("group", {
+      name: "CoCalc.ai boundary route checkpoints",
+    });
+    expectLinkHrefs(boundaryRouteCheckpoints, [
+      "/policies/trust",
+      "/pricing",
+      "/products",
+      "/support",
+    ]);
+    expect(
+      within(boundaryRouteCheckpoints).getByText("Boundary route checkpoints"),
+    ).not.toBeNull();
+    expect(
+      within(boundaryRouteCheckpoints).getByText(
+        "Move from review question to controlled page.",
+      ),
+    ).not.toBeNull();
+    for (const checkpoint of [
+      "Policy references",
+      "Hosted account choices",
+      "Operating model",
+      "Conversation path",
+      "Use trust when review needs policy references before choosing a path.",
+      "Use pricing when hosted accounts or memberships define the next question.",
+      "Use products when the question is local or customer-operated.",
+      "Use support when scope, rollout, or purchasing needs a conversation.",
+      "Open trust policy",
+      "Review hosted pricing",
+      "Compare product paths",
+      "Open support",
+    ]) {
+      expect(
+        within(boundaryRouteCheckpoints).getByText(checkpoint),
+      ).not.toBeNull();
+    }
+    expect(
+      within(boundaryRouteCheckpoints)
+        .getByRole("link", { name: /Policy references/i })
+        .getAttribute("href"),
+    ).toBe("/policies/trust");
+    expect(
+      within(boundaryRouteCheckpoints)
+        .getByRole("link", { name: /Hosted account choices/i })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(
+      within(boundaryRouteCheckpoints)
+        .getByRole("link", { name: /Operating model/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(boundaryRouteCheckpoints)
+        .getByRole("link", { name: /Conversation path/i })
+        .getAttribute("href"),
+    ).toBe("/support");
     expect(
       screen.getByRole("region", { name: "CoCalc.ai final calls to action" }),
     ).not.toBeNull();
