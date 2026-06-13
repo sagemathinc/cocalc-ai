@@ -6,6 +6,8 @@ ROOT_DIR="/"
 CURRENT_DIR="/opt/cocalc/bay/current"
 ENV_DIR="/etc/cocalc"
 SYSTEMD_DIR="/etc/systemd/system"
+SBIN_DIR="/usr/local/sbin"
+SUDOERS_DIR="/etc/sudoers.d"
 OVERLAY_MODE="none"
 DAEMON_RELOAD=0
 
@@ -20,6 +22,8 @@ Options:
   --current-dir <dir>       bundle current dir inside the target rootfs
   --env-dir <dir>           env dir inside the target rootfs
   --systemd-dir <dir>       systemd dir inside the target rootfs
+  --sbin-dir <dir>          root helper dir inside the target rootfs
+  --sudoers-dir <dir>       sudoers dir inside the target rootfs
   --overlay current-cocalc  install the current CoCalc overlay as bay-overlay.env
   --overlay rocket-bundle   install the Rocket bay bundle overlay as bay-overlay.env
   --daemon-reload           run systemctl daemon-reload after install (only when --root=/)
@@ -43,6 +47,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --systemd-dir)
       SYSTEMD_DIR="$2"
+      shift 2
+      ;;
+    --sbin-dir)
+      SBIN_DIR="$2"
+      shift 2
+      ;;
+    --sudoers-dir)
+      SUDOERS_DIR="$2"
       shift 2
       ;;
     --overlay)
@@ -83,11 +95,20 @@ TARGET_CURRENT_DIR="$(prefix_path "$CURRENT_DIR")"
 TARGET_BIN_DIR="${TARGET_CURRENT_DIR}/bin"
 TARGET_ENV_DIR="$(prefix_path "$ENV_DIR")"
 TARGET_SYSTEMD_DIR="$(prefix_path "$SYSTEMD_DIR")"
+TARGET_SBIN_DIR="$(prefix_path "$SBIN_DIR")"
+TARGET_SUDOERS_DIR="$(prefix_path "$SUDOERS_DIR")"
 
-mkdir -p "$TARGET_BIN_DIR" "$TARGET_ENV_DIR" "$TARGET_SYSTEMD_DIR"
+mkdir -p "$TARGET_BIN_DIR" "$TARGET_ENV_DIR" "$TARGET_SYSTEMD_DIR" \
+  "$TARGET_SBIN_DIR" "$TARGET_SUDOERS_DIR"
 
 install -m 0755 "${SCRIPT_DIR}/bin/"* "$TARGET_BIN_DIR/"
 install -m 0644 "${SCRIPT_DIR}/systemd/"* "$TARGET_SYSTEMD_DIR/"
+install -m 0755 "${SCRIPT_DIR}/sbin/"* "$TARGET_SBIN_DIR/"
+install -m 0440 "${SCRIPT_DIR}/sudoers/"* "$TARGET_SUDOERS_DIR/"
+
+if command -v visudo >/dev/null 2>&1; then
+  visudo -cf "${TARGET_SUDOERS_DIR}/cocalc-bay-cloudflared" >/dev/null
+fi
 
 install -m 0644 "${SCRIPT_DIR}/env/bay.env.example" \
   "${TARGET_ENV_DIR}/bay.env.example"
@@ -147,6 +168,8 @@ Installed bay scaffold:
   bin dir:      ${TARGET_BIN_DIR}
   env dir:      ${TARGET_ENV_DIR}
   systemd dir:  ${TARGET_SYSTEMD_DIR}
+  sbin dir:     ${TARGET_SBIN_DIR}
+  sudoers dir:  ${TARGET_SUDOERS_DIR}
   overlay:      ${OVERLAY_MODE}
 
 Next steps:

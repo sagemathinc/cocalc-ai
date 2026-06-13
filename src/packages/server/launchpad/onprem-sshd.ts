@@ -37,6 +37,7 @@ import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 const logger = getLogger("launchpad:local:sshd");
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const CLOUDFLARED_APPLY_LOCK_KEY = "launchpad-cloudflared-apply";
+const SYSTEMD_CLOUDFLARED_CTL = "/usr/local/sbin/cocalc-bay-cloudflared-ctl";
 
 type SshdState = {
   sshdDir: string;
@@ -150,6 +151,39 @@ function cloudflareSelfMode(settings: any): boolean {
 
 function systemdManagedCloudflared(): boolean {
   return isEnabled(process.env.COCALC_BAY_CLOUDFLARED_SYSTEMD);
+}
+
+async function restartSystemdCloudflared(): Promise<{
+  ok: boolean;
+  error?: string;
+}> {
+  if (!(await fileExists(SYSTEMD_CLOUDFLARED_CTL))) {
+    return {
+      ok: false,
+      error: `${SYSTEMD_CLOUDFLARED_CTL} is not installed`,
+    };
+  }
+  try {
+    const { stdout, stderr, exit_code } = await executeCode({
+      command: "sudo",
+      args: ["-n", SYSTEMD_CLOUDFLARED_CTL, "restart"],
+      timeout: 30,
+      err_on_exit: false,
+    });
+    if (exit_code !== 0) {
+      return {
+        ok: false,
+        error:
+          `${stderr ?? ""}`.trim() ||
+          `${stdout ?? ""}`.trim() ||
+          `systemd cloudflared restart failed with exit code ${exit_code}`,
+      };
+    }
+  } catch (err) {
+    return { ok: false, error: `${err}` };
+  }
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  return { ok: true };
 }
 
 async function hasLaunchpadReverseTunnelHosts(): Promise<boolean> {
@@ -1675,6 +1709,8 @@ export async function applyLaunchpadCloudflareTunnelSettings(): Promise<{
     const tunnel = systemdManaged
       ? await prepareCloudflared()
       : await startCloudflared();
+    const systemdRestart =
+      systemdManaged && tunnel ? await restartSystemdCloudflared() : undefined;
     try {
       const publicViewerDns = await ensurePublicViewerDns();
       if (publicViewerDns) {
@@ -1684,16 +1720,29 @@ export async function applyLaunchpadCloudflareTunnelSettings(): Promise<{
       logger.warn("public viewer dns ensure failed", { err: `${err}` });
     }
     const status = await getLaunchpadCloudflaredStatus();
+    const systemdError =
+      systemdRestart?.ok === false ? systemdRestart.error : null;
+    let message: string;
+    if (systemdManaged) {
+      if (!tunnel) {
+        message = status.error ?? "Cloudflare tunnel is not configured.";
+      } else if (systemdRestart?.ok) {
+        message = `Cloudflare tunnel configuration was updated and cocalc-bay-cloudflared.service was restarted${status.hostname ? ` for ${status.hostname}` : ""}.`;
+      } else {
+        message = `Cloudflare tunnel configuration was updated, but cocalc-bay-cloudflared.service could not be restarted automatically: ${systemdError ?? "unknown error"}`;
+      }
+    } else if (status.running) {
+      message = `Cloudflare tunnel is running${status.hostname ? ` at ${status.hostname}` : ""}.`;
+    } else {
+      message = status.error ?? "Cloudflare tunnel is not running.";
+    }
     return {
       ...status,
-      applied: !!tunnel && (systemdManaged || status.running),
-      message: systemdManaged
-        ? tunnel
-          ? "Cloudflare tunnel configuration was updated. Restart cocalc-bay-cloudflared.service to force immediate runtime reload."
-          : (status.error ?? "Cloudflare tunnel is not configured.")
-        : status.running
-          ? `Cloudflare tunnel is running${status.hostname ? ` at ${status.hostname}` : ""}.`
-          : (status.error ?? "Cloudflare tunnel is not running."),
+      error: status.error ?? systemdError,
+      applied:
+        !!tunnel &&
+        (systemdManaged ? systemdRestart?.ok === true : status.running),
+      message,
     };
   });
   if (result != null) {
