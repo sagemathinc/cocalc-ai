@@ -393,6 +393,21 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(within(workspaceArtifacts).getByText(artifact)).not.toBeNull();
     }
+    const workspaceDecisionCues = within(workspaceScope).getByRole("group", {
+      name: "CoCalc.ai workspace decision cues",
+    });
+    for (const cue of [
+      "Material",
+      "Runtime",
+      "Collaboration",
+      "Operating boundary",
+      "Files, notebooks, data, and notes.",
+      "Kernels, terminals, packages, and services.",
+      "People, Codex turns, and review notes.",
+      "Hosted, local, or customer-operated path.",
+    ]) {
+      expect(within(workspaceDecisionCues).getByText(cue)).not.toBeNull();
+    }
     const continuityMap = screen.getByRole("region", {
       name: "CoCalc.ai workspace continuity map",
     });

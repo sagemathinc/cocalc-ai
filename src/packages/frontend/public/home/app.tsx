@@ -244,6 +244,37 @@ const WORKSPACE_SCOPE_ITEMS = [
   icon: IconName;
   label: string;
 }[];
+const WORKSPACE_DECISION_CUES = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Files, notebooks, data, and notes.",
+    icon: "files",
+    label: "Material",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Kernels, terminals, packages, and services.",
+    icon: "terminal",
+    label: "Runtime",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "People, Codex turns, and review notes.",
+    icon: "users",
+    label: "Collaboration",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Hosted, local, or customer-operated path.",
+    icon: "servers",
+    label: "Operating boundary",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -1834,65 +1865,126 @@ function WorkspaceScopeStrip() {
         padding: `18px ${PUBLIC_PAGE_GUTTER}`,
       }}
     >
-      <Flex align="center" gap={18} justify="space-between" wrap>
-        <div style={{ maxWidth: 430 }}>
-          <Eyebrow>Workspace scope</Eyebrow>
-          <Title level={2} style={{ fontSize: 26, margin: "6px 0 6px" }}>
-            The workspace holds the pieces technical work needs.
-          </Title>
-          <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-            Keep the common artifacts visible before choosing a notebook,
-            terminal, agent, collaboration, or deployment path.
-          </Paragraph>
-        </div>
+      <Flex vertical gap={14}>
+        <Flex align="center" gap={18} justify="space-between" wrap>
+          <div style={{ maxWidth: 430 }}>
+            <Eyebrow>Workspace scope</Eyebrow>
+            <Title level={2} style={{ fontSize: 26, margin: "6px 0 6px" }}>
+              The workspace holds the pieces technical work needs.
+            </Title>
+            <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+              Keep the common artifacts visible before choosing a notebook,
+              terminal, agent, collaboration, or deployment path.
+            </Paragraph>
+          </div>
+          <div
+            aria-label="CoCalc.ai workspace artifacts"
+            role="group"
+            style={{
+              display: "grid",
+              flex: "1 1 660px",
+              gap: 8,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
+            }}
+          >
+            {WORKSPACE_SCOPE_ITEMS.map((item) => (
+              <div
+                key={item.label}
+                style={{
+                  alignItems: "start",
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${alpha(item.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  display: "grid",
+                  gap: 9,
+                  gridTemplateColumns: "32px minmax(0, 1fr)",
+                  minHeight: 76,
+                  padding: 10,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(item.accent, 0.08),
+                    border: `1px solid ${alpha(item.accent, 0.22)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    fontSize: 16,
+                    height: 32,
+                    justifyContent: "center",
+                    width: 32,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text strong style={{ display: "block" }}>
+                    {item.label}
+                  </Text>
+                  <Text type="secondary">{item.detail}</Text>
+                </span>
+              </div>
+            ))}
+          </div>
+        </Flex>
         <div
-          aria-label="CoCalc.ai workspace artifacts"
+          aria-label="CoCalc.ai workspace decision cues"
           role="group"
           style={{
             display: "grid",
-            flex: "1 1 660px",
             gap: 8,
             gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
+              "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
           }}
         >
-          {WORKSPACE_SCOPE_ITEMS.map((item) => (
+          {WORKSPACE_DECISION_CUES.map((cue) => (
             <div
-              key={item.label}
+              key={cue.label}
               style={{
                 alignItems: "start",
-                background: PUBLIC_COLORS.surface,
-                border: `1px solid ${alpha(item.accent, 0.22)}`,
+                background: alpha(cue.accent, 0.05),
+                border: `1px solid ${alpha(cue.accent, 0.22)}`,
                 borderRadius: PANEL_RADIUS,
                 display: "grid",
                 gap: 9,
-                gridTemplateColumns: "32px minmax(0, 1fr)",
-                minHeight: 76,
-                padding: 10,
+                gridTemplateColumns: "34px minmax(0, 1fr)",
+                minHeight: 70,
+                padding: 11,
               }}
             >
               <span
                 aria-hidden="true"
                 style={{
                   alignItems: "center",
-                  background: alpha(item.accent, 0.08),
-                  border: `1px solid ${alpha(item.accent, 0.22)}`,
+                  background: alpha(cue.accent, 0.08),
+                  border: `1px solid ${alpha(cue.accent, 0.22)}`,
                   borderRadius: PANEL_RADIUS,
-                  color: item.accent,
+                  color: cue.accent,
                   display: "flex",
                   fontSize: 16,
-                  height: 32,
+                  height: 34,
                   justifyContent: "center",
-                  width: 32,
+                  width: 34,
                 }}
               >
-                <Icon name={item.icon} />
+                <Icon name={cue.icon} />
               </span>
               <span style={{ minWidth: 0 }}>
-                <Text strong style={{ display: "block" }}>
-                  {item.label}
+                <Text
+                  strong
+                  style={{
+                    color: cue.accent,
+                    display: "block",
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {cue.label}
                 </Text>
-                <Text type="secondary">{item.detail}</Text>
+                <Text type="secondary">{cue.detail}</Text>
               </span>
             </div>
           ))}
