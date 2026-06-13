@@ -538,3 +538,4 @@ After that first deploy/status slice works for cocalc.ai and delta, add R2
 credential resolution and Plus SEA publishing. That second slice removes the R2
 environment-variable pain and establishes the shared artifact-store model needed
 for Rocket channels, rollbacks, Star channels, and L2 restore drills.
+

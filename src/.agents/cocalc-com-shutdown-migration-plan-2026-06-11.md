@@ -850,3 +850,4 @@ spending the launch window rebuilding legacy licensing complexity.
 The third most important simplification is CUP. Signed site-license claim tokens
 and rootfs landing pages solve CUP's current flow using general cocalc.ai
 primitives instead of preserving a dangerous anonymous secret-URL system.
+
