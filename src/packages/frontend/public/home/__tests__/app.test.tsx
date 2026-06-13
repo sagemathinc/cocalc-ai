@@ -210,6 +210,35 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectPreview).getByText("Shared project state"),
     ).not.toBeNull();
+    const activeWork = within(projectPreview).getByRole("group", {
+      name: "CoCalc.ai active project work",
+    });
+    expect(within(activeWork).getByText("Active project work")).not.toBeNull();
+    expect(within(activeWork).getByText("Durable context")).not.toBeNull();
+    expect(within(activeWork).getByText("Notebook run")).not.toBeNull();
+    expect(within(activeWork).getByText("Shell session")).not.toBeNull();
+    expect(within(activeWork).getByText("Codex turn")).not.toBeNull();
+    expect(within(activeWork).getByText("Review trail")).not.toBeNull();
+    expect(
+      within(activeWork).getByText(
+        "Output and notes remain next to the notebook.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(activeWork).getByText(
+        "Package installs and service output stay with the project.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(activeWork).getByText(
+        "Prompt, patch, and review notes stay attached.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(activeWork).getByText(
+        "Snapshots and TimeTravel keep earlier states nearby.",
+      ),
+    ).not.toBeNull();
     expect(within(projectPreview).queryByText("Handoff queue")).toBeNull();
     expect(within(projectPreview).queryByText("Project record")).toBeNull();
     expect(
