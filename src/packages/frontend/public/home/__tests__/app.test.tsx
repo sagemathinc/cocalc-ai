@@ -63,6 +63,44 @@ describe("PublicHomeApp", () => {
     expect(within(projectPreview).getByText("research-demo")).not.toBeNull();
     expect(within(projectPreview).getByText("Codex thread")).not.toBeNull();
     expect(within(projectPreview).getByText("Live context")).not.toBeNull();
+    const workspaceBreadth = screen.getByRole("region", {
+      name: "CoCalc.ai workspace breadth",
+    });
+    expect(
+      within(workspaceBreadth).getByRole("heading", {
+        name: "One project context for the work that technical teams pass around.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(workspaceBreadth)
+        .getByRole("link", { name: /Code and scripts/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(workspaceBreadth)
+        .getByRole("link", { name: /Notebooks/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      within(workspaceBreadth)
+        .getByRole("link", { name: /Documents/i })
+        .getAttribute("href"),
+    ).toBe("/features/latex-editor");
+    expect(
+      within(workspaceBreadth)
+        .getByRole("link", { name: /Linux compute/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(workspaceBreadth)
+        .getByRole("link", { name: /AI agents/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(workspaceBreadth)
+        .getByRole("link", { name: /Review history/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     expect(
       screen.getByRole("heading", {
         name: "Start with the work surface you need.",

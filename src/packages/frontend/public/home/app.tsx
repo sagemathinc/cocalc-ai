@@ -71,6 +71,49 @@ const HERO_SIGNALS = [
     title: "Recoverable work",
   },
 ] satisfies { body: string; icon: IconName; title: string }[];
+const WORKSPACE_BREADTH_ITEMS = [
+  {
+    body: "Source files, scripts, and reviews",
+    href: "features/compare",
+    icon: "code-outlined",
+    title: "Code and scripts",
+  },
+  {
+    body: "Computational notebooks with output nearby",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    title: "Notebooks",
+  },
+  {
+    body: "LaTeX, Markdown, whiteboards, and notes",
+    href: "features/latex-editor",
+    icon: "tex",
+    title: "Documents",
+  },
+  {
+    body: "Terminals, files, packages, and services",
+    href: "features/terminal",
+    icon: "terminal",
+    title: "Linux compute",
+  },
+  {
+    body: "Codex threads beside project state",
+    href: "features/ai",
+    icon: "robot",
+    title: "AI agents",
+  },
+  {
+    body: "Collaboration, TimeTravel, and recovery paths",
+    href: "features/compare",
+    icon: "history",
+    title: "Review history",
+  },
+] satisfies {
+  body: string;
+  href: string;
+  icon: IconName;
+  title: string;
+}[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -743,6 +786,88 @@ function Hero({ config }: { config?: HomeConfig }) {
         </div>
         <div style={{ justifySelf: "end", maxWidth: 540, width: "100%" }}>
           <WorkspacePreview />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProofStripSection() {
+  return (
+    <section
+      aria-label="CoCalc.ai workspace breadth"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `18px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <div
+        style={{
+          alignItems: "center",
+          display: "grid",
+          gap: 16,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+        }}
+      >
+        <div>
+          <Eyebrow>Workspace breadth</Eyebrow>
+          <Title level={2} style={{ fontSize: 24, margin: "6px 0 0" }}>
+            One project context for the work that technical teams pass around.
+          </Title>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+          }}
+        >
+          {WORKSPACE_BREADTH_ITEMS.map((item) => (
+            <a
+              href={appPath(item.href)}
+              key={item.title}
+              style={{
+                alignItems: "start",
+                background: PUBLIC_COLORS.surfaceMuted,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "34px minmax(0, 1fr)",
+                minHeight: 88,
+                padding: "11px 12px",
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(PUBLIC_COLORS.surface, 0.82),
+                  border: `1px solid ${alpha(PUBLIC_COLORS.brand, 0.2)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: PUBLIC_COLORS.brand,
+                  display: "flex",
+                  fontSize: 17,
+                  height: 34,
+                  justifyContent: "center",
+                  width: 34,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ display: "block" }}>
+                  {item.title}
+                </Text>
+                <Text type="secondary">{item.body}</Text>
+              </span>
+            </a>
+          ))}
         </div>
       </div>
     </section>
@@ -2912,6 +3037,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   return (
     <PublicPage active="home" config={marketingConfig}>
       <Hero config={config} />
+      <ProofStripSection />
       <QuickStartSection />
       <StarterRecipesSection config={config} />
       <ProjectPackageSection />
