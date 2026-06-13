@@ -6,6 +6,11 @@ import { Alert, Button, Space } from "antd";
 import { useMemo, useState } from "react";
 
 import { Tooltip } from "@cocalc/frontend/components";
+import {
+  AgentSessionError,
+  AgentSessionSelect,
+  usePersistentAgentSessionSelection,
+} from "@cocalc/frontend/frame-editors/ai/agent-session-selector";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 
@@ -55,6 +60,12 @@ export default function AIError({ traceback, input }: Props) {
   const { actions: frameActions, project_id, path } = useFrameContext();
   const [routing, setRouting] = useState(false);
   const [routingError, setRoutingError] = useState("");
+  const agentSessionSelection = usePersistentAgentSessionSelection({
+    project_id,
+    path,
+    cacheContext: "jupyter-ai-error",
+    enabled: frameActions != null,
+  });
 
   const intentPrompt = useMemo(() => {
     return buildNotebookErrorPrompt({ path, traceback, input });
@@ -77,7 +88,9 @@ export default function AIError({ traceback, input }: Props) {
         codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
         openFloating: true,
         waitForAgent: false,
+        agentSession: agentSessionSelection.selectedAgentSession,
       });
+      agentSessionSelection.saveSelectedAgentSession();
       if (!sent) {
         throw new Error("Unable to submit the notebook repair request.");
       }
@@ -90,7 +103,11 @@ export default function AIError({ traceback, input }: Props) {
 
   return (
     <div>
-      <Space wrap size={[8, 8]} style={{ marginBottom: 8 }}>
+      <Space
+        direction="vertical"
+        size={8}
+        style={{ marginBottom: 8, maxWidth: 520, width: "100%" }}
+      >
         <Tooltip title="Opens the workspace agent thread and submits this notebook error to the Agent.">
           <Button
             size="small"
@@ -100,6 +117,11 @@ export default function AIError({ traceback, input }: Props) {
             Fix with Agent
           </Button>
         </Tooltip>
+        <AgentSessionSelect
+          selection={agentSessionSelection}
+          disabled={routing}
+        />
+        <AgentSessionError selection={agentSessionSelection} />
       </Space>
       {routingError ? (
         <Alert
