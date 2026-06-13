@@ -464,6 +464,7 @@ const LANDING_ROUTE_MAP = [
     label: "Project first",
     next: ({ authenticated }: { authenticated: boolean }) =>
       authenticated ? "Open projects" : "Create a workspace",
+    prompt: "I have work to put somewhere",
     title: "Start a workspace",
   },
   {
@@ -473,6 +474,7 @@ const LANDING_ROUTE_MAP = [
     icon: "overview",
     label: "Workflow first",
     next: () => "Explore workflows",
+    prompt: "I need the right work surface",
     title: "Pick a work surface",
   },
   {
@@ -482,6 +484,7 @@ const LANDING_ROUTE_MAP = [
     icon: "servers",
     label: "Operations first",
     next: () => "Choose operating path",
+    prompt: "I need to decide where it runs",
     title: "Decide where CoCalc runs",
   },
 ] satisfies {
@@ -491,6 +494,7 @@ const LANDING_ROUTE_MAP = [
   icon: IconName;
   label: string;
   next: (opts: { authenticated: boolean }) => string;
+  prompt: string;
   title: string;
 }[];
 function alpha(hexColor: string, opacity: number): string {
@@ -1564,8 +1568,9 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
             Route by what you need next.
           </Title>
           <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-            Start with the workspace, a specific technical surface, or the
-            operating path. Each route keeps the project model visible.
+            Choose by the question in front of you: where the work should live,
+            which surface should open it, or who should operate the workspace.
+            Each route keeps the project model visible.
           </Paragraph>
         </div>
         <div
@@ -1625,6 +1630,16 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                   }}
                 >
                   {route.label}
+                </Text>
+                <Text
+                  style={{
+                    color: PUBLIC_COLORS.mutedText,
+                    display: "block",
+                    fontSize: 13,
+                    marginTop: 2,
+                  }}
+                >
+                  {route.prompt}
                 </Text>
                 <Title level={3} style={{ fontSize: 21, margin: "4px 0 6px" }}>
                   {route.title}

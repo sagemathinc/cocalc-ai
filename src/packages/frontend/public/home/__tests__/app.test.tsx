@@ -250,6 +250,11 @@ describe("PublicHomeApp", () => {
         name: "Route by what you need next.",
       }),
     ).not.toBeNull();
+    expect(
+      within(routeMap).getByText(
+        /where the work should live, which surface should open it, or who should operate the workspace/i,
+      ),
+    ).not.toBeNull();
     const primaryLandingRoutes = within(routeMap).getByRole("group", {
       name: "CoCalc.ai primary landing routes",
     });
@@ -279,6 +284,15 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(primaryLandingRoutes).getByText("Choose operating path"),
+    ).not.toBeNull();
+    expect(
+      within(primaryLandingRoutes).getByText("I have work to put somewhere"),
+    ).not.toBeNull();
+    expect(
+      within(primaryLandingRoutes).getByText("I need the right work surface"),
+    ).not.toBeNull();
+    expect(
+      within(primaryLandingRoutes).getByText("I need to decide where it runs"),
     ).not.toBeNull();
     const workspacePreview = screen.getByRole("region", {
       name: "CoCalc.ai workspace preview",
