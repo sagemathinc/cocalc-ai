@@ -339,6 +339,16 @@ function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
+function supportPurchasePath(subject: string, body: string): string {
+  const params = new URLSearchParams({
+    body,
+    subject,
+    title: "Ask Sales",
+    type: "purchase",
+  });
+  return `${appPath("support/new")}?${params.toString()}`;
+}
+
 async function loadNews(): Promise<NewsItem[] | undefined> {
   try {
     const resp = await fetch(joinUrlPath(appBasePath, "api/v2/news/list"));
@@ -731,7 +741,7 @@ function Hero({ config }: { config?: HomeConfig }) {
                     icon={<DecorativeButtonIcon name="project-outlined" />}
                     size="large"
                   >
-                    Compare product paths
+                    Compare deployment options
                   </Button>
                 </>
               )}
@@ -742,6 +752,17 @@ function Hero({ config }: { config?: HomeConfig }) {
                 size="large"
               >
                 Install CoCalc Plus
+              </Button>
+              <Button
+                ghost
+                href={supportPurchasePath(
+                  "Site license",
+                  "I want to discuss a CoCalc site license.",
+                )}
+                icon={<DecorativeButtonIcon name="credit-card" />}
+                size="large"
+              >
+                Discuss site licensing
               </Button>
             </Flex>
             <div
@@ -2325,13 +2346,6 @@ function ProductOptionsSection() {
       title: "CoCalc Plus",
     },
     {
-      bestFor: "A lab, class, GPU box, or small team on one public Ubuntu VM",
-      href: appPath("products/cocalc-star"),
-      icon: "star",
-      operator: "VM owner",
-      title: "CoCalc Star",
-    },
-    {
       bestFor: "A private deployment with lightweight customer operations",
       href: appPath("products/cocalc-launchpad"),
       icon: "servers",
@@ -2363,12 +2377,12 @@ function ProductOptionsSection() {
             </Title>
             <Paragraph style={{ fontSize: 18, margin: 0 }}>
               Choose how much infrastructure you want to operate: hosted, local,
-              public VM, private deployment, or private cloud. The project
-              workspace model stays the same.
+              private deployment, or private cloud. The project workspace model
+              stays the same.
             </Paragraph>
             <Flex gap={12} wrap>
               <Button href={appPath("products")} type="primary">
-                Compare product paths
+                Compare deployment options
               </Button>
               <Button href={appPath("features")}>
                 Explore shared features
@@ -2729,7 +2743,7 @@ function OperationalProofSection() {
     },
     {
       accent: PUBLIC_COLORS.success,
-      body: "Start hosted, local, or on a public VM, then move toward private deployments without changing the project workflow.",
+      body: "Start hosted or local, then move toward private deployment without changing the project workflow.",
       icon: "servers",
       label: "Operate",
       title: "Choose the operating model",
@@ -2890,11 +2904,11 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
       title: "CoCalc Plus",
     },
     {
-      body: "Shared CoCalc on one public VM.",
-      button: "Install CoCalc Star",
-      href: appPath("products/cocalc-star"),
-      icon: "star",
-      title: "CoCalc Star",
+      body: "Hosted, local, or customer-operated private paths.",
+      button: "Compare deployment options",
+      href: appPath("products"),
+      icon: "servers",
+      title: "Deployment options",
     },
   ] satisfies {
     body: string;
@@ -2929,9 +2943,10 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 maxWidth: 760,
               }}
             >
-              Use CoCalc.ai, CoCalc Plus, or CoCalc Star when you want to try or
-              run CoCalc without planning a private deployment. Launchpad,
-              Rocket, and site licensing stay available as needs grow.
+              Use CoCalc.ai or CoCalc Plus when you want the quickest start.
+              Compare deployment options and site licensing when organizational
+              control, procurement, or private operation becomes the next
+              question.
             </Paragraph>
           </Col>
         </Row>
@@ -3001,12 +3016,21 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
         </div>
         <Flex align="center" justify="space-between" wrap gap={14}>
           <Text type="secondary">
-            Need a private deployment or site licensing? Compare product paths
-            or contact us.
+            Need a private deployment or site licensing? Compare operating
+            models or ask sales about organizational rollout.
           </Text>
           <Flex gap={10} wrap>
-            <Button href={appPath("products")}>Compare product paths</Button>
-            <Button href={appPath("support")}>Support</Button>
+            <Button href={appPath("products")}>
+              Compare deployment options
+            </Button>
+            <Button
+              href={supportPurchasePath(
+                "Site license",
+                "I want to discuss a CoCalc site license.",
+              )}
+            >
+              Discuss site licensing
+            </Button>
           </Flex>
         </Flex>
       </Flex>

@@ -195,11 +195,30 @@ describe("PublicHomeApp", () => {
       "/products/cocalc-plus",
       "https://software.cocalc.ai/software/cocalc-plus/index.html",
     ]);
+    const deploymentLinks = screen.getAllByRole("link", {
+      name: "Compare deployment options",
+    });
+    expect(deploymentLinks.length).toBeGreaterThan(0);
     expect(
-      screen
-        .getByRole("link", { name: "Install CoCalc Star" })
-        .getAttribute("href"),
-    ).toBe("/products/cocalc-star");
+      deploymentLinks.every(
+        (link) => link.getAttribute("href") === "/products",
+      ),
+    ).toBe(true);
+    const siteLicenseLinks = screen.getAllByRole("link", {
+      name: "Discuss site licensing",
+    });
+    expect(siteLicenseLinks.length).toBeGreaterThan(0);
+    expect(
+      siteLicenseLinks.every((link) => {
+        const href = link.getAttribute("href");
+        return (
+          href?.startsWith("/support/new?") &&
+          href.includes("subject=Site+license")
+        );
+      }),
+    ).toBe(true);
+    expect(screen.queryByText("CoCalc Star")).toBeNull();
+    expect(screen.queryByText("Install CoCalc Star")).toBeNull();
     expect(
       screen
         .getByRole("link", { name: "Explore shared features" })
