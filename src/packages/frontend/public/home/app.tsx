@@ -2332,7 +2332,8 @@ function AudienceSection() {
 function ProductOptionsSection() {
   const options = [
     {
-      bestFor: "Managed accounts, hosted projects, and fast team starts",
+      bestFor:
+        "Managed accounts, hosted projects, and self-service team starts",
       href: appPath(""),
       icon: "cloud",
       operator: "CoCalc",
@@ -2353,7 +2354,8 @@ function ProductOptionsSection() {
       title: "CoCalc Launchpad",
     },
     {
-      bestFor: "Production private cloud operations and multi-bay deployments",
+      bestFor:
+        "Enterprise private deployment planning with customer-operated infrastructure boundaries",
       href: appPath("products/cocalc-rocket"),
       icon: "rocket",
       operator: "Customer cloud",
@@ -2376,8 +2378,8 @@ function ProductOptionsSection() {
               Pick the path first. The workspace stays familiar.
             </Title>
             <Paragraph style={{ fontSize: 18, margin: 0 }}>
-              Choose how much infrastructure you want to operate: hosted, local,
-              private deployment, or private cloud. The project workspace model
+              Choose the operating model that fits the team: hosted, local, or
+              customer-operated private deployment. The project workspace model
               stays the same.
             </Paragraph>
             <Flex gap={12} wrap>
@@ -2943,10 +2945,10 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 maxWidth: 760,
               }}
             >
-              Use CoCalc.ai or CoCalc Plus when you want the quickest start.
-              Compare deployment options and site licensing when organizational
-              control, procurement, or private operation becomes the next
-              question.
+              Use CoCalc.ai or CoCalc Plus when you want a direct self-service
+              path. Compare deployment options and site licensing when
+              organizational control, procurement, or private operation becomes
+              the next question.
             </Paragraph>
           </Col>
         </Row>

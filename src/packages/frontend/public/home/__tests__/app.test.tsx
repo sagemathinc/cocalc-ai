@@ -334,8 +334,22 @@ describe("PublicHomeApp", () => {
     ).toBe("/features/teaching");
     expect(screen.getByText("Runtime path chooser")).not.toBeNull();
     expect(
+      screen.getByText(
+        "Managed accounts, hosted projects, and self-service team starts",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Enterprise private deployment planning with customer-operated infrastructure boundaries",
+      ),
+    ).not.toBeNull();
+    expect(
       screen.getByText("Site licensing wraps the path you choose."),
     ).not.toBeNull();
+    expect(screen.getByText(/direct self-service path/i)).not.toBeNull();
+    expect(screen.queryByText(/fast team starts/i)).toBeNull();
+    expect(screen.queryByText(/quickest start/i)).toBeNull();
+    expect(screen.queryByText(/multi-bay deployments/i)).toBeNull();
     const proofPoints = screen.getByRole("region", {
       name: "Operational proof points for CoCalc.ai",
     });
