@@ -83,6 +83,26 @@ describe("PublicHomeApp", () => {
         name: "See the work loop inside a project.",
       }),
     ).not.toBeNull();
+    const agentHandoff = screen.getByRole("region", {
+      name: "Human and Codex handoff workflow",
+    });
+    expect(
+      within(agentHandoff).getByRole("heading", {
+        name: "Handoff from human work to agent work.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(agentHandoff)
+        .getByRole("link", { name: "See Codex workflows" })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(agentHandoff)
+        .getByRole("link", { name: "Compare workflow" })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(within(agentHandoff).getByText("Notebook state")).not.toBeNull();
+    expect(within(agentHandoff).getByText("Review notes")).not.toBeNull();
     expect(
       screen.getByRole("heading", {
         name: "From first file to reviewed result.",

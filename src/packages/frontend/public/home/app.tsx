@@ -1127,6 +1127,230 @@ function ProjectLoopSection() {
   );
 }
 
+function AgentHandoffSection() {
+  const handoffSteps = [
+    {
+      accent: PUBLIC_COLORS.brand,
+      body: "Source files, notebooks, terminals, screenshots, chat, and history are already inside the project.",
+      icon: "project-outlined",
+      label: "Shared context",
+      title: "Start from the same workspace",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      body: "Codex works beside the durable project state instead of reconstructing context from copied snippets.",
+      icon: "robot",
+      label: "Agent turn",
+      title: "Ask for a scoped change",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      body: "Review patches, terminal output, screenshots, and TimeTravel history before the result moves forward.",
+      icon: "history",
+      label: "Human review",
+      title: "Keep the decision trail",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    icon: IconName;
+    label: string;
+    title: string;
+  }[];
+  const contextItems = [
+    { icon: "files", label: "Files" },
+    { icon: "terminal", label: "Terminal output" },
+    { icon: "jupyter", label: "Notebook state" },
+    { icon: "layout", label: "Screenshots" },
+    { icon: "comments", label: "Review notes" },
+    { icon: "disk-snapshot", label: "Recovery points" },
+  ] satisfies { icon: IconName; label: string }[];
+
+  return (
+    <section
+      aria-label="Human and Codex handoff workflow"
+      style={{
+        background: `linear-gradient(135deg, ${PUBLIC_COLORS.brandDark} 0%, ${PUBLIC_COLORS.brandActive} 48%, ${PUBLIC_COLORS.brand} 100%)`,
+        borderBottom: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+        borderTop: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+        color: PUBLIC_COLORS.surface,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `38px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Row align="middle" gutter={[30, 26]}>
+        <Col lg={9} xs={24}>
+          <Flex vertical gap={18}>
+            <div>
+              <Text
+                strong
+                style={{
+                  color: PUBLIC_COLORS.accent,
+                  fontSize: 13,
+                  letterSpacing: 0,
+                  textTransform: "uppercase",
+                }}
+              >
+                Human plus agent workflow
+              </Text>
+              <Title
+                level={2}
+                style={{
+                  color: PUBLIC_COLORS.surface,
+                  margin: "8px 0 10px",
+                }}
+              >
+                Handoff from human work to agent work.
+              </Title>
+              <Paragraph
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.86),
+                  fontSize: 18,
+                  margin: 0,
+                }}
+              >
+                CoCalc keeps the prompt, source, execution, review, and recovery
+                trail in one project, so Codex can help without breaking the
+                audit path people need.
+              </Paragraph>
+            </div>
+            <Flex gap={12} wrap>
+              <Button
+                href={appPath("features/ai")}
+                icon={<DecorativeButtonIcon name="robot" />}
+                type="primary"
+              >
+                See Codex workflows
+              </Button>
+              <Button
+                ghost
+                href={appPath("features/compare")}
+                icon={<DecorativeButtonIcon name="overview" />}
+              >
+                Compare workflow
+              </Button>
+            </Flex>
+          </Flex>
+        </Col>
+        <Col lg={15} xs={24}>
+          <div
+            style={{
+              backdropFilter: "blur(12px)",
+              background: alpha(PUBLIC_COLORS.surface, 0.12),
+              border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.28)}`,
+              borderRadius: PANEL_RADIUS,
+              padding: 18,
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+              }}
+            >
+              {handoffSteps.map((step, index) => (
+                <div
+                  key={step.title}
+                  style={{
+                    background: alpha(PUBLIC_COLORS.surface, 0.92),
+                    border: `1px solid ${alpha(step.accent, 0.28)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: PUBLIC_COLORS.heading,
+                    minHeight: 208,
+                    padding: 18,
+                  }}
+                >
+                  <Flex vertical gap={14} style={{ height: "100%" }}>
+                    <Flex align="center" justify="space-between" gap={12}>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          alignItems: "center",
+                          background: alpha(step.accent, 0.1),
+                          border: `1px solid ${alpha(step.accent, 0.26)}`,
+                          borderRadius: PANEL_RADIUS,
+                          color: step.accent,
+                          display: "flex",
+                          flex: "0 0 46px",
+                          fontSize: 22,
+                          height: 46,
+                          justifyContent: "center",
+                          width: 46,
+                        }}
+                      >
+                        <Icon name={step.icon} />
+                      </span>
+                      <Tag
+                        style={{
+                          background: alpha(step.accent, 0.1),
+                          borderColor: alpha(step.accent, 0.26),
+                          color: step.accent,
+                          marginInlineEnd: 0,
+                        }}
+                      >
+                        {step.label}
+                      </Tag>
+                    </Flex>
+                    <div>
+                      <Title
+                        level={3}
+                        style={{ fontSize: 21, margin: "0 0 10px" }}
+                      >
+                        {step.title}
+                      </Title>
+                      <Paragraph style={{ margin: 0 }}>{step.body}</Paragraph>
+                    </div>
+                    {index < handoffSteps.length - 1 ? (
+                      <Icon
+                        name="arrow-right"
+                        style={{
+                          color: step.accent,
+                          marginTop: "auto",
+                          opacity: 0.78,
+                        }}
+                      />
+                    ) : null}
+                  </Flex>
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 160px), 1fr))",
+                marginTop: 12,
+              }}
+            >
+              {contextItems.map((item) => (
+                <span
+                  key={item.label}
+                  style={{
+                    alignItems: "center",
+                    background: alpha(PUBLIC_COLORS.surface, 0.16),
+                    border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.28)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: PUBLIC_COLORS.surface,
+                    display: "inline-flex",
+                    gap: 8,
+                    minHeight: 38,
+                    padding: "7px 10px",
+                  }}
+                >
+                  <Icon name={item.icon} />
+                  <Text style={{ color: "inherit" }}>{item.label}</Text>
+                </span>
+              ))}
+            </div>
+          </div>
+        </Col>
+      </Row>
+    </section>
+  );
+}
+
 function ProjectStorySection() {
   return (
     <section>
@@ -2373,6 +2597,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <ProjectPackageSection />
       <OperatingModelSection />
       <ProjectLoopSection />
+      <AgentHandoffSection />
       <ProjectStorySection />
       <ProjectFlowSection />
       <WorkflowsSection />
