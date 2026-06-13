@@ -78,6 +78,7 @@ import {
   set_local_storage,
 } from "@cocalc/frontend/misc";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
+import { User } from "@cocalc/frontend/users/user";
 import {
   AGENT_PANEL_INLINE_CHAT_INSTANCE_KEY as AGENTS_INLINE_CHAT_INSTANCE_KEY,
   AGENT_PANEL_PIN_CHAT_INSTANCE_KEY as AGENTS_PIN_CHAT_INSTANCE_KEY,
@@ -136,12 +137,6 @@ const AGENT_SESSION_WATCH_TIMEOUT_MS = 15000;
 const AGENTS_MODEL_MIN_PANEL_WIDTH_PX = 360;
 const AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX = "agents-panel-workspace-only";
 const NEW_AGENT_BASENAME = "agent";
-
-function shortAccountId(accountId?: string): string {
-  if (!accountId) return "unknown";
-  if (accountId.length <= 12) return accountId;
-  return `${accountId.slice(0, 8)}...`;
-}
 
 function ellipsize(value: string, max = 72): string {
   if (!value) return "";
@@ -283,7 +278,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     () => new Set(),
   );
   const [loading, setLoading] = useState(true);
-  const [scope, setScope] = useState<"mine" | "all">("mine");
+  const [scope, setScope] = useState<"mine" | "others">("mine");
   const [showArchived, setShowArchived] = useState(false);
   const [showAutomations, setShowAutomations] = useState(
     () => layout !== "flyout",
@@ -525,14 +520,16 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   const scopedSessions = useMemo(() => {
     let filtered = sessionsWithExistingChat;
-    if (
-      scope === "mine" &&
-      typeof account_id === "string" &&
-      account_id.trim()
-    ) {
-      filtered = filtered.filter(
-        (session) => session.account_id === account_id,
-      );
+    const currentAccountId =
+      typeof account_id === "string" ? account_id.trim() : "";
+    if (scope === "mine") {
+      filtered = currentAccountId
+        ? filtered.filter((session) => session.account_id === currentAccountId)
+        : [];
+    } else if (scope === "others") {
+      filtered = currentAccountId
+        ? filtered.filter((session) => session.account_id !== currentAccountId)
+        : [];
     }
     if (workspaceOnly && workspaces.current) {
       const workspaceId = workspaces.current.workspace_id;
@@ -989,18 +986,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     }
   }
 
-  function recordMetaLine(record: AgentSessionRecord): string {
+  function recordMetaParts(record: AgentSessionRecord): string[] {
     const parts: string[] = [];
-    if (scope === "all") {
-      parts.push(shortAccountId(record.account_id));
-    }
     if (showModelInMeta && record.model) {
       parts.push(ellipsize(record.model, isFlyout ? 30 : 44));
     }
     if (record.thread_pin) {
       parts.push("pinned");
     }
-    return parts.join(" · ");
+    return parts;
   }
 
   function renderSessionMenu(record: AgentSessionRecord): React.JSX.Element {
@@ -1420,7 +1414,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const accentColor = record.thread_accent_color?.trim() || undefined;
     const themeLineColor = color ?? accentColor;
     const title = normalizedTitle(record);
-    const metaLine = recordMetaLine(record);
+    const metaParts = recordMetaParts(record);
+    const showOwner = scope === "others" && !!record.account_id;
+    const hasMeta = showOwner || metaParts.length > 0;
     const updatedAt = record.updated_at ?? record.created_at;
     const showCornerImage = Boolean(image);
     const statusTag = (
@@ -1518,7 +1514,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 </Typography.Text>
                 {statusTag}
               </div>
-              {metaLine ? (
+              {hasMeta ? (
                 <div
                   style={{
                     display: "flex",
@@ -1528,18 +1524,44 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                     marginTop: 2,
                   }}
                 >
-                  <Typography.Text
-                    type="secondary"
+                  <div
                     style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
                       minWidth: 0,
                       flex: 1,
                       whiteSpace: "nowrap",
                       overflow: "hidden",
-                      textOverflow: "ellipsis",
                     }}
                   >
-                    {metaLine}
-                  </Typography.Text>
+                    {showOwner ? (
+                      <Typography.Text
+                        type="secondary"
+                        style={{ flexShrink: 0 }}
+                      >
+                        <User
+                          account_id={record.account_id}
+                          trunc={isFlyout ? 18 : 24}
+                          show_avatar
+                          avatarSize={16}
+                          style={{ maxWidth: isFlyout ? 150 : 220 }}
+                        />
+                      </Typography.Text>
+                    ) : null}
+                    {metaParts.length > 0 ? (
+                      <Typography.Text
+                        type="secondary"
+                        style={{
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {metaParts.join(" · ")}
+                      </Typography.Text>
+                    ) : null}
+                  </div>
                   {updatedAt ? (
                     <span
                       style={{
@@ -2095,10 +2117,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             </Button>
             <Button
               size="small"
-              type={scope === "all" ? "primary" : "default"}
-              onClick={() => setScope("all")}
+              type={scope === "others" ? "primary" : "default"}
+              onClick={() => setScope("others")}
             >
-              All Users
+              Other Users
             </Button>
             <Button
               size="small"
