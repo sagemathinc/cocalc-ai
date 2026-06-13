@@ -605,39 +605,6 @@ const LANDING_WORKSPACE_LOOP = [
   label: string;
   title: string;
 }[];
-const LANDING_NEXT_ROUTE_NOTES = [
-  {
-    accent: COLORS.BLUE_D,
-    body: "Open or create the project first, then choose the notebook, terminal, or agent surface from there.",
-    carry: "Files and history stay with the workspace.",
-    icon: "project-outlined",
-    label: "Workspace route",
-    title: "Put the work somewhere durable",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Use the feature page to choose the right work surface, then return to a project for the actual work.",
-    carry: "Output and notes stay near the surface that produced them.",
-    icon: "overview",
-    label: "Workflow route",
-    title: "Pick the surface by task",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    body: "Use product pages when the decision is who operates the runtime and what boundary the team needs.",
-    carry: "Support, licensing, and trust details stay on controlled pages.",
-    icon: "servers",
-    label: "Deployment route",
-    title: "Keep operating questions separate",
-  },
-] satisfies {
-  accent: string;
-  body: string;
-  carry: string;
-  icon: IconName;
-  label: string;
-  title: string;
-}[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
     return `rgba(255, 255, 255, ${opacity})`;
@@ -2198,98 +2165,6 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
                   <Text type="secondary">{step.body}</Text>
                 </span>
               </a>
-            ))}
-          </div>
-        </div>
-        <div
-          aria-label="CoCalc.ai next-route notes"
-          role="group"
-          style={{
-            background: PUBLIC_COLORS.surface,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            flex: "1 1 100%",
-            padding: 14,
-          }}
-        >
-          <Flex align="baseline" justify="space-between" wrap gap={8}>
-            <Text strong style={{ color: PUBLIC_COLORS.heading }}>
-              After the first click
-            </Text>
-            <Text style={{ color: PUBLIC_COLORS.mutedText, fontSize: 12 }}>
-              Keep the next step attached to the route.
-            </Text>
-          </Flex>
-          <div
-            style={{
-              display: "grid",
-              gap: 8,
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-              marginTop: 10,
-            }}
-          >
-            {LANDING_NEXT_ROUTE_NOTES.map((note) => (
-              <div
-                key={note.label}
-                style={{
-                  alignItems: "start",
-                  background: alpha(note.accent, 0.05),
-                  border: `1px solid ${alpha(note.accent, 0.22)}`,
-                  borderRadius: PANEL_RADIUS,
-                  display: "grid",
-                  gap: 10,
-                  gridTemplateColumns: "36px minmax(0, 1fr)",
-                  minHeight: 146,
-                  padding: 12,
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    alignItems: "center",
-                    background: alpha(note.accent, 0.08),
-                    border: `1px solid ${alpha(note.accent, 0.22)}`,
-                    borderRadius: PANEL_RADIUS,
-                    color: note.accent,
-                    display: "flex",
-                    fontSize: 17,
-                    height: 36,
-                    justifyContent: "center",
-                    width: 36,
-                  }}
-                >
-                  <Icon name={note.icon} />
-                </span>
-                <span style={{ minWidth: 0 }}>
-                  <Text
-                    strong
-                    style={{
-                      color: note.accent,
-                      display: "block",
-                      fontSize: 12,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {note.label}
-                  </Text>
-                  <Text strong style={{ display: "block", marginTop: 2 }}>
-                    {note.title}
-                  </Text>
-                  <Text type="secondary">{note.body}</Text>
-                  <Text
-                    style={{
-                      borderTop: `1px solid ${alpha(note.accent, 0.16)}`,
-                      color: PUBLIC_COLORS.mutedText,
-                      display: "block",
-                      marginTop: 10,
-                      paddingTop: 8,
-                    }}
-                  >
-                    {note.carry}
-                  </Text>
-                </span>
-              </div>
             ))}
           </div>
         </div>

@@ -518,39 +518,6 @@ describe("PublicHomeApp", () => {
         "Keep prompts, code changes, commands, and output attached to the same record.",
       ),
     ).not.toBeNull();
-    const nextRouteNotes = within(routeMap).getByRole("group", {
-      name: "CoCalc.ai next-route notes",
-    });
-    expect(
-      within(nextRouteNotes).getByText("After the first click"),
-    ).not.toBeNull();
-    expect(
-      within(nextRouteNotes).getByText(
-        "Keep the next step attached to the route.",
-      ),
-    ).not.toBeNull();
-    expect(within(nextRouteNotes).getByText("Workspace route")).not.toBeNull();
-    expect(within(nextRouteNotes).getByText("Workflow route")).not.toBeNull();
-    expect(within(nextRouteNotes).getByText("Deployment route")).not.toBeNull();
-    expect(
-      within(nextRouteNotes).getByText("Put the work somewhere durable"),
-    ).not.toBeNull();
-    expect(
-      within(nextRouteNotes).getByText("Pick the surface by task"),
-    ).not.toBeNull();
-    expect(
-      within(nextRouteNotes).getByText("Keep operating questions separate"),
-    ).not.toBeNull();
-    expect(
-      within(nextRouteNotes).getByText(
-        "Files and history stay with the workspace.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(nextRouteNotes).getByText(
-        "Support, licensing, and trust details stay on controlled pages.",
-      ),
-    ).not.toBeNull();
     const workspacePreview = screen.getByRole("region", {
       name: "CoCalc.ai workspace preview",
     });
@@ -812,6 +779,10 @@ describe("PublicHomeApp", () => {
         name: "CoCalc.ai route confirmation checks",
       }),
     ).toBeNull();
+    expect(
+      screen.queryByRole("group", { name: "CoCalc.ai next-route notes" }),
+    ).toBeNull();
+    expect(screen.queryByText("After the first click")).toBeNull();
     const coreWorkflows = screen.getByRole("region", {
       name: "CoCalc.ai core workflows",
     });
