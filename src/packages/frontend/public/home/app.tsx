@@ -136,30 +136,40 @@ const WORKSPACE_PREVIEW_ACTIVITY = [
 }[];
 const WORKSPACE_PREVIEW_TABS = [
   {
+    description: "Source, notebooks, data",
     href: "features/compare",
     icon: "files",
-    label: "Files",
+    label: "Open files",
     title: "File tree",
   },
   {
+    description: "Shells and services",
     href: "features/terminal",
     icon: "terminal",
-    label: "Run",
+    label: "Run terminal",
     title: "Linux terminal",
   },
   {
+    description: "Agent work thread",
     href: "features/ai",
     icon: "robot",
-    label: "Ask",
+    label: "Ask Codex",
     title: "Agent turn",
   },
   {
+    description: "Snapshots and TimeTravel",
     href: "features/compare",
     icon: "history",
-    label: "Review",
+    label: "Review history",
     title: "History trail",
   },
-] satisfies { href: string; icon: IconName; label: string; title: string }[];
+] satisfies {
+  description: string;
+  href: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 const WORKFLOW_CONTEXT_ITEMS = [
   { icon: "files", label: "Files" },
   { icon: "history", label: "History" },
@@ -501,54 +511,54 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
         </div>
       </div>
       <div
+        aria-label="CoCalc.ai project surface links"
+        role="group"
         style={{
-          display: "grid",
-          gap: 8,
-          gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))",
-          marginTop: 12,
+          marginTop: 14,
         }}
       >
-        <a
-          href={appPath(projectHref)}
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+            Open from this project
+          </Text>
+          <Text
+            style={{
+              color: alpha(PUBLIC_COLORS.surface, 0.68),
+              fontSize: 12,
+            }}
+          >
+            One context, multiple surfaces
+          </Text>
+        </Flex>
+        <div
           style={{
-            alignItems: "center",
-            background: alpha(PUBLIC_COLORS.surface, 0.16),
-            border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.3)}`,
-            borderRadius: PANEL_RADIUS,
-            color: PUBLIC_COLORS.surface,
-            display: "inline-flex",
-            gap: 7,
-            justifyContent: "center",
-            minHeight: 36,
-            padding: "7px 8px",
-            textDecoration: "none",
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 134px), 1fr))",
+            marginTop: 8,
           }}
         >
-          <DecorativeButtonIcon name="project-outlined" />
-          <Text style={{ color: "inherit" }}>{projectLabel}</Text>
-        </a>
-        {WORKSPACE_PREVIEW_TABS.map((tab) => (
           <a
-            href={appPath(tab.href)}
-            key={tab.label}
+            aria-label={projectLabel}
+            href={appPath(projectHref)}
             style={{
-              alignItems: "center",
-              background: alpha(PUBLIC_COLORS.surface, 0.13),
-              border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+              alignItems: "start",
+              background: alpha(PUBLIC_COLORS.surface, 0.16),
+              border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.3)}`,
               borderRadius: PANEL_RADIUS,
               color: PUBLIC_COLORS.surface,
               display: "inline-flex",
               gap: 7,
-              justifyContent: "center",
-              minHeight: 36,
-              padding: "7px 8px",
+              minHeight: 62,
+              padding: "9px 10px",
               textDecoration: "none",
             }}
           >
-            <DecorativeButtonIcon name={tab.icon} />
+            <DecorativeButtonIcon name="project-outlined" />
             <span style={{ minWidth: 0 }}>
               <Text style={{ color: "inherit", display: "block" }}>
-                {tab.label}
+                {projectLabel}
               </Text>
               <Text
                 style={{
@@ -557,11 +567,55 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
                   fontSize: 12,
                 }}
               >
-                {tab.title}
+                New workspace
               </Text>
             </span>
           </a>
-        ))}
+          {WORKSPACE_PREVIEW_TABS.map((tab) => (
+            <a
+              aria-label={tab.label}
+              href={appPath(tab.href)}
+              key={tab.label}
+              style={{
+                alignItems: "start",
+                background: alpha(PUBLIC_COLORS.surface, 0.13),
+                border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+                borderRadius: PANEL_RADIUS,
+                color: PUBLIC_COLORS.surface,
+                display: "inline-flex",
+                gap: 7,
+                minHeight: 62,
+                padding: "9px 10px",
+                textDecoration: "none",
+              }}
+            >
+              <DecorativeButtonIcon name={tab.icon} />
+              <span style={{ minWidth: 0 }}>
+                <Text style={{ color: "inherit", display: "block" }}>
+                  {tab.label}
+                </Text>
+                <Text
+                  style={{
+                    color: alpha(PUBLIC_COLORS.surface, 0.68),
+                    display: "block",
+                    fontSize: 12,
+                  }}
+                >
+                  {tab.title}
+                </Text>
+                <Text
+                  style={{
+                    color: alpha(PUBLIC_COLORS.surface, 0.58),
+                    display: "block",
+                    fontSize: 12,
+                  }}
+                >
+                  {tab.description}
+                </Text>
+              </span>
+            </a>
+          ))}
+        </div>
       </div>
     </div>
   );

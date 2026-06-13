@@ -204,21 +204,44 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Start a project/i })
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
+    const projectSurfaceLinks = within(projectPreview).getByRole("group", {
+      name: "CoCalc.ai project surface links",
+    });
     expect(
-      within(projectPreview)
-        .getByRole("link", { name: /Run Linux terminal/i })
+      within(projectSurfaceLinks)
+        .getByRole("link", { name: "Open files" })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(projectSurfaceLinks)
+        .getByRole("link", { name: "Run terminal" })
         .getAttribute("href"),
     ).toBe("/features/terminal");
     expect(
-      within(projectPreview)
-        .getByRole("link", { name: /Ask Agent turn/i })
+      within(projectSurfaceLinks)
+        .getByRole("link", { name: "Ask Codex" })
         .getAttribute("href"),
     ).toBe("/features/ai");
     expect(
-      within(projectPreview)
-        .getByRole("link", { name: /Review History trail/i })
+      within(projectSurfaceLinks)
+        .getByRole("link", { name: "Review history" })
         .getAttribute("href"),
     ).toBe("/features/compare");
+    expect(
+      within(projectSurfaceLinks).getByText("One context, multiple surfaces"),
+    ).not.toBeNull();
+    expect(
+      within(projectSurfaceLinks).getByText("Source, notebooks, data"),
+    ).not.toBeNull();
+    expect(
+      within(projectSurfaceLinks).getByText("Shells and services"),
+    ).not.toBeNull();
+    expect(
+      within(projectSurfaceLinks).getByText("Agent work thread"),
+    ).not.toBeNull();
+    expect(
+      within(projectSurfaceLinks).getByText("Snapshots and TimeTravel"),
+    ).not.toBeNull();
     const removedDuplicateRegions = [
       "CoCalc.ai project handoff path",
       "CoCalc.ai intent router",
