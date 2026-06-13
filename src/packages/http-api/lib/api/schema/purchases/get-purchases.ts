@@ -49,7 +49,7 @@ export const GetPurchasesInputSchema = z
     thisMonth: z
       .boolean()
       .describe(
-        "If `true`, only purchases since the most recent closing date will be returned.",
+        "If `true`, only purchases since the start of the current calendar month will be returned.",
       )
       .nullish(),
     day_statement_id: DayStatementIdSchema.describe(

@@ -156,3 +156,47 @@ describe("creates an account, then creates purchases and statements and ensures 
     expect(statements.length).toBe(2);
   });
 });
+
+describe("monthly statements", () => {
+  const account_id = uuid();
+
+  it("creates monthly statements without per-account closing dates", async () => {
+    await createTestAccount(account_id);
+    await createPurchase({
+      account_id,
+      service: "credit",
+      description: { type: "credit" },
+      client: null,
+      cost: -20,
+    });
+    await createPurchase({
+      account_id,
+      service: "student-pay",
+      description: {} as any,
+      client: null,
+      cost: 4,
+    });
+
+    await delay(50);
+    await createStatements({
+      time: new Date(Date.now() - 1),
+      interval: "month",
+    });
+    const statements = await getStatements({
+      account_id,
+      limit: 1,
+      interval: "month",
+    });
+    expect(statements.length).toBe(1);
+    expect(statements[0].num_charges).toBe(1);
+    expect(toDecimal(statements[0].total_charges).toNumber()).toBe(4);
+    expect(statements[0].num_credits).toBe(1);
+    expect(toDecimal(statements[0].total_credits).toNumber()).toBe(-20);
+
+    const { purchases } = await getPurchases({
+      account_id,
+      month_statement_id: statements[0].id,
+    });
+    expect(purchases.length).toBe(2);
+  });
+});

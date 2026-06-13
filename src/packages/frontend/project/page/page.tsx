@@ -98,6 +98,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import type { ProjectAccessLandingInfo } from "@cocalc/conat/hub/api/projects";
 import { lite } from "@cocalc/frontend/lite";
+import { shouldBypassWorkspaceStartupGuardForTab } from "./workspace-startup";
 
 const START_BANNER = false;
 
@@ -243,13 +244,21 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     useState<boolean>(true);
 
   const initialWorkspaceRender = useMemo(() => {
+    const activeFullPageTab = fullPageProjectTab(active_project_tab);
     const orderedPaths: string[] =
       open_files_order?.toJS?.() ?? open_files_order ?? [];
     if (!workspaceStartupGuard) {
       return {
         pending: false,
         renderPaths: orderedPaths,
-        displayActiveTab: active_project_tab,
+        displayActiveTab: activeFullPageTab,
+      };
+    }
+    if (shouldBypassWorkspaceStartupGuardForTab(activeFullPageTab)) {
+      return {
+        pending: false,
+        renderPaths: orderedPaths,
+        displayActiveTab: activeFullPageTab,
       };
     }
     const { workspaces } = projectCtx;
@@ -257,7 +266,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       return {
         pending: false,
         renderPaths: orderedPaths,
-        displayActiveTab: active_project_tab,
+        displayActiveTab: activeFullPageTab,
       };
     }
     const current = workspaces.current;
@@ -265,7 +274,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       return {
         pending: false,
         renderPaths: orderedPaths,
-        displayActiveTab: active_project_tab,
+        displayActiveTab: activeFullPageTab,
       };
     }
     const visiblePaths = workspaces.filterPaths(orderedPaths);
@@ -274,7 +283,6 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       visiblePaths.includes(current.last_active_path)
         ? current.last_active_path
         : visiblePaths[0];
-    const activeFullPageTab = fullPageProjectTab(active_project_tab);
     const activePath = tab_to_path(activeFullPageTab ?? "");
     const activePathIsVisible =
       !!activePath && visiblePaths.includes(activePath);

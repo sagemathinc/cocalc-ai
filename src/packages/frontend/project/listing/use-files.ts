@@ -9,7 +9,6 @@ TESTS: See packages/test/project/listing/
 import useAsyncEffect from "use-async-effect";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { throttle } from "lodash";
-import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import LRU from "lru-cache";
 import { sleep, withTimeout } from "@cocalc/util/async-utils";
 import type { JSONValue } from "@cocalc/util/types";
@@ -140,7 +139,7 @@ export default function useFiles({
     path: string;
     error: ConatErrorLike | null;
   }>({ path, error: null });
-  const { val: counter, inc: refreshCounter } = useCounter();
+  const [counter, setCounter] = useState(0);
   const listingRef = useRef<any>(null);
   const throttledUpdateRef = useRef<undefined | { cancel?: () => void }>(
     undefined,
@@ -156,8 +155,8 @@ export default function useFiles({
       cur.path === path && cur.error == null ? cur : { path, error: null },
     );
     setFilesState({ path, files: null });
-    refreshCounter();
-  }, [cacheId, path, refreshCounter]);
+    setCounter((value) => value + 1);
+  }, [cacheId, path]);
 
   useAsyncEffect(
     async () => {

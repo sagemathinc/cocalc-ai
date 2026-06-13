@@ -109,7 +109,13 @@ clusters:
     manifests:
       base_key: software/rocket/channels
     ssh:
-      bastion: ubuntu@prod-bay
+      remote: ubuntu@10.206.0.38
+    bay:
+      id: bay-0
+      worker_count: 4
+      public_url: https://cocalc.ai
+      require_clean_worktree: true
+      retain_releases: 5
 
   staging:
     hub_url: https://staging.cocalc.ai
@@ -122,6 +128,14 @@ clusters:
       credentials_file: ~/.config/cocalc/rocket/staging-r2.env
     manifests:
       base_key: software/rocket-staging/channels
+    ssh:
+      remote: ubuntu@10.206.15.209
+    bay:
+      id: bay-0
+      worker_count: 4
+      public_url: https://staging.cocalc.ai
+      require_clean_worktree: true
+      retain_releases: 3
 ```
 
 Example credentials file:
@@ -238,28 +252,59 @@ Every manifest should include:
 
 ## CLI Surface
 
+### Operator Principles
+
+- Make the deployment scope explicit. The CLI must not silently upgrade project
+  hosts when the operator only intended to update the bay/hub.
+- Prefer site config over repeated flags. Values such as remote SSH target,
+  worker count, bay id, public URL, and release retention belong in config.
+- Fail on a dirty checkout by default for release builds. `--allow-dirty` must
+  be explicit and should stamp the release manifest as dirty.
+- Always print a plan before mutating a live cluster. `--yes` can skip the
+  interactive confirmation, but JSON output should still contain the plan.
+- Separate building, publishing, deploying, and host rollout, while keeping a
+  convenient one-command path for small sites.
+- Treat current scripts as implementation details. The user-facing command
+  should describe intent, not script flags.
+
+### Core Commands
+
 Initial namespace:
 
 ```text
 cocalc rocket config check --cluster prod
 cocalc rocket config show --cluster prod
 
-cocalc rocket artifacts publish --product plus --file <path> --channel candidate
-cocalc rocket artifacts list --product rocket
-cocalc rocket artifacts verify --release <release-id>
+cocalc rocket status --cluster prod
+cocalc rocket doctor --cluster prod
+cocalc rocket smoke --cluster prod
+
+cocalc rocket release build --cluster prod --kind bay-runtime
+cocalc rocket release build --cluster prod --kind bay-static
+cocalc rocket release publish --cluster prod --release <release-id> --channel candidate
+cocalc rocket release list --cluster prod --product rocket
+cocalc rocket release show --cluster prod --release <release-id>
+cocalc rocket release verify --cluster prod --release <release-id>
 
 cocalc rocket channels show --product rocket --cluster prod
 cocalc rocket channels promote --product rocket --from candidate --to stable
 cocalc rocket channels rollback --product rocket --channel stable
 
-cocalc rocket status --cluster prod
-cocalc rocket deploy --cluster prod --channel candidate --dry-run
-cocalc rocket rollback --cluster prod --to previous --dry-run
+cocalc rocket deploy --cluster prod --scope static --build --dry-run
+cocalc rocket deploy --cluster prod --scope bay --build --dry-run
+cocalc rocket deploy --cluster prod --scope hosts --channel stable --dry-run
+cocalc rocket deploy --cluster prod --scope all --channel candidate --dry-run
+cocalc rocket rollback --cluster prod --scope bay --to previous --dry-run
+cocalc rocket rollback --cluster prod --scope hosts --to previous --dry-run
+
+cocalc rocket hosts list --cluster prod
+cocalc rocket hosts versions --cluster prod
+cocalc rocket hosts upgrade --cluster prod --channel stable --wait
 cocalc rocket hosts upgrade --cluster prod --target project-host --channel stable
+cocalc rocket hosts rollout --cluster prod --component project-host --wait
 
 cocalc rocket backups status --cluster prod
 cocalc rocket restore postgres --cluster staging --backup <backup-id> --dry-run
-cocalc rocket smoke --cluster prod
 ```
 
 All commands should support:
@@ -273,16 +318,104 @@ All commands should support:
 Destructive or sensitive commands should require fresh admin authorization where
 they touch the hub or live cluster state.
 
+### Deploy Scopes
+
+The deploy command should expose the four operations we actually need during
+launch:
+
+| Scope | Meaning | Current script mapping |
+| --- | --- | --- |
+| `static` | Build/deploy only frontend/static assets. Optionally restart hub workers one at a time. | `upgrade-bay-release.sh --static-only --restart-hub-workers` |
+| `bay` | Build/deploy the Rocket bay runtime and restart bay services, but do not upgrade project hosts. | `upgrade-bay-release.sh --skip-host-upgrade` |
+| `hosts` | Upgrade online project hosts from the already deployed hub/software source. | `cocalc host upgrade --hub-source --all-online --wait` |
+| `all` | Deploy the bay runtime and then upgrade online project hosts. | Current default `upgrade-bay-release.sh` behavior |
+
+Compatibility aliases are useful because they match current operator language:
+
+- `--static-only` should mean `--scope static`.
+- `--hub-only` should mean `--scope bay`.
+- `--skip-hosts` should mean `--scope bay` when deploying a bay release.
+
+`--scope all` should be explicit for production. The dangerous part is not
+restarting the bay; it is unintentionally rolling every online project host.
+
+### Concrete Launch Examples
+
+Low-risk frontend-only change:
+
+```sh
+cocalc rocket deploy --cluster prod --scope static --build --restart-hub-workers
+```
+
+Hub/bay runtime change that does not affect project hosts:
+
+```sh
+cocalc rocket deploy --cluster prod --scope bay --build
+```
+
+Project-host rollout after the bay is already healthy:
+
+```sh
+cocalc rocket deploy --cluster prod --scope hosts --channel stable --wait
+```
+
+Full small-site upgrade when host rollout is intentional:
+
+```sh
+cocalc rocket deploy --cluster prod --scope all --build --wait
+```
+
+The `prod` config should supply the remote host, API URL, bay id, worker count,
+release retention, auth profile, and report directory base. Operators should
+not have to remember that cocalc.ai currently has four hub workers.
+
+### Status Output
+
+`cocalc rocket status --cluster prod` should consolidate what we currently
+check manually:
+
+- configured cluster, API URL, public URL, bay id, remote SSH target
+- current and previous bay release versions
+- bay health and worker health
+- cloudflared service status
+- project-host count by status
+- online project-host versions and managed component alignment
+- active host upgrade or deploy LROs
+- whether the current deployed release was built from a dirty checkout
+- last deploy report directory and outcome
+
+The status command is non-mutating and should not require fresh auth. It should
+have a concise default table and a full `--json` form for agents and scripts.
+
 ## First Implementation Slice
 
-The first slice should be deliberately small.
+The first launch-critical slice should be deliberately small and should solve
+the deployment workflow we are already using.
 
 1. Add a Rocket config loader in the CLI package.
 2. Add strict permission checks for config and credential files.
 3. Add `cocalc rocket config check`.
 4. Add `cocalc rocket config show` with secret redaction.
-5. Add R2 credential resolution from the config model.
-6. Update the Plus SEA publish path so a human can publish using:
+5. Add `cocalc rocket status --cluster <name>` using configured remote/API.
+6. Add `cocalc rocket deploy --scope static|bay|hosts|all`.
+7. Implement deploy initially by wrapping:
+   - `scripts/bay-systemd/upgrade-bay-release.sh`
+   - `cocalc host upgrade`
+8. Fail release builds on dirty worktrees by default.
+9. Write report directories in a predictable place and print them at the end.
+
+This slice should not require rewriting the deploy stack. It should turn the
+proven commands into a safer operator interface with explicit deploy scope,
+cluster config, clear dry-run output, and fewer remembered flags.
+
+## Second Implementation Slice
+
+The second slice should prove the artifact-store model on a path that already
+works: Plus SEA publishing to R2.
+
+1. Add R2 credential resolution from the config model.
+2. Add the shared artifact manifest schema.
+3. Update the Plus SEA publish path so a human can publish using:
 
 ```sh
 cocalc rocket artifacts publish \
@@ -304,18 +437,11 @@ publishing to R2.
 
 ## Later Implementation Slices
 
-### Slice 2: Channel Commands
+### Slice 3: Channel Commands
 
 - Add publish-to-candidate and promote-to-stable flows.
 - Add rollback by repointing a channel manifest.
 - Support Star, Plus, and Rocket manifests with a shared schema.
-
-### Slice 3: Rocket Status And Deploy Wrappers
-
-- Wrap existing deploy and host-upgrade scripts behind `cocalc rocket`.
-- Show the selected cluster, active channel, deployed versions, host versions,
-  and artifact source.
-- Make deploy and rollback plans visible before mutation.
 
 ### Slice 4: Backup And Restore Commands
 
@@ -365,13 +491,22 @@ Long-term strategy:
 
 ## Acceptance Criteria For L0.5
 
-- An operator can publish a Plus artifact to R2 without manually exporting R2
-  environment variables.
 - `cocalc rocket config check` catches insecure config and secret-file
   permissions.
+- `cocalc rocket status --cluster prod` shows bay health, current/previous
+  release, worker count, cloudflared status, online project-host versions, and
+  dirty-release state.
+- `cocalc rocket deploy --cluster prod --scope static --build` can perform the
+  current static-only deploy path without remembering script flags.
+- `cocalc rocket deploy --cluster prod --scope bay --build` can perform a
+  hub/bay-only runtime deploy without upgrading project hosts.
+- `cocalc rocket deploy --cluster prod --scope hosts --wait` can run the
+  project-host rollout separately after the bay is healthy.
+- Mutating deploy commands print a plan, write a report directory, and fail on
+  dirty release builds unless `--allow-dirty` is explicit.
+- An operator can publish a Plus artifact to R2 without manually exporting R2
+  environment variables.
 - `cocalc rocket channels show` can display candidate and stable manifests.
-- `cocalc rocket status` can show the configured cluster target and artifact
-  source.
 - A runbook can describe deploy, rollback, and backup-status discovery using
   `cocalc rocket ...` commands instead of script paths.
 - The L2 restore-drill plan can depend on this CLI without requiring personal
@@ -394,8 +529,12 @@ Long-term strategy:
 
 ## Recommendation
 
-Start with the config loader, permission checker, and Plus SEA publish path.
-That gives immediate operator value, removes the R2 environment-variable pain,
-and establishes the same artifact-store model needed for Rocket deploys,
-rollbacks, Star channels, and L2 restore drills.
+Start with the config loader, permission checker, `status`, and deploy wrapper
+for the existing `bay-systemd` flow. That directly removes the current launch
+risk: remembered script flags, implicit project-host rollout, wrong worker-count
+defaults, dirty release builds, and scattered report directories.
 
+After that first deploy/status slice works for cocalc.ai and delta, add R2
+credential resolution and Plus SEA publishing. That second slice removes the R2
+environment-variable pain and establishes the shared artifact-store model needed
+for Rocket channels, rollbacks, Star channels, and L2 restore drills.

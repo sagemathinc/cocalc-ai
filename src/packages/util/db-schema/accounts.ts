@@ -358,10 +358,10 @@ Table({
     },
     purchase_closing_day: {
       type: "integer",
-      desc: "Day of the month when pay-as-you-go purchases are cutoff and charged for this user. It happens at midnight UTC on this day.  This should be an integer between 1 and 28.",
+      desc: "Legacy billing-cycle day. New purchases and statements use calendar-month periods.",
       render: {
         type: "number",
-        editable: false, // Do NOT change this without going through the reset-closing-date api call...
+        editable: false,
         min: 1,
         max: 28,
       },

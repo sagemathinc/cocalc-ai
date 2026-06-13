@@ -1,5 +1,7 @@
 /*
 Periodically send emails out to users that active subscriptions will renew soon.
+These are reminders only; automatic renewal payment is attempted when the
+subscription period ends.
 
 
 RULE: For each subscription that has:
@@ -29,11 +31,13 @@ import {
 } from "@cocalc/util/misc";
 import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import { getUser } from "@cocalc/server/purchases/statements/email-statement";
-import { getTotalBalance } from "./get-balance";
-import { getUsageSubscription } from "./stripe-usage-based-subscription";
 import sendEmail from "@cocalc/server/email/send-email";
 import getLogger from "@cocalc/backend/logger";
 import siteURL from "@cocalc/database/settings/site-url";
+import {
+  formatRenewalDate,
+  getRenewalPaymentNotice,
+} from "./subscription-renewal-notice";
 
 const logger = getLogger("purchases:subscription-renewal-emails");
 
@@ -67,6 +71,9 @@ export default async function sendSubscriptionRenewalEmails() {
 }
 
 async function sendSubscriptionRenewalEmail(account_id, subs: Subscription[]) {
+  if (subs.length == 0) {
+    return;
+  }
   logger.debug("sendSubscriptionRenewalEmail", { account_id, subs });
   const { help_email, site_name: siteName } = await getServerSettings();
   const { name, email_address: to } = await getUser(account_id);
@@ -78,34 +85,30 @@ async function sendSubscriptionRenewalEmail(account_id, subs: Subscription[]) {
   }
   const subject = `${siteName} Subscription Renewals`;
 
-  const totalBalance = toDecimal(await getTotalBalance(account_id));
   let cost = toDecimal(0);
+  let earliestRenewal = subs[0].current_period_end;
   for (const sub of subs) {
     cost = cost.add(toDecimal(sub.cost ?? 0));
-  }
-  const usageSub = await getUsageSubscription(account_id);
-
-  let pay = `Your account balance is ${moneyToCurrency(totalBalance)}. `;
-  if (totalBalance.sub(cost).lt(0)) {
-    const amount = moneyToCurrency(totalBalance.sub(cost).abs());
-    if (usageSub) {
-      pay += ` You have automatic payments set up, and might be charged at least ${amount} in the next few days.`;
-    } else {
-      pay += ` Be sure to add at least ${amount} to your account to maintain your subscriptions
-so they are not automatically canceled.   You will receive a reminder email in a few days with your next statement.`;
+    if (earliestRenewal == null || sub.current_period_end < earliestRenewal) {
+      earliestRenewal = sub.current_period_end;
     }
-  } else {
-    pay += ` You have plenty of money in your account to cover these subscriptions.`;
   }
+  const paymentNotice = await getRenewalPaymentNotice({
+    account_id,
+    cost: cost.toNumber(),
+    current_period_end: earliestRenewal,
+  });
 
   let subscriptionList: string[] = [];
   for (const sub of subs) {
     subscriptionList.push(
       `<li>${sub.interval == "month" ? "Monthly" : "Yearly"} Subscription (id=${
         sub.id
-      }) for ${moneyToCurrency(sub.cost)}/${sub.interval}: ${await describeSubscription(
-        sub.metadata,
-      )} </li>`,
+      }) for ${moneyToCurrency(sub.cost)}/${
+        sub.interval
+      }, renews ${formatRenewalDate(
+        sub.current_period_end,
+      )}: ${await describeSubscription(sub.metadata)} </li>`,
     );
   }
 
@@ -128,7 +131,7 @@ NOTE: You can cancel a subscription via the link above without having to sign in
 
 <br/><br/>
 
-${pay}
+${paymentNotice}
 
 <br/><br/>
 

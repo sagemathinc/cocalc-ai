@@ -76,6 +76,7 @@ async function get(req) {
       lineItems,
       purpose,
       metadata,
+      requireAddress: true,
     });
   }
   return { success: true };

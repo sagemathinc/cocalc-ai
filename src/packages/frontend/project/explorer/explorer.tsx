@@ -46,10 +46,11 @@ import {
   useProjectMapField,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { useFsWithRefresh } from "@cocalc/frontend/project/listing/use-fs";
 import useListing, {
+  sortListingEntries,
   type SortField,
 } from "@cocalc/frontend/project/listing/use-listing";
+import useProjectActionsFilesystem from "@cocalc/frontend/project/listing/use-project-actions-fs";
 import useBackupsListing, {
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
@@ -62,6 +63,8 @@ import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { isProjectRecentlyCreated } from "@cocalc/frontend/project/recently-created-project";
+import { useProjectCreated } from "@cocalc/frontend/project/use-project-created";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
@@ -100,6 +103,8 @@ import {
   shouldShowWrongAccountListingError,
 } from "./listing-error";
 
+type ActiveFileSort = ReturnType<typeof normalizeActiveFileSort>;
+
 const FLEX_ROW_STYLE = {
   display: "flex",
   flexFlow: "row wrap",
@@ -117,13 +122,14 @@ const ERROR_STYLE: CSSProperties = {
 } as const;
 
 const LIFECYCLE_LISTING_REFRESH_DELAYS_MS = [0, 1000, 2000, 5000] as const;
+const RECENT_PROJECT_MISSING_VOLUME_REFRESH_MS = 1500;
 
 function isMissingProjectVolumeError(error: unknown): boolean {
   const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
   return text.includes("project volume does not exist");
 }
 
-function sortDesc(active_file_sort?): {
+function sortDesc(active_file_sort?: ActiveFileSort): {
   sortField: SortField;
   sortDirection: "desc" | "asc";
 } {
@@ -139,6 +145,22 @@ function sortDesc(active_file_sort?): {
     sortField: column_name as SortField,
     sortDirection: is_descending ? "desc" : "asc",
   };
+}
+
+function sortAndMaskListing({
+  listing,
+  active_file_sort,
+  mask,
+}: {
+  listing: DirectoryListingEntry[] | null;
+  active_file_sort?: ActiveFileSort;
+  mask?: boolean;
+}): DirectoryListingEntry[] | null {
+  if (listing == null) {
+    return null;
+  }
+  const { sortField, sortDirection } = sortDesc(active_file_sort);
+  return sortListingEntries({ listing, sortField, sortDirection, mask });
 }
 
 export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
@@ -222,10 +244,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
       DEFAULT_ACTIVE_FILE_SORT,
   );
 
-  const { fs, refreshFs } = useFsWithRefresh({
-    project_id,
-    viewer: readOnlyViewer,
-  });
+  const fs = useProjectActionsFilesystem({ actions, project_id });
   const inBackupsPath = isBackupsPath(effective_current_path);
   const inSnapshotsPath = isSnapshotsPath(effective_current_path);
   const homePath =
@@ -238,16 +257,12 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   });
   let {
     refresh,
-    listing,
+    listing: rawListing,
     error: listingError,
   } = useListing({
     fs: inBackupsPath ? null : fs,
     path: listingPath,
-    ...sortDesc(active_file_sort),
-    cacheId: actions?.getCacheId(),
-    mask,
     watch: !readOnlyViewer,
-    refreshFs,
   });
   const {
     listing: backupsListing,
@@ -256,7 +271,6 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   } = useBackupsListing({
     project_id,
     path: effective_current_path,
-    ...sortDesc(active_file_sort),
   });
   const backupOps = useTypedRedux({ project_id }, "backup_ops");
   const prevBackupStatuses = useRef<Map<string, string>>(new Map());
@@ -290,15 +304,22 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     }
   }, [backupOps, refreshBackups]);
   if (inBackupsPath && !readOnlyViewer) {
-    listing = backupsListing;
+    rawListing = backupsListing;
     listingError = backupsError;
     refresh = refreshBackups;
   } else if (inBackupsPath && readOnlyViewer) {
-    listing = null;
+    rawListing = null;
     listingError = new Error("Viewers cannot browse project backups.");
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
   const flyout = useTypedRedux({ project_id }, "flyout");
+  const { created: projectCreated } = useProjectCreated(project_id);
+  const suppressMissingVolumeListingError =
+    isMissingProjectVolumeError(listingError) &&
+    isProjectRecentlyCreated({ project_id, created: projectCreated });
+  const displayListingError = suppressMissingVolumeListingError
+    ? null
+    : listingError;
   const applyNavigationWorkspaceSelection = useCallback(
     (path: string) => {
       const nextSelection = selectionForPathFollowThrough(
@@ -333,10 +354,19 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     [applyNavigationWorkspaceSelection, navigateExplorerRaw, navHistory],
   );
 
-  listing = listingError
+  const sortedListing = useMemo(
+    () =>
+      sortAndMaskListing({
+        listing: rawListing,
+        active_file_sort,
+        mask,
+      }),
+    [rawListing, active_file_sort, mask],
+  );
+  const listing = displayListingError
     ? null
     : filterListing({
-        listing,
+        listing: sortedListing,
         search: file_search,
         showHidden,
       });
@@ -546,13 +576,28 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
 
   useEffect(() => {
     if (!isVisible) return;
-    if (listing != null || listingError != null) return;
+    if (listing != null) return;
+    if (listingError != null && !suppressMissingVolumeListingError) return;
     if (projectStateName !== "running" && projectStateName !== "opened") {
       return;
     }
 
     let canceled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+
+    if (suppressMissingVolumeListingError) {
+      timer = setTimeout(() => {
+        if (!canceled) {
+          refresh();
+        }
+      }, RECENT_PROJECT_MISSING_VOLUME_REFRESH_MS);
+      return () => {
+        canceled = true;
+        if (timer != null) {
+          clearTimeout(timer);
+        }
+      };
+    }
 
     const refreshAfterDelay = (attempt: number): void => {
       const delay =
@@ -562,7 +607,6 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
       timer = setTimeout(() => {
         if (canceled) return;
         refresh();
-        refreshFs();
         if (attempt + 1 < LIFECYCLE_LISTING_REFRESH_DELAYS_MS.length) {
           refreshAfterDelay(attempt + 1);
         }
@@ -581,10 +625,10 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     isVisible,
     listing,
     listingError,
+    suppressMissingVolumeListingError,
     projectStateName,
     effective_current_path,
     refresh,
-    refreshFs,
   ]);
 
   const clearedTransientProjectErrorRef = useRef<string>("");
@@ -687,7 +731,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     project_is_running = false;
   }
 
-  if (shouldShowWrongAccountListingError(listingError)) {
+  if (shouldShowWrongAccountListingError(displayListingError)) {
     return (
       <div style={{ margin: "30px auto", textAlign: "center" }}>
         <ShowError
@@ -713,19 +757,23 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   }
 
   const suppressRoutingError =
-    (hostUnavailable && isHostRoutingUnavailableError(listingError)) ||
-    shouldSuppressTransientRoutingError({ error: listingError, moveLro });
+    (hostUnavailable && isHostRoutingUnavailableError(displayListingError)) ||
+    shouldSuppressTransientRoutingError({
+      error: displayListingError,
+      moveLro,
+    });
   const suppressProjectError =
     (hostUnavailable && isHostRoutingUnavailableError(error)) ||
     shouldSuppressTransientRoutingError({ error, moveLro });
   const shouldShowArchivedProjectWarning =
-    project_is_archived && listingError != null;
-  const shouldShowNewProjectWarning = project_is_new && listingError != null;
+    project_is_archived && displayListingError != null;
+  const shouldShowNewProjectWarning =
+    project_is_new && displayListingError != null;
   const shouldShowStartProjectWarning =
     !project_is_running &&
     !project_is_archived &&
     !project_is_new &&
-    isMissingProjectVolumeError(listingError);
+    isMissingProjectVolumeError(displayListingError);
 
   if (hostUnavailable && !project_is_running) {
     return (
@@ -1148,14 +1196,14 @@ You can either wait for this host to become available again, or move this ${proj
               />
             )}
 
-            {listingError &&
+            {displayListingError &&
               !suppressRoutingError &&
               !shouldShowArchivedProjectWarning &&
               !shouldShowNewProjectWarning &&
               !shouldShowStartProjectWarning && (
                 <div style={{ margin: "30px auto", textAlign: "center" }}>
                   <ShowError
-                    error={getUserFacingListingError(listingError)}
+                    error={getUserFacingListingError(displayListingError)}
                     style={{ textAlign: "left" }}
                   />
                   <br />
@@ -1167,30 +1215,31 @@ You can either wait for this host to become available again, or move this ${proj
                     >
                       <Icon name="refresh" /> Refresh
                     </Button>
-                    {listingError.code == "ENOENT" && canWriteProjectFiles && (
-                      <Button
-                        size="large"
-                        style={{ margin: "auto" }}
-                        onClick={async () => {
-                          const fs = actions?.fs();
-                          try {
-                            await fs.mkdir(effective_current_path, {
-                              recursive: true,
-                            });
-                            refresh();
-                          } catch (err) {
-                            actions?.setState({ error: err });
-                          }
-                        }}
-                      >
-                        <Icon name="folder-open" /> Create Directory
-                      </Button>
-                    )}
+                    {displayListingError.code == "ENOENT" &&
+                      canWriteProjectFiles && (
+                        <Button
+                          size="large"
+                          style={{ margin: "auto" }}
+                          onClick={async () => {
+                            const fs = actions?.fs();
+                            try {
+                              await fs.mkdir(effective_current_path, {
+                                recursive: true,
+                              });
+                              refresh();
+                            } catch (err) {
+                              actions?.setState({ error: err });
+                            }
+                          }}
+                        >
+                          <Icon name="folder-open" /> Create Directory
+                        </Button>
+                      )}
                   </Space.Compact>
                 </div>
               )}
 
-            {!listingError && (
+            {!displayListingError && (
               <>
                 <MaybeFileUploadWrapper
                   enabled={canWriteProjectFiles}

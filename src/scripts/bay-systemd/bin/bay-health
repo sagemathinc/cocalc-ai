@@ -141,6 +141,7 @@ fi
 postgres_ok=true
 persist_ok=true
 router_ok=true
+frontdoor_ok=true
 healthy_workers=0
 
 if ! "$router_only"; then
@@ -149,6 +150,9 @@ if ! "$router_only"; then
   fi
   if ! http_check "$(persist_url)"; then
     persist_ok=false
+  fi
+  if ! "${SCRIPT_DIR}/bay-frontdoor-health" >/dev/null 2>&1; then
+    frontdoor_ok=false
   fi
 fi
 
@@ -171,13 +175,13 @@ if "$router_only"; then
 fi
 
 ok=false
-if "$postgres_ok" && "$persist_ok" && "$router_ok" \
+if "$postgres_ok" && "$persist_ok" && "$router_ok" && "$frontdoor_ok" \
   && [[ "$healthy_workers" -ge "$COCALC_BAY_MIN_HEALTHY_WORKERS" ]]; then
   ok=true
 fi
 
-printf '{"ok":%s,"postgres_ok":%s,"persist_ok":%s,"router_ok":%s,"healthy_workers":%s,"min_healthy_workers":%s}\n' \
-  "$ok" "$postgres_ok" "$persist_ok" "$router_ok" "$healthy_workers" \
+printf '{"ok":%s,"postgres_ok":%s,"persist_ok":%s,"router_ok":%s,"frontdoor_ok":%s,"healthy_workers":%s,"min_healthy_workers":%s}\n' \
+  "$ok" "$postgres_ok" "$persist_ok" "$router_ok" "$frontdoor_ok" "$healthy_workers" \
   "$COCALC_BAY_MIN_HEALTHY_WORKERS"
 
 "$ok"

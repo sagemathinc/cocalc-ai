@@ -6,11 +6,17 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
-import StripePayment, { AddPaymentMethodButton } from "./stripe-payment";
+import StripePayment, {
+  AddPaymentMethodButton,
+  BillingSetupModal,
+} from "./stripe-payment";
 import {
   createPaymentIntent,
   createSetupIntent,
+  getCustomerSession,
   getPaymentMethods,
+  getStripeCustomer,
+  setStripeCustomer,
 } from "./api";
 
 let mockStripeEnabled = false;
@@ -43,6 +49,7 @@ jest.mock("antd", () => {
       </button>
     ),
     Card: Box,
+    Divider: () => <hr />,
     Modal: Box,
     Space: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
     Spin: () => <div>loading</div>,
@@ -67,13 +74,39 @@ jest.mock("antd", () => {
 });
 
 jest.mock("@stripe/react-stripe-js", () => ({
+  AddressElement: ({ onReady }: any) => {
+    const React = jest.requireActual("react");
+    React.useEffect(() => {
+      onReady?.();
+    }, [onReady]);
+    return <div>Stripe address element</div>;
+  },
   EmbeddedCheckout: () => null,
   EmbeddedCheckoutProvider: ({ children }: { children?: ReactNode }) => (
     <>{children}</>
   ),
   Elements: ({ children }: { children?: ReactNode }) => <>{children}</>,
   PaymentElement: () => <div>Stripe payment element</div>,
-  useElements: () => ({}),
+  useElements: () => ({
+    getElement: (type: string) =>
+      type === "address"
+        ? {
+            getValue: jest.fn().mockResolvedValue({
+              complete: true,
+              value: {
+                address: {
+                  city: "San Francisco",
+                  country: "US",
+                  line1: "1 Main St",
+                  postal_code: "94105",
+                  state: "CA",
+                },
+                name: "Ada Lovelace",
+              },
+            }),
+          }
+        : null,
+  }),
   useStripe: () => ({ confirmSetup: jest.fn() }),
 }));
 
@@ -128,7 +161,9 @@ jest.mock("./api", () => ({
   getCheckoutSession: jest.fn(),
   getCustomerSession: jest.fn(),
   getPaymentMethods: jest.fn(),
+  getStripeCustomer: jest.fn(),
   processPaymentIntents: jest.fn(),
+  setStripeCustomer: jest.fn(),
 }));
 
 describe("StripePayment", () => {
@@ -137,7 +172,16 @@ describe("StripePayment", () => {
     mockEmailVerificationRequired = false;
     jest.mocked(createPaymentIntent).mockReset();
     jest.mocked(createSetupIntent).mockReset();
+    jest.mocked(getCustomerSession).mockReset();
+    jest.mocked(getCustomerSession).mockResolvedValue({});
     jest.mocked(getPaymentMethods).mockReset();
+    jest.mocked(getStripeCustomer).mockReset();
+    jest.mocked(getStripeCustomer).mockResolvedValue({
+      address: {},
+      name: "Ada Lovelace",
+    });
+    jest.mocked(setStripeCustomer).mockReset();
+    jest.mocked(setStripeCustomer).mockResolvedValue(undefined);
   });
 
   it("requires email verification before rendering purchase controls", () => {
@@ -228,6 +272,10 @@ describe("StripePayment", () => {
     render(<AddPaymentMethodButton />);
 
     fireEvent.click(screen.getByText(/Add Payment Method/));
+    await waitFor(() => {
+      expect(screen.getByText("Stripe address element")).toBeTruthy();
+    });
+    fireEvent.click(await screen.findByText("Save Address"));
 
     await waitFor(() => {
       expect(screen.getByText("Confirm security action")).toBeTruthy();
@@ -244,10 +292,44 @@ describe("StripePayment", () => {
     render(<AddPaymentMethodButton />);
 
     fireEvent.click(screen.getByText(/Add Payment Method/));
+    await waitFor(() => {
+      expect(screen.getByText("Stripe address element")).toBeTruthy();
+    });
+    const saveAddress = (await screen.findByText("Save Address"))
+      .closest("button") as HTMLButtonElement;
+    await waitFor(() => {
+      expect(saveAddress.disabled).toBe(false);
+    });
+    fireEvent.click(saveAddress);
 
-    expect(
-      screen.getByText("Verify your email before adding a payment method"),
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        screen.getByText("Verify your email before adding a payment method"),
+      ).toBeTruthy();
+    });
+    expect(createSetupIntent).not.toHaveBeenCalled();
+  });
+
+  it("can collect billing details without requiring another payment method", async () => {
+    const onFinished = jest.fn();
+
+    render(
+      <BillingSetupModal
+        onCancel={jest.fn()}
+        onFinished={onFinished}
+        requirePaymentMethod={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Stripe address element")).toBeTruthy();
+    });
+    fireEvent.click(await screen.findByText("Save Address"));
+
+    await waitFor(() => {
+      expect(onFinished).toHaveBeenCalled();
+    });
+    expect(screen.queryByText("Stripe payment element")).toBeNull();
     expect(createSetupIntent).not.toHaveBeenCalled();
   });
 
@@ -262,6 +344,10 @@ describe("StripePayment", () => {
     render(<AddPaymentMethodButton />);
 
     fireEvent.click(screen.getByText(/Add Payment Method/));
+    await waitFor(() => {
+      expect(screen.getByText("Stripe address element")).toBeTruthy();
+    });
+    fireEvent.click(await screen.findByText("Save Address"));
     await waitFor(() => {
       expect(screen.getByText("Confirm security action")).toBeTruthy();
     });
@@ -284,6 +370,10 @@ describe("StripePayment", () => {
     render(<AddPaymentMethodButton />);
 
     fireEvent.click(screen.getByText(/Add Payment Method/));
+    await waitFor(() => {
+      expect(screen.getByText("Stripe address element")).toBeTruthy();
+    });
+    fireEvent.click(await screen.findByText("Save Address"));
     await waitFor(() => {
       expect(screen.getByText("Confirm security action")).toBeTruthy();
     });

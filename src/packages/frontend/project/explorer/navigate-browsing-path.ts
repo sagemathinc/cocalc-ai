@@ -33,9 +33,10 @@ export function navigateBrowsingPath(
   const actions = redux.getProjectActions(project_id);
   if (actions == null) return;
 
-  actions.set_current_path(normalizedPath);
   if (opts.updateUrl) {
-    actions.set_url_to_path(normalizedPath, "");
+    void actions.open_directory(normalizedPath, true, true);
+  } else {
+    actions.set_current_path(normalizedPath);
+    actions.set_all_files_unchecked();
   }
-  actions.set_all_files_unchecked();
 }

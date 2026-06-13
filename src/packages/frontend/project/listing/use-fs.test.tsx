@@ -53,6 +53,7 @@ jest.mock("react", () => ({
 
 jest.mock("@cocalc/util/async-utils", () => ({
   sleep: jest.fn(() => Promise.resolve()),
+  withTimeout: jest.fn(async (promise: Promise<any>) => await promise),
 }));
 
 const loggerWarn = jest.fn();
@@ -71,7 +72,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
-import { sleep } from "@cocalc/util/async-utils";
+import { sleep, withTimeout } from "@cocalc/util/async-utils";
 import useFs from "./use-fs";
 
 async function flushEffects() {
@@ -147,6 +148,23 @@ describe("useFs", () => {
 
     const result = useFsForTest("project-4");
     expect(projectFs).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(1000);
+    expect(result).toBe(fs);
+  });
+
+  it("retries a hung projectFs bootstrap after timeout", async () => {
+    const fs = { readdir: jest.fn() } as any;
+    (withTimeout as jest.Mock)
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockImplementation(async (promise: Promise<any>) => await promise);
+    projectFs.mockResolvedValue(fs);
+
+    useFsForTest("project-5");
+    await flushEffects();
+
+    const result = useFsForTest("project-5");
+    expect(projectFs).toHaveBeenCalledTimes(2);
+    expect(withTimeout).toHaveBeenCalledWith(expect.any(Promise), 10000);
     expect(sleep).toHaveBeenCalledWith(1000);
     expect(result).toBe(fs);
   });

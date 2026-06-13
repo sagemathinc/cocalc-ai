@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+ensure_dirs
+exec "$COCALC_BAY_NODE_BIN" "${SCRIPT_DIR}/bay-frontdoor.js"

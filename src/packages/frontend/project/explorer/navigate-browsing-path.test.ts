@@ -23,10 +23,12 @@ describe("navigateBrowsingPath", () => {
     const set_current_path = jest.fn();
     const set_url_to_path = jest.fn();
     const set_all_files_unchecked = jest.fn();
+    const open_directory = jest.fn();
     getProjectActionsMock.mockReturnValue({
       set_current_path,
       set_url_to_path,
       set_all_files_unchecked,
+      open_directory,
     });
 
     navigateBrowsingPath("project-1", "/tmp");
@@ -34,22 +36,26 @@ describe("navigateBrowsingPath", () => {
     expect(set_current_path).toHaveBeenCalledWith("/tmp");
     expect(set_url_to_path).not.toHaveBeenCalled();
     expect(set_all_files_unchecked).toHaveBeenCalled();
+    expect(open_directory).not.toHaveBeenCalled();
   });
 
   it("updates the browser url for main explorer navigation", () => {
     const set_current_path = jest.fn();
     const set_url_to_path = jest.fn();
     const set_all_files_unchecked = jest.fn();
+    const open_directory = jest.fn();
     getProjectActionsMock.mockReturnValue({
       set_current_path,
       set_url_to_path,
       set_all_files_unchecked,
+      open_directory,
     });
 
     navigateBrowsingPath("project-1", "/tmp/demo", { updateUrl: true });
 
-    expect(set_current_path).toHaveBeenCalledWith("/tmp/demo");
-    expect(set_url_to_path).toHaveBeenCalledWith("/tmp/demo", "");
-    expect(set_all_files_unchecked).toHaveBeenCalled();
+    expect(open_directory).toHaveBeenCalledWith("/tmp/demo", true, true);
+    expect(set_current_path).not.toHaveBeenCalled();
+    expect(set_url_to_path).not.toHaveBeenCalled();
+    expect(set_all_files_unchecked).not.toHaveBeenCalled();
   });
 });

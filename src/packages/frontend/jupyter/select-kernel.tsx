@@ -12,6 +12,7 @@ import {
   Card,
   Checkbox,
   Descriptions,
+  Modal,
   Popover,
   Spin,
   Space,
@@ -38,6 +39,11 @@ import {
   submitNavigatorPromptInWorkspaceChat,
   submitNavigatorPromptToCurrentThread,
 } from "@cocalc/frontend/project/new/navigator-intents";
+import {
+  AgentSessionError,
+  AgentSessionSelect,
+  usePersistentAgentSessionSelection,
+} from "@cocalc/frontend/frame-editors/ai/agent-session-selector";
 
 import { Kernel as KernelType } from "@cocalc/jupyter/util/misc";
 import * as misc from "@cocalc/util/misc";
@@ -71,6 +77,11 @@ interface KernelSelectorProps {
   actions: JupyterActions;
   embedded?: boolean;
   onSelectKernel?: (kernelName: string) => void;
+}
+
+interface KernelAgentInstallRequest {
+  requestedKernel?: string;
+  spec?: JupyterKernelInstallSpec;
 }
 
 export function KernelSelector({
@@ -135,21 +146,31 @@ export function KernelSelector({
   const [sendingAgentTarget, setSendingAgentTarget] = useState<string | null>(
     null,
   );
+  const [pendingAgentInstall, setPendingAgentInstall] =
+    useState<KernelAgentInstallRequest | null>(null);
+  const agentSessionSelection = usePersistentAgentSessionSelection({
+    project_id: project_id ?? "",
+    path: actions.path,
+    cacheContext: "jupyter-install-kernel",
+    enabled: pendingAgentInstall != null,
+  });
 
-  function kernelInstallTagSuffix(opts: {
-    requestedKernel?: string;
-    spec?: JupyterKernelInstallSpec;
-  }): string {
+  function kernelAgentTargetKey(opts?: KernelAgentInstallRequest): string {
+    const requested =
+      `${opts?.spec?.requestedKernel ?? opts?.requestedKernel ?? ""}`.trim();
+    return opts?.spec != null
+      ? `popular:${opts.spec.key}`
+      : requested || "generic";
+  }
+
+  function kernelInstallTagSuffix(opts: KernelAgentInstallRequest): string {
     const raw = `${opts.spec?.key ?? opts.requestedKernel ?? "generic"}`
       .trim()
       .toLowerCase();
     return raw.replace(/[^a-z0-9_.-]+/g, "-") || "generic";
   }
 
-  function kernelInstallVisiblePrompt(opts: {
-    requestedKernel?: string;
-    spec?: JupyterKernelInstallSpec;
-  }): string {
+  function kernelInstallVisiblePrompt(opts: KernelAgentInstallRequest): string {
     if (opts.spec != null) {
       return `Install ${opts.spec.label}`;
     }
@@ -159,10 +180,7 @@ export function KernelSelector({
       : "Install a Jupyter kernel";
   }
 
-  function kernelInstallTitle(opts: {
-    requestedKernel?: string;
-    spec?: JupyterKernelInstallSpec;
-  }): string {
+  function kernelInstallTitle(opts: KernelAgentInstallRequest): string {
     if (opts.spec != null) {
       return `Install ${opts.spec.label}`;
     }
@@ -172,18 +190,12 @@ export function KernelSelector({
       : "Install Jupyter kernel";
   }
 
-  async function askAgentToInstallKernel(opts?: {
-    requestedKernel?: string;
-    spec?: JupyterKernelInstallSpec;
-  }) {
+  async function askAgentToInstallKernel(opts?: KernelAgentInstallRequest) {
     if (!project_id || !canAskAgentForKernel) return;
     try {
       const requested =
         `${opts?.spec?.requestedKernel ?? opts?.requestedKernel ?? ""}`.trim();
-      const targetKey =
-        opts?.spec != null
-          ? `popular:${opts.spec.key}`
-          : requested || "generic";
+      const targetKey = kernelAgentTargetKey(opts);
       setSendingAgentTarget(targetKey);
       const prompt = buildJupyterKernelAgentPrompt({
         notebookPath: actions.path,
@@ -205,7 +217,9 @@ export function KernelSelector({
         forceCodex: true,
         openFloating: true,
         waitForAgent: false,
+        agentSession: agentSessionSelection.selectedAgentSession,
       });
+      agentSessionSelection.saveSelectedAgentSession();
       if (!sent) {
         sent = await submitNavigatorPromptToCurrentThread({
           project_id,
@@ -222,6 +236,7 @@ export function KernelSelector({
       if (!sent) {
         throw new Error("Unable to submit request to Agent.");
       }
+      setPendingAgentInstall(null);
     } catch (err) {
       alert_message({
         type: "error",
@@ -229,12 +244,7 @@ export function KernelSelector({
       });
     } finally {
       setSendingAgentTarget((current) =>
-        current ===
-        (opts?.spec != null
-          ? `popular:${opts.spec.key}`
-          : `${opts?.requestedKernel ?? ""}`.trim() || "generic")
-          ? null
-          : current,
+        current === kernelAgentTargetKey(opts) ? null : current,
       );
     }
   }
@@ -246,7 +256,7 @@ export function KernelSelector({
       <Button
         size="small"
         loading={sendingAgentTarget === targetKey}
-        onClick={() => void askAgentToInstallKernel({ requestedKernel })}
+        onClick={() => setPendingAgentInstall({ requestedKernel })}
       >
         Agent
       </Button>
@@ -261,7 +271,7 @@ export function KernelSelector({
       <Button
         size="small"
         loading={sendingAgentTarget === `popular:${spec.key}`}
-        onClick={() => void askAgentToInstallKernel({ spec })}
+        onClick={() => setPendingAgentInstall({ spec })}
       >
         Agent
       </Button>
@@ -820,6 +830,59 @@ export function KernelSelector({
     );
   }
 
+  function renderAgentInstallModal(): Rendered {
+    if (!canAskAgentForKernel) return;
+    const opts = pendingAgentInstall ?? {};
+    const title = kernelInstallTitle(opts);
+    const targetKey = kernelAgentTargetKey(opts);
+    return (
+      <Modal
+        title="Ask Agent to install a kernel"
+        open={pendingAgentInstall != null}
+        onCancel={() => {
+          if (sendingAgentTarget == null) {
+            setPendingAgentInstall(null);
+          }
+        }}
+        destroyOnHidden
+        mask={{ closable: sendingAgentTarget == null }}
+        footer={[
+          <Button
+            key="cancel"
+            disabled={sendingAgentTarget != null}
+            onClick={() => setPendingAgentInstall(null)}
+          >
+            Cancel
+          </Button>,
+          <Button
+            key="submit"
+            type="primary"
+            loading={sendingAgentTarget === targetKey}
+            onClick={() => void askAgentToInstallKernel(opts)}
+          >
+            Ask Agent
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <div>
+            Agent will inspect this project environment, install the requested
+            Jupyter kernel, and register its kernelspec when it can do so
+            safely.
+          </div>
+          <div>
+            Request: <Text strong>{title}</Text>
+          </div>
+          <AgentSessionSelect
+            selection={agentSessionSelection}
+            disabled={sendingAgentTarget != null}
+          />
+          <AgentSessionError selection={agentSessionSelection} />
+        </Space>
+      </Modal>
+    );
+  }
+
   function render_body(): Rendered {
     if (kernels_by_name == null || kernel_selection == null) {
       return (
@@ -897,19 +960,22 @@ Something about the CSS and Typography components are just truly
 a horrific disaster.  This one component though is maybe usable.
 */
     return (
-      <div
-        style={{
-          overflow: "auto",
-          padding: "20px 10px",
-        }}
-        className={"smc-vfill"}
-      >
-        <div style={{ float: "right" }}>
-          {renderCloseButton()}
-          {renderRefreshButton()}
+      <>
+        {renderAgentInstallModal()}
+        <div
+          style={{
+            overflow: "auto",
+            padding: "20px 10px",
+          }}
+          className={"smc-vfill"}
+        >
+          <div style={{ float: "right" }}>
+            {renderCloseButton()}
+            {renderRefreshButton()}
+          </div>
+          {render_select_all()}
         </div>
-        {render_select_all()}
-      </div>
+      </>
     );
   }
 
@@ -919,20 +985,26 @@ a horrific disaster.  This one component though is maybe usable.
   }
   if (embedded) {
     return (
-      <div style={{ padding: "0 4px 12px 4px" }}>
-        {render_head()}
-        {render_body()}
-      </div>
+      <>
+        {renderAgentInstallModal()}
+        <div style={{ padding: "0 4px 12px 4px" }}>
+          {render_head()}
+          {render_body()}
+        </div>
+      </>
     );
   }
   return (
-    <div style={MAIN_STYLE} className={"smc-vfill"}>
-      <Card
-        title={render_head()}
-        style={{ margin: "0 auto", maxWidth: "900px" }}
-      >
-        {render_body()}
-      </Card>
-    </div>
+    <>
+      {renderAgentInstallModal()}
+      <div style={MAIN_STYLE} className={"smc-vfill"}>
+        <Card
+          title={render_head()}
+          style={{ margin: "0 auto", maxWidth: "900px" }}
+        >
+          {render_body()}
+        </Card>
+      </div>
+    </>
   );
 }

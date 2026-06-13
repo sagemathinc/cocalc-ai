@@ -15,10 +15,6 @@ export class PurchasesClient {
     return await this.client.conat_client.hub.purchases.getBalance();
   }
 
-  async getClosingDates(): Promise<{ last: Date; next: Date }> {
-    return await purchasesApi.getClosingDates();
-  }
-
   async isPurchaseAllowed(
     service: Service,
     cost?: MoneyValue,
