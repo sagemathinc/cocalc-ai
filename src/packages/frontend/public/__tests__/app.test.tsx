@@ -984,7 +984,25 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
-    expect(screen.getByText("CoCalc.ai")).not.toBeNull();
+    expect(screen.getAllByText("CoCalc.ai").length).toBeGreaterThan(0);
+    expect(screen.getByText("Route families")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Most visitors only need one first decision: who operates CoCalc for this workspace?",
+      ),
+    ).not.toBeNull();
+    const routeFamilies = screen.getByRole("group", {
+      name: "CoCalc product route families",
+    });
+    for (const label of [
+      "Managed hosted",
+      "Self-operated",
+      "Customer-operated private",
+      "CoCalc Plus or Star",
+      "CoCalc Launchpad or Rocket",
+    ]) {
+      expect(within(routeFamilies).getByText(label)).not.toBeNull();
+    }
     expect(
       screen.getByRole("table", { name: "CoCalc product path chooser" }),
     ).not.toBeNull();
