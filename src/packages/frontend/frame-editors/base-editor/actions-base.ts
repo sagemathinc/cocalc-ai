@@ -2856,7 +2856,7 @@ export class BaseEditorActions<
   }
 
   private formatError = (error?: object | string): string | undefined => {
-    if (error === undefined) {
+    if (error === undefined || error === "") {
       return "";
     }
     if (isTimeoutCallingProject(error)) {
@@ -2896,14 +2896,6 @@ export class BaseEditorActions<
     }
     const e = this.formatError(error);
     if (e) {
-      if (e == "An error occurred.") {
-        console.warn("CoCalc editor showed generic error toast", {
-          path: this.path,
-          project_id: this.project_id,
-          rawError: error,
-          stack: new Error().stack,
-        });
-      }
       alert_message({
         type: "error",
         title: path_split(this.path).tail,
