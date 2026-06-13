@@ -875,6 +875,29 @@ describe("PublicHomeApp", () => {
     expect(
       within(coreWorkflows).queryByRole("link", { name: /Whiteboard/i }),
     ).toBeNull();
+    const workflowContextReview = within(coreWorkflows).getByRole("group", {
+      name: "CoCalc.ai workflow context review",
+    });
+    expect(
+      within(workflowContextReview).getByText("Workflow context review"),
+    ).not.toBeNull();
+    expect(
+      within(workflowContextReview).getByText(
+        "Keep the work connected before choosing another surface.",
+      ),
+    ).not.toBeNull();
+    for (const step of [
+      "Project material",
+      "Work surface",
+      "Output record",
+      "Review point",
+      "Files, notebooks, datasets, and notes define the starting point.",
+      "Notebook, terminal, agent, writing, or teaching opens against that record.",
+      "Results, logs, patches, and comments return to the project.",
+      "History and snapshots make the next change easier to inspect.",
+    ]) {
+      expect(within(workflowContextReview).getByText(step)).not.toBeNull();
+    }
     const supportingWorkflowGuide = within(coreWorkflows).getByRole("group", {
       name: "CoCalc.ai supporting workflow guide",
     });

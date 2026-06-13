@@ -647,6 +647,38 @@ const SUPPORTING_WORKFLOW_ROUTES = [
   label: string;
   title: string;
 }[];
+const WORKFLOW_REVIEW_STEPS = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Files, notebooks, datasets, and notes define the starting point.",
+    icon: "files",
+    label: "Project material",
+  },
+  {
+    accent: COLORS.RUN,
+    detail:
+      "Notebook, terminal, agent, writing, or teaching opens against that record.",
+    icon: "overview",
+    label: "Work surface",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Results, logs, patches, and comments return to the project.",
+    icon: "robot",
+    label: "Output record",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "History and snapshots make the next change easier to inspect.",
+    icon: "history",
+    label: "Review point",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
     return `rgba(255, 255, 255, ${opacity})`;
@@ -2543,6 +2575,84 @@ function WorkflowsSection() {
                 </Flex>
               </a>
             ))}
+          </div>
+          <div
+            aria-label="CoCalc.ai workflow context review"
+            role="group"
+            style={{
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              marginTop: 14,
+              padding: 14,
+            }}
+          >
+            <Flex align="baseline" justify="space-between" wrap gap={8}>
+              <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                Workflow context review
+              </Text>
+              <Text type="secondary">
+                Keep the work connected before choosing another surface.
+              </Text>
+            </Flex>
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 156px), 1fr))",
+                marginTop: 10,
+              }}
+            >
+              {WORKFLOW_REVIEW_STEPS.map((step) => (
+                <div
+                  key={step.label}
+                  style={{
+                    alignItems: "start",
+                    background: alpha(step.accent, 0.05),
+                    border: `1px solid ${alpha(step.accent, 0.22)}`,
+                    borderRadius: PANEL_RADIUS,
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns: "30px minmax(0, 1fr)",
+                    minHeight: 118,
+                    padding: 10,
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      alignItems: "center",
+                      background: alpha(step.accent, 0.08),
+                      border: `1px solid ${alpha(step.accent, 0.22)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: step.accent,
+                      display: "flex",
+                      height: 30,
+                      justifyContent: "center",
+                      marginTop: 1,
+                      width: 30,
+                    }}
+                  >
+                    <Icon name={step.icon} />
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <Text
+                      strong
+                      style={{
+                        color: step.accent,
+                        display: "block",
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {step.label}
+                    </Text>
+                    <Text type="secondary">{step.detail}</Text>
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
           <div
             aria-label="CoCalc.ai supporting workflow guide"
