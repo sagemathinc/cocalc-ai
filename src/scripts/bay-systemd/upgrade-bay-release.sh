@@ -13,6 +13,7 @@ BUILD_HOST_SOFTWARE_BUNDLE=0
 STATIC_ONLY=0
 RESTART_HUB_WORKERS=0
 RESTART_SHARED_SERVICES=0
+RESTART_CLOUDFLARED=0
 API_URL=""
 PUBLIC_URL=""
 BAY_ID="bay-0"
@@ -100,6 +101,8 @@ Options:
   --skip-host-upgrade         only upgrade bay services
   --restart-shared-services   restart router/persist/peer-health during bay
                               deploy; default only rolls hub workers
+  --restart-cloudflared       restart the Cloudflare tunnel after frontdoor
+                              startup to apply tunnel origin/config changes
   --keep-remote-artifacts     leave uploaded /tmp artifacts on the VM
   --cleanup-local-bundle      remove the local bundle after upload
   -h, --help                  show help
@@ -178,6 +181,8 @@ parse_args() {
         RESTART_HUB_WORKERS=1; shift ;;
       --restart-shared-services)
         RESTART_SHARED_SERVICES=1; shift ;;
+      --restart-cloudflared)
+        RESTART_CLOUDFLARED=1; shift ;;
       --api)
         API_URL="$2"; shift 2 ;;
       --public-url)
@@ -469,12 +474,16 @@ done
 EOF
   else
     log "Run migrations, roll hub workers, and run health checks"
-    remote_exec "sudo env RESTART_SHARED_SERVICES=$(q "$RESTART_SHARED_SERVICES") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+    remote_exec "sudo env RESTART_SHARED_SERVICES=$(q "$RESTART_SHARED_SERVICES") RESTART_CLOUDFLARED=$(q "$RESTART_CLOUDFLARED") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
 set -euo pipefail
 source /etc/cocalc/bay-workers.env
 systemctl daemon-reload
 systemctl start cocalc-bay.target
 systemctl start cocalc-bay-frontdoor.service
+if [[ "$RESTART_CLOUDFLARED" -eq 1 ]]; then
+  systemctl restart cocalc-bay-cloudflared.service
+  systemctl is-active --quiet cocalc-bay-cloudflared.service
+fi
 
 credential_dir="$(mktemp -d /run/cocalc-bay-deploy-credentials.XXXXXX)"
 cleanup() {
@@ -743,6 +752,7 @@ bundle=${BUNDLE_PATH}
 host_software_bundle=${HOST_SOFTWARE_BUNDLE_PATH}
 worker_count_override=${WORKER_COUNT}
 restart_shared_services=${RESTART_SHARED_SERVICES}
+restart_cloudflared=${RESTART_CLOUDFLARED}
 report_dir=${REPORT_DIR}
 EOF
 

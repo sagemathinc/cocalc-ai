@@ -64,6 +64,7 @@ type DeployOptions = {
   script?: string;
   restartHubWorkers?: boolean;
   restartSharedServices?: boolean;
+  restartCloudflared?: boolean;
   keepRemoteArtifacts?: boolean;
   cleanupLocalBundle?: boolean;
   allowDirty?: boolean;
@@ -231,6 +232,11 @@ export function registerRocketCommand(
     .option(
       "--restart-shared-services",
       "restart bay router/persist/peer-health during bay deploys",
+      false,
+    )
+    .option(
+      "--restart-cloudflared",
+      "restart the bay Cloudflare tunnel during deploys",
       false,
     )
     .option("--keep-remote-artifacts", "do not delete remote /tmp artifacts")
@@ -495,6 +501,9 @@ function buildDeployPlan({
   }
   if (opts.restartSharedServices) {
     args.push("--restart-shared-services");
+  }
+  if (opts.restartCloudflared) {
+    args.push("--restart-cloudflared");
   }
   if (opts.cleanupLocalBundle) {
     args.push("--cleanup-local-bundle");

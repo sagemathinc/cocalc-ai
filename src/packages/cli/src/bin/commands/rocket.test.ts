@@ -269,6 +269,31 @@ test("rocket deploy can request bay shared service restarts explicitly", async (
   assert.equal(runs[0].args.includes("--skip-host-upgrade"), true);
 });
 
+test("rocket deploy can request a cloudflared restart explicitly", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({ runs });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "deploy",
+    "--scope",
+    "bay",
+    "--build",
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
+    "--restart-cloudflared",
+    "--yes",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("--restart-cloudflared"), true);
+  assert.equal(runs[0].args.includes("--skip-host-upgrade"), true);
+});
+
 test("rocket deploy --static-only keeps compatibility with static deploys", async () => {
   const runs: CapturedRun[] = [];
   const program = createProgram({ runs });
