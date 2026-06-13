@@ -587,7 +587,7 @@ function HeroContextStrip() {
 function HeroWorkspaceSnapshot({ authenticated }: { authenticated: boolean }) {
   return (
     <aside
-      aria-label="CoCalc.ai live workspace snapshot"
+      aria-label="CoCalc.ai project context snapshot"
       className="cocalc-public-home-hero-snapshot"
       style={{
         alignSelf: "center",
@@ -624,7 +624,7 @@ function HeroWorkspaceSnapshot({ authenticated }: { authenticated: boolean }) {
           </span>
           <span>
             <Text strong style={{ color: "inherit", display: "block" }}>
-              Live project snapshot
+              Project context snapshot
             </Text>
             <Text
               style={{

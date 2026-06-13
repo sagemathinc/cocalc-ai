@@ -46,6 +46,10 @@ const BLOCKED_HOMEPAGE_CLAIM_PATTERNS = [
   /research-demo/i,
   /Live CoCalc project preview/i,
   /Live context/i,
+  /live workspace snapshot/i,
+  /live project snapshot/i,
+  /live demo/i,
+  /demo surface/i,
   /without setting up/i,
   /Consistent lab setup/i,
   /benchmark/i,
@@ -215,10 +219,10 @@ describe("PublicHomeApp", () => {
       }),
     ).toBeNull();
     const heroSnapshot = within(hero).getByRole("complementary", {
-      name: "CoCalc.ai live workspace snapshot",
+      name: "CoCalc.ai project context snapshot",
     });
     expect(
-      within(heroSnapshot).getByText("Live project snapshot"),
+      within(heroSnapshot).getByText("Project context snapshot"),
     ).not.toBeNull();
     expect(within(heroSnapshot).getByText("Notebook output")).not.toBeNull();
     expect(within(heroSnapshot).getByText("Terminal state")).not.toBeNull();
