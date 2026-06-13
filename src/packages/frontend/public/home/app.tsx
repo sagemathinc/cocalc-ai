@@ -397,6 +397,185 @@ function OperatingModelSection() {
   );
 }
 
+function ProjectLoopSection() {
+  const layers = [
+    {
+      accent: COLORS.ANTD_LINK_BLUE_DARK,
+      body: "Keep notebooks, scripts, data, LaTeX, Markdown, and environment files in the same project tree.",
+      examples: ["analysis.ipynb", "src/model.py", "paper.tex"],
+      icon: "files",
+      title: "Source stays together",
+    },
+    {
+      accent: PUBLIC_COLORS.success,
+      body: "Run notebooks, terminals, package installs, and services against the same project files.",
+      examples: ["run.term", "service.log", "requirements.txt"],
+      icon: "terminal",
+      title: "Execution shares state",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      body: "Let Codex work where prompts, patches, screenshots, and review notes remain attached.",
+      examples: ["codex thread", "patch review", "screenshots"],
+      icon: "robot",
+      title: "Agents read context",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      body: "Recover with TimeTravel, snapshots, backups, and project history when work needs inspection.",
+      examples: ["TimeTravel", "snapshot", "backup"],
+      icon: "disk-snapshot",
+      title: "Recovery is nearby",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    examples: string[];
+    icon: IconName;
+    title: string;
+  }[];
+  const anchors = [
+    { icon: "project-outlined", label: "One project" },
+    { icon: "terminal", label: "Shared runtime" },
+    { icon: "history", label: "Recoverable state" },
+  ] satisfies { icon: IconName; label: string }[];
+
+  return (
+    <section
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `42px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Row align="middle" gutter={[32, 28]}>
+        <Col lg={8} xs={24}>
+          <Flex vertical gap={16}>
+            <div>
+              <Eyebrow>Inside one project</Eyebrow>
+              <Title level={2} style={{ margin: "8px 0 10px" }}>
+                See the work loop inside a project.
+              </Title>
+              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+                A CoCalc project is the runtime envelope for source files,
+                execution, collaborators, agent work, and recovery. The same
+                project can be understood by artifact: what exists, what ran,
+                what changed, and how to recover it.
+              </Paragraph>
+            </div>
+            <Flex gap={10} wrap>
+              {anchors.map((anchor) => (
+                <span
+                  key={anchor.label}
+                  style={{
+                    alignItems: "center",
+                    background: PUBLIC_COLORS.surfaceMuted,
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: PUBLIC_COLORS.brand,
+                    display: "inline-flex",
+                    gap: 8,
+                    padding: "8px 10px",
+                  }}
+                >
+                  <Icon name={anchor.icon} />
+                  <Text>{anchor.label}</Text>
+                </span>
+              ))}
+            </Flex>
+          </Flex>
+        </Col>
+        <Col lg={16} xs={24}>
+          <div
+            style={{
+              display: "grid",
+              gap: 14,
+              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+            }}
+          >
+            {layers.map((layer, index) => (
+              <div
+                key={layer.title}
+                style={{
+                  background:
+                    index === 0
+                      ? `linear-gradient(145deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 66%)`
+                      : PUBLIC_COLORS.surface,
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  boxShadow: `0 14px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+                  minHeight: 250,
+                  padding: 20,
+                }}
+              >
+                <Flex vertical gap={14} style={{ height: "100%" }}>
+                  <Flex align="center" justify="space-between">
+                    <div
+                      style={{
+                        alignItems: "center",
+                        background: `${layer.accent}14`,
+                        border: `1px solid ${layer.accent}33`,
+                        borderRadius: PANEL_RADIUS,
+                        color: layer.accent,
+                        display: "flex",
+                        fontSize: 24,
+                        height: 52,
+                        justifyContent: "center",
+                        width: 52,
+                      }}
+                    >
+                      <Icon name={layer.icon} />
+                    </div>
+                    <Text
+                      strong
+                      style={{
+                        color: alpha(PUBLIC_COLORS.brandDark, 0.32),
+                        fontFamily: PUBLIC_DISPLAY_FONT_FAMILY,
+                        fontSize: 24,
+                      }}
+                    >
+                      {String(index + 1).padStart(2, "0")}
+                    </Text>
+                  </Flex>
+                  <div>
+                    <Title
+                      level={3}
+                      style={{ fontSize: 21, margin: "0 0 10px" }}
+                    >
+                      {layer.title}
+                    </Title>
+                    <Paragraph style={{ margin: 0 }}>{layer.body}</Paragraph>
+                  </div>
+                  <Flex gap={8} wrap style={{ marginTop: "auto" }}>
+                    {layer.examples.map((example) => (
+                      <Text
+                        code
+                        key={example}
+                        style={{
+                          background: `${layer.accent}10`,
+                          border: `1px solid ${layer.accent}24`,
+                          borderRadius: PANEL_RADIUS,
+                          color: PUBLIC_COLORS.heading,
+                          marginInlineEnd: 0,
+                          padding: "3px 7px",
+                        }}
+                      >
+                        {example}
+                      </Text>
+                    ))}
+                  </Flex>
+                </Flex>
+              </div>
+            ))}
+          </div>
+        </Col>
+      </Row>
+    </section>
+  );
+}
+
 function ProjectStorySection() {
   return (
     <section>
@@ -1049,7 +1228,7 @@ function ProductOptionsSection() {
                       </Text>
                       <Text type="secondary">{option.operator}</Text>
                     </span>
-                    <Text style={{ gridColumn: "2 / 4" }}>
+                    <Text style={{ gridColumn: "2 / 4", gridRow: 2 }}>
                       {option.bestFor}
                     </Text>
                     <Icon
@@ -1059,6 +1238,9 @@ function ProductOptionsSection() {
                           index === 2
                             ? PUBLIC_COLORS.warning
                             : PUBLIC_COLORS.brand,
+                        gridColumn: 3,
+                        gridRow: 1,
+                        justifySelf: "end",
                       }}
                     />
                   </a>
@@ -1503,6 +1685,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <Hero config={config} />
       <OperatingModelSection />
+      <ProjectLoopSection />
       <ProjectStorySection />
       <ProjectFlowSection />
       <WorkflowsSection />

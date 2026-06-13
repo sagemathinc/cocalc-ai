@@ -64,6 +64,11 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
+        name: "See the work loop inside a project.",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
         name: "From first file to reviewed result.",
       }),
     ).not.toBeNull();
