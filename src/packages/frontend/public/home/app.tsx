@@ -535,6 +535,41 @@ const LANDING_DECISION_FLOW = [
   label: string;
   title: string;
 }[];
+const ROUTE_CONFIRMATION_CHECKS = [
+  {
+    accent: COLORS.BLUE_D,
+    body: "Files, output, and review history need a project before workflow details matter.",
+    href: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? appPath("projects") : appPath("auth/sign-up"),
+    icon: "project-outlined",
+    label: "I need a place for work",
+    next: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? "Open projects" : "Create a workspace",
+  },
+  {
+    accent: COLORS.RUN,
+    body: "Choose notebooks, terminals, AI, teaching, writing, or comparison pages by the work surface.",
+    href: () => appPath("features"),
+    icon: "overview",
+    label: "I need the right surface",
+    next: () => "Browse features",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Compare hosted service, local runtime, and customer-operated paths before planning rollout.",
+    href: () => appPath("products"),
+    icon: "servers",
+    label: "I need an operating path",
+    next: () => "Compare products",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: (opts: { authenticated: boolean }) => string;
+  icon: IconName;
+  label: string;
+  next: (opts: { authenticated: boolean }) => string;
+}[];
 function alpha(hexColor: string, opacity: number): string {
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
     return `rgba(255, 255, 255, ${opacity})`;
@@ -1684,6 +1719,97 @@ function LandingRouteMapSection({ authenticated }: { authenticated: boolean }) {
               </span>
             </a>
           ))}
+        </div>
+        <div
+          aria-label="CoCalc.ai route confirmation checks"
+          role="group"
+          style={{
+            background: PUBLIC_COLORS.surfaceMuted,
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: PANEL_RADIUS,
+            flex: "1 1 100%",
+            padding: 14,
+          }}
+        >
+          <Flex align="baseline" justify="space-between" wrap gap={8}>
+            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+              Confirm the route
+            </Text>
+            <Text type="secondary">
+              Match the next question before moving deeper.
+            </Text>
+          </Flex>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+              marginTop: 10,
+            }}
+          >
+            {ROUTE_CONFIRMATION_CHECKS.map((check) => (
+              <a
+                href={check.href({ authenticated })}
+                key={check.label}
+                style={{
+                  alignItems: "start",
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${alpha(check.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: "inherit",
+                  display: "grid",
+                  gap: 10,
+                  gridTemplateColumns: "34px minmax(0, 1fr) 14px",
+                  minHeight: 96,
+                  padding: 12,
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: alpha(check.accent, 0.08),
+                    border: `1px solid ${alpha(check.accent, 0.2)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: check.accent,
+                    display: "flex",
+                    fontSize: 17,
+                    height: 34,
+                    justifyContent: "center",
+                    width: 34,
+                  }}
+                >
+                  <Icon name={check.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text strong style={{ display: "block" }}>
+                    {check.label}
+                  </Text>
+                  <Text type="secondary">{check.body}</Text>
+                  <Text
+                    strong
+                    style={{
+                      color: check.accent,
+                      display: "block",
+                      marginTop: 8,
+                    }}
+                  >
+                    {check.next({ authenticated })}
+                  </Text>
+                </span>
+                <Icon
+                  name="arrow-right"
+                  style={{
+                    alignSelf: "center",
+                    color: check.accent,
+                    fontSize: 12,
+                  }}
+                />
+              </a>
+            ))}
+          </div>
         </div>
         <div
           aria-label="CoCalc.ai primary landing routes"

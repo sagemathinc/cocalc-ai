@@ -299,6 +299,45 @@ describe("PublicHomeApp", () => {
         "Create or open the project that will hold files, output, terminals, and notes.",
       ),
     ).not.toBeNull();
+    const routeConfirmationChecks = within(routeMap).getByRole("group", {
+      name: "CoCalc.ai route confirmation checks",
+    });
+    expectLinkHrefs(routeConfirmationChecks, [
+      "/auth/sign-up",
+      "/features",
+      "/products",
+    ]);
+    expect(
+      within(routeConfirmationChecks).getByText("Confirm the route"),
+    ).not.toBeNull();
+    expect(
+      within(routeConfirmationChecks).getByText(
+        "Match the next question before moving deeper.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(routeConfirmationChecks).getByText("I need a place for work"),
+    ).not.toBeNull();
+    expect(
+      within(routeConfirmationChecks).getByText("I need the right surface"),
+    ).not.toBeNull();
+    expect(
+      within(routeConfirmationChecks).getByText("I need an operating path"),
+    ).not.toBeNull();
+    expect(
+      within(routeConfirmationChecks).getByText("Create a workspace"),
+    ).not.toBeNull();
+    expect(
+      within(routeConfirmationChecks).getByText("Browse features"),
+    ).not.toBeNull();
+    expect(
+      within(routeConfirmationChecks).getByText("Compare products"),
+    ).not.toBeNull();
+    expect(
+      within(routeConfirmationChecks).getByText(
+        "Files, output, and review history need a project before workflow details matter.",
+      ),
+    ).not.toBeNull();
     const primaryLandingRoutes = within(routeMap).getByRole("group", {
       name: "CoCalc.ai primary landing routes",
     });
@@ -1129,6 +1168,12 @@ describe("PublicHomeApp", () => {
     expectLinkHrefs(
       screen.getByRole("group", {
         name: "CoCalc.ai first decision flow",
+      }),
+      ["/projects", "/features", "/products"],
+    );
+    expectLinkHrefs(
+      screen.getByRole("group", {
+        name: "CoCalc.ai route confirmation checks",
       }),
       ["/projects", "/features", "/products"],
     );
