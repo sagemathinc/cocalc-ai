@@ -249,7 +249,7 @@ export function buildDefaultDraft(
       name: DEFAULT_NAME,
       provider: firstEnabledProvider(context),
       start_after_create: true,
-      region_preference: "balanced",
+      region_preference: "cheapest",
       price_display: "hourly",
       pricing_model: "on_demand",
       interruption_restore_policy: defaultRestorePolicy("on_demand"),
@@ -280,7 +280,7 @@ export function buildSimilarDraft(
       name: similarName(host.name),
       provider,
       start_after_create: true,
-      region_preference: "balanced",
+      region_preference: "cheapest",
       price_display: "hourly",
       funding_mode: host.funding_mode,
       cpu: readPositiveInteger(host.machine?.metadata?.cpu),
@@ -338,10 +338,11 @@ export function normalizeDraft(
     funding_mode: input.funding_mode,
     start_after_create: input.start_after_create !== false,
     region_preference:
+      input.region_preference === "balanced" ||
       input.region_preference === "closest" ||
       input.region_preference === "cheapest"
         ? input.region_preference
-        : "balanced",
+        : "cheapest",
     price_display: input.price_display === "monthly" ? "monthly" : "hourly",
     pricing_model: input.pricing_model === "spot" ? "spot" : "on_demand",
     interruption_restore_policy:

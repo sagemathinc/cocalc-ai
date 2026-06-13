@@ -44,7 +44,9 @@ function TestHostCreateForm() {
               },
             ],
           },
-          labels: {},
+          labels: {
+            region: "Google Region",
+          },
           tooltips: {},
         },
         storage: {
@@ -119,11 +121,13 @@ describe("HostCreateForm", () => {
     expect(html).toContain("Disk type");
   });
 
-  it("shows Cloudflare placement context and GCP main disk auto-grow at create time", () => {
+  it("shows compact region context and GCP main disk auto-grow at create time", () => {
     const html = renderToStaticMarkup(<TestHostCreateForm />);
 
-    expect(html).toContain("Cloudflare location");
-    expect(html).toContain("Washington");
+    expect(html).not.toContain("Cloudflare location");
+    expect(html).toContain("Google Region");
+    expect(html).toContain("your region:");
+    expect(html).toContain("Western North America");
     expect(html).toContain("Enable guarded auto-grow");
   });
 

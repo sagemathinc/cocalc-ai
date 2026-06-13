@@ -200,7 +200,8 @@ export const Page: React.FC = () => {
         label_class={NAV_CLASS}
         icon={"book"}
         active_top_tab={active_top_tab}
-        hide_label={!show_label}
+        hide_label={true}
+        ariaLabel="Docs"
         tooltip="Search CoCalc documentation"
       />
     );
