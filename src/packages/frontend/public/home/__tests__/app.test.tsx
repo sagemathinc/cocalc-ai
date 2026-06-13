@@ -632,6 +632,11 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(operatingBoundaryShortcuts)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/", "/products/cocalc-plus", "/products"]);
+    expect(
+      within(operatingBoundaryShortcuts)
         .getByRole("link", { name: /Managed CoCalc\.ai/i })
         .getAttribute("href"),
     ).toBe("/");
@@ -653,25 +658,38 @@ describe("PublicHomeApp", () => {
     const productOptions = screen.getByRole("region", {
       name: "CoCalc.ai product options",
     });
+    const deploymentPathCards = within(productOptions).getByRole("group", {
+      name: "CoCalc.ai deployment path cards",
+    });
     expect(
-      within(productOptions)
+      within(deploymentPathCards)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "/",
+      "/products/cocalc-plus",
+      "/products/cocalc-launchpad",
+      "/products/cocalc-rocket",
+    ]);
+    expect(
+      within(deploymentPathCards)
         .getByRole("link", { name: /CoCalc\.ai: Hosted service/i })
         .getAttribute("href"),
     ).toBe("/");
     expect(
-      within(productOptions)
+      within(deploymentPathCards)
         .getByRole("link", { name: /CoCalc Plus: Local runtime/i })
         .getAttribute("href"),
     ).toBe("/products/cocalc-plus");
     expect(
-      within(productOptions)
+      within(deploymentPathCards)
         .getByRole("link", {
           name: /CoCalc Launchpad: Private deployment/i,
         })
         .getAttribute("href"),
     ).toBe("/products/cocalc-launchpad");
     expect(
-      within(productOptions)
+      within(deploymentPathCards)
         .getByRole("link", { name: /CoCalc Rocket: Private cloud/i })
         .getAttribute("href"),
     ).toBe("/products/cocalc-rocket");
@@ -754,6 +772,42 @@ describe("PublicHomeApp", () => {
     const finalCallsToAction = screen.getByRole("region", {
       name: "CoCalc.ai final calls to action",
     });
+    const finalDeploymentPathActions = within(finalCallsToAction).getByRole(
+      "group",
+      {
+        name: "CoCalc.ai final deployment path actions",
+      },
+    );
+    expect(
+      within(finalDeploymentPathActions)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "/auth/sign-up",
+      "https://software.cocalc.ai/software/cocalc-plus/index.html",
+      "/products/cocalc-launchpad",
+      "/products/cocalc-rocket",
+    ]);
+    expect(
+      within(finalDeploymentPathActions).getByRole("link", {
+        name: "Start on CoCalc.ai",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(finalDeploymentPathActions).getByRole("link", {
+        name: "Install CoCalc Plus",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(finalDeploymentPathActions).getByRole("link", {
+        name: "Review Launchpad",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(finalDeploymentPathActions).getByRole("link", {
+        name: "Plan Rocket",
+      }),
+    ).not.toBeNull();
     expect(
       within(finalCallsToAction).getByText("Start where CoCalc should run."),
     ).not.toBeNull();

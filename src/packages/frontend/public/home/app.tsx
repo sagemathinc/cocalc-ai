@@ -2220,6 +2220,8 @@ function ProductOptionsSection() {
                 ))}
               </div>
               <div
+                aria-label="CoCalc.ai deployment path cards"
+                role="group"
                 style={{
                   display: "grid",
                   gap: 8,
@@ -2705,6 +2707,8 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
           </Col>
         </Row>
         <div
+          aria-label="CoCalc.ai final deployment path actions"
+          role="group"
           style={{
             display: "grid",
             gap: 12,
