@@ -81,6 +81,10 @@ const HOME_PAGE_CSS = `
     .cocalc-public-home-project-comparison-arrow {
       justify-self: start !important;
     }
+
+    .cocalc-public-home-route-handoff {
+      grid-template-columns: 1fr !important;
+    }
   }
 `;
 const HERO_RUN_MODES = [
@@ -1585,6 +1589,7 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
       </div>
       <div
         aria-label="CoCalc.ai route handoff summary"
+        className="cocalc-public-home-route-handoff"
         role="group"
         style={{
           background: PUBLIC_COLORS.surface,
@@ -1908,7 +1913,12 @@ function WorkflowsSection() {
             stay close when the workflow expands.
           </Paragraph>
         </div>
-        <Button href={appPath("features")}>Explore all features</Button>
+        <Button
+          href={appPath("features")}
+          icon={<DecorativeButtonIcon name="overview" />}
+        >
+          Explore all features
+        </Button>
       </Flex>
       <Row gutter={[18, 18]} style={{ marginTop: 26 }}>
         <Col lg={8} xs={24}>
@@ -2102,7 +2112,12 @@ function AudienceSection() {
             stack of disconnected tools.
           </Paragraph>
         </div>
-        <Button href={appPath("features/compare")}>Compare CoCalc</Button>
+        <Button
+          href={appPath("features/compare")}
+          icon={<DecorativeButtonIcon name="overview" />}
+        >
+          Compare CoCalc
+        </Button>
       </Flex>
       <div
         style={{
@@ -2238,10 +2253,17 @@ function ProductOptionsSection() {
               stays the same.
             </Paragraph>
             <Flex gap={12} wrap>
-              <Button href={appPath("products")} type="primary">
+              <Button
+                href={appPath("products")}
+                icon={<DecorativeButtonIcon name="servers" />}
+                type="primary"
+              >
                 Compare deployment options
               </Button>
-              <Button href={appPath("features")}>
+              <Button
+                href={appPath("features")}
+                icon={<DecorativeButtonIcon name="overview" />}
+              >
                 Explore shared features
               </Button>
             </Flex>
@@ -2384,6 +2406,7 @@ function ProductOptionsSection() {
                     "Site license",
                     "I want to discuss a CoCalc site license.",
                   )}
+                  icon={<DecorativeButtonIcon name="bank" />}
                 >
                   Discuss site licensing
                 </Button>
@@ -2518,7 +2541,12 @@ function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
         <Title level={2} style={{ margin: 0 }}>
           Recent News
         </Title>
-        <Button href={appPath("news")}>All news</Button>
+        <Button
+          href={appPath("news")}
+          icon={<DecorativeButtonIcon name="book" />}
+        >
+          All news
+        </Button>
       </Flex>
       <PublicGrid columns={3}>
         {news.map((item) => (
@@ -2647,6 +2675,7 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
               </Flex>
               <Button
                 href={path.href}
+                icon={<DecorativeButtonIcon name={path.icon} />}
                 rel={path.href.startsWith("http") ? "noreferrer" : undefined}
                 target={path.href.startsWith("http") ? "_blank" : undefined}
                 type={index === 0 ? "primary" : "default"}
@@ -2663,7 +2692,10 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
             self-service entry points to the product chooser.
           </Text>
           <Flex gap={10} wrap>
-            <Button href={appPath("products")}>
+            <Button
+              href={appPath("products")}
+              icon={<DecorativeButtonIcon name="servers" />}
+            >
               Compare deployment options
             </Button>
             <Button
@@ -2671,6 +2703,7 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
                 "Site license",
                 "I want to discuss a CoCalc site license.",
               )}
+              icon={<DecorativeButtonIcon name="bank" />}
             >
               Discuss site licensing
             </Button>
