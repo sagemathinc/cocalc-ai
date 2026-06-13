@@ -751,6 +751,9 @@ EOF
   if [[ -n "$PUBLIC_URL" ]]; then
     set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_PUBLIC_URL" "$PUBLIC_URL"
   fi
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_BUNDLE_DIR" "/opt/cocalc/bay/current/runtime/control-plane"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_API_V2_ROOT" "/opt/cocalc/bay/current/runtime/control-plane/http-api-dist/pages/api/v2"
+  set_env_var "${ENV_DIR}/bay.env" "COCALC_API_V2_ROUTES_BUNDLE" "/opt/cocalc/bay/current/runtime/control-plane/api-v2-routes/index.js"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_HOST" "127.0.0.1"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_PORT" "9400"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_FRONTDOOR_HEALTH_PATH" "/_cocalc/frontdoor/healthz"
