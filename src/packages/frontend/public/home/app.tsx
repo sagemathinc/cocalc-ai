@@ -593,165 +593,207 @@ function Hero({ config }: { config?: HomeConfig }) {
     >
       <div
         style={{
-          alignItems: "center",
-          display: "grid",
-          gap: 32,
-          gridTemplateColumns:
-            "repeat(auto-fit, minmax(min(100%, 380px), 1fr))",
+          maxWidth: 760,
           width: "100%",
         }}
       >
-        <div style={{ maxWidth: 720 }}>
-          <Flex vertical gap={22}>
-            <Eyebrow>
-              <span style={{ color: PUBLIC_COLORS.accent }}>
-                AI-native technical workspace
-              </span>
-            </Eyebrow>
-            <div>
-              <Title
-                className="cocalc-public-home-hero-title"
-                level={1}
-                style={{
-                  color: PUBLIC_COLORS.surface,
-                  fontSize: 58,
-                  letterSpacing: 0,
-                  lineHeight: 1.02,
-                  margin: 0,
-                }}
-              >
-                CoCalc.ai
-              </Title>
-              <Paragraph
-                className="cocalc-public-home-hero-copy"
-                style={{
-                  color: alpha(PUBLIC_COLORS.surface, 0.9),
-                  fontSize: 21,
-                  lineHeight: 1.45,
-                  margin: "16px 0 0",
-                  maxWidth: 640,
-                }}
-              >
-                A technical workspace where the notebook, shell, source tree,
-                chat, and Codex thread stay in the same recoverable project.
-              </Paragraph>
-            </div>
-            <div
-              aria-label="CoCalc.ai project outcomes"
-              role="group"
+        <Flex vertical gap={22}>
+          <Eyebrow>
+            <span style={{ color: PUBLIC_COLORS.accent }}>
+              AI-native technical workspace
+            </span>
+          </Eyebrow>
+          <div>
+            <Title
+              className="cocalc-public-home-hero-title"
+              level={1}
               style={{
-                display: "grid",
-                gap: 10,
-                gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-                maxWidth: 700,
+                color: PUBLIC_COLORS.surface,
+                fontSize: 58,
+                letterSpacing: 0,
+                lineHeight: 1.02,
+                margin: 0,
               }}
             >
-              {HERO_OUTCOMES.map((item) => (
-                <div
-                  key={item.title}
+              CoCalc.ai
+            </Title>
+            <Paragraph
+              className="cocalc-public-home-hero-copy"
+              style={{
+                color: alpha(PUBLIC_COLORS.surface, 0.9),
+                fontSize: 21,
+                lineHeight: 1.45,
+                margin: "16px 0 0",
+                maxWidth: 640,
+              }}
+            >
+              A technical workspace where the notebook, shell, source tree,
+              chat, and Codex thread stay in the same recoverable project.
+            </Paragraph>
+          </div>
+          <div
+            aria-label="CoCalc.ai project outcomes"
+            role="group"
+            style={{
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+              maxWidth: 700,
+            }}
+          >
+            {HERO_OUTCOMES.map((item) => (
+              <div
+                key={item.title}
+                style={{
+                  alignItems: "start",
+                  background: alpha(PUBLIC_COLORS.brandDark, 0.34),
+                  border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.3)}`,
+                  borderRadius: PANEL_RADIUS,
+                  display: "grid",
+                  gap: 9,
+                  gridTemplateColumns: "28px minmax(0, 1fr)",
+                  minHeight: 102,
+                  padding: "12px 13px",
+                }}
+              >
+                <span
+                  aria-hidden="true"
                   style={{
-                    alignItems: "start",
-                    background: alpha(PUBLIC_COLORS.brandDark, 0.34),
-                    border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.3)}`,
+                    alignItems: "center",
+                    background: alpha(PUBLIC_COLORS.accent, 0.14),
+                    border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.28)}`,
                     borderRadius: PANEL_RADIUS,
-                    display: "grid",
-                    gap: 9,
-                    gridTemplateColumns: "28px minmax(0, 1fr)",
-                    minHeight: 102,
-                    padding: "12px 13px",
+                    color: PUBLIC_COLORS.accent,
+                    display: "flex",
+                    height: 28,
+                    justifyContent: "center",
+                    marginTop: 1,
+                    width: 28,
                   }}
                 >
-                  <span
-                    aria-hidden="true"
+                  <Icon name={item.icon} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Text
+                    strong
                     style={{
-                      alignItems: "center",
-                      background: alpha(PUBLIC_COLORS.accent, 0.14),
-                      border: `1px solid ${alpha(PUBLIC_COLORS.accent, 0.28)}`,
-                      borderRadius: PANEL_RADIUS,
-                      color: PUBLIC_COLORS.accent,
-                      display: "flex",
-                      height: 28,
-                      justifyContent: "center",
-                      marginTop: 1,
-                      width: 28,
+                      color: PUBLIC_COLORS.surface,
+                      display: "block",
                     }}
                   >
-                    <Icon name={item.icon} />
-                  </span>
-                  <span style={{ minWidth: 0 }}>
-                    <Text
-                      strong
-                      style={{
-                        color: PUBLIC_COLORS.surface,
-                        display: "block",
-                      }}
-                    >
-                      {item.title}
-                    </Text>
-                    <Text
-                      style={{
-                        color: alpha(PUBLIC_COLORS.surface, 0.76),
-                        display: "block",
-                      }}
-                    >
-                      {item.body}
-                    </Text>
-                  </span>
-                </div>
-              ))}
-            </div>
-            <Flex
-              className="cocalc-public-home-hero-actions"
-              gap={12}
-              style={{ maxWidth: 740 }}
-              wrap
-            >
-              {authenticated ? (
-                <>
-                  <Button
-                    href={appPath("projects")}
-                    icon={<DecorativeButtonIcon name="project-outlined" />}
-                    size="large"
-                    type="primary"
+                    {item.title}
+                  </Text>
+                  <Text
+                    style={{
+                      color: alpha(PUBLIC_COLORS.surface, 0.76),
+                      display: "block",
+                    }}
                   >
-                    Open projects
-                  </Button>
-                  <Button
-                    ghost
-                    href={appPath("features")}
-                    icon={<DecorativeButtonIcon name="overview" />}
-                    size="large"
-                  >
-                    Explore features
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    href={appPath("auth/sign-up")}
-                    icon={<DecorativeButtonIcon name="rocket" />}
-                    size="large"
-                    type="primary"
-                  >
-                    Start on CoCalc.ai
-                  </Button>
-                  <Button
-                    ghost
-                    href={appPath("products")}
-                    icon={<DecorativeButtonIcon name="project-outlined" />}
-                    size="large"
-                  >
-                    Compare deployment options
-                  </Button>
-                </>
-              )}
-            </Flex>
+                    {item.body}
+                  </Text>
+                </span>
+              </div>
+            ))}
+          </div>
+          <Flex
+            className="cocalc-public-home-hero-actions"
+            gap={12}
+            style={{ maxWidth: 740 }}
+            wrap
+          >
+            {authenticated ? (
+              <>
+                <Button
+                  href={appPath("projects")}
+                  icon={<DecorativeButtonIcon name="project-outlined" />}
+                  size="large"
+                  type="primary"
+                >
+                  Open projects
+                </Button>
+                <Button
+                  ghost
+                  href={appPath("features")}
+                  icon={<DecorativeButtonIcon name="overview" />}
+                  size="large"
+                >
+                  Explore features
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  href={appPath("auth/sign-up")}
+                  icon={<DecorativeButtonIcon name="rocket" />}
+                  size="large"
+                  type="primary"
+                >
+                  Start on CoCalc.ai
+                </Button>
+                <Button
+                  ghost
+                  href={appPath("products")}
+                  icon={<DecorativeButtonIcon name="project-outlined" />}
+                  size="large"
+                >
+                  Compare deployment options
+                </Button>
+              </>
+            )}
           </Flex>
-        </div>
-        <div style={{ justifySelf: "end", maxWidth: 540, width: "100%" }}>
-          <WorkspacePreview authenticated={authenticated} />
-        </div>
+        </Flex>
       </div>
+    </section>
+  );
+}
+
+function WorkspaceContextSection({
+  authenticated,
+}: {
+  authenticated: boolean;
+}) {
+  return (
+    <section
+      aria-label="CoCalc.ai workspace preview"
+      style={{
+        background: PUBLIC_COLORS.brandDark,
+        borderBottom: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.14)}`,
+        borderTop: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.14)}`,
+        color: PUBLIC_COLORS.surface,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `34px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Row align="middle" gutter={[28, 28]}>
+        <Col lg={9} xs={24}>
+          <Flex vertical gap={12}>
+            <Eyebrow>
+              <span style={{ color: PUBLIC_COLORS.accent }}>
+                Project workspace
+              </span>
+            </Eyebrow>
+            <Title
+              level={2}
+              style={{ color: PUBLIC_COLORS.surface, margin: 0 }}
+            >
+              The project is the unit of work.
+            </Title>
+            <Paragraph
+              style={{
+                color: alpha(PUBLIC_COLORS.surface, 0.78),
+                fontSize: 18,
+                margin: 0,
+              }}
+            >
+              Files, terminals, agent turns, and review history stay close
+              enough that the next person can continue from the same record.
+            </Paragraph>
+          </Flex>
+        </Col>
+        <Col lg={15} xs={24}>
+          <WorkspacePreview authenticated={authenticated} />
+        </Col>
+      </Row>
     </section>
   );
 }
@@ -1476,6 +1518,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
+      <WorkspaceContextSection authenticated={!!config?.is_authenticated} />
       <WorkflowsSection />
       <AudienceSection />
       <ProductOptionsSection />

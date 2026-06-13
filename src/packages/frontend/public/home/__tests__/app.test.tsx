@@ -170,7 +170,20 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectOutcomes).getByText("A lasting record"),
     ).not.toBeNull();
-    const projectPreview = screen.getByRole("group", {
+    expect(
+      within(hero).queryByRole("group", {
+        name: "CoCalc project context preview",
+      }),
+    ).toBeNull();
+    const workspacePreview = screen.getByRole("region", {
+      name: "CoCalc.ai workspace preview",
+    });
+    expect(
+      within(workspacePreview).getByRole("heading", {
+        name: "The project is the unit of work.",
+      }),
+    ).not.toBeNull();
+    const projectPreview = within(workspacePreview).getByRole("group", {
       name: "CoCalc project context preview",
     });
     expect(
