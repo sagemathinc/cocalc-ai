@@ -78,9 +78,11 @@ sudo ./bay-bootstrap-release.sh \
   --start
 ```
 
-Rocket currently defaults to one browser-facing hub worker. Do not raise
-`--worker-count` for production until the frontdoor and hub Conat fabric have
-sticky/shared routing for browser-session and project-host auth traffic.
+Rocket defaults to one browser-facing hub worker. Production bays can raise
+`--worker-count` after deploying the sticky frontdoor: browsers are pinned to
+one healthy worker by an affinity cookie, and drained or unhealthy workers are
+replaced automatically. This is the intended near-term scale-up path for a
+single Rocket bay; a shared hub Conat fabric is still the longer-term design.
 
 For an existing bay, prefer the higher-level upgrade wrapper from the repo
 checkout. It stages the release, restarts the bay, runs health checks, upgrades
