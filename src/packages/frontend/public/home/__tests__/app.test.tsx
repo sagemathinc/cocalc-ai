@@ -830,125 +830,6 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectSurfaceLinks).getByText("Snapshots and TimeTravel"),
     ).not.toBeNull();
-    const collaborationReview = screen.getByRole("region", {
-      name: "CoCalc.ai collaboration review path",
-    });
-    expect(
-      within(collaborationReview).getByRole("heading", {
-        name: "Review shared work before the next step.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(collaborationReview)
-        .getByRole("link", { name: "Compare review tools" })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
-    const collaborationReviewSteps = within(collaborationReview).getByRole(
-      "group",
-      {
-        name: "CoCalc.ai collaboration review steps",
-      },
-    );
-    expectLinkHrefs(collaborationReviewSteps, [
-      "/features/teaching",
-      "/features/ai",
-      "/features/compare",
-    ]);
-    expect(
-      within(collaborationReviewSteps)
-        .getByRole("link", { name: /Collaborate in the project/i })
-        .getAttribute("href"),
-    ).toBe("/features/teaching");
-    expect(
-      within(collaborationReviewSteps)
-        .getByRole("link", { name: /Ask with visible context/i })
-        .getAttribute("href"),
-    ).toBe("/features/ai");
-    expect(
-      within(collaborationReviewSteps)
-        .getByRole("link", { name: /Compare before moving on/i })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
-    expect(
-      within(collaborationReviewSteps).getByText("Shared workspace"),
-    ).not.toBeNull();
-    expect(
-      within(collaborationReviewSteps).getByText("Prompts and patches"),
-    ).not.toBeNull();
-    expect(
-      within(collaborationReviewSteps).getByText("History and diffs"),
-    ).not.toBeNull();
-    const workInputRoutes = screen.getByRole("region", {
-      name: "CoCalc.ai work input routes",
-    });
-    expect(
-      within(workInputRoutes).getByRole("heading", {
-        name: "Open the work where it already belongs.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(workInputRoutes)
-        .getByRole("link", { name: "Browse feature routes" })
-        .getAttribute("href"),
-    ).toBe("/features");
-    const materialRouteCards = within(workInputRoutes).getByRole("group", {
-      name: "CoCalc.ai material route cards",
-    });
-    expectLinkHrefs(materialRouteCards, [
-      "/features/jupyter-notebook",
-      "/features/terminal",
-      "/features/python",
-      "/features/latex-editor",
-    ]);
-    expect(
-      within(materialRouteCards).getByText("Notebook or data table"),
-    ).not.toBeNull();
-    expect(
-      within(materialRouteCards).getByText("Command or service"),
-    ).not.toBeNull();
-    expect(
-      within(materialRouteCards).getByText("Script or source tree"),
-    ).not.toBeNull();
-    expect(
-      within(materialRouteCards).getByText("Paper or handout"),
-    ).not.toBeNull();
-    expect(
-      within(materialRouteCards).getByText("Review Python support"),
-    ).not.toBeNull();
-    const notebookRouteContext = within(materialRouteCards).getByRole("group", {
-      name: "Notebook or data table carried context",
-    });
-    expect(
-      within(notebookRouteContext).getByText("Notebook output"),
-    ).not.toBeNull();
-    expect(within(notebookRouteContext).getByText("Data files")).not.toBeNull();
-    expect(
-      within(notebookRouteContext).getByText("Environment notes"),
-    ).not.toBeNull();
-    const terminalRouteContext = within(materialRouteCards).getByRole("group", {
-      name: "Command or service carried context",
-    });
-    expect(
-      within(terminalRouteContext).getByText("Shell history"),
-    ).not.toBeNull();
-    expect(
-      within(terminalRouteContext).getByText("Package state"),
-    ).not.toBeNull();
-    expect(
-      within(terminalRouteContext).getByText("Service logs"),
-    ).not.toBeNull();
-    const pythonRouteContext = within(materialRouteCards).getByRole("group", {
-      name: "Script or source tree carried context",
-    });
-    expect(within(pythonRouteContext).getByText("Source files")).not.toBeNull();
-    expect(within(pythonRouteContext).getByText("Plots")).not.toBeNull();
-    expect(within(pythonRouteContext).getByText("Test output")).not.toBeNull();
-    const latexRouteContext = within(materialRouteCards).getByRole("group", {
-      name: "Paper or handout carried context",
-    });
-    expect(within(latexRouteContext).getByText("Source text")).not.toBeNull();
-    expect(within(latexRouteContext).getByText("PDF output")).not.toBeNull();
-    expect(within(latexRouteContext).getByText("Review notes")).not.toBeNull();
     const removedDuplicateRegions = [
       "CoCalc.ai project handoff path",
       "CoCalc.ai intent router",
@@ -964,6 +845,8 @@ describe("PublicHomeApp", () => {
       "Homepage boundary and detail routes",
       "Why CoCalc keeps work in projects",
       "CoCalc.ai next action routes",
+      "CoCalc.ai collaboration review path",
+      "CoCalc.ai work input routes",
     ];
     for (const name of removedDuplicateRegions) {
       expect(screen.queryByRole("region", { name })).toBeNull();
@@ -990,7 +873,26 @@ describe("PublicHomeApp", () => {
     expect(
       screen.queryByRole("group", { name: "CoCalc.ai next-route notes" }),
     ).toBeNull();
+    expect(
+      screen.queryByRole("group", {
+        name: "CoCalc.ai collaboration review steps",
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("group", { name: "CoCalc.ai material route cards" }),
+    ).toBeNull();
     expect(screen.queryByText("After the first click")).toBeNull();
+    expect(
+      screen.queryByText("Review shared work before the next step."),
+    ).toBeNull();
+    expect(
+      screen.queryByText("Open the work where it already belongs."),
+    ).toBeNull();
+    expect(screen.queryByText("Browse feature routes")).toBeNull();
+    expect(screen.queryByText("Notebook or data table")).toBeNull();
+    expect(screen.queryByText("Command or service")).toBeNull();
+    expect(screen.queryByText("Script or source tree")).toBeNull();
+    expect(screen.queryByText("Paper or handout")).toBeNull();
     const coreWorkflows = screen.getByRole("region", {
       name: "CoCalc.ai core workflows",
     });
@@ -1050,8 +952,6 @@ describe("PublicHomeApp", () => {
       "CoCalc.ai workspace scope",
       "CoCalc.ai workspace continuity map",
       "CoCalc.ai workspace preview",
-      "CoCalc.ai collaboration review path",
-      "CoCalc.ai work input routes",
       "CoCalc.ai core workflows",
       "CoCalc.ai audience paths",
       "CoCalc.ai product options",
