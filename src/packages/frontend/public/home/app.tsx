@@ -172,6 +172,47 @@ const FIRST_STEP_CHECKPOINTS = [
   path: string;
   title: string;
 }[];
+const STARTING_SIGNAL_LINKS = [
+  {
+    accent: COLORS.RUN,
+    body: "Open the notebook workflow when the next decision starts from output, kernels, or nearby data files.",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    route: "Jupyter notebooks",
+    signal: "Notebook output",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Open the terminal workflow when commands, services, packages, or logs are the active artifact.",
+    href: "features/terminal",
+    icon: "terminal",
+    route: "Linux terminal",
+    signal: "Terminal trace",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Open the AI agents page when a source change, prompt, or review question needs project context.",
+    href: "features/ai",
+    icon: "robot",
+    route: "AI agents",
+    signal: "Source change",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Open teaching when the work is organized around assignments, labs, grading, or class projects.",
+    href: "features/teaching",
+    icon: "graduation-cap",
+    route: "Teaching",
+    signal: "Course material",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  route: string;
+  signal: string;
+}[];
 const WORKFLOW_PATH_LINKS = [
   {
     accent: COLORS.RUN,
@@ -1352,6 +1393,113 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
               <Icon
                 name="arrow-right"
                 style={{ color: PUBLIC_COLORS.brand, marginTop: 3 }}
+              />
+            </a>
+          ))}
+        </div>
+      </div>
+      <div
+        aria-label="CoCalc.ai starting signal routes"
+        role="group"
+        style={{
+          background: alpha(PUBLIC_COLORS.surfaceMuted, 0.74),
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          display: "grid",
+          gap: 14,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
+          marginTop: 16,
+          padding: 14,
+        }}
+      >
+        <Flex align="start" gap={12}>
+          <span
+            aria-hidden="true"
+            style={{
+              alignItems: "center",
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              color: PUBLIC_COLORS.brand,
+              display: "flex",
+              flex: "0 0 38px",
+              fontSize: 18,
+              height: 38,
+              justifyContent: "center",
+              width: 38,
+            }}
+          >
+            <Icon name="overview" />
+          </span>
+          <span>
+            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+              Starting signals
+            </Text>
+            <Paragraph style={{ margin: "4px 0 0" }}>
+              When you already know the artifact in front of you, jump straight
+              to the detail page that owns that workflow.
+            </Paragraph>
+          </span>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+          }}
+        >
+          {STARTING_SIGNAL_LINKS.map((item) => (
+            <a
+              href={appPath(item.href)}
+              key={item.signal}
+              style={{
+                alignItems: "start",
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${alpha(item.accent, 0.22)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 9,
+                gridTemplateColumns: "32px minmax(0, 1fr)",
+                minHeight: 118,
+                padding: 12,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(item.accent, 0.1),
+                  border: `1px solid ${alpha(item.accent, 0.24)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  height: 32,
+                  justifyContent: "center",
+                  width: 32,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ display: "block" }}>
+                  {item.signal}
+                </Text>
+                <Text style={{ color: item.accent }}>{item.route}</Text>
+              </span>
+              <Text type="secondary" style={{ gridColumn: "1 / 3", margin: 0 }}>
+                {item.body}
+              </Text>
+              <Icon
+                name="arrow-right"
+                style={{
+                  color: item.accent,
+                  gridColumn: "1 / 3",
+                  justifySelf: "end",
+                }}
               />
             </a>
           ))}

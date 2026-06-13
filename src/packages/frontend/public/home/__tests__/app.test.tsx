@@ -249,6 +249,32 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Contact support/i })
         .getAttribute("href"),
     ).toBe("/support");
+    const startingSignals = within(firstStepRoutes).getByRole("group", {
+      name: "CoCalc.ai starting signal routes",
+    });
+    expect(
+      within(startingSignals).getByText("Starting signals"),
+    ).not.toBeNull();
+    expect(
+      within(startingSignals)
+        .getByRole("link", { name: /Notebook output/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      within(startingSignals)
+        .getByRole("link", { name: /Terminal trace/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(startingSignals)
+        .getByRole("link", { name: /Source change/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(startingSignals)
+        .getByRole("link", { name: /Course material/i })
+        .getAttribute("href"),
+    ).toBe("/features/teaching");
     const decisionCheckpoints = within(firstStepRoutes).getByRole("group", {
       name: "CoCalc.ai homepage decision checkpoints",
     });
