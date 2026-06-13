@@ -110,6 +110,41 @@ const HERO_RUN_MODES = [
   path: string;
   title: string;
 }[];
+const FIRST_STEP_LINKS = [
+  {
+    authenticatedPath: "projects",
+    authenticatedTitle: "Open projects",
+    body: "Use the hosted workspace for managed accounts and projects.",
+    icon: "project-outlined",
+    path: "auth/sign-up",
+    title: "Start a project",
+  },
+  {
+    body: "Scan notebooks, terminals, AI, teaching, and writing pages.",
+    icon: "overview",
+    path: "features",
+    title: "Explore workflows",
+  },
+  {
+    body: "Compare hosted, local, and customer-operated runtimes.",
+    icon: "servers",
+    path: "products",
+    title: "Compare runtimes",
+  },
+  {
+    body: "Use support for purchase, onboarding, or account-specific questions.",
+    icon: "question-circle",
+    path: "support",
+    title: "Contact support",
+  },
+] satisfies {
+  authenticatedPath?: string;
+  authenticatedTitle?: string;
+  body: string;
+  icon: IconName;
+  path: string;
+  title: string;
+}[];
 const HERO_OUTCOMES = [
   {
     body: "The notebook, terminal, source files, and agent notes stay in the same project.",
@@ -1099,6 +1134,110 @@ function Hero({ config }: { config?: HomeConfig }) {
         </div>
         <div style={{ justifySelf: "end", maxWidth: 540, width: "100%" }}>
           <WorkspacePreview authenticated={authenticated} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
+  const links = FIRST_STEP_LINKS.map((item) => ({
+    ...item,
+    href: appPath(
+      authenticated && item.authenticatedPath
+        ? item.authenticatedPath
+        : item.path,
+    ),
+    title:
+      authenticated && item.authenticatedTitle
+        ? item.authenticatedTitle
+        : item.title,
+  }));
+
+  return (
+    <section
+      aria-label="CoCalc.ai first-step routes"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `18px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <div
+        style={{
+          alignItems: "center",
+          display: "grid",
+          gap: 18,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+        }}
+      >
+        <div>
+          <Eyebrow>Common next steps</Eyebrow>
+          <Title level={2} style={{ fontSize: 24, margin: "6px 0 6px" }}>
+            Choose the next page by intent.
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Start in the hosted workspace, inspect workflow details, compare
+            where CoCalc runs, or contact support when the route depends on your
+            group.
+          </Paragraph>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 188px), 1fr))",
+          }}
+        >
+          {links.map((link) => (
+            <a
+              href={link.href}
+              key={link.title}
+              style={{
+                alignItems: "start",
+                background: PUBLIC_COLORS.surfaceMuted,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "34px minmax(0, 1fr) 16px",
+                minHeight: 86,
+                padding: "12px",
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: PUBLIC_COLORS.brand,
+                  display: "flex",
+                  height: 34,
+                  justifyContent: "center",
+                  width: 34,
+                }}
+              >
+                <Icon name={link.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ display: "block" }}>
+                  {link.title}
+                </Text>
+                <Text type="secondary">{link.body}</Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{ color: PUBLIC_COLORS.brand, marginTop: 3 }}
+              />
+            </a>
+          ))}
         </div>
       </div>
     </section>
@@ -2123,6 +2262,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     <PublicPage active="home" config={marketingConfig}>
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
+      <FirstStepRoutesSection authenticated={!!config?.is_authenticated} />
       <WorkflowsSection />
       <ProjectPackageSection />
       <AudienceSection />

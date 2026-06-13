@@ -221,6 +221,34 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Review History trail/i })
         .getAttribute("href"),
     ).toBe("/features/compare");
+    const firstStepRoutes = screen.getByRole("region", {
+      name: "CoCalc.ai first-step routes",
+    });
+    expect(
+      within(firstStepRoutes).getByRole("heading", {
+        name: "Choose the next page by intent.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(firstStepRoutes)
+        .getByRole("link", { name: /Start a project/i })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(firstStepRoutes)
+        .getByRole("link", { name: /Explore workflows/i })
+        .getAttribute("href"),
+    ).toBe("/features");
+    expect(
+      within(firstStepRoutes)
+        .getByRole("link", { name: /Compare runtimes/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(firstStepRoutes)
+        .getByRole("link", { name: /Contact support/i })
+        .getAttribute("href"),
+    ).toBe("/support");
     const removedDuplicateRegions = [
       "CoCalc.ai project handoff path",
       "CoCalc.ai intent router",
@@ -510,6 +538,13 @@ describe("PublicHomeApp", () => {
         screen.getByRole("group", { name: "CoCalc project context preview" }),
       )
         .getByRole("link", { name: "Open projects" })
+        .getAttribute("href"),
+    ).toBe("/projects");
+    expect(
+      within(
+        screen.getByRole("region", { name: "CoCalc.ai first-step routes" }),
+      )
+        .getByRole("link", { name: /Open projects/i })
         .getAttribute("href"),
     ).toBe("/projects");
     expect(
