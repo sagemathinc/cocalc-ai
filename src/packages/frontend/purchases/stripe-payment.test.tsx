@@ -172,6 +172,9 @@ describe("StripePayment", () => {
     mockEmailVerificationRequired = false;
     jest.mocked(createPaymentIntent).mockReset();
     jest.mocked(createSetupIntent).mockReset();
+    jest
+      .mocked(createSetupIntent)
+      .mockResolvedValue({ clientSecret: "seti_test_secret" } as any);
     jest.mocked(getCustomerSession).mockReset();
     jest.mocked(getCustomerSession).mockResolvedValue({});
     jest.mocked(getPaymentMethods).mockReset();
@@ -264,11 +267,7 @@ describe("StripePayment", () => {
     expect(screen.getByText("loading")).toBeTruthy();
   });
 
-  it("shows fresh auth prompt when adding a payment method requires it", async () => {
-    const freshAuthError: any = new Error("fresh auth is required");
-    freshAuthError.code = "fresh_auth_required";
-    jest.mocked(createSetupIntent).mockRejectedValueOnce(freshAuthError);
-
+  it("adds a payment method without requiring fresh auth", async () => {
     render(<AddPaymentMethodButton />);
 
     fireEvent.click(screen.getByText(/Add Payment Method/));
@@ -278,12 +277,23 @@ describe("StripePayment", () => {
     fireEvent.click(await screen.findByText("Save Address"));
 
     await waitFor(() => {
-      expect(screen.getByText("Confirm security action")).toBeTruthy();
+      expect(screen.getByText("Stripe payment element")).toBeTruthy();
     });
-    expect(screen.getByText("Confirm security action")).toBeTruthy();
+    expect(setStripeCustomer).toHaveBeenCalledWith({
+      address: {
+        city: "San Francisco",
+        country: "US",
+        line1: "1 Main St",
+        postal_code: "94105",
+        state: "CA",
+      },
+      name: "Ada Lovelace",
+    });
     expect(createSetupIntent).toHaveBeenCalledWith({
       description: "Add a new payment method.",
     });
+    expect(getCustomerSession).not.toHaveBeenCalled();
+    expect(screen.queryByText("Confirm security action")).toBeNull();
   });
 
   it("requires email verification before adding a payment method", async () => {
@@ -295,8 +305,9 @@ describe("StripePayment", () => {
     await waitFor(() => {
       expect(screen.getByText("Stripe address element")).toBeTruthy();
     });
-    const saveAddress = (await screen.findByText("Save Address"))
-      .closest("button") as HTMLButtonElement;
+    const saveAddress = (await screen.findByText("Save Address")).closest(
+      "button",
+    ) as HTMLButtonElement;
     await waitFor(() => {
       expect(saveAddress.disabled).toBe(false);
     });
@@ -331,61 +342,6 @@ describe("StripePayment", () => {
     });
     expect(screen.queryByText("Stripe payment element")).toBeNull();
     expect(createSetupIntent).not.toHaveBeenCalled();
-  });
-
-  it("continues to Stripe setup after successful fresh auth while adding a payment method", async () => {
-    const freshAuthError: any = new Error("fresh auth is required");
-    freshAuthError.code = "fresh_auth_required";
-    jest
-      .mocked(createSetupIntent)
-      .mockRejectedValueOnce(freshAuthError)
-      .mockResolvedValueOnce({ clientSecret: "seti_test_secret" });
-
-    render(<AddPaymentMethodButton />);
-
-    fireEvent.click(screen.getByText(/Add Payment Method/));
-    await waitFor(() => {
-      expect(screen.getByText("Stripe address element")).toBeTruthy();
-    });
-    fireEvent.click(await screen.findByText("Save Address"));
-    await waitFor(() => {
-      expect(screen.getByText("Confirm security action")).toBeTruthy();
-    });
-    fireEvent.click(screen.getByText("Verify fresh auth"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Stripe payment element")).toBeTruthy();
-    });
-    expect(
-      screen.queryByText("Security confirmation was canceled."),
-    ).toBeNull();
-    expect(createSetupIntent).toHaveBeenCalledTimes(2);
-  });
-
-  it("shows a retryable state when fresh auth is canceled while adding a payment method", async () => {
-    const freshAuthError: any = new Error("fresh auth is required");
-    freshAuthError.code = "fresh_auth_required";
-    jest.mocked(createSetupIntent).mockRejectedValueOnce(freshAuthError);
-
-    render(<AddPaymentMethodButton />);
-
-    fireEvent.click(screen.getByText(/Add Payment Method/));
-    await waitFor(() => {
-      expect(screen.getByText("Stripe address element")).toBeTruthy();
-    });
-    fireEvent.click(await screen.findByText("Save Address"));
-    await waitFor(() => {
-      expect(screen.getByText("Confirm security action")).toBeTruthy();
-    });
-    fireEvent.click(screen.getByText("Cancel fresh auth"));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(
-          "Adding a payment method requires security confirmation.",
-        ),
-      ).toBeTruthy();
-    });
-    expect(screen.getByText("Confirm security action")).toBeTruthy();
+    expect(getCustomerSession).not.toHaveBeenCalled();
   });
 });
