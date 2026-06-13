@@ -108,6 +108,27 @@ describe("PublicHomeApp", () => {
     ).toBe("/features/compare");
     expect(within(agentHandoff).getByText("Notebook state")).not.toBeNull();
     expect(within(agentHandoff).getByText("Review notes")).not.toBeNull();
+    const reviewTrail = screen.getByRole("region", {
+      name: "Review trail for technical work",
+    });
+    expect(
+      within(reviewTrail).getByRole("heading", {
+        name: "Make technical work inspectable before it moves on.",
+      }),
+    ).not.toBeNull();
+    expect(within(reviewTrail).getByText("Terminal output")).not.toBeNull();
+    expect(within(reviewTrail).getByText("Agent changes")).not.toBeNull();
+    expect(within(reviewTrail).getByText("Recovery points")).not.toBeNull();
+    expect(
+      within(reviewTrail)
+        .getByRole("link", { name: "Review collaboration" })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(reviewTrail)
+        .getByRole("link", { name: "Agent workflow" })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
     expect(
       screen.getByRole("heading", {
         name: "From first file to reviewed result.",
