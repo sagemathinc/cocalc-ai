@@ -681,6 +681,44 @@ const SUPPORTING_WORKFLOW_ROUTES = [
   label: string;
   title: string;
 }[];
+const WORKFLOW_HANDOFF_ROUTES = [
+  {
+    accent: COLORS.BLUE_D,
+    detail:
+      "Return to the project that holds files, outputs, prompts, and review notes.",
+    href: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? appPath("projects") : appPath("auth/sign-up"),
+    icon: "project-outlined",
+    label: "Project record",
+    title: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? "Open projects" : "Create workspace",
+  },
+  {
+    accent: COLORS.RUN,
+    detail:
+      "Move between notebook, terminal, AI, writing, and teaching while keeping the same project context.",
+    href: () => appPath("features"),
+    icon: "overview",
+    label: "Workflow catalog",
+    title: () => "Browse workflow surfaces",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail:
+      "Use products when the next question is hosted, local, or customer-operated.",
+    href: () => appPath("products"),
+    icon: "servers",
+    label: "Operating path",
+    title: () => "Check deployment path",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  href: (opts: { authenticated: boolean }) => string;
+  icon: IconName;
+  label: string;
+  title: (opts: { authenticated: boolean }) => string;
+}[];
 const AUDIENCE_OPERATING_HANDOFFS = [
   {
     accent: COLORS.BLUE_D,
@@ -2675,7 +2713,7 @@ function WorkspaceContextSection({
   );
 }
 
-function WorkflowsSection() {
+function WorkflowsSection({ authenticated }: { authenticated: boolean }) {
   const workflowSummaries = {
     ai: "Ask Codex to work from project files, terminal output, and review notes.",
     "jupyter-notebook":
@@ -2871,6 +2909,97 @@ function WorkflowsSection() {
                     <Text type="secondary">{step.detail}</Text>
                   </span>
                 </div>
+              ))}
+            </div>
+          </div>
+          <div
+            aria-label="CoCalc.ai workflow handoff routes"
+            role="group"
+            style={{
+              background: PUBLIC_COLORS.surfaceMuted,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              marginTop: 14,
+              padding: 14,
+            }}
+          >
+            <Flex align="baseline" justify="space-between" wrap gap={8}>
+              <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                Workflow handoff routes
+              </Text>
+              <Text type="secondary">
+                Keep project, workflow, and operating path connected.
+              </Text>
+            </Flex>
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+                marginTop: 10,
+              }}
+            >
+              {WORKFLOW_HANDOFF_ROUTES.map((route) => (
+                <a
+                  href={route.href({ authenticated })}
+                  key={route.label}
+                  style={{
+                    alignItems: "start",
+                    background: PUBLIC_COLORS.surface,
+                    border: `1px solid ${alpha(route.accent, 0.24)}`,
+                    borderRadius: PANEL_RADIUS,
+                    color: "inherit",
+                    display: "grid",
+                    gap: 9,
+                    gridTemplateColumns: "32px minmax(0, 1fr) 14px",
+                    minHeight: 112,
+                    padding: 12,
+                    textDecoration: "none",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      alignItems: "center",
+                      background: alpha(route.accent, 0.08),
+                      border: `1px solid ${alpha(route.accent, 0.22)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: route.accent,
+                      display: "flex",
+                      height: 32,
+                      justifyContent: "center",
+                      width: 32,
+                    }}
+                  >
+                    <Icon name={route.icon} />
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <Text
+                      strong
+                      style={{
+                        color: route.accent,
+                        display: "block",
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {route.label}
+                    </Text>
+                    <Text strong style={{ display: "block" }}>
+                      {route.title({ authenticated })}
+                    </Text>
+                    <Text type="secondary">{route.detail}</Text>
+                  </span>
+                  <Icon
+                    name="arrow-right"
+                    style={{
+                      alignSelf: "center",
+                      color: route.accent,
+                      fontSize: 12,
+                    }}
+                  />
+                </a>
               ))}
             </div>
           </div>
@@ -4876,7 +5005,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <Hero config={config} />
       <WorkspaceOverviewSection authenticated={!!config?.is_authenticated} />
       <WorkspaceContextSection authenticated={!!config?.is_authenticated} />
-      <WorkflowsSection />
+      <WorkflowsSection authenticated={!!config?.is_authenticated} />
       <AudienceSection />
       <ProductOptionsSection />
       <DetailRoutesSection />

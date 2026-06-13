@@ -923,6 +923,50 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(within(workflowContextReview).getByText(step)).not.toBeNull();
     }
+    const workflowHandoffRoutes = within(coreWorkflows).getByRole("group", {
+      name: "CoCalc.ai workflow handoff routes",
+    });
+    expectLinkHrefs(workflowHandoffRoutes, [
+      "/auth/sign-up",
+      "/features",
+      "/products",
+    ]);
+    expect(
+      within(workflowHandoffRoutes).getByText("Workflow handoff routes"),
+    ).not.toBeNull();
+    expect(
+      within(workflowHandoffRoutes).getByText(
+        "Keep project, workflow, and operating path connected.",
+      ),
+    ).not.toBeNull();
+    for (const route of [
+      "Project record",
+      "Workflow catalog",
+      "Operating path",
+      "Create workspace",
+      "Browse workflow surfaces",
+      "Check deployment path",
+      "Return to the project that holds files, outputs, prompts, and review notes.",
+      "Move between notebook, terminal, AI, writing, and teaching while keeping the same project context.",
+      "Use products when the next question is hosted, local, or customer-operated.",
+    ]) {
+      expect(within(workflowHandoffRoutes).getByText(route)).not.toBeNull();
+    }
+    expect(
+      within(workflowHandoffRoutes)
+        .getByRole("link", { name: /Project record/i })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(workflowHandoffRoutes)
+        .getByRole("link", { name: /Workflow catalog/i })
+        .getAttribute("href"),
+    ).toBe("/features");
+    expect(
+      within(workflowHandoffRoutes)
+        .getByRole("link", { name: /Operating path/i })
+        .getAttribute("href"),
+    ).toBe("/products");
     const supportingWorkflowGuide = within(coreWorkflows).getByRole("group", {
       name: "CoCalc.ai supporting workflow guide",
     });
@@ -1736,6 +1780,19 @@ describe("PublicHomeApp", () => {
       }),
       ["/projects", "/features", "/products"],
     );
+    expectLinkHrefs(
+      screen.getByRole("group", {
+        name: "CoCalc.ai workflow handoff routes",
+      }),
+      ["/projects", "/features", "/products"],
+    );
+    expect(
+      within(
+        screen.getByRole("group", {
+          name: "CoCalc.ai workflow handoff routes",
+        }),
+      ).getByText("Open projects"),
+    ).not.toBeNull();
     expect(
       within(
         screen.getByRole("group", {
