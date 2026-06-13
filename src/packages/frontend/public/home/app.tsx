@@ -1758,11 +1758,11 @@ function Hero({ config }: { config?: HomeConfig }) {
                 </Button>
                 <Button
                   ghost
-                  href={appPath("features")}
-                  icon={<DecorativeButtonIcon name="overview" />}
+                  href={appPath("products")}
+                  icon={<DecorativeButtonIcon name="servers" />}
                   size="large"
                 >
-                  Explore workflows
+                  Compare deployment options
                 </Button>
               </>
             )}

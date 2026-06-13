@@ -190,16 +190,26 @@ describe("PublicHomeApp", () => {
     ).toBe("/auth/sign-up");
     expect(
       within(hero)
-        .getByRole("link", { name: "Explore workflows" })
+        .getByRole("link", { name: "Compare deployment options" })
         .getAttribute("href"),
-    ).toBe("/features");
+    ).toBe("/products");
     const heroActions = hero.querySelector(".cocalc-public-home-hero-actions");
     expect(heroActions).not.toBeNull();
     expect(
       within(heroActions as HTMLElement)
+        .getByRole("link", { name: "Start on CoCalc.ai" })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(heroActions as HTMLElement)
+        .getByRole("link", { name: "Compare deployment options" })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(heroActions as HTMLElement)
         .getAllByRole("link")
-        .map((link) => link.textContent?.trim()),
-    ).toEqual(["Start on CoCalc.ai", "Explore workflows"]);
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/auth/sign-up", "/products"]);
     const heroRouteChooser = within(hero).getByRole("group", {
       name: "CoCalc.ai hero route chooser",
     });
