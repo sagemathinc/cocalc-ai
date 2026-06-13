@@ -1769,7 +1769,9 @@ export class Actions extends BaseActions<LatexEditorState> {
         this.setState({ word_count: output.stdout });
       }
     } catch (err) {
-      this.set_error(err);
+      this.setState({
+        word_count: `Error running word count:\n${err instanceof Error ? err.message : `${err}`}`,
+      });
     }
   }
 

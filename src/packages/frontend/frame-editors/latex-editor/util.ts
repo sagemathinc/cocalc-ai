@@ -74,48 +74,6 @@ export function ensureTargetPathIsCorrect(
   return cmd.slice(0, i).trim() + " " + quoted;
 }
 
-function stringifyStreamError(err: unknown): string {
-  if (err instanceof Error) return err.message || `${err}`;
-  if (typeof err === "string") return err;
-  if (err == null) return "";
-  if (typeof err === "object") {
-    const message = (err as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-    try {
-      const encoded = JSON.stringify(err);
-      return encoded === "{}" ? "" : encoded;
-    } catch {
-      // fall through
-    }
-  }
-  return `${err}`;
-}
-
-function isGenericStreamError(err: unknown): boolean {
-  const s = stringifyStreamError(err)
-    .replace(/^error\s*:?\s*/i, "")
-    .replace(/\.+$/, "")
-    .trim()
-    .toLowerCase();
-  return !s || s === "an error occurred" || s === "error occurred";
-}
-
-function latexBuildErrorMessage(opts: {
-  command: string;
-  args?: string[];
-  path: string;
-  err: unknown;
-  currentJobInfo: ExecuteCodeOutputAsync | null;
-}): string {
-  const command = [opts.command, ...(opts.args ?? [])].join(" ");
-  const err = stringifyStreamError(opts.err).trim();
-  const stderr = `${opts.currentJobInfo?.stderr ?? ""}`.trim();
-  const stdout = `${opts.currentJobInfo?.stdout ?? ""}`.trim();
-  const detail = err || stderr || stdout;
-  const prefix = `Unable to run LaTeX build for ${opts.path} using ${command}.`;
-  return detail ? `${prefix}\n\n${detail}` : prefix;
-}
-
 interface RunJobOpts {
   aggregate: ExecOptsBlocking["aggregate"];
   args?: string[];
@@ -161,38 +119,6 @@ export async function runJob(opts: RunJobOpts): Promise<ExecOutput> {
     let current_job_info: ExecuteCodeOutputAsync | null = null;
     let pending_stdout = "";
     let pending_stderr = "";
-    let settled = false;
-
-    const resolveOnce = (output: ExecOutput) => {
-      if (settled) return;
-      settled = true;
-      resolve(output);
-    };
-
-    const rejectOnce = (err: unknown) => {
-      if (settled) return;
-      if (current_job_info != null && isGenericStreamError(err)) {
-        // A generic transport error can race with a useful latexmk job result.
-        // Keep the build log and let the LaTeX log parser decide whether the
-        // document really has errors, instead of showing "An error occurred."
-        settled = true;
-        resolve({ ...current_job_info, time: Date.now() });
-        return;
-      }
-      settled = true;
-      reject(
-        new Error(
-          latexBuildErrorMessage({
-            command,
-            args,
-            path,
-            err,
-            currentJobInfo: current_job_info,
-          }),
-        ),
-      );
-    };
-
     stream.on("job", (job_info: ExecuteCodeOutputAsync) => {
       current_job_info = {
         ...job_info,
@@ -248,11 +174,11 @@ export async function runJob(opts: RunJobOpts): Promise<ExecOutput> {
       if (result.type === "async") {
         set_job_info(result);
       }
-      resolveOnce(result);
+      resolve(result);
     });
 
     stream.on("error", (err) => {
-      rejectOnce(err);
+      reject(new Error(`Unable to run the compilation. ${err}`));
     });
   });
 }
