@@ -2582,6 +2582,7 @@ function AudienceSection() {
         { icon: "terminal", label: "Runtime", value: "Services and tests" },
         { icon: "robot", label: "Codex", value: "Patches and review" },
       ],
+      startingContext: ["Repo and config", "Service logs", "Patch notes"],
       nextStep: "See AI workflows",
       title: "Engineering teams",
     },
@@ -2599,6 +2600,11 @@ function AudienceSection() {
         { icon: "jupyter", label: "Notebooks", value: "Output and notes" },
         { icon: "database", label: "Data", value: "Project files" },
         { icon: "history", label: "Record", value: "Snapshots" },
+      ],
+      startingContext: [
+        "Notebook output",
+        "Dataset files",
+        "Environment notes",
       ],
       nextStep: "Open notebooks",
       title: "Research labs",
@@ -2618,6 +2624,11 @@ function AudienceSection() {
         { icon: "users", label: "Class", value: "Student projects" },
         { icon: "jupyter", label: "Review", value: "Notebook grading" },
       ],
+      startingContext: [
+        "Assignment source",
+        "Student submissions",
+        "Grading notes",
+      ],
       nextStep: "Explore teaching",
       title: "Technical courses",
     },
@@ -2629,6 +2640,7 @@ function AudienceSection() {
     icon: IconName;
     nextStep: string;
     signals: { icon: IconName; label: string; value: string }[];
+    startingContext: string[];
     title: string;
   }[];
 
@@ -2743,6 +2755,30 @@ function AudienceSection() {
                   {audience.title}
                 </Title>
                 <Paragraph style={{ margin: 0 }}>{audience.body}</Paragraph>
+                <div
+                  aria-label={`${audience.title} starting context`}
+                  role="group"
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 6,
+                    marginTop: 10,
+                  }}
+                >
+                  {audience.startingContext.map((context) => (
+                    <Tag
+                      key={context}
+                      style={{
+                        background: alpha(audience.accent, 0.08),
+                        borderColor: alpha(audience.accent, 0.22),
+                        color: audience.accent,
+                        marginInlineEnd: 0,
+                      }}
+                    >
+                      {context}
+                    </Tag>
+                  ))}
+                </div>
               </span>
             </div>
             <div

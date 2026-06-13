@@ -962,6 +962,45 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Technical courses/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
+    const engineeringStartingContext = within(audiencePaths).getByRole(
+      "group",
+      {
+        name: "Engineering teams starting context",
+      },
+    );
+    expect(
+      within(engineeringStartingContext).getByText("Repo and config"),
+    ).not.toBeNull();
+    expect(
+      within(engineeringStartingContext).getByText("Service logs"),
+    ).not.toBeNull();
+    expect(
+      within(engineeringStartingContext).getByText("Patch notes"),
+    ).not.toBeNull();
+    const researchStartingContext = within(audiencePaths).getByRole("group", {
+      name: "Research labs starting context",
+    });
+    expect(
+      within(researchStartingContext).getByText("Notebook output"),
+    ).not.toBeNull();
+    expect(
+      within(researchStartingContext).getByText("Dataset files"),
+    ).not.toBeNull();
+    expect(
+      within(researchStartingContext).getByText("Environment notes"),
+    ).not.toBeNull();
+    const courseStartingContext = within(audiencePaths).getByRole("group", {
+      name: "Technical courses starting context",
+    });
+    expect(
+      within(courseStartingContext).getByText("Assignment source"),
+    ).not.toBeNull();
+    expect(
+      within(courseStartingContext).getByText("Student submissions"),
+    ).not.toBeNull();
+    expect(
+      within(courseStartingContext).getByText("Grading notes"),
+    ).not.toBeNull();
     const engineeringCues = within(audiencePaths).getByRole("group", {
       name: "Engineering teams project context cues",
     });
