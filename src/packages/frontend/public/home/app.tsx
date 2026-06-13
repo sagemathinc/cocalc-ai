@@ -195,6 +195,42 @@ const WORKSPACE_PREVIEW_TABS = [
   { icon: "robot", label: "Codex" },
   { icon: "history", label: "History" },
 ] satisfies { icon: IconName; label: string }[];
+const AGENT_READINESS_ITEMS = [
+  {
+    accent: PUBLIC_COLORS.brand,
+    body: "Notebooks, scripts, data, documents, and environment files are already in the project tree.",
+    icon: "files",
+    label: "Project files",
+    title: "Source context",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Terminal sessions, package installs, services, and logs show what actually ran.",
+    icon: "terminal",
+    label: "Runtime",
+    title: "Execution evidence",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Prompts, patches, screenshots, comments, and collaborator notes stay beside the change.",
+    icon: "robot",
+    label: "Codex",
+    title: "Agent trail",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "TimeTravel, snapshots, and backups give reviewers a way to inspect or recover prior state.",
+    icon: "disk-snapshot",
+    label: "Recovery",
+    title: "Rollback points",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 const QUICK_START_ACTIONS = [
   {
     body: "Run Jupyter with files, terminals, chat, and history in the same project.",
@@ -1026,6 +1062,118 @@ function ProofStripSection() {
           ))}
         </div>
       </div>
+    </section>
+  );
+}
+
+function AgentReadinessSection() {
+  return (
+    <section
+      aria-label="CoCalc.ai agent-ready project checklist"
+      style={{
+        background: PUBLIC_COLORS.surfaceMuted,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `34px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Row align="middle" gutter={[30, 24]}>
+        <Col lg={8} xs={24}>
+          <Flex vertical gap={16}>
+            <div>
+              <Eyebrow>Agent-ready projects</Eyebrow>
+              <Title level={2} style={{ margin: "8px 0 10px" }}>
+                Give Codex the evidence, not just the prompt.
+              </Title>
+              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+                CoCalc makes the project the handoff unit: source files, runtime
+                output, human decisions, and recovery points are close before an
+                agent turn begins.
+              </Paragraph>
+            </div>
+            <Flex gap={12} wrap>
+              <Button
+                href={appPath("features/ai")}
+                icon={<DecorativeButtonIcon name="robot" />}
+                type="primary"
+              >
+                Codex in CoCalc
+              </Button>
+              <Button
+                href={appPath("features/compare")}
+                icon={<DecorativeButtonIcon name="overview" />}
+              >
+                Review workflow
+              </Button>
+            </Flex>
+          </Flex>
+        </Col>
+        <Col lg={16} xs={24}>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+            }}
+          >
+            {AGENT_READINESS_ITEMS.map((item) => (
+              <div
+                key={item.title}
+                style={{
+                  background: PUBLIC_COLORS.surface,
+                  border: `1px solid ${alpha(item.accent, 0.24)}`,
+                  borderRadius: PANEL_RADIUS,
+                  boxShadow: `0 12px 28px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+                  minHeight: 184,
+                  padding: 18,
+                }}
+              >
+                <Flex vertical gap={13} style={{ height: "100%" }}>
+                  <Flex align="center" justify="space-between" gap={12}>
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        alignItems: "center",
+                        background: alpha(item.accent, 0.1),
+                        border: `1px solid ${alpha(item.accent, 0.28)}`,
+                        borderRadius: PANEL_RADIUS,
+                        color: item.accent,
+                        display: "flex",
+                        flex: "0 0 46px",
+                        fontSize: 22,
+                        height: 46,
+                        justifyContent: "center",
+                        width: 46,
+                      }}
+                    >
+                      <Icon name={item.icon} />
+                    </span>
+                    <Tag
+                      style={{
+                        background: alpha(item.accent, 0.1),
+                        borderColor: alpha(item.accent, 0.28),
+                        color: item.accent,
+                        marginInlineEnd: 0,
+                      }}
+                    >
+                      {item.label}
+                    </Tag>
+                  </Flex>
+                  <div>
+                    <Title
+                      level={3}
+                      style={{ fontSize: 20, margin: "0 0 8px" }}
+                    >
+                      {item.title}
+                    </Title>
+                    <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+                  </div>
+                </Flex>
+              </div>
+            ))}
+          </div>
+        </Col>
+      </Row>
     </section>
   );
 }
@@ -3200,6 +3348,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <Hero config={config} />
       <HeroHandoffStrip />
       <ProofStripSection />
+      <AgentReadinessSection />
       <QuickStartSection />
       <StarterRecipesSection config={config} />
       <ProjectPackageSection />

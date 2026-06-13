@@ -124,6 +124,28 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Review history/i })
         .getAttribute("href"),
     ).toBe("/features/compare");
+    const agentReady = screen.getByRole("region", {
+      name: "CoCalc.ai agent-ready project checklist",
+    });
+    expect(
+      within(agentReady).getByRole("heading", {
+        name: "Give Codex the evidence, not just the prompt.",
+      }),
+    ).not.toBeNull();
+    expect(within(agentReady).getByText("Source context")).not.toBeNull();
+    expect(within(agentReady).getByText("Execution evidence")).not.toBeNull();
+    expect(within(agentReady).getByText("Agent trail")).not.toBeNull();
+    expect(within(agentReady).getByText("Rollback points")).not.toBeNull();
+    expect(
+      within(agentReady)
+        .getByRole("link", { name: "Codex in CoCalc" })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(agentReady)
+        .getByRole("link", { name: "Review workflow" })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
     expect(
       screen.getByRole("heading", {
         name: "Start with the work surface you need.",
