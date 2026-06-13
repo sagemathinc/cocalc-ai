@@ -422,6 +422,34 @@ describe("PublicHomeApp", () => {
     expect(within(courseCues).getByText("Notebook grading")).not.toBeNull();
     expect(screen.getByText("Operating path chooser")).not.toBeNull();
     expect(screen.getByText("Choose who runs the workspace")).not.toBeNull();
+    const operatingBoundaryShortcuts = screen.getByRole("group", {
+      name: "CoCalc.ai operating boundary shortcuts",
+    });
+    expect(
+      within(operatingBoundaryShortcuts)
+        .getByRole("link", { name: /Managed CoCalc\.ai/i })
+        .getAttribute("href"),
+    ).toBe("/");
+    expect(
+      within(operatingBoundaryShortcuts)
+        .getByRole("link", { name: /One-user local/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(operatingBoundaryShortcuts)
+        .getByRole("link", { name: /Single-VM appliance/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-star");
+    expect(
+      within(operatingBoundaryShortcuts)
+        .getByRole("link", { name: /Customer-operated/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(operatingBoundaryShortcuts).getByText(
+        "Compare Launchpad and Rocket for customer-operated paths.",
+      ),
+    ).not.toBeNull();
     expect(screen.getByText("Deployment path")).not.toBeNull();
     expect(screen.getByText("Next step")).not.toBeNull();
     expect(screen.getAllByText("Operator").length).toBeGreaterThan(0);
@@ -443,7 +471,7 @@ describe("PublicHomeApp", () => {
       "Infrastructure plan",
       "CoCalc guidance",
     ]) {
-      expect(screen.getByText(productCue)).not.toBeNull();
+      expect(screen.getAllByText(productCue).length).toBeGreaterThan(0);
     }
     expect(
       screen.getByText("Managed accounts, hosted projects, and team access"),

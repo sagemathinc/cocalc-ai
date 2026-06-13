@@ -1377,6 +1377,48 @@ function ProductOptionsSection() {
     route: string;
     title: string;
   }[];
+  const routeShortcuts = [
+    {
+      accent: COLORS.BLUE_D,
+      body: "CoCalc runs the service; teams use hosted projects.",
+      href: appPath(""),
+      icon: "cloud",
+      label: "Hosted",
+      title: "Managed CoCalc.ai",
+    },
+    {
+      accent: COLORS.RUN,
+      body: "Run CoCalc Plus on your own Linux or Mac machine.",
+      href: appPath("products/cocalc-plus"),
+      icon: "laptop",
+      label: "Local",
+      title: "One-user local",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      body: "Use CoCalc Star when one public VM is the right boundary.",
+      href: appPath("products/cocalc-star"),
+      icon: "star",
+      label: "Public VM",
+      title: "Single-VM appliance",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      body: "Compare Launchpad and Rocket for customer-operated paths.",
+      href: appPath("products"),
+      icon: "servers",
+      label: "Private",
+      title: "Customer-operated",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    href: string;
+    icon: IconName;
+    label: string;
+    title: string;
+  }[];
+
   return (
     <section aria-label="CoCalc.ai product options">
       <Row align="middle" gutter={[32, 32]}>
@@ -1425,6 +1467,69 @@ function ProductOptionsSection() {
                 </Text>
                 <Text type="secondary">Choose who runs the workspace</Text>
               </Flex>
+              <div
+                aria-label="CoCalc.ai operating boundary shortcuts"
+                role="group"
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(min(100%, 168px), 1fr))",
+                }}
+              >
+                {routeShortcuts.map((shortcut) => (
+                  <a
+                    href={shortcut.href}
+                    key={shortcut.label}
+                    style={{
+                      background: PUBLIC_COLORS.surface,
+                      border: `1px solid ${alpha(shortcut.accent, 0.24)}`,
+                      borderRadius: PANEL_RADIUS,
+                      color: "inherit",
+                      display: "grid",
+                      gap: 9,
+                      gridTemplateColumns: "32px minmax(0, 1fr)",
+                      minHeight: 116,
+                      padding: 12,
+                      textDecoration: "none",
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        alignItems: "center",
+                        background: `${shortcut.accent}14`,
+                        border: `1px solid ${shortcut.accent}33`,
+                        borderRadius: PANEL_RADIUS,
+                        color: shortcut.accent,
+                        display: "flex",
+                        height: 32,
+                        justifyContent: "center",
+                        width: 32,
+                      }}
+                    >
+                      <Icon name={shortcut.icon} />
+                    </span>
+                    <span style={{ minWidth: 0 }}>
+                      <Text
+                        strong
+                        style={{
+                          color: shortcut.accent,
+                          display: "block",
+                          fontSize: 12,
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {shortcut.label}
+                      </Text>
+                      <Text strong style={{ display: "block" }}>
+                        {shortcut.title}
+                      </Text>
+                      <Text type="secondary">{shortcut.body}</Text>
+                    </span>
+                  </a>
+                ))}
+              </div>
               <div
                 style={{
                   display: "grid",
