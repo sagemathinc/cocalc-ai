@@ -149,6 +149,47 @@ const HERO_HANDOFF_ITEMS = [
   label: string;
   title: string;
 }[];
+const FIRST_OPEN_ITEMS = [
+  {
+    accent: COLORS.RUN,
+    body: "Keep data files, plots, package installs, and review notes beside the notebook that produced them.",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    prompt: "I have data or a notebook",
+    title: "Open a notebook project",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Run scripts, services, packages, and logs from the same project tree your team can inspect later.",
+    href: "features/terminal",
+    icon: "terminal",
+    prompt: "I need a real shell",
+    title: "Start a Linux terminal",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Ask Codex where files, terminal output, screenshots, and reviewer notes are already nearby.",
+    href: "features/ai",
+    icon: "robot",
+    prompt: "I want agent help",
+    title: "Start from project context",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    body: "Distribute files, collect notebooks, grade work, and support students from course project context.",
+    href: "features/teaching",
+    icon: "graduation-cap",
+    prompt: "I am teaching a group",
+    title: "Create course projects",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  prompt: string;
+  title: string;
+}[];
 const PROJECT_STATE_MAP_ITEMS = [
   {
     accent: PUBLIC_COLORS.brand,
@@ -1596,6 +1637,139 @@ function ProofStripSection() {
   );
 }
 
+function FirstOpenSection({ config }: { config?: HomeConfig }) {
+  const projectHref = config?.is_authenticated
+    ? appPath("projects")
+    : appPath("auth/sign-up");
+  const projectLabel = config?.is_authenticated
+    ? "Open projects"
+    : "Start a project";
+
+  return (
+    <section
+      aria-label="CoCalc.ai first workspace choice"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `30px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <div
+        style={{
+          alignItems: "start",
+          display: "grid",
+          gap: 22,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+        }}
+      >
+        <div style={{ maxWidth: 520 }}>
+          <Eyebrow>First workspace choice</Eyebrow>
+          <Title level={2} style={{ margin: "8px 0 10px" }}>
+            Choose the first surface by the job in front of you.
+          </Title>
+          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+            Start with the tool that matches the immediate work. The project can
+            grow into notebooks, terminals, Codex threads, course files, and
+            recovery history as the context expands.
+          </Paragraph>
+          <Flex gap={12} style={{ marginTop: 18 }} wrap>
+            <Button
+              href={projectHref}
+              icon={<DecorativeButtonIcon name="project-outlined" />}
+              type="primary"
+            >
+              {projectLabel}
+            </Button>
+            <Button
+              href={appPath("features")}
+              icon={<DecorativeButtonIcon name="overview" />}
+            >
+              Explore all features
+            </Button>
+          </Flex>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+            width: "100%",
+          }}
+        >
+          {FIRST_OPEN_ITEMS.map((item, index) => (
+            <a
+              href={appPath(item.href)}
+              key={item.title}
+              style={{
+                alignItems: "start",
+                background:
+                  index === 2
+                    ? PUBLIC_COLORS.warningTint
+                    : PUBLIC_COLORS.surfaceMuted,
+                border: `1px solid ${
+                  index === 2
+                    ? PUBLIC_COLORS.warningBorder
+                    : alpha(item.accent, 0.22)
+                }`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "44px minmax(0, 1fr) 18px",
+                minHeight: 154,
+                padding: 15,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(PUBLIC_COLORS.surface, 0.86),
+                  border: `1px solid ${alpha(item.accent, 0.26)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  fontSize: 21,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: item.accent,
+                    display: "block",
+                    fontSize: 12,
+                    letterSpacing: 0,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {item.prompt}
+                </Text>
+                <Title level={3} style={{ fontSize: 20, margin: "6px 0 8px" }}>
+                  {item.title}
+                </Title>
+                <Text type="secondary">{item.body}</Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{ color: item.accent, fontSize: 16, marginTop: 3 }}
+              />
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ProjectStateMapSection() {
   return (
     <section
@@ -2865,6 +3039,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <style>{HOME_PAGE_CSS}</style>
       <Hero config={config} />
       <HeroHandoffStrip config={config} />
+      <FirstOpenSection config={config} />
       <ProofStripSection />
       <ProjectStateMapSection />
       <QuickStartSection />
