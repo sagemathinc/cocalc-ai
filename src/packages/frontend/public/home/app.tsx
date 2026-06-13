@@ -433,6 +433,47 @@ const REVIEW_TRAIL_ITEMS = [
   icon: IconName;
   label: string;
 }[];
+const AGENT_TURN_EVIDENCE_ITEMS = [
+  {
+    accent: PUBLIC_COLORS.brand,
+    body: "Keep source files, notebooks, data, documents, and environment files where the agent can inspect them.",
+    href: "features/compare",
+    icon: "files",
+    label: "Sources",
+    title: "Project files",
+  },
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Preserve commands, package installs, test output, logs, and services beside the changed files.",
+    href: "features/terminal",
+    icon: "terminal",
+    label: "Runtime",
+    title: "Execution record",
+  },
+  {
+    accent: COLORS.RUN,
+    body: "Keep notebook output, plots, explanations, and data paths attached to the project state.",
+    href: "features/jupyter-notebook",
+    icon: "jupyter",
+    label: "Computed state",
+    title: "Notebook evidence",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Review prompts, patches, screenshots, comments, and follow-up decisions where the work happened.",
+    href: "features/ai",
+    icon: "robot",
+    label: "Agent trail",
+    title: "Codex review",
+  },
+] satisfies {
+  accent: string;
+  body: string;
+  href: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}[];
 const BOUNDARY_LINK_ITEMS = [
   {
     accent: PUBLIC_COLORS.brand,
@@ -2324,6 +2365,123 @@ function AgentHandoffSection() {
   );
 }
 
+function AgentEvidenceSection() {
+  return (
+    <section
+      aria-label="CoCalc.ai agent turn evidence checklist"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
+        marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+        padding: `34px ${PUBLIC_PAGE_GUTTER}`,
+      }}
+    >
+      <Flex vertical gap={22}>
+        <Flex align="end" justify="space-between" wrap gap={16}>
+          <div style={{ maxWidth: 760 }}>
+            <Eyebrow>Before the next agent turn</Eyebrow>
+            <Title level={2} style={{ margin: "8px 0 10px" }}>
+              Give Codex the artifacts a reviewer would ask for.
+            </Title>
+            <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              CoCalc projects make an agent request more concrete by keeping the
+              sources, runtime evidence, computed state, and review trail in one
+              place.
+            </Paragraph>
+          </div>
+          <Flex gap={12} wrap>
+            <Button
+              href={appPath("features/ai")}
+              icon={<DecorativeButtonIcon name="robot" />}
+              type="primary"
+            >
+              Open Codex workflows
+            </Button>
+            <Button
+              href={appPath("features/terminal")}
+              icon={<DecorativeButtonIcon name="terminal" />}
+            >
+              Terminal workflow
+            </Button>
+          </Flex>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          }}
+        >
+          {AGENT_TURN_EVIDENCE_ITEMS.map((item) => (
+            <a
+              href={appPath(item.href)}
+              key={item.title}
+              style={{
+                alignItems: "start",
+                background: `linear-gradient(180deg, ${alpha(
+                  item.accent,
+                  0.07,
+                )} 0%, ${PUBLIC_COLORS.surface} 52%)`,
+                border: `1px solid ${alpha(item.accent, 0.24)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 14,
+                gridTemplateColumns: "48px minmax(0, 1fr) 18px",
+                minHeight: 170,
+                padding: 18,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(PUBLIC_COLORS.surface, 0.84),
+                  border: `1px solid ${alpha(item.accent, 0.28)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  fontSize: 22,
+                  height: 48,
+                  justifyContent: "center",
+                  width: 48,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Tag
+                  style={{
+                    background: alpha(item.accent, 0.1),
+                    borderColor: alpha(item.accent, 0.28),
+                    color: item.accent,
+                    marginInlineEnd: 0,
+                  }}
+                >
+                  {item.label}
+                </Tag>
+                <Title level={3} style={{ fontSize: 20, margin: "10px 0 8px" }}>
+                  {item.title}
+                </Title>
+                <Text type="secondary">{item.body}</Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{
+                  color: item.accent,
+                  fontSize: 16,
+                  marginTop: 4,
+                }}
+              />
+            </a>
+          ))}
+        </div>
+      </Flex>
+    </section>
+  );
+}
+
 function ReviewTrailSection() {
   return (
     <section
@@ -3778,6 +3936,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <OperatingModelSection />
       <ProjectLoopSection />
       <AgentHandoffSection />
+      <AgentEvidenceSection />
       <ReviewTrailSection />
       <ProjectStorySection />
       <ProjectFlowSection />

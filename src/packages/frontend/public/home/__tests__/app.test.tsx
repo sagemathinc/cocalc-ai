@@ -220,6 +220,44 @@ describe("PublicHomeApp", () => {
     ).toBe("/features/compare");
     expect(within(agentHandoff).getByText("Notebook state")).not.toBeNull();
     expect(within(agentHandoff).getByText("Review notes")).not.toBeNull();
+    const agentEvidence = screen.getByRole("region", {
+      name: "CoCalc.ai agent turn evidence checklist",
+    });
+    expect(
+      within(agentEvidence).getByRole("heading", {
+        name: "Give Codex the artifacts a reviewer would ask for.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(agentEvidence)
+        .getByRole("link", { name: "Open Codex workflows" })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      within(agentEvidence)
+        .getByRole("link", { name: "Terminal workflow" })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(agentEvidence)
+        .getByRole("link", { name: /Project files/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(agentEvidence)
+        .getByRole("link", { name: /Execution record/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(agentEvidence)
+        .getByRole("link", { name: /Notebook evidence/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      within(agentEvidence)
+        .getByRole("link", { name: /Codex review/i })
+        .getAttribute("href"),
+    ).toBe("/features/ai");
     const reviewTrail = screen.getByRole("region", {
       name: "Review trail for technical work",
     });
