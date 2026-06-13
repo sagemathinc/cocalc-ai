@@ -118,11 +118,21 @@ describe("shouldShowAcpResubmitToAgentButton", () => {
     renderedValue: "Codex authentication expired.",
   };
 
-  it("shows on assistant replies to failed ACP submissions", () => {
+  it("shows on assistant replies to failed frontend ACP submissions", () => {
     expect(shouldShowAcpResubmitToAgentButton(base)).toBe(true);
   });
 
-  it("hides unless the parent user message is still not-sent", () => {
+  it("shows on active terminal thread errors without parent not-sent state", () => {
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        parentAcpState: undefined,
+        terminalThreadErrorActive: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides without parent not-sent state or an active terminal thread error", () => {
     expect(
       shouldShowAcpResubmitToAgentButton({
         ...base,

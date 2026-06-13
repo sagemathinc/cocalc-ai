@@ -675,6 +675,8 @@ export function resendCanceledAcpJob({
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
+  // Historical name: this also retries terminal error jobs, which keep the
+  // original request_json needed to resubmit the same user turn.
   db.prepare(
     `UPDATE ${TABLE}
       SET state = 'queued',
@@ -690,7 +692,7 @@ export function resendCanceledAcpJob({
       WHERE project_id = ?
         AND path = ?
         AND user_message_id = ?
-        AND state = 'canceled'`,
+        AND state IN ('canceled', 'error')`,
   ).run(now, project_id, path, user_message_id);
   return getAcpJob({ project_id, path, user_message_id });
 }

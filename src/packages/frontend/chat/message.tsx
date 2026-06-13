@@ -916,6 +916,7 @@ export default function Message({
     if (!parentId) return undefined;
     const parentMessage = actions.getMessageById(parentId);
     if (parentMessage == null) return undefined;
+    const messageId = field<string>(message, "message_id");
     const parentMessageIdValue =
       field<string>(parentMessage, "message_id") ?? parentId;
     const acpStore = actions.store?.get("acpState") as any;
@@ -924,6 +925,17 @@ export default function Message({
       field<string>(parentMessage, "acp_state") ??
       ""
     }`;
+    const threadState =
+      messageThreadId && typeof actions.syncdb?.get_one === "function"
+        ? actions.syncdb.get_one({
+            event: "chat-thread-state",
+            thread_id: messageThreadId,
+          })
+        : undefined;
+    const terminalThreadErrorActive =
+      `${field<string>(threadState, "state") ?? ""}`.trim() === "error" &&
+      `${field<string>(threadState, "active_message_id") ?? ""}`.trim() ===
+        messageId;
     if (
       !shouldShowAcpResubmitToAgentButton({
         hasActions: true,
@@ -932,6 +944,7 @@ export default function Message({
         parentAcpState,
         readOnly: read_only,
         renderedValue: renderedMessageValue,
+        terminalThreadErrorActive,
       })
     ) {
       return undefined;
