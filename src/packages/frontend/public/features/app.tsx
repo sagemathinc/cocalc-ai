@@ -169,6 +169,44 @@ function titleForRoute(route: PublicFeaturesRoute): string {
   return "CoCalc Features";
 }
 
+function getOrderedFeatureIndexPages(): FeaturePage[] {
+  const priorities = new Map<string, number>(
+    FEATURE_INDEX_PRIORITY.map((slug, index) => [slug, index]),
+  );
+  return getFeatureIndexPages()
+    .map((page, index) => ({ index, page }))
+    .sort((a, b) => {
+      const aPriority = priorities.get(a.page.slug);
+      const bPriority = priorities.get(b.page.slug);
+      if (aPriority != null || bPriority != null) {
+        return (aPriority ?? 100) - (bPriority ?? 100);
+      }
+      return a.index - b.index;
+    })
+    .map(({ page }) => page);
+}
+
+function getAdjacentFeaturePages(currentSlug: string): {
+  next?: FeaturePage;
+  previous?: FeaturePage;
+} {
+  const pages = getOrderedFeatureIndexPages();
+  const currentIndex = pages.findIndex((page) => page.slug === currentSlug);
+  if (currentIndex < 0) return {};
+  return {
+    next: pages[currentIndex + 1],
+    previous: pages[currentIndex - 1],
+  };
+}
+
+function ButtonIcon({ name }: { name: IconName }) {
+  return (
+    <span aria-hidden="true" style={{ display: "inline-flex" }}>
+      <Icon name={name} />
+    </span>
+  );
+}
+
 function FeatureLinkCard({ page }: { page: FeaturePage }) {
   const meta = featureMeta(page.slug);
   return (
@@ -364,20 +402,7 @@ function FeatureGroupSection({
 }
 
 function FeaturesIndex() {
-  const priorities = new Map<string, number>(
-    FEATURE_INDEX_PRIORITY.map((slug, index) => [slug, index]),
-  );
-  const pages = getFeatureIndexPages()
-    .map((page, index) => ({ index, page }))
-    .sort((a, b) => {
-      const aPriority = priorities.get(a.page.slug);
-      const bPriority = priorities.get(b.page.slug);
-      if (aPriority != null || bPriority != null) {
-        return (aPriority ?? 100) - (bPriority ?? 100);
-      }
-      return a.index - b.index;
-    })
-    .map(({ page }) => page);
+  const pages = getOrderedFeatureIndexPages();
   return (
     <>
       <section>
@@ -582,7 +607,85 @@ function FeaturesIndex() {
   );
 }
 
+function FeatureDetailNavigation({ page }: { page: FeaturePage }) {
+  const { next, previous } = getAdjacentFeaturePages(page.slug);
+  const meta = featureMeta(page.slug);
+
+  return (
+    <section
+      aria-label="Feature page navigation"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 8,
+        padding: 16,
+      }}
+    >
+      <Flex align="center" justify="space-between" wrap gap={14}>
+        <Flex align="center" gap={12} wrap>
+          <span
+            aria-hidden="true"
+            style={{
+              alignItems: "center",
+              background: `${meta.accent}12`,
+              border: `1px solid ${meta.accent}2e`,
+              borderRadius: 8,
+              color: meta.accent,
+              display: "inline-flex",
+              fontSize: 20,
+              height: 42,
+              justifyContent: "center",
+              width: 42,
+            }}
+          >
+            <Icon name={meta.icon} />
+          </span>
+          <span>
+            <Text
+              strong
+              style={{
+                color: PUBLIC_COLORS.brand,
+                display: "block",
+                fontSize: 12,
+                letterSpacing: 0,
+                textTransform: "uppercase",
+              }}
+            >
+              Feature detail
+            </Text>
+            <Text strong>{page.title}</Text>
+          </span>
+        </Flex>
+        <Flex wrap gap={10}>
+          <Button href={featurePath()} icon={<ButtonIcon name="overview" />}>
+            All features
+          </Button>
+          {previous ? (
+            <Button
+              href={featurePath(previous.slug)}
+              icon={<ButtonIcon name="arrow-left" />}
+            >
+              Previous: {previous.title}
+            </Button>
+          ) : null}
+          {next ? (
+            <Button
+              href={featurePath(next.slug)}
+              icon={<ButtonIcon name="arrow-right" />}
+              type="primary"
+            >
+              Next: {next.title}
+            </Button>
+          ) : null}
+        </Flex>
+      </Flex>
+    </section>
+  );
+}
+
 function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
+  const { next, previous } = getAdjacentFeaturePages(currentSlug);
+
   return (
     <PublicSection>
       <Title level={3} style={{ margin: 0 }}>
@@ -606,6 +709,20 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
         ) : null}
         <LinkButton href={featurePath()}>Feature map</LinkButton>
       </Flex>
+      {previous || next ? (
+        <Flex wrap gap={12}>
+          {previous ? (
+            <LinkButton href={featurePath(previous.slug)}>
+              Previous feature: {previous.title}
+            </LinkButton>
+          ) : null}
+          {next ? (
+            <LinkButton href={featurePath(next.slug)}>
+              Next feature: {next.title}
+            </LinkButton>
+          ) : null}
+        </Flex>
+      ) : null}
     </PublicSection>
   );
 }
@@ -827,13 +944,14 @@ function FeatureDetail({
 
   return (
     <>
+      <FeatureDetailNavigation page={page} />
       <FeatureDetailContent
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
         page={page}
-        slug={slug}
+        slug={page.slug}
       />
-      <FeatureProductPathLinks currentSlug={slug} />
+      <FeatureProductPathLinks currentSlug={page.slug} />
     </>
   );
 }

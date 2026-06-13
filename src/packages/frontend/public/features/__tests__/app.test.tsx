@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import PublicFeaturesApp from "../app";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
@@ -109,6 +109,23 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("One AI path")).not.toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
+    const featureNav = screen.getByRole("region", {
+      name: "Feature page navigation",
+    });
+    expect(within(featureNav).getByText("Feature detail")).not.toBeNull();
+    expect(
+      within(featureNav)
+        .getByRole("link", { name: "All features" })
+        .getAttribute("href"),
+    ).toBe("/features");
+    expect(
+      within(featureNav)
+        .getByRole("link", { name: "Next: Jupyter Notebooks" })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+    expect(
+      within(featureNav).queryByRole("link", { name: /Previous:/ }),
+    ).toBeNull();
     expect(
       screen.getByText("Connect this feature to a product path."),
     ).not.toBeNull();
@@ -130,6 +147,32 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByRole("link", { name: "Feature map" }).getAttribute("href"),
     ).toBe("/features");
+    expect(
+      screen
+        .getByRole("link", { name: "Next feature: Jupyter Notebooks" })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
+  });
+
+  it("canonicalizes feature aliases before rendering detail navigation", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "openai-chatgpt", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText("Codex agent chat where the project already lives."),
+    ).not.toBeNull();
+    const featureNav = screen.getByRole("region", {
+      name: "Feature page navigation",
+    });
+    expect(
+      within(featureNav)
+        .getByRole("link", { name: "Next: Jupyter Notebooks" })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
   });
 
   it("uses projects as the ai CTA for authenticated users", () => {
