@@ -271,6 +271,24 @@ describe("PublicHomeApp", () => {
         "Then pick the workflow or operating path.",
       ),
     ).not.toBeNull();
+    const heroContinuityRail = within(heroRouteChooser).getByRole("group", {
+      name: "CoCalc.ai project continuity rail",
+    });
+    expect(
+      within(heroContinuityRail).getByText("What moves with the project"),
+    ).not.toBeNull();
+    for (const signal of [
+      "Files",
+      "Runtime",
+      "AI context",
+      "Review trail",
+      "Notebooks, source trees, datasets",
+      "Kernels, terminals, services",
+      "Prompts, patches, review notes",
+      "Snapshots, TimeTravel, history",
+    ]) {
+      expect(within(heroContinuityRail).getByText(signal)).not.toBeNull();
+    }
     expect(within(heroRouteChooser).getByText("Workspace")).not.toBeNull();
     expect(within(heroRouteChooser).getByText("Workflows")).not.toBeNull();
     expect(within(heroRouteChooser).getByText("Deployment")).not.toBeNull();

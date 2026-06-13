@@ -189,6 +189,37 @@ const HERO_ROUTE_CHOICES = [
   label: string;
   title: (opts: { authenticated: boolean }) => string;
 }[];
+const HERO_CONTEXT_RAIL = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Notebooks, source trees, datasets",
+    icon: "files",
+    label: "Files",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Kernels, terminals, services",
+    icon: "terminal",
+    label: "Runtime",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Prompts, patches, review notes",
+    icon: "robot",
+    label: "AI context",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Snapshots, TimeTravel, history",
+    icon: "history",
+    label: "Review trail",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_SCOPE_ITEMS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
@@ -803,6 +834,80 @@ function HeroRouteChooser({ authenticated }: { authenticated: boolean }) {
           Then pick the workflow or operating path.
         </Text>
       </Flex>
+      <div
+        aria-label="CoCalc.ai project continuity rail"
+        role="group"
+        style={{
+          background: alpha(PUBLIC_COLORS.surface, 0.1),
+          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.18)}`,
+          borderRadius: PANEL_RADIUS,
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 132px), 1fr))",
+          marginTop: 10,
+          padding: 10,
+        }}
+      >
+        <Text
+          strong
+          style={{
+            color: alpha(PUBLIC_COLORS.surface, 0.74),
+            fontSize: 12,
+            gridColumn: "1 / -1",
+            textTransform: "uppercase",
+          }}
+        >
+          What moves with the project
+        </Text>
+        {HERO_CONTEXT_RAIL.map((item) => (
+          <span
+            key={item.label}
+            style={{
+              alignItems: "start",
+              display: "grid",
+              gap: 7,
+              gridTemplateColumns: "24px minmax(0, 1fr)",
+              minHeight: 54,
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                alignItems: "center",
+                background: alpha(item.accent, 0.13),
+                border: `1px solid ${alpha(item.accent, 0.28)}`,
+                borderRadius: PANEL_RADIUS,
+                color: item.accent,
+                display: "flex",
+                height: 24,
+                justifyContent: "center",
+                marginTop: 2,
+                width: 24,
+              }}
+            >
+              <Icon name={item.icon} />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <Text
+                strong
+                style={{ color: PUBLIC_COLORS.surface, display: "block" }}
+              >
+                {item.label}
+              </Text>
+              <Text
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.64),
+                  display: "block",
+                  fontSize: 12,
+                }}
+              >
+                {item.detail}
+              </Text>
+            </span>
+          </span>
+        ))}
+      </div>
       <div
         style={{
           display: "grid",
