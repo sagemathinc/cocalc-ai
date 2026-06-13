@@ -300,6 +300,31 @@ const WORKSPACE_PREVIEW_TRAIL = [
   icon: IconName;
   label: string;
 }[];
+const WORKSPACE_PREVIEW_HANDOFF = [
+  {
+    accent: COLORS.RUN,
+    detail: "Notebook output and source files stay together.",
+    icon: "jupyter",
+    label: "Notebook state",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Codex reads the same project context.",
+    icon: "robot",
+    label: "Agent request",
+  },
+  {
+    accent: PUBLIC_COLORS.success,
+    detail: "Terminal result and reviewer notes are visible.",
+    icon: "clipboard-check",
+    label: "Review notes",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_PREVIEW_TABS = [
   {
     href: "features/compare",
@@ -837,6 +862,60 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
               </Flex>
             ))}
           </Flex>
+        </div>
+      </div>
+      <div
+        style={{
+          background: alpha(PUBLIC_COLORS.surface, 0.92),
+          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.3)}`,
+          borderRadius: PANEL_RADIUS,
+          color: PUBLIC_COLORS.heading,
+          marginTop: 12,
+          padding: 12,
+        }}
+      >
+        <Flex align="center" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.heading }}>
+            Handoff queue
+          </Text>
+          <Text type="secondary">Work moves with context</Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {WORKSPACE_PREVIEW_HANDOFF.map((item) => (
+            <Flex align="start" gap={8} key={item.label}>
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(item.accent, 0.1),
+                  border: `1px solid ${alpha(item.accent, 0.24)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: item.accent,
+                  display: "flex",
+                  flex: "0 0 28px",
+                  height: 28,
+                  justifyContent: "center",
+                  marginTop: 1,
+                  width: 28,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ display: "block" }}>
+                  {item.label}
+                </Text>
+                <Text type="secondary">{item.detail}</Text>
+              </span>
+            </Flex>
+          ))}
         </div>
       </div>
       <div

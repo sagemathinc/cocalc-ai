@@ -170,6 +170,10 @@ describe("PublicHomeApp", () => {
     expect(within(projectPreview).getByText("research-demo")).not.toBeNull();
     expect(within(projectPreview).getByText("Codex thread")).not.toBeNull();
     expect(within(projectPreview).getByText("Live context")).not.toBeNull();
+    expect(within(projectPreview).getByText("Handoff queue")).not.toBeNull();
+    expect(within(projectPreview).getByText("Notebook state")).not.toBeNull();
+    expect(within(projectPreview).getByText("Agent request")).not.toBeNull();
+    expect(within(projectPreview).getByText("Review notes")).not.toBeNull();
     expect(within(projectPreview).getByText("Current trail")).not.toBeNull();
     expect(
       within(projectPreview).getByText("pytest passed in run.term"),
