@@ -14,6 +14,11 @@ import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/n
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "@cocalc/frontend/app-framework";
+import {
+  AgentSessionError,
+  AgentSessionSelect,
+  usePersistentAgentSessionSelection,
+} from "@cocalc/frontend/frame-editors/ai/agent-session-selector";
 import type { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
 import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
 
@@ -109,8 +114,14 @@ export function AIGenerateCodeCell({
   const [prompt, setPrompt] = useState("");
   const [querying, setQuerying] = useState(false);
   const [error, setError] = useState("");
-
   const open = showAICellGen != null;
+  const agentSessionSelection = usePersistentAgentSessionSelection({
+    project_id,
+    path,
+    cacheContext: "jupyter-generate-cell",
+    enabled: open,
+  });
+
   const anchorCellType = useMemo(
     () =>
       normalizeCellType(
@@ -168,7 +179,9 @@ export function AIGenerateCodeCell({
       codexConfig: { model: DEFAULT_GENERATE_AGENT_MODEL },
       openFloating: true,
       waitForAgent: false,
+      agentSession: agentSessionSelection.selectedAgentSession,
     });
+    agentSessionSelection.saveSelectedAgentSession();
     setShowAICellGen(null);
     void send
       .then((sent) => {
@@ -218,6 +231,11 @@ export function AIGenerateCodeCell({
           <div style={{ color: "rgba(0,0,0,0.65)" }}>
             Target: generate new cells {placement}.
           </div>
+          <AgentSessionSelect
+            selection={agentSessionSelection}
+            disabled={querying}
+          />
+          <AgentSessionError selection={agentSessionSelection} />
           <PopupAgentComposer
             value={prompt}
             onChange={setPrompt}

@@ -2,7 +2,7 @@
 Use the Agent to explain a notebook error and help fix it.
 */
 
-import { Alert, Button, Space } from "antd";
+import { Alert, Button, Modal, Space } from "antd";
 import { useMemo, useState } from "react";
 
 import { Tooltip } from "@cocalc/frontend/components";
@@ -58,6 +58,7 @@ function buildNotebookErrorPrompt(opts: {
 
 export default function AIError({ traceback, input }: Props) {
   const { actions: frameActions, project_id, path } = useFrameContext();
+  const [modalOpen, setModalOpen] = useState(false);
   const [routing, setRouting] = useState(false);
   const [routingError, setRoutingError] = useState("");
   const agentSessionSelection = usePersistentAgentSessionSelection({
@@ -94,6 +95,7 @@ export default function AIError({ traceback, input }: Props) {
       if (!sent) {
         throw new Error("Unable to submit the notebook repair request.");
       }
+      setModalOpen(false);
     } catch (err) {
       setRoutingError(`${err}`);
     } finally {
@@ -103,34 +105,67 @@ export default function AIError({ traceback, input }: Props) {
 
   return (
     <div>
-      <Space
-        direction="vertical"
-        size={8}
-        style={{ marginBottom: 8, maxWidth: 520, width: "100%" }}
-      >
-        <Tooltip title="Opens the workspace agent thread and submits this notebook error to the Agent.">
+      <Tooltip title="Opens the workspace agent thread and submits this notebook error to the Agent.">
+        <Button
+          size="small"
+          loading={routing}
+          onClick={() => {
+            setRoutingError("");
+            setModalOpen(true);
+          }}
+        >
+          Fix with Agent
+        </Button>
+      </Tooltip>
+      <Modal
+        title="Fix with Agent"
+        open={modalOpen}
+        onCancel={() => {
+          if (!routing) {
+            setModalOpen(false);
+            setRoutingError("");
+          }
+        }}
+        destroyOnHidden
+        mask={{ closable: !routing }}
+        footer={[
           <Button
-            size="small"
+            key="cancel"
+            disabled={routing}
+            onClick={() => {
+              setModalOpen(false);
+              setRoutingError("");
+            }}
+          >
+            Cancel
+          </Button>,
+          <Button
+            key="submit"
+            type="primary"
             loading={routing}
             onClick={() => void routeToNavigator()}
           >
             Fix with Agent
-          </Button>
-        </Tooltip>
-        <AgentSessionSelect
-          selection={agentSessionSelection}
-          disabled={routing}
-        />
-        <AgentSessionError selection={agentSessionSelection} />
-      </Space>
-      {routingError ? (
-        <Alert
-          style={{ marginTop: 8, maxWidth: 720 }}
-          type="error"
-          showIcon
-          title={routingError}
-        />
-      ) : null}
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <div>
+            The selected agent session will receive this notebook error, the
+            traceback, and the cell input. The agent will use the live notebook
+            state as the source of truth, investigate the failure, and apply a
+            fix when it can do so safely.
+          </div>
+          <AgentSessionSelect
+            selection={agentSessionSelection}
+            disabled={routing}
+          />
+          <AgentSessionError selection={agentSessionSelection} />
+          {routingError ? (
+            <Alert type="error" showIcon title={routingError} />
+          ) : null}
+        </Space>
+      </Modal>
     </div>
   );
 }

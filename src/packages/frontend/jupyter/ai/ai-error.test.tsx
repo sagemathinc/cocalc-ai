@@ -8,12 +8,25 @@ const mockUseRecentAgentSessions = jest.fn();
 const submitNavigatorPromptInWorkspaceChat = jest.fn();
 
 jest.mock("antd", () => {
-  const Button = ({ children, loading: _loading, ...props }: any) => (
+  const Button = ({
+    children,
+    loading: _loading,
+    type: _type,
+    size: _size,
+    ...props
+  }: any) => (
     <button type="button" {...props}>
       {children}
     </button>
   );
   const Div = ({ children }: any) => <div>{children}</div>;
+  const Modal = ({ children, footer, open }: any) =>
+    open ? (
+      <div role="dialog">
+        {children}
+        <div>{footer}</div>
+      </div>
+    ) : null;
   const Select = ({ value, options, onChange }: any) => (
     <select
       aria-label="Recent agent sessions"
@@ -30,6 +43,7 @@ jest.mock("antd", () => {
   return {
     Alert: Div,
     Button,
+    Modal,
     Select,
     Space: Div,
   };
@@ -98,11 +112,14 @@ describe("AIError", () => {
 
     render(<AIError input="1 / 0" traceback="ZeroDivisionError" />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Fix with Agent" }));
     fireEvent.change(screen.getByLabelText("Recent agent sessions"), {
       target: { value: "session-2" },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Fix with Agent" }));
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Fix with Agent" })[1],
+      );
     });
 
     expect(submitNavigatorPromptInWorkspaceChat).toHaveBeenCalledWith(
