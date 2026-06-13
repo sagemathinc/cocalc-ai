@@ -145,6 +145,33 @@ const FIRST_STEP_LINKS = [
   path: string;
   title: string;
 }[];
+const FIRST_STEP_CHECKPOINTS = [
+  {
+    authenticatedPath: "projects",
+    body: "Open or create the project before choosing individual tools.",
+    icon: "project-outlined",
+    path: "auth/sign-up",
+    title: "Project work",
+  },
+  {
+    body: "Use feature pages for notebooks, terminals, AI, courses, writing, and whiteboards.",
+    icon: "overview",
+    path: "features",
+    title: "Workflow detail",
+  },
+  {
+    body: "Use product pages when the question is hosted, local, or customer-operated runtime.",
+    icon: "servers",
+    path: "products",
+    title: "Runtime boundary",
+  },
+] satisfies {
+  authenticatedPath?: string;
+  body: string;
+  icon: IconName;
+  path: string;
+  title: string;
+}[];
 const WORKFLOW_PATH_LINKS = [
   {
     accent: COLORS.RUN,
@@ -1235,6 +1262,14 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
         ? item.authenticatedTitle
         : item.title,
   }));
+  const checkpoints = FIRST_STEP_CHECKPOINTS.map((item) => ({
+    ...item,
+    href: appPath(
+      authenticated && item.authenticatedPath
+        ? item.authenticatedPath
+        : item.path,
+    ),
+  }));
 
   return (
     <section
@@ -1317,6 +1352,110 @@ function FirstStepRoutesSection({ authenticated }: { authenticated: boolean }) {
               <Icon
                 name="arrow-right"
                 style={{ color: PUBLIC_COLORS.brand, marginTop: 3 }}
+              />
+            </a>
+          ))}
+        </div>
+      </div>
+      <div
+        aria-label="CoCalc.ai homepage decision checkpoints"
+        role="group"
+        style={{
+          background: alpha(PUBLIC_COLORS.brandTint, 0.82),
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          display: "grid",
+          gap: 14,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
+          marginTop: 16,
+          padding: 14,
+        }}
+      >
+        <Flex align="start" gap={12}>
+          <span
+            aria-hidden="true"
+            style={{
+              alignItems: "center",
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              color: PUBLIC_COLORS.brand,
+              display: "flex",
+              flex: "0 0 38px",
+              fontSize: 18,
+              height: 38,
+              justifyContent: "center",
+              width: 38,
+            }}
+          >
+            <Icon name="sliders" />
+          </span>
+          <span>
+            <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+              Decision checkpoint
+            </Text>
+            <Paragraph style={{ margin: "4px 0 0" }}>
+              Use the homepage as the entry route, then move to the page that
+              owns the next decision.
+            </Paragraph>
+          </span>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 180px), 1fr))",
+          }}
+        >
+          {checkpoints.map((item) => (
+            <a
+              href={item.href}
+              key={item.title}
+              style={{
+                alignItems: "start",
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns: "30px minmax(0, 1fr)",
+                minHeight: 104,
+                padding: 11,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: PUBLIC_COLORS.surfaceMuted,
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: PUBLIC_COLORS.brand,
+                  display: "flex",
+                  height: 30,
+                  justifyContent: "center",
+                  width: 30,
+                }}
+              >
+                <Icon name={item.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text strong style={{ display: "block" }}>
+                  {item.title}
+                </Text>
+                <Text type="secondary">{item.body}</Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{
+                  color: PUBLIC_COLORS.brand,
+                  gridColumn: "1 / 3",
+                  justifySelf: "end",
+                }}
               />
             </a>
           ))}

@@ -249,6 +249,27 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Contact support/i })
         .getAttribute("href"),
     ).toBe("/support");
+    const decisionCheckpoints = within(firstStepRoutes).getByRole("group", {
+      name: "CoCalc.ai homepage decision checkpoints",
+    });
+    expect(
+      within(decisionCheckpoints).getByText("Decision checkpoint"),
+    ).not.toBeNull();
+    expect(
+      within(decisionCheckpoints)
+        .getByRole("link", { name: /Project work/i })
+        .getAttribute("href"),
+    ).toBe("/auth/sign-up");
+    expect(
+      within(decisionCheckpoints)
+        .getByRole("link", { name: /Workflow detail/i })
+        .getAttribute("href"),
+    ).toBe("/features");
+    expect(
+      within(decisionCheckpoints)
+        .getByRole("link", { name: /Runtime boundary/i })
+        .getAttribute("href"),
+    ).toBe("/products");
     const workflowPathRoutes = screen.getByRole("region", {
       name: "CoCalc.ai workflow path routing",
     });
@@ -599,6 +620,15 @@ describe("PublicHomeApp", () => {
         screen.getByRole("region", { name: "CoCalc.ai first-step routes" }),
       )
         .getByRole("link", { name: /Open projects/i })
+        .getAttribute("href"),
+    ).toBe("/projects");
+    expect(
+      within(
+        screen.getByRole("group", {
+          name: "CoCalc.ai homepage decision checkpoints",
+        }),
+      )
+        .getByRole("link", { name: /Project work/i })
         .getAttribute("href"),
     ).toBe("/projects");
     expect(
