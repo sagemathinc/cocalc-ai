@@ -490,6 +490,31 @@ describe("PublicHomeApp", () => {
         "Compare Launchpad and Rocket for customer-operated paths.",
       ),
     ).not.toBeNull();
+    const productOptions = screen.getByRole("region", {
+      name: "CoCalc.ai product options",
+    });
+    expect(
+      within(productOptions)
+        .getByRole("link", { name: /CoCalc\.ai: Hosted service/i })
+        .getAttribute("href"),
+    ).toBe("/");
+    expect(
+      within(productOptions)
+        .getByRole("link", { name: /CoCalc Plus: Local runtime/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(productOptions)
+        .getByRole("link", {
+          name: /CoCalc Launchpad: Private deployment/i,
+        })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-launchpad");
+    expect(
+      within(productOptions)
+        .getByRole("link", { name: /CoCalc Rocket: Private cloud/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-rocket");
     expect(screen.getByText("Deployment path")).not.toBeNull();
     expect(screen.getAllByText("Next step").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Operator").length).toBeGreaterThan(0);

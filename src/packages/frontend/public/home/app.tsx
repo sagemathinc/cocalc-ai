@@ -1508,6 +1508,7 @@ function AudienceSection() {
 function ProductOptionsSection() {
   const options = [
     {
+      accent: PUBLIC_COLORS.brand,
       bestFor: "Managed accounts, hosted projects, and team access",
       cues: ["Managed service", "Hosted projects"],
       href: appPath(""),
@@ -1518,6 +1519,7 @@ function ProductOptionsSection() {
       title: "CoCalc.ai",
     },
     {
+      accent: PUBLIC_COLORS.success,
       bestFor: "One person running CoCalc on their own Linux or Mac machine",
       cues: ["One-user local", "Browser workspace"],
       href: appPath("products/cocalc-plus"),
@@ -1528,6 +1530,7 @@ function ProductOptionsSection() {
       title: "CoCalc Plus",
     },
     {
+      accent: PUBLIC_COLORS.warning,
       bestFor: "A lightweight private deployment with customer control",
       cues: ["Private team", "Customer operated"],
       href: appPath("products/cocalc-launchpad"),
@@ -1538,6 +1541,7 @@ function ProductOptionsSection() {
       title: "CoCalc Launchpad",
     },
     {
+      accent: COLORS.ANTD_LINK_BLUE_DARK,
       bestFor:
         "Private cloud planning with customer-operated infrastructure boundaries",
       cues: ["Infrastructure plan", "CoCalc guidance"],
@@ -1549,6 +1553,7 @@ function ProductOptionsSection() {
       title: "CoCalc Rocket",
     },
   ] satisfies {
+    accent: string;
     bestFor: string;
     cues: string[];
     href: string;
@@ -1738,7 +1743,7 @@ function ProductOptionsSection() {
                   </Text>
                   <span />
                 </div>
-                {options.map((option, index) => (
+                {options.map((option) => (
                   <a
                     aria-label={`${option.title}: ${option.route}. ${option.operator}. ${option.bestFor}. ${option.nextStep}.`}
                     className="cocalc-public-home-product-row"
@@ -1770,19 +1775,10 @@ function ProductOptionsSection() {
                       <span
                         style={{
                           alignItems: "center",
-                          background:
-                            index === 2
-                              ? PUBLIC_COLORS.warningTint
-                              : PUBLIC_COLORS.surfaceMuted,
-                          border:
-                            index === 2
-                              ? `1px solid ${PUBLIC_COLORS.warningBorder}`
-                              : `1px solid ${PUBLIC_COLORS.border}`,
+                          background: alpha(option.accent, 0.08),
+                          border: `1px solid ${alpha(option.accent, 0.22)}`,
                           borderRadius: PANEL_RADIUS,
-                          color:
-                            index === 2
-                              ? PUBLIC_COLORS.warning
-                              : PUBLIC_COLORS.brand,
+                          color: option.accent,
                           display: "flex",
                           flex: "0 0 44px",
                           fontSize: 20,
@@ -1803,18 +1799,9 @@ function ProductOptionsSection() {
                             <Tag
                               key={cue}
                               style={{
-                                background:
-                                  index === 2
-                                    ? PUBLIC_COLORS.warningTint
-                                    : PUBLIC_COLORS.surfaceMuted,
-                                borderColor:
-                                  index === 2
-                                    ? PUBLIC_COLORS.warningBorder
-                                    : PUBLIC_COLORS.border,
-                                color:
-                                  index === 2
-                                    ? PUBLIC_COLORS.warning
-                                    : PUBLIC_COLORS.brand,
+                                background: alpha(option.accent, 0.08),
+                                borderColor: alpha(option.accent, 0.22),
+                                color: option.accent,
                                 marginInlineEnd: 0,
                               }}
                             >
@@ -1863,10 +1850,7 @@ function ProductOptionsSection() {
                         strong
                         style={{
                           alignSelf: "center",
-                          color:
-                            index === 2
-                              ? PUBLIC_COLORS.warning
-                              : PUBLIC_COLORS.brand,
+                          color: option.accent,
                           justifySelf: "start",
                         }}
                       >
@@ -1877,10 +1861,7 @@ function ProductOptionsSection() {
                       name="arrow-right"
                       style={{
                         alignSelf: "center",
-                        color:
-                          index === 2
-                            ? PUBLIC_COLORS.warning
-                            : PUBLIC_COLORS.brand,
+                        color: option.accent,
                         justifySelf: "end",
                       }}
                     />
