@@ -392,19 +392,31 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectOutcomes).getByText("A lasting record"),
     ).not.toBeNull();
-    const heroFirstChoices = within(hero).getByRole("group", {
-      name: "CoCalc.ai hero first choices",
+    const heroProjectPath = within(hero).getByRole("group", {
+      name: "CoCalc.ai hero project path",
     });
-    for (const choice of [
-      "Project first",
-      "Pick a surface",
-      "Set the boundary",
-      "Put files, notebooks, terminals, AI, and review in one project.",
-      "Open the notebook, shell, agent, teaching, or writing surface.",
-      "Use hosted, local, or customer-operated paths when that matters.",
+    for (const step of [
+      "Project path",
+      "Keep each step attached to the same workspace.",
+      "Project record",
+      "Compute surface",
+      "Agent context",
+      "Review history",
+      "Capture notebooks, source trees, datasets, and notes.",
+      "Run notebooks, terminals, packages, and services nearby.",
+      "Keep Codex prompts, patches, and review notes attached.",
+      "Preserve snapshots, TimeTravel, and recovery history.",
     ]) {
-      expect(within(heroFirstChoices).getByText(choice)).not.toBeNull();
+      expect(within(heroProjectPath).getByText(step)).not.toBeNull();
     }
+    expect(
+      within(hero).queryByRole("group", {
+        name: "CoCalc.ai hero first choices",
+      }),
+    ).toBeNull();
+    expect(within(hero).queryByText("Project first")).toBeNull();
+    expect(within(hero).queryByText("Pick a surface")).toBeNull();
+    expect(within(hero).queryByText("Set the boundary")).toBeNull();
     expect(
       within(hero).queryByRole("group", {
         name: "CoCalc.ai workspace context cues",

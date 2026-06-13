@@ -154,24 +154,30 @@ const HERO_OUTCOMES = [
     title: "A lasting record",
   },
 ] satisfies { body: string; icon: IconName; title: string }[];
-const HERO_FIRST_CHOICES = [
+const HERO_PROJECT_PATH = [
   {
     accent: COLORS.BLUE_D,
-    detail: "Put files, notebooks, terminals, AI, and review in one project.",
-    icon: "project-outlined",
-    label: "Project first",
+    detail: "Capture notebooks, source trees, datasets, and notes.",
+    icon: "files",
+    label: "Project record",
   },
   {
     accent: COLORS.RUN,
-    detail: "Open the notebook, shell, agent, teaching, or writing surface.",
-    icon: "overview",
-    label: "Pick a surface",
+    detail: "Run notebooks, terminals, packages, and services nearby.",
+    icon: "terminal",
+    label: "Compute surface",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Keep Codex prompts, patches, and review notes attached.",
+    icon: "robot",
+    label: "Agent context",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    detail: "Use hosted, local, or customer-operated paths when that matters.",
-    icon: "servers",
-    label: "Set the boundary",
+    detail: "Preserve snapshots, TimeTravel, and recovery history.",
+    icon: "history",
+    label: "Review history",
   },
 ] satisfies {
   accent: string;
@@ -916,90 +922,110 @@ function DecorativeButtonIcon({ name }: { name: IconName }) {
   );
 }
 
-function HeroFirstChoices() {
+function HeroProjectPath() {
   return (
     <div
-      aria-label="CoCalc.ai hero first choices"
+      aria-label="CoCalc.ai hero project path"
       role="group"
       style={{
         background: alpha(PUBLIC_COLORS.brandDark, 0.38),
         border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
         borderRadius: PANEL_RADIUS,
-        display: "grid",
-        gap: 8,
-        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 188px), 1fr))",
         maxWidth: 700,
         padding: 10,
       }}
     >
-      {HERO_FIRST_CHOICES.map((choice, index) => (
-        <div
-          key={choice.label}
+      <Flex align="baseline" justify="space-between" wrap gap={8}>
+        <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+          Project path
+        </Text>
+        <Text
           style={{
-            alignItems: "start",
-            background: alpha(PUBLIC_COLORS.surface, 0.1),
-            border: `1px solid ${alpha(choice.accent, 0.3)}`,
-            borderRadius: PANEL_RADIUS,
-            display: "grid",
-            gap: 9,
-            gridTemplateColumns: "30px minmax(0, 1fr)",
-            minHeight: 96,
-            padding: "10px 11px",
+            color: alpha(PUBLIC_COLORS.surface, 0.7),
+            fontSize: 12,
           }}
         >
-          <span
-            aria-hidden="true"
+          Keep each step attached to the same workspace.
+        </Text>
+      </Flex>
+      <div
+        style={{
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 148px), 1fr))",
+          marginTop: 10,
+        }}
+      >
+        {HERO_PROJECT_PATH.map((step, index) => (
+          <div
+            key={step.label}
             style={{
-              alignItems: "center",
-              background: alpha(choice.accent, 0.14),
-              border: `1px solid ${alpha(choice.accent, 0.28)}`,
+              alignItems: "start",
+              background: alpha(PUBLIC_COLORS.surface, 0.1),
+              border: `1px solid ${alpha(step.accent, 0.3)}`,
               borderRadius: PANEL_RADIUS,
-              color: choice.accent,
-              display: "flex",
-              flexDirection: "column",
-              fontSize: 14,
-              gap: 2,
-              height: 42,
-              justifyContent: "center",
-              width: 30,
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "28px minmax(0, 1fr)",
+              minHeight: 98,
+              padding: "10px 11px",
             }}
           >
-            <Icon name={choice.icon} />
-            <Text
-              strong
+            <span
+              aria-hidden="true"
               style={{
-                color: "inherit",
-                fontSize: 10,
-                lineHeight: 1,
+                alignItems: "center",
+                background: alpha(step.accent, 0.14),
+                border: `1px solid ${alpha(step.accent, 0.28)}`,
+                borderRadius: PANEL_RADIUS,
+                color: step.accent,
+                display: "flex",
+                flexDirection: "column",
+                fontSize: 13,
+                gap: 2,
+                height: 40,
+                justifyContent: "center",
+                width: 28,
               }}
             >
-              {index + 1}
-            </Text>
-          </span>
-          <span style={{ minWidth: 0 }}>
-            <Text
-              strong
-              style={{
-                color: choice.accent,
-                display: "block",
-                fontSize: 12,
-                textTransform: "uppercase",
-              }}
-            >
-              {choice.label}
-            </Text>
-            <Text
-              style={{
-                color: alpha(PUBLIC_COLORS.surface, 0.74),
-                display: "block",
-                marginTop: 4,
-              }}
-            >
-              {choice.detail}
-            </Text>
-          </span>
-        </div>
-      ))}
+              <Icon name={step.icon} />
+              <Text
+                strong
+                style={{
+                  color: "inherit",
+                  fontSize: 10,
+                  lineHeight: 1,
+                }}
+              >
+                {index + 1}
+              </Text>
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <Text
+                strong
+                style={{
+                  color: step.accent,
+                  display: "block",
+                  fontSize: 12,
+                  textTransform: "uppercase",
+                }}
+              >
+                {step.label}
+              </Text>
+              <Text
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.74),
+                  display: "block",
+                  marginTop: 4,
+                }}
+              >
+                {step.detail}
+              </Text>
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -2376,7 +2402,7 @@ function Hero({ config }: { config?: HomeConfig }) {
               </div>
             ))}
           </div>
-          <HeroFirstChoices />
+          <HeroProjectPath />
           <Flex
             className="cocalc-public-home-hero-actions"
             gap={12}
