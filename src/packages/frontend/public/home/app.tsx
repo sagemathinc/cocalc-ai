@@ -1718,6 +1718,8 @@ function WorkflowsSection() {
         </Col>
         <Col lg={16} xs={24}>
           <div
+            aria-label="CoCalc.ai core workflow cards"
+            role="group"
             style={{
               display: "grid",
               gap: 14,
@@ -1986,6 +1988,8 @@ function AudienceSection() {
         </Button>
       </Flex>
       <div
+        aria-label="CoCalc.ai audience route rows"
+        role="group"
         style={{
           background: PUBLIC_COLORS.surface,
           border: `1px solid ${PUBLIC_COLORS.border}`,

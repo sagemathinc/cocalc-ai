@@ -501,6 +501,18 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: "Map project context" })
         .getAttribute("href"),
     ).toBe("/features/compare");
+    const coreWorkflowCards = within(coreWorkflows).getByRole("group", {
+      name: "CoCalc.ai core workflow cards",
+    });
+    expect(
+      within(coreWorkflowCards)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "/features/jupyter-notebook",
+      "/features/terminal",
+      "/features/ai",
+    ]);
     expect(
       within(coreWorkflows).queryByRole("link", { name: /LaTeX Editor/i }),
     ).toBeNull();
@@ -591,6 +603,19 @@ describe("PublicHomeApp", () => {
     const nextActionRoutes = screen.getByRole("region", {
       name: "CoCalc.ai next action routes",
     });
+    const nextActionCards = within(nextActionRoutes).getByRole("group", {
+      name: "CoCalc.ai next action cards",
+    });
+    expect(
+      within(nextActionCards)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "/features/jupyter-notebook",
+      "/features/terminal",
+      "/features/ai",
+      "/products",
+    ]);
     expect(
       within(nextActionRoutes).getByRole("heading", {
         name: "Start from the artifact in front of you.",
@@ -626,6 +651,18 @@ describe("PublicHomeApp", () => {
     const audiencePaths = screen.getByRole("region", {
       name: "CoCalc.ai audience paths",
     });
+    const audienceRouteRows = within(audiencePaths).getByRole("group", {
+      name: "CoCalc.ai audience route rows",
+    });
+    expect(
+      within(audienceRouteRows)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "/features/ai",
+      "/features/jupyter-notebook",
+      "/features/teaching",
+    ]);
     expect(
       within(audiencePaths)
         .getByRole("link", { name: /Engineering teams/i })
