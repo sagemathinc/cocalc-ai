@@ -31,6 +31,7 @@ const messages = {
 interface HelpMeFixButtonProps {
   mode: "hint" | "solution";
   inputText: string;
+  agentSessionSelector?: React.ReactNode;
   size?: any;
   style?: React.CSSProperties;
   gettingHelp: boolean;
@@ -40,6 +41,7 @@ interface HelpMeFixButtonProps {
 export default function HelpMeFixButton({
   mode,
   inputText,
+  agentSessionSelector,
   size,
   style,
   gettingHelp,
@@ -67,6 +69,9 @@ export default function HelpMeFixButton({
           }}
         >
           The following context will be sent to the agent:
+          {agentSessionSelector ? (
+            <div style={{ margin: "8px 0 12px" }}>{agentSessionSelector}</div>
+          ) : null}
           <RawPrompt input={inputText} />
         </div>
       )}
