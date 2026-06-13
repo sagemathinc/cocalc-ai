@@ -216,6 +216,41 @@ describe("PublicHomeApp", () => {
     expect(
       within(projectPreview).getByText("Shared project state"),
     ).not.toBeNull();
+    const contextCarriedForward = within(projectPreview).getByRole("group", {
+      name: "CoCalc.ai context carried forward",
+    });
+    expect(
+      within(contextCarriedForward).getByText("What stays attached"),
+    ).not.toBeNull();
+    expect(
+      within(contextCarriedForward).getByText(
+        "Work can be resumed from context",
+      ),
+    ).not.toBeNull();
+    expect(within(contextCarriedForward).getByText("Inputs")).not.toBeNull();
+    expect(within(contextCarriedForward).getByText("Execution")).not.toBeNull();
+    expect(within(contextCarriedForward).getByText("Decisions")).not.toBeNull();
+    expect(within(contextCarriedForward).getByText("Recovery")).not.toBeNull();
+    expect(
+      within(contextCarriedForward).getByText(
+        "Files, notebooks, data, and prompts stay in the same workspace.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(contextCarriedForward).getByText(
+        "Notebook output and terminal sessions remain close to the work.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(contextCarriedForward).getByText(
+        "Chat, agent turns, and review notes carry the reasoning forward.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(contextCarriedForward).getByText(
+        "Snapshots and TimeTravel keep earlier states available.",
+      ),
+    ).not.toBeNull();
     const activeWork = within(projectPreview).getByRole("group", {
       name: "CoCalc.ai active project work",
     });

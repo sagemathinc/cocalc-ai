@@ -197,6 +197,37 @@ const WORKSPACE_PREVIEW_ACTIVITY = [
   icon: IconName;
   label: string;
 }[];
+const WORKSPACE_PREVIEW_RECORD = [
+  {
+    accent: COLORS.BLUE_D,
+    detail: "Files, notebooks, data, and prompts stay in the same workspace.",
+    icon: "files",
+    label: "Inputs",
+  },
+  {
+    accent: COLORS.RUN,
+    detail: "Notebook output and terminal sessions remain close to the work.",
+    icon: "terminal",
+    label: "Execution",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail: "Chat, agent turns, and review notes carry the reasoning forward.",
+    icon: "robot",
+    label: "Decisions",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail: "Snapshots and TimeTravel keep earlier states available.",
+    icon: "history",
+    label: "Recovery",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_PREVIEW_STATUS = [
   {
     accent: COLORS.RUN,
@@ -687,6 +718,86 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
               </Flex>
             ))}
           </Flex>
+        </div>
+      </div>
+      <div
+        aria-label="CoCalc.ai context carried forward"
+        role="group"
+        style={{
+          background: alpha(PUBLIC_COLORS.brandDark, 0.36),
+          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 14,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
+            What stays attached
+          </Text>
+          <Text
+            style={{
+              color: alpha(PUBLIC_COLORS.surface, 0.68),
+              fontSize: 12,
+            }}
+          >
+            Work can be resumed from context
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {WORKSPACE_PREVIEW_RECORD.map((item) => (
+            <div
+              key={item.label}
+              style={{
+                background: alpha(PUBLIC_COLORS.surface, 0.11),
+                border: `1px solid ${alpha(item.accent, 0.36)}`,
+                borderRadius: PANEL_RADIUS,
+                color: PUBLIC_COLORS.surface,
+                minHeight: 104,
+                padding: 11,
+              }}
+            >
+              <Flex align="center" gap={8}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: `${item.accent}1f`,
+                    border: `1px solid ${item.accent}42`,
+                    borderRadius: PANEL_RADIUS,
+                    color: item.accent,
+                    display: "flex",
+                    flex: "0 0 28px",
+                    height: 28,
+                    justifyContent: "center",
+                    width: 28,
+                  }}
+                >
+                  <Icon name={item.icon} />
+                </span>
+                <Text strong style={{ color: "inherit" }}>
+                  {item.label}
+                </Text>
+              </Flex>
+              <Text
+                style={{
+                  color: alpha(PUBLIC_COLORS.surface, 0.68),
+                  display: "block",
+                  marginTop: 8,
+                }}
+              >
+                {item.detail}
+              </Text>
+            </div>
+          ))}
         </div>
       </div>
       <div
