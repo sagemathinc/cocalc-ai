@@ -751,10 +751,10 @@ function ProductsSection() {
       aria-label="Ways to run CoCalc"
       className="cocalc-public-home-products"
       style={{
-        alignItems: "center",
+        alignItems: "stretch",
         display: "grid",
-        gap: 34,
-        gridTemplateColumns: "minmax(0, 0.8fr) minmax(360px, 1.2fr)",
+        gap: 22,
+        gridTemplateColumns: "minmax(0, 1fr)",
         padding: "36px 0",
       }}
     >
@@ -812,7 +812,7 @@ function ProductsSection() {
           style={{
             display: "grid",
             gap: 12,
-            gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))",
+            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
             marginTop: 18,
           }}
         >
@@ -1011,7 +1011,7 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
         style={{
           display: "grid",
           gap: 18,
-          gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+          gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
           marginTop: 26,
         }}
       >
