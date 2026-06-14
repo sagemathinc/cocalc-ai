@@ -474,10 +474,12 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Choose product path" }),
+      screen.getByRole("link", { name: "Compare product paths" }),
     ).toHaveAttribute("href", "/products");
     expect(
-      screen.getAllByRole("link", { name: "Talk about site licensing" }).length,
+      screen.getAllByRole("link", {
+        name: "Talk with CoCalc about site licensing",
+      }).length,
     ).toBeGreaterThan(0);
     expect(
       screen.getByRole("heading", { name: "Site licensing" }),
@@ -517,11 +519,11 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "Compare product paths" })
-        .getAttribute("href"),
-    ).toBe("/products");
+        .getAllByRole("link", { name: "Compare product paths" })
+        .every((link) => link.getAttribute("href") === "/products"),
+    ).toBe(true);
     const hostedPlansLink = screen.getByRole("link", {
-      name: "Contact CoCalc about hosted plans",
+      name: "Talk with CoCalc about hosted plans",
     });
     expect(hostedPlansLink.getAttribute("href")).toContain("/support/new?");
     expect(hostedPlansLink.getAttribute("href")).toContain(
@@ -1068,7 +1070,7 @@ describe("PublicApp", () => {
     expect(screen.queryByText(/Production private cloud/i)).toBeNull();
     expect(screen.queryByText(/multi-bay operations/i)).toBeNull();
     expect(
-      screen.getByRole("link", { name: "Open CoCalc Rocket" }),
+      screen.getByRole("link", { name: "View CoCalc Rocket" }),
     ).toHaveAttribute("href", "/products/cocalc-rocket");
     expect(
       screen.getByText("Site licensing wraps the product path."),
@@ -1100,8 +1102,8 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Which path fits?")).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Explore shared features" }),
-    ).toHaveAttribute("href", "/features");
+      screen.getByRole("link", { name: "Compare workspace model" }),
+    ).toHaveAttribute("href", "/features/compare");
   });
 
   it("renders the cocalc launchpad page", async () => {
@@ -1132,8 +1134,16 @@ describe("PublicApp", () => {
       screen.getByText(/customer-operated private environment/),
     ).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Pricing and licensing" }),
-    ).toHaveAttribute("href", "/pricing");
+      screen
+        .getAllByRole("link", { name: "Pricing and licensing" })
+        .every((link) => link.getAttribute("href") === "/pricing"),
+    ).toBe(true);
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
+    ).toHaveAttribute("href", "/support");
+    expect(
+      screen.getByRole("link", { name: "Compare with Rocket" }),
+    ).toHaveAttribute("href", "/products/cocalc-rocket");
     expectNoProductDetailStalePhrasing();
   });
 
@@ -1192,7 +1202,9 @@ describe("PublicApp", () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText(/governance, support/i)).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Start the Rocket conversation" }),
+      screen.getAllByRole("link", {
+        name: "Talk with CoCalc about Rocket",
+      })[0],
     ).toHaveAttribute("href", "/support");
     expectNoProductDetailStalePhrasing();
   });

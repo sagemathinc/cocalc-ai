@@ -674,8 +674,8 @@ function HostedPlansFallback({
     ? `No ${intervalLabel} hosted plan prices are published here yet.`
     : "Hosted plan prices are not published here yet.";
   const description = hasPublicTiers
-    ? "The available hosted plans do not include pricing for this billing interval in this environment. Compare product paths or contact CoCalc about hosted memberships and organizational buying."
-    : "Hosted memberships are the managed CoCalc.ai account path. Compare product paths for hosted, local, and customer-operated choices, or contact CoCalc about memberships, site licensing, and quotes.";
+    ? "The available hosted plans do not include pricing for this billing interval in this environment. Compare product paths or talk with CoCalc about hosted memberships and organizational buying."
+    : "Hosted memberships are the managed CoCalc.ai account path. Compare product paths for hosted, local, and customer-operated choices, or talk with CoCalc about memberships, site licensing, and quotes.";
 
   return (
     <PublicSection>
@@ -694,7 +694,7 @@ function HostedPlansFallback({
           )}
           icon={<DecorativeButtonIcon name="support" />}
         >
-          Contact CoCalc about hosted plans
+          Talk with CoCalc about hosted plans
         </Button>
       </Flex>
     </PublicSection>
@@ -750,7 +750,7 @@ export default function PricingPage({
               href={appPath("products")}
               icon={<DecorativeButtonIcon name="servers" />}
             >
-              Choose product path
+              Compare product paths
             </Button>
             <Button
               href={supportPurchasePath(
@@ -759,7 +759,7 @@ export default function PricingPage({
               )}
               icon={<DecorativeButtonIcon name="bank" />}
             >
-              Talk about site licensing
+              Talk with CoCalc about site licensing
             </Button>
           </Flex>
         </PublicSection>
@@ -840,7 +840,7 @@ export default function PricingPage({
                   "I want to discuss a CoCalc site license.",
                 )}
               >
-                Talk about site licensing
+                Talk with CoCalc about site licensing
               </Button>
             </Space>
           </PublicSection>
@@ -855,7 +855,7 @@ export default function PricingPage({
                 isolated or larger compute. This is hosted infrastructure, not a
                 private deployment path.
               </Paragraph>
-              <Button href={appPath("hosts")}>Open project hosts</Button>
+              <Button href={appPath("hosts")}>Review project hosts</Button>
             </Space>
           </PublicSection>
 

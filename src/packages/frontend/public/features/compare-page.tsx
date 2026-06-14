@@ -119,7 +119,7 @@ export default function CompareFeaturePage({
         </Paragraph>
         <Flex wrap gap={12}>
           <Button type="primary" href={featureAppPath("products")}>
-            Choose product path
+            Compare product paths
           </Button>
           <Button href={featureAppPath("pricing")}>
             Pricing and licensing

@@ -136,8 +136,8 @@ function ProductsOverviewPage() {
           it should run and who will operate it.
         </Paragraph>
         <Flex gap={12} wrap>
-          <LinkButton href={appPath("features")}>
-            Explore shared features
+          <LinkButton href={appPath("features/compare")}>
+            Compare workspace model
           </LinkButton>
           <LinkButton href={appPath("pricing")}>
             Pricing and licensing
@@ -293,7 +293,7 @@ function ProductsOverviewPage() {
                 </Text>
                 <Text>{path.bestFit}</Text>
               </div>
-              <LinkButton href={path.href}>Open {path.title}</LinkButton>
+              <LinkButton href={path.href}>View {path.title}</LinkButton>
             </div>
           ))}
         </div>
@@ -473,7 +473,11 @@ function CocalcRocketPage() {
     <Flex vertical gap={18}>
       <ProductLeadSection
         actions={[
-          { href: appPath("support"), label: "Talk with us", primary: true },
+          {
+            href: appPath("support"),
+            label: "Talk with CoCalc about Rocket",
+            primary: true,
+          },
           { href: appPath("pricing"), label: "Pricing and licensing" },
         ]}
         title="Private-cloud path for institutional deployment"
@@ -502,7 +506,7 @@ function CocalcRocketPage() {
             actions={[
               {
                 href: appPath("support"),
-                label: "Start the Rocket conversation",
+                label: "Talk with CoCalc about Rocket",
                 primary: true,
               },
               {
@@ -644,15 +648,12 @@ function CocalcLaunchpadPage() {
       <ProductLeadSection
         actions={[
           {
-            href: "#install-cocalc-launchpad",
-            label: "Install CoCalc Launchpad",
+            href: appPath("support"),
+            label: "Talk with CoCalc about Launchpad",
             primary: true,
           },
+          { href: appPath("pricing"), label: "Pricing and licensing" },
           { href: publicPath("products/cocalc-star"), label: "Compare Star" },
-          {
-            href: publicPath("products/cocalc-rocket"),
-            label: "Compare Rocket",
-          },
         ]}
         title="Lightweight private deployment for teams that operate CoCalc"
         body="CoCalc Launchpad is the customer-operated private deployment path for pilots, labs, workshops, departments, and platform teams that need more control than hosted CoCalc.ai or a single-VM Star appliance."
@@ -712,7 +713,9 @@ function CocalcLaunchpadPage() {
           <LinkButton href={publicPath("products/cocalc-plus")}>
             Compare with CoCalc Plus
           </LinkButton>
-          <LinkButton href={appPath("features/api")}>HTTP API</LinkButton>
+          <LinkButton href={publicPath("products/cocalc-rocket")}>
+            Compare with Rocket
+          </LinkButton>
         </Flex>
       </PublicSection>
     </Flex>

@@ -143,7 +143,7 @@ function SupportIndex({
           description="Review hosted plans, site licensing, and organizational buying routes."
           title="Pricing and licensing"
         >
-          <Button href={appPath("/pricing")}>Open pricing</Button>
+          <Button href={appPath("/pricing")}>Review pricing</Button>
         </SupportCard>
         {hasZendesk ? (
           <SupportCard

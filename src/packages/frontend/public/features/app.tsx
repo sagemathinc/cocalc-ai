@@ -826,7 +826,7 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
   return (
     <PublicSection>
       <Title level={3} style={{ margin: 0 }}>
-        Choose how CoCalc should run for you.
+        Choose the operating model that fits.
       </Title>
       <Paragraph style={{ margin: 0 }}>
         These feature pages describe shared workspace capabilities. Next, choose
@@ -835,7 +835,7 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
       </Paragraph>
       <Flex wrap gap={12}>
         <Button href={appPath("products")} type="primary">
-          Choose product path
+          Compare product paths
         </Button>
         <Button href={appPath("pricing")}>Pricing and licensing</Button>
         {currentSlug !== "compare" ? (

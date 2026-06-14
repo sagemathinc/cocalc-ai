@@ -34,10 +34,9 @@ describe("PublicSupportApp", () => {
     expect(
       screen.getByRole("link", { name: "Compare product paths" }),
     ).toHaveAttribute("href", "/products");
-    expect(screen.getByRole("link", { name: "Open pricing" })).toHaveAttribute(
-      "href",
-      "/pricing",
-    );
+    expect(
+      screen.getByRole("link", { name: "Review pricing" }),
+    ).toHaveAttribute("href", "/pricing");
     expect(screen.queryByText("System status")).toBeNull();
   });
 

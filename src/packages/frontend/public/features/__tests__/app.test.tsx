@@ -150,11 +150,11 @@ describe("PublicFeaturesApp", () => {
       within(featureNav).queryByRole("link", { name: /Previous:/ }),
     ).toBeNull();
     expect(
-      screen.getByText("Choose how CoCalc should run for you."),
+      screen.getByText("Choose the operating model that fits."),
     ).not.toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "Choose product path" })
+        .getByRole("link", { name: "Compare product paths" })
         .getAttribute("href"),
     ).toBe("/products");
     expect(
@@ -614,11 +614,11 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("AI-native work changes the comparison"),
     ).not.toBeNull();
     expect(
-      screen.getByText("Choose how CoCalc should run for you."),
+      screen.getByText("Choose the operating model that fits."),
     ).not.toBeNull();
     expect(
       screen
-        .getAllByRole("link", { name: "Choose product path" })
+        .getAllByRole("link", { name: "Compare product paths" })
         .map((link) => link.getAttribute("href")),
     ).toEqual(["/products", "/products"]);
     expect(

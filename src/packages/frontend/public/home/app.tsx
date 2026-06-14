@@ -366,7 +366,7 @@ const PATH_OPTIONS = [
   },
   {
     accent: COLORS.GRAY_D,
-    body: "Talk with us when governance, procurement, onboarding, support, or broader deployment rights matter.",
+    body: "Talk with CoCalc when governance, procurement, onboarding, support, or broader deployment rights matter.",
     button: () => "Pricing and licensing",
     href: () => appPath("pricing"),
     icon: "solution",
