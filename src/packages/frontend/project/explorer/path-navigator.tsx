@@ -24,7 +24,10 @@ import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { trunc_middle } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
-import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import {
+  getProjectHomeDirectory,
+  resolveProjectHomeDirectory,
+} from "@cocalc/frontend/project/home-directory";
 import getStorageOverview, {
   getCachedStorageOverview,
 } from "../disk-usage/storage-overview";
@@ -294,6 +297,9 @@ export const PathNavigator: React.FC<Props> = React.memo(
         actions?.open_directory(path, true, false);
       }
     };
+    const navigateHome = () => {
+      void resolveProjectHomeDirectory(project_id).then(navigate);
+    };
 
     const normalizePathForNav = (path: string): string => {
       const snapshotRelative = snapshotPathForNav(path, homePath);
@@ -363,7 +369,7 @@ export const PathNavigator: React.FC<Props> = React.memo(
       {
         key: "home",
         label: "Home",
-        onClick: () => navigate(homePath),
+        onClick: navigateHome,
       },
       {
         key: "root",
@@ -443,7 +449,13 @@ export const PathNavigator: React.FC<Props> = React.memo(
             ),
             full_name: currentSource.rootPath,
             key: 0,
-            on_click: () => navigate(currentSource.rootPath),
+            on_click: () => {
+              if (currentSource.key === "home") {
+                navigateHome();
+              } else {
+                navigate(currentSource.rootPath);
+              }
+            },
             active: currentPath === currentSource.rootPath,
             dropPath: currentSource.rootPath,
           }),

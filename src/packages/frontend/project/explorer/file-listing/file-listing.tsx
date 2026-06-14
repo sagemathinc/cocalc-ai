@@ -73,6 +73,7 @@ import {
   sortedTypeFilterOptions,
 } from "./utils";
 import {
+  hasRealListingRows,
   parentDirectoryPath,
   withParentDirectoryRow,
 } from "./parent-directory-row";
@@ -533,13 +534,15 @@ export function FileListing({
     );
   }, []);
 
-  const baseDataSource = useMemo<FileEntry[]>(() => {
-    const filteredListing = listing
+  const filteredListing = useMemo(() => {
+    return listing
       .filter((entry) => (hide_masked_files ? !entry.mask : true))
       .filter((entry) =>
         type_filter == null ? true : typeFilterValue(entry) === type_filter,
       );
+  }, [listing, hide_masked_files, type_filter]);
 
+  const baseDataSource = useMemo<FileEntry[]>(() => {
     return withParentDirectoryRow({
       listing: filteredListing,
       currentPath: current_path,
@@ -558,15 +561,7 @@ export function FileListing({
           starredSet.has(entry.isDir ? `${fullPath}/` : fullPath),
       };
     });
-  }, [
-    listing,
-    hide_masked_files,
-    type_filter,
-    current_path,
-    file_search,
-    openFiles,
-    starredSet,
-  ]);
+  }, [filteredListing, current_path, file_search, openFiles, starredSet]);
 
   const virtualData = useMemo<VirtualEntry[]>(() => {
     const result: VirtualEntry[] = [];
@@ -1342,8 +1337,10 @@ export function FileListing({
   const isBackupsVirtualPath = isBackupsPath(current_path);
   const isSecretsPath = isProjectSecretsPath(current_path);
   const isReadonlyVirtualPath = isSnapshotsVirtualPath || isBackupsVirtualPath;
+  const showEmptyNotice =
+    !hasRealListingRows(baseDataSource) && file_search[0] !== TERM_MODE_CHAR;
 
-  if (baseDataSource.length === 0 && file_search[0] !== TERM_MODE_CHAR) {
+  if (baseDataSource.length === 0 && showEmptyNotice) {
     return (
       <>
         {isSnapshotsVirtualPath ? (
@@ -1485,6 +1482,26 @@ export function FileListing({
             </Button>
           }
         />
+      ) : null}
+      {showEmptyNotice ? (
+        isReadonlyVirtualPath ? (
+          <Alert
+            type="info"
+            showIcon
+            style={{ margin: "8px 16px 0 16px" }}
+            title={
+              file_search.trim()
+                ? "No files or folders match the current filter."
+                : "No files or folders to display."
+            }
+          />
+        ) : (
+          <NoFiles
+            current_path={current_path}
+            file_search={file_search}
+            project_id={project_id}
+          />
+        )
       ) : null}
       <DndRowContext.Provider value={dndRowCtx}>
         <div
