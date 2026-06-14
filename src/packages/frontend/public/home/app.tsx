@@ -3701,33 +3701,42 @@ function ProductOptionsSection() {
     icon: IconName;
     question: string;
   }[];
-  const operatingPathReview = [
+  const operatingFitMatrix = [
     {
       accent: COLORS.BLUE_D,
-      detail:
-        "Hosted accounts, local use, private teams, and policy questions use different routes.",
-      icon: "users",
-      label: "Scope",
+      href: appPath("pricing"),
+      icon: "cloud",
+      path: "Hosted",
+      route: "Hosted pricing",
+      useWhen: "CoCalc runs the service and accounts need project upgrades.",
+      watchNext: "Account limits, project resources, and membership choices.",
     },
     {
       accent: COLORS.RUN,
-      detail:
-        "Projects still hold files, notebooks, terminals, AI work, and history.",
-      icon: "project-outlined",
-      label: "Workspace model",
+      href: appPath("products/cocalc-plus"),
+      icon: "laptop",
+      path: "Local",
+      route: "CoCalc Plus details",
+      useWhen: "One person runs CoCalc on their own Linux or Mac machine.",
+      watchNext: "Install path, local files, and single-user expectations.",
     },
     {
       accent: COLORS.AI_ASSISTANT_FONT,
-      detail:
-        "Use pricing, Plus, products, trust, or support for the boundary question.",
-      icon: "arrow-right",
-      label: "Next page",
+      href: appPath("products"),
+      icon: "servers",
+      path: "Customer-operated",
+      route: "Deployment comparison",
+      useWhen: "A team needs a private operating boundary.",
+      watchNext: "Operator responsibility, rollout scope, and support needs.",
     },
   ] satisfies {
     accent: string;
-    detail: string;
+    href: string;
     icon: IconName;
-    label: string;
+    path: string;
+    route: string;
+    useWhen: string;
+    watchNext: string;
   }[];
   const operatingDecisionRoutes = [
     {
@@ -4000,7 +4009,7 @@ function ProductOptionsSection() {
                 </div>
               </div>
               <div
-                aria-label="CoCalc.ai operating path review"
+                aria-label="CoCalc.ai operating fit matrix"
                 role="group"
                 style={{
                   background: alpha(PUBLIC_COLORS.surface, 0.86),
@@ -4011,80 +4020,153 @@ function ProductOptionsSection() {
               >
                 <Flex align="baseline" justify="space-between" wrap gap={8}>
                   <Text strong style={{ color: PUBLIC_COLORS.brand }}>
-                    Review before choosing
+                    Operating fit matrix
                   </Text>
                   <Text type="secondary">
-                    Keep route, workspace, and detail page aligned.
+                    Match responsibility to the next page.
                   </Text>
                 </Flex>
                 <div
                   style={{
                     display: "grid",
                     gap: 8,
-                    gridTemplateColumns:
-                      "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
                     marginTop: 10,
                   }}
                 >
-                  {operatingPathReview.map((item, index) => (
-                    <span
-                      key={item.label}
+                  <div
+                    aria-hidden="true"
+                    className="cocalc-public-home-product-header"
+                    style={{
+                      color: PUBLIC_COLORS.brand,
+                      display: "grid",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      gap: 12,
+                      gridTemplateColumns:
+                        "minmax(132px, 0.78fr) minmax(180px, 1fr) minmax(180px, 1fr) minmax(122px, 0.58fr) 16px",
+                      padding: "0 10px",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    <Text style={{ color: "inherit", fontSize: "inherit" }}>
+                      Path
+                    </Text>
+                    <Text style={{ color: "inherit", fontSize: "inherit" }}>
+                      Use when
+                    </Text>
+                    <Text style={{ color: "inherit", fontSize: "inherit" }}>
+                      Check next
+                    </Text>
+                    <Text style={{ color: "inherit", fontSize: "inherit" }}>
+                      Route
+                    </Text>
+                    <span />
+                  </div>
+                  {operatingFitMatrix.map((item) => (
+                    <a
+                      aria-label={`${item.path}: ${item.useWhen} ${item.watchNext} ${item.route}.`}
+                      className="cocalc-public-home-product-row"
+                      href={item.href}
+                      key={item.path}
                       style={{
                         alignItems: "start",
                         background: alpha(item.accent, 0.06),
                         border: `1px solid ${alpha(item.accent, 0.22)}`,
                         borderRadius: PANEL_RADIUS,
                         display: "grid",
-                        gap: 9,
-                        gridTemplateColumns: "30px minmax(0, 1fr)",
-                        minHeight: 98,
+                        gap: 12,
+                        gridTemplateColumns:
+                          "minmax(132px, 0.78fr) minmax(180px, 1fr) minmax(180px, 1fr) minmax(122px, 0.58fr) 16px",
+                        minHeight: 82,
                         padding: 10,
+                        textDecoration: "none",
                       }}
                     >
                       <span
-                        aria-hidden="true"
+                        className="cocalc-public-home-product-row-path"
                         style={{
                           alignItems: "center",
-                          background: alpha(item.accent, 0.08),
-                          border: `1px solid ${alpha(item.accent, 0.22)}`,
-                          borderRadius: PANEL_RADIUS,
-                          color: item.accent,
                           display: "flex",
-                          flexDirection: "column",
-                          fontSize: 14,
-                          gap: 2,
-                          height: 42,
-                          justifyContent: "center",
-                          width: 30,
+                          gap: 9,
+                          minWidth: 0,
                         }}
                       >
-                        <Icon name={item.icon} />
-                        <Text
-                          strong
+                        <span
+                          aria-hidden="true"
                           style={{
-                            color: "inherit",
-                            fontSize: 10,
-                            lineHeight: 1,
+                            alignItems: "center",
+                            background: alpha(item.accent, 0.08),
+                            border: `1px solid ${alpha(item.accent, 0.22)}`,
+                            borderRadius: PANEL_RADIUS,
+                            color: item.accent,
+                            display: "flex",
+                            flex: "0 0 30px",
+                            height: 30,
+                            justifyContent: "center",
+                            width: 30,
                           }}
                         >
-                          {index + 1}
+                          <Icon name={item.icon} />
+                        </span>
+                        <Text strong style={{ color: item.accent }}>
+                          {item.path}
                         </Text>
                       </span>
-                      <span style={{ minWidth: 0 }}>
+                      <span
+                        className="cocalc-public-home-product-row-field"
+                        style={{ minWidth: 0 }}
+                      >
                         <Text
                           strong
                           style={{
-                            color: item.accent,
+                            color: PUBLIC_COLORS.brand,
                             display: "block",
                             fontSize: 12,
                             textTransform: "uppercase",
                           }}
                         >
-                          {item.label}
+                          Use when
                         </Text>
-                        <Text type="secondary">{item.detail}</Text>
+                        <Text type="secondary">{item.useWhen}</Text>
                       </span>
-                    </span>
+                      <span
+                        className="cocalc-public-home-product-row-field"
+                        style={{ minWidth: 0 }}
+                      >
+                        <Text
+                          strong
+                          style={{
+                            color: PUBLIC_COLORS.brand,
+                            display: "block",
+                            fontSize: 12,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          Check next
+                        </Text>
+                        <Text type="secondary">{item.watchNext}</Text>
+                      </span>
+                      <Text
+                        className="cocalc-public-home-product-row-next"
+                        strong
+                        style={{
+                          alignSelf: "center",
+                          color: item.accent,
+                          justifySelf: "start",
+                        }}
+                      >
+                        {item.route}
+                      </Text>
+                      <Icon
+                        name="arrow-right"
+                        style={{
+                          alignSelf: "center",
+                          color: item.accent,
+                          fontSize: 12,
+                          justifySelf: "end",
+                        }}
+                      />
+                    </a>
                   ))}
                 </div>
               </div>

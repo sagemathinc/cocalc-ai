@@ -1369,27 +1369,53 @@ describe("PublicHomeApp", () => {
         within(operatingBoundaryQuestions).getByText(question),
       ).not.toBeNull();
     }
-    const operatingPathReview = within(productOptions).getByRole("group", {
-      name: "CoCalc.ai operating path review",
+    const operatingFitMatrix = within(productOptions).getByRole("group", {
+      name: "CoCalc.ai operating fit matrix",
     });
+    expectLinkHrefs(operatingFitMatrix, [
+      "/pricing",
+      "/products/cocalc-plus",
+      "/products",
+    ]);
     expect(
-      within(operatingPathReview).getByText("Review before choosing"),
+      within(operatingFitMatrix).getByText("Operating fit matrix"),
     ).not.toBeNull();
     expect(
-      within(operatingPathReview).getByText(
-        "Keep route, workspace, and detail page aligned.",
+      within(operatingFitMatrix).getByText(
+        "Match responsibility to the next page.",
       ),
     ).not.toBeNull();
     for (const reviewItem of [
-      "Scope",
-      "Workspace model",
-      "Next page",
-      "Hosted accounts, local use, private teams, and policy questions use different routes.",
-      "Projects still hold files, notebooks, terminals, AI work, and history.",
-      "Use pricing, Plus, products, trust, or support for the boundary question.",
+      "Hosted",
+      "Local",
+      "Customer-operated",
+      "CoCalc runs the service and accounts need project upgrades.",
+      "One person runs CoCalc on their own Linux or Mac machine.",
+      "A team needs a private operating boundary.",
+      "Account limits, project resources, and membership choices.",
+      "Install path, local files, and single-user expectations.",
+      "Operator responsibility, rollout scope, and support needs.",
+      "Hosted pricing",
+      "CoCalc Plus details",
+      "Deployment comparison",
     ]) {
-      expect(within(operatingPathReview).getByText(reviewItem)).not.toBeNull();
+      expect(within(operatingFitMatrix).getByText(reviewItem)).not.toBeNull();
     }
+    expect(
+      within(operatingFitMatrix)
+        .getByRole("link", { name: /Hosted:/i })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(
+      within(operatingFitMatrix)
+        .getByRole("link", { name: /Local:/i })
+        .getAttribute("href"),
+    ).toBe("/products/cocalc-plus");
+    expect(
+      within(operatingFitMatrix)
+        .getByRole("link", { name: /Customer-operated:/i })
+        .getAttribute("href"),
+    ).toBe("/products");
     const operatingDecisionRoutes = within(productOptions).getByRole("group", {
       name: "CoCalc.ai operating decision routes",
     });
