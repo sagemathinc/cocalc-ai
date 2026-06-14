@@ -75,7 +75,7 @@ describe("PublicHomeApp", () => {
     ).toBeNull();
     expect(getHomepageSectionLabels(container)).toEqual([
       "CoCalc hero",
-      "One technical workspace",
+      "Project continuity",
       "Who CoCalc helps",
       "Core workflows",
       "Ways to run CoCalc",
@@ -90,12 +90,12 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero).getByRole("heading", {
         level: 1,
-        name: "One workspace for code, notebooks, documents, compute, and AI",
+        name: "Collaborative computing for research, teaching, and teams",
       }),
     ).not.toBeNull();
     expect(
       within(hero).getByText(
-        /CoCalc keeps notebooks, code, terminals, documents, collaboration/i,
+        /shared project space for notebooks, code, documents, terminals/i,
       ),
     ).not.toBeNull();
     expect(
@@ -111,22 +111,22 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
     expect(
-      within(hero).getByRole("link", { name: "Find your CoCalc path" }),
+      within(hero).getByRole("link", { name: "Compare product paths" }),
     ).toHaveAttribute("href", "/products");
     expect(
       within(hero).queryByText(/keeps technical work collaborative/i),
     ).toBeNull();
     for (const tag of [
-      "Code and scripts",
-      "Notebooks",
-      "Documents",
-      "AI in context",
+      "Shared projects",
+      "Review history",
+      "Course workflows",
+      "Deployment choice",
     ]) {
       expect(within(hero).getByText(tag)).not.toBeNull();
     }
 
     const project = screen.getByRole("region", {
-      name: "One technical workspace",
+      name: "Project continuity",
     });
     expect(
       within(project)
@@ -137,13 +137,17 @@ describe("PublicHomeApp", () => {
     ).toBe("/public/landing/project-workflows.jpg");
     expect(
       within(project).getByRole("heading", {
-        name: "Bring technical work back into one context.",
+        name: "Keep the work connected after the first result.",
       }),
     ).not.toBeNull();
-    expect(within(project).getByText("Context stays together")).not.toBeNull();
-    expect(within(project).getByText("Work stays reviewable")).not.toBeNull();
     expect(
-      within(project).getByText("People and AI share context"),
+      within(project).getByText("The project becomes the record"),
+    ).not.toBeNull();
+    expect(
+      within(project).getByText("Review comes with the work"),
+    ).not.toBeNull();
+    expect(
+      within(project).getByText("AI works inside the project"),
     ).not.toBeNull();
 
     const audiences = screen.getByRole("region", {
@@ -151,7 +155,7 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(audiences).getByRole("heading", {
-        name: "One workspace for research, courses, and platform teams.",
+        name: "Built for research groups, courses, and platform teams.",
       }),
     ).not.toBeNull();
     expect(
@@ -178,7 +182,7 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(workflows).getByRole("heading", {
-        name: "Use the tools you already understand, together.",
+        name: "Use notebooks, terminals, documents, and AI in context.",
       }),
     ).not.toBeNull();
     expect(
@@ -211,12 +215,12 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(products).getByRole("heading", {
-        name: "Hosted, local, one VM, or private from the same product family.",
+        name: "Choose the operating model that fits your team.",
       }),
     ).not.toBeNull();
     expect(
       within(products).getByRole("link", {
-        name: "Choose how to run CoCalc",
+        name: "Compare product paths",
       }),
     ).toHaveAttribute("href", "/products");
     expect(
@@ -248,11 +252,11 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(difference).getByRole("heading", {
-        name: "Technical work you can review, recover, and keep moving.",
+        name: "Work you can review, recover, and continue.",
       }),
     ).not.toBeNull();
     for (const title of [
-      "One technical workspace",
+      "Project-centered workflow",
       "Reviewable work",
       "Recoverable projects",
       "Hosted, local, one VM, or private",
@@ -262,7 +266,9 @@ describe("PublicHomeApp", () => {
 
     const path = screen.getByRole("region", { name: "Choose your path" });
     expect(
-      within(path).getByRole("heading", { name: "Choose your CoCalc path" }),
+      within(path).getByRole("heading", {
+        name: "Start with the path that matches your operating model.",
+      }),
     ).not.toBeNull();
     expect(
       within(path).getByRole("link", { name: "Start on CoCalc.ai" }),
@@ -299,6 +305,9 @@ describe("PublicHomeApp", () => {
     expect(container.innerHTML).toContain("products/cocalc-star");
     expect(container.innerHTML).not.toMatch(
       /project hosts|backend state|logs stay scoped|RootFS|multi-bay/i,
+    );
+    expect(container.textContent ?? "").not.toMatch(
+      /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams/i,
     );
   });
 

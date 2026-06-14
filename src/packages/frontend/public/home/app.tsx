@@ -107,24 +107,24 @@ const HOME_PAGE_CSS = `
 `;
 
 const HERO_TAGS = [
-  "Code and scripts",
-  "Notebooks",
-  "Documents",
-  "AI in context",
+  "Shared projects",
+  "Review history",
+  "Course workflows",
+  "Deployment choice",
 ] as const;
 
 const PROJECT_FACTS = [
   {
-    body: "Code, notebooks, papers, terminals, chat, files, and AI assistance stay close to the same project instead of drifting into separate tools.",
-    title: "Context stays together",
+    body: "Files, notebooks, documents, terminals, chat, and outputs stay near the decisions they support.",
+    title: "The project becomes the record",
   },
   {
-    body: "History, shared files, and recovery paths make technical work easier to inspect, continue, and hand off.",
-    title: "Work stays reviewable",
+    body: "History, shared files, and recovery paths make it easier to inspect changes and hand projects off.",
+    title: "Review comes with the work",
   },
   {
-    body: "Researchers, engineers, instructors, and AI assistants can work around the same artifacts without losing the thread.",
-    title: "People and AI share context",
+    body: "Agents work against the same project artifacts people are already using, so help stays tied to the work.",
+    title: "AI works inside the project",
   },
 ] as const;
 
@@ -195,7 +195,7 @@ const WORKFLOW_FEATURES = [
 const AUDIENCE_ROUTES = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Keep notebooks, scripts, papers, terminals, and AI assistance close to the same project history.",
+    body: "Keep experiments, code, papers, outputs, and AI assistance tied to a project record the team can inspect and continue.",
     button: "Explore workflows",
     href: "features/compare",
     icon: "project-outlined",
@@ -203,7 +203,7 @@ const AUDIENCE_ROUTES = [
   },
   {
     accent: COLORS.RUN,
-    body: "Use course management for student projects, assignments, grading, shared software environments, and contextual help.",
+    body: "Run technical course workflows around student projects, assignments, grading, shared environments, and contextual help.",
     button: "Course workflows",
     href: "features/teaching",
     icon: "graduation-cap",
@@ -211,7 +211,7 @@ const AUDIENCE_ROUTES = [
   },
   {
     accent: COLORS.GRAY_D,
-    body: "Choose hosted, local, single-VM, or private deployment paths without changing the core workspace model.",
+    body: "Match the operating model to your requirements: hosted, local, single-VM, or customer-operated private deployment.",
     button: "Compare product paths",
     href: "products",
     icon: "servers",
@@ -295,14 +295,14 @@ const DIFFERENCE_SIGNALS = [
 const DIFFERENTIATORS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Code, notebooks, documents, files, terminals, collaboration, and AI assistance stay connected in project context.",
-    eyebrow: "Workspace breadth",
+    body: "Keep the main artifacts of computational work near the discussions, outputs, and decisions they produce.",
+    eyebrow: "Project continuity",
     icon: "project-outlined",
-    title: "One technical workspace",
+    title: "Project-centered workflow",
   },
   {
     accent: COLORS.RUN,
-    body: "Technical work remains easier to inspect, discuss, continue, and hand off after AI or human changes.",
+    body: "Human and AI changes remain easier to inspect, discuss, continue, and hand off.",
     eyebrow: "Inspect and continue",
     icon: "search",
     title: "Reviewable work",
@@ -316,7 +316,7 @@ const DIFFERENTIATORS = [
   },
   {
     accent: COLORS.GRAY_M,
-    body: "Use CoCalc hosted, evaluate locally, run a shared single-VM appliance, or choose a customer-operated private deployment path when your organization needs more control.",
+    body: "Start hosted, evaluate locally, use one shared VM, or move to a customer-operated private deployment path.",
     eyebrow: "Deployment choice",
     icon: "cloud",
     title: "Hosted, local, one VM, or private",
@@ -526,7 +526,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            One workspace for code, notebooks, documents, compute, and AI
+            Collaborative computing for research, teaching, and teams
           </Title>
           <Paragraph
             style={{
@@ -537,9 +537,9 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            CoCalc keeps notebooks, code, terminals, documents, collaboration,
-            AI agents, course workflows, history, and recovery together in one
-            project workspace.
+            CoCalc gives technical groups a shared project space for notebooks,
+            code, documents, terminals, AI assistance, and course workflows,
+            with hosted, local, single-VM, and private deployment paths.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -556,7 +556,7 @@ function Hero({
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
           <Button href={appPath("products")} size="large">
-            Find your CoCalc path
+            Compare product paths
           </Button>
         </Flex>
         <Flex gap={8} wrap>
@@ -594,7 +594,7 @@ function Hero({
 function ProjectSection() {
   return (
     <section
-      aria-label="One technical workspace"
+      aria-label="Project continuity"
       className="cocalc-public-home-project"
       style={{
         alignItems: "center",
@@ -622,15 +622,15 @@ function ProjectSection() {
       />
       <Flex vertical gap={18}>
         <div>
-          <Eyebrow>One technical workspace</Eyebrow>
+          <Eyebrow>Project continuity</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Bring technical work back into one context.
+            Keep the work connected after the first result.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Technical teams move between code, notebooks, papers, terminals,
-            files, and AI. CoCalc keeps those artifacts together so work can be
-            shared, reviewed, continued, and recovered without rebuilding
-            context across disconnected tools.
+            Research, teaching, and computational projects rarely end at a
+            single output. CoCalc keeps the working record around the project so
+            teams can share it, review it, continue it, and recover it without
+            reconstructing what happened.
           </Paragraph>
         </div>
         <div
@@ -668,9 +668,9 @@ function AudienceRoutesSection() {
   return (
     <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
       <SectionIntro
-        body="The same project model supports hands-on technical work, course operations, and deployment decisions."
+        body="Researchers get productive projects, instructors get course workflows, and IT teams get deployment choices without changing the core product story."
         eyebrow="Who it helps"
-        title="One workspace for research, courses, and platform teams."
+        title="Built for research groups, courses, and platform teams."
       />
       <div
         className="cocalc-public-home-audience-grid"
@@ -715,9 +715,9 @@ function WorkflowsSection() {
     <section aria-label="Core workflows" style={{ padding: "28px 0" }}>
       <SectionIntro
         action={<Button href={appPath("features")}>All features</Button>}
-        body="CoCalc keeps familiar research and engineering tools in one shared workspace: notebooks, papers, terminals, AI help, courses, and visual thinking."
+        body="Open the workflow you need without moving the project into another product: notebooks, writing, terminals, agents, courses, and visual collaboration."
         eyebrow="Core workflows"
-        title="Use the tools you already understand, together."
+        title="Use notebooks, terminals, documents, and AI in context."
       />
       <div
         className="cocalc-public-home-workflow-layout"
@@ -852,18 +852,17 @@ function ProductsSection() {
         <div>
           <Eyebrow>Ways to run CoCalc</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Hosted, local, one VM, or private from the same product family.
+            Choose the operating model that fits your team.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Start with the operating model that fits the team. Use CoCalc
-            hosted, evaluate locally with CoCalc Plus, run a shared single-VM
-            appliance with CoCalc Star, or choose a customer-operated private
-            deployment path when your organization needs more control.
+            Start hosted on CoCalc.ai, evaluate locally with CoCalc Plus, run
+            one shared VM with CoCalc Star, or choose Launchpad or Rocket when
+            your organization needs a customer-operated environment.
           </Paragraph>
         </div>
         <Flex gap={10} wrap>
           <Button href={appPath("products")} type="primary">
-            Choose how to run CoCalc
+            Compare product paths
           </Button>
           <Button href={appPath("pricing")}>Pricing and licensing</Button>
         </Flex>
@@ -879,7 +878,7 @@ function ProductsSection() {
       >
         <Flex align="center" justify="space-between" wrap gap={12}>
           <Text strong style={{ color: PUBLIC_COLORS.link }}>
-            Same CoCalc workspace model
+            Same CoCalc project model
           </Text>
           <Flex gap={6} wrap>
             {PRODUCT_MODEL_ITEMS.map((item) => (
@@ -985,12 +984,12 @@ function DifferenceSection() {
         <div>
           <Eyebrow>Why CoCalc is different</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Technical work you can review, recover, and keep moving.
+            Work you can review, recover, and continue.
           </Title>
           <Paragraph style={{ margin: 0 }}>
-            Technical teams need more than fast output. They need shared
-            context, durable artifacts, review paths, and recovery paths around
-            the same code, notebooks, documents, and compute.
+            Fast output matters less if nobody can explain, resume, or recover
+            it. CoCalc keeps collaboration, history, artifacts, and deployment
+            options around the project.
           </Paragraph>
         </div>
         <div
@@ -1087,7 +1086,7 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
       >
         <Eyebrow>Choose your path</Eyebrow>
         <Title level={2} style={{ margin: "8px 0 10px" }}>
-          Choose your CoCalc path
+          Start with the path that matches your operating model.
         </Title>
         <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
           Use hosted CoCalc.ai when you want CoCalc operated for you, Plus for

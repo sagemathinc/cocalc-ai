@@ -5,7 +5,10 @@ import { render, screen, within } from "@testing-library/react";
 import PublicHomeApp from "../app";
 
 const INTERNAL_IMPLEMENTATION_TERMS =
-  /project hosts|backend state|logs stay scoped|RootFS|multi-bay|control plane|postgres|kubernetes|systemd|conat/i;
+  /serious\s+technical\s+work|project hosts|backend state|logs stay scoped|RootFS|multi-bay|control plane|postgres|kubernetes|systemd|conat/i;
+
+const STALE_REPETITIVE_HOME_LINES =
+  /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Use the tools you already understand, together/i;
 
 function renderHome() {
   return render(
@@ -140,7 +143,7 @@ describe("PublicHomeApp visual quality contract", () => {
     expect(getDirectCards(differenceGrid)).toHaveLength(4);
     expectGridTemplate(differenceGrid, "repeat(2, minmax(0, 1fr))");
     expect(getCardTitles(differenceGrid)).toEqual([
-      "One technical workspace",
+      "Project-centered workflow",
       "Reviewable work",
       "Recoverable projects",
       "Hosted, local, one VM, or private",
@@ -223,12 +226,12 @@ describe("PublicHomeApp visual quality contract", () => {
     expect(
       sectionHeadings.map((heading) => heading.textContent?.trim()),
     ).toEqual([
-      "Bring technical work back into one context.",
-      "One workspace for research, courses, and platform teams.",
-      "Use the tools you already understand, together.",
-      "Hosted, local, one VM, or private from the same product family.",
-      "Technical work you can review, recover, and keep moving.",
-      "Choose your CoCalc path",
+      "Keep the work connected after the first result.",
+      "Built for research groups, courses, and platform teams.",
+      "Use notebooks, terminals, documents, and AI in context.",
+      "Choose the operating model that fits your team.",
+      "Work you can review, recover, and continue.",
+      "Start with the path that matches your operating model.",
     ]);
     for (const heading of sectionHeadings) {
       expect(textLength(heading)).toBeLessThanOrEqual(72);
@@ -236,6 +239,9 @@ describe("PublicHomeApp visual quality contract", () => {
 
     expect(container.textContent ?? "").not.toMatch(
       INTERNAL_IMPLEMENTATION_TERMS,
+    );
+    expect(container.textContent ?? "").not.toMatch(
+      STALE_REPETITIVE_HOME_LINES,
     );
   });
 
@@ -256,7 +262,7 @@ describe("PublicHomeApp visual quality contract", () => {
     );
 
     const workflowImage = within(
-      screen.getByRole("region", { name: "One technical workspace" }),
+      screen.getByRole("region", { name: "Project continuity" }),
     ).getByRole("img", {
       name: "One CoCalc workspace containing many workflows",
     });
