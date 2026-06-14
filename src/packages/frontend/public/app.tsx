@@ -13,6 +13,7 @@ import {
 } from "@cocalc/frontend/auth/api";
 import { getStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import { getSiteName, type PublicConfig, PublicSectionShell } from "./common";
+import { PublicRouteHeadMetadata } from "./metadata";
 import type { PublicRoute } from "./routes";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { publicPath } from "./routes";
@@ -234,6 +235,7 @@ export default function PublicApp({
 
   return (
     <Suspense fallback={null}>
+      <PublicRouteHeadMetadata config={resolvedConfig} route={initialRoute} />
       <PublicRouteBody
         config={resolvedConfig}
         initialRoute={initialRoute}
