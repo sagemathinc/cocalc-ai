@@ -188,46 +188,36 @@ const PRODUCT_OPTIONS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Managed hosted workspace for teams that want the full product without running infrastructure.",
-    fit: "Teams, labs, and evaluators starting hosted",
     icon: "cloud",
     label: "Hosted",
-    mode: "Managed hosted",
     title: "CoCalc.ai",
   },
   {
     accent: COLORS.RUN,
     body: "Free source-available local runtime for self-directed technical work and evaluation.",
-    fit: "Individual researchers and technical evaluators",
     icon: "laptop",
     label: "Local",
-    mode: "Runs locally",
     title: "CoCalc Plus",
   },
   {
     accent: PUBLIC_COLORS.warning,
     body: "Lightweight customer-operated private deployment for pilots, labs, workshops, and small teams.",
-    fit: "Private pilots and departmental environments",
     icon: "servers",
     label: "Private",
-    mode: "Customer-operated",
     title: "CoCalc Launchpad",
   },
   {
     accent: COLORS.GRAY_D,
     body: "Enterprise private-cloud deployment path for larger organizational requirements.",
-    fit: "Platform, security, and procurement-led rollouts",
     icon: "rocket",
     label: "Enterprise",
-    mode: "Customer-operated enterprise",
     title: "CoCalc Rocket",
   },
 ] satisfies Array<{
   accent: string;
   body: string;
-  fit: string;
   icon: IconName;
   label: string;
-  mode: string;
   title: string;
 }>;
 
@@ -282,8 +272,6 @@ const DIFFERENTIATORS = [
   icon: IconName;
   title: string;
 }>;
-
-const PATH_TAGS = ["Notebooks", "Terminals", "Agents", "TimeTravel"] as const;
 
 const PATH_OPTIONS = [
   {
@@ -815,7 +803,7 @@ function ProductsSection() {
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${alpha(option.accent, 0.18)}`,
                 borderRadius: PANEL_RADIUS,
-                minHeight: 280,
+                minHeight: 225,
                 padding: 16,
               }}
             >
@@ -843,23 +831,6 @@ function ProductsSection() {
                     {option.title}
                   </Title>
                   <Paragraph style={{ margin: 0 }}>{option.body}</Paragraph>
-                </div>
-                <div
-                  style={{
-                    background: PUBLIC_COLORS.surfaceMuted,
-                    border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: PANEL_RADIUS,
-                    display: "grid",
-                    gap: 6,
-                    padding: 10,
-                  }}
-                >
-                  <Text style={{ display: "block", fontSize: 13 }}>
-                    <Text strong>Model:</Text> {option.mode}
-                  </Text>
-                  <Text style={{ display: "block", fontSize: 13 }}>
-                    <Text strong>Best fit:</Text> {option.fit}
-                  </Text>
                 </div>
               </Flex>
             </div>
@@ -1001,43 +972,18 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
       <div
         className="cocalc-public-home-path"
         style={{
-          alignItems: "end",
-          display: "grid",
-          gap: 22,
-          gridTemplateColumns: "minmax(0, 1fr) auto",
+          maxWidth: 780,
         }}
       >
-        <div>
-          <Eyebrow>Choose your path</Eyebrow>
-          <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Start using CoCalc
-          </Title>
-          <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-            Start hosted, evaluate locally, compare private deployment, or talk
-            with us about organizational rollout. The point is one technical
-            workspace with multiple operating models.
-          </Paragraph>
-        </div>
-        <Flex gap={6} wrap>
-          {PATH_TAGS.map((tag) => (
-            <Tag
-              key={tag}
-              style={{
-                background: PUBLIC_COLORS.surface,
-                borderColor: PUBLIC_COLORS.border,
-                color:
-                  tag === "Terminals"
-                    ? PUBLIC_COLORS.success
-                    : tag === "Agents"
-                      ? PUBLIC_COLORS.warning
-                      : PUBLIC_COLORS.link,
-                marginInlineEnd: 0,
-              }}
-            >
-              {tag}
-            </Tag>
-          ))}
-        </Flex>
+        <Eyebrow>Choose your path</Eyebrow>
+        <Title level={2} style={{ margin: "8px 0 10px" }}>
+          Start using CoCalc
+        </Title>
+        <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
+          Start hosted, evaluate locally, compare private deployment, or talk
+          with us about organizational rollout. The point is one technical
+          workspace with multiple operating models.
+        </Paragraph>
       </div>
       <div
         className="cocalc-public-home-path-grid"

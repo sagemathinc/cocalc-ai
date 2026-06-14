@@ -184,15 +184,19 @@ describe("PublicHomeApp", () => {
       "CoCalc Plus",
       "CoCalc Launchpad",
       "CoCalc Rocket",
+      "Hosted",
+      "Local",
+      "Private",
+      "Enterprise",
       "Individual",
       "Organization",
-      "Managed hosted",
-      "Customer-operated",
-      "Customer-operated enterprise",
-      "Platform, security, and procurement-led rollouts",
     ]) {
       expect(within(products).getByText(option)).not.toBeNull();
     }
+    expect(
+      within(products).getAllByText(/customer-operated private deployment/i)
+        .length,
+    ).toBeGreaterThan(0);
 
     const difference = screen.getByRole("region", {
       name: "Why CoCalc is different",
