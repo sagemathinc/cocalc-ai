@@ -107,7 +107,7 @@ describe("PublicHomeApp", () => {
     ).toHaveAttribute("href", "/products/cocalc-plus");
     for (const tag of [
       "Minimal free tier",
-      "Standard trial planned",
+      "Hosted plans",
       "Free CoCalc Plus",
       "Self-host with Star",
     ]) {
@@ -129,11 +129,12 @@ describe("PublicHomeApp", () => {
         name: "One durable place for technical work.",
       }),
     ).not.toBeNull();
+    expect(within(project).getByText("One project boundary")).not.toBeNull();
     expect(
       within(project).getByText("Work survives the browser"),
     ).not.toBeNull();
     expect(
-      within(project).getByText("Collaboration is everywhere"),
+      within(project).getByText("People and agents share context"),
     ).not.toBeNull();
 
     const workflows = screen.getByRole("region", {
@@ -174,7 +175,7 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(products).getByRole("heading", {
-        name: "Hosted, local, self-hosted, or enterprise scale.",
+        name: "Choose by who operates CoCalc.",
       }),
     ).not.toBeNull();
     expect(
@@ -189,6 +190,9 @@ describe("PublicHomeApp", () => {
       "Launchpad + Rocket",
       "Individual",
       "Organization",
+      "Operated by CoCalc",
+      "Operated on your VM",
+      "Lab, class, GPU box, agent sandbox, or small team",
     ]) {
       expect(within(products).getByText(option)).not.toBeNull();
     }

@@ -93,19 +93,23 @@ const HOME_PAGE_CSS = `
 
 const HERO_TAGS = [
   "Minimal free tier",
-  "Standard trial planned",
+  "Hosted plans",
   "Free CoCalc Plus",
   "Self-host with Star",
 ] as const;
 
 const PROJECT_FACTS = [
   {
+    body: "Files, notebooks, terminals, chat, collaborators, secrets, agents, runtime settings, project hosts, and logs stay scoped to the project.",
+    title: "One project boundary",
+  },
+  {
     body: "Notebook execution, agent turns, terminal sessions, document history, and files are backend state, not fragile browser state.",
     title: "Work survives the browser",
   },
   {
-    body: "Multiple people can share notebooks, terminals, files, chat, and review workflows in the same project.",
-    title: "Collaboration is everywhere",
+    body: "Humans and Codex can work against the same files, notebooks, terminals, document history, and chat threads.",
+    title: "People and agents share context",
   },
 ] as const;
 
@@ -143,7 +147,7 @@ const WORKFLOW_FEATURES = [
     icon: "robot",
     label: "Agent help",
     summary:
-      "Work with Codex inside collaborative chat threads that stay close to project files, notebooks, terminals, images, and review context.",
+      "Ask Codex to inspect project files, use terminals and notebooks, edit documents, and keep review context in collaborative chat threads.",
     title: "Codex Agent Chat",
   },
   {
@@ -175,45 +179,55 @@ const WORKFLOW_FEATURES = [
 
 const PROJECT_MODEL_ITEMS = [
   { icon: "files", label: "Files" },
-  { icon: "history", label: "TimeTravel" },
-  { icon: "users", label: "People" },
+  { icon: "terminal", label: "Runtime" },
+  { icon: "users", label: "People + agents" },
   { icon: "disk-snapshot", label: "Recovery" },
 ] satisfies Array<{ icon: IconName; label: string }>;
 
 const PRODUCT_OPTIONS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Use CoCalc in the public cloud with a minimal free tier and a path to standard plans.",
+    body: "Use the public CoCalc site with a minimal free tier and a path to standard plans.",
+    fit: "Public cloud projects and accounts",
     icon: "cloud",
     label: "Hosted",
+    operator: "Operated by CoCalc",
     title: "Hosted CoCalc",
   },
   {
     accent: COLORS.RUN,
     body: "Install the free single-user app on your own Linux or Mac computer.",
+    fit: "One local Linux or Mac user",
     icon: "laptop",
     label: "Local",
+    operator: "Operated by you",
     title: "CoCalc Plus",
   },
   {
     accent: PUBLIC_COLORS.warning,
     body: "Paste one command on a public Ubuntu VM and get a shared HTTPS CoCalc appliance.",
+    fit: "Lab, class, GPU box, agent sandbox, or small team",
     icon: "star",
     label: "Self-hosted",
+    operator: "Operated on your VM",
     title: "CoCalc Star",
   },
   {
     accent: COLORS.GRAY_D,
-    body: "Use Launchpad or Rocket for operator-managed deployments, custom hosts, and production scale.",
+    body: "Use Launchpad for lower-level deployment control or Rocket for production multi-user scale.",
+    fit: "Private hosts, custom deployment, production scale",
     icon: "servers",
     label: "Operators",
+    operator: "Operated by your organization",
     title: "Launchpad + Rocket",
   },
 ] satisfies Array<{
   accent: string;
   body: string;
+  fit: string;
   icon: IconName;
   label: string;
+  operator: string;
   title: string;
 }>;
 
@@ -228,14 +242,14 @@ const PRODUCT_MODEL_ITEMS = [
 const DIFFERENCE_SIGNALS = [
   { icon: "jupyter", label: "Notebook output" },
   { icon: "files", label: "Linux filesystem" },
-  { icon: "users", label: "Team activity" },
+  { icon: "robot", label: "Codex context" },
   { icon: "disk-snapshot", label: "Snapshots and backups" },
 ] satisfies Array<{ icon: IconName; label: string }>;
 
 const DIFFERENTIATORS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Run cells, commands, terminals, and agent turns without tying the useful state to one browser tab.",
+    body: "Run cells, commands, terminals, and agent turns while project state remains attached to a durable backend workspace.",
     eyebrow: "State survives",
     icon: "clock",
     title: "Durable execution",
@@ -249,14 +263,14 @@ const DIFFERENTIATORS = [
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Chat, notebooks, terminals, files, whiteboards, git review, and support workflows are designed for more than one person.",
+    body: "Chat, notebooks, terminals, files, whiteboards, review, and support workflows are shared computational surfaces, not separate sharing layers.",
     eyebrow: "Shared by default",
     icon: "users",
     title: "Realtime collaboration",
   },
   {
     accent: COLORS.GRAY_M,
-    body: "Snapshots, backups, TimeTravel, project movement, and RootFS versions make project state recoverable and reusable.",
+    body: "TimeTravel, snapshots, backups, project movement, and RootFS versions make technical work recoverable and reusable.",
     eyebrow: "Recoverable work",
     icon: "database",
     title: "Operational safety",
@@ -292,7 +306,7 @@ const PATH_OPTIONS = [
   },
   {
     accent: PUBLIC_COLORS.warning,
-    body: "Run a shared CoCalc appliance on a public Ubuntu VM with automatic HTTPS.",
+    body: "Run a shared CoCalc appliance on a public Ubuntu VM for a lab, class, GPU box, agent sandbox, or small team.",
     button: () => "Install CoCalc Star",
     href: () => appPath("products/cocalc-star"),
     icon: "star",
@@ -734,12 +748,12 @@ function ProductsSection() {
         <div>
           <Eyebrow>Ways to run CoCalc</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Hosted, local, self-hosted, or enterprise scale.
+            Choose by who operates CoCalc.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Use the public cloud, install the free single-user CoCalc Plus app,
-            run your own public VM with CoCalc Star, or step up to Launchpad and
-            Rocket for operator-managed deployments.
+            Each path answers where CoCalc runs and who is responsible for
+            operating it. The project workspace stays familiar across hosted,
+            local, public-VM, and private deployment options.
           </Paragraph>
         </div>
         <Flex gap={10} wrap>
@@ -794,7 +808,7 @@ function ProductsSection() {
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${alpha(option.accent, 0.18)}`,
                 borderRadius: PANEL_RADIUS,
-                minHeight: 230,
+                minHeight: 280,
                 padding: 16,
               }}
             >
@@ -822,6 +836,23 @@ function ProductsSection() {
                     {option.title}
                   </Title>
                   <Paragraph style={{ margin: 0 }}>{option.body}</Paragraph>
+                </div>
+                <div
+                  style={{
+                    background: PUBLIC_COLORS.surfaceMuted,
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: PANEL_RADIUS,
+                    display: "grid",
+                    gap: 6,
+                    padding: 10,
+                  }}
+                >
+                  <Text style={{ display: "block", fontSize: 13 }}>
+                    <Text strong>Operator:</Text> {option.operator}
+                  </Text>
+                  <Text style={{ display: "block", fontSize: 13 }}>
+                    <Text strong>Best for:</Text> {option.fit}
+                  </Text>
                 </div>
               </Flex>
             </div>
