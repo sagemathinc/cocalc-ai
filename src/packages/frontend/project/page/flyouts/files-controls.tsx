@@ -96,9 +96,7 @@ export function FilesSelectedControls({
   );
   const [restoreLoading, setRestoreLoading] = useState<boolean>(false);
   const [restoreError, setRestoreError] = useState<any>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => message.error(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const selectedOpenablePaths = useMemo(
     () => checked_files.toArray().filter((file) => !getFile(file)?.isDir),
     [checked_files, getFile],

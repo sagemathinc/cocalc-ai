@@ -280,8 +280,8 @@ function normalizeOrigin(value: unknown): string | undefined {
   }
 }
 
-function projectHomeUrl(origin: string, projectId: string): string {
-  return `${origin}/projects/${projectId}/project-home`;
+function projectFilesUrl(origin: string, projectId: string): string {
+  return `${origin}/projects/${projectId}/files/`;
 }
 
 async function resolveDocsSpawnTargetUrl({
@@ -321,7 +321,7 @@ async function resolveDocsSpawnTargetUrl({
     };
     const homeOrigin = normalizeOrigin(bootstrap.home_bay_url);
     if (!homeOrigin || homeOrigin === apiOrigin) return undefined;
-    return projectHomeUrl(homeOrigin, projectId);
+    return projectFilesUrl(homeOrigin, projectId);
   } catch {
     return undefined;
   }

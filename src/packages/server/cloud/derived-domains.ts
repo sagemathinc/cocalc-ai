@@ -42,6 +42,35 @@ export function normalizeProjectHostSuffix(value: unknown): string | undefined {
   return `${separator}${host}`;
 }
 
+export function inferCloudflareBaseDomain(
+  siteHostname?: string,
+): string | undefined {
+  const host = normalizeCloudflareHostname(siteHostname);
+  if (!host) return undefined;
+  const labels = host.split(".").filter(Boolean);
+  if (labels.length <= 2) return host;
+  const secondLevelPublicSuffixes = new Set([
+    "ac",
+    "co",
+    "com",
+    "edu",
+    "gov",
+    "net",
+    "org",
+  ]);
+  const penultimate = labels[labels.length - 2];
+  const last = labels[labels.length - 1];
+  if (
+    last.length === 2 &&
+    penultimate.length <= 3 &&
+    secondLevelPublicSuffixes.has(penultimate) &&
+    labels.length >= 3
+  ) {
+    return labels.slice(-3).join(".");
+  }
+  return labels.slice(-2).join(".");
+}
+
 function explicitProjectHostSuffix(
   value: unknown,
   siteHostname?: string,
@@ -61,7 +90,8 @@ function explicitProjectHostSuffix(
   if (siteHostname === host || siteHostname.startsWith(`${host}.`)) {
     return `${separator}${siteHostname}`;
   }
-  return `${separator}${host}.${siteHostname}`;
+  const baseDomain = inferCloudflareBaseDomain(siteHostname);
+  return `${separator}${host}.${baseDomain ?? siteHostname}`;
 }
 
 export function deriveProjectHostSuffix(settings: {

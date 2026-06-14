@@ -64,6 +64,7 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
     { page: "site-licenses", path: "settings/site-licenses" },
     { page: "software-licenses", path: "settings/software-licenses" },
     { page: "subscriptions", path: "settings/subscriptions" },
+    { page: "balance", path: "settings/balance" },
     { page: "purchases", path: "settings/purchases" },
     { page: "payments", path: "settings/payments" },
     {
@@ -71,7 +72,6 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
       path: "settings/payment-methods",
     },
     { page: "statements", path: "settings/statements" },
-    { page: "vouchers", path: "settings/vouchers" },
     { page: "support", path: "settings/support" },
   ] as const;
 

@@ -72,14 +72,52 @@ const VIEWER_FIXED_TABS = new Set<FixedTab>([
 ]);
 
 function filterTabsForProjectAccess({
+  agentAIEnabled,
   names,
   viewer,
 }: {
+  agentAIEnabled: boolean;
   names: readonly FixedTab[];
   viewer: boolean;
 }): FixedTab[] {
-  if (!viewer) return [...names];
-  return names.filter((name) => VIEWER_FIXED_TABS.has(name));
+  return names.filter((name) => {
+    if (!agentAIEnabled && name === "agents") return false;
+    if (viewer && !VIEWER_FIXED_TABS.has(name)) return false;
+    return true;
+  });
+}
+
+function preserveUnavailableTabs(opts: {
+  agentAIEnabled: boolean;
+  hiddenTabs: readonly FixedTab[];
+  nextHidden: FixedTab[];
+  nextOrder: FixedTab[];
+  originalOrder: readonly FixedTab[];
+  viewer: boolean;
+}): { hidden: FixedTab[]; order: FixedTab[] } {
+  const available = new Set(
+    filterTabsForProjectAccess({
+      agentAIEnabled: opts.agentAIEnabled,
+      names: opts.originalOrder,
+      viewer: opts.viewer,
+    }),
+  );
+  const unavailableOrder = opts.originalOrder.filter(
+    (name) => !available.has(name),
+  );
+  const unavailableHidden = opts.hiddenTabs.filter(
+    (name) => !available.has(name),
+  );
+  return {
+    order: [
+      ...opts.nextOrder,
+      ...unavailableOrder.filter((name) => !opts.nextOrder.includes(name)),
+    ],
+    hidden: [
+      ...opts.nextHidden,
+      ...unavailableHidden.filter((name) => !opts.nextHidden.includes(name)),
+    ],
+  };
 }
 
 interface PTProps {
@@ -150,6 +188,7 @@ export function VerticalFixedTabs({
   const intl = useIntl();
   const {
     actions,
+    agentAIEnabled,
     project_id,
     active_project_tab: activeTab,
     projectAccess,
@@ -174,15 +213,17 @@ export function VerticalFixedTabs({
   const projectLabel = intl.formatMessage(labels.project);
   const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(() => {
     const filteredOrder = filterTabsForProjectAccess({
+      agentAIEnabled,
       names: tabOrder,
       viewer,
     });
     const filteredHidden = filterTabsForProjectAccess({
+      agentAIEnabled,
       names: hiddenTabs,
       viewer,
     });
     return splitRailTabs(filteredOrder, filteredHidden);
-  }, [hiddenTabs, tabOrder, viewer]);
+  }, [agentAIEnabled, hiddenTabs, tabOrder, viewer]);
 
   const calcCondensed = throttle(
     () => {
@@ -473,11 +514,23 @@ export function VerticalFixedTabs({
         open={showCustomize}
         onClose={() => setShowCustomize(false)}
         onSave={(nextOrder, nextHidden) => {
-          setActivityBarTabOrder(nextOrder, { liteMode: lite });
-          setActivityBarHiddenTabs(nextHidden, { liteMode: lite });
+          const preserved = preserveUnavailableTabs({
+            agentAIEnabled,
+            hiddenTabs,
+            nextHidden,
+            nextOrder,
+            originalOrder: tabOrder,
+            viewer,
+          });
+          setActivityBarTabOrder(preserved.order, { liteMode: lite });
+          setActivityBarHiddenTabs(preserved.hidden, { liteMode: lite });
           setShowCustomize(false);
         }}
-        order={tabOrder}
+        order={filterTabsForProjectAccess({
+          agentAIEnabled,
+          names: tabOrder,
+          viewer,
+        })}
       />
     </div>
   );
@@ -485,7 +538,8 @@ export function VerticalFixedTabs({
 
 export function HiddenActivityBarLauncher() {
   const intl = useIntl();
-  const { actions, project_id, projectAccess } = useProjectContext();
+  const { actions, agentAIEnabled, project_id, projectAccess } =
+    useProjectContext();
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const account_id = useTypedRedux("account", "account_id");
@@ -500,7 +554,11 @@ export function HiddenActivityBarLauncher() {
   const projectLabel = intl.formatMessage(labels.project);
   const items = createRailMenuItems({
     intl,
-    names: filterTabsForProjectAccess({ names: tabOrder, viewer }),
+    names: filterTabsForProjectAccess({
+      agentAIEnabled,
+      names: tabOrder,
+      viewer,
+    }),
     onCustomize: () => setShowCustomize(true),
     onToggleActivityBar: () => {
       setActivityBarCollapsed(false);
@@ -577,11 +635,23 @@ export function HiddenActivityBarLauncher() {
         open={showCustomize}
         onClose={() => setShowCustomize(false)}
         onSave={(nextOrder, nextHidden) => {
-          setActivityBarTabOrder(nextOrder, { liteMode: lite });
-          setActivityBarHiddenTabs(nextHidden, { liteMode: lite });
+          const preserved = preserveUnavailableTabs({
+            agentAIEnabled,
+            hiddenTabs,
+            nextHidden,
+            nextOrder,
+            originalOrder: tabOrder,
+            viewer,
+          });
+          setActivityBarTabOrder(preserved.order, { liteMode: lite });
+          setActivityBarHiddenTabs(preserved.hidden, { liteMode: lite });
           setShowCustomize(false);
         }}
-        order={tabOrder}
+        order={filterTabsForProjectAccess({
+          agentAIEnabled,
+          names: tabOrder,
+          viewer,
+        })}
       />
     </>
   );

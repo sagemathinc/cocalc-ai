@@ -30,9 +30,9 @@ export async function ensureProjectRunningForJupyter({
   project_id: string;
   isClosed: () => boolean;
   getProjectState?: (project_id: string) => Promise<ProjectState | undefined>;
-}): Promise<void> {
+}): Promise<{ initialState?: string; started: boolean; wasRunning: boolean }> {
   if (lite) {
-    return;
+    return { initialState: "running", started: false, wasRunning: true };
   }
   const store = redux.getStore("projects");
   const getFreshProjectState = async (): Promise<string | undefined> => {
@@ -44,6 +44,7 @@ export async function ensureProjectRunningForJupyter({
     }
   };
   const state = (await getFreshProjectState()) ?? store.get_state(project_id);
+  let started = false;
   if (state !== "running" && state !== "starting" && !isClosed()) {
     const accountStore = redux.getStore("account");
     const block = getProjectStartPolicyBlock({
@@ -58,6 +59,7 @@ export async function ensureProjectRunningForJupyter({
     await redux
       .getActions("projects")
       .start_project(project_id, { autostart: true });
+    started = true;
   }
   await until(
     async () => {
@@ -74,6 +76,7 @@ export async function ensureProjectRunningForJupyter({
     },
     { min: 500, max: 500 },
   );
+  return { initialState: state, started, wasRunning: state === "running" };
 }
 
 async function defaultGetProjectState(

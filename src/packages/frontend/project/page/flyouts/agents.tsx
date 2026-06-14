@@ -71,6 +71,7 @@ import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
 import CodexConfigButton from "@cocalc/frontend/chat/codex";
 import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
+import { agentSessionTitle } from "@cocalc/frontend/chat/recent-agent-sessions";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import {
   get_local_storage,
@@ -78,6 +79,7 @@ import {
   set_local_storage,
 } from "@cocalc/frontend/misc";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
+import { User } from "@cocalc/frontend/users/user";
 import {
   AGENT_PANEL_INLINE_CHAT_INSTANCE_KEY as AGENTS_INLINE_CHAT_INSTANCE_KEY,
   AGENT_PANEL_PIN_CHAT_INSTANCE_KEY as AGENTS_PIN_CHAT_INSTANCE_KEY,
@@ -137,12 +139,6 @@ const AGENTS_MODEL_MIN_PANEL_WIDTH_PX = 360;
 const AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX = "agents-panel-workspace-only";
 const NEW_AGENT_BASENAME = "agent";
 
-function shortAccountId(accountId?: string): string {
-  if (!accountId) return "unknown";
-  if (accountId.length <= 12) return accountId;
-  return `${accountId.slice(0, 8)}...`;
-}
-
 function ellipsize(value: string, max = 72): string {
   if (!value) return "";
   if (value.length <= max) return value;
@@ -171,10 +167,7 @@ function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
 }
 
 function normalizedTitle(record: AgentSessionRecord): string {
-  const raw = typeof record.title === "string" ? record.title : "";
-  const plain = html_to_text(raw).replace(/\s+/g, " ").trim();
-  if (plain) return plain;
-  return "Navigator session";
+  return agentSessionTitle(record);
 }
 
 function previousTitle(title?: string): string {
@@ -283,7 +276,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     () => new Set(),
   );
   const [loading, setLoading] = useState(true);
-  const [scope, setScope] = useState<"mine" | "all">("mine");
+  const [scope, setScope] = useState<"mine" | "others">("mine");
   const [showArchived, setShowArchived] = useState(false);
   const [showAutomations, setShowAutomations] = useState(
     () => layout !== "flyout",
@@ -525,14 +518,16 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   const scopedSessions = useMemo(() => {
     let filtered = sessionsWithExistingChat;
-    if (
-      scope === "mine" &&
-      typeof account_id === "string" &&
-      account_id.trim()
-    ) {
-      filtered = filtered.filter(
-        (session) => session.account_id === account_id,
-      );
+    const currentAccountId =
+      typeof account_id === "string" ? account_id.trim() : "";
+    if (scope === "mine") {
+      filtered = currentAccountId
+        ? filtered.filter((session) => session.account_id === currentAccountId)
+        : [];
+    } else if (scope === "others") {
+      filtered = currentAccountId
+        ? filtered.filter((session) => session.account_id !== currentAccountId)
+        : [];
     }
     if (workspaceOnly && workspaces.current) {
       const workspaceId = workspaces.current.workspace_id;
@@ -887,12 +882,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   function openNavigatorSession(record: AgentSessionRecord): void {
-    if (record.entrypoint !== "global") {
-      actions?.open_file({ path: record.chat_path });
-      return;
+    if (record.entrypoint === "global") {
+      saveNavigatorSelectedThreadKey(record.thread_key, record.chat_path);
     }
-    saveNavigatorSelectedThreadKey(record.thread_key, record.chat_path);
-    actions?.set_active_tab("home");
+    actions?.open_file({ path: record.chat_path });
   }
 
   function openInlineSession(record: AgentSessionRecord): void {
@@ -991,23 +984,19 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     }
   }
 
-  function recordMetaLine(record: AgentSessionRecord): string {
+  function recordMetaParts(record: AgentSessionRecord): string[] {
     const parts: string[] = [];
-    if (scope === "all") {
-      parts.push(shortAccountId(record.account_id));
-    }
     if (showModelInMeta && record.model) {
       parts.push(ellipsize(record.model, isFlyout ? 30 : 44));
     }
     if (record.thread_pin) {
       parts.push("pinned");
     }
-    return parts.join(" · ");
+    return parts;
   }
 
   function renderSessionMenu(record: AgentSessionRecord): React.JSX.Element {
-    const resumeLabel =
-      record.entrypoint === "global" ? "Go to Home Chat" : "Go to Chat";
+    const resumeLabel = "Go to Chat";
     const items: MenuProps["items"] = [
       {
         key: "resume",
@@ -1423,7 +1412,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const accentColor = record.thread_accent_color?.trim() || undefined;
     const themeLineColor = color ?? accentColor;
     const title = normalizedTitle(record);
-    const metaLine = recordMetaLine(record);
+    const metaParts = recordMetaParts(record);
+    const showOwner = scope === "others" && !!record.account_id;
+    const hasMeta = showOwner || metaParts.length > 0;
     const updatedAt = record.updated_at ?? record.created_at;
     const showCornerImage = Boolean(image);
     const statusTag = (
@@ -1521,7 +1512,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 </Typography.Text>
                 {statusTag}
               </div>
-              {metaLine ? (
+              {hasMeta ? (
                 <div
                   style={{
                     display: "flex",
@@ -1531,18 +1522,44 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                     marginTop: 2,
                   }}
                 >
-                  <Typography.Text
-                    type="secondary"
+                  <div
                     style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
                       minWidth: 0,
                       flex: 1,
                       whiteSpace: "nowrap",
                       overflow: "hidden",
-                      textOverflow: "ellipsis",
                     }}
                   >
-                    {metaLine}
-                  </Typography.Text>
+                    {showOwner ? (
+                      <Typography.Text
+                        type="secondary"
+                        style={{ flexShrink: 0 }}
+                      >
+                        <User
+                          account_id={record.account_id}
+                          trunc={isFlyout ? 18 : 24}
+                          show_avatar
+                          avatarSize={16}
+                          style={{ maxWidth: isFlyout ? 150 : 220 }}
+                        />
+                      </Typography.Text>
+                    ) : null}
+                    {metaParts.length > 0 ? (
+                      <Typography.Text
+                        type="secondary"
+                        style={{
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {metaParts.join(" · ")}
+                      </Typography.Text>
+                    ) : null}
+                  </div>
                   {updatedAt ? (
                     <span
                       style={{
@@ -2098,10 +2115,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             </Button>
             <Button
               size="small"
-              type={scope === "all" ? "primary" : "default"}
-              onClick={() => setScope("all")}
+              type={scope === "others" ? "primary" : "default"}
+              onClick={() => setScope("others")}
             >
-              All Users
+              Other Users
             </Button>
             <Button
               size="small"
@@ -2192,5 +2209,17 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 }
 
 export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
+  const { agentAIEnabled } = useProjectContext();
+  if (!agentAIEnabled) {
+    return wrap(
+      <Alert
+        showIcon
+        type="info"
+        style={{ margin: "12px" }}
+        message="AI integrations are disabled"
+        description="Agents are hidden because AI integrations are disabled for this account or project."
+      />,
+    );
+  }
   return wrap(<AgentsPanel project_id={project_id} layout="flyout" />);
 }

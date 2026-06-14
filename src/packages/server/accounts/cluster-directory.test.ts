@@ -40,6 +40,7 @@ describe("accounts.cluster-directory", () => {
             {
               account_id: "11111111-1111-4111-8111-111111111111",
               email_address: "new@example.com",
+              display_name: "QA Directory",
               first_name: "QA",
               last_name: "Directory",
               home_bay_id: "bay-2",
@@ -57,6 +58,7 @@ describe("accounts.cluster-directory", () => {
             {
               account_id: "11111111-1111-4111-8111-111111111111",
               email_address: "qa@example.com",
+              display_name: "QA Local",
               first_name: "QA",
               last_name: "Local",
               home_bay_id: "bay-1",
@@ -75,6 +77,7 @@ describe("accounts.cluster-directory", () => {
             {
               account_id: "11111111-1111-4111-8111-111111111111",
               email_address: "qa@example.com",
+              display_name: "QA Directory",
               first_name: "QA",
               last_name: "Directory",
               home_bay_id: "bay-2",
@@ -145,6 +148,7 @@ describe("accounts.cluster-directory", () => {
       [
         "11111111-1111-4111-8111-111111111111",
         "new@example.com",
+        "QA Directory",
         "QA",
         "Directory",
         "bay-2",

@@ -1,4 +1,5 @@
 import getPool from "@cocalc/database/pool";
+import { displayNameFromParts } from "@cocalc/util/accounts/display-name";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -291,6 +292,10 @@ export async function createUser({
   const new_account_id = uuid();
   await createClusterAccount({
     email_address: email,
+    display_name: displayNameFromParts({
+      first_name: firstName,
+      last_name: lastName,
+    }),
     first_name: firstName,
     last_name: lastName,
     account_id: new_account_id,

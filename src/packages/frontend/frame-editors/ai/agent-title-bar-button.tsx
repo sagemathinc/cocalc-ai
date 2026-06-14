@@ -14,6 +14,11 @@ import { labels } from "@cocalc/frontend/i18n";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { COLORS } from "@cocalc/util/theme";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
+import {
+  AgentSessionError,
+  AgentSessionSelect,
+  usePersistentAgentSessionSelection,
+} from "./agent-session-selector";
 import { DEFAULT_ASSISTANT_CODEX_MODEL, Options } from "./create-chat";
 import { PopupAgentComposer } from "./popup-agent-composer";
 
@@ -56,15 +61,26 @@ export default function AgentTitleBarButton({
   const [command, setCommand] = useState<string>("");
 
   const promptLsKey = `AI-CODEX-ASSISTANT-PROMPT:v1:${project_id}:${path}:${type}`;
+  const agentSessionSelection = usePersistentAgentSessionSelection({
+    project_id,
+    path,
+    cacheContext: type,
+    enabled: Boolean(showDialog),
+  });
 
   const canSubmit = useMemo(
     () => command.trim().length > 0 && !querying,
     [command, querying],
   );
+  const selectedAgentSession = agentSessionSelection.selectedAgentSession;
   const helperText =
     type === "terminal"
-      ? "The agent will continue in the workspace agent thread, and it can inspect and write to this live terminal session."
-      : "The agent will continue the work in the workspace agent thread.";
+      ? selectedAgentSession
+        ? "The agent will continue in the selected session, and it can inspect and write to this live terminal session."
+        : "The agent will continue in the workspace agent thread, and it can inspect and write to this live terminal session."
+      : selectedAgentSession
+        ? "The agent will continue the work in the selected session."
+        : "The agent will continue the work in the workspace agent thread.";
 
   function closeDialog() {
     setShowDialog(false);
@@ -137,12 +153,14 @@ export default function AgentTitleBarButton({
     }
     submittingRef.current = true;
     try {
+      agentSessionSelection.saveSelectedAgentSession();
       await queryLLM({
         command: resolvedCommand,
         codegen: false,
         allowEmpty: true,
         model: DEFAULT_ASSISTANT_CODEX_MODEL,
         tag: "custom",
+        agentSession: selectedAgentSession,
       });
       closeDialog();
     } finally {
@@ -224,6 +242,11 @@ export default function AgentTitleBarButton({
                 cacheId={`popup-agent:${project_id}:${path}:${type}`}
                 autoFocus
               />
+              <AgentSessionSelect
+                selection={agentSessionSelection}
+                disabled={querying}
+              />
+              <AgentSessionError selection={agentSessionSelection} />
               <div style={{ color: COLORS.GRAY_D }}>{helperText}</div>
             </>
           )}

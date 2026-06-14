@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { AuthView } from "@cocalc/frontend/auth/types";
+import { getControlPlaneAuthBootstrap } from "@cocalc/frontend/auth/api";
 import { enableForceConsent } from "@cocalc/frontend/cookie-consent";
 import { PublicPage } from "@cocalc/frontend/public/layout/shell";
 import { getSiteName, type PublicConfig } from "../common";
@@ -27,7 +28,6 @@ import {
   PublicSignUpForm,
 } from "./forms";
 import PublicAuthPageShell from "./page-shell";
-import PublicRedeemVoucherView from "./redeem-view";
 import {
   getPublicAuthRouteFromPath,
   pathForAuthView,
@@ -70,8 +70,6 @@ function titleForRoute(route: PublicAuthRoute, siteName: string): string {
       return `Choose a new ${siteName} password`;
     case "auth-verify-email":
       return `Verify your ${siteName} email`;
-    case "redeem":
-      return `Redeem voucher for ${siteName}`;
     case "project-invite":
       return `Accept project invite for ${siteName}`;
     case "sso-detail":
@@ -86,8 +84,10 @@ function subtitleForRoute(
   route: PublicAuthRoute,
   siteName: string,
   isAuthenticated?: boolean,
-): string {
+): string | undefined {
   switch (route.kind) {
+    case "auth-form":
+      return undefined;
     case "sso-detail":
     case "sso-index":
       return `Single sign-on for ${siteName}`;
@@ -99,15 +99,13 @@ function subtitleForRoute(
       return `Finish signing in to ${siteName}`;
     case "auth-password-reset-done":
       return siteName;
-    case "redeem":
-      return `Sign in or create an account to apply voucher credit to your ${siteName} account.`;
     case "project-invite":
       if (isAuthenticated) {
         return `Review this ${siteName} project invite before accepting it.`;
       }
       return `Sign in or create an account to accept this ${siteName} project invite.`;
     default:
-      return siteName;
+      return undefined;
   }
 }
 
@@ -123,7 +121,6 @@ function cardWidthForRoute(route: PublicAuthRoute): string | undefined {
     case "auth-password-reset-done":
     case "auth-verify-email":
       return "min(560px, 96vw)";
-    case "redeem":
     case "project-invite":
       return "min(720px, 96vw)";
     default:
@@ -139,12 +136,40 @@ export default function PublicAuthApp({
   initialSSOStrategies,
   redirectToPath,
 }: PublicAuthAppProps) {
+  const [resolvedConfig, setResolvedConfig] = useState(config);
   const [route, setRoute] = useState<PublicAuthRoute>(initialRoute);
-  const siteName = getSiteName(config);
+  const siteName = getSiteName(resolvedConfig);
 
   useEffect(() => {
     setRoute(initialRoute);
   }, [initialRoute]);
+
+  useEffect(() => {
+    setResolvedConfig(config);
+  }, [config]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const bootstrap = await getControlPlaneAuthBootstrap();
+        if (cancelled || typeof bootstrap?.signed_in !== "boolean") return;
+        setResolvedConfig((current) => ({
+          ...(current ?? config ?? {}),
+          account_display_name: bootstrap.display_name,
+          account_email_address: bootstrap.email_address,
+          account_id: bootstrap.account_id,
+          is_authenticated: !!bootstrap.signed_in,
+        }));
+      } catch {
+        // Public auth routes can still render with server-provided customize
+        // data. Bootstrap only fills in the current signed-in account.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [config]);
 
   const title = useMemo(
     () => titleForRoute(route, siteName),
@@ -156,10 +181,10 @@ export default function PublicAuthApp({
   }, [title]);
 
   useEffect(() => {
-    if (!config?.cookie_banner_enabled) return;
+    if (!resolvedConfig?.cookie_banner_enabled) return;
     if (route.kind !== "sso-detail" && route.kind !== "sso-index") return;
     return enableForceConsent();
-  }, [config?.cookie_banner_enabled, route.kind]);
+  }, [resolvedConfig?.cookie_banner_enabled, route.kind]);
 
   function onNavigate(next: AuthView) {
     const nextRoute: PublicAuthRoute = { kind: "auth-form", view: next };
@@ -168,21 +193,25 @@ export default function PublicAuthApp({
   }
 
   return (
-    <PublicPage active="auth" config={config} title={title}>
+    <PublicPage active="auth" config={resolvedConfig} title={title}>
       <PublicAuthPageShell
         cardWidth={cardWidthForRoute(route)}
-        subtitle={subtitleForRoute(route, siteName, config?.is_authenticated)}
+        subtitle={subtitleForRoute(
+          route,
+          siteName,
+          resolvedConfig?.is_authenticated,
+        )}
       >
         {route.kind === "auth-form" && route.view === "sign-in" && (
           <PublicSignInForm
-            cookieBannerEnabled={!!config?.cookie_banner_enabled}
+            cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
             onNavigate={onNavigate}
             redirectToPath={redirectToPath}
           />
         )}
         {route.kind === "auth-second-factor" && (
           <PublicSignInForm
-            cookieBannerEnabled={!!config?.cookie_banner_enabled}
+            cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
             initialChallengeId={route.challengeId}
             initialInfo="Single sign-on succeeded. Enter your CoCalc second factor to finish signing in."
             onNavigate={onNavigate}
@@ -191,10 +220,12 @@ export default function PublicAuthApp({
         )}
         {route.kind === "auth-form" && route.view === "sign-up" && (
           <PublicSignUpForm
-            cookieBannerEnabled={!!config?.cookie_banner_enabled}
+            cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
             onNavigate={onNavigate}
             redirectToPath={redirectToPath}
-            signupEmailDomainPolicy={config?.signup_email_domain_public_policy}
+            signupEmailDomainPolicy={
+              resolvedConfig?.signup_email_domain_public_policy
+            }
           />
         )}
         {route.kind === "auth-form" && route.view === "password-reset" && (
@@ -209,11 +240,11 @@ export default function PublicAuthApp({
           <>
             <PublicCliLoginApprovalView
               challengeId={route.challengeId}
-              isAuthenticated={!!config?.is_authenticated}
+              isAuthenticated={!!resolvedConfig?.is_authenticated}
             />
-            {!config?.is_authenticated ? (
+            {!resolvedConfig?.is_authenticated ? (
               <PublicSignInForm
-                cookieBannerEnabled={!!config?.cookie_banner_enabled}
+                cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
                 onNavigate={onNavigate}
                 redirectToPath={() =>
                   window.location.pathname + window.location.search
@@ -226,11 +257,11 @@ export default function PublicAuthApp({
           <>
             <PublicCliElevateApprovalView
               challengeId={route.challengeId}
-              isAuthenticated={!!config?.is_authenticated}
+              isAuthenticated={!!resolvedConfig?.is_authenticated}
             />
-            {!config?.is_authenticated ? (
+            {!resolvedConfig?.is_authenticated ? (
               <PublicSignInForm
-                cookieBannerEnabled={!!config?.cookie_banner_enabled}
+                cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
                 onNavigate={onNavigate}
                 redirectToPath={() =>
                   window.location.pathname + window.location.search
@@ -245,31 +276,24 @@ export default function PublicAuthApp({
         {route.kind === "auth-verify-email" && (
           <PublicVerifyEmailView
             email={route.email}
-            isAuthenticated={!!config?.is_authenticated}
+            isAuthenticated={!!resolvedConfig?.is_authenticated}
             token={route.token}
-          />
-        )}
-        {route.kind === "redeem" && (
-          <PublicRedeemVoucherView
-            initialCode={route.code}
-            isAuthenticated={!!config?.is_authenticated}
-            onNavigate={onNavigate}
           />
         )}
         {route.kind === "project-invite" && (
           <>
             <PublicRedeemProjectInviteView
               inviteId={route.inviteId}
-              currentAccountDisplayName={config?.account_display_name}
-              currentAccountEmailAddress={config?.account_email_address}
-              currentAccountId={config?.account_id}
-              isAuthenticated={!!config?.is_authenticated}
+              currentAccountDisplayName={resolvedConfig?.account_display_name}
+              currentAccountEmailAddress={resolvedConfig?.account_email_address}
+              currentAccountId={resolvedConfig?.account_id}
+              isAuthenticated={!!resolvedConfig?.is_authenticated}
               projectId={route.projectId}
               token={route.token}
             />
-            {!config?.is_authenticated ? (
+            {!resolvedConfig?.is_authenticated ? (
               <PublicSignInForm
-                cookieBannerEnabled={!!config?.cookie_banner_enabled}
+                cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
                 onNavigate={onNavigate}
                 redirectToPath={() =>
                   window.location.pathname + window.location.search
@@ -280,13 +304,13 @@ export default function PublicAuthApp({
         )}
         {route.kind === "sso-index" && (
           <PublicSSOIndexView
-            cookieBannerEnabled={!!config?.cookie_banner_enabled}
+            cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
             initialStrategies={initialSSOStrategies}
           />
         )}
         {route.kind === "sso-detail" && (
           <PublicSSODetailView
-            cookieBannerEnabled={!!config?.cookie_banner_enabled}
+            cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
             id={route.id}
             initialStrategies={initialSSOStrategies}
           />

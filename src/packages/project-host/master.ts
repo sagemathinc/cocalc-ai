@@ -8,6 +8,7 @@ import { getRow, upsertRow } from "@cocalc/lite/hub/sqlite/database";
 import {
   createHostRegistryClient,
   createHostControlService,
+  type HostControlApi,
   type HostProjectStopPolicyRow,
   type HostRuntimeLogSource,
 } from "@cocalc/conat/project-host/api";
@@ -56,7 +57,10 @@ import {
   prepareDefaultRootfsTrivyScanner,
   runRootfsTrivyScan,
 } from "./rootfs-scan";
-import { connect as connectToConat } from "@cocalc/conat/core/client";
+import {
+  connect as connectToConat,
+  type Client as ConatClient,
+} from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import {
   fetchMasterConatTokenViaBootstrap,
@@ -731,6 +735,7 @@ export async function startMasterRegistration({
   host,
   port,
   masterConatToken,
+  controlClient,
   waitUntilReady,
   stopProjectForPressure,
 }: {
@@ -739,6 +744,7 @@ export async function startMasterRegistration({
   host: string;
   port: number;
   masterConatToken?: string;
+  controlClient?: ConatClient;
   waitUntilReady?: () => Promise<void>;
   stopProjectForPressure?: (opts: {
     project_id: string;
@@ -855,7 +861,9 @@ export async function startMasterRegistration({
           host,
           port,
           masterConatToken: next,
+          controlClient,
           waitUntilReady,
+          stopProjectForPressure,
         });
       } catch (err) {
         logger.warn(
@@ -910,24 +918,35 @@ export async function startMasterRegistration({
   const registry = createHostRegistryClient({ client });
 
   // Control plane for this host (master can ask us to create/start/stop projects).
-  const controlService = createHostControlService({
-    host_id: id,
-    client,
-    impl: {
-      async createProject(opts) {
-        if (opts.start || opts.ensure_volume !== false) {
-          await awaitReadyForControl("createProject", waitUntilReady);
-        }
-        if (!hubApi.projects?.createProject) {
-          throw Error("createProject not available");
-        }
-        const project_id = await hubApi.projects.createProject({
-          ...opts,
-          account_id,
-        } as any);
-        return { project_id };
-      },
-      async startProject({
+  const controlImpl: HostControlApi = {
+    async createProject(opts) {
+      if (opts.start || opts.ensure_volume !== false) {
+        await awaitReadyForControl("createProject", waitUntilReady);
+      }
+      if (!hubApi.projects?.createProject) {
+        throw Error("createProject not available");
+      }
+      const project_id = await hubApi.projects.createProject({
+        ...opts,
+        account_id,
+      } as any);
+      return { project_id };
+    },
+    async startProject({
+      project_id,
+      authorized_keys,
+      run_quota,
+      image,
+      restore,
+      restore_backup_id,
+      lro_op_id,
+    }) {
+      await awaitReadyForControl("startProject", waitUntilReady);
+      if (!hubApi.projects?.start) {
+        throw Error("start not available");
+      }
+      const status = await hubApi.projects.start({
+        account_id,
         project_id,
         authorized_keys,
         run_quota,
@@ -935,279 +954,283 @@ export async function startMasterRegistration({
         restore,
         restore_backup_id,
         lro_op_id,
-      }) {
-        await awaitReadyForControl("startProject", waitUntilReady);
-        if (!hubApi.projects?.start) {
-          throw Error("start not available");
-        }
-        const status = await hubApi.projects.start({
-          account_id,
-          project_id,
-          authorized_keys,
-          run_quota,
-          image,
-          restore,
-          restore_backup_id,
-          lro_op_id,
-        });
-        return {
-          project_id,
-          state: (status as any)?.state,
-          phase_timings_ms: (status as any)?.phase_timings_ms,
-        };
-      },
-      async stopProject({ project_id }) {
-        await awaitReadyForControl("stopProject", waitUntilReady);
-        if (!hubApi.projects?.stop) {
-          throw Error("stop not available");
-        }
-        const status = await hubApi.projects.stop({ account_id, project_id });
-        return { project_id, state: (status as any)?.state };
-      },
-      async getProjectStatus({ project_id }) {
-        await awaitReadyForControl("getProjectStatus", waitUntilReady);
-        if (!(hubApi.projects as any)?.status) {
-          throw Error("status not available");
-        }
-        const status = await (hubApi.projects as any).status({ project_id });
-        return {
-          project_id,
-          state: (status as any)?.state,
-          http_port: (status as any)?.http_port,
-          ssh_port: (status as any)?.ssh_port,
-          project_bundle_version: (status as any)?.project_bundle_version,
-          tools_version: (status as any)?.tools_version,
-          phase_timings_ms: (status as any)?.phase_timings_ms,
-        };
-      },
-      async updateAuthorizedKeys({ project_id, authorized_keys }) {
-        await updateAuthorizedKeys({
-          project_id,
-          authorized_keys,
-        });
-      },
-      async updateProjectUsers({ project_id, users }) {
-        await updateProjectUsers({
-          project_id,
-          users,
-        });
-      },
-      async syncProjectSecretsCache({ project_id, cache }) {
-        await awaitReadyForControl("syncProjectSecretsCache", waitUntilReady);
-        const secret_names = syncProjectSecretsCacheLocal({
-          project_id,
-          cache,
-        });
-        upsertProject({ project_id, secret_names });
-        return { secret_names };
-      },
-      async setupProjectSecretSshKey(opts) {
-        await awaitReadyForControl("setupProjectSecretSshKey", waitUntilReady);
-        return await setupProjectSecretSshKey(opts);
-      },
-      async applyPendingCopies({ project_id, limit }) {
-        await awaitReadyForControl("applyPendingCopies", waitUntilReady);
-        const claimed = await applyPendingCopies({ project_id, limit });
-        return { claimed };
-      },
-      async deleteProjectData({ project_id }) {
-        await awaitReadyForControl("deleteProjectData", waitUntilReady);
-        await deleteVolume(project_id);
-        clearLocalAcpAutomationsForProject(project_id);
-        deleteProjectLocal(project_id);
-      },
-      upgradeSoftware,
-      async growBtrfs({ disk_gb }) {
-        const args = ["-n", STORAGE_WRAPPER, "grow-btrfs"];
-        if (disk_gb != null) args.push(String(disk_gb));
-        const { stdout, stderr, exit_code } = await executeCode({
-          command: "sudo",
-          args,
-          timeout: 60,
-        });
-        if (exit_code) {
-          throw new Error(
-            `grow-btrfs failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
-          );
-        }
-        return { ok: true };
-      },
-      async growSharedScratch({ disk_gb }) {
-        const args = ["-n", STORAGE_WRAPPER, "grow-shared-scratch"];
-        if (disk_gb != null) args.push(String(disk_gb));
-        const { stdout, stderr, exit_code } = await executeCode({
-          command: "sudo",
-          args,
-          timeout: 60,
-        });
-        if (exit_code) {
-          throw new Error(
-            `grow-shared-scratch failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
-          );
-        }
-        return { ok: true };
-      },
-      async unmountSharedScratch() {
-        const { stdout, stderr, exit_code } = await executeCode({
-          command: "sudo",
-          args: ["-n", STORAGE_WRAPPER, "unmount-shared-scratch"],
-          timeout: 60,
-        });
-        if (exit_code) {
-          throw new Error(
-            `unmount-shared-scratch failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
-          );
-        }
-        return { ok: true };
-      },
-      async getRuntimeLog({ lines, source }) {
-        return await readRuntimeLogTail(source, lines);
-      },
-      async getProjectRuntimeLog({ project_id, lines }) {
-        return await readProjectRuntimeLogTail(project_id, lines);
-      },
-      async listRootfsImages() {
-        return await listRootfsCacheEntries();
-      },
-      async pullRootfsImage({ image }) {
-        return await pullRootfsCacheEntry(image, {
-          awaitRegionalReplication: true,
-        });
-      },
-      async deleteRootfsImage({ image }) {
-        return await deleteRootfsCacheEntry(image);
-      },
-      async scanRootfsRelease(opts) {
-        await awaitReadyForControl("scanRootfsRelease", waitUntilReady);
-        const image = opts.target.runtime_image;
-        await Promise.all([
-          pullRootfsCacheEntry(image, {
-            awaitRegionalReplication: true,
-          }),
-          ensureRootfsTrivyScannerPrepared({
-            trivy_cache_dir: opts.trivy_cache_dir,
-            scanner_image: opts.scanner_image,
-            timeout_ms: opts.timeout_ms,
-            memory_limit: opts.memory_limit,
-            cpu_limit: opts.cpu_limit,
-            tmpfs_size: opts.tmpfs_size,
-          }),
-        ]);
-        const result = await runRootfsTrivyScan({
-          scan_run_id: opts.scan_run_id,
-          target: opts.target,
-          rootfs_path: imageCachePath(image),
-          trivy_cache_dir: opts.trivy_cache_dir,
-          scanner_image: opts.scanner_image,
-          timeout_ms: opts.timeout_ms,
-          max_target_bytes: opts.max_target_bytes,
-          max_report_bytes: opts.max_report_bytes,
-          memory_limit: opts.memory_limit,
-          cpu_limit: opts.cpu_limit,
-          tmpfs_size: opts.tmpfs_size,
-        });
-        return {
-          summary: result.summary,
-          duration_ms: result.duration_ms,
-          report_json: result.report_json,
-          report: {
-            bytes: result.report.bytes,
-            compressed_bytes: result.report.compressed_bytes,
-            sha256: result.report.sha256,
-          },
-        };
-      },
-      async scanProjectRootfs(opts) {
-        await awaitReadyForControl("scanProjectRootfs", waitUntilReady);
-        const rootfsPath = getRootfsMountpoint(opts.project_id);
-        try {
-          await fsPromises.access(rootfsPath);
-        } catch {
-          throw new Error(
-            `project '${opts.project_id}' RootFS mount path is not available on this host`,
-          );
-        }
-        if (!(await isRootfsMounted({ project_id: opts.project_id }))) {
-          throw new Error(
-            `project '${opts.project_id}' RootFS is not mounted on this host; start the project before scanning`,
-          );
-        }
-        await ensureRootfsTrivyScannerPrepared({
-          trivy_cache_dir: opts.trivy_cache_dir,
-          scanner_image: opts.scanner_image,
-          timeout_ms: opts.timeout_ms,
-          memory_limit: opts.memory_limit,
-          cpu_limit: opts.cpu_limit,
-          tmpfs_size: opts.tmpfs_size,
-        });
-        const result = await runRootfsTrivyScan({
-          scan_run_id: opts.scan_run_id,
-          target: opts.target,
-          rootfs_path: rootfsPath,
-          trivy_cache_dir: opts.trivy_cache_dir,
-          scanner_image: opts.scanner_image,
-          timeout_ms: opts.timeout_ms,
-          max_target_bytes: opts.max_target_bytes,
-          max_report_bytes: opts.max_report_bytes,
-          memory_limit: opts.memory_limit,
-          cpu_limit: opts.cpu_limit,
-          tmpfs_size: opts.tmpfs_size,
-        });
-        return {
-          summary: result.summary,
-          duration_ms: result.duration_ms,
-          report_json: result.report_json,
-          report: {
-            bytes: result.report.bytes,
-            compressed_bytes: result.report.compressed_bytes,
-            sha256: result.report.sha256,
-          },
-        };
-      },
-      async listHostSshAuthorizedKeys() {
-        return await listHostSshAuthorizedKeys();
-      },
-      async addHostSshAuthorizedKey({ public_key, user }) {
-        return await addHostSshAuthorizedKey(public_key, user);
-      },
-      async removeHostSshAuthorizedKey({ public_key }) {
-        return await removeHostSshAuthorizedKey(public_key);
-      },
-      async getBackupExecutionStatus() {
-        return await getBackupExecutionStatus();
-      },
-      async getManagedComponentStatus() {
-        return getManagedComponentStatus();
-      },
-      async getInstalledRuntimeArtifacts(opts) {
-        return getInstalledRuntimeArtifacts(opts);
-      },
-      async getHostAgentStatus() {
-        return readHostAgentState();
-      },
-      async rolloutManagedComponents(opts) {
-        return await rolloutManagedComponents(opts);
-      },
-      async inspectStaticAppPath({ project_id, url }) {
-        const match = await matchAppRequest({ project_id, url });
-        const inspection = await inspectStaticAppRequest({
-          project_id,
-          match,
-          url,
-        });
-        if (!inspection) {
-          throw new Error("static app path not found");
-        }
-        return inspection;
-      },
-      async buildRootfsImageManifest({ image }) {
-        return await buildCachedRootfsManifest(image);
-      },
-      async buildProjectRootfsManifest({ project_id }) {
-        return await buildProjectRootfsManifest(project_id);
-      },
+      });
+      return {
+        project_id,
+        state: (status as any)?.state,
+        phase_timings_ms: (status as any)?.phase_timings_ms,
+      };
     },
+    async stopProject({ project_id }) {
+      await awaitReadyForControl("stopProject", waitUntilReady);
+      if (!hubApi.projects?.stop) {
+        throw Error("stop not available");
+      }
+      const status = await hubApi.projects.stop({ account_id, project_id });
+      return { project_id, state: (status as any)?.state };
+    },
+    async getProjectStatus({ project_id }) {
+      await awaitReadyForControl("getProjectStatus", waitUntilReady);
+      if (!(hubApi.projects as any)?.status) {
+        throw Error("status not available");
+      }
+      const status = await (hubApi.projects as any).status({ project_id });
+      return {
+        project_id,
+        state: (status as any)?.state,
+        http_port: (status as any)?.http_port,
+        ssh_port: (status as any)?.ssh_port,
+        project_bundle_version: (status as any)?.project_bundle_version,
+        tools_version: (status as any)?.tools_version,
+        phase_timings_ms: (status as any)?.phase_timings_ms,
+      };
+    },
+    async updateAuthorizedKeys({ project_id, authorized_keys }) {
+      await updateAuthorizedKeys({
+        project_id,
+        authorized_keys,
+      });
+    },
+    async updateProjectUsers({ project_id, users }) {
+      await updateProjectUsers({
+        project_id,
+        users,
+      });
+    },
+    async syncProjectSecretsCache({ project_id, cache }) {
+      await awaitReadyForControl("syncProjectSecretsCache", waitUntilReady);
+      const secret_names = syncProjectSecretsCacheLocal({
+        project_id,
+        cache,
+      });
+      upsertProject({ project_id, secret_names });
+      return { secret_names };
+    },
+    async setupProjectSecretSshKey(opts) {
+      await awaitReadyForControl("setupProjectSecretSshKey", waitUntilReady);
+      return await setupProjectSecretSshKey(opts);
+    },
+    async applyPendingCopies({ project_id, limit }) {
+      await awaitReadyForControl("applyPendingCopies", waitUntilReady);
+      const claimed = await applyPendingCopies({ project_id, limit });
+      return { claimed };
+    },
+    async deleteProjectData({ project_id }) {
+      await awaitReadyForControl("deleteProjectData", waitUntilReady);
+      await deleteVolume(project_id);
+      clearLocalAcpAutomationsForProject(project_id);
+      deleteProjectLocal(project_id);
+    },
+    upgradeSoftware,
+    async growBtrfs({ disk_gb }) {
+      const args = ["-n", STORAGE_WRAPPER, "grow-btrfs"];
+      if (disk_gb != null) args.push(String(disk_gb));
+      const { stdout, stderr, exit_code } = await executeCode({
+        command: "sudo",
+        args,
+        timeout: 60,
+      });
+      if (exit_code) {
+        throw new Error(
+          `grow-btrfs failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
+        );
+      }
+      return { ok: true };
+    },
+    async growSharedScratch({ disk_gb }) {
+      const args = ["-n", STORAGE_WRAPPER, "grow-shared-scratch"];
+      if (disk_gb != null) args.push(String(disk_gb));
+      const { stdout, stderr, exit_code } = await executeCode({
+        command: "sudo",
+        args,
+        timeout: 60,
+      });
+      if (exit_code) {
+        throw new Error(
+          `grow-shared-scratch failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
+        );
+      }
+      return { ok: true };
+    },
+    async unmountSharedScratch() {
+      const { stdout, stderr, exit_code } = await executeCode({
+        command: "sudo",
+        args: ["-n", STORAGE_WRAPPER, "unmount-shared-scratch"],
+        timeout: 60,
+      });
+      if (exit_code) {
+        throw new Error(
+          `unmount-shared-scratch failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
+        );
+      }
+      return { ok: true };
+    },
+    async getRuntimeLog({ lines, source }) {
+      return await readRuntimeLogTail(source, lines);
+    },
+    async getProjectRuntimeLog({ project_id, lines }) {
+      return await readProjectRuntimeLogTail(project_id, lines);
+    },
+    async listRootfsImages() {
+      return await listRootfsCacheEntries();
+    },
+    async pullRootfsImage({ image }) {
+      return await pullRootfsCacheEntry(image, {
+        awaitRegionalReplication: true,
+      });
+    },
+    async deleteRootfsImage({ image }) {
+      return await deleteRootfsCacheEntry(image);
+    },
+    async scanRootfsRelease(opts) {
+      await awaitReadyForControl("scanRootfsRelease", waitUntilReady);
+      const image = opts.target.runtime_image;
+      await Promise.all([
+        pullRootfsCacheEntry(image, {
+          awaitRegionalReplication: true,
+        }),
+        ensureRootfsTrivyScannerPrepared({
+          trivy_cache_dir: opts.trivy_cache_dir,
+          scanner_image: opts.scanner_image,
+          timeout_ms: opts.timeout_ms,
+          memory_limit: opts.memory_limit,
+          cpu_limit: opts.cpu_limit,
+          tmpfs_size: opts.tmpfs_size,
+        }),
+      ]);
+      const result = await runRootfsTrivyScan({
+        scan_run_id: opts.scan_run_id,
+        target: opts.target,
+        rootfs_path: imageCachePath(image),
+        trivy_cache_dir: opts.trivy_cache_dir,
+        scanner_image: opts.scanner_image,
+        timeout_ms: opts.timeout_ms,
+        max_target_bytes: opts.max_target_bytes,
+        max_report_bytes: opts.max_report_bytes,
+        memory_limit: opts.memory_limit,
+        cpu_limit: opts.cpu_limit,
+        tmpfs_size: opts.tmpfs_size,
+      });
+      return {
+        summary: result.summary,
+        duration_ms: result.duration_ms,
+        report_json: result.report_json,
+        report: {
+          bytes: result.report.bytes,
+          compressed_bytes: result.report.compressed_bytes,
+          sha256: result.report.sha256,
+        },
+      };
+    },
+    async scanProjectRootfs(opts) {
+      await awaitReadyForControl("scanProjectRootfs", waitUntilReady);
+      const rootfsPath = getRootfsMountpoint(opts.project_id);
+      try {
+        await fsPromises.access(rootfsPath);
+      } catch {
+        throw new Error(
+          `project '${opts.project_id}' RootFS mount path is not available on this host`,
+        );
+      }
+      if (!(await isRootfsMounted({ project_id: opts.project_id }))) {
+        throw new Error(
+          `project '${opts.project_id}' RootFS is not mounted on this host; start the project before scanning`,
+        );
+      }
+      await ensureRootfsTrivyScannerPrepared({
+        trivy_cache_dir: opts.trivy_cache_dir,
+        scanner_image: opts.scanner_image,
+        timeout_ms: opts.timeout_ms,
+        memory_limit: opts.memory_limit,
+        cpu_limit: opts.cpu_limit,
+        tmpfs_size: opts.tmpfs_size,
+      });
+      const result = await runRootfsTrivyScan({
+        scan_run_id: opts.scan_run_id,
+        target: opts.target,
+        rootfs_path: rootfsPath,
+        trivy_cache_dir: opts.trivy_cache_dir,
+        scanner_image: opts.scanner_image,
+        timeout_ms: opts.timeout_ms,
+        max_target_bytes: opts.max_target_bytes,
+        max_report_bytes: opts.max_report_bytes,
+        memory_limit: opts.memory_limit,
+        cpu_limit: opts.cpu_limit,
+        tmpfs_size: opts.tmpfs_size,
+      });
+      return {
+        summary: result.summary,
+        duration_ms: result.duration_ms,
+        report_json: result.report_json,
+        report: {
+          bytes: result.report.bytes,
+          compressed_bytes: result.report.compressed_bytes,
+          sha256: result.report.sha256,
+        },
+      };
+    },
+    async listHostSshAuthorizedKeys() {
+      return await listHostSshAuthorizedKeys();
+    },
+    async addHostSshAuthorizedKey({ public_key, user }) {
+      return await addHostSshAuthorizedKey(public_key, user);
+    },
+    async removeHostSshAuthorizedKey({ public_key }) {
+      return await removeHostSshAuthorizedKey(public_key);
+    },
+    async getBackupExecutionStatus() {
+      return await getBackupExecutionStatus();
+    },
+    async getManagedComponentStatus() {
+      return getManagedComponentStatus();
+    },
+    async getInstalledRuntimeArtifacts(opts) {
+      return getInstalledRuntimeArtifacts(opts);
+    },
+    async getHostAgentStatus() {
+      return readHostAgentState();
+    },
+    async rolloutManagedComponents(opts) {
+      return await rolloutManagedComponents(opts);
+    },
+    async inspectStaticAppPath({ project_id, url }) {
+      const match = await matchAppRequest({ project_id, url });
+      const inspection = await inspectStaticAppRequest({
+        project_id,
+        match,
+        url,
+      });
+      if (!inspection) {
+        throw new Error("static app path not found");
+      }
+      return inspection;
+    },
+    async buildRootfsImageManifest({ image }) {
+      return await buildCachedRootfsManifest(image);
+    },
+    async buildProjectRootfsManifest({ project_id }) {
+      return await buildProjectRootfsManifest(project_id);
+    },
+  };
+
+  const controlService = createHostControlService({
+    host_id: id,
+    client,
+    impl: controlImpl,
   });
+  const localControlService =
+    controlClient && controlClient !== client
+      ? createHostControlService({
+          host_id: id,
+          client: controlClient,
+          impl: controlImpl,
+        })
+      : undefined;
+  if (localControlService) {
+    logger.info("started host control service on local conat router", {
+      host_id: id,
+    });
+  }
 
   const basePayload: HostRegistration = {
     id,
@@ -1952,6 +1975,7 @@ export async function startMasterRegistration({
     }
     client.close?.();
     controlService?.close?.();
+    localControlService?.close?.();
   };
   return { stop, notifyShutdown };
 }

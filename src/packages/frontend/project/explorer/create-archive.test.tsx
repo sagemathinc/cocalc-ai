@@ -2,8 +2,10 @@
 
 import {
   ARCHIVE_TIMEOUT_MS,
+  STALE_DOWNLOAD_ARCHIVE_MS,
   createArchive,
   createDownloadArchive,
+  removeStaleDownloadArchives,
 } from "./create-archive";
 
 const ensureProjectScratchVolume = jest.fn();
@@ -136,25 +138,100 @@ describe("createArchive", () => {
     const ouch = jest.fn(async () => ({ code: 0, stderr: Buffer.alloc(0) }));
     const rename = jest.fn(async () => undefined);
     const rm = jest.fn(async () => undefined);
+    const onProgress = jest.fn();
     const actions = {
       project_id: "project-1",
       fs: () => ({ ouch, rename, rm }),
     };
 
-    const finalPath = await createDownloadArchive({
+    const archive = await createDownloadArchive({
       files: ["a", "b"],
       target: "selection",
       format: "zip",
       actions,
+      onProgress,
     });
 
+    expect(onProgress.mock.calls.map(([stage]) => stage)).toEqual([
+      "scratch",
+      "cleanup",
+      "compress",
+    ]);
     expect(ensureProjectScratchVolume).toHaveBeenCalledWith({
       project_id: "project-1",
     });
     expect(rename).toHaveBeenCalledWith(
-      expect.stringMatching(/^\/tmp\/\.cocalc-archive-.*-selection\.zip$/),
-      "/tmp/selection.zip",
+      expect.stringMatching(
+        /^\/tmp\/\.cocalc-archive-.*-\.cocalc-download-archive-.*-selection\.zip$/,
+      ),
+      expect.stringMatching(
+        /^\/tmp\/\.cocalc-download-archive-.*-selection\.zip$/,
+      ),
     );
-    expect(finalPath).toBe("/tmp/selection.zip");
+    expect(archive).toEqual({
+      path: expect.stringMatching(
+        /^\/tmp\/\.cocalc-download-archive-.*-selection\.zip$/,
+      ),
+      filename: "selection.zip",
+    });
+    expect(archive.path).toContain(".cocalc-download-archive-");
+  });
+
+  it("sanitizes download archive filenames but preserves the requested suffix", async () => {
+    const ouch = jest.fn(async () => ({ code: 0, stderr: Buffer.alloc(0) }));
+    const rename = jest.fn(async () => undefined);
+    const rm = jest.fn(async () => undefined);
+    const actions = {
+      project_id: "project-1",
+      fs: () => ({ ouch, rename, rm }),
+    };
+
+    const archive = await createDownloadArchive({
+      files: ["a", "b"],
+      target: "../selection.tar.gz",
+      format: "zip",
+      actions,
+    });
+
+    expect(archive.filename).toBe("selection.zip");
+    expect(archive.path).toMatch(
+      /^\/tmp\/\.cocalc-download-archive-.*-selection\.zip$/,
+    );
+  });
+
+  it("garbage-collects stale hidden download archives only", async () => {
+    const now = new Date("2026-06-12T18:00:00.000Z").valueOf();
+    const stale = ".cocalc-download-archive-stale.zip";
+    const fresh = ".cocalc-download-archive-fresh.zip";
+    const unrelated = "user-file.zip";
+    const readdir = jest.fn(async () => [stale, fresh, unrelated]);
+    const stat = jest.fn(async (path: string) => {
+      if (path.endsWith(stale)) {
+        return {
+          mtimeMs: now - STALE_DOWNLOAD_ARCHIVE_MS - 1,
+          atimeMs: now - STALE_DOWNLOAD_ARCHIVE_MS - 1,
+        };
+      }
+      if (path.endsWith(fresh)) {
+        return {
+          mtimeMs: now - STALE_DOWNLOAD_ARCHIVE_MS - 1,
+          atimeMs: now,
+        };
+      }
+      throw Error(`unexpected stat for ${path}`);
+    });
+    const rm = jest.fn(async () => undefined);
+    const actions = {
+      fs: () => ({ readdir, stat, rm }),
+    };
+
+    await removeStaleDownloadArchives({ actions, now });
+
+    expect(readdir).toHaveBeenCalledWith("/tmp");
+    expect(stat).toHaveBeenCalledWith(`/tmp/${stale}`);
+    expect(stat).toHaveBeenCalledWith(`/tmp/${fresh}`);
+    expect(stat).not.toHaveBeenCalledWith(`/tmp/${unrelated}`);
+    expect(rm).toHaveBeenCalledTimes(1);
+    expect(rm).toHaveBeenCalledWith(`/tmp/${stale}`, { force: true });
   });
 });

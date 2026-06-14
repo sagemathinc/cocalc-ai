@@ -20,25 +20,27 @@ import { ugly_error } from "./util";
 
 interface Props {
   email_address?: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
 }
 
 export function SecuritySettings({
   email_address,
+  display_name,
   first_name,
   last_name,
 }: Readonly<Props>) {
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: ugly_error,
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   if (lite) {
     return null;
   }
 
   const actions = () => redux.getActions("account");
-  const userName = `${first_name ?? ""} ${last_name ?? ""}`.trim();
+  const userName =
+    `${display_name ?? ""}`.trim() ||
+    `${first_name ?? ""} ${last_name ?? ""}`.trim();
 
   return (
     <SettingBox title="Security" icon="lock">
@@ -53,11 +55,15 @@ export function SecuritySettings({
             ) : undefined}
           </Flex>
           <DeleteAccountButton
-            confirm={() =>
-              runFreshAuthAction(async () => {
-                await actions().delete_account();
-              })
-            }
+            confirm={async () => {
+              try {
+                await runFreshAuthAction(async () => {
+                  await actions().delete_account();
+                });
+              } catch (err) {
+                ugly_error(err);
+              }
+            }}
             requiredText={userName}
           />
         </Flex>

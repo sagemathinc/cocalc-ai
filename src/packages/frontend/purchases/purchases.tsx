@@ -27,7 +27,6 @@ import { useTypedRedux, redux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { Icon } from "@cocalc/frontend/components/icon";
-import Next from "@cocalc/frontend/components/next";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { labels } from "@cocalc/frontend/i18n";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
@@ -937,14 +936,6 @@ function Description({ description, service }) {
       <Space>
         <Tooltip title="Thank you!">
           {description?.description ?? "Credit"}
-          {description.voucher_code ? (
-            <>
-              {" "}
-              For voucher <Tag>{description.voucher_code}</Tag>
-            </>
-          ) : (
-            ""
-          )}
         </Tooltip>
       </Space>
     );
@@ -967,16 +958,6 @@ function Description({ description, service }) {
     );
   }
 
-  if (service === "voucher") {
-    const { title, quantity } = description;
-    return (
-      <div>
-        <Next href={"settings/vouchers"}>
-          {quantity} {plural(quantity, "voucher")}: {title}
-        </Next>
-      </div>
-    );
-  }
   // generic fallback...
   return (
     <>

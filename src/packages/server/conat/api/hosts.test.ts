@@ -100,8 +100,6 @@ let resolveAccountHomeBayMock: jest.Mock;
 let estimateDedicatedHostRateUsdPerHourMock: jest.Mock;
 let reconcileDedicatedHostPurchaseSessionForAccountMock: jest.Mock;
 let getDedicatedHostWindowUsageForHostLocalMock: jest.Mock;
-let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
-let getClusterAccountByEmailMock: jest.Mock;
 const originalFetch = global.fetch;
 
 jest.mock("node:child_process", () => {
@@ -332,14 +330,6 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
   resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
-}));
-
-jest.mock("@cocalc/server/inter-bay/accounts", () => ({
-  __esModule: true,
-  assertClusterAccountTrustedForProductAccess: (...args: any[]) =>
-    assertClusterAccountTrustedForProductAccessMock(...args),
-  getClusterAccountByEmail: (...args: any[]) =>
-    getClusterAccountByEmailMock(...args),
 }));
 
 jest.mock("@cocalc/server/cluster-config", () => {
@@ -581,10 +571,6 @@ beforeEach(() => {
     home_bay_id: "bay-0",
     epoch: 1,
   }));
-  assertClusterAccountTrustedForProductAccessMock = jest.fn(
-    async () => undefined,
-  );
-  getClusterAccountByEmailMock = jest.fn(async () => null);
   estimateDedicatedHostRateUsdPerHourMock = jest.fn(async () => "1.25");
   reconcileDedicatedHostPurchaseSessionForAccountMock = jest.fn(
     async () => undefined,
@@ -1249,10 +1235,6 @@ describe("hosts.createHost", () => {
       bay_id: "bay-0",
       epoch: 1,
     }));
-    assertClusterAccountTrustedForProductAccessMock = jest.fn(
-      async () => undefined,
-    );
-    getClusterAccountByEmailMock = jest.fn(async () => null);
     hostConnectionListHostProjectsMock = jest.fn(async () => ({
       rows: [
         {
@@ -1471,32 +1453,6 @@ describe("hosts.createHost", () => {
         machine: { cloud: "self-host", metadata: {} },
       }),
     ).rejects.toThrow("self-hosted hosts are limited to admins");
-    expect(queryMock).not.toHaveBeenCalled();
-  });
-
-  it("blocks host creation when email verification is required", async () => {
-    assertClusterAccountTrustedForProductAccessMock = jest.fn(async () => {
-      throw new Error(
-        "Verify your email address before you create project hosts.",
-      );
-    });
-    queryMock = jest.fn(async (sql: string) => {
-      throw new Error(`unexpected query: ${sql}`);
-    });
-    const { createHost } = await import("./hosts");
-
-    await expect(
-      createHost({
-        account_id: ACCOUNT_ID,
-        name: "host-name",
-        region: "us-central1",
-        size: "small",
-        machine: { cloud: "local", metadata: {} },
-      }),
-    ).rejects.toThrow(
-      "Verify your email address before you create project hosts.",
-    );
-
     expect(queryMock).not.toHaveBeenCalled();
   });
 });

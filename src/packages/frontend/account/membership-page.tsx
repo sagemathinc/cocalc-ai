@@ -135,6 +135,12 @@ function MembershipSettingsContent() {
     setPurchaseCurrentInterval(currentIntervalOverride);
     setPurchaseOpen(true);
   };
+  const closePurchase = () => {
+    setPurchaseOpen(false);
+    setPurchaseCurrentClass(undefined);
+    setPurchaseCurrentInterval(undefined);
+    refreshMembership();
+  };
 
   return (
     <Space vertical size="middle" style={{ width: "100%" }}>
@@ -262,12 +268,8 @@ function MembershipSettingsContent() {
         currentClassOverride={purchaseCurrentClass}
         currentIntervalOverride={purchaseCurrentInterval}
         open={purchaseOpen}
-        onClose={() => {
-          setPurchaseOpen(false);
-          setPurchaseCurrentClass(undefined);
-          setPurchaseCurrentInterval(undefined);
-        }}
-        onChanged={refresh}
+        onClose={closePurchase}
+        onChanged={refreshMembership}
       />
     </Space>
   );
@@ -409,9 +411,7 @@ function PersonalSubscriptionActions({
   const subscriptionId = membership.subscription_id;
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   if (subscriptionId == null) {
     return null;

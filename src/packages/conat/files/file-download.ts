@@ -5,6 +5,7 @@ import { path_split } from "@cocalc/util/misc";
 import { getLogger } from "@cocalc/conat/logger";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import mime from "mime-types";
+import { isTemporaryDownloadArchivePath } from "./download-archive";
 
 const DANGEROUS_CONTENT_TYPE = new Set(["image/svg+xml" /*, "text/html"*/]);
 export const DOWNLOAD_ERROR_HEADER = "X-CoCalc-Download-Error";
@@ -42,17 +43,52 @@ function parseDownloadUrl(url: string): { project_id: string; path: string } {
   };
 }
 
-function hasExplicitDownloadQuery(url: string): boolean {
+function getDownloadQueryOptions(url: string): {
+  explicitDownload: boolean;
+  deleteAfterDownload: boolean;
+  downloadFilename?: string;
+} {
   try {
     const parsed = new URL(url, "http://127.0.0.1");
-    return parsed.searchParams.has("download");
+    const downloadFilename = parsed.searchParams.get("downloadFilename");
+    return {
+      explicitDownload: parsed.searchParams.has("download"),
+      deleteAfterDownload:
+        parsed.searchParams.get("deleteAfterDownload") == "1",
+      downloadFilename: downloadFilename
+        ? path_split(downloadFilename).tail
+        : undefined,
+    };
   } catch {
-    return false;
+    return { explicitDownload: false, deleteAfterDownload: false };
   }
 }
 
 function encodeDownloadErrorHeader(message: string): string {
   return encodeURIComponent(message);
+}
+
+async function cleanupTemporaryDownloadArchive({
+  client,
+  project_id,
+  path,
+}: {
+  client: ConatClient;
+  project_id: string;
+  path: string;
+}) {
+  try {
+    await fsClient({
+      client,
+      subject: fsSubject({ project_id }),
+    }).rm(path, { force: true });
+  } catch (err) {
+    logger.debug("ERROR removing temporary download archive", {
+      project_id,
+      path,
+      err: `${err}`,
+    });
+  }
 }
 
 export async function handleFileDownload({
@@ -97,9 +133,18 @@ export async function handleFileDownload({
   }
   const { project_id, path } = parseDownloadUrl(url);
   logger.debug("conat: get file", { project_id, path, url });
-  const fileName = path_split(path).tail;
+  const { explicitDownload, deleteAfterDownload, downloadFilename } =
+    getDownloadQueryOptions(url);
+  const fileName = downloadFilename || path_split(path).tail;
   const contentType = mime.lookup(fileName);
-  const explicitDownload = hasExplicitDownloadQuery(url);
+  const cleanupClient =
+    req.method !== "HEAD" &&
+    explicitDownload &&
+    deleteAfterDownload &&
+    client != null &&
+    isTemporaryDownloadArchivePath(path)
+      ? client
+      : undefined;
   if (
     explicitDownload ||
     (!allowUnsafe && DANGEROUS_CONTENT_TYPE.has(contentType))
@@ -131,6 +176,13 @@ export async function handleFileDownload({
         encodeDownloadErrorHeader(allowed.message),
       );
       res.end(allowed.message);
+      if (cleanupClient) {
+        await cleanupTemporaryDownloadArchive({
+          client: cleanupClient,
+          project_id,
+          path,
+        });
+      }
       return;
     }
   }
@@ -209,6 +261,14 @@ export async function handleFileDownload({
     } else {
       // Data sent, forcibly kill the connection
       res.destroy(err);
+    }
+  } finally {
+    if (cleanupClient) {
+      await cleanupTemporaryDownloadArchive({
+        client: cleanupClient,
+        project_id,
+        path,
+      });
     }
   }
 }

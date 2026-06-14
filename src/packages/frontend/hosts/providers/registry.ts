@@ -65,6 +65,7 @@ export type HostFieldOption<T = unknown> = {
   selectionLabel?: string;
   mainLabel?: string;
   subLabel?: string;
+  detailLabel?: string;
   priceLabel?: string;
   hourlyRate?: number;
   benchmarkCpuScore?: number;
@@ -355,6 +356,14 @@ const buildBasePayload = (
     bucket: vals.bucket,
   };
   const mergedMetadata = { ...baseMetadata, ...(machine.metadata ?? {}) };
+  if (vals.provider === "gcp" && vals.auto_grow_enabled) {
+    mergedMetadata.auto_grow = {
+      enabled: true,
+      max_disk_gb: vals.auto_grow_max_disk_gb,
+      growth_step_gb: vals.auto_grow_growth_step_gb,
+      min_grow_interval_minutes: vals.auto_grow_min_grow_interval_minutes,
+    };
+  }
   if (vals.provider === "gcp" && vals.shared_scratch_auto_grow_enabled) {
     mergedMetadata.shared_scratch_auto_grow = {
       enabled: true,
@@ -2393,6 +2402,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       primary: ["region", "zone", "gpu_type", "machine_type"],
       advanced: [],
       labels: {
+        region: "Google Region",
         machine_type: "Machine type",
         gpu_type: "GPU",
       },
@@ -2592,6 +2602,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       primary: ["region", "machine_type"],
       advanced: [],
       labels: {
+        region: "Nebius Region",
         machine_type: "Instance type",
       },
     },

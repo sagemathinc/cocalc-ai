@@ -79,9 +79,7 @@ export default function RestoreSnapshot() {
   const [snapshot, setSnapshot] = useState<string>("");
   const [mode, setMode] = useState<SnapshotRestoreMode>("both");
   const [safetySnapshotName, setSafetySnapshotName] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     if (!open) return;

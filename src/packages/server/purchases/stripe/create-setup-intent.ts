@@ -11,6 +11,7 @@ import getConn from "@cocalc/server/stripe/connection";
 import getLogger from "@cocalc/backend/logger";
 import { getStripeCustomerId } from "./util";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
+import { hasBillingDetails } from "./customer";
 
 const logger = getLogger("purchases:stripe:create-setup-intent");
 
@@ -23,6 +24,9 @@ export default async function createSetupIntent({
 }): Promise<{ clientSecret: string }> {
   logger.debug("createSetupIntent", { account_id });
   await assertPaymentCheckoutAllowed();
+  if (!(await hasBillingDetails(account_id))) {
+    throw Error("Billing details are required before adding a payment method.");
+  }
 
   const stripe = await getConn();
   const customer = await getStripeCustomerId({ account_id, create: true });

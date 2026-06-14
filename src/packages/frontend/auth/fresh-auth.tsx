@@ -30,6 +30,12 @@ export type FreshAuthActionRunner = (
   action: () => Promise<void>,
 ) => Promise<boolean>;
 
+type PendingFreshAuthAction = {
+  action: () => Promise<void>;
+  resolve: (completed: boolean) => void;
+  reject: (err: unknown) => void;
+};
+
 function normalizeFreshAuthEmail(email: string): string {
   return `${email ?? ""}`.trim().toLowerCase();
 }
@@ -150,7 +156,6 @@ export function FreshAuthModal({
       setCode("");
       setUsePasskey(false);
       setExtended(false);
-      onCancel();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -283,28 +288,29 @@ export function FreshAuthModal({
   );
 }
 
-export function useFreshAuthAction({
-  closeBeforeRetry = false,
-  onUnhandledError,
-}: {
-  closeBeforeRetry?: boolean;
-  onUnhandledError?: (err: unknown) => void;
-} = {}) {
+export function useFreshAuthAction() {
   // Frontend counterpart to backend requireFreshAuth checks. Any browser UI
   // action that can hit a fresh-auth-protected HTTP route or Conat RPC should
   // run the mutation through runFreshAuthAction and render FreshAuthModal with
   // freshAuthModalProps. Backend-only fresh-auth changes without this wiring
   // leave users with an opaque "fresh auth is required" error.
   const [open, setOpen] = useState(false);
-  const pendingActionRef = useRef<null | (() => Promise<void>)>(null);
+  const pendingActionRef = useRef<PendingFreshAuthAction | null>(null);
 
   const cancelFreshAuth = useCallback(() => {
-    pendingActionRef.current = null;
+    const pending = pendingActionRef.current;
+    if (pending != null) {
+      pendingActionRef.current = null;
+      pending.resolve(false);
+    }
     setOpen(false);
   }, []);
 
   const runFreshAuthAction = useCallback(
     async (action: () => Promise<void>): Promise<boolean> => {
+      // Resolve only after the protected action has completed. If fresh auth is
+      // required, the promise stays pending while the user authenticates and
+      // while the action is retried. The only false result is user cancellation.
       try {
         await action();
         return true;
@@ -312,30 +318,30 @@ export function useFreshAuthAction({
         if (!isFreshAuthRequiredError(err)) {
           throw err;
         }
-        pendingActionRef.current = action;
-        setOpen(true);
-        return false;
+        return await new Promise<boolean>((resolve, reject) => {
+          pendingActionRef.current = { action, resolve, reject };
+          setOpen(true);
+        });
       }
     },
     [],
   );
 
   const handleFreshAuthSuccess = useCallback(async () => {
-    const action = pendingActionRef.current;
+    const pending = pendingActionRef.current;
     pendingActionRef.current = null;
-    if (!action) {
+    if (!pending) {
+      setOpen(false);
       return;
     }
-    if (closeBeforeRetry) {
-      setOpen(false);
-    }
+    setOpen(false);
     try {
-      await action();
+      await pending.action();
+      pending.resolve(true);
     } catch (err) {
-      onUnhandledError?.(err);
-      throw err;
+      pending.reject(err);
     }
-  }, [closeBeforeRetry, onUnhandledError]);
+  }, []);
 
   return {
     runFreshAuthAction,

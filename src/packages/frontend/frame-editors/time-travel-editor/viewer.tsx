@@ -9,6 +9,7 @@ import { getScale } from "@cocalc/frontend/frame-editors/frame-tree/hooks";
 import Whiteboard from "@cocalc/frontend/frame-editors/whiteboard-editor/time-travel";
 import { HistoryViewer as JupyterHistoryViewer } from "@cocalc/frontend/jupyter/history-viewer";
 import type { Document } from "@cocalc/sync/editor/generic/types";
+import { timeTravelDocumentSource } from "./document-source";
 import { TextDocument } from "./document";
 import { isObjectDoc } from "./view-document";
 
@@ -46,10 +47,12 @@ export function Viewer({
   const renderText = () => {
     return (
       <TextDocument
-        value={() => doc()?.to_str() ?? "unknown version"}
+        value={() => timeTravelDocumentSource(doc(), ext).text}
         id={id}
         path={path}
-        syntaxHighlightExtension={isObjectDoc(path) ? "js" : undefined}
+        syntaxHighlightExtension={
+          ext === "ipynb" || isObjectDoc(path) ? "js" : undefined
+        }
         project_id={project_id}
         font_size={font_size}
         editor_settings={editor_settings}

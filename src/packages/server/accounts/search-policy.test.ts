@@ -12,6 +12,7 @@ describe("searchRelatedClusterAccounts", () => {
       rows: [
         {
           account_id: RELATED_ID,
+          display_name: "William Collaborator",
           first_name: "William",
           last_name: "Collaborator",
           email_address: "william@example.com",
@@ -32,6 +33,7 @@ describe("searchRelatedClusterAccounts", () => {
     expect(result).toEqual([
       expect.objectContaining({
         account_id: RELATED_ID,
+        display_name: "William Collaborator",
         first_name: "William",
         last_active: new Date("2026-01-02T00:00:00Z").valueOf(),
       }),
@@ -50,6 +52,7 @@ describe("searchRelatedClusterAccounts", () => {
       rows: [
         {
           account_id: RELATED_ID,
+          display_name: "Related User",
           first_name: "Related",
           email_address: "related@example.com",
           matched_email: true,

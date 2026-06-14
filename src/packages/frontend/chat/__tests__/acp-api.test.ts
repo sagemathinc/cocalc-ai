@@ -923,6 +923,7 @@ describe("queued ACP controls", () => {
       date: new Date(8300),
       message_id: "user-msg-missing",
       thread_id: "thread-missing",
+      acp_prompt: "hidden retry context",
       history: [
         {
           author_id: "user-1",
@@ -965,7 +966,7 @@ describe("queued ACP controls", () => {
     expect(mockStreamAcp).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "proj",
-        prompt: "retry this",
+        prompt: "hidden retry context",
         chat: expect.objectContaining({
           user_message_content: "@codex retry this",
           user_message_date: new Date(8300).toISOString(),

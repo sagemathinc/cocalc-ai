@@ -129,13 +129,18 @@ export function ProjectsTable({
 
         const first_name = user.get("first_name") ?? "";
         const last_name = user.get("last_name") ?? "";
+        const display_name = user.get("display_name") ?? "";
         const avatar = user.get("avatar_image_tiny");
 
         return {
-          text: `${first_name} ${last_name}`.trim() || "Unknown User",
+          text:
+            `${display_name}`.trim() ||
+            `${first_name} ${last_name}`.trim() ||
+            "Unknown User",
           value: account_id,
           first_name,
           last_name,
+          display_name,
           avatar,
         };
       })
@@ -174,7 +179,7 @@ export function ProjectsTable({
     }
     actions.open_project({
       project_id: record.project_id,
-      target: "project-home",
+      target: "files/",
       switch_to: !(e?.button === 1 || e?.ctrlKey || e?.metaKey),
     });
   }

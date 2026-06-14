@@ -15,6 +15,29 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
+const CLOSE_CREATE_SNAPSHOT_MODALS = "cocalc:close-create-snapshot-modals";
+
+let activeCreateSnapshotModal: symbol | undefined = undefined;
+
+function claimCreateSnapshotModal(id: symbol): boolean {
+  if (activeCreateSnapshotModal != null && activeCreateSnapshotModal !== id) {
+    return false;
+  }
+  activeCreateSnapshotModal = id;
+  return true;
+}
+
+function releaseCreateSnapshotModal(id: symbol): void {
+  if (activeCreateSnapshotModal === id) {
+    activeCreateSnapshotModal = undefined;
+  }
+}
+
+function broadcastCloseCreateSnapshotModals(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(CLOSE_CREATE_SNAPSHOT_MODALS));
+}
+
 export default function CreateSnapshot({
   onCreated,
 }: {
@@ -33,6 +56,16 @@ export default function CreateSnapshot({
   const [rollingReserved, setRollingReserved] = useState<number | null>(null);
   const openCreate = useTypedRedux({ project_id }, "open_create_snapshot");
   const inputRef = useRef<InputRef>(null);
+  const modalIdRef = useRef<symbol>(Symbol("CreateSnapshot"));
+
+  function closeModal(clearName: boolean = false): void {
+    releaseCreateSnapshotModal(modalIdRef.current);
+    setOpen(false);
+    setCreating(false);
+    if (clearName) {
+      setName("");
+    }
+  }
 
   useEffect(() => {
     if (!open) {
@@ -46,9 +79,20 @@ export default function CreateSnapshot({
 
   useEffect(() => {
     if (!openCreate) return;
-    setOpen(true);
+    if (claimCreateSnapshotModal(modalIdRef.current)) {
+      setOpen(true);
+    }
     actions?.setState({ open_create_snapshot: false });
   }, [actions, openCreate]);
+
+  useEffect(() => {
+    const handleClose = () => closeModal(true);
+    window.addEventListener(CLOSE_CREATE_SNAPSHOT_MODALS, handleClose);
+    return () => {
+      window.removeEventListener(CLOSE_CREATE_SNAPSHOT_MODALS, handleClose);
+      releaseCreateSnapshotModal(modalIdRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) {
@@ -88,6 +132,12 @@ export default function CreateSnapshot({
     return null;
   }
 
+  function openModal(): void {
+    if (claimCreateSnapshotModal(modalIdRef.current)) {
+      setOpen(true);
+    }
+  }
+
   async function createSnapshot() {
     if (creating) {
       return;
@@ -102,8 +152,7 @@ export default function CreateSnapshot({
         project_id,
         name,
       });
-      setName("");
-      setOpen(false);
+      broadcastCloseCreateSnapshotModals();
       await onCreated?.();
     } catch (err) {
       setError(`${err}`);
@@ -114,7 +163,7 @@ export default function CreateSnapshot({
 
   return (
     <>
-      <Button disabled={open} onClick={() => setOpen(!open)}>
+      <Button disabled={open} onClick={openModal}>
         <Icon name="disk-snapshot" /> Create Snapshot
       </Button>
       {open && (
@@ -148,14 +197,13 @@ export default function CreateSnapshot({
           open={open}
           onOk={createSnapshot}
           onCancel={() => {
-            setOpen(false);
+            broadcastCloseCreateSnapshotModals();
           }}
           footer={[
             <Button
               key="cancel"
               onClick={() => {
-                setOpen(false);
-                setName("");
+                broadcastCloseCreateSnapshotModals();
               }}
               disabled={creating}
             >

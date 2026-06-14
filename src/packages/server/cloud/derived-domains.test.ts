@@ -39,12 +39,21 @@ describe("derived cloud domains", () => {
     ).toBe("host-abc-lite2b.cocalc.ai");
   });
 
-  it("nests non-site explicit bare suffixes below the site hostname", () => {
+  it("expands non-site explicit bare suffixes under the base domain", () => {
     expect(
       deriveProjectHostHostname("abc", {
         dns: "https://lite2b.cocalc.ai",
         project_hosts_cloudflare_tunnel_host_suffix: "staging",
       }),
-    ).toBe("host-abc-staging.lite2b.cocalc.ai");
+    ).toBe("host-abc-staging.cocalc.ai");
+  });
+
+  it("keeps staging project-host names covered by the cocalc.ai wildcard", () => {
+    expect(
+      deriveProjectHostHostname("abc", {
+        dns: "https://staging.cocalc.ai",
+        project_hosts_cloudflare_tunnel_host_suffix: "cocalc-staging",
+      }),
+    ).toBe("host-abc-cocalc-staging.cocalc.ai");
   });
 });

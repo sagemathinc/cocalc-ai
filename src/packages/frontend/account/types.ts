@@ -26,6 +26,7 @@ export interface AccountState {
   account_id: string;
   groups?: List<string>;
   terminal: Map<string, any>;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   unlisted?: boolean;

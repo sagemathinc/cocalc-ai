@@ -3,17 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Modal, Space } from "antd";
+import type { ReactNode } from "react";
+import { Alert, Button, Card, Modal, Space } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { emailVerificationMsg } from "@cocalc/frontend/account/settings/email-verification";
 import {
+  CSS,
   useActions,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { getNow } from "@cocalc/frontend/app/util";
-import { Icon, Paragraph, Text } from "@cocalc/frontend/components";
+import { Icon, Paragraph, Text, Title } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -207,5 +209,135 @@ export function useShowVerifyEmail(): boolean {
     notTooNew &&
     !dismissed &&
     emailSendingEnabled
+  );
+}
+
+export function useEmailVerificationRequired(): boolean {
+  const loaded = useAccountStoreReady();
+  const verifyEmails = !!useTypedRedux("customize", "verify_emails");
+  const email_address = useTypedRedux("account", "email_address");
+  const email_address_verified = useTypedRedux(
+    "account",
+    "email_address_verified",
+  );
+
+  return (
+    loaded &&
+    verifyEmails &&
+    (!email_address || !email_address_verified?.get(email_address))
+  );
+}
+
+export function VerifyEmailRequiredPanel({
+  title,
+  description,
+  style,
+  compact,
+}: {
+  title?: ReactNode;
+  description?: ReactNode;
+  style?: CSS;
+  compact?: boolean;
+}) {
+  const intl = useIntl();
+  const page_actions = useActions("page");
+  const email_address = useTypedRedux("account", "email_address");
+  const emailSendingEnabled = !!useTypedRedux("customize", "email_enabled");
+  const [error, setError] = useState<string>("");
+  const [sending, setSending] = useState<boolean>(false);
+  const [sent, setSent] = useState<boolean>(false);
+
+  async function verify(): Promise<void> {
+    setError("");
+    setSending(true);
+    try {
+      await webapp_client.account_client.send_verification_email();
+      setSent(true);
+    } catch (err) {
+      setError(`Problem sending email verification: ${err}`);
+      setSent(false);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function openSettings() {
+    page_actions.set_active_tab("account");
+  }
+
+  return (
+    <Card
+      style={{
+        maxWidth: compact ? 620 : 760,
+        margin: compact ? "12px auto" : "64px auto",
+        textAlign: "center",
+        ...style,
+      }}
+    >
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Title level={compact ? 4 : 2} style={{ marginBottom: 0 }}>
+          <Icon name="mail" />{" "}
+          {title ??
+            intl.formatMessage({
+              id: "app.verify-email-required.title",
+              defaultMessage: "Verify your email address",
+            })}
+        </Title>
+        <Paragraph style={{ fontSize: compact ? undefined : "12pt" }}>
+          {description ??
+            intl.formatMessage({
+              id: "app.verify-email-required.description",
+              defaultMessage:
+                "This site requires a verified email address before you can continue.",
+            })}
+        </Paragraph>
+        {email_address ? (
+          <Paragraph code style={{ textAlign: "center" }}>
+            {email_address}
+          </Paragraph>
+        ) : (
+          <Alert
+            showIcon
+            type="warning"
+            message="No email address is set for this account."
+          />
+        )}
+        {sent ? (
+          <Alert
+            showIcon
+            type="success"
+            message={`Verification email sent${email_address ? ` to ${email_address}` : ""}.`}
+            description="Check your inbox and spam folder, then click the verification link."
+          />
+        ) : null}
+        {error ? <Alert showIcon type="error" message={error} /> : null}
+        {!emailSendingEnabled && email_address ? (
+          <Alert
+            showIcon
+            type="warning"
+            message="Email delivery is not configured on this site."
+            description="Open account settings to review your email address, or contact the site administrator to verify it."
+          />
+        ) : null}
+        <Space wrap style={{ justifyContent: "center" }}>
+          {email_address && emailSendingEnabled ? (
+            <Button
+              type="primary"
+              size={compact ? "middle" : "large"}
+              loading={sending}
+              disabled={sent || sending}
+              onClick={verify}
+            >
+              {intl.formatMessage(emailVerificationMsg, {
+                state: sending ? "sending" : sent ? "sent" : "idle",
+              })}
+            </Button>
+          ) : null}
+          <Button size={compact ? "middle" : "large"} onClick={openSettings}>
+            <Icon name="pencil" /> Open account settings
+          </Button>
+        </Space>
+      </Space>
+    </Card>
   );
 }

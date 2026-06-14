@@ -14,7 +14,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { loadNebiusInstanceTypes } from "@cocalc/server/cloud/providers";
-import { getNextClosingDateAfter } from "@cocalc/server/purchases/closing-date";
+import { nextCalendarMonthStartAfter } from "@cocalc/server/purchases/billing-period";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import {
   DEDICATED_HOST_USAGE,
@@ -523,7 +523,7 @@ async function insertDedicatedHostPurchaseSegmentLocal({
   });
 }
 
-export async function rotateDedicatedHostPostpaidSegmentForClosingDateLocal({
+export async function rotateDedicatedHostPostpaidSegmentForCalendarMonthLocal({
   account_id,
   host_id,
   through,
@@ -550,16 +550,13 @@ export async function rotateDedicatedHostPostpaidSegmentForClosingDateLocal({
   }
   const now = through ?? new Date();
   const periodStart = new Date(newest.period_start);
-  const nextClosingDate = await getNextClosingDateAfter(
-    account_id,
-    periodStart,
-  );
-  if (nextClosingDate > now) {
+  const nextPeriodStart = nextCalendarMonthStartAfter(periodStart);
+  if (nextPeriodStart > now) {
     return;
   }
   await finalizeDedicatedHostPurchaseRowByIdLocal({
     purchase_id: newest.id,
-    ended_at: nextClosingDate,
+    ended_at: nextPeriodStart,
     client,
   });
   await insertDedicatedHostPurchaseSegmentLocal({
@@ -567,7 +564,7 @@ export async function rotateDedicatedHostPostpaidSegmentForClosingDateLocal({
     host_id,
     description: newest.description,
     cost_per_hour: newest.cost_per_hour,
-    period_start: nextClosingDate,
+    period_start: nextPeriodStart,
     client,
   });
 }
@@ -596,14 +593,13 @@ export async function closeDedicatedHostPurchaseSessionLocal({
       newest.period_start &&
       newest.cost_per_hour
     ) {
-      const nextClosingDate = await getNextClosingDateAfter(
-        account_id,
+      const nextPeriodStart = nextCalendarMonthStartAfter(
         new Date(newest.period_start),
       );
-      if (nextClosingDate <= now) {
+      if (nextPeriodStart <= now) {
         await finalizeDedicatedHostPurchaseRowByIdLocal({
           purchase_id: newest.id,
-          ended_at: nextClosingDate,
+          ended_at: nextPeriodStart,
           client,
         });
         await insertDedicatedHostPurchaseSegmentLocal({
@@ -611,7 +607,7 @@ export async function closeDedicatedHostPurchaseSessionLocal({
           host_id,
           description: newest.description,
           cost_per_hour: newest.cost_per_hour,
-          period_start: nextClosingDate,
+          period_start: nextPeriodStart,
           period_end: now,
           client,
         });
@@ -678,7 +674,7 @@ export async function reconcileDedicatedHostPurchaseSessionLocal({
     newest.description?.funding_lane === funding_lane
   ) {
     if (funding_lane === "credit") {
-      await rotateDedicatedHostPostpaidSegmentForClosingDateLocal({
+      await rotateDedicatedHostPostpaidSegmentForCalendarMonthLocal({
         account_id,
         host_id,
         through:
@@ -719,7 +715,7 @@ export async function reconcileDedicatedHostPurchaseSessionLocal({
     notes: DEDICATED_HOST_USAGE,
   });
   if (funding_lane === "credit") {
-    await rotateDedicatedHostPostpaidSegmentForClosingDateLocal({
+    await rotateDedicatedHostPostpaidSegmentForCalendarMonthLocal({
       account_id,
       host_id,
       through:

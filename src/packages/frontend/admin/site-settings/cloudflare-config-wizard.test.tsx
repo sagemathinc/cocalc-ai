@@ -71,8 +71,11 @@ describe("CloudflareConfigWizard", () => {
     );
 
     expect(
+      screen.getByText("Step 8 - Post-save diagnostics"),
+    ).toBeInTheDocument();
+    expect(
       screen.getByText(
-        "Cloudflare tunnel settings must be applied to the running server",
+        "These tests use the saved, currently running configuration.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -81,8 +84,9 @@ describe("CloudflareConfigWizard", () => {
       }),
     ).toBeEnabled();
     expect(
-      screen.getByText(/save and apply the Cloudflare tunnel settings/i),
-    ).toBeInTheDocument();
+      screen.getAllByText(/cloudflared has successfully set up the tunnel/i)
+        .length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it("disables the visitor-header check while Cloudflare runtime changes are only in draft", () => {
@@ -106,7 +110,9 @@ describe("CloudflareConfigWizard", () => {
       }),
     ).toBeDisabled();
     expect(
-      screen.getByText(/use Apply Cloudflare tunnel settings now/i),
+      screen.getByText(
+        "Save and apply Cloudflare tunnel settings before testing visitor headers.",
+      ),
     ).toBeInTheDocument();
   });
 

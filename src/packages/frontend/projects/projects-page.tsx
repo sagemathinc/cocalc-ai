@@ -43,6 +43,10 @@ import { FilenameSearch } from "./filename-search";
 import { MobileProjectsList } from "./mobile-projects-list";
 import { RecentDocumentActivityButton } from "@cocalc/frontend/file-use/button";
 import {
+  useEmailVerificationRequired,
+  VerifyEmailRequiredPanel,
+} from "@cocalc/frontend/app/verify-email-banner";
+import {
   retainScheduledProjectDeletes,
   useProjectDeleteQueue,
 } from "./project-delete-queue";
@@ -88,6 +92,7 @@ export const ProjectsPage: React.FC = () => {
   const project_map = useTypedRedux("projects", "project_map");
   const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
+  const activeTopTab = useTypedRedux("page", "active_top_tab");
 
   const all_projects: string[] = useMemo(
     () => project_map?.keySeq().toJS() ?? [],
@@ -142,6 +147,7 @@ export const ProjectsPage: React.FC = () => {
     includeOutgoing: false,
     includeBlocks: false,
   });
+  const emailVerificationRequired = useEmailVerificationRequired();
 
   const selected_hashtags: Map<string, ImmutableSet<string>> = useTypedRedux(
     "projects",
@@ -211,11 +217,29 @@ export const ProjectsPage: React.FC = () => {
   const backendWindowDirtyCount = Number(
     readMaybeImmutable(project_list_window, "dirty_count") ?? 0,
   );
+  const refreshBackendWindow = React.useCallback(() => {
+    void redux
+      .getActions("projects")
+      ?.loadProjectListWindowForCurrentAccount?.({
+        ...backendWindowQuery,
+        force: true,
+      });
+  }, [backendWindowQuery]);
 
   const visibleProjectionRepairKey = useMemo(
     () => visible_projects.slice(0, VISIBLE_WINDOW_REPAIR_LIMIT).join("\n"),
     [visible_projects],
   );
+
+  const previousActiveTopTabRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const wasProjectsPage = previousActiveTopTabRef.current === "projects";
+    const isProjectsPage = activeTopTab === "projects";
+    previousActiveTopTabRef.current = activeTopTab;
+    if (backendWindowDirty && isProjectsPage && !wasProjectsPage) {
+      refreshBackendWindow();
+    }
+  }, [activeTopTab, backendWindowDirty, refreshBackendWindow]);
 
   useEffect(() => {
     const project_ids =
@@ -271,15 +295,6 @@ export const ProjectsPage: React.FC = () => {
     backendWindowQuery,
     project_list_window,
   ]);
-
-  function refreshBackendWindow() {
-    void redux
-      .getActions("projects")
-      ?.loadProjectListWindowForCurrentAccount?.({
-        ...backendWindowQuery,
-        force: true,
-      });
-  }
 
   useEffect(() => {
     const visible = new Set(visible_projects);
@@ -429,11 +444,13 @@ export const ProjectsPage: React.FC = () => {
           minHeight: 0,
         }}
       >
-        <NewProjectCreator
-          default_value={search}
-          open={createPanelOpen}
-          onClose={() => setCreatePanelOpen(false)}
-        />
+        {!emailVerificationRequired && (
+          <NewProjectCreator
+            default_value={search}
+            open={createPanelOpen}
+            onClose={() => setCreatePanelOpen(false)}
+          />
+        )}
         <Layout.Content
           style={{
             background: "white",
@@ -448,164 +465,176 @@ export const ProjectsPage: React.FC = () => {
             className={"smc-vfill"}
             style={{ overflowY: "auto" }}
           >
-            <Row>
-              <Col sm={24} md={24} lg={contentCol}>
-                <Space
-                  orientation="vertical"
-                  size={10}
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    padding: narrow ? "0 10px 0 10px" : "0",
-                  }}
-                >
-                  <div
-                    ref={titleRef}
+            {emailVerificationRequired ? (
+              <VerifyEmailRequiredPanel
+                title="Verify your email to use projects"
+                description="Please verify your email address before creating, opening, or running projects."
+              />
+            ) : (
+              <Row>
+                <Col sm={24} md={24} lg={contentCol}>
+                  <Space
+                    orientation="vertical"
+                    size={10}
                     style={{
-                      marginTop: mobileProjectsList ? "8px" : "20px",
-                      display: "flex",
                       width: "100%",
-                      gap: "10px",
-                      alignItems: "center",
-                      flexWrap: mobileProjectsList ? "wrap" : "nowrap",
+                      display: "flex",
+                      padding: narrow ? "0 10px 0 10px" : "0",
                     }}
                   >
-                    <Title
-                      level={3}
-                      style={{
-                        flex: "0 1 auto",
-                        marginBottom: mobileProjectsList ? 0 : "15px",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      <Icon name="edit" /> {intl.formatMessage(labels.projects)}
-                    </Title>
-                    <Button
-                      ref={createNewRef}
-                      type="primary"
-                      onClick={handleCreateProject}
-                      icon={<Icon name="plus-circle" />}
-                    >
-                      {capitalize(intl.formatMessage(labels.create))}
-                    </Button>
                     <div
-                      ref={starredBarRef}
+                      ref={titleRef}
                       style={{
-                        flex: mobileProjectsList ? "1 0 100%" : "1 1 auto",
-                        minWidth: 0,
+                        marginTop: mobileProjectsList ? "8px" : "20px",
+                        display: "flex",
+                        width: "100%",
+                        gap: "10px",
+                        alignItems: "center",
+                        flexWrap: mobileProjectsList ? "wrap" : "nowrap",
                       }}
                     >
-                      <StarredProjectsBar />
+                      <Title
+                        level={3}
+                        style={{
+                          flex: "0 1 auto",
+                          marginBottom: mobileProjectsList ? 0 : "15px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <Icon name="edit" />{" "}
+                        {intl.formatMessage(labels.projects)}
+                      </Title>
+                      <Button
+                        ref={createNewRef}
+                        type="primary"
+                        onClick={handleCreateProject}
+                        icon={<Icon name="plus-circle" />}
+                      >
+                        {capitalize(intl.formatMessage(labels.create))}
+                      </Button>
+                      <div
+                        ref={starredBarRef}
+                        style={{
+                          flex: mobileProjectsList ? "1 0 100%" : "1 1 auto",
+                          minWidth: 0,
+                        }}
+                      >
+                        <StarredProjectsBar />
+                      </div>
+                      {!narrow && (
+                        <div
+                          ref={filenameSearchRef}
+                          style={{
+                            flex: "0 1 auto",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
+                        >
+                          <FilenameSearch
+                            style={{
+                              width: IS_MOBILE ? "100px" : "200px",
+                              display: "inline-block",
+                            }}
+                          />
+                          <RecentDocumentActivityButton />
+                        </div>
+                      )}
                     </div>
-                    {!narrow && (
+
+                    {narrow && (
                       <div
                         ref={filenameSearchRef}
                         style={{
-                          flex: "0 1 auto",
                           display: "flex",
-                          alignItems: "center",
+                          justifyContent: "flex-end",
                           gap: "8px",
                         }}
                       >
+                        <RecentDocumentActivityButton />
                         <FilenameSearch
                           style={{
                             width: IS_MOBILE ? "100px" : "200px",
                             display: "inline-block",
                           }}
                         />
-                        <RecentDocumentActivityButton />
                       </div>
                     )}
-                  </div>
 
-                  {narrow && (
                     <div
-                      ref={filenameSearchRef}
-                      style={{
-                        display: "flex",
-                        justifyContent: "flex-end",
-                        gap: "8px",
-                      }}
+                      ref={inviteInboxRef}
+                      style={{ maxHeight: "50vh", overflow: "auto" }}
                     >
-                      <RecentDocumentActivityButton />
-                      <FilenameSearch
-                        style={{
-                          width: IS_MOBILE ? "100px" : "200px",
-                          display: "inline-block",
-                        }}
+                      <IncomingInviteBanner
+                        state={inviteState}
+                        onReview={openInvitations}
                       />
                     </div>
-                  )}
 
-                  <div
-                    ref={inviteInboxRef}
-                    style={{ maxHeight: "50vh", overflow: "auto" }}
-                  >
-                    <IncomingInviteBanner
-                      state={inviteState}
-                      onReview={openInvitations}
-                    />
-                  </div>
-
-                  {/* Table Controls (Search, Filters, Create Button) */}
-                  <div ref={controlsRef}>
-                    <ProjectsTableControls
-                      visible_projects={visible_projects}
-                      searchRef={searchRef}
-                      filtersRef={filtersRef}
-                      projectListChanged={backendWindowDirty}
-                      projectListChangedCount={backendWindowDirtyCount}
-                      onRefreshProjectList={refreshBackendWindow}
-                      tour={
-                        <ProjectsPageTour
-                          searchRef={searchRef}
-                          filtersRef={filtersRef}
-                          createNewRef={createNewRef}
-                          projectListRef={projectListRef}
-                          filenameSearchRef={filenameSearchRef}
-                          style={{ flex: 0 }}
-                        />
-                      }
-                    />
-                  </div>
-                  {/* Bulk Operations (when filters active) */}
-                  <div ref={operationsRef}>
-                    <ProjectsOperations
-                      visible_projects={visible_projects}
-                      selected_project_ids={selectedProjectIds}
-                      onSelectionChange={setSelectedProjectIds}
-                      filteredCollaborators={filteredCollaborators}
-                      onClearCollaboratorFilter={handleClearCollaboratorFilter}
-                    />
-                  </div>
-
-                  <div ref={projectListRef}>
-                    {mobileProjectsList ? (
-                      <MobileProjectsList
+                    {/* Table Controls (Search, Filters, Create Button) */}
+                    <div ref={controlsRef}>
+                      <ProjectsTableControls
                         visible_projects={visible_projects}
-                        selectedProjectIds={selectedProjectIds}
-                        onSelectedProjectIdsChange={setSelectedProjectIds}
+                        searchRef={searchRef}
+                        filtersRef={filtersRef}
+                        projectListChanged={backendWindowDirty}
+                        projectListChangedCount={backendWindowDirtyCount}
+                        onRefreshProjectList={refreshBackendWindow}
+                        tour={
+                          <ProjectsPageTour
+                            searchRef={searchRef}
+                            filtersRef={filtersRef}
+                            createNewRef={createNewRef}
+                            projectListRef={projectListRef}
+                            filenameSearchRef={filenameSearchRef}
+                            style={{ flex: 0 }}
+                          />
+                        }
                       />
-                    ) : (
-                      <ProjectsTable
+                    </div>
+                    {/* Bulk Operations (when filters active) */}
+                    <div ref={operationsRef}>
+                      <ProjectsOperations
                         visible_projects={visible_projects}
-                        height={tableHeight}
-                        narrow={narrow}
+                        selected_project_ids={selectedProjectIds}
+                        onSelectionChange={setSelectedProjectIds}
                         filteredCollaborators={filteredCollaborators}
-                        onFilteredCollaboratorsChange={setFilteredCollaborators}
-                        selectedProjectIds={selectedProjectIds}
-                        onSelectedProjectIdsChange={setSelectedProjectIds}
-                        freezeOrder={backendWindowDirty}
+                        onClearCollaboratorFilter={
+                          handleClearCollaboratorFilter
+                        }
                       />
-                    )}
-                  </div>
-                </Space>
-              </Col>
-            </Row>
+                    </div>
+
+                    <div ref={projectListRef}>
+                      {mobileProjectsList ? (
+                        <MobileProjectsList
+                          visible_projects={visible_projects}
+                          selectedProjectIds={selectedProjectIds}
+                          onSelectedProjectIdsChange={setSelectedProjectIds}
+                        />
+                      ) : (
+                        <ProjectsTable
+                          visible_projects={visible_projects}
+                          height={tableHeight}
+                          narrow={narrow}
+                          filteredCollaborators={filteredCollaborators}
+                          onFilteredCollaboratorsChange={
+                            setFilteredCollaborators
+                          }
+                          selectedProjectIds={selectedProjectIds}
+                          onSelectedProjectIdsChange={setSelectedProjectIds}
+                          freezeOrder={backendWindowDirty}
+                        />
+                      )}
+                    </div>
+                  </Space>
+                </Col>
+              </Row>
+            )}
           </div>
         </Layout.Content>
       </Layout>
-      <ProjectDrawer />
+      {!emailVerificationRequired && <ProjectDrawer />}
     </div>
   );
 };

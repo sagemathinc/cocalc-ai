@@ -402,10 +402,7 @@ export function AdminDataExplorer() {
   const [running, setRunning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    closeBeforeRetry: true,
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function loadCatalog() {
     setLoading(true);

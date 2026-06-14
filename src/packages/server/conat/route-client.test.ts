@@ -313,6 +313,29 @@ describe("server/conat route-client", () => {
     );
   });
 
+  it("uses explicit routed host clients for local host control clients", async () => {
+    const routed = createFakeClient();
+    connectMock.mockImplementationOnce(() => routed);
+    materializeHostRouteTargetMock.mockResolvedValue({
+      host_id: "host-3",
+      address: "https://host-3.example",
+      host_session_id: "session-3",
+    });
+
+    const { getExplicitHostControlClient } = await import("./route-client");
+
+    await expect(
+      getExplicitHostControlClient({ host_id: "host-3" }),
+    ).resolves.toBe(routed);
+    expect(connectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: "https://host-3.example",
+        noCache: true,
+        forceNew: true,
+      }),
+    );
+  });
+
   it("uses account-scoped auth for account-routed project clients", async () => {
     const central = createFakeClient();
     const routed = createFakeClient();

@@ -27,9 +27,7 @@ export async function sanity_checks(pool, info: PurchaseInfo) {
 }
 
 // Check that cost in the info object matches computing the cost again
-// from scratch.  We *only* do this if a cost is set, since we also
-// use this code for creating licenses associated to a voucher, where
-// payment has already happened (or will happen later).
+// from scratch.  We *only* do this if a cost is set.
 function sanity_check_cost(info: PurchaseInfo) {
   if (info.cost != null && !isEqual(info.cost, compute_cost(info))) {
     throw Error("cost does not match");

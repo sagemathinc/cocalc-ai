@@ -151,6 +151,7 @@ export function selectionForOutOfScopeFileExplorerPath({
 export interface ProjectContextState {
   actions?: ProjectActions;
   active_project_tab?: string;
+  agentAIEnabled: boolean;
   contentSize: { width: number; height: number };
   enabledAIServices: AIServicesAvailable;
   flipTabs: [number, React.Dispatch<React.SetStateAction<number>>];
@@ -180,6 +181,7 @@ export interface ProjectContextState {
 export const emptyProjectContext = {
   actions: undefined,
   active_project_tab: undefined,
+  agentAIEnabled: false,
   contentSize: { width: 0, height: 0 },
   enabledAIServices: {
     openai: false,
@@ -293,20 +295,8 @@ export function useProjectContextProvider({
   const haveCustomOpenAI = useTypedRedux("customize", "custom_openai_enabled");
   const haveMistral = useTypedRedux("customize", "mistral_enabled");
   const haveAnthropic = useTypedRedux("customize", "anthropic_enabled");
-
-  const enabledAIServices = useMemo(() => {
-    const projectsStore = redux.getStore("projects");
-    return projectsStore.whichAIServicesAreEnabled(project_id);
-  }, [
-    haveAnthropic,
-    haveCustomOpenAI,
-    haveGoogle,
-    haveMistral,
-    haveOllama,
-    haveOpenAI,
-  ]);
-
-  const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
+  const accountCustomize = useTypedRedux("account", "customize");
+  const accountOtherSettings = useTypedRedux("account", "other_settings");
   const projectAccess = useMemo(() => {
     if (group === "admin") {
       return projectAccessFromRole({ role: "admin" });
@@ -324,7 +314,45 @@ export function useProjectContextProvider({
     return projectAccessFromRole({ role: role as any, read_policy });
   }, [account_id, group, project]);
   const isViewer = projectAccess.role === "viewer";
-  useProjectCourseInfo(project_id, undefined, { enabled: !isViewer });
+  const { course } = useProjectCourseInfo(project_id, undefined, {
+    enabled: !isViewer,
+  });
+  const studentProjectFunctionality = course?.get(
+    "student_project_functionality",
+  );
+  const enabledAIServices = useMemo(() => {
+    const projectsStore = redux.getStore("projects");
+    return projectsStore.whichAIServicesAreEnabled(project_id);
+  }, [
+    accountCustomize,
+    accountOtherSettings,
+    haveAnthropic,
+    haveCustomOpenAI,
+    haveGoogle,
+    haveMistral,
+    haveOllama,
+    haveOpenAI,
+    project_id,
+    studentProjectFunctionality,
+  ]);
+  const agentAIEnabled = useMemo(() => {
+    return redux
+      .getStore("projects")
+      .hasLanguageModelEnabled(project_id, "agent");
+  }, [
+    accountCustomize,
+    accountOtherSettings,
+    haveAnthropic,
+    haveCustomOpenAI,
+    haveGoogle,
+    haveMistral,
+    haveOllama,
+    haveOpenAI,
+    project_id,
+    studentProjectFunctionality,
+  ]);
+
+  const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const hasInternet =
     useProjectHasInternetAccess(project_id, { enabled: !isViewer }) || lite;
   const workspaces = useProjectWorkspaces(account_id, project_id, {
@@ -554,6 +582,7 @@ export function useProjectContextProvider({
   return {
     actions,
     active_project_tab,
+    agentAIEnabled,
     contentSize,
     enabledAIServices,
     flipTabs,

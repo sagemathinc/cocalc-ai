@@ -149,9 +149,7 @@ export const ProjectSecrets: React.FC<Props> = ({
   >(null);
   const [sshRestartError, setSshRestartError] = useState<string>("");
   const [showRestartWarning, setShowRestartWarning] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const trimmedName = name.trim();
   const nameError = trimmedName ? validateName(trimmedName) : undefined;

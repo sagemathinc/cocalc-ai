@@ -8,14 +8,14 @@ import {
 
 describe("page-routing", () => {
   it("maps settings routes to the account top tab", () => {
-    const parsed = parsePageTarget("settings/vouchers");
+    const parsed = parsePageTarget("settings/payment-methods");
     expect(parsed).toEqual({
       page: "account",
-      tab: "vouchers",
+      tab: "payment-methods",
     });
     expect(getPageTopTab(parsed)).toBe("account");
     expect(getInitialAccountPageState(parsed)).toEqual({
-      active_page: "vouchers",
+      active_page: "payment-methods",
     });
   });
 
@@ -91,9 +91,9 @@ describe("page-routing", () => {
       page: "account",
       tab: "membership",
     });
-    expect(parsePageTarget("store/vouchers")).toEqual({
+    expect(parsePageTarget("store/checkout")).toEqual({
       page: "account",
-      tab: "index",
+      tab: "membership",
     });
   });
 

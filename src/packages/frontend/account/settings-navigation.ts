@@ -123,6 +123,10 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
       },
       {
         type: "page",
+        page: "balance",
+      },
+      {
+        type: "page",
         page: "purchases",
       },
       {
@@ -139,7 +143,6 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
         type: "page",
         page: "statements",
       },
-      { type: "page", page: "vouchers" },
     ],
   },
   {

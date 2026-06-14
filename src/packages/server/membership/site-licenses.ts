@@ -68,6 +68,13 @@ type Queryable = PoolClient | ReturnType<typeof getPool>;
 type SiteLicenseMembershipPackage = NonNullable<
   Awaited<ReturnType<typeof getMembershipPackage>>
 >;
+type SiteLicenseAccountDetailEntry = {
+  account_id: string;
+  email_address?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  home_bay_id?: string | null;
+};
 
 const logger = getLogger("server:membership:site-licenses");
 const SITE_LICENSE_NOTIFICATION_ORIGIN_LABEL = "Site licenses";
@@ -1736,22 +1743,71 @@ function collectSiteLicenseOverviewAccountIds(
 
 async function addSiteLicenseAccountDetails(
   overview: SiteLicenseOverview,
+  client?: PoolClient,
 ): Promise<SiteLicenseOverview> {
   const accountIds = collectSiteLicenseOverviewAccountIds(overview);
   if (accountIds.length === 0) {
     return overview;
   }
-  const entries = await getClusterAccountsByIdsDirect(accountIds);
+  const entries = await getSiteLicenseAccountDetailEntries(accountIds, client);
   const account_details: Record<string, SiteLicenseAccountDetails> = {};
   for (const entry of entries) {
     account_details[entry.account_id] = {
       account_id: entry.account_id,
-      email_address: entry.email_address,
-      first_name: entry.first_name,
-      last_name: entry.last_name,
+      email_address: entry.email_address ?? undefined,
+      first_name: entry.first_name ?? undefined,
+      last_name: entry.last_name ?? undefined,
     };
   }
   return { ...overview, account_details };
+}
+
+async function getSiteLicenseAccountDetailEntries(
+  accountIds: string[],
+  client?: PoolClient,
+): Promise<SiteLicenseAccountDetailEntry[]> {
+  const normalized = Array.from(new Set(accountIds.filter(isValidUUID)));
+  if (normalized.length === 0) {
+    return [];
+  }
+  if (client == null) {
+    return await getClusterAccountsByIdsDirect(normalized);
+  }
+  const entries = new Map<string, SiteLicenseAccountDetailEntry>();
+  const localRows = await client.query<SiteLicenseAccountDetailEntry>(
+    `SELECT account_id, email_address, first_name, last_name, home_bay_id
+       FROM accounts
+      WHERE account_id = ANY($1::UUID[])
+        AND deleted IS NOT TRUE`,
+    [normalized],
+  );
+  for (const row of localRows.rows) {
+    entries.set(row.account_id, row);
+  }
+  const directoryTable = await client.query<{ table_name: string | null }>(
+    "SELECT to_regclass($1) AS table_name",
+    ["public.cluster_account_directory"],
+  );
+  if (directoryTable.rows[0]?.table_name) {
+    const directoryRows = await client.query<SiteLicenseAccountDetailEntry>(
+      `SELECT account_id, email_address, first_name, last_name, home_bay_id
+         FROM cluster_account_directory
+        WHERE account_id = ANY($1::UUID[])
+          AND provisioned = TRUE`,
+      [normalized],
+    );
+    for (const row of directoryRows.rows) {
+      const current = entries.get(row.account_id);
+      entries.set(row.account_id, {
+        account_id: row.account_id,
+        email_address: current?.email_address ?? row.email_address,
+        first_name: current?.first_name ?? row.first_name,
+        last_name: current?.last_name ?? row.last_name,
+        home_bay_id: row.home_bay_id ?? current?.home_bay_id,
+      });
+    }
+  }
+  return [...entries.values()];
 }
 
 async function assertSiteLicenseManager({
@@ -2816,13 +2872,16 @@ async function getSiteLicenseOverviewWithoutAuthorization({
         client,
       }),
     ]);
-  return await addSiteLicenseAccountDetails({
-    site_license: siteLicense,
-    pools,
-    managers,
-    pending_requests,
-    recent_audit_events,
-  });
+  return await addSiteLicenseAccountDetails(
+    {
+      site_license: siteLicense,
+      pools,
+      managers,
+      pending_requests,
+      recent_audit_events,
+    },
+    client,
+  );
 }
 
 export async function adminProvisionSiteLicense({

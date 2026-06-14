@@ -6,6 +6,7 @@
 // A single terminal frame.
 
 import { Button } from "antd";
+import "@xterm/xterm/css/xterm.css";
 import { Map } from "immutable";
 import { throttle } from "lodash";
 import {

@@ -18,13 +18,12 @@ const mockGetUnpaidInvoices = jest.fn();
 const mockGetChargesThisMonthByService = jest.fn();
 const mockEmailStatement = jest.fn();
 const mockGetCostPerDay = jest.fn();
-const mockGetLastClosingDate = jest.fn();
-const mockGetNextClosingDate = jest.fn();
 const mockGetAIUsageStatus = jest.fn();
 const mockResolveMembershipForAccount = jest.fn();
 const mockGetMinBalance = jest.fn();
 const mockIsPurchaseAllowed = jest.fn();
 const mockComputeMembershipChange = jest.fn();
+const mockGetBillingReadiness = jest.fn();
 const mockCostToResumeSubscription = jest.fn();
 const mockThrottle = jest.fn();
 
@@ -93,11 +92,6 @@ jest.mock("@cocalc/server/purchases/get-cost-per-day", () => ({
   default: (...args) => mockGetCostPerDay(...args),
 }));
 
-jest.mock("@cocalc/server/purchases/closing-date", () => ({
-  getLastClosingDate: (...args) => mockGetLastClosingDate(...args),
-  getNextClosingDate: (...args) => mockGetNextClosingDate(...args),
-}));
-
 jest.mock("@cocalc/server/ai/usage-status", () => ({
   getAIUsageStatus: (...args) => mockGetAIUsageStatus(...args),
 }));
@@ -119,6 +113,14 @@ jest.mock("@cocalc/server/purchases/is-purchase-allowed", () => ({
 jest.mock("@cocalc/server/membership/tiers", () => ({
   computeMembershipChange: (...args) => mockComputeMembershipChange(...args),
 }));
+
+jest.mock(
+  "@cocalc/server/purchases/stripe/billing-readiness",
+  () => ({
+    getBillingReadiness: (...args) => mockGetBillingReadiness(...args),
+  }),
+  { virtual: true },
+);
 
 jest.mock("@cocalc/server/purchases/resume-subscription", () => ({
   costToResumeSubscription: (...args) => mockCostToResumeSubscription(...args),
@@ -144,8 +146,6 @@ describe("billing account read routes API-key scope", () => {
     mockGetChargesThisMonthByService.mockReset().mockResolvedValue({});
     mockEmailStatement.mockReset().mockResolvedValue(undefined);
     mockGetCostPerDay.mockReset().mockResolvedValue([]);
-    mockGetLastClosingDate.mockReset().mockResolvedValue(new Date(0));
-    mockGetNextClosingDate.mockReset().mockResolvedValue(new Date(1));
     mockGetAIUsageStatus.mockReset().mockResolvedValue({ used: 1 });
     mockResolveMembershipForAccount.mockReset().mockResolvedValue({
       tier_id: "tier-1",
@@ -154,6 +154,10 @@ describe("billing account read routes API-key scope", () => {
     mockIsPurchaseAllowed.mockReset().mockResolvedValue({ allowed: true });
     mockComputeMembershipChange.mockReset().mockResolvedValue({
       charge: 0,
+    });
+    mockGetBillingReadiness.mockReset().mockResolvedValue({
+      hasBillingDetails: true,
+      hasPaymentMethod: true,
     });
     mockCostToResumeSubscription.mockReset().mockResolvedValue({
       cost: 12,
@@ -172,7 +176,6 @@ describe("billing account read routes API-key scope", () => {
     ["./purchases/get-charges-by-service", mockGetChargesThisMonthByService],
     ["./purchases/email-statement", mockEmailStatement],
     ["./purchases/get-cost-per-day", mockGetCostPerDay],
-    ["./purchases/get-closing-dates", mockGetLastClosingDate],
     ["./purchases/get-llm-usage", mockGetAIUsageStatus],
     ["./purchases/get-membership", mockResolveMembershipForAccount],
     ["./purchases/get-min-balance", mockGetMinBalance],
@@ -225,6 +228,67 @@ describe("billing account read routes API-key scope", () => {
     expect(mockEmailStatement).toHaveBeenCalledWith({
       account_id: "acct-1",
       statement_id: 5,
+    });
+  });
+
+  it("reports missing trial billing requirements separately", async () => {
+    mockGetParams.mockReturnValue({
+      class: "standard",
+      interval: "year",
+    });
+    mockComputeMembershipChange.mockResolvedValue({
+      change: "new",
+      charge: 0,
+      price: 216,
+      trial_available: true,
+      trial_days: 7,
+    });
+    mockGetBillingReadiness.mockResolvedValue({
+      hasBillingDetails: false,
+      hasPaymentMethod: true,
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      body: { class: "standard", interval: "year" },
+    });
+
+    const { default: handler } = await import("./purchases/membership-quote");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toMatchObject({
+      allowed: false,
+      charge_amount: 0,
+      reason: "Add billing details to start this free trial.",
+      trial_requires_billing_details: true,
+      trial_requires_payment_method: false,
+    });
+  });
+
+  it("allows trial quotes when billing is ready", async () => {
+    mockGetParams.mockReturnValue({
+      class: "standard",
+      interval: "year",
+    });
+    mockComputeMembershipChange.mockResolvedValue({
+      change: "new",
+      charge: 0,
+      price: 216,
+      trial_available: true,
+      trial_days: 7,
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      body: { class: "standard", interval: "year" },
+    });
+
+    const { default: handler } = await import("./purchases/membership-quote");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toMatchObject({
+      allowed: true,
+      charge_amount: 0,
+      trial_requires_billing_details: false,
+      trial_requires_payment_method: false,
     });
   });
 

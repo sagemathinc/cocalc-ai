@@ -9,6 +9,7 @@ Table({
   name: "collaborators",
   fields: {
     account_id: true,
+    display_name: true,
     first_name: true,
     last_name: true,
     name: true,
@@ -31,6 +32,7 @@ Table({
         pg_changefeed: "collaborators",
         fields: {
           account_id: null,
+          display_name: "",
           first_name: "",
           last_name: "",
           name: "",
@@ -48,6 +50,7 @@ Table({
   fields: {
     account_id: true,
     project_id: true,
+    display_name: true,
     first_name: true,
     last_name: true,
     name: true,
@@ -73,6 +76,7 @@ Table({
         fields: {
           account_id: null,
           project_id: null,
+          display_name: "",
           first_name: "",
           last_name: "",
           name: "",

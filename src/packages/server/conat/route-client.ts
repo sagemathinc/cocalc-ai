@@ -357,13 +357,19 @@ export async function getExplicitHostControlClient({
   fresh?: boolean;
 }): Promise<Client> {
   const routed = await materializeHostRouteTarget(host_id, { fresh });
+  if (routed?.host_id) {
+    const target = routeTargetToClient(`project-host.${host_id}.api`, routed);
+    if (hasRoutedClient(target)) {
+      return target.client;
+    }
+    throw new Error(`unable to route host ${host_id} to its control service`);
+  }
   if (!routed?.host_id && !(await resolveHostBayAcrossCluster(host_id))) {
     throw new Error(`unable to route host ${host_id} to its owning bay`);
   }
-  // The project-host control service currently lives on the owning bay hub
-  // cluster, not the host-local Conat server. Keep the route materialization
-  // explicit so callers fail fast on invalid ownership, but send the RPC over
-  // the bay hub client.
+  // Remote-bay hosts are handled by getRoutedHostControlClient before this
+  // helper is called. Keep this fallback for direct callers that only need to
+  // validate remote ownership here.
   return conatWithProjectRouting();
 }
 

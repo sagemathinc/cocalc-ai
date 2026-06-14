@@ -102,11 +102,11 @@ describe("load_target", () => {
   });
 
   it("routes settings targets through account route state", () => {
-    load_target("settings/vouchers", false, false);
+    load_target("settings/payment-methods", false, false);
 
     expect(pageActions.set_active_tab).toHaveBeenCalledWith("account", false);
     expect(accountActions.setState).toHaveBeenCalledWith({
-      active_page: "vouchers",
+      active_page: "payment-methods",
     });
   });
 

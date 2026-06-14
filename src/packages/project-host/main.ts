@@ -1455,6 +1455,7 @@ export async function main(
     host,
     port,
     masterConatToken,
+    controlClient: conatClient,
     waitUntilReady: async () => {
       if (healthState.ready) return;
       await startupReady;

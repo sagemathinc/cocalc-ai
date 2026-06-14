@@ -5,10 +5,15 @@ import { KernelSelector } from "../select-kernel";
 
 const useRedux = jest.fn();
 const useTypedRedux = jest.fn();
+const isAIAllowedByPolicy = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   CSS: {},
   Rendered: {},
+  redux: {
+    getStore: (name: string) =>
+      name === "projects" ? { isAIAllowedByPolicy } : undefined,
+  },
   useRedux: (...args) => useRedux(...args),
   useTypedRedux: (...args) => useTypedRedux(...args),
 }));
@@ -37,6 +42,13 @@ jest.mock("@cocalc/frontend/project/new/navigator-intents", () => ({
   submitNavigatorPromptToCurrentThread: jest.fn(),
 }));
 
+jest.mock(
+  "@cocalc/frontend/course/configuration/customize-student-project-functionality",
+  () => ({
+    useStudentProjectFunctionality: () => ({}),
+  }),
+);
+
 jest.mock("@cocalc/frontend/components/run-button/kernel-star", () => ({
   KernelStar: () => null,
 }));
@@ -48,6 +60,8 @@ describe("KernelSelector", () => {
     useRedux.mockReset();
     useTypedRedux.mockReset();
     useTypedRedux.mockReturnValue(immutable.Map());
+    isAIAllowedByPolicy.mockReset();
+    isAIAllowedByPolicy.mockReturnValue(true);
   });
 
   it("keeps an install-kernel path visible when kernels already exist", () => {
@@ -103,5 +117,39 @@ describe("KernelSelector", () => {
     );
 
     expect(screen.getByText("Install")).toBeTruthy();
+  });
+
+  it("hides Agent kernel install controls when AI is disabled", () => {
+    isAIAllowedByPolicy.mockReturnValue(false);
+    const actions = {
+      name: "jupyter-test",
+      project_id: "project-1",
+      path: "notebook.ipynb",
+      select_kernel: jest.fn(),
+      fetch_jupyter_kernels: jest.fn(),
+      hide_select_kernel: jest.fn(),
+    } as any;
+
+    useRedux.mockImplementation(([name, key]) => {
+      if (name !== "jupyter-test") return;
+      switch (key) {
+        case "kernel":
+          return "";
+        case "project_id":
+          return "project-1";
+        case "kernels_by_name":
+          return immutable.OrderedMap();
+        case "kernels_by_language":
+          return immutable.OrderedMap();
+      }
+    });
+
+    render(
+      <IntlProvider locale="en" messages={{}}>
+        <KernelSelector actions={actions} embedded />
+      </IntlProvider>,
+    );
+
+    expect(screen.queryByText("Agent")).toBeNull();
   });
 });

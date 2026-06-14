@@ -22,7 +22,16 @@ export async function createDayStatements() {
 }
 
 export async function createMonthStatements() {
-  await createStatements({ time: mostRecentMidnight(), interval: "month" });
+  const time = mostRecentMidnight();
+  if (time.getUTCDate() !== 1) {
+    logger.debug(
+      "createMonthStatements",
+      { time },
+      "not the first UTC day of the month, so no-op",
+    );
+    return;
+  }
+  await createStatements({ time, interval: "month" });
 }
 
 function mostRecentMidnight(): Date {
@@ -212,21 +221,15 @@ export async function createStatements({
   }
 }
 
-function getQuery(
-  time: Date,
-  interval: Interval,
-  type: "charges" | "credits",
-): string {
+function getQuery(interval: Interval, type: "charges" | "credits"): string {
   if (interval == "day") {
     return `SELECT account_id, SUM(cost) AS total_${type}, count(*) AS num_${type} FROM purchases WHERE cost IS NOT NULL AND ${interval}_statement_id IS NULL AND time <= $1 AND cost ${
       type == "charges" ? " > 0" : "< 0"
     } GROUP BY account_id`;
   } else if (interval == "month") {
-    // for interval = 'month' we need to add an additional where clause about the purchase_closing_day from the accounts table.
-    const purchase_closing_day = time.getDate();
-    return `SELECT purchases.account_id AS account_id, SUM(purchases.cost) AS total_${type}, count(*) AS num_${type} FROM purchases, accounts WHERE purchases.cost IS NOT NULL AND purchases.account_id = accounts.account_id AND accounts.purchase_closing_day = ${purchase_closing_day} AND purchases.${interval}_statement_id IS NULL AND purchases.time <= $1 AND purchases.cost ${
+    return `SELECT account_id, SUM(cost) AS total_${type}, count(*) AS num_${type} FROM purchases WHERE cost IS NOT NULL AND ${interval}_statement_id IS NULL AND time <= $1 AND cost ${
       type == "charges" ? " > 0" : "< 0"
-    } GROUP BY purchases.account_id`;
+    } GROUP BY account_id`;
   } else {
     throw Error("unknown interval");
   }
@@ -240,7 +243,7 @@ async function getData(
   interval: Interval,
   type: "charges" | "credits",
 ) {
-  const query = getQuery(time, interval, type);
+  const query = getQuery(interval, type);
   const { rows } = await pool.query(query, [time]);
   return toAccountMap(rows);
 }

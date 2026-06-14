@@ -109,7 +109,6 @@ export default function BalanceModal({
 
 const LINKS = [
   { label: "Membership", value: "membership" },
-  { label: "Vouchers", value: "vouchers" },
   { label: "Purchases", value: "purchases" },
   { label: "Payments", value: "payments", stripe: true },
   { label: "Methods", value: "payment-methods", stripe: true },

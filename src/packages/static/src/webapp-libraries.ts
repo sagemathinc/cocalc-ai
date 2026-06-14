@@ -26,5 +26,37 @@ import "./webapp-css";
 // CSS style file for CoCalc.  This must be at the very end, and by using a
 // dynamic import, it is imported in another chunk, hence after antd.
 // That's important so this overrides antd.
-// @ts-ignore -- handled by webpack but not typescirpt.
-import("@cocalc/frontend/styles/index.css"); // this is a dynamic import on purpose!
+function getErrorStack(error: unknown): string | undefined {
+  if (error instanceof Error) return error.stack;
+  if (
+    error != null &&
+    typeof error == "object" &&
+    typeof (error as any).stack == "string"
+  ) {
+    return (error as any).stack;
+  }
+}
+
+// @ts-ignore -- handled by webpack but not typescript.
+export const cocalcStylesReady = import("@cocalc/frontend/styles/index.css") // this is a dynamic import on purpose!
+  .catch((error) => {
+    const stack = getErrorStack(error);
+    console.warn("CoCalc global stylesheet failed to load", {
+      error,
+      message: String(error),
+      stack,
+      location: window.location.href,
+      scripts: Array.from(document.scripts)
+        .map((script) => script.src)
+        .filter((src) => src.length > 0),
+      rspackChunks: Array.isArray((globalThis as any).rspackChunk_cocalc_static)
+        ? {
+            length: (globalThis as any).rspackChunk_cocalc_static.length,
+            pushType: typeof (globalThis as any).rspackChunk_cocalc_static.push,
+          }
+        : { exists: false },
+    });
+    if (stack != null) {
+      console.warn(stack);
+    }
+  });

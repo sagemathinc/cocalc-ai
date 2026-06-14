@@ -15,6 +15,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { get as getProjectStatus } from "@cocalc/conat/project/project-status";
 import { default_filename } from "@cocalc/frontend/account";
 import { alert_message } from "@cocalc/frontend/alerts";
+import "@cocalc/frontend/editors/register-all";
 import {
   Actions,
   project_redux_name,
@@ -1036,10 +1037,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (key === "users") {
       key = "settings";
     }
+    const openProjectHomeFiles = key === "home";
+    if (openProjectHomeFiles) {
+      key = "files";
+    }
     const store = this.get_store();
     if (store == undefined) return; // project closed
     const prev_active_project_tab = store.get("active_project_tab");
-    if (!opts.change_history && prev_active_project_tab === key) {
+    if (
+      !openProjectHomeFiles &&
+      !opts.change_history &&
+      prev_active_project_tab === key
+    ) {
       // already active -- nothing further to do
       return;
     }
@@ -1058,12 +1067,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "files":
         // Treat "/" as a fallback state. Re-entering the files tab should land in
         // HOME unless the user is already on a concrete filesystem path.
-        const currentPathAbs = store.get("current_path_abs") ?? "/";
+        const existingPathAbs = store.get("current_path_abs") ?? "/";
+        const currentPathAbs = openProjectHomeFiles
+          ? this.getHomeDirectoryForPaths()
+          : existingPathAbs;
         const filesPathAbs =
           currentPathAbs === "/"
             ? this.getHomeDirectoryForPaths()
             : currentPathAbs;
-        if (filesPathAbs !== currentPathAbs) {
+        if (filesPathAbs !== existingPathAbs) {
           this.set_current_path(filesPathAbs);
         }
         if (opts.change_history) {
@@ -1128,13 +1140,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "info":
         if (opts.change_history) {
           this.push_state("info", "");
-        }
-        break;
-
-      case "home":
-        this.set_current_path(this.getHomeDirectoryForPaths());
-        if (opts.change_history) {
-          this.push_state("project-home", "");
         }
         break;
 
@@ -1507,9 +1512,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           typeof staleActions.isClosed === "function" &&
           staleActions.isClosed()) ||
         (staleActions == null && staleStore != null);
-      // LAZY IMPORT, so that editors are only available
-      // when you are going to use them.  Helps with code splitting.
-      await import("../../editors/register-all");
       if (shouldRemoveStaleRuntime) {
         project_file.remove(path, this.redux, this.project_id);
         if (redux.getActions(staleName) != null) {
@@ -2565,8 +2567,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           this.replaceFallbackRootWithHome(normalizedHomeDirectory);
         }
 
-        // Keep project-home aligned with HOME once capabilities arrive.
-        if (store.get("active_project_tab") === "home") {
+        // Keep the files landing path aligned with HOME once capabilities arrive.
+        const activeTab = store.get("active_project_tab");
+        if (activeTab === "home" || activeTab === "files") {
           this.set_current_path(normalizedHomeDirectory);
         }
       }
@@ -2944,12 +2947,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     auto = true,
     print = false,
     showError = true,
+    deleteAfterDownload,
+    downloadFilename,
   }: {
     path: string;
     log?: boolean | string[];
     auto?: boolean;
     print?: boolean;
     showError?: boolean;
+    deleteAfterDownload?: boolean;
+    downloadFilename?: string;
   }): Promise<void> => {
     await downloadProjectFile({
       project_id: this.project_id,
@@ -2958,6 +2965,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       auto,
       print,
       showError,
+      deleteAfterDownload,
+      downloadFilename,
       logAction: (opts) => this.log(opts),
       routeProjectHostHttpUrl: (opts) =>
         webapp_client.conat_client.routeProjectHostHttpUrl(opts),
@@ -3123,7 +3132,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
     switch (route.kind) {
       case "directory":
-        this.open_directory(route.path, change_history, true, foreground);
+        await this.open_directory(route.path, change_history, true, foreground);
         return;
 
       case "file": {
@@ -3142,7 +3151,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         const isDir = await this.isDir(route.path);
         if (isDir) {
-          this.open_directory(route.path, change_history, true, foreground);
+          await this.open_directory(
+            route.path,
+            change_history,
+            true,
+            foreground,
+          );
         } else {
           this.open_file({
             path: route.path,
@@ -3162,10 +3176,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         break;
 
       case "tab":
-        if (route.tab === "project-home") {
-          this.set_active_tab("home", { change_history: change_history });
-          break;
-        }
         this.set_active_tab(route.tab as FixedTab, {
           change_history: change_history,
         });

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE="cocalc-bay-cloudflared.service"
+SYSTEMCTL="/usr/bin/systemctl"
+
+if [[ ! -x "$SYSTEMCTL" ]]; then
+  SYSTEMCTL="/bin/systemctl"
+fi
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: cocalc-bay-cloudflared-ctl <start|restart|status|is-active>
+
+Narrow root helper for the CoCalc bay Cloudflare tunnel service.
+EOF
+}
+
+if [[ $# -ne 1 ]]; then
+  usage
+  exit 2
+fi
+
+case "$1" in
+  start|restart|status|is-active)
+    exec "$SYSTEMCTL" --no-pager "$1" "$SERVICE"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac

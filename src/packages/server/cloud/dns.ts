@@ -53,6 +53,8 @@ type DnsRecord = {
   type?: string;
 };
 
+const CNAME_CONFLICT_RECORD_TYPES = new Set(["A", "AAAA"]);
+
 async function cloudflareRequest<T>(
   token: string,
   method: "GET" | "POST" | "PUT" | "DELETE",
@@ -160,6 +162,49 @@ async function listDnsRecords(
     "GET",
     `zones/${zoneId}/dns_records?${qs.toString()}`,
   );
+}
+
+async function listDnsRecordsByName(
+  token: string,
+  zoneId: string,
+  name: string,
+): Promise<DnsRecord[]> {
+  const qs = new URLSearchParams({ name });
+  return await cloudflareRequest<DnsRecord[]>(
+    token,
+    "GET",
+    `zones/${zoneId}/dns_records?${qs.toString()}`,
+  );
+}
+
+async function deleteAddressRecordsConflictingWithCname(opts: {
+  token: string;
+  zoneId: string;
+  hostname: string;
+  keepRecordId?: string;
+}): Promise<void> {
+  const records = await listDnsRecordsByName(
+    opts.token,
+    opts.zoneId,
+    opts.hostname,
+  );
+  for (const record of records) {
+    if (!record.id) continue;
+    if (record.id === opts.keepRecordId) continue;
+    const type = `${record.type ?? ""}`.trim().toUpperCase();
+    if (!CNAME_CONFLICT_RECORD_TYPES.has(type)) continue;
+    try {
+      await cloudflareRequest(
+        opts.token,
+        "DELETE",
+        `zones/${opts.zoneId}/dns_records/${record.id}`,
+      );
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        throw err;
+      }
+    }
+  }
 }
 
 async function getClient(): Promise<{
@@ -370,6 +415,11 @@ export async function ensureHostnameCnameDns(opts: {
   }
   if (!record_id) {
     if (!recordIds.length) {
+      await deleteAddressRecordsConflictingWithCname({
+        token,
+        zoneId,
+        hostname,
+      });
       record_id = await createRecord();
       records = [];
     } else {
@@ -392,6 +442,12 @@ export async function ensureHostnameCnameDns(opts: {
       }
     }
   }
+  await deleteAddressRecordsConflictingWithCname({
+    token,
+    zoneId,
+    hostname,
+    keepRecordId: record_id,
+  });
   return { record_id: record_id! };
 }
 

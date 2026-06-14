@@ -19,13 +19,13 @@ import {
   TEAM_LICENSES_SETTINGS_PAGE,
 } from "./licenses/licenses-page";
 import { MEMBERSHIP_SETTINGS_PAGE } from "./membership-page";
+import { BALANCE_SETTINGS_PAGE } from "@cocalc/frontend/purchases/balance-page";
 import { PAYMENT_METHODS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payment-methods-page";
 import { PAYMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payments-page";
 import { PURCHASES_SETTINGS_PAGE } from "@cocalc/frontend/purchases/purchases-page";
 import { STATEMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/statements-page";
 import { SUBSCRIPTIONS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/subscriptions-page";
 import { USAGE_LIMITS_SETTINGS_PAGE } from "./usage-limits-page";
-import { VOUCHERS_SETTINGS_PAGE } from "@cocalc/frontend/account/vouchers/vouchers-page";
 import { SUPPORT_TICKETS_SETTINGS_PAGE } from "@cocalc/frontend/support/tickets";
 import type { SettingsPageDefinition } from "./settings-page";
 
@@ -40,6 +40,7 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   keys: ACCOUNT_PREFERENCES_SECURITY_PAGE,
   membership: MEMBERSHIP_SETTINGS_PAGE,
   other: ACCOUNT_PREFERENCES_OTHER_PAGE,
+  balance: BALANCE_SETTINGS_PAGE,
   "payment-methods": PAYMENT_METHODS_SETTINGS_PAGE,
   payments: PAYMENTS_SETTINGS_PAGE,
   profile: ACCOUNT_PREFERENCES_PROFILE_PAGE,
@@ -51,7 +52,6 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   "site-licenses": SITE_LICENSES_SETTINGS_PAGE,
   "software-licenses": SOFTWARE_LICENSES_SETTINGS_PAGE,
   "usage-limits": USAGE_LIMITS_SETTINGS_PAGE,
-  vouchers: VOUCHERS_SETTINGS_PAGE,
 } satisfies Record<RegisteredSettingsPageType, SettingsPageDefinition>;
 
 export type RegisteredSettingsPage = keyof typeof SETTINGS_PAGE_DEFINITIONS;

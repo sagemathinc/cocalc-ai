@@ -1905,7 +1905,7 @@ export function registerAdminCommand(
     )
     .option("--first-name <firstName>", "first name")
     .option("--last-name <lastName>", "last name")
-    .option("--name <name>", "full name shorthand (split into first/last)")
+    .option("--name <name>", "display name")
     .option("--tag <tag...>", "optional account tags")
     .action(
       async (
@@ -1927,8 +1927,9 @@ export function registerAdminCommand(
 
           let firstName = opts.firstName?.trim();
           let lastName = opts.lastName?.trim();
-          if (opts.name?.trim()) {
-            const parts = opts.name.trim().split(/\s+/).filter(Boolean);
+          const displayName = opts.name?.trim();
+          if (displayName) {
+            const parts = displayName.split(/\s+/).filter(Boolean);
             if (!firstName && parts.length) {
               firstName = parts[0];
             }
@@ -1940,6 +1941,7 @@ export function registerAdminCommand(
           const created = await ctx.hub.system.adminCreateUser({
             email,
             password: opts.password,
+            display_name: displayName,
             first_name: firstName,
             last_name: lastName,
             tags: opts.tag && opts.tag.length ? opts.tag : undefined,

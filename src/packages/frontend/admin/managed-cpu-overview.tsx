@@ -462,9 +462,7 @@ function MembershipUsageWindowReset({
   const [reason, setReason] = useState("");
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function resetWindows() {
     const trimmedReason = reason.trim();

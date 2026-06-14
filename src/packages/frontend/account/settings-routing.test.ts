@@ -30,8 +30,8 @@ describe("settings-routing", () => {
     expect(parseAccountSettingsRoute("settings/subscriptions")).toEqual({
       page: "subscriptions",
     });
-    expect(parseAccountSettingsRoute("settings/vouchers")).toEqual({
-      page: "vouchers",
+    expect(parseAccountSettingsRoute("settings/balance")).toEqual({
+      page: "balance",
     });
     expect(parseAccountSettingsRoute("settings/editor")).toEqual({
       page: "editor",
@@ -43,16 +43,15 @@ describe("settings-routing", () => {
     expect(parseAccountSettingsRoute("settings/billing")).toBeUndefined();
     expect(parseAccountSettingsRoute("settings/licenses")).toBeUndefined();
     expect(parseAccountSettingsRoute("settings/licenses/team")).toBeUndefined();
+    expect(parseAccountSettingsRoute("settings/not-real")).toBeUndefined();
   });
 
   it("builds canonical settings paths from leaf pages", () => {
     expect(getSettingsTargetPath({ page: "index" })).toBe("settings");
-    expect(getSettingsTargetPath({ page: "vouchers" })).toBe(
-      "settings/vouchers",
-    );
     expect(getSettingsTargetPath({ page: "subscriptions" })).toBe(
       "settings/subscriptions",
     );
+    expect(getSettingsTargetPath({ page: "balance" })).toBe("settings/balance");
     expect(getSettingsTargetPath({ page: "membership" })).toBe(
       "settings/membership",
     );
@@ -113,19 +112,19 @@ describe("settings-routing", () => {
       setState: jest.fn(),
     };
 
-    applyAccountSettingsRoute(actions, { page: "vouchers" });
+    applyAccountSettingsRoute(actions, { page: "appearance" });
     expect(actions.setState).toHaveBeenCalledWith({
-      active_page: "vouchers",
+      active_page: "appearance",
     });
-    expect(actions.push_state).toHaveBeenCalledWith("/settings/vouchers");
+    expect(actions.push_state).toHaveBeenCalledWith("/settings/appearance");
 
     applyAccountSettingsRoute(
       actions,
-      { page: "appearance" },
+      { page: "editor" },
       { pushHistory: false },
     );
     expect(actions.setState).toHaveBeenCalledWith({
-      active_page: "appearance",
+      active_page: "editor",
     });
   });
 

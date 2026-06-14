@@ -734,7 +734,9 @@ export class JupyterClient {
     }) => Promise<string>,
   ) {
     this.socket = this.client.socket.connect(this.subject);
-    this.socket.once("close", () => this.iter?.end());
+    const endIterator = () => this.iter?.end();
+    this.socket.once("closed", endIterator);
+    this.socket.once("close", endIterator);
     this.socket.on("request", async (mesg) => {
       const { data } = mesg;
       try {

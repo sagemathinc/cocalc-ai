@@ -75,9 +75,14 @@ Then copy the generated tarball to the VM and stage it directly:
 ```sh
 sudo ./bay-bootstrap-release.sh \
   --bundle /tmp/cocalc-bay-runtime-linux-x64.tar.xz \
-  --worker-count 8 \
   --start
 ```
+
+Rocket defaults to one browser-facing hub worker. Production bays can raise
+`--worker-count` after deploying the sticky frontdoor: browsers are pinned to
+one healthy worker by an affinity cookie, and drained or unhealthy workers are
+replaced automatically. This is the intended near-term scale-up path for a
+single Rocket bay; a shared hub Conat fabric is still the longer-term design.
 
 For an existing bay, prefer the higher-level upgrade wrapper from the repo
 checkout. It stages the release, restarts the bay, runs health checks, upgrades

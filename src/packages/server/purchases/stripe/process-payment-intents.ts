@@ -10,7 +10,6 @@ import {
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
   MEMBERSHIP_PACKAGE_PURCHASE,
-  VOUCHER_PURCHASE,
 } from "@cocalc/util/db-schema/purchases";
 import {
   processSubscriptionRenewal,
@@ -30,9 +29,7 @@ import type { MoneyValue } from "@cocalc/util/money";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import getPool from "@cocalc/database/pool";
-import { getTransactionClient } from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
-import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 
@@ -92,11 +89,25 @@ function getMembershipPackageProductFromMetadata(
 export default async function processPaymentIntents({
   paymentIntents,
   account_id,
+  checkout_session_id,
+  payment_intent_id,
+  strict = false,
 }: {
   account_id?: string;
+  checkout_session_id?: string;
+  payment_intent_id?: string;
   paymentIntents?;
+  strict?: boolean;
 }): Promise<number> {
-  if (paymentIntents == null) {
+  const explicitPaymentIntent =
+    payment_intent_id != null || checkout_session_id != null;
+  if (paymentIntents == null && explicitPaymentIntent) {
+    paymentIntents = await getExplicitPaymentIntents({
+      account_id,
+      checkout_session_id,
+      payment_intent_id,
+    });
+  } else if (paymentIntents == null) {
     if (account_id == null) {
       // nothing to do
       return 0;
@@ -145,9 +156,18 @@ export default async function processPaymentIntents({
         });
         await setMetadataRecorded(paymentIntent);
       } catch (err) {
+        await alertUncreditedSucceededPayment({
+          account_id,
+          err,
+          paymentIntent,
+          stage: "record",
+        });
         logger.debug(
           `WARNING: issue processing a payment intent ${paymentIntent.id} -- ${err}`,
         );
+        if (strict) {
+          throw err;
+        }
       }
     }
     if (isReadyToProcess(paymentIntent)) {
@@ -155,8 +175,16 @@ export default async function processPaymentIntents({
         const id = await processPaymentIntent(paymentIntent);
         if (id) {
           purchase_ids.add(id);
+        } else if (strict && explicitPaymentIntent) {
+          throw Error(`payment intent ${paymentIntent.id} was not processed`);
         }
       } catch (err) {
+        await alertUncreditedSucceededPayment({
+          account_id,
+          err,
+          paymentIntent,
+          stage: "process",
+        });
         // There are a number of things that are expected to go wrong, hopefully ephemeral.  We log
         // them.  Examples:
         //   - Problem creating an item a user wants to buy because they spend too much right when
@@ -167,10 +195,121 @@ export default async function processPaymentIntents({
         logger.debug(
           `WARNING: issue processing a payment intent ${paymentIntent.id} -- ${err}`,
         );
+        if (strict) {
+          throw err;
+        }
       }
+    } else if (
+      strict &&
+      explicitPaymentIntent &&
+      paymentIntent.metadata?.processed != "true"
+    ) {
+      throw Error(
+        `payment intent ${paymentIntent.id} is not ready to process (status=${paymentIntent.status})`,
+      );
     }
   }
   return purchase_ids.size;
+}
+
+async function getExplicitPaymentIntents({
+  account_id,
+  checkout_session_id,
+  payment_intent_id,
+}: {
+  account_id?: string;
+  checkout_session_id?: string;
+  payment_intent_id?: string;
+}) {
+  const stripe = await getConn();
+  if (payment_intent_id != null) {
+    const paymentIntent =
+      await stripe.paymentIntents.retrieve(payment_intent_id);
+    if (account_id != null) {
+      const expectedCustomerId = await getStripeCustomerId({
+        account_id,
+        create: false,
+      });
+      if (!expectedCustomerId) {
+        throw Error("payer does not have a Stripe customer");
+      }
+      assertPaymentIntentAccountBinding({
+        paymentIntent,
+        account_id,
+        expected_customer_id: expectedCustomerId,
+      });
+    }
+    return [paymentIntent];
+  }
+  if (checkout_session_id == null) {
+    return [];
+  }
+  const session = await stripe.checkout.sessions.retrieve(checkout_session_id, {
+    expand: ["payment_intent"],
+  });
+  if (account_id != null) {
+    const expectedCustomerId = await getStripeCustomerId({
+      account_id,
+      create: false,
+    });
+    if (!expectedCustomerId) {
+      throw Error("payer does not have a Stripe customer");
+    }
+    if (stripeCustomerId(session.customer) !== expectedCustomerId) {
+      throw Error("checkout session customer does not match payer");
+    }
+  }
+  const paymentIntent = session.payment_intent;
+  if (paymentIntent == null) {
+    throw Error("checkout session does not have a payment intent");
+  }
+  if (typeof paymentIntent === "string") {
+    return [await stripe.paymentIntents.retrieve(paymentIntent)];
+  }
+  return [paymentIntent];
+}
+
+export async function alertUncreditedSucceededPayment({
+  account_id,
+  err,
+  paymentIntent,
+  stage,
+}: {
+  account_id?: string;
+  err;
+  paymentIntent;
+  stage: "record" | "process";
+}) {
+  if (
+    paymentIntent.status !== "succeeded" ||
+    paymentIntent.metadata?.processed === "true" ||
+    paymentIntent.metadata?.credit_id ||
+    paymentIntent.metadata?.processing_error_alerted
+  ) {
+    return;
+  }
+  try {
+    const stripe = await getConn();
+    const alertedAt = `${Date.now()}`;
+    await stripe.paymentIntents.update(paymentIntent.id, {
+      metadata: {
+        ...(paymentIntent.metadata ?? {}),
+        processing_error_alerted: alertedAt,
+      },
+    });
+    paymentIntent.metadata = {
+      ...(paymentIntent.metadata ?? {}),
+      processing_error_alerted: alertedAt,
+    };
+  } catch (metadataErr) {
+    logger.debug(
+      `WARNING: unable to mark payment intent ${paymentIntent.id} as alerted -- ${metadataErr}`,
+    );
+  }
+  adminAlert({
+    subject: "Issue Processing a User Payment Before Credit",
+    body: `CoCalc could not convert a succeeded Stripe payment into account credit.\n\n- Payment intent: ${paymentIntent.id}\n- Account id: ${account_id ?? paymentIntent.metadata?.account_id ?? "unknown"}\n- Stage: ${stage}\n- ERROR: ${err}`,
+  });
 }
 
 export function isReadyToProcess(paymentIntent) {
@@ -219,9 +358,31 @@ async function setMetadataRecorded(paymentIntent) {
 // messages out to the user, which is confusing.
 export const processPaymentIntent = reuseInFlight(
   async (paymentIntent): Promise<number | undefined> => {
+    paymentIntent.metadata ??= {};
     if (paymentIntent.metadata.processed == "true") {
       // already done.
       return;
+    }
+    const stripe = await getConn();
+    let invoice;
+    const getInvoice = async () => {
+      if (invoice == null && paymentIntent.invoice) {
+        invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+      }
+      return invoice;
+    };
+    if (
+      !paymentIntent.metadata?.account_id ||
+      !paymentIntent.metadata?.purpose ||
+      !paymentIntent.metadata?.total_excluding_tax_usd
+    ) {
+      invoice = await getInvoice();
+      if (invoice?.metadata != null) {
+        paymentIntent.metadata = {
+          ...invoice.metadata,
+          ...paymentIntent.metadata,
+        };
+      }
     }
     let account_id = paymentIntent.metadata.account_id;
     logger.debug("processPaymentIntent", { id: paymentIntent.id, account_id });
@@ -259,7 +420,6 @@ customer.  So we don't know what to do with this.  Please manually investigate.
       }
     }
 
-    const stripe = await getConn();
     expectedCustomerId = await getStripeCustomerId({
       account_id,
       create: false,
@@ -377,7 +537,7 @@ ${await support()}`;
       return;
     }
 
-    const invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+    invoice = await getInvoice();
     assertInvoiceAccountBinding({
       invoice,
       expected_customer_id: expectedCustomerId,
@@ -446,33 +606,6 @@ ${await support()}`;
           product,
           amount,
         });
-      } else if (paymentIntent.metadata.purpose == VOUCHER_PURCHASE) {
-        const amountEach = Number(paymentIntent.metadata.voucher_amount ?? 0);
-        const count = Number(paymentIntent.metadata.voucher_count ?? 0);
-        const title = `${paymentIntent.metadata.voucher_title ?? ""}`.trim();
-        reason = `purchase ${count} voucher${count === 1 ? "" : "s"}`;
-        const client = await getTransactionClient();
-        try {
-          await createVouchers({
-            account_id,
-            active: new Date(),
-            amount: amountEach,
-            cancelBy: null,
-            client,
-            credit_id,
-            expire: null,
-            numVouchers: count,
-            paymentAmount: amount,
-            title,
-            whenPay: "now",
-          });
-          await client.query("COMMIT");
-        } catch (err) {
-          await client.query("ROLLBACK");
-          throw err;
-        } finally {
-          client.release();
-        }
       } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
         const statement_id = parseInt(
           paymentIntent.metadata.purpose.split("-")[1],

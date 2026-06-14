@@ -13,6 +13,7 @@ codemirror editor instance mainly for use in a frame tree.
 */
 
 import * as CodeMirror from "codemirror";
+import "../generic/codemirror-plugins";
 import { InputNumber, Modal, Slider, Switch } from "antd";
 import { Map, Set } from "immutable";
 import {
@@ -32,7 +33,7 @@ import { get_state, set_state } from "../codemirror/codemirror-state";
 import { init_style_hacks } from "../codemirror/util";
 import { Path } from "../frame-tree/path";
 import { EditorState } from "../frame-tree/types";
-import { Actions } from "./actions";
+import type { Actions } from "./actions";
 import { GutterMarkers } from "./codemirror-gutter-markers";
 import { SAVE_DEBOUNCE_MS } from "./const";
 import { get_linked_doc, has_doc, set_doc } from "./doc";
@@ -64,6 +65,16 @@ const CODEMIRROR_MINIMAP_BASE_LINE_SCALE = 1.45;
 
 const CODEMIRROR_MINIMAP_TOKEN_RE =
   /(#.*$)|(\/\/.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|(\b(?:abstract|and|as|assert|async|await|break|case|catch|class|const|continue|def|default|del|elif|else|enum|except|export|extends|False|finally|for|from|function|global|if|implements|import|in|interface|is|lambda|let|new|None|nonlocal|not|null|or|package|pass|private|protected|public|raise|return|static|switch|this|throw|True|try|type|typeof|var|void|while|with|yield)\b)/g;
+
+function spellcheckHighlight(
+  cm: CodeMirror.Editor,
+  words: string[] | undefined,
+): void {
+  const fn = (cm as any).spellcheck_highlight;
+  if (typeof fn == "function") {
+    fn.call(cm, words);
+  }
+}
 
 function getCodeMirrorMinimapTextMetrics(width: number): {
   fontSize: number;
@@ -720,13 +731,13 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     if (words == "browser") {
       // just ensure browser spellcheck is enabled
       cmRef.current.setOption("spellcheck", true);
-      (cmRef.current as any).spellcheck_highlight([]);
+      spellcheckHighlight(cmRef.current, []);
       return;
     }
     if (words == "disabled") {
       // disabled
       cmRef.current.setOption("spellcheck", false);
-      (cmRef.current as any).spellcheck_highlight([]);
+      spellcheckHighlight(cmRef.current, []);
       return;
     }
     if (typeof words == "string") {
@@ -735,7 +746,7 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
     cmRef.current.setOption("spellcheck", false);
-    (cmRef.current as any).spellcheck_highlight(words.toJS());
+    spellcheckHighlight(cmRef.current, words.toJS());
   }
 
   const firstFontSizeUpdateRef = useRef<boolean>(true);

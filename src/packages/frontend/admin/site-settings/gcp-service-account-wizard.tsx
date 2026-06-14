@@ -26,6 +26,11 @@ function shQuote(value: string): string {
   return `'${value.replace(/'/g, "'\"'\"'")}'`;
 }
 
+function defaultUseDirectUpload(): boolean {
+  if (typeof window === "undefined") return false;
+  return !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
 function extractJsonBlock(input: string): any | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -90,6 +95,9 @@ export default function GcpServiceAccountWizard({
   const [challenge, setChallenge] = useState<
     (ProviderSetupChallenge & { token?: string }) | null
   >(null);
+  const [useDirectUpload, setUseDirectUpload] = useState(
+    defaultUseDirectUpload,
+  );
   const [challengeError, setChallengeError] = useState("");
   const [challengeLoading, setChallengeLoading] = useState(false);
 
@@ -101,6 +109,7 @@ export default function GcpServiceAccountWizard({
       setJsonInput("");
       setJsonNotice("");
       setChallenge(null);
+      setUseDirectUpload(defaultUseDirectUpload());
       setChallengeError("");
       setChallengeLoading(false);
       return;
@@ -141,7 +150,7 @@ export default function GcpServiceAccountWizard({
       return "curl -fsSL <software-base-url>/gcp/gcp-setup.sh | bash";
     }
     const uploadUrl =
-      challenge?.id && typeof window !== "undefined"
+      useDirectUpload && challenge?.id && typeof window !== "undefined"
         ? `${window.location.origin}${appBasePath === "/" ? "" : appBasePath}/project-host/provider-setup/${challenge.id}/upload`
         : "";
     const uploadEnv =
@@ -152,7 +161,13 @@ export default function GcpServiceAccountWizard({
       return `curl -fsSL \"${scriptUrl}\" | ${uploadEnv}bash`;
     }
     return `curl -fsSL \"${scriptUrl}\" | ${uploadEnv}PROJECT_ID=\"${trimmedProject}\" SA_NAME=\"${trimmedServiceAccount}\" bash`;
-  }, [scriptUrl, trimmedProject, trimmedServiceAccount, challenge]);
+  }, [
+    scriptUrl,
+    trimmedProject,
+    trimmedServiceAccount,
+    challenge,
+    useDirectUpload,
+  ]);
 
   const scriptMarkdown = useMemo(
     () =>
@@ -185,6 +200,7 @@ export default function GcpServiceAccountWizard({
   const uploadedJsonValid = !!uploadedJson;
 
   async function startUploadChallenge() {
+    if (challengeLoading || challenge?.id) return;
     setChallengeLoading(true);
     setChallengeError("");
     try {
@@ -219,12 +235,19 @@ export default function GcpServiceAccountWizard({
   }
 
   useEffect(() => {
-    if (!challenge?.id || challenge.status !== "pending") return;
+    if (!useDirectUpload || !challenge?.id || challenge.status !== "pending") {
+      return;
+    }
     const timer = setInterval(() => {
       void refreshUploadChallenge();
     }, 2000);
     return () => clearInterval(timer);
-  }, [challenge?.id, challenge?.status]);
+  }, [useDirectUpload, challenge?.id, challenge?.status]);
+
+  useEffect(() => {
+    if (!open || !useDirectUpload || challenge?.id || challengeLoading) return;
+    void startUploadChallenge();
+  }, [open, useDirectUpload, challenge?.id, challengeLoading]);
 
   async function copyCommands() {
     if (!scriptCommand) return;
@@ -338,12 +361,13 @@ export default function GcpServiceAccountWizard({
                 <Button
                   size="small"
                   icon={<Icon name="cloud-upload" />}
-                  loading={challengeLoading}
-                  onClick={startUploadChallenge}
+                  onClick={() => setUseDirectUpload(!useDirectUpload)}
                 >
-                  Use direct upload instead of paste
+                  {useDirectUpload
+                    ? "Use paste instead of direct upload"
+                    : "Use direct upload instead of paste"}
                 </Button>
-                {challenge ? (
+                {useDirectUpload && challenge ? (
                   <Button
                     size="small"
                     style={{ marginLeft: "8px" }}
@@ -354,6 +378,11 @@ export default function GcpServiceAccountWizard({
                   </Button>
                 ) : null}
               </div>
+              <div style={{ marginTop: "6px", color: "#666" }}>
+                {useDirectUpload
+                  ? "Direct upload is best when this admin page is publicly reachable from Cloud Shell."
+                  : "Paste mode is safest for localhost because Cloud Shell cannot usually reach your local browser origin."}
+              </div>
               {challengeError ? (
                 <Alert
                   type="warning"
@@ -363,7 +392,9 @@ export default function GcpServiceAccountWizard({
                   description={challengeError}
                 />
               ) : null}
-              {challenge?.status === "uploaded" && uploadedJsonValid ? (
+              {useDirectUpload &&
+              challenge?.status === "uploaded" &&
+              uploadedJsonValid ? (
                 <Alert
                   type="success"
                   showIcon
@@ -403,62 +434,86 @@ export default function GcpServiceAccountWizard({
         ) : null}
         {gcloudReady ? (
           <div>
-            <strong>Step 5 — Paste the output here</strong>
-            <Input.TextArea
-              placeholder="Paste the output from the script (or just the JSON key)"
-              value={jsonInput}
-              onChange={(e) => setJsonInput(e.target.value)}
-              autoSize={{ minRows: 6, maxRows: 10 }}
+            <strong>
+              Step 5 —{" "}
+              {useDirectUpload
+                ? "Wait for direct upload"
+                : "Paste the output here"}
+            </strong>
+            {useDirectUpload ? (
+              <Alert
+                type={uploadedJsonValid ? "success" : "info"}
+                showIcon
+                style={{ marginTop: "8px" }}
+                title={
+                  uploadedJsonValid
+                    ? "Uploaded service account JSON is ready."
+                    : "Run the script, then wait for the upload."
+                }
+                description={
+                  uploadedJsonValid
+                    ? `Detected ${uploadedJson.client_email}.`
+                    : "If the upload does not appear automatically, use Check upload above."
+                }
+              />
+            ) : (
+              <>
+                <Input.TextArea
+                  placeholder="Paste the output from the script (or just the JSON key)"
+                  value={jsonInput}
+                  onChange={(e) => setJsonInput(e.target.value)}
+                  autoSize={{ minRows: 6, maxRows: 10 }}
+                />
+                {jsonInput.trim() && !jsonValid ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginTop: "8px" }}
+                    title="This does not look like a service account key JSON."
+                  />
+                ) : null}
+                {jsonValid ? (
+                  <Alert
+                    type="success"
+                    showIcon
+                    style={{ marginTop: "8px" }}
+                    title={`Detected service account: ${jsonEmail}`}
+                    description={`Project ID: ${jsonProjectId}`}
+                  />
+                ) : null}
+              </>
+            )}
+            {!useDirectUpload ? (
+              <Button
+                type="primary"
+                style={{ marginTop: "8px" }}
+                disabled={!jsonValid}
+                onClick={applyJson}
+              >
+                Apply Pasted JSON
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {gcloudReady ? (
+          <div>
+            <strong>Cleanup if needed</strong>
+            <div style={{ marginTop: "6px", color: "#666" }}>
+              If you created the wrong service account, remove it in Cloud
+              Shell:
+            </div>
+            <StaticMarkdown
+              value={cleanupBlock || "Enter a project id first."}
             />
-            {jsonInput.trim() && !jsonValid ? (
-              <Alert
-                type="warning"
-                showIcon
-                style={{ marginTop: "8px" }}
-                title="This does not look like a service account key JSON."
-              />
-            ) : null}
-            {jsonValid ? (
-              <Alert
-                type="success"
-                showIcon
-                style={{ marginTop: "8px" }}
-                title={`Detected service account: ${jsonEmail}`}
-                description={`Project ID: ${jsonProjectId}`}
-              />
-            ) : null}
             <Button
-              type="primary"
-              icon={<Icon name="save" />}
-              style={{ marginTop: "8px" }}
-              onClick={applyJson}
-              disabled={!jsonValid}
+              icon={<Icon name="copy" />}
+              onClick={copyCleanup}
+              disabled={!trimmedProject}
             >
-              Apply JSON to Setting
+              Copy Cleanup Command
             </Button>
           </div>
         ) : null}
-        <div>
-          <strong>Cleanup (optional)</strong>
-          <div style={{ marginTop: "6px", color: "#666" }}>
-            If you need to revoke access, delete the service account:
-          </div>
-          <div style={{ marginTop: "8px" }}>
-            <StaticMarkdown
-              value={
-                cleanupBlock ||
-                "```sh\n# enter a Project ID to generate cleanup command\n```"
-              }
-            />
-          </div>
-          <Button
-            icon={<Icon name="copy" />}
-            onClick={copyCleanup}
-            disabled={!trimmedProject}
-          >
-            Copy Cleanup Command
-          </Button>
-        </div>
         {jsonNotice ? (
           <Alert type="success" showIcon title={jsonNotice} />
         ) : null}

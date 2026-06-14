@@ -11,7 +11,6 @@ For Subjects:
 
 */
 
-import generateVouchers from "@cocalc/util/vouchers";
 import type { Location } from "./types";
 import { encodeBase64 } from "@cocalc/conat/util";
 
@@ -21,7 +20,19 @@ export const EXEC_STREAM_SERVICE = "exec-stream";
 // nice alphanumeric string that can be used as conat subject, and very
 // unlikely to randomly collide with another browser tab from this account.
 export function randomId() {
-  return generateVouchers({ count: 1, length: 10 })[0];
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const bytes = new Uint8Array(10);
+  const crypto = globalThis.crypto;
+  if (crypto?.getRandomValues != null) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join(
+    "",
+  );
 }
 
 // jetstream name -- we use this canonical name for the KV and the stream associated

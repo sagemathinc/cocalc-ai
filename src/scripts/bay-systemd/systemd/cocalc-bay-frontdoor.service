@@ -1,0 +1,27 @@
+[Unit]
+Description=CoCalc Bay Local Front Door
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=cocalc-bay
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
+EnvironmentFile=-/etc/cocalc/bay-topology.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+Environment=COCALC_REQUIRE_SITE_MASTER_KEY=1
+LoadCredential=site-master-key:/etc/cocalc/site-master-key
+ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight frontdoor
+ExecStart=/opt/cocalc/bay/current/bin/bay-frontdoor
+Restart=always
+RestartSec=2
+TimeoutStartSec=30
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

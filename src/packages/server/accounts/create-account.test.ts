@@ -35,6 +35,7 @@ describe("accounts.createAccount", () => {
       [
         "phase1-account@test.local",
         "hashed-password",
+        "Phase One",
         "Phase",
         "One",
         "11111111-1111-4111-8111-111111111111",
@@ -67,6 +68,7 @@ describe("accounts.createAccount", () => {
       [
         "phase1-remote@test.local",
         "hashed-password",
+        "Phase Remote",
         "Phase",
         "Remote",
         "22222222-2222-4222-8222-222222222222",

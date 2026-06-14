@@ -5,6 +5,7 @@
 
 import { make_valid_name } from "@cocalc/util/misc";
 import { Store } from "@cocalc/util/redux/Store";
+import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { AccountState } from "./types";
 
 // Define account store
@@ -47,21 +48,17 @@ export class AccountStore extends Store<AccountState> {
   }
 
   get_fullname(): string {
-    const first_name = this.get("first_name");
-    const last_name = this.get("last_name");
-    if (first_name == null && last_name == null) {
-      return "Anonymous";
-    } else if (first_name == undefined) {
-      return last_name ?? "";
-    } else if (last_name == undefined) {
-      return first_name ?? "";
-    } else {
-      return `${first_name} ${last_name}`;
-    }
+    return (
+      displayNameFromAccount({
+        display_name: this.get("display_name"),
+        first_name: this.get("first_name"),
+        last_name: this.get("last_name"),
+      }) || "Anonymous"
+    );
   }
 
   get_first_name(): string {
-    return this.get("first_name", "Anonymous");
+    return this.get("display_name") || this.get("first_name", "Anonymous");
   }
 
   get_color(): string {

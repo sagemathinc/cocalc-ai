@@ -78,9 +78,7 @@ function SubscriptionActions({
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const [showResume, setShowResume] = useState<boolean>(false);
   const reasonRef = useRef<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const handleCancel = async () => {
     try {
       setLoading(true);

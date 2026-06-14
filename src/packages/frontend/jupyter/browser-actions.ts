@@ -2160,11 +2160,14 @@ export class JupyterActions extends JupyterActions0 {
   }
 
   waitUntilProjectIsRunning = reuseInFlight(async () => {
-    await ensureProjectRunningForJupyter({
+    const result = await ensureProjectRunningForJupyter({
       redux: this.redux,
       project_id: this.project_id,
       isClosed: () => this.isClosed(),
     });
+    if (!result.wasRunning) {
+      this.closeJupyterClient("project_runtime_restarted");
+    }
   });
 
   private getProjectRuntimeState(): string | undefined {
@@ -2710,12 +2713,28 @@ export class JupyterActions extends JupyterActions0 {
   }
 
   private jupyterClient?: JupyterClient;
+  private closeJupyterClient = (reason: string): void => {
+    const c = this.jupyterClient;
+    if (c == null) {
+      return;
+    }
+    this.runDebug("client.close", {
+      reason,
+      socketState: c.socket?.state,
+    });
+    this.jupyterClient = undefined;
+    c.close();
+  };
+
   private getJupyterClient = async (): Promise<JupyterClient | null> => {
     if (this.isClosed()) return null;
     let c = this.jupyterClient;
-    if (c != null && c.socket.state != "closed") {
+    if (c != null && c.socket.state === "ready") {
       this.runDebug("client.reuse", { socketState: c.socket.state });
       return c;
+    }
+    if (c != null) {
+      this.closeJupyterClient("socket_not_ready");
     }
     await this.waitUntilProjectIsRunning();
     if (this.isClosed()) return null;
@@ -2747,7 +2766,11 @@ export class JupyterActions extends JupyterActions0 {
       }
       this.runDebug("client.socket.closed", {
         previousState: c?.socket?.state,
+        currentClient: this.jupyterClient === c,
       });
+      if (this.jupyterClient !== c) {
+        return;
+      }
       this.jupyterClient = undefined;
       // TODO: doing this is not ideal, but it's probably less confusing.
       this.clearRunQueue();

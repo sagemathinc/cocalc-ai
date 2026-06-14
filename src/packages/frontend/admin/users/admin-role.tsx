@@ -31,11 +31,7 @@ export function AdminRole({ account_id, name, is_admin }: Props) {
   >(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [message, setMessage] = useState<string | undefined>(undefined);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      setError(`${err}`);
-    },
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function grantAdminRole(): Promise<void> {
     const trimmedReason = reason.trim();

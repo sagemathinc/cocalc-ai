@@ -104,6 +104,11 @@ import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-sett
 import { is_valid_email_address } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
 import {
+  displayNameFromParts,
+  legacyNamePartsFromDisplayName,
+  normalizeDisplayName,
+} from "@cocalc/util/accounts/display-name";
+import {
   normalizeSignupEmailDomainPolicy,
   SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS,
   type DomainRule,
@@ -5132,6 +5137,7 @@ export async function adminCreateUser({
   session_hash,
   email,
   password,
+  display_name,
   first_name,
   last_name,
   tags,
@@ -5141,12 +5147,14 @@ export async function adminCreateUser({
   session_hash?: string | null;
   email: string;
   password?: string;
+  display_name?: string;
   first_name?: string;
   last_name?: string;
   tags?: string[];
 }): Promise<{
   account_id: string;
   email_address: string;
+  display_name: string;
   first_name: string;
   last_name: string;
   created_by: string;
@@ -5178,13 +5186,23 @@ export async function adminCreateUser({
   }
 
   const defaultName = defaultUserNameFromEmail(emailAddress);
-  const firstName = `${first_name ?? ""}`.trim() || defaultName.first_name;
-  const lastName = `${last_name ?? ""}`.trim() || defaultName.last_name;
+  const displayName =
+    normalizeDisplayName(display_name) ||
+    displayNameFromParts({
+      first_name,
+      last_name,
+    }) ||
+    displayNameFromParts(defaultName);
+  const legacyNameParts = legacyNamePartsFromDisplayName(displayName);
+  const firstName =
+    normalizeDisplayName(first_name) || legacyNameParts.first_name;
+  const lastName = normalizeDisplayName(last_name) || legacyNameParts.last_name;
   try {
     const created = await createClusterAccount({
       account_id: uuid(),
       email_address: emailAddress,
       password: finalPassword,
+      display_name: displayName,
       first_name: firstName,
       last_name: lastName,
       home_bay_id: getConfiguredBayId(),
@@ -5195,6 +5213,7 @@ export async function adminCreateUser({
     return {
       account_id: created.account_id,
       email_address: emailAddress,
+      display_name: displayName,
       first_name: firstName,
       last_name: lastName,
       created_by: account_id,

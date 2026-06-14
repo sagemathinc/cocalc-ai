@@ -53,6 +53,12 @@ const HOST_RESTART_RECOVERY_ACTIVE_STATES = [
   "starting",
   "restarting",
 ];
+const HOST_OBSERVATION_ACTIVE_STATUSES = new Set([
+  "running",
+  "active",
+  "starting",
+  "restarting",
+]);
 
 const stopPolicyPriorityCache = new Map<
   string,
@@ -83,6 +89,14 @@ function registryBayIdForHeartbeat(previousBayId: unknown): string {
   // grant metadata ownership. During host rehome, the old bay can keep seeing
   // heartbeats until bootstrap reconcile restarts the host agent.
   return current || localBayId;
+}
+
+function canRecoverHostObservationFromError(metadata: any): boolean {
+  const cloud = `${metadata?.machine?.cloud ?? ""}`.trim();
+  if (!cloud) return false;
+  const desiredState = `${metadata?.desired_state ?? ""}`.trim();
+  const bootstrapStatus = `${metadata?.bootstrap?.status ?? ""}`.trim();
+  return desiredState === "running" || bootstrapStatus === "done";
 }
 
 function getPendingAutomaticConvergenceRetry(metadata: any): {
@@ -790,6 +804,34 @@ export async function initHostRegistryService() {
     );
     return rows[0]?.status;
   };
+  const shouldAcceptHostObservation = async ({
+    id,
+    status,
+    source,
+  }: {
+    id: string;
+    status?: string;
+    source: "register" | "heartbeat";
+  }): Promise<boolean> => {
+    if (!status || HOST_OBSERVATION_ACTIVE_STATUSES.has(String(status))) {
+      return true;
+    }
+    if (String(status) !== "error") {
+      return false;
+    }
+    const { rows } = await pool().query<{ metadata?: any }>(
+      "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+      [id],
+    );
+    const accepted = canRecoverHostObservationFromError(rows[0]?.metadata);
+    if (accepted) {
+      logger.info("accepting project host observation after error status", {
+        id,
+        source,
+      });
+    }
+    return accepted;
+  };
   const resolveLocalSelfHost = async (
     info: HostRegistration,
   ): Promise<boolean> => {
@@ -938,12 +980,11 @@ export async function initHostRegistryService() {
         });
         const currentStatus = await loadCurrentStatus(info.id);
         if (
-          currentStatus &&
-          // During cloud startup, register is the readiness signal. Accepting
-          // it immediately upserts status=running and last_seen below.
-          !["running", "active", "starting", "restarting"].includes(
-            String(currentStatus),
-          )
+          !(await shouldAcceptHostObservation({
+            id: info.id,
+            status: currentStatus,
+            source: "register",
+          }))
         ) {
           logger.debug("register ignored (status)", {
             id: info.id,
@@ -1020,10 +1061,11 @@ export async function initHostRegistryService() {
         logger.silly?.("heartbeat", { id: info.id, status: info.status });
         const currentStatus = await loadCurrentStatus(info.id);
         if (
-          currentStatus &&
-          !["running", "active", "starting", "restarting"].includes(
-            String(currentStatus),
-          )
+          !(await shouldAcceptHostObservation({
+            id: info.id,
+            status: currentStatus,
+            source: "heartbeat",
+          }))
         ) {
           logger.debug("heartbeat ignored (status)", {
             id: info.id,

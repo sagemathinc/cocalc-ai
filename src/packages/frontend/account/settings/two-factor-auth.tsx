@@ -478,6 +478,7 @@ export default function TwoFactorAuthSetting({ showHeader = true }: Props) {
           } else if (freshAction?.type === "disable") {
             await disableTwoFactor();
           }
+          setFreshAction(null);
         }}
       />
     </>

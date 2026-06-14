@@ -34,11 +34,11 @@ export type LicensesSubTabType = (typeof VALID_LICENSES_SUB_TYPES)[number];
 
 export const VALID_BILLING_SUB_TYPES = [
   "subscriptions",
+  "balance",
   "purchases",
   "payments",
   "payment-methods",
   "statements",
-  "vouchers",
 ] as const;
 
 export type BillingSubTabType = (typeof VALID_BILLING_SUB_TYPES)[number];

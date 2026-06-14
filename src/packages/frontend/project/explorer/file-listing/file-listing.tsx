@@ -72,6 +72,10 @@ import {
   VIEWABLE_FILE_EXT,
   sortedTypeFilterOptions,
 } from "./utils";
+import {
+  parentDirectoryPath,
+  withParentDirectoryRow,
+} from "./parent-directory-row";
 
 const COL_W = {
   CHECKBOX: 40,
@@ -530,25 +534,36 @@ export function FileListing({
   }, []);
 
   const baseDataSource = useMemo<FileEntry[]>(() => {
-    return listing
+    const filteredListing = listing
       .filter((entry) => (hide_masked_files ? !entry.mask : true))
       .filter((entry) =>
         type_filter == null ? true : typeFilterValue(entry) === type_filter,
-      )
-      .map((entry) => {
-        const fullPath = misc.path_to_file(current_path, entry.name);
-        return {
-          ...entry,
-          fullPath,
-          isOpen: openFiles.has(fullPath),
-          isStarred: starredSet.has(entry.isDir ? `${fullPath}/` : fullPath),
-        };
-      });
+      );
+
+    return withParentDirectoryRow({
+      listing: filteredListing,
+      currentPath: current_path,
+      fileSearch: file_search,
+    }).map((entry) => {
+      const isParentDirectory = entry.name === "..";
+      const fullPath = isParentDirectory
+        ? parentDirectoryPath(current_path)
+        : misc.path_to_file(current_path, entry.name);
+      return {
+        ...entry,
+        fullPath,
+        isOpen: openFiles.has(fullPath),
+        isStarred:
+          !isParentDirectory &&
+          starredSet.has(entry.isDir ? `${fullPath}/` : fullPath),
+      };
+    });
   }, [
     listing,
     hide_masked_files,
     type_filter,
     current_path,
+    file_search,
     openFiles,
     starredSet,
   ]);
@@ -601,6 +616,7 @@ export function FileListing({
   const selectedRowKeys = useMemo(() => {
     const keys: string[] = [];
     for (const record of baseDataSource) {
+      if (record.name === "..") continue;
       if (checked_files.has(record.fullPath)) {
         keys.push(record.fullPath);
       }
@@ -757,6 +773,16 @@ export function FileListing({
   const handleRowClick = useCallback(
     (record: FileEntry, e: React.MouseEvent) => {
       if ((window.getSelection()?.toString() ?? "") !== selectionRef.current) {
+        return;
+      }
+
+      if (record.name === "..") {
+        if (onNavigateDirectory) {
+          onNavigateDirectory(record.fullPath);
+        } else {
+          actions.open_directory(record.fullPath);
+        }
+        actions.set_file_search("");
         return;
       }
 
@@ -1187,20 +1213,22 @@ export function FileListing({
             </span>
           </td>
           <td style={{ ...cellStyle, width: COL_W.STAR, textAlign: "center" }}>
-            <Icon
-              name={record.isStarred ? "star-filled" : "star"}
-              onClick={(e) => {
-                if (!e) return;
-                e.preventDefault();
-                e.stopPropagation();
-                handleToggleStar(record, !record.isStarred);
-              }}
-              style={{
-                cursor: "pointer",
-                fontSize: "14pt",
-                color: record.isStarred ? COLORS.STAR : COLORS.GRAY_L,
-              }}
-            />
+            {record.name !== ".." && (
+              <Icon
+                name={record.isStarred ? "star-filled" : "star"}
+                onClick={(e) => {
+                  if (!e) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleToggleStar(record, !record.isStarred);
+                }}
+                style={{
+                  cursor: "pointer",
+                  fontSize: "14pt",
+                  color: record.isStarred ? COLORS.STAR : COLORS.GRAY_L,
+                }}
+              />
+            )}
           </td>
           <td style={cellStyle}>{renderFileName(record)}</td>
           <td style={{ ...cellStyle, width: COL_W.DATE }}>

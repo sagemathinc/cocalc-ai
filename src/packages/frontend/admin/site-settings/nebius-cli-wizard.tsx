@@ -37,6 +37,11 @@ function shQuote(value: string): string {
   return `'${value.replace(/'/g, "'\"'\"'")}'`;
 }
 
+function defaultUseDirectUpload(): boolean {
+  if (typeof window === "undefined") return false;
+  return !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
 function normalizeRegionEntry(entry: any): RegionConfigEntry | null {
   if (!entry || typeof entry !== "object") return null;
   const credsRaw =
@@ -137,8 +142,24 @@ export default function NebiusCliWizard({
   const [challenge, setChallenge] = useState<
     (ProviderSetupChallenge & { token?: string }) | null
   >(null);
+  const [useDirectUpload, setUseDirectUpload] = useState(
+    defaultUseDirectUpload,
+  );
   const [challengeError, setChallengeError] = useState("");
   const [challengeLoading, setChallengeLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setOutput("");
+      setParsed(null);
+      setParseError(null);
+      setNotice("");
+      setChallenge(null);
+      setUseDirectUpload(defaultUseDirectUpload());
+      setChallengeError("");
+      setChallengeLoading(false);
+    }
+  }, [open]);
 
   const scriptUrl = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -152,7 +173,7 @@ export default function NebiusCliWizard({
 
   const scriptCommand = useMemo(() => {
     const uploadUrl =
-      challenge?.id && typeof window !== "undefined"
+      useDirectUpload && challenge?.id && typeof window !== "undefined"
         ? `${window.location.origin}${appBasePath === "/" ? "" : appBasePath}/project-host/provider-setup/${challenge.id}/upload`
         : "";
     const uploadEnv =
@@ -162,7 +183,7 @@ export default function NebiusCliWizard({
     return scriptUrl
       ? `curl -fsSL "${scriptUrl}" | ${uploadEnv}bash`
       : `curl -fsSL <software-base-url>/nebius/nebius-setup.sh | ${uploadEnv}bash`;
-  }, [scriptUrl, challenge]);
+  }, [scriptUrl, challenge, useDirectUpload]);
 
   const scriptMarkdown = useMemo(
     () => `Run this once in your terminal (after installing and authenticating \`nebius\`):
@@ -199,6 +220,7 @@ You can review the script here: ${
   }
 
   async function startUploadChallenge() {
+    if (challengeLoading || challenge?.id) return;
     setChallengeLoading(true);
     setChallengeError("");
     try {
@@ -238,12 +260,19 @@ You can review the script here: ${
   }
 
   useEffect(() => {
-    if (!challenge?.id || challenge.status !== "pending") return;
+    if (!useDirectUpload || !challenge?.id || challenge.status !== "pending") {
+      return;
+    }
     const timer = setInterval(() => {
       void refreshUploadChallenge();
     }, 2000);
     return () => clearInterval(timer);
-  }, [challenge?.id, challenge?.status]);
+  }, [useDirectUpload, challenge?.id, challenge?.status]);
+
+  useEffect(() => {
+    if (!open || !useDirectUpload || challenge?.id || challengeLoading) return;
+    void startUploadChallenge();
+  }, [open, useDirectUpload, challenge?.id, challengeLoading]);
 
   async function applySettings() {
     if (!parsed) return;
@@ -301,12 +330,13 @@ You can review the script here: ${
             <Button
               size="small"
               icon={<Icon name="cloud-upload" />}
-              loading={challengeLoading}
-              onClick={startUploadChallenge}
+              onClick={() => setUseDirectUpload(!useDirectUpload)}
             >
-              Use direct upload instead of paste
+              {useDirectUpload
+                ? "Use paste instead of direct upload"
+                : "Use direct upload instead of paste"}
             </Button>
-            {challenge ? (
+            {useDirectUpload && challenge ? (
               <Button
                 size="small"
                 style={{ marginLeft: "8px" }}
@@ -317,6 +347,11 @@ You can review the script here: ${
               </Button>
             ) : null}
           </div>
+          <div style={{ marginTop: "6px", color: "#666" }}>
+            {useDirectUpload
+              ? "Direct upload is best when this admin page is publicly reachable from the shell running Nebius CLI."
+              : "Paste mode is safest for localhost because a remote cloud shell cannot usually reach your local browser origin."}
+          </div>
           {challengeError ? (
             <Alert
               type="warning"
@@ -326,7 +361,7 @@ You can review the script here: ${
               description={challengeError}
             />
           ) : null}
-          {challenge?.status === "uploaded" && parsed ? (
+          {useDirectUpload && challenge?.status === "uploaded" && parsed ? (
             <Alert
               type="success"
               showIcon
@@ -338,21 +373,44 @@ You can review the script here: ${
           <StaticMarkdown value={scriptMarkdown} />
         </div>
         <div>
-          <strong>Step 3 - Paste the output</strong>
-          <Input.TextArea
-            rows={8}
-            placeholder="Paste the script output here..."
-            value={output}
-            onChange={(e) => parseOutput(e.target.value)}
-          />
-          {parseError ? (
+          <strong>
+            Step 3 -{" "}
+            {useDirectUpload ? "Wait for direct upload" : "Paste the output"}
+          </strong>
+          {useDirectUpload ? (
             <Alert
-              type="warning"
+              type={parsed ? "success" : "info"}
               showIcon
               style={{ marginTop: "8px" }}
-              title={parseError}
+              title={
+                parsed
+                  ? "Uploaded Nebius configuration is ready."
+                  : "Run the script, then wait for the upload."
+              }
+              description={
+                parsed
+                  ? "Review the parsed settings below, then apply them."
+                  : "If the upload does not appear automatically, use Check upload above."
+              }
             />
-          ) : null}
+          ) : (
+            <>
+              <Input.TextArea
+                rows={8}
+                placeholder="Paste the script output here..."
+                value={output}
+                onChange={(e) => parseOutput(e.target.value)}
+              />
+              {parseError ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginTop: "8px" }}
+                  title={parseError}
+                />
+              ) : null}
+            </>
+          )}
           {parsed ? (
             <Alert
               type="success"

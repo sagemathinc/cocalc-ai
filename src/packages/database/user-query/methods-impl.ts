@@ -1654,6 +1654,7 @@ export async function _user_set_query_account_change_after(
       reason: "user_query_set",
     });
     const collaboratorRelevantFields = [
+      "display_name",
       "first_name",
       "last_name",
       "name",

@@ -93,9 +93,7 @@ function ActionBarEnabled({
   const [backupsErr, setBackupsErr] = useState<any>(null);
   const [backupsTick, setBackupsTick] = useState(0);
   const backupsRequestIdRef = useRef(0);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => message.error(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const selectedOpenablePaths = useMemo(() => {
     const listingByPath = new Map(
       listing.map((file) => [misc.path_to_file(current_path, file.name), file]),

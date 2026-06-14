@@ -22,6 +22,9 @@ export function FindScopeBar({
   onScopeModeChange,
   onScopePathChange,
   onScopePinnedChange,
+  label = "Find in",
+  selectorTitle = "Select Search Folder",
+  selectorOkText = "Use this folder",
 }: {
   mode: "project" | "flyout";
   project_id: string;
@@ -35,6 +38,9 @@ export function FindScopeBar({
   onScopeModeChange: (mode: FindScopeMode) => void;
   onScopePathChange: (path: string) => void;
   onScopePinnedChange: (next: boolean) => void;
+  label?: string;
+  selectorTitle?: string;
+  selectorOkText?: string;
 }) {
   const size = mode === "flyout" ? "small" : "middle";
   const fs = useFs({ project_id });
@@ -168,7 +174,7 @@ export function FindScopeBar({
     <div>
       <div style={{ marginBottom: "8px" }}>
         <Space wrap>
-          <strong>Find in</strong>
+          <strong>{label}</strong>
           <Input
             value={draftPath}
             allowClear
@@ -267,8 +273,8 @@ export function FindScopeBar({
         open={selectorOpen}
         destroyOnHidden
         width={mode === "flyout" ? 640 : 860}
-        title="Select Search Folder"
-        okText="Use this folder"
+        title={selectorTitle}
+        okText={selectorOkText}
         onOk={() => {
           onScopeModeChange("custom");
           onScopePathChange(pendingPath ?? "");

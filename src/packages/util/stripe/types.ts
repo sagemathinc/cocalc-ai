@@ -13,6 +13,7 @@ export interface PaymentIntentSecret {
 
 export interface CheckoutSessionSecret {
   clientSecret: string;
+  sessionId: string;
 }
 
 export interface CustomerSessionSecret {

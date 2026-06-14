@@ -107,9 +107,7 @@ export function Student({
 }: StudentProps) {
   const intl = useIntl();
   const actions: CourseActions = redux.getActions(name);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setSeatError(`${err}`),
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const store = actions.get_store();
   if (store == null) throw Error("store must be defined");
 

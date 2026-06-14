@@ -705,6 +705,7 @@ type TierTemplateFields = {
   store_highlights?: readonly string[];
   site_license_pool_description?: string;
   course_store_visible?: boolean;
+  course_allowed_domains?: readonly string[] | null;
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
@@ -760,6 +761,11 @@ export function applyMembershipTierTemplateFallbacks<
       templateFields.site_license_pool_description,
     course_store_visible:
       tier.course_store_visible ?? template.course_store_visible,
+    course_allowed_domains:
+      tier.course_allowed_domains ??
+      (templateFields.course_allowed_domains == null
+        ? undefined
+        : [...templateFields.course_allowed_domains]),
     course_price: tier.course_price ?? template.course_price,
     course_duration_days:
       tier.course_duration_days ?? template.course_duration_days,

@@ -12,6 +12,7 @@ import type {
   PaymentIntentCancelReason,
 } from "@cocalc/util/stripe/types";
 import {
+  alertUncreditedSucceededPayment,
   isReadyToProcess,
   processPaymentIntent,
 } from "./process-payment-intents";
@@ -23,6 +24,7 @@ import { delay } from "awaiting";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 
 const logger = getLogger("purchases:stripe:create-payment-intent");
+const INVOICE_PAYMENT_EXPAND = ["payments.data.payment.payment_intent"];
 
 export default async function createPaymentIntent({
   account_id,
@@ -32,6 +34,8 @@ export default async function createPaymentIntent({
   return_url,
   metadata,
   force,
+  requireAddress = false,
+  processImmediately = true,
 }: {
   account_id: string;
   purpose: string;
@@ -47,6 +51,12 @@ export default async function createPaymentIntent({
   // do not bother with sanity checking the amount, e.g., it can be below the
   // min payg setting.
   force?: boolean;
+  // For interactive checkout, require a customer address so automatic tax can
+  // be computed before we attempt to charge the user.
+  requireAddress?: boolean;
+  // Some callers must persist local state that processPaymentIntent reads
+  // before an immediately paid invoice can be safely processed.
+  processImmediately?: boolean;
 }): Promise<{ payment_intent: string; hosted_invoice_url: string }> {
   logger.debug("createPaymentIntent", {
     account_id,
@@ -133,8 +143,14 @@ export default async function createPaymentIntent({
   try {
     finalizedInvoice = await stripe.invoices.finalizeInvoice(invoice.id, {
       auto_advance: false,
+      expand: INVOICE_PAYMENT_EXPAND,
     });
   } catch (err) {
+    if (requireAddress) {
+      throw Error(
+        `Name and address are required before checkout so CoCalc can calculate tax. Please add your name and address and try again. ${err}`,
+      );
+    }
     logger.debug(`creating invoice with automatic_tax enabled failed: ${err}`);
     logger.debug("creating invoice WITHOUT automatic_tax enabled");
     // failed, so do without tax enabled.  If a user has NO INFO in stripe, then
@@ -151,6 +167,7 @@ export default async function createPaymentIntent({
     });
     finalizedInvoice = await stripe.invoices.finalizeInvoice(invoice.id, {
       auto_advance: false,
+      expand: INVOICE_PAYMENT_EXPAND,
     });
     send({
       to_ids: [account_id],
@@ -166,19 +183,26 @@ ${await support()}
     });
   }
 
-  let paymentIntentId;
-  paymentIntentId = finalizedInvoice.payment_intent as string | undefined;
-  // Usually paymentIntentId is set, but every so often it isn't, and I have
-  // no idea why or what is going on.  The api docs are not helpful:
-  //   https://docs.stripe.com/api/invoices/finalize
-  // For now at least retry up to 20s with exponential backoff:
+  let paymentIntentId = await getInvoicePaymentIntentId({
+    stripe,
+    invoice: finalizedInvoice,
+  });
+  // Stripe creates a default InvoicePayment during invoice finalization. In
+  // current API versions the PaymentIntent id lives there, not on a top-level
+  // invoice.payment_intent field.
   const t0 = Date.now();
   let d = 2000;
   while (!paymentIntentId && Date.now() - t0 <= 30000) {
     logger.debug("finalizing didn't produce payment intent, so checking again");
     await delay(d);
     d *= 1.3 + Math.random();
-    finalizedInvoice = await stripe.invoices.retrieve(invoice.id);
+    finalizedInvoice = await stripe.invoices.retrieve(invoice.id, {
+      expand: INVOICE_PAYMENT_EXPAND,
+    });
+    paymentIntentId = await getInvoicePaymentIntentId({
+      stripe,
+      invoice: finalizedInvoice,
+    });
   }
   if (!paymentIntentId) {
     throw Error(
@@ -222,16 +246,87 @@ ${await support()}
     }
   }
   if (!success) {
-    return finalizedInvoice as any;
+    return invoiceWithPaymentIntent(finalizedInvoice, paymentIntentId) as any;
+  }
+  if (!processImmediately) {
+    return invoiceWithPaymentIntent(invoice, paymentIntentId) as any;
   }
   // succeeded, so immediately check if we can process, in case of an instant
   // payment method.  otherwise, has to wait on user intervention and/or our
   // periodic polling of Stripe, or maybe a webhook.
   const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
   if (isReadyToProcess(paymentIntent)) {
-    processPaymentIntent(paymentIntent);
+    try {
+      await processPaymentIntent(paymentIntent);
+    } catch (err) {
+      await alertUncreditedSucceededPayment({
+        account_id,
+        err,
+        paymentIntent,
+        stage: "process",
+      });
+      throw err;
+    }
   }
-  return finalizedInvoice as any;
+  return invoiceWithPaymentIntent(invoice, paymentIntentId) as any;
+}
+
+function paymentIntentIdFromValue(value): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  return value?.id;
+}
+
+export function getPaymentIntentIdFromInvoice(invoice): string | undefined {
+  const legacyId = paymentIntentIdFromValue(invoice?.payment_intent);
+  if (legacyId) {
+    return legacyId;
+  }
+
+  const payments = invoice?.payments?.data ?? [];
+  const payment =
+    payments.find(
+      ({ is_default, payment }) =>
+        is_default && payment?.type === "payment_intent",
+    ) ?? payments.find(({ payment }) => payment?.type === "payment_intent");
+  const paymentIntentId = paymentIntentIdFromValue(
+    payment?.payment?.payment_intent,
+  );
+  if (paymentIntentId) {
+    return paymentIntentId;
+  }
+
+  const clientSecret = invoice?.confirmation_secret?.client_secret;
+  if (typeof clientSecret === "string" && clientSecret.startsWith("pi_")) {
+    return clientSecret.split("_secret_")[0];
+  }
+}
+
+async function getInvoicePaymentIntentId({ stripe, invoice }) {
+  const paymentIntentId = getPaymentIntentIdFromInvoice(invoice);
+  if (paymentIntentId) {
+    return paymentIntentId;
+  }
+
+  if (!invoice?.id || !stripe.invoicePayments?.list) {
+    return;
+  }
+
+  const { data } = await stripe.invoicePayments.list({
+    invoice: invoice.id,
+    payment: { type: "payment_intent" },
+    limit: 10,
+    expand: ["data.payment.payment_intent"],
+  });
+  return getPaymentIntentIdFromInvoice({ payments: { data } });
+}
+
+function invoiceWithPaymentIntent(invoice, paymentIntentId: string) {
+  return {
+    ...invoice,
+    payment_intent: paymentIntentId,
+  };
 }
 
 // returns first ~10 distinct payment method ids, with the default first if there

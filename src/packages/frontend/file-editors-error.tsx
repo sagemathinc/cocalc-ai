@@ -4,9 +4,10 @@
  */
 
 import { Alert as AntdAlert, Button } from "antd";
-import { ReactElement } from "react";
+import { ReactElement, useEffect } from "react";
 
 import { Icon, Paragraph } from "@cocalc/frontend/components";
+import { warnEditorLoadFailure } from "./editor-load-diagnostics";
 
 interface EditorLoadErrorProps {
   path: string;
@@ -19,6 +20,10 @@ interface EditorLoadErrorProps {
  */
 export function EditorLoadError(props: EditorLoadErrorProps): ReactElement {
   const { path, error } = props;
+
+  useEffect(() => {
+    warnEditorLoadFailure({ path, phase: "error-component", error });
+  }, [path, error]);
 
   const handleRefresh = () => {
     // Refresh the page while preserving the current URL
@@ -35,6 +40,10 @@ export function EditorLoadError(props: EditorLoadErrorProps): ReactElement {
           <Paragraph code>{String(error)}</Paragraph>
           <Paragraph>
             This usually happens due to temporary network issues.
+          </Paragraph>
+          <Paragraph>
+            Full error details and stack trace were logged to the browser
+            console.
           </Paragraph>
           <Button type="primary" size="large" onClick={handleRefresh}>
             <Icon name="reload" /> Refresh Page
