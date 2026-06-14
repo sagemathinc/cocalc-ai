@@ -43,7 +43,7 @@ const ROW_INFO_STYLE = {
   alignItems: "center",
   color: COLORS.TAB,
   display: "inline-flex",
-  minHeight: "32px",
+  height: "32px",
   margin: "0 3px",
 } as const;
 
@@ -567,7 +567,7 @@ function ActionBarEnabled({
         flex: "1 0 auto",
         flexWrap: "wrap",
         gap: "8px",
-        minHeight: "32px",
+        height: "32px",
       }}
     >
       {buttonArea != null ? (
