@@ -301,7 +301,7 @@ describe("PublicFeaturesApp", () => {
   });
 
   it("renders the richer teaching feature page", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "teaching", view: "detail" }}
@@ -309,12 +309,55 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("Teach in the same environment where students work"),
+      screen.getByText("Teach where students compute, write, and collaborate"),
+    ).not.toBeNull();
+    expect(screen.getByText("Technical course workspace")).not.toBeNull();
+    expect(
+      screen.getByText(/CoCalc complements the campus LMS/i),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Pair CoCalc with the systems your institution already uses",
+      ),
     ).not.toBeNull();
     expect(screen.getByText("Assign, collect, grade, return")).not.toBeNull();
     expect(
-      screen.getByText("Grade in the same environment students used"),
+      screen.getByText("Grade in the same workspace students used"),
     ).not.toBeNull();
+    expect(screen.getByText("Reduce local setup friction")).not.toBeNull();
+    expect(
+      screen.getByText("Share a reusable course environment"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Environment guide" }),
+    ).toHaveAttribute(
+      "href",
+      "https://sagemathinc.github.io/cocalc-guides/rootfs-management/",
+    );
+    expect(
+      within(screen.getByText("Technical course workspace").closest("section")!)
+        .getAllByRole("link", { name: /teaching guide|instructor manual/i })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "https://sagemathinc.github.io/cocalc-guides/teaching/",
+      "https://sagemathinc.github.io/cocalc-guides/teaching/",
+    ]);
+    const disallowedTeachingCopy = [
+      "RootFS",
+      "rootfs",
+      "Live computational classroom",
+      "teaching center",
+      "first minute",
+      "strongest",
+      ["serious", "technical"].join(" "),
+    ];
+    expect(container.textContent ?? "").not.toMatch(
+      new RegExp(disallowedTeachingCopy.join("|"), "i"),
+    );
+    expect(container.innerHTML).not.toContain("cocalc.com/testimonials");
+    expect(
+      screen.queryByText("Teach in the same environment where students work"),
+    ).toBeNull();
   });
 
   it("uses projects as the teaching CTA for authenticated users", () => {

@@ -85,7 +85,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(hero).getByText(
-        /CoCalc Launchpad keeps serious technical work collaborative, reviewable, and recoverable/i,
+        /CoCalc Launchpad keeps technical work collaborative, reviewable, and recoverable/i,
       ),
     ).not.toBeNull();
     expect(

@@ -533,8 +533,8 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            {siteName} keeps serious technical work collaborative, reviewable,
-            and recoverable without splitting context across separate coding,
+            {siteName} keeps technical work collaborative, reviewable, and
+            recoverable without splitting context across separate coding,
             notebook, document, compute, and AI tools.
           </Paragraph>
         </div>

@@ -58,7 +58,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
       "Founder of SageMath and CoCalc, leading product direction, engineering, and long-term strategy across the entire company.",
     role: [
       "William is both the CEO and a lead software developer across the front and back end of CoCalc, with day-to-day involvement in product direction and engineering decisions.",
-      "His long history with SageMath and his years as a professor of mathematics shape CoCalc's emphasis on serious technical computing, teaching, collaboration, and open infrastructure.",
+      "His long history with SageMath and his years as a professor of mathematics shape CoCalc's emphasis on technical computing, teaching, collaboration, and open infrastructure.",
     ],
     personal: [
       "As CEO, William steers growth strategy, delegates across the company, watches technical and business risk closely, and pushes CoCalc toward ambitious but practical new capabilities.",
