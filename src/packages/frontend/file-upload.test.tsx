@@ -112,6 +112,29 @@ describe("BlobUpload", () => {
     expect(latestDropzone.options.withCredentials).toBe(true);
   });
 
+  it("falls back to the hub upload route when project-host upload routing is unavailable", async () => {
+    mockRouteProjectHostHttpUrl.mockImplementation(async ({ url }) => url);
+
+    render(
+      <FileUploadWrapper
+        show_upload={false}
+        project_id="project-1"
+        dest_path="/home/user"
+      >
+        <div>body</div>
+      </FileUploadWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(latestDropzone).toBeTruthy();
+    });
+
+    expect(latestDropzone.options.url).toBe(
+      "/upload?project_id=project-1&path=%2Fhome%2Fuser",
+    );
+    expect(latestDropzone.options.withCredentials).toBe(false);
+  });
+
   it("uses project-scoped blob uploads when project_id is set", () => {
     render(
       <BlobUpload show_upload={false} project_id="project-1">
