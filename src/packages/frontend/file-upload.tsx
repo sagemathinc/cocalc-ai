@@ -258,12 +258,21 @@ export function FileUploadWrapper({
             project_id,
           },
         );
+        const directProjectHostUrl = projectHostUploadUrl(
+          project_id,
+          dest_path,
+        );
         const routedUrl =
           await webapp_client.conat_client.routeProjectHostHttpUrl({
             project_id,
-            url: projectHostUploadUrl(project_id, dest_path),
+            url: directProjectHostUrl,
           });
         if (canceled) return;
+        if (routedUrl === directProjectHostUrl) {
+          setUploadUrl(postUrl(project_id, dest_path));
+          setUploadWithCredentials(false);
+          return;
+        }
         setUploadUrl(routedUrl);
         setUploadWithCredentials(true);
       } catch {

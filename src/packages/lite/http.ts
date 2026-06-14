@@ -1,4 +1,8 @@
-import express, { type Application } from "express";
+import express, {
+  type Application,
+  type Request,
+  type Response,
+} from "express";
 import { path as STATIC_PATH } from "@cocalc/static";
 import { path as ASSET_PATH } from "@cocalc/assets";
 import getPort from "@cocalc/backend/get-port";
@@ -170,9 +174,11 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
   });
 
   // file download
-  app.get(`/${project_id}/files/*path`, async (req, res) => {
-    await handleFileDownload({ req, res });
-  });
+  const handleProjectFileDownload = async (req: Request, res: Response) => {
+    await handleFileDownload({ req, res, client: conatClient });
+  };
+  app.get(`/${project_id}/files/*path`, handleProjectFileDownload);
+  app.head(`/${project_id}/files/*path`, handleProjectFileDownload);
 
   initBlobUpload(app, conatClient);
   initBlobDownload(app, conatClient);
