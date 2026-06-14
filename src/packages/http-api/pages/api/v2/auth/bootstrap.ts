@@ -11,6 +11,10 @@ import { getImpersonationBootstrapInfo } from "@cocalc/server/auth/impersonation
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 
 export default async function bootstrap(req, res) {
+  if (req.header("Authorization")) {
+    res.json({ error: "API keys are not allowed to use browser bootstrap" });
+    return;
+  }
   const account_id = await getAccountId(req);
   if (!account_id) {
     const hinted_home_bay_id =
