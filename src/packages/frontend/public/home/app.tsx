@@ -66,6 +66,11 @@ const HOME_PAGE_CSS = `
     .cocalc-public-home-hero-image {
       order: 2;
     }
+
+    .cocalc-public-home-product-grid,
+    .cocalc-public-home-path-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
   }
 
   @media (max-width: 560px) {
@@ -200,6 +205,13 @@ const PRODUCT_OPTIONS = [
     title: "CoCalc Plus",
   },
   {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Single-VM appliance for a shared CoCalc instance on a public Ubuntu VM or local Lima VM.",
+    icon: "star",
+    label: "One VM",
+    title: "CoCalc Star",
+  },
+  {
     accent: PUBLIC_COLORS.warning,
     body: "Lightweight customer-operated private deployment for pilots, labs, workshops, and small teams.",
     icon: "servers",
@@ -260,10 +272,10 @@ const DIFFERENTIATORS = [
   },
   {
     accent: COLORS.GRAY_M,
-    body: "Use CoCalc hosted, evaluate locally, or choose a customer-operated private deployment path when your organization needs more control.",
+    body: "Use CoCalc hosted, evaluate locally, run a shared single-VM appliance, or choose a customer-operated private deployment path when your organization needs more control.",
     eyebrow: "Deployment choice",
     icon: "cloud",
-    title: "Hosted, local, or private",
+    title: "Hosted, local, one VM, or private",
   },
 ] satisfies Array<{
   accent: string;
@@ -293,9 +305,17 @@ const PATH_OPTIONS = [
     title: "CoCalc Plus",
   },
   {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    body: "Explore the single-VM appliance for a shared CoCalc instance on a public Ubuntu VM or local Lima VM.",
+    button: () => "Explore CoCalc Star",
+    href: () => appPath("products/cocalc-star"),
+    icon: "star",
+    title: "CoCalc Star",
+  },
+  {
     accent: PUBLIC_COLORS.warning,
-    body: "Compare hosted, local, and customer-operated private deployment paths before choosing.",
-    button: () => "Compare deployment options",
+    body: "Compare hosted, local, appliance, and private deployment paths before choosing.",
+    button: () => "Compare options",
     href: () => appPath("products"),
     icon: "servers",
     title: "Deployment options",
@@ -742,13 +762,13 @@ function ProductsSection() {
         <div>
           <Eyebrow>Ways to run CoCalc</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Hosted, local, or private from the same product family.
+            Hosted, local, one VM, or private from the same product family.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
             Start with the operating model that fits the team. Use CoCalc
-            hosted, evaluate locally with CoCalc Plus, or choose a
-            customer-operated private deployment path when your organization
-            needs more control.
+            hosted, evaluate locally with CoCalc Plus, run a shared single-VM
+            appliance with CoCalc Star, or choose a customer-operated private
+            deployment path when your organization needs more control.
           </Paragraph>
         </div>
         <Flex gap={10} wrap>
@@ -792,7 +812,7 @@ function ProductsSection() {
           style={{
             display: "grid",
             gap: 12,
-            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))",
             marginTop: 18,
           }}
         >
@@ -841,7 +861,7 @@ function ProductsSection() {
           <span
             aria-hidden="true"
             style={{
-              background: `linear-gradient(90deg, ${COLORS.ANTD_LINK_BLUE_DARK}, ${PUBLIC_COLORS.success}, ${PUBLIC_COLORS.warning})`,
+              background: `linear-gradient(90deg, ${COLORS.ANTD_LINK_BLUE_DARK}, ${PUBLIC_COLORS.success}, ${COLORS.AI_ASSISTANT_FONT}, ${PUBLIC_COLORS.warning}, ${COLORS.GRAY_D})`,
               borderRadius: PANEL_RADIUS,
               display: "block",
               flex: 1,
@@ -980,9 +1000,10 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
           Start using CoCalc
         </Title>
         <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-          Start hosted, evaluate locally, compare private deployment, or talk
-          with us about organizational rollout. The point is one technical
-          workspace with multiple operating models.
+          Start hosted, evaluate locally, explore the single-VM appliance,
+          compare private deployment, or talk with us about organizational
+          rollout. The point is one technical workspace with multiple operating
+          models.
         </Paragraph>
       </div>
       <div
@@ -990,7 +1011,7 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
         style={{
           display: "grid",
           gap: 18,
-          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
           marginTop: 26,
         }}
       >

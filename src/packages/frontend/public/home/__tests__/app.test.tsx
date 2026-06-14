@@ -170,7 +170,7 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(products).getByRole("heading", {
-        name: "Hosted, local, or private from the same product family.",
+        name: "Hosted, local, one VM, or private from the same product family.",
       }),
     ).not.toBeNull();
     expect(
@@ -182,10 +182,12 @@ describe("PublicHomeApp", () => {
     for (const option of [
       "CoCalc.ai",
       "CoCalc Plus",
+      "CoCalc Star",
       "CoCalc Launchpad",
       "CoCalc Rocket",
       "Hosted",
       "Local",
+      "One VM",
       "Private",
       "Enterprise",
       "Individual",
@@ -210,7 +212,7 @@ describe("PublicHomeApp", () => {
       "One technical workspace",
       "Reviewable work",
       "Recoverable projects",
-      "Hosted, local, or private",
+      "Hosted, local, one VM, or private",
     ]) {
       expect(within(difference).getByText(title)).not.toBeNull();
     }
@@ -229,7 +231,10 @@ describe("PublicHomeApp", () => {
       "https://software.cocalc.ai/software/cocalc-plus/index.html",
     );
     expect(
-      within(path).getByRole("link", { name: "Compare deployment options" }),
+      within(path).getByRole("link", { name: "Explore CoCalc Star" }),
+    ).toHaveAttribute("href", "/products/cocalc-star");
+    expect(
+      within(path).getByRole("link", { name: "Compare options" }),
     ).toHaveAttribute("href", "/products");
     expect(
       within(path).getByRole("link", { name: "Discuss site licensing" }),
@@ -247,8 +252,8 @@ describe("PublicHomeApp", () => {
     expect(
       screen.queryByRole("region", { name: "CoCalc.ai workspace overview" }),
     ).toBeNull();
-    expect(screen.queryByText("CoCalc Star")).toBeNull();
-    expect(container.innerHTML).not.toContain("products/cocalc-star");
+    expect(screen.getAllByText("CoCalc Star").length).toBeGreaterThan(0);
+    expect(container.innerHTML).toContain("products/cocalc-star");
     expect(container.innerHTML).not.toMatch(
       /project hosts|backend state|logs stay scoped|RootFS|multi-bay/i,
     );
