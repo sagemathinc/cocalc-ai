@@ -546,12 +546,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             </code>
           )}
           {selectedRootfsEntry && renderRootfsWarning(selectedRootfsEntry)}
-          {selectedRootfsEntry && (
-            <RootfsScanSummaryButton
-              entry={selectedRootfsEntry}
-              title={`RootFS scan details: ${selectedRootfsEntry.label}`}
-            />
-          )}
           {renderRootfsPicker()}
         </Space>
       </Card>
