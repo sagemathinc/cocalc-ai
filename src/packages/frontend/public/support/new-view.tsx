@@ -4,17 +4,15 @@
  */
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 
 import { Alert, Button, Divider, Input, Radio, Space, Typography } from "antd";
 
-import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { COLORS, HELP_EMAIL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
-import RecentFiles from "./recent-files";
 
 type SupportView = "index" | "new" | "tickets";
 type TicketType = "problem" | "question" | "task" | "purchase" | "chat";
@@ -45,6 +43,15 @@ interface SupportFileRef {
 const { Paragraph, Text, Title } = Typography;
 
 const MIN_BODY_LENGTH = 16;
+const RecentFiles = lazy(() => import("./recent-files"));
+type ClientApi = typeof import("@cocalc/frontend/client/api").default;
+
+async function clientApi(
+  ...args: Parameters<ClientApi>
+): Promise<Awaited<ReturnType<ClientApi>>> {
+  const { default: api } = await import("@cocalc/frontend/client/api");
+  return api(...args);
+}
 
 function stringToType(value?: string): TicketType {
   switch (value) {
@@ -215,13 +222,22 @@ function PurchaseFields({
         <Alert
           showIcon
           type="info"
-          title="What information helps us respond quickly?"
+          title="Helpful context for pricing or purchasing"
           description={
             <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
-              <li>The rough number of users or projects.</li>
-              <li>The kind of workload you expect.</li>
-              <li>How long you expect to use the service.</li>
-              <li>Any academic, classroom, or organizational context.</li>
+              <li>
+                Which CoCalc path you are considering: hosted CoCalc.ai, Plus,
+                Star, Launchpad, Rocket, or site licensing.
+              </li>
+              <li>
+                Approximate users or projects, and whether this is for a course,
+                lab, team, department, or institution.
+              </li>
+              <li>Timeline, procurement requirements, or invoice needs.</li>
+              <li>
+                Any deployment, governance, data-location, or support
+                constraints.
+              </li>
             </ul>
           }
         />
@@ -230,7 +246,7 @@ function PurchaseFields({
         disabled={disabled}
         rows={8}
         defaultValue={defaultValue}
-        placeholder="Describe what you want to purchase and any constraints we should know about."
+        placeholder="Tell us which CoCalc path you are considering, who it is for, and any purchasing or deployment constraints."
         onChange={(e) => onChange(e.target.value)}
       />
     </Space>
@@ -434,6 +450,7 @@ export default function SupportNew({
 }) {
   const initial = useInitialQueryState();
   const siteName = config.site_name ?? "CoCalc";
+  const helpEmail = config.help_email?.trim() || HELP_EMAIL;
   const [email, setEmail] = useState("");
   const [subject, setSubject] = useState(initial.subject);
   const [type, setType] = useState<TicketType>(initial.type);
@@ -470,7 +487,7 @@ export default function SupportNew({
       if (initial.context) {
         info.context = initial.context;
       }
-      const result = await api("support/create-ticket", {
+      const result = await clientApi("support/create-ticket", {
         options: {
           email,
           subject,
@@ -508,12 +525,15 @@ export default function SupportNew({
 
   useEffect(() => {
     let canceled = false;
+    if (!config.zendesk) {
+      return;
+    }
     if (email.trim().length > 0) {
       return;
     }
     (async () => {
       try {
-        const result = await api("accounts/profile");
+        const result = await clientApi("accounts/profile");
         const nextEmail = result?.profile?.email_address;
         if (
           !canceled &&
@@ -529,15 +549,55 @@ export default function SupportNew({
     return () => {
       canceled = true;
     };
-  }, [email]);
+  }, [config.zendesk, email]);
 
   if (!config.zendesk) {
+    const mailtoParams = new URLSearchParams();
+    if (initial.subject.trim()) {
+      mailtoParams.set("subject", initial.subject);
+    }
+    if (initial.body.trim()) {
+      mailtoParams.set("body", initial.body);
+    }
+    const mailtoHref = `mailto:${helpEmail}${
+      mailtoParams.size > 0 ? `?${mailtoParams.toString()}` : ""
+    }`;
+
     return (
-      <Alert
-        showIcon
-        type="error"
-        title="Support ticket creation is not configured."
-      />
+      <Space orientation="vertical" size="large" style={{ width: "100%" }}>
+        <PublicSection>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+            <Title level={2} style={{ margin: 0 }}>
+              {initial.title || "Contact CoCalc Support"}
+            </Title>
+            <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+              This site is not accepting support tickets directly here. Use the
+              support page or email CoCalc, and include the context below if it
+              applies to your request.
+            </Paragraph>
+            {initial.subject || initial.body ? (
+              <Alert
+                showIcon
+                type="info"
+                title={initial.subject || "Request context"}
+                description={
+                  initial.body ? (
+                    <Paragraph style={{ marginBottom: 0 }}>
+                      {initial.body}
+                    </Paragraph>
+                  ) : undefined
+                }
+              />
+            ) : null}
+            <Space wrap>
+              <Button type="primary" onClick={() => onNavigate("index")}>
+                Open support page
+              </Button>
+              <Button href={mailtoHref}>Email CoCalc</Button>
+            </Space>
+          </Space>
+        </PublicSection>
+      </Space>
     );
   }
 
@@ -561,10 +621,10 @@ export default function SupportNew({
               </a>
               .
             </Paragraph>
-            {config.help_email ? (
+            {helpEmail ? (
               <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
                 You can also email us directly at{" "}
-                <a href={`mailto:${config.help_email}`}>{config.help_email}</a>.
+                <a href={`mailto:${helpEmail}`}>{helpEmail}</a>.
               </Paragraph>
             ) : null}
             {config.support_video_call ? (
@@ -673,11 +733,19 @@ export default function SupportNew({
                 Select any relevant projects and files below. This will make it
                 much easier for us to quickly understand your problem.
               </Paragraph>
-              <RecentFiles
-                disabled={formLocked}
-                interval="1 day"
-                onChange={setFiles}
-              />
+              <Suspense
+                fallback={
+                  <div style={{ padding: "8px 0" }}>
+                    Loading recent files...
+                  </div>
+                }
+              >
+                <RecentFiles
+                  disabled={formLocked}
+                  interval="1 day"
+                  onChange={setFiles}
+                />
+              </Suspense>
             </div>
           ) : null}
 

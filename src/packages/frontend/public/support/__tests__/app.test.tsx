@@ -29,7 +29,7 @@ describe("PublicSupportApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Choose a product path")).not.toBeNull();
     expect(screen.getByText("Pricing and licensing")).not.toBeNull();
-    expect(screen.getByText("Contact CoCalc")).not.toBeNull();
+    expect(screen.getByText("Talk with CoCalc")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "Compare product paths" }),
@@ -37,6 +37,9 @@ describe("PublicSupportApp", () => {
     expect(
       screen.getByRole("link", { name: "Review pricing" }),
     ).toHaveAttribute("href", "/pricing");
+    expect(
+      screen.getByRole("button", { name: "Start support request" }),
+    ).not.toBeNull();
     expect(screen.queryByText("System status")).toBeNull();
   });
 
@@ -67,13 +70,39 @@ describe("PublicSupportApp", () => {
   it("does not advertise ticket actions when zendesk is disabled", () => {
     render(
       <PublicSupportApp
-        config={{ site_name: "Launchpad", zendesk: false }}
+        config={{ help_email: "", site_name: "Launchpad", zendesk: false }}
         initialRoute={{ view: "index" }}
       />,
     );
 
     expect(screen.queryByRole("button", { name: "New ticket" })).toBeNull();
     expect(screen.queryByRole("button", { name: "My tickets" })).toBeNull();
+    expect(screen.getByText("Talk with CoCalc")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Email CoCalc" })).toHaveAttribute(
+      "href",
+      "mailto:help@cocalc.com",
+    );
+  });
+
+  it("does not describe the direct contact fallback as ticket creation", async () => {
+    render(
+      <PublicSupportApp
+        config={{ site_name: "CoCalc", zendesk: false }}
+        initialRoute={{ view: "new" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Contact CoCalc Support" }),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Create a CoCalc Support Ticket" }),
+    ).toBeNull();
+    expect(
+      await screen.findByText(
+        "This site is not accepting support tickets directly here. Use the support page or email CoCalc, and include the context below if it applies to your request.",
+      ),
+    ).not.toBeNull();
   });
 
   it("renders the community view", async () => {

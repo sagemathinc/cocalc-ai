@@ -91,8 +91,14 @@ describe("PublicTopNav", () => {
   it("uses sign-in and sign-up links for anonymous visitors", async () => {
     await renderTopNav(<PublicTopNav />);
 
-    expect(screen.getByRole("link", { name: "Sign in" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Sign up" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
+      "href",
+      "/auth/sign-in",
+    );
+    expect(screen.getByRole("link", { name: "Sign up" })).toHaveAttribute(
+      "href",
+      "/auth/sign-up",
+    );
     expect(screen.queryByRole("link", { name: "Projects" })).toBeNull();
   });
 

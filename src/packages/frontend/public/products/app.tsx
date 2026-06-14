@@ -27,6 +27,44 @@ interface ProductAction {
   primary?: boolean;
 }
 
+function supportContactPath({
+  body,
+  context,
+  subject,
+  title,
+}: {
+  body: string;
+  context: string;
+  subject: string;
+  title: string;
+}): string {
+  const params = new URLSearchParams({
+    body,
+    context,
+    subject,
+    title,
+    type: "purchase",
+  });
+  return `${appPath("support/new")}?${params.toString()}`;
+}
+
+function supportProductPath(product: "Launchpad" | "Rocket"): string {
+  if (product === "Launchpad") {
+    return supportContactPath({
+      body: "I want to talk with CoCalc about CoCalc Launchpad. Helpful context: expected users or projects, pilot/lab/workshop/department scope, operating environment, timeline, and whether pricing or site licensing is part of the decision.",
+      context: "product-cocalc-launchpad",
+      subject: "CoCalc Launchpad",
+      title: "Talk with CoCalc about Launchpad",
+    });
+  }
+  return supportContactPath({
+    body: "I want to talk with CoCalc about CoCalc Rocket. Helpful context: organization type, expected users or projects, private-cloud requirements, governance or procurement needs, timeline, and support or deployment-planning questions.",
+    context: "product-cocalc-rocket",
+    subject: "CoCalc Rocket",
+    title: "Talk with CoCalc about Rocket",
+  });
+}
+
 interface ProductDetailPoint {
   body: ReactNode;
   icon: IconName;
@@ -312,7 +350,16 @@ function ProductsOverviewPage() {
           <LinkButton href={appPath("pricing")}>
             See pricing and licensing
           </LinkButton>
-          <LinkButton href={appPath("support")}>Talk with CoCalc</LinkButton>
+          <LinkButton
+            href={supportContactPath({
+              body: "I want to talk with CoCalc about product paths, site licensing, or an organizational buying route. Helpful context: where you want CoCalc to run, who will operate it, expected users or projects, and procurement or support needs.",
+              context: "products-site-licensing",
+              subject: "Product paths and site licensing",
+              title: "Talk with CoCalc about product paths",
+            })}
+          >
+            Talk with CoCalc
+          </LinkButton>
         </Flex>
       </PublicSection>
     </Flex>
@@ -474,7 +521,7 @@ function CocalcRocketPage() {
       <ProductLeadSection
         actions={[
           {
-            href: appPath("support"),
+            href: supportProductPath("Rocket"),
             label: "Talk with CoCalc about Rocket",
             primary: true,
           },
@@ -505,7 +552,7 @@ function CocalcRocketPage() {
           <ProductActions
             actions={[
               {
-                href: appPath("support"),
+                href: supportProductPath("Rocket"),
                 label: "Talk with CoCalc about Rocket",
                 primary: true,
               },
@@ -564,8 +611,8 @@ function CocalcStarPage() {
             label: "Compare Rocket",
           },
         ]}
-        title="Shared CoCalc on one VM"
-        body="CoCalc Star is the path for a small shared CoCalc instance on one public Ubuntu VM. It sits between local CoCalc Plus and customer-operated private deployment."
+        title="Shared CoCalc on a single VM"
+        body="CoCalc Star is the path for a small shared CoCalc instance on a single public Ubuntu VM. It sits between local CoCalc Plus and customer-operated private deployment."
       />
       <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />
       <PublicGrid columns={2}>
@@ -648,7 +695,7 @@ function CocalcLaunchpadPage() {
       <ProductLeadSection
         actions={[
           {
-            href: appPath("support"),
+            href: supportProductPath("Launchpad"),
             label: "Talk with CoCalc about Launchpad",
             primary: true,
           },

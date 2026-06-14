@@ -55,11 +55,22 @@ function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
-function supportPurchasePath(subject: string, body: string): string {
+function supportPurchasePath({
+  body,
+  context,
+  subject,
+  title,
+}: {
+  body: string;
+  context: string;
+  subject: string;
+  title: string;
+}): string {
   const params = new URLSearchParams({
     body,
+    context,
     subject,
-    title: "Ask Sales",
+    title,
     type: "purchase",
   });
   return `${appPath("support/new")}?${params.toString()}`;
@@ -534,10 +545,14 @@ function PricingTierTile({
   const href = isAuthenticated
     ? appPath("settings/membership")
     : appPath("auth/sign-up");
+  const actionLabel = isAuthenticated
+    ? `Manage ${label} hosted plan`
+    : `Sign up for ${label} hosted plan`;
   const { token } = theme.useToken();
 
   return (
     <a
+      aria-label={actionLabel}
       href={href}
       style={{
         color: "inherit",
@@ -688,10 +703,12 @@ function HostedPlansFallback({
           Compare product paths
         </Button>
         <Button
-          href={supportPurchasePath(
-            "Hosted plans",
-            "I want to ask about CoCalc.ai hosted plans, memberships, or organizational buying.",
-          )}
+          href={supportPurchasePath({
+            body: "I want to ask about CoCalc.ai hosted plans, memberships, or organizational buying. Helpful context: approximate users or projects, course/lab/team/institution, timeline, and procurement constraints.",
+            context: "pricing-hosted-plans",
+            subject: "Hosted CoCalc.ai plans",
+            title: "Ask CoCalc about hosted plans",
+          })}
           icon={<DecorativeButtonIcon name="support" />}
         >
           Talk with CoCalc about hosted plans
@@ -753,10 +770,12 @@ export default function PricingPage({
               Compare product paths
             </Button>
             <Button
-              href={supportPurchasePath(
-                "Site license",
-                "I want to discuss a CoCalc site license.",
-              )}
+              href={supportPurchasePath({
+                body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, and support coordination needs.",
+                context: "pricing-site-license",
+                subject: "Site licensing",
+                title: "Ask CoCalc about site licensing",
+              })}
               icon={<DecorativeButtonIcon name="bank" />}
             >
               Talk with CoCalc about site licensing
@@ -818,8 +837,16 @@ export default function PricingPage({
                 people who need managed access. Team seats stay inside the
                 self-service hosted plan model.
               </Paragraph>
-              <Button href={appPath("settings/team-licenses")}>
-                Manage team seats
+              <Button
+                href={
+                  isAuthenticated
+                    ? appPath("settings/team-licenses")
+                    : appPath("auth/sign-up")
+                }
+              >
+                {isAuthenticated
+                  ? "Manage team seats"
+                  : "Sign up for team seats"}
               </Button>
             </Space>
           </PublicSection>
@@ -835,10 +862,12 @@ export default function PricingPage({
                 rights across CoCalc.ai, Star, Launchpad, or Rocket.
               </Paragraph>
               <Button
-                href={supportPurchasePath(
-                  "Site license",
-                  "I want to discuss a CoCalc site license.",
-                )}
+                href={supportPurchasePath({
+                  body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, and support coordination needs.",
+                  context: "pricing-site-license",
+                  subject: "Site licensing",
+                  title: "Ask CoCalc about site licensing",
+                })}
               >
                 Talk with CoCalc about site licensing
               </Button>
@@ -855,7 +884,17 @@ export default function PricingPage({
                 isolated or larger compute. This is hosted infrastructure, not a
                 private deployment path.
               </Paragraph>
-              <Button href={appPath("hosts")}>Review project hosts</Button>
+              <Button
+                href={
+                  isAuthenticated
+                    ? appPath("hosts")
+                    : appPath("docs/hosts/project-hosts")
+                }
+              >
+                {isAuthenticated
+                  ? "Manage project hosts"
+                  : "Read project host docs"}
+              </Button>
             </Space>
           </PublicSection>
 
@@ -870,10 +909,12 @@ export default function PricingPage({
                 rights, or invoices above $100.
               </Paragraph>
               <Button
-                href={supportPurchasePath(
-                  "Quote, site license, or customized invoice",
-                  "I want to request a quote, site license, or customized invoice for CoCalc.",
-                )}
+                href={supportPurchasePath({
+                  body: "I want to request a quote, site license, or customized invoice for CoCalc. Helpful context: product path, expected users or projects, billing timeline, procurement process, and any deployment or support constraints.",
+                  context: "pricing-quote",
+                  subject: "Quote, site license, or customized invoice",
+                  title: "Request a CoCalc quote",
+                })}
               >
                 Request a quote
               </Button>

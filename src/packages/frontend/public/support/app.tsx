@@ -58,10 +58,16 @@ function supportPath(view: SupportView): string {
   }
 }
 
-function titleForView(view: SupportView, siteName: string): string {
+function titleForView(
+  view: SupportView,
+  siteName: string,
+  zendesk: boolean,
+): string {
   switch (view) {
     case "new":
-      return `Create a ${siteName} Support Ticket`;
+      return zendesk
+        ? `Create a ${siteName} Support Ticket`
+        : `Contact ${siteName} Support`;
     case "tickets":
       return `${siteName} Support Tickets`;
     case "community":
@@ -96,7 +102,7 @@ function SupportIndex({
   config: SupportConfig;
   onNavigate: (view: SupportView) => void;
 }) {
-  const helpEmail = config.help_email ?? HELP_EMAIL;
+  const helpEmail = config.help_email?.trim() || HELP_EMAIL;
   const hasZendesk = !!config.zendesk;
 
   if (!config.on_cocalc_com && config.support) {
@@ -147,11 +153,11 @@ function SupportIndex({
         </SupportCard>
         {hasZendesk ? (
           <SupportCard
-            description="Open a support or purchase ticket when you are ready to talk with CoCalc."
-            title="Contact CoCalc"
+            description="Start here when you are ready to ask about pricing, deployment, or an existing account or project issue."
+            title="Talk with CoCalc"
           >
             <Button type="primary" onClick={() => onNavigate("new")}>
-              Open ticket form
+              Start support request
             </Button>
           </SupportCard>
         ) : null}
@@ -194,10 +200,10 @@ function SupportIndex({
         </SupportCard>
         <SupportCard
           description="Reach the team directly by email."
-          title="Email"
+          title={hasZendesk ? "Email" : "Talk with CoCalc"}
         >
           <a href={`mailto:${helpEmail}`} style={{ color: COLORS.BLUE_D }}>
-            {helpEmail}
+            {hasZendesk ? helpEmail : "Email CoCalc"}
           </a>
         </SupportCard>
       </PublicGrid>
@@ -214,7 +220,11 @@ export default function PublicSupportApp({
     | SupportConfig
     | undefined;
   const siteName = getPublicMarketingSiteName(config);
-  const title = useMemo(() => titleForView(view, siteName), [siteName, view]);
+  const hasZendesk = !!config.zendesk;
+  const title = useMemo(
+    () => titleForView(view, siteName, hasZendesk),
+    [hasZendesk, siteName, view],
+  );
 
   useEffect(() => {
     setView(initialRoute.view);

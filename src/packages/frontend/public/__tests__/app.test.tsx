@@ -459,10 +459,9 @@ describe("PublicApp", () => {
     expect(screen.getByText("Minimal")).not.toBeNull();
     expect(screen.getByText("Standard")).not.toBeNull();
     expect(screen.getByText("Expanded")).not.toBeNull();
-    expect(screen.getByRole("link", { name: /Member/ })).toHaveAttribute(
-      "href",
-      "/settings/membership",
-    );
+    expect(
+      screen.getByRole("link", { name: "Manage Member hosted plan" }),
+    ).toHaveAttribute("href", "/settings/membership");
     fireEvent.click(screen.getByText("Monthly"));
     expect(screen.getByText("$25")).not.toBeNull();
     expect(screen.getAllByText("/ month").length).toBe(2);
@@ -481,12 +480,25 @@ describe("PublicApp", () => {
         name: "Talk with CoCalc about site licensing",
       }).length,
     ).toBeGreaterThan(0);
+    const siteLicenseLink = screen.getAllByRole("link", {
+      name: "Talk with CoCalc about site licensing",
+    })[0];
+    expect(siteLicenseLink.getAttribute("href")).toContain("/support/new?");
+    expect(siteLicenseLink.getAttribute("href")).toContain(
+      "context=pricing-site-license",
+    );
     expect(
       screen.getByRole("heading", { name: "Site licensing" }),
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", { name: "Dedicated project hosts" }),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Manage project hosts" }),
+    ).toHaveAttribute("href", "/hosts");
+    expect(
+      screen.getByRole("link", { name: "Manage team seats" }),
+    ).toHaveAttribute("href", "/settings/team-licenses");
     expect(
       screen.getByRole("heading", {
         name: "Quotes and customized invoices",
@@ -527,13 +539,25 @@ describe("PublicApp", () => {
     });
     expect(hostedPlansLink.getAttribute("href")).toContain("/support/new?");
     expect(hostedPlansLink.getAttribute("href")).toContain(
-      "subject=Hosted+plans",
+      "subject=Hosted+CoCalc.ai+plans",
+    );
+    expect(hostedPlansLink.getAttribute("href")).toContain(
+      "context=pricing-hosted-plans",
+    );
+    expect(hostedPlansLink.getAttribute("href")).toContain(
+      "title=Ask+CoCalc+about+hosted+plans",
     );
     expect(
       screen.getByRole("heading", {
         name: "Buying paths for groups and deployments",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Sign up for team seats" }),
+    ).toHaveAttribute("href", "/auth/sign-up");
+    expect(
+      screen.getByRole("link", { name: "Read project host docs" }),
+    ).toHaveAttribute("href", "/docs/hosts/project-hosts");
     expect(
       screen.queryByText(/No public hosted plans are currently configured/i),
     ).toBeNull();
@@ -1077,7 +1101,13 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "Talk with CoCalc" }),
-    ).toHaveAttribute("href", "/support");
+    ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=products-site-licensing"),
+    );
   });
 
   it("uses CoCalc marketing branding on public product pages for default Launchpad installs", async () => {
@@ -1140,7 +1170,13 @@ describe("PublicApp", () => {
     ).toBe(true);
     expect(
       screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
-    ).toHaveAttribute("href", "/support");
+    ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=product-cocalc-launchpad"),
+    );
     expect(
       screen.getByRole("link", { name: "Compare with Rocket" }),
     ).toHaveAttribute("href", "/products/cocalc-rocket");
@@ -1156,7 +1192,7 @@ describe("PublicApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Shared CoCalc on one VM" }),
+      screen.getByRole("heading", { name: "Shared CoCalc on a single VM" }),
     ).not.toBeNull();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Star positioning",
@@ -1205,7 +1241,15 @@ describe("PublicApp", () => {
       screen.getAllByRole("link", {
         name: "Talk with CoCalc about Rocket",
       })[0],
-    ).toHaveAttribute("href", "/support");
+    ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
+    expect(
+      screen.getAllByRole("link", {
+        name: "Talk with CoCalc about Rocket",
+      })[0],
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=product-cocalc-rocket"),
+    );
     expectNoProductDetailStalePhrasing();
   });
 });

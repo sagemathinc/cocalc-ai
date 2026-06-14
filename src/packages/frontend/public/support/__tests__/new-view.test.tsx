@@ -1,14 +1,18 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import api from "@cocalc/frontend/client/api";
 import SupportNew from "../new-view";
 
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
-jest.mock("../recent-files", () => function RecentFilesMock() {
-  return <div>Recent files picker</div>;
-});
+jest.mock(
+  "../recent-files",
+  () =>
+    function RecentFilesMock() {
+      return <div>Recent files picker</div>;
+    },
+);
 
 const mockedApi = api as jest.Mock;
 
@@ -29,7 +33,7 @@ describe("SupportNew", () => {
     });
   });
 
-  it("renders a richer zendesk-backed support form", () => {
+  it("renders a richer zendesk-backed support form", async () => {
     render(
       <SupportNew
         config={{
@@ -48,7 +52,7 @@ describe("SupportNew", () => {
     ).not.toBeNull();
     expect(screen.getByText("Helpful links")).not.toBeNull();
     expect(screen.getByText("Relevant files")).not.toBeNull();
-    expect(screen.getByText("Recent files picker")).not.toBeNull();
+    expect(await screen.findByText("Recent files picker")).not.toBeNull();
     expect(screen.getByText("Enter a valid email address")).not.toBeNull();
   });
 
@@ -76,7 +80,7 @@ describe("SupportNew", () => {
     window.history.replaceState(
       {},
       "",
-      "/support/new?type=purchase&subject=Need%20pricing&title=Ask%20Sales&body=Tell%20me%20more%20about%20pricing",
+      "/support/new?type=purchase&subject=Need%20pricing&title=Ask%20CoCalc%20about%20pricing&body=Tell%20me%20more%20about%20pricing&context=pricing-hosted-plans",
     );
 
     render(
@@ -86,11 +90,94 @@ describe("SupportNew", () => {
       />,
     );
 
-    expect(screen.getByText("Ask Sales")).not.toBeNull();
+    expect(screen.getByText("Ask CoCalc about pricing")).not.toBeNull();
     expect(screen.getByDisplayValue("Need pricing")).not.toBeNull();
     expect(
       screen.getByDisplayValue("Tell me more about pricing"),
     ).not.toBeNull();
+    expect(
+      screen.getByText("Helpful context for pricing or purchasing"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/Which CoCalc path you are considering/),
+    ).not.toBeNull();
+  });
+
+  it("passes prefilled purchase context to the support ticket", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/support/new?type=purchase&subject=CoCalc%20Rocket&title=Talk%20with%20CoCalc%20about%20Rocket&body=I%20want%20to%20talk%20about%20Rocket%20deployment%20planning.&context=product-cocalc-rocket",
+    );
+    mockedApi.mockImplementation(async (endpoint: string) => {
+      if (endpoint === "accounts/profile") {
+        return { profile: {} };
+      }
+      if (endpoint === "support/create-ticket") {
+        return { url: "https://example.zendesk.com/requests/456" };
+      }
+      return {};
+    });
+
+    render(
+      <SupportNew
+        config={{ site_name: "CoCalc", zendesk: true }}
+        onNavigate={jest.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Email address..."), {
+      target: { value: "buyer@example.com" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create support ticket" }),
+    );
+
+    await waitFor(() =>
+      expect(mockedApi).toHaveBeenCalledWith(
+        "support/create-ticket",
+        expect.objectContaining({
+          options: expect.objectContaining({
+            body: "I want to talk about Rocket deployment planning.",
+            email: "buyer@example.com",
+            subject: "CoCalc Rocket",
+            type: "purchase",
+            info: expect.objectContaining({
+              context: "product-cocalc-rocket",
+            }),
+          }),
+        }),
+      ),
+    );
+  });
+
+  it("preserves request context when direct ticket creation is unavailable", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/support/new?type=purchase&subject=CoCalc%20Rocket&title=Talk%20with%20CoCalc%20about%20Rocket&body=I%20want%20to%20talk%20about%20Rocket%20deployment%20planning.&context=product-cocalc-rocket",
+    );
+
+    render(
+      <SupportNew
+        config={{ help_email: "help@example.com", site_name: "CoCalc" }}
+        onNavigate={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Talk with CoCalc about Rocket")).not.toBeNull();
+    expect(screen.getByText("CoCalc Rocket")).not.toBeNull();
+    expect(
+      screen.getByText("I want to talk about Rocket deployment planning."),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Open support page" }),
+    ).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Email CoCalc" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("mailto:help@example.com?"),
+    );
+    expect(mockedApi).not.toHaveBeenCalled();
   });
 
   it("shows a success alert after creating a ticket", async () => {
