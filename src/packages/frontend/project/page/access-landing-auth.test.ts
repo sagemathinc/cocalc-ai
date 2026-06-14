@@ -2,6 +2,7 @@ import {
   hasProjectRoleForAccessLandingBypass,
   projectAccessSignInHref,
   shouldFetchProjectAccessLandingInfo,
+  shouldShowProjectAccessSignInRequired,
 } from "./access-landing-auth";
 
 describe("project access landing auth gate", () => {
@@ -12,6 +13,42 @@ describe("project access landing auth gate", () => {
         accountIsReady: true,
         isLoggedIn: false,
         hasProject: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not show the project access sign-in prompt while remember-me auth is pending", () => {
+    expect(
+      shouldShowProjectAccessSignInRequired({
+        accountIsReady: true,
+        isLoggedIn: false,
+        userType: "signing_in",
+      }),
+    ).toBe(false);
+  });
+
+  it("shows the project access sign-in prompt only after signed-out state is confirmed", () => {
+    expect(
+      shouldShowProjectAccessSignInRequired({
+        accountIsReady: true,
+        isLoggedIn: false,
+        userType: "public",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldShowProjectAccessSignInRequired({
+        accountIsReady: false,
+        isLoggedIn: false,
+        userType: "public",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldShowProjectAccessSignInRequired({
+        accountIsReady: true,
+        isLoggedIn: true,
+        userType: "signed_in",
       }),
     ).toBe(false);
   });
