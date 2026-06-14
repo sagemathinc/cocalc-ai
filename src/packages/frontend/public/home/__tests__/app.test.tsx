@@ -1743,6 +1743,46 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Conversation path/i })
         .getAttribute("href"),
     ).toBe("/support");
+    const learningRouteHandoff = within(detailRoutes).getByRole("group", {
+      name: "CoCalc.ai learning route handoff",
+    });
+    expectLinkHrefs(learningRouteHandoff, ["/docs", "/guides", "/support"]);
+    expect(
+      within(learningRouteHandoff).getByText("Learning route handoff"),
+    ).not.toBeNull();
+    expect(
+      within(learningRouteHandoff).getByText(
+        "Move from overview to docs, guides, or support.",
+      ),
+    ).not.toBeNull();
+    for (const handoff of [
+      "Product docs",
+      "Workflow guides",
+      "Support center",
+      "Use docs for product help tied to this CoCalc instance.",
+      "Use guides for narrative paths through notebooks, terminals, teaching, writing, and Codex.",
+      "Use support when a docs page or guide does not answer the routing question.",
+      "Browse docs",
+      "Open guides",
+      "Get support",
+    ]) {
+      expect(within(learningRouteHandoff).getByText(handoff)).not.toBeNull();
+    }
+    expect(
+      within(learningRouteHandoff)
+        .getByRole("link", { name: /Product docs/i })
+        .getAttribute("href"),
+    ).toBe("/docs");
+    expect(
+      within(learningRouteHandoff)
+        .getByRole("link", { name: /Workflow guides/i })
+        .getAttribute("href"),
+    ).toBe("/guides");
+    expect(
+      within(learningRouteHandoff)
+        .getByRole("link", { name: /Support center/i })
+        .getAttribute("href"),
+    ).toBe("/support");
     expect(
       screen.getByRole("region", { name: "CoCalc.ai final calls to action" }),
     ).not.toBeNull();

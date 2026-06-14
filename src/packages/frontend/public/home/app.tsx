@@ -5014,6 +5014,39 @@ function DetailRoutesSection() {
     label: string;
     next: string;
   }[];
+  const learningHandoffs = [
+    {
+      accent: COLORS.BLUE_D,
+      body: "Use docs for product help tied to this CoCalc instance.",
+      href: appPath("docs"),
+      icon: "book",
+      label: "Product docs",
+      next: "Browse docs",
+    },
+    {
+      accent: COLORS.RUN,
+      body: "Use guides for narrative paths through notebooks, terminals, teaching, writing, and Codex.",
+      href: appPath("guides"),
+      icon: "compass",
+      label: "Workflow guides",
+      next: "Open guides",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      body: "Use support when a docs page or guide does not answer the routing question.",
+      href: appPath("support"),
+      icon: "support",
+      label: "Support center",
+      next: "Get support",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    href: string;
+    icon: IconName;
+    label: string;
+    next: string;
+  }[];
 
   return (
     <section
@@ -5183,6 +5216,104 @@ function DetailRoutesSection() {
                 style={{
                   alignSelf: "center",
                   color: checkpoint.accent,
+                  fontSize: 12,
+                }}
+              />
+            </a>
+          ))}
+        </div>
+      </div>
+      <div
+        aria-label="CoCalc.ai learning route handoff"
+        role="group"
+        style={{
+          background: PUBLIC_COLORS.surface,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 14,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+            Learning route handoff
+          </Text>
+          <Text type="secondary">
+            Move from overview to docs, guides, or support.
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {learningHandoffs.map((handoff) => (
+            <a
+              href={handoff.href}
+              key={handoff.label}
+              style={{
+                alignItems: "start",
+                background: alpha(handoff.accent, 0.05),
+                border: `1px solid ${alpha(handoff.accent, 0.22)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 9,
+                gridTemplateColumns: "32px minmax(0, 1fr) 14px",
+                minHeight: 112,
+                padding: 12,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(handoff.accent, 0.08),
+                  border: `1px solid ${alpha(handoff.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: handoff.accent,
+                  display: "flex",
+                  height: 32,
+                  justifyContent: "center",
+                  width: 32,
+                }}
+              >
+                <Icon name={handoff.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: handoff.accent,
+                    display: "block",
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {handoff.label}
+                </Text>
+                <Text type="secondary">{handoff.body}</Text>
+                <Text
+                  strong
+                  style={{
+                    color: handoff.accent,
+                    display: "block",
+                    marginTop: 4,
+                  }}
+                >
+                  {handoff.next}
+                </Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{
+                  alignSelf: "center",
+                  color: handoff.accent,
                   fontSize: 12,
                 }}
               />
