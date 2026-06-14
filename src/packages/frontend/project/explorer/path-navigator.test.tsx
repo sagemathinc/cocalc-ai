@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Map as ImmutableMap } from "immutable";
 import type React from "react";
 import { PathNavigator } from "./path-navigator";
@@ -18,14 +18,21 @@ jest.mock("../disk-usage/storage-overview", () => ({
   getCachedStorageOverview: jest.fn(),
 }));
 
+const mockOpenDirectory = jest.fn();
+
 jest.mock("@cocalc/frontend/app-framework", () => {
   const React = require("react");
   return {
     React,
-    useActions: jest.fn(() => ({ open_directory: jest.fn() })),
+    useActions: jest.fn(() => ({ open_directory: mockOpenDirectory })),
     useTypedRedux: jest.fn(),
   };
 });
+
+jest.mock("@cocalc/frontend/project/home-directory", () => ({
+  getProjectHomeDirectory: () => "/home/user",
+  resolveProjectHomeDirectory: jest.fn(async () => "/Users/wstein"),
+}));
 
 const getStorageOverviewMock = getStorageOverview as jest.Mock;
 const getCachedStorageOverviewMock = getCachedStorageOverview as jest.Mock;
@@ -86,5 +93,23 @@ describe("PathNavigator", () => {
     expect(screen.getByText(".snapshots")).toBeInTheDocument();
     expect(screen.queryByText("home")).not.toBeInTheDocument();
     expect(screen.queryByText("user")).not.toBeInTheDocument();
+  });
+
+  it("resolves exact home before navigating from the Home breadcrumb", async () => {
+    useTypedRedux.mockImplementation((_opts, key) => {
+      if (key === "current_path_abs") return "/home/user";
+      return undefined;
+    });
+
+    render(<PathNavigator project_id="project-1" />);
+    fireEvent.click(screen.getByText("Home"));
+
+    await waitFor(() => {
+      expect(mockOpenDirectory).toHaveBeenCalledWith(
+        "/Users/wstein",
+        true,
+        false,
+      );
+    });
   });
 });
