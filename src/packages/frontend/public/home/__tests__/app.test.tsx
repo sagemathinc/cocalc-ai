@@ -1783,6 +1783,59 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Support center/i })
         .getAttribute("href"),
     ).toBe("/support");
+    const routeAssuranceMap = within(detailRoutes).getByRole("group", {
+      name: "CoCalc.ai route assurance map",
+    });
+    expectLinkHrefs(routeAssuranceMap, [
+      "/features/compare",
+      "/features/terminal",
+      "/products",
+      "/support",
+    ]);
+    expect(
+      within(routeAssuranceMap).getByText("Route assurance map"),
+    ).not.toBeNull();
+    expect(
+      within(routeAssuranceMap).getByText(
+        "Confirm the controlled page before leaving the overview.",
+      ),
+    ).not.toBeNull();
+    for (const assurance of [
+      "Project context",
+      "Runtime question",
+      "Operating path",
+      "Unclear scope",
+      "Use compare when source, notebooks, data, and notes need a shared review page.",
+      "Use terminal when packages, scripts, services, or logs define the next answer.",
+      "Use products when the next question is who runs the workspace.",
+      "Use support when the right workflow or boundary still needs discussion.",
+      "Map context",
+      "Open terminal",
+      "Compare products",
+      "Ask support",
+    ]) {
+      expect(within(routeAssuranceMap).getByText(assurance)).not.toBeNull();
+    }
+    expect(
+      within(routeAssuranceMap)
+        .getByRole("link", { name: /Project context/i })
+        .getAttribute("href"),
+    ).toBe("/features/compare");
+    expect(
+      within(routeAssuranceMap)
+        .getByRole("link", { name: /Runtime question/i })
+        .getAttribute("href"),
+    ).toBe("/features/terminal");
+    expect(
+      within(routeAssuranceMap)
+        .getByRole("link", { name: /Operating path/i })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      within(routeAssuranceMap)
+        .getByRole("link", { name: /Unclear scope/i })
+        .getAttribute("href"),
+    ).toBe("/support");
     expect(
       screen.getByRole("region", { name: "CoCalc.ai final calls to action" }),
     ).not.toBeNull();
@@ -1890,7 +1943,7 @@ describe("PublicHomeApp", () => {
         name: "Operational workspace signals for CoCalc.ai",
       }),
     ).toBeNull();
-  });
+  }, 15000);
 
   it("uses CoCalc marketing branding for the default hosted Launchpad preview", async () => {
     global.fetch = jest.fn(

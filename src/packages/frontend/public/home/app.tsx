@@ -5047,6 +5047,47 @@ function DetailRoutesSection() {
     label: string;
     next: string;
   }[];
+  const routeAssurances = [
+    {
+      accent: COLORS.BLUE_D,
+      body: "Use compare when source, notebooks, data, and notes need a shared review page.",
+      href: appPath("features/compare"),
+      icon: "files",
+      label: "Project context",
+      next: "Map context",
+    },
+    {
+      accent: COLORS.RUN,
+      body: "Use terminal when packages, scripts, services, or logs define the next answer.",
+      href: appPath("features/terminal"),
+      icon: "terminal",
+      label: "Runtime question",
+      next: "Open terminal",
+    },
+    {
+      accent: PUBLIC_COLORS.warning,
+      body: "Use products when the next question is who runs the workspace.",
+      href: appPath("products"),
+      icon: "servers",
+      label: "Operating path",
+      next: "Compare products",
+    },
+    {
+      accent: COLORS.AI_ASSISTANT_FONT,
+      body: "Use support when the right workflow or boundary still needs discussion.",
+      href: appPath("support"),
+      icon: "support",
+      label: "Unclear scope",
+      next: "Ask support",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    href: string;
+    icon: IconName;
+    label: string;
+    next: string;
+  }[];
 
   return (
     <section
@@ -5314,6 +5355,104 @@ function DetailRoutesSection() {
                 style={{
                   alignSelf: "center",
                   color: handoff.accent,
+                  fontSize: 12,
+                }}
+              />
+            </a>
+          ))}
+        </div>
+      </div>
+      <div
+        aria-label="CoCalc.ai route assurance map"
+        role="group"
+        style={{
+          background: PUBLIC_COLORS.surface,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
+          marginTop: 14,
+          padding: 14,
+        }}
+      >
+        <Flex align="baseline" justify="space-between" wrap gap={8}>
+          <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+            Route assurance map
+          </Text>
+          <Text type="secondary">
+            Confirm the controlled page before leaving the overview.
+          </Text>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 190px), 1fr))",
+            marginTop: 10,
+          }}
+        >
+          {routeAssurances.map((assurance) => (
+            <a
+              href={assurance.href}
+              key={assurance.label}
+              style={{
+                alignItems: "start",
+                background: alpha(assurance.accent, 0.05),
+                border: `1px solid ${alpha(assurance.accent, 0.22)}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "grid",
+                gap: 9,
+                gridTemplateColumns: "32px minmax(0, 1fr) 14px",
+                minHeight: 112,
+                padding: 12,
+                textDecoration: "none",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: alpha(assurance.accent, 0.08),
+                  border: `1px solid ${alpha(assurance.accent, 0.22)}`,
+                  borderRadius: PANEL_RADIUS,
+                  color: assurance.accent,
+                  display: "flex",
+                  height: 32,
+                  justifyContent: "center",
+                  width: 32,
+                }}
+              >
+                <Icon name={assurance.icon} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    color: assurance.accent,
+                    display: "block",
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {assurance.label}
+                </Text>
+                <Text type="secondary">{assurance.body}</Text>
+                <Text
+                  strong
+                  style={{
+                    color: assurance.accent,
+                    display: "block",
+                    marginTop: 4,
+                  }}
+                >
+                  {assurance.next}
+                </Text>
+              </span>
+              <Icon
+                name="arrow-right"
+                style={{
+                  alignSelf: "center",
+                  color: assurance.accent,
                   fontSize: 12,
                 }}
               />
