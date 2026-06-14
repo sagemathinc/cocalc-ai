@@ -1,4 +1,6 @@
 import {
+  hasRealListingRows,
+  isParentDirectoryRow,
   parentDirectoryPath,
   withParentDirectoryRow,
 } from "./parent-directory-row";
@@ -17,6 +19,19 @@ describe("parent directory row", () => {
         listing,
       }).map((entry) => entry.name),
     ).toEqual(["..", "src", "README.md"]);
+  });
+
+  it("marks a synthetic parent row without treating it as real listing content", () => {
+    const rows = withParentDirectoryRow({
+      currentPath: "/home/user/project",
+      fileSearch: "",
+      listing: [],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(isParentDirectoryRow(rows[0])).toBe(true);
+    expect(hasRealListingRows(rows)).toBe(false);
+    expect(hasRealListingRows([...rows, { name: "README.md" }])).toBe(true);
   });
 
   it("does not add a parent row at filesystem root", () => {

@@ -26,6 +26,18 @@ export function parentDirectoryPath(path: string): string {
   return dirname(normalized) || "/";
 }
 
+export function isParentDirectoryRow(
+  entry: Pick<DirectoryListingEntry, "name">,
+): boolean {
+  return entry.name === "..";
+}
+
+export function hasRealListingRows(
+  listing: Pick<DirectoryListingEntry, "name">[],
+): boolean {
+  return listing.some((entry) => !isParentDirectoryRow(entry));
+}
+
 export function withParentDirectoryRow({
   currentPath,
   fileSearch,
@@ -38,7 +50,7 @@ export function withParentDirectoryRow({
   if (fileSearch.trim() !== "" || normalizeListingPath(currentPath) === "/") {
     return listing;
   }
-  if (listing.some((entry) => entry.name === "..")) {
+  if (listing.some(isParentDirectoryRow)) {
     return listing;
   }
   return [{ ...PARENT_DIRECTORY_ROW }, ...listing];
