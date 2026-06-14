@@ -31,6 +31,48 @@ async function makeTestAccountAdmin(account_id: string) {
   );
 }
 
+async function createResolverTestSiteLicense({
+  id,
+  name,
+  organization_name,
+}: {
+  id: string;
+  name: string;
+  organization_name: string;
+}) {
+  const pool = getPool("medium");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_licenses (
+      id UUID PRIMARY KEY,
+      name TEXT NOT NULL,
+      organization_name TEXT NOT NULL,
+      bay_id TEXT NOT NULL,
+      owner_account_id UUID,
+      allowed_domains TEXT[],
+      custom_terms_url TEXT,
+      custom_policy_url TEXT,
+      terms_version_label TEXT,
+      renewal_policy TEXT,
+      overage_policy TEXT,
+      starts_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      metadata JSONB,
+      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    `INSERT INTO site_licenses
+       (id, name, organization_name, bay_id, allowed_domains, created, updated)
+     VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       name=EXCLUDED.name,
+       organization_name=EXCLUDED.organization_name,
+       updated=NOW()`,
+    [id, name, organization_name, "test-bay", []],
+  );
+}
+
 describe("resolveMembershipForAccount", () => {
   const lowTier = `test-low-${uuid()}`;
   const highTier = `test-high-${uuid()}`;
@@ -189,6 +231,41 @@ describe("resolveMembershipForAccount", () => {
     expect(result.class).toBe(lowTier);
     expect(result.source).toBe("grant");
     expect(result.grant_source).toBe("student-pay");
+  });
+
+  it("uses the current site-license title for grant display metadata", async () => {
+    const account_id = uuid();
+    const site_license_id = uuid();
+    await createTestAccount(account_id);
+    await createResolverTestSiteLicense({
+      id: site_license_id,
+      name: "Summer CoCalc Trial",
+      organization_name: "Example University",
+    });
+    await createTestMembershipGrant(account_id, {
+      membership_class: lowTier,
+      source: "site-license",
+      metadata: {
+        organization_name: "Example University",
+        pool_name: "Researcher",
+        site_license_id,
+        site_license_name: "CoCalc Trial",
+      },
+    });
+
+    const details = await resolveMembershipDetailsForAccount(account_id);
+
+    expect(details.selected.site_license_name).toBe("Summer CoCalc Trial");
+    expect(details.selected.organization_name).toBe("Example University");
+    expect(
+      details.candidates.find(
+        (candidate) => candidate.grant_source === "site-license",
+      ),
+    ).toMatchObject({
+      organization_name: "Example University",
+      pool_name: "Researcher",
+      site_license_name: "Summer CoCalc Trial",
+    });
   });
 
   it("picks the highest priority tier across subscription and admin", async () => {

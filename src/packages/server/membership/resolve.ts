@@ -84,6 +84,8 @@ async function buildMembershipCandidates(
   ]);
 
   const candidates: MembershipCandidate[] = [];
+  const siteLicenseDisplayNames =
+    await getCurrentSiteLicenseDisplayNamesForGrants(grants);
 
   for (const sub of subResult.rows) {
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
@@ -139,6 +141,11 @@ async function buildMembershipCandidates(
     const tier =
       tiers[membershipClass] ??
       (await getMembershipTierById({ id: membershipClass }));
+    const siteLicenseId = getMetadataString(grant.metadata, "site_license_id");
+    const siteLicenseDisplayName =
+      siteLicenseId == null
+        ? undefined
+        : siteLicenseDisplayNames.get(siteLicenseId);
     candidates.push({
       class: membershipClass,
       source: "grant",
@@ -150,11 +157,51 @@ async function buildMembershipCandidates(
       grant_package_id: grant.package_id ?? undefined,
       grant_purchase_id: grant.purchase_id ?? undefined,
       pool_name: getMetadataString(grant.metadata, "pool_name"),
+      site_license_name:
+        siteLicenseDisplayName?.name ??
+        getMetadataString(grant.metadata, "site_license_name"),
+      organization_name:
+        siteLicenseDisplayName?.organization_name ??
+        getMetadataString(grant.metadata, "organization_name"),
       expires: grant.expires_at ? new Date(grant.expires_at) : undefined,
     });
   }
 
   return dedupeEquivalentAdminCandidates(candidates);
+}
+
+async function getCurrentSiteLicenseDisplayNamesForGrants(
+  grants: Awaited<ReturnType<typeof listActiveMembershipGrantsForAccount>>,
+): Promise<Map<string, { name?: string; organization_name?: string }>> {
+  const siteLicenseIds = Array.from(
+    new Set(
+      grants
+        .map((grant) => getMetadataString(grant.metadata, "site_license_id"))
+        .filter((siteLicenseId): siteLicenseId is string => !!siteLicenseId),
+    ),
+  );
+  if (siteLicenseIds.length === 0) {
+    return new Map();
+  }
+  const { rows } = await getPool("medium").query<{
+    id: string;
+    name?: string | null;
+    organization_name?: string | null;
+  }>(
+    `SELECT id::text AS id, name, organization_name
+       FROM site_licenses
+      WHERE id::text = ANY($1::text[])`,
+    [siteLicenseIds],
+  );
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        name: getMetadataString(row, "name"),
+        organization_name: getMetadataString(row, "organization_name"),
+      },
+    ]),
+  );
 }
 
 function getMetadataString(
@@ -296,6 +343,8 @@ function pickBestMembership(
       grant_package_id: best.grant_package_id,
       grant_purchase_id: best.grant_purchase_id,
       pool_name: best.pool_name,
+      site_license_name: best.site_license_name,
+      organization_name: best.organization_name,
       expires: best.expires,
     };
   }

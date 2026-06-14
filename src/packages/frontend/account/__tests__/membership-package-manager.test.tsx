@@ -1793,6 +1793,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
         reason: "domain-match",
         pool_name: "Students",
         pool_description: "Access for eligible example.edu users.",
+        site_license_name: "CoCalc Trial",
       },
     ]);
     claimMembershipPackageSeat.mockResolvedValue({
@@ -1822,6 +1823,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
         screen.getByText("Access for eligible example.edu users."),
       ).toBeTruthy();
     });
+    expect(screen.queryByText("CoCalc Trial")).toBeNull();
     expect(screen.queryByText("Member")).toBeNull();
     expect(
       screen.queryByText("Tier default description should not show."),
@@ -1984,7 +1986,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
       expect(screen.getByText("Student access for example.edu.")).toBeTruthy();
     });
     fireEvent.click(screen.getByRole("button", { name: "Release seat" }));
-    await screen.findByText("Release this seat?");
+    await screen.findByText("Release Students seat?");
     const releaseButtons = screen.getAllByText("Release seat");
     fireEvent.click(releaseButtons[releaseButtons.length - 1]);
 
@@ -2029,7 +2031,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel request" }));
-    await screen.findByText("Withdraw this request?");
+    await screen.findByText("Withdraw Instructors request?");
     fireEvent.click(screen.getByText("Withdraw request"));
 
     await waitFor(() => {

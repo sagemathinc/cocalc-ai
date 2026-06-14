@@ -314,7 +314,7 @@ describe("MembershipPage", () => {
             membership: "Researcher",
             note: "Ends June 4, 2027",
             selected: true,
-            source: "Site license",
+            source: "CoCalc Trial",
             sourceKind: "grant",
             state: "Active",
           },
@@ -348,6 +348,7 @@ describe("MembershipPage", () => {
     render(<MembershipPage />);
     await screen.findByText("Claim site license");
 
+    expect(screen.getByText("Researcher - CoCalc Trial")).toBeTruthy();
     expect(mockClaimableMembershipPackagesPanel.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ hasSiteLicenseMembership: true }),
     );

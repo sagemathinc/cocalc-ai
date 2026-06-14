@@ -2220,6 +2220,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "domain-match",
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          site_license_name: terms.name ?? null,
+          organization_name: terms.organization_name ?? null,
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(
@@ -2257,6 +2259,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "email-assignment",
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          site_license_name: terms.name ?? null,
+          organization_name: terms.organization_name ?? null,
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(
@@ -2334,6 +2338,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "domain-match",
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          site_license_name: terms.name ?? null,
+          organization_name: terms.organization_name ?? null,
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(

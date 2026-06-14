@@ -649,6 +649,14 @@ function ClaimablePoolSummary({
   return <Text type="secondary">{description}</Text>;
 }
 
+function getClaimablePoolDisplayName(
+  claimablePackage: ClaimableMembershipPackage,
+): string {
+  return (
+    `${claimablePackage.pool_name ?? ""}`.trim() || "Site license membership"
+  );
+}
+
 function getClaimableSeatStatus(
   claimablePackage: ClaimableMembershipPackage,
 ): NonNullable<ClaimableMembershipPackage["seat_status"]> {
@@ -1084,9 +1092,7 @@ export function ClaimableMembershipPackagesPanel({
       <Space vertical size="middle" style={{ width: "100%" }}>
         {claimables.map((claimablePackage) => {
           const seatStatus = getClaimableSeatStatus(claimablePackage);
-          const title =
-            `${claimablePackage.pool_name ?? ""}`.trim() ||
-            "Site license membership";
+          const title = getClaimablePoolDisplayName(claimablePackage);
           return (
             <Card
               key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
@@ -1108,7 +1114,7 @@ export function ClaimableMembershipPackagesPanel({
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   {seatStatus === "claimed" ? (
                     <Popconfirm
-                      title="Release this seat?"
+                      title={`Release ${title} seat?`}
                       description="This will remove this site-license membership from your account."
                       okText="Release seat"
                       okButtonProps={{ danger: true }}
@@ -1126,7 +1132,7 @@ export function ClaimableMembershipPackagesPanel({
                   ) : claimablePackage.requires_approval ? (
                     seatStatus === "pending" ? (
                       <Popconfirm
-                        title="Withdraw this request?"
+                        title={`Withdraw ${title} request?`}
                         description="This will remove your pending request for this site-license membership."
                         okText="Withdraw request"
                         okButtonProps={{ danger: true }}

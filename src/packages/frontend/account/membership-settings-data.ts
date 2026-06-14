@@ -212,15 +212,24 @@ function membershipName(
 
 function membershipSourceLabel({
   grant_source,
+  organization_name,
+  site_license_name,
   source,
 }: {
   grant_source?: string;
+  organization_name?: string | null;
+  site_license_name?: string | null;
   source: "subscription" | "admin" | "grant";
 }) {
   if (source === "subscription") return "Personal";
   if (source === "admin") return "Admin assigned";
   if (grant_source === "team-seat") return "Team license";
-  if (grant_source === "site-license") return "Site license";
+  if (grant_source === "site-license") {
+    return (
+      siteLicenseDisplayName({ organization_name, site_license_name }) ??
+      "Site license"
+    );
+  }
   if (grant_source?.includes("course")) return "Course membership";
   return "Granted";
 }
@@ -300,10 +309,22 @@ function claimablePackageRequestRow(
     note: "Awaiting manager approval",
     priority: tierById[claimablePackage.membership_class]?.priority ?? 0,
     selected: false,
-    source: "Site license",
+    source: siteLicenseDisplayName(claimablePackage) ?? "Site license",
     sourceKind: "site-request",
     state: "Pending approval",
   };
+}
+
+function siteLicenseDisplayName({
+  organization_name,
+  site_license_name,
+}: {
+  organization_name?: string | null;
+  site_license_name?: string | null;
+}): string | undefined {
+  const title = `${site_license_name ?? ""}`.trim();
+  const organization = `${organization_name ?? ""}`.trim();
+  return title || organization || undefined;
 }
 
 function startsInFuture(value?: Date | string): boolean {
@@ -331,7 +352,7 @@ function membershipSourceOrder(row: MembershipCandidateRow): number {
     case "site-request":
       return 1;
     case "grant":
-      return row.source === "Site license" ? 1 : 2;
+      return row.action === "site-license" ? 1 : 2;
     case "admin":
       return 3;
   }

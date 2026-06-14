@@ -110,6 +110,8 @@ function MembershipSettingsContent() {
   >(undefined);
   const [siteLicenseManageOpen, setSiteLicenseManageOpen] =
     useState<boolean>(false);
+  const [siteLicenseManageSource, setSiteLicenseManageSource] =
+    useState<string>("site-license");
   const [siteLicenseRefreshToken, setSiteLicenseRefreshToken] =
     useState<number>(0);
 
@@ -236,7 +238,12 @@ function MembershipSettingsContent() {
                     }
                     if (row.action === "site-license") {
                       return (
-                        <Button onClick={() => setSiteLicenseManageOpen(true)}>
+                        <Button
+                          onClick={() => {
+                            setSiteLicenseManageSource(row.source);
+                            setSiteLicenseManageOpen(true);
+                          }}
+                        >
                           Manage
                         </Button>
                       );
@@ -283,7 +290,7 @@ function MembershipSettingsContent() {
 
       <Modal
         open={siteLicenseManageOpen}
-        title="Manage site-license membership"
+        title={`Manage ${siteLicenseManageSource} membership`}
         footer={null}
         onCancel={() => setSiteLicenseManageOpen(false)}
         destroyOnHidden
@@ -378,12 +385,26 @@ function effectiveMembershipSourceLabel(
     return "Team license";
   }
   if (membership.grant_source === "site-license") {
-    return "Site license";
+    return (
+      siteLicenseDisplayName(
+        membership.site_license_name,
+        membership.organization_name,
+      ) ?? "Site license"
+    );
   }
   if (membership.grant_source?.includes("course")) {
     return "Course membership";
   }
   return "Granted";
+}
+
+function siteLicenseDisplayName(
+  siteLicenseName?: string | null,
+  organizationName?: string | null,
+): string | undefined {
+  const title = `${siteLicenseName ?? ""}`.trim();
+  const organization = `${organizationName ?? ""}`.trim();
+  return title || organization || undefined;
 }
 
 function personalMembershipPriceLabel(
