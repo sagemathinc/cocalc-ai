@@ -7,9 +7,14 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
+import http from "node:http";
+import https from "node:https";
 import { homedir } from "node:os";
 import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { Command } from "commander";
+
+import { buildCookieHeader } from "../../core/auth-cookies";
+import { applyAuthProfile, loadAuthConfig } from "../../core/auth-config";
 
 type DeployScope = "static" | "bay" | "hosts" | "all";
 type ReleaseBuildKind = "bay-runtime" | "bay-static" | "project-host-software";
@@ -94,6 +99,19 @@ type ReleaseBuildOptions = {
   dryRun?: boolean;
 };
 
+type HealthHostRoutesOptions = {
+  cluster?: string;
+  config?: string;
+  api?: string;
+  cookie?: string;
+  cli?: string;
+  workers?: string;
+  hostLimit?: string;
+  allHosts?: boolean;
+  rpcTimeout?: string;
+  requestTimeoutMs?: string;
+};
+
 type ReleaseBuildPlan = {
   kind: ReleaseBuildKind;
   command: string;
@@ -113,6 +131,30 @@ type ReleaseBuildSummary = ReleaseBuildPlan & {
   git_commit?: string;
   git_branch?: string;
   git_dirty?: boolean;
+};
+
+type FrontdoorWorker = {
+  id: number;
+  healthy?: boolean;
+  drained?: boolean;
+};
+
+type HostRouteProbe = {
+  worker_id: number;
+  host_id: string;
+  host_name?: string;
+  ok: boolean;
+  ms: number;
+  error?: string;
+};
+
+type HostRouteHealthResult = {
+  ok: boolean;
+  api: string;
+  checked_at: string;
+  workers: number[];
+  hosts: Array<{ host_id: string; name?: string; status?: string }>;
+  probes: HostRouteProbe[];
 };
 
 export type RocketCommandDeps = {
@@ -142,6 +184,10 @@ export function registerRocketCommand(
   const release = rocket
     .command("release")
     .description("Rocket release artifact operations");
+
+  const health = rocket
+    .command("health")
+    .description("Rocket production health checks");
 
   release
     .command("build")
@@ -186,6 +232,58 @@ export function registerRocketCommand(
       const summary = await summarizeReleaseBuild(plan);
       printReleaseBuildSummary(summary, globals);
     });
+
+  health
+    .command("host-routes [cluster]")
+    .description(
+      "verify every bay frontdoor hub worker can route to each online project-host API",
+    )
+    .option("--cluster <name>", "cluster name from rocket config")
+    .option("--config <path>", "rocket config path")
+    .option("--api <url>", "site API URL")
+    .option("--cookie <header>", "cookie header for CLI auth")
+    .option("--cli <path>", "local cocalc CLI path")
+    .option(
+      "--workers <ids>",
+      "comma-separated frontdoor worker ids; default: discover from frontdoor health",
+    )
+    .option("--host-limit <n>", "maximum hosts to probe", "100")
+    .option(
+      "--all-hosts",
+      "probe all listed hosts instead of only online hosts",
+    )
+    .option("--rpc-timeout <duration>", "per host CLI RPC timeout", "10s")
+    .option("--request-timeout-ms <n>", "HTTP/CLI probe timeout in ms", "30000")
+    .action(
+      async (
+        clusterArg: string | undefined,
+        opts: HealthHostRoutesOptions,
+        command: Command,
+      ) => {
+        const globals = command.optsWithGlobals() as Record<string, any>;
+        const rocketOpts = command.parent?.parent?.opts() as
+          | Record<string, any>
+          | undefined;
+        const result = await runHostRouteHealth({
+          clusterArg,
+          opts: {
+            ...opts,
+            config:
+              opts.config ??
+              stringOption(command.parent?.opts()?.config) ??
+              stringOption(rocketOpts?.config),
+            api: opts.api ?? stringOption(globals.api),
+            cookie: opts.cookie ?? stringOption(globals.cookie),
+          },
+          globals,
+          deps,
+        });
+        printHostRouteHealthResult(result, globals);
+        if (!result.ok) {
+          process.exitCode = 1;
+        }
+      },
+    );
 
   rocket
     .command("deploy [cluster]")
@@ -346,6 +444,475 @@ function mergeGlobalDeployOptions(
     api: opts.api ?? stringOption(globals.api),
     cookie: opts.cookie ?? stringOption(globals.cookie),
   };
+}
+
+async function runHostRouteHealth({
+  clusterArg,
+  opts,
+  globals,
+  deps,
+}: {
+  clusterArg?: string;
+  opts: HealthHostRoutesOptions;
+  globals: Record<string, any>;
+  deps: RocketCommandDeps;
+}): Promise<HostRouteHealthResult> {
+  const env = deps.env ?? process.env;
+  const configPath = resolveConfigPath(opts.config, env);
+  const config = configPath ? readRocketConfig(configPath) : {};
+  const clusterName = resolveClusterName(clusterArg, opts.cluster, config);
+  const cluster = clusterName ? config.clusters?.[clusterName] : undefined;
+  if (clusterName && configPath && !cluster) {
+    throw new Error(`cluster '${clusterName}' not found in ${configPath}`);
+  }
+
+  const cwd = deps.cwd ?? process.cwd();
+  const srcRoot = findSrcRoot(cwd);
+  const api =
+    stringOption(opts.api) ??
+    stringOption(cluster?.hub_url) ??
+    stringOption(cluster?.api);
+  if (!api) {
+    throw new Error(
+      "Rocket host route health requires --api or clusters.<name>.hub_url",
+    );
+  }
+  const cliPath = expandPath(
+    stringOption(opts.cli) ??
+      cluster?.deployment?.cli ??
+      join(srcRoot, "packages", "cli", "dist", "bin", "cocalc.js"),
+  );
+  if (!existsSync(cliPath)) {
+    throw new Error(`cocalc CLI not found: ${cliPath}`);
+  }
+
+  const requestTimeoutMs =
+    parsePositiveIntegerOption(opts.requestTimeoutMs, "--request-timeout-ms") ??
+    30_000;
+  const hostLimit =
+    parsePositiveIntegerOption(opts.hostLimit, "--host-limit") ?? 100;
+  const authCookie = resolveAuthCookieForHealth({
+    api,
+    opts,
+    globals,
+    env,
+  });
+  const workers =
+    parseWorkerIds(opts.workers) ??
+    (await discoverFrontdoorWorkerIds({ api, requestTimeoutMs }));
+  const affinityCookies = await collectFrontdoorAffinityCookies({
+    api,
+    workers,
+    requestTimeoutMs,
+  });
+  const hosts = await listHostsForRouteHealth({
+    cliPath,
+    api,
+    authCookie,
+    hostLimit,
+    allHosts: opts.allHosts === true,
+    requestTimeoutMs,
+  });
+  const probes: HostRouteProbe[] = [];
+  for (const workerId of workers) {
+    const affinityCookie = affinityCookies.get(workerId);
+    if (!affinityCookie) {
+      for (const host of hosts) {
+        probes.push({
+          worker_id: workerId,
+          host_id: host.host_id,
+          host_name: host.name,
+          ok: false,
+          ms: 0,
+          error: "failed to obtain signed frontdoor affinity cookie",
+        });
+      }
+      continue;
+    }
+    for (const host of hosts) {
+      probes.push(
+        runHostRouteProbe({
+          cliPath,
+          api,
+          authCookie,
+          affinityCookie,
+          workerId,
+          host,
+          rpcTimeout: stringOption(opts.rpcTimeout) ?? "10s",
+          requestTimeoutMs,
+        }),
+      );
+    }
+  }
+  return {
+    ok: probes.every((probe) => probe.ok),
+    api,
+    checked_at: new Date().toISOString(),
+    workers,
+    hosts,
+    probes,
+  };
+}
+
+function resolveAuthCookieForHealth({
+  api,
+  opts,
+  globals,
+  env,
+}: {
+  api: string;
+  opts: HealthHostRoutesOptions;
+  globals: Record<string, any>;
+  env: NodeJS.ProcessEnv;
+}): string {
+  const config = loadAuthConfig();
+  const applied = applyAuthProfile(
+    {
+      profile: stringOption(globals.profile),
+      api,
+      cookie: stringOption(opts.cookie) ?? stringOption(globals.cookie),
+      apiKey: stringOption(globals.apiKey),
+      bearer: stringOption(globals.bearer),
+      hubPassword: stringOption(globals.hubPassword),
+      accountId: stringOption(globals.accountId),
+      account_id: stringOption(globals.account_id),
+      disableEnvAuthDefaults: globals.disableEnvAuthDefaults === true,
+    },
+    config,
+    env,
+  );
+  const cookie = buildCookieHeader(api, applied.globals, {}, env);
+  if (!cookie) {
+    throw new Error(
+      "Rocket host route health requires cookie-compatible CLI auth; run `cocalc --api <url> auth login` or pass --cookie",
+    );
+  }
+  return cookie;
+}
+
+function parseWorkerIds(value: string | undefined): number[] | undefined {
+  const text = stringOption(value);
+  if (!text) return undefined;
+  const ids = text.split(",").map((part) => Number.parseInt(part.trim(), 10));
+  if (ids.length === 0 || ids.some((id) => !Number.isInteger(id) || id <= 0)) {
+    throw new Error("--workers must be a comma-separated list of positive ids");
+  }
+  return Array.from(new Set(ids)).sort((a, b) => a - b);
+}
+
+async function discoverFrontdoorWorkerIds({
+  api,
+  requestTimeoutMs,
+}: {
+  api: string;
+  requestTimeoutMs: number;
+}): Promise<number[]> {
+  let payload: any;
+  try {
+    payload = await requestJson({
+      url: new URL("/_cocalc/frontdoor/healthz", api),
+      requestTimeoutMs,
+    });
+  } catch (err) {
+    throw new Error(
+      `frontdoor health endpoint is unavailable at ${api}; this site may not be using the bay frontdoor yet, or pass --workers explicitly: ${(err as Error).message}`,
+    );
+  }
+  const workers = Array.isArray(payload?.workers)
+    ? (payload.workers as FrontdoorWorker[])
+        .filter((worker) => worker.healthy !== false && worker.drained !== true)
+        .map((worker) => worker.id)
+    : [];
+  if (workers.length === 0) {
+    throw new Error("frontdoor health returned no healthy, undrained workers");
+  }
+  return workers.sort((a, b) => a - b);
+}
+
+async function collectFrontdoorAffinityCookies({
+  api,
+  workers,
+  requestTimeoutMs,
+}: {
+  api: string;
+  workers: number[];
+  requestTimeoutMs: number;
+}): Promise<Map<number, string>> {
+  const wanted = new Set(workers);
+  const cookies = new Map<number, string>();
+  const maxAttempts = Math.max(12, workers.length * 8);
+  for (
+    let attempt = 0;
+    attempt < maxAttempts && cookies.size < wanted.size;
+    attempt++
+  ) {
+    const setCookies = await requestSetCookies({
+      url: new URL(`/?_cocalc_frontdoor_probe=${Date.now()}-${attempt}`, api),
+      requestTimeoutMs,
+    });
+    const parsed = parseFrontdoorAffinityCookie(setCookies);
+    if (parsed && wanted.has(parsed.workerId)) {
+      cookies.set(parsed.workerId, parsed.cookie);
+    }
+  }
+  return cookies;
+}
+
+function parseFrontdoorAffinityCookie(
+  setCookies: string[],
+): { workerId: number; cookie: string } | undefined {
+  for (const header of setCookies) {
+    const cookie = header.split(";", 1)[0]?.trim();
+    const prefix = "cocalc_bay_frontdoor_worker=";
+    if (!cookie?.startsWith(prefix)) {
+      continue;
+    }
+    const value = cookie.slice(prefix.length);
+    const workerId = Number.parseInt(value.split(".", 1)[0] ?? "", 10);
+    if (Number.isInteger(workerId) && workerId > 0) {
+      return { workerId, cookie };
+    }
+  }
+  return undefined;
+}
+
+async function listHostsForRouteHealth({
+  cliPath,
+  api,
+  authCookie,
+  hostLimit,
+  allHosts,
+  requestTimeoutMs,
+}: {
+  cliPath: string;
+  api: string;
+  authCookie: string;
+  hostLimit: number;
+  allHosts: boolean;
+  requestTimeoutMs: number;
+}): Promise<Array<{ host_id: string; name?: string; status?: string }>> {
+  const result = spawnSync(
+    cliPath,
+    [
+      "--api",
+      api,
+      "--disable-env-auth-defaults",
+      "--cookie",
+      authCookie,
+      "--output",
+      "json",
+      "host",
+      "list",
+      "--admin-view",
+      "--limit",
+      `${hostLimit}`,
+    ],
+    {
+      encoding: "utf8",
+      timeout: requestTimeoutMs,
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `host list failed: ${trimCommandOutput(result.stderr || result.stdout)}`,
+    );
+  }
+  const rows = normalizeCliDataArray(result.stdout, "host list");
+  return rows
+    .map((row) => ({
+      host_id: `${row.host_id ?? row.id ?? ""}`.trim(),
+      name: stringOption(row.name),
+      status: stringOption(row.status),
+    }))
+    .filter(
+      (row) =>
+        row.host_id &&
+        (allHosts || row.status === "online" || row.status === "running"),
+    );
+}
+
+function runHostRouteProbe({
+  cliPath,
+  api,
+  authCookie,
+  affinityCookie,
+  workerId,
+  host,
+  rpcTimeout,
+  requestTimeoutMs,
+}: {
+  cliPath: string;
+  api: string;
+  authCookie: string;
+  affinityCookie: string;
+  workerId: number;
+  host: { host_id: string; name?: string };
+  rpcTimeout: string;
+  requestTimeoutMs: number;
+}): HostRouteProbe {
+  const started = Date.now();
+  const cookie = appendCookieHeader(authCookie, affinityCookie);
+  const result = spawnSync(
+    cliPath,
+    [
+      "--api",
+      api,
+      "--disable-env-auth-defaults",
+      "--cookie",
+      cookie,
+      "--rpc-timeout",
+      rpcTimeout,
+      "--timeout",
+      `${Math.max(1, Math.ceil(requestTimeoutMs / 1000))}s`,
+      "--output",
+      "json",
+      "host",
+      "get",
+      host.host_id,
+    ],
+    {
+      encoding: "utf8",
+      timeout: requestTimeoutMs + 2_000,
+    },
+  );
+  const ms = Date.now() - started;
+  const output = trimCommandOutput(result.stderr || result.stdout);
+  if (result.error) {
+    return {
+      worker_id: workerId,
+      host_id: host.host_id,
+      host_name: host.name,
+      ok: false,
+      ms,
+      error: result.error.message,
+    };
+  }
+  if (result.status !== 0) {
+    return {
+      worker_id: workerId,
+      host_id: host.host_id,
+      host_name: host.name,
+      ok: false,
+      ms,
+      error: output || `exit status ${result.status}`,
+    };
+  }
+  try {
+    const parsed = JSON.parse(result.stdout);
+    if (parsed?.ok === false) {
+      return {
+        worker_id: workerId,
+        host_id: host.host_id,
+        host_name: host.name,
+        ok: false,
+        ms,
+        error:
+          `${parsed?.error?.message ?? parsed?.error ?? "host get failed"}`.trim(),
+      };
+    }
+  } catch {
+    // The exit status is authoritative; tolerate non-JSON wrappers from older CLIs.
+  }
+  return {
+    worker_id: workerId,
+    host_id: host.host_id,
+    host_name: host.name,
+    ok: true,
+    ms,
+  };
+}
+
+function appendCookieHeader(base: string, extra: string): string {
+  const parts = [base.trim(), extra.trim()].filter(Boolean);
+  return parts.join("; ");
+}
+
+function normalizeCliDataArray(stdout: string, label: string): any[] {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(
+      `${label} returned invalid JSON: ${(err as Error).message}`,
+    );
+  }
+  if (parsed?.ok === false) {
+    throw new Error(
+      `${label} failed: ${parsed?.error?.message ?? "unknown error"}`,
+    );
+  }
+  const data = parsed?.data ?? parsed;
+  if (!Array.isArray(data)) {
+    throw new Error(`${label} did not return an array`);
+  }
+  return data;
+}
+
+function trimCommandOutput(output: string): string {
+  return output.trim().split(/\r?\n/).slice(-8).join("\n");
+}
+
+function requestJson({
+  url,
+  requestTimeoutMs,
+}: {
+  url: URL;
+  requestTimeoutMs: number;
+}): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const req = requestModule(url).request(
+      url,
+      { method: "GET", timeout: requestTimeoutMs },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          if ((res.statusCode ?? 0) < 200 || (res.statusCode ?? 0) >= 300) {
+            reject(new Error(`HTTP ${res.statusCode}: ${text.slice(0, 200)}`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(text));
+          } catch (err) {
+            reject(new Error(`invalid JSON: ${(err as Error).message}`));
+          }
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error("request timeout")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+function requestSetCookies({
+  url,
+  requestTimeoutMs,
+}: {
+  url: URL;
+  requestTimeoutMs: number;
+}): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const req = requestModule(url).request(
+      url,
+      { method: "HEAD", timeout: requestTimeoutMs },
+      (res) => {
+        res.resume();
+        const cookies = res.headers["set-cookie"] ?? [];
+        resolve(Array.isArray(cookies) ? cookies : [cookies]);
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error("request timeout")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+function requestModule(url: URL) {
+  if (url.protocol === "http:") return http;
+  if (url.protocol === "https:") return https;
+  throw new Error(`unsupported URL protocol: ${url.protocol}`);
 }
 
 function buildDeployPlan({
@@ -1006,6 +1573,33 @@ function redactArgs(args: string[]): string[] {
     }
   }
   return redacted;
+}
+
+function printHostRouteHealthResult(
+  result: HostRouteHealthResult,
+  globals: Record<string, any>,
+) {
+  if (globals.json || globals.output === "json") {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log("Rocket host route health");
+  console.log(`api: ${result.api}`);
+  console.log(`workers: ${result.workers.join(", ") || "(none)"}`);
+  console.log(`hosts: ${result.hosts.length}`);
+  console.log(`ok: ${result.ok ? "yes" : "no"}`);
+  console.log("");
+  for (const probe of result.probes) {
+    const host = probe.host_name
+      ? `${probe.host_name} (${probe.host_id})`
+      : probe.host_id;
+    const status = probe.ok ? "ok" : "FAIL";
+    console.log(
+      `worker ${probe.worker_id} -> ${host}: ${status} ${probe.ms}ms${
+        probe.error ? ` - ${probe.error}` : ""
+      }`,
+    );
+  }
 }
 
 function printDeployPlan(plan: CommandPlan, globals: Record<string, any>) {
