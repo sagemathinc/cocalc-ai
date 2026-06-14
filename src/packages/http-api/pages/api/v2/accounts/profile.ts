@@ -10,6 +10,8 @@ import getProfile from "@cocalc/server/accounts/profile/get";
 import getPrivateProfile from "@cocalc/server/accounts/profile/private";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { requireApiKeyCapability } from "@cocalc/server/api/api-key-scope";
+import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
   AccountProfileInputSchema,
@@ -30,11 +32,22 @@ async function handle(req, res) {
 }
 
 async function getPrivate(req, noCache) {
-  const account_id = await getAccountId(req, { noCache });
+  const account_id = req.header("Authorization")
+    ? await getPrivateAccountIdFromApiKey(req)
+    : await getAccountId(req, { noCache });
   if (account_id == null) {
     return {};
   }
   return await getPrivateProfile(account_id, noCache);
+}
+
+async function getPrivateAccountIdFromApiKey(req): Promise<string | undefined> {
+  const principal = await getAccountFromApiKey(req);
+  if (!principal?.account_id) {
+    return;
+  }
+  requireApiKeyCapability(principal, "account:read");
+  return principal.account_id;
 }
 
 export default apiRoute({

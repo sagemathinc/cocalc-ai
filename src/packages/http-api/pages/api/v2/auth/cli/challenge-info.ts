@@ -10,6 +10,9 @@ import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 
 export default async function cliChallengeInfo(req, res) {
   try {
+    if (req.header("Authorization")) {
+      throw Error("API keys are not allowed to use CLI auth challenge context");
+    }
     const { challenge_id } = getParams(req);
     const info = await getCliAuthApprovalInfo({
       challenge_id: `${challenge_id ?? ""}`,
