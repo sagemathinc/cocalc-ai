@@ -993,20 +993,25 @@ export default function DiskUsage({
       style={{
         ...style,
         alignItems: "center",
-        display: "flex",
-        gap: compact ? "8px" : "10px",
-        height: "auto",
+        display: "inline-flex",
+        gap: compact ? "6px" : "8px",
+        height: compact ? "28px" : "32px",
         justifyContent: "flex-start",
-        padding: compact ? "4px 8px" : "6px 10px",
+        lineHeight: 1,
+        padding: compact ? "2px 8px" : "4px 10px",
         textAlign: "left",
       }}
     >
       <Icon name="disk-round" />
-      <Space size={compact ? 8 : 10} wrap={false}>
+      <Space size={compact ? 6 : 8} wrap={false} style={{ lineHeight: 1 }}>
         {quota != null ? (
           <>
             <Progress
-              style={{ width: compact ? "52px" : "60px", marginBottom: 0 }}
+              style={{
+                width: compact ? "52px" : "60px",
+                marginBottom: 0,
+                lineHeight: 1,
+              }}
               percent={percent}
               status={quotaStatus}
               showInfo={false}

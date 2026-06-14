@@ -40,9 +40,11 @@ import {
 } from "@cocalc/frontend/project/explorer/refresh-button";
 
 const ROW_INFO_STYLE = {
+  alignItems: "center",
   color: COLORS.TAB,
-  height: "22px",
-  margin: "5px 3px",
+  display: "inline-flex",
+  minHeight: "32px",
+  margin: "0 3px",
 } as const;
 
 interface Props {
@@ -558,11 +560,24 @@ function ActionBarEnabled({
     return null;
   }
   return (
-    <div style={{ flex: "1 0 auto" }}>
-      <div style={{ flex: "1 0 auto", whiteSpace: "nowrap", padding: 0 }}>
-        {buttonArea}
-      </div>
-      <div style={{ flex: "1 0 auto" }}>{selectedInfo}</div>
+    <div
+      style={{
+        alignItems: "center",
+        display: "flex",
+        flex: "1 0 auto",
+        flexWrap: "wrap",
+        gap: "8px",
+        minHeight: "32px",
+      }}
+    >
+      {buttonArea != null ? (
+        <div style={{ flex: "0 0 auto", whiteSpace: "nowrap", padding: 0 }}>
+          {buttonArea}
+        </div>
+      ) : null}
+      {selectedInfo != null ? (
+        <div style={{ flex: "0 1 auto", minWidth: 0 }}>{selectedInfo}</div>
+      ) : null}
       <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
