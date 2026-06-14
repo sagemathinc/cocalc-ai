@@ -1336,6 +1336,7 @@ function MaybeFileUploadWrapper({
       dest_path={dest_path}
       config={{ clickable: ".upload-button" }}
       event_handlers={{
+        addedfile: onUploadActivity,
         sending: onUploadActivity,
         complete: onUploadActivity,
       }}
