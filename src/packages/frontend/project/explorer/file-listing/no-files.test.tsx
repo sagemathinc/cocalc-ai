@@ -24,6 +24,10 @@ jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: any) => <span data-icon={name} />,
 }));
 
+jest.mock("@cocalc/frontend/project/home-directory", () => ({
+  getProjectHomeDirectory: () => "/home/user",
+}));
+
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getProjectActions: jest.fn(),
@@ -49,14 +53,35 @@ describe("NoFiles", () => {
 
   it("shows a polished first-run empty-state with direct actions", () => {
     render(
-      <NoFiles project_id="project-1" current_path="/tmp" file_search="" />,
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
     );
 
     expect(screen.getByText("Welcome to your project")).not.toBeNull();
     expect(screen.getByText("Jupyter Notebook")).not.toBeNull();
     expect(screen.getByText("Chat with AI")).not.toBeNull();
     expect(screen.getByText("Upload Files")).not.toBeNull();
-    expect(screen.getByText("Browse templates and file types")).not.toBeNull();
+    expect(screen.getByText("Browse file types")).not.toBeNull();
+    expect(screen.getByText("Upload Files").closest("button")).toHaveClass(
+      "upload-button",
+    );
+  });
+
+  it("uses a compact empty-folder state away from project home", () => {
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user/subfolder"
+        file_search=""
+      />,
+    );
+
+    expect(screen.getByText("This folder is empty.")).not.toBeNull();
+    expect(screen.getByText("+New")).not.toBeNull();
+    expect(screen.queryByText("Welcome to your project")).toBeNull();
   });
 
   it("hides the AI chat action when project AI policy disables agents", () => {
@@ -65,7 +90,11 @@ describe("NoFiles", () => {
     });
 
     render(
-      <NoFiles project_id="project-1" current_path="/tmp" file_search="" />,
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
     );
 
     expect(screen.queryByText("Chat with AI")).toBeNull();
@@ -101,11 +130,15 @@ describe("NoFiles", () => {
     });
 
     render(
-      <NoFiles project_id="project-1" current_path="/tmp" file_search="" />,
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
     );
-    fireEvent.click(screen.getByText("Browse templates and file types"));
+    fireEvent.click(screen.getByText("Browse file types"));
 
-    expect(setCurrentPath).toHaveBeenCalledWith("/tmp");
+    expect(setCurrentPath).toHaveBeenCalledWith("/home/user");
     expect(setActiveTab).toHaveBeenCalledWith("new");
   });
 
@@ -121,11 +154,15 @@ describe("NoFiles", () => {
     });
 
     render(
-      <NoFiles project_id="project-1" current_path="/tmp" file_search="" />,
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
     );
     fireEvent.click(screen.getByText("Jupyter Notebook"));
 
-    expect(setCurrentPath).toHaveBeenCalledWith("/tmp");
+    expect(setCurrentPath).toHaveBeenCalledWith("/home/user");
     expect(askFilename).toHaveBeenCalledWith("ipynb");
   });
 

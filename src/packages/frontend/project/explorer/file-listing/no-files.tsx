@@ -7,8 +7,10 @@ import { Alert, Button, Space } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { NEW_FILETYPE_ICONS } from "@cocalc/frontend/project/new/consts";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
 
 interface Props {
@@ -103,6 +105,26 @@ export default function NoFiles({
             <Button size="small" onClick={() => actions?.set_file_search("")}>
               Clear filter
             </Button>
+            <Button size="small" type="primary" onClick={openNewPage}>
+              +New
+            </Button>
+          </Space>
+        }
+      />
+    );
+  }
+  if (
+    normalizeAbsolutePath(current_path) !==
+    normalizeAbsolutePath(getProjectHomeDirectory(project_id))
+  ) {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        style={{ margin: "8px 16px 0 16px" }}
+        title="This folder is empty."
+        description={
+          <Space wrap style={{ marginTop: 8 }}>
             <Button size="small" type="primary" onClick={openNewPage}>
               +New
             </Button>
@@ -311,10 +333,10 @@ function EmptyDirectoryWelcome({
         }}
       >
         <span style={{ color: COLORS.GRAY_M }}>
-          Prefer the full launcher with templates and more file types?
+          Prefer the full launcher with more file types?
         </span>
         <Button type="primary" onClick={openNewPage}>
-          Browse templates and file types
+          Browse file types
         </Button>
       </div>
     </div>
