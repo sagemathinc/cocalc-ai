@@ -670,7 +670,9 @@ describe("PublicHomeApp", () => {
     });
     expect(within(continuityCues).getByText("Continuity cues")).not.toBeNull();
     expect(
-      within(continuityCues).getByText("What carries forward"),
+      within(continuityCues).getByText(
+        "What carries forward before the next step",
+      ),
     ).not.toBeNull();
     expect(within(continuityCues).getByText("Project context")).not.toBeNull();
     expect(within(continuityCues).getByText("Execution trail")).not.toBeNull();
@@ -696,13 +698,6 @@ describe("PublicHomeApp", () => {
         "Snapshots and TimeTravel keep earlier states available when work changes.",
       ),
     ).not.toBeNull();
-    const reviewAnchors = within(projectPreview).getByRole("group", {
-      name: "CoCalc.ai review anchors",
-    });
-    expect(within(reviewAnchors).getByText("Review anchors")).not.toBeNull();
-    expect(
-      within(reviewAnchors).getByText("Check what changed before continuing."),
-    ).not.toBeNull();
     for (const anchor of [
       "File state",
       "Runtime output",
@@ -713,8 +708,19 @@ describe("PublicHomeApp", () => {
       "Codex turns and chat keep the reason for a change nearby.",
       "Snapshots and TimeTravel give a prior state to compare against.",
     ]) {
-      expect(within(reviewAnchors).getByText(anchor)).not.toBeNull();
+      expect(within(continuityCues).getByText(anchor)).not.toBeNull();
     }
+    expect(
+      within(projectPreview).queryByRole("group", {
+        name: "CoCalc.ai review anchors",
+      }),
+    ).toBeNull();
+    expect(within(projectPreview).queryByText("Review anchors")).toBeNull();
+    expect(
+      within(projectPreview).queryByText(
+        "Check what changed before continuing.",
+      ),
+    ).toBeNull();
     expect(
       within(projectPreview).queryByRole("group", {
         name: "CoCalc.ai workspace record",

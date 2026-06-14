@@ -490,6 +490,8 @@ const WORKSPACE_PREVIEW_CONTINUITY = [
       "Files, notebooks, data, prompts, and notes stay in one inspectable project.",
     icon: "files",
     label: "Project context",
+    review: "Code, notebooks, data, and notes are visible before continuing.",
+    reviewLabel: "File state",
   },
   {
     accent: COLORS.RUN,
@@ -497,6 +499,9 @@ const WORKSPACE_PREVIEW_CONTINUITY = [
       "Notebook output and terminal sessions remain near the code that produced them.",
     icon: "terminal",
     label: "Execution trail",
+    review:
+      "Notebook output and terminal logs stay near the files that produced them.",
+    reviewLabel: "Runtime output",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
@@ -504,6 +509,8 @@ const WORKSPACE_PREVIEW_CONTINUITY = [
       "Chat, Codex turns, and review notes preserve why changes were made.",
     icon: "robot",
     label: "Decision trail",
+    review: "Codex turns and chat keep the reason for a change nearby.",
+    reviewLabel: "Agent notes",
   },
   {
     accent: PUBLIC_COLORS.warning,
@@ -511,44 +518,16 @@ const WORKSPACE_PREVIEW_CONTINUITY = [
       "Snapshots and TimeTravel keep earlier states available when work changes.",
     icon: "history",
     label: "Recovery trail",
+    review: "Snapshots and TimeTravel give a prior state to compare against.",
+    reviewLabel: "Recovery point",
   },
 ] satisfies {
   accent: string;
   detail: string;
   icon: IconName;
   label: string;
-}[];
-const WORKSPACE_REVIEW_ANCHORS = [
-  {
-    accent: COLORS.BLUE_D,
-    detail: "Code, notebooks, data, and notes are visible before continuing.",
-    icon: "files",
-    label: "File state",
-  },
-  {
-    accent: COLORS.RUN,
-    detail:
-      "Notebook output and terminal logs stay near the files that produced them.",
-    icon: "terminal",
-    label: "Runtime output",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    detail: "Codex turns and chat keep the reason for a change nearby.",
-    icon: "robot",
-    label: "Agent notes",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    detail: "Snapshots and TimeTravel give a prior state to compare against.",
-    icon: "disk-snapshot",
-    label: "Recovery point",
-  },
-] satisfies {
-  accent: string;
-  detail: string;
-  icon: IconName;
-  label: string;
+  review: string;
+  reviewLabel: string;
 }[];
 const WORKSPACE_PREVIEW_FLOW = [
   {
@@ -1925,7 +1904,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
               fontSize: 12,
             }}
           >
-            What carries forward
+            What carries forward before the next step
           </Text>
         </Flex>
         <div
@@ -1949,7 +1928,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
                 display: "grid",
                 gap: 8,
                 gridTemplateColumns: "28px minmax(0, 1fr)",
-                minHeight: 118,
+                minHeight: 156,
                 padding: 10,
               }}
             >
@@ -1983,80 +1962,17 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
                 >
                   {item.detail}
                 </Text>
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div
-        aria-label="CoCalc.ai review anchors"
-        role="group"
-        style={{
-          background: alpha(PUBLIC_COLORS.surface, 0.1),
-          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)}`,
-          borderRadius: PANEL_RADIUS,
-          marginTop: 14,
-          padding: 14,
-        }}
-      >
-        <Flex align="baseline" justify="space-between" wrap gap={8}>
-          <Text strong style={{ color: PUBLIC_COLORS.surface }}>
-            Review anchors
-          </Text>
-          <Text
-            style={{
-              color: alpha(PUBLIC_COLORS.surface, 0.68),
-              fontSize: 12,
-            }}
-          >
-            Check what changed before continuing.
-          </Text>
-        </Flex>
-        <div
-          style={{
-            display: "grid",
-            gap: 8,
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 156px), 1fr))",
-            marginTop: 10,
-          }}
-        >
-          {WORKSPACE_REVIEW_ANCHORS.map((item) => (
-            <div
-              key={item.label}
-              style={{
-                alignItems: "start",
-                background: alpha(PUBLIC_COLORS.brandDark, 0.24),
-                border: `1px solid ${alpha(item.accent, 0.34)}`,
-                borderRadius: PANEL_RADIUS,
-                color: PUBLIC_COLORS.surface,
-                display: "grid",
-                gap: 8,
-                gridTemplateColumns: "28px minmax(0, 1fr)",
-                minHeight: 104,
-                padding: 10,
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  alignItems: "center",
-                  background: `${item.accent}1f`,
-                  border: `1px solid ${item.accent}42`,
-                  borderRadius: PANEL_RADIUS,
-                  color: item.accent,
-                  display: "flex",
-                  height: 28,
-                  justifyContent: "center",
-                  marginTop: 1,
-                  width: 28,
-                }}
-              >
-                <Icon name={item.icon} />
-              </span>
-              <span style={{ minWidth: 0 }}>
-                <Text strong style={{ color: "inherit", display: "block" }}>
-                  {item.label}
+                <Text
+                  strong
+                  style={{
+                    color: item.accent,
+                    display: "block",
+                    fontSize: 12,
+                    marginTop: 10,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {item.reviewLabel}
                 </Text>
                 <Text
                   style={{
@@ -2065,7 +1981,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
                     marginTop: 4,
                   }}
                 >
-                  {item.detail}
+                  {item.review}
                 </Text>
               </span>
             </div>
