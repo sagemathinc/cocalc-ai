@@ -48,6 +48,7 @@ import {
 } from "./consts";
 import { FileListItem } from "./file-list-item";
 import { FilesBottom } from "./files-bottom";
+import { FilesSelectedControls } from "./files-controls";
 import { FilesHeader } from "./files-header";
 import { fileItemStyle } from "./utils";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
@@ -1072,16 +1073,6 @@ export function FilesFlyout({
         setTypeFilter={setTypeFilter}
         typeFilterOptions={typeFilterOptions}
         hasPendingUpdate={visiblePendingListingUpdate}
-        diskUsageControl={
-          !lite ? (
-            <DiskUsage
-              compact
-              current_path={effective_current_path}
-              project_id={project_id}
-              style={{ margin: 0 }}
-            />
-          ) : undefined
-        }
         onRefreshListing={() =>
           refreshListingAfterUserAction({
             allowUpdatesFor: allowListingUpdatesFor,
@@ -1090,6 +1081,34 @@ export function FilesFlyout({
         }
         onTerminalCommand={() => allowListingUpdatesFor()}
       />
+      {!lite && (
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            gap: 8,
+            padding: "0 5px 5px",
+          }}
+        >
+          <DiskUsage
+            compact
+            current_path={effective_current_path}
+            project_id={project_id}
+            style={{ margin: 0 }}
+          />
+          <FilesSelectedControls
+            project_id={project_id}
+            checked_files={checked_files}
+            directoryFiles={directoryFiles}
+            open={open}
+            getFile={getFile}
+            mode="top"
+            activeFile={activeFile}
+            refreshBackups={refreshBackups}
+            showInfo={false}
+          />
+        </div>
+      )}
       {disableUploads ? (
         renderListing()
       ) : (

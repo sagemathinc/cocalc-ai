@@ -134,7 +134,6 @@ interface Props {
   hasPendingUpdate?: boolean;
   onRefreshListing?: () => void;
   onTerminalCommand?: () => void;
-  diskUsageControl?: React.ReactNode;
 }
 
 export function FilesHeader({
@@ -166,7 +165,6 @@ export function FilesHeader({
   hasPendingUpdate,
   onRefreshListing,
   onTerminalCommand,
-  diskUsageControl,
 }: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
 
@@ -698,7 +696,6 @@ export function FilesHeader({
             minWidth: 0,
           }}
         >
-          {diskUsageControl}
           <FilesSelectedControls
             project_id={project_id}
             checked_files={checked_files}
@@ -708,6 +705,7 @@ export function FilesHeader({
             mode="top"
             activeFile={activeFile}
             refreshBackups={refreshBackups}
+            showActions={false}
           />
           <div
             aria-hidden={!hasPendingUpdate}
