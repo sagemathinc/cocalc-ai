@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MembershipPage } from "../membership-page";
 
@@ -173,17 +173,26 @@ describe("MembershipPage", () => {
       onClose: () => void;
       onChanged: () => void;
     };
-    props.onChanged();
+    await act(async () => {
+      props.onChanged();
+    });
 
     expect(refresh).toHaveBeenCalled();
     expect(dispatchEvent).toHaveBeenCalledWith(expect.any(Event));
     expect(dispatchEvent.mock.calls.at(-1)?.[0].type).toBe(
       "cocalc:membership-changed",
     );
+    await waitFor(() => {
+      expect(
+        mockClaimableMembershipPackagesPanel.mock.calls.at(-1)?.[0],
+      ).toEqual(expect.objectContaining({ refreshToken: 1 }));
+    });
 
     refresh.mockClear();
     dispatchEvent.mockClear();
-    props.onClose();
+    await act(async () => {
+      props.onClose();
+    });
 
     expect(refresh).toHaveBeenCalled();
     expect(dispatchEvent).toHaveBeenCalledWith(expect.any(Event));

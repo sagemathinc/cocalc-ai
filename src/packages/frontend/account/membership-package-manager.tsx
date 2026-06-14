@@ -153,6 +153,7 @@ interface ClaimableMembershipPackagesPanelProps {
   compact?: boolean;
   hasSiteLicenseMembership?: boolean;
   onChanged?: () => void;
+  refreshToken?: number;
   tiers?: MembershipTierLike[];
 }
 
@@ -820,6 +821,7 @@ export function ClaimableMembershipPackagesPanel({
   compact,
   hasSiteLicenseMembership = false,
   onChanged,
+  refreshToken,
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
   const email_address = useTypedRedux("account", "email_address");
@@ -871,7 +873,7 @@ export function ClaimableMembershipPackagesPanel({
 
   useEffect(() => {
     void refreshClaimables();
-  }, [account_id]);
+  }, [account_id, refreshToken]);
 
   async function resendVerificationEmail(): Promise<void> {
     setError("");

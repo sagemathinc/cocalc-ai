@@ -110,6 +110,8 @@ function MembershipSettingsContent() {
   >(undefined);
   const [siteLicenseManageOpen, setSiteLicenseManageOpen] =
     useState<boolean>(false);
+  const [siteLicenseRefreshToken, setSiteLicenseRefreshToken] =
+    useState<number>(0);
 
   if (!account_id) return null;
   if (loading && !membership) return <Loading />;
@@ -129,6 +131,7 @@ function MembershipSettingsContent() {
   const refreshMembership = () => {
     window.dispatchEvent(new Event("cocalc:membership-changed"));
     refresh();
+    setSiteLicenseRefreshToken((value) => value + 1);
   };
   const openPurchase = (
     currentClassOverride?: string,
@@ -266,6 +269,7 @@ function MembershipSettingsContent() {
                 compact
                 hasSiteLicenseMembership={hasSiteLicenseMembership}
                 onChanged={refreshMembership}
+                refreshToken={siteLicenseRefreshToken}
                 tiers={Object.values(tierById)}
               />
             </Suspense>
@@ -288,6 +292,7 @@ function MembershipSettingsContent() {
           <ClaimableMembershipPackagesPanel
             hasSiteLicenseMembership={hasSiteLicenseMembership}
             onChanged={refreshMembership}
+            refreshToken={siteLicenseRefreshToken}
             tiers={Object.values(tierById)}
           />
         </Suspense>
