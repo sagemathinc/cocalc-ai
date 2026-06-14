@@ -417,6 +417,9 @@ describe("PublicApp", () => {
         name: "CoCalc.ai Pricing and Licensing",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Hosted CoCalc.ai plans" }),
+    ).not.toBeNull();
     expect(screen.getAllByText("Member").length).toBeGreaterThan(0);
     expect(
       screen.getByText("A solid choice for everyday work."),
@@ -452,7 +455,7 @@ describe("PublicApp", () => {
     expect(screen.getAllByText("Save 25% with annual billing").length).toBe(2);
     expect(
       screen.getByRole("heading", {
-        name: "Buying paths beyond hosted plans",
+        name: "Buying paths for groups and deployments",
       }),
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
@@ -506,7 +509,7 @@ describe("PublicApp", () => {
     );
     expect(
       screen.getByRole("heading", {
-        name: "Buying paths beyond hosted plans",
+        name: "Buying paths for groups and deployments",
       }),
     ).not.toBeNull();
     expect(
@@ -970,7 +973,7 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByText("Install CoCalc Plus")).not.toBeNull();
-    expect(screen.getByText("What CoCalc Plus is")).not.toBeNull();
+    expect(screen.getByText("Who CoCalc Plus is for")).not.toBeNull();
   });
 
   it("renders the software overview page", async () => {
@@ -985,35 +988,41 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
     expect(screen.getAllByText("CoCalc.ai").length).toBeGreaterThan(0);
-    expect(screen.getByText("Route families")).not.toBeNull();
+    expect(screen.getByText("Start with who operates CoCalc")).not.toBeNull();
     expect(
       screen.getByText(
-        "Most visitors only need one first decision: who operates CoCalc for this workspace?",
+        "Most buyers can narrow the decision quickly by separating managed hosted use, self-operated use, and customer-operated private deployment.",
       ),
     ).not.toBeNull();
     const routeFamilies = screen.getByRole("group", {
       name: "CoCalc product route families",
     });
     for (const label of [
-      "Managed hosted",
-      "Self-operated",
-      "Customer-operated private",
+      "Hosted by CoCalc",
+      "Run it yourself",
+      "Private deployment",
       "CoCalc Plus or Star",
       "CoCalc Launchpad or Rocket",
     ]) {
       expect(within(routeFamilies).getByText(label)).not.toBeNull();
     }
+    const pathChooser = screen.getByRole("group", {
+      name: "CoCalc product path chooser",
+    });
+    expect(pathChooser).not.toBeNull();
+    expect(within(pathChooser).getAllByText("Where it runs")).toHaveLength(5);
+    expect(within(pathChooser).getAllByText("Best fit")).toHaveLength(5);
     expect(
-      screen.getByRole("table", { name: "CoCalc product path chooser" }),
+      screen.getByText("Hosted service operated by CoCalc"),
     ).not.toBeNull();
-    expect(screen.getByText("Vendor-operated hosted service")).not.toBeNull();
-    expect(screen.getByText("Choose this if...")).not.toBeNull();
     expect(
       screen.getByText(
-        "You want managed hosted projects and accounts run by CoCalc.",
+        "Individuals and teams that want managed hosted projects without running infrastructure.",
       ),
     ).not.toBeNull();
-    expect(screen.getByText("Operator-owned public VM")).not.toBeNull();
+    expect(
+      screen.getByText("Single-VM appliance operated by the user or customer"),
+    ).not.toBeNull();
     expect(screen.queryByText(/quick team starts/i)).toBeNull();
     expect(screen.queryByText(/Production private cloud/i)).toBeNull();
     expect(screen.queryByText(/multi-bay operations/i)).toBeNull();
@@ -1021,7 +1030,7 @@ describe("PublicApp", () => {
       screen.getByRole("link", { name: "Open CoCalc Rocket" }),
     ).toHaveAttribute("href", "/products/cocalc-rocket");
     expect(
-      screen.getByText("Site licensing is an organizational wrapper."),
+      screen.getByText("Site licensing wraps the product path."),
     ).not.toBeNull();
   });
 
@@ -1042,8 +1051,10 @@ describe("PublicApp", () => {
         name: "CoCalc home",
       }),
     ).not.toBeNull();
-    expect(screen.getByText("Choose the product path first.")).not.toBeNull();
-    expect(screen.getByText("Product path chooser")).not.toBeNull();
+    expect(
+      screen.getByText("Choose how CoCalc should run for your team."),
+    ).not.toBeNull();
+    expect(screen.getByText("Which path fits?")).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "Explore shared features" }),
     ).toHaveAttribute("href", "/features");
@@ -1070,7 +1081,7 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByText("Install CoCalc Star")).not.toBeNull();
-    expect(screen.getByText("What CoCalc Star is")).not.toBeNull();
+    expect(screen.getByText("Who CoCalc Star is for")).not.toBeNull();
   });
 
   it("renders the cocalc rocket page", async () => {
@@ -1081,9 +1092,11 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("What CoCalc Rocket is")).not.toBeNull();
-    expect(screen.getByText(/private multi-user CoCalc/i)).not.toBeNull();
-    expect(screen.getByText(/operational planning matter/i)).not.toBeNull();
+    expect(screen.getByText("Who CoCalc Rocket is for")).not.toBeNull();
+    expect(
+      screen.getByText(/customer-operated private-cloud deployment/i),
+    ).not.toBeNull();
+    expect(screen.getByText(/governance, support/i)).not.toBeNull();
     expect(screen.queryByText(/production multi-user CoCalc/i)).toBeNull();
     expect(screen.queryByText(/multi-bay architecture/i)).toBeNull();
     expect(screen.queryByText(/production operations matter/i)).toBeNull();

@@ -111,7 +111,7 @@ const HERO_TAGS = [
 
 const PROJECT_FACTS = [
   {
-    body: "Code, notebooks, papers, terminals, chat, files, and AI assistance stay close to the same work instead of drifting into separate tools.",
+    body: "Code, notebooks, papers, terminals, chat, files, and AI assistance stay close to the same project instead of drifting into separate tools.",
     title: "Context stays together",
   },
   {
@@ -232,7 +232,7 @@ const PROJECT_MODEL_ITEMS = [
 const PRODUCT_OPTIONS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Managed hosted workspace for teams that want the full product without running infrastructure.",
+    body: "Managed hosted workspace for individuals and teams that do not want to run infrastructure.",
     icon: "cloud",
     label: "Hosted",
     title: "CoCalc.ai",
@@ -260,7 +260,7 @@ const PRODUCT_OPTIONS = [
   },
   {
     accent: COLORS.GRAY_D,
-    body: "Enterprise private-cloud deployment path for larger organizational requirements.",
+    body: "Enterprise private-cloud path for institutions and organizations with broader deployment requirements.",
     icon: "rocket",
     label: "Enterprise",
     title: "CoCalc Rocket",
@@ -291,7 +291,7 @@ const DIFFERENCE_SIGNALS = [
 const DIFFERENTIATORS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Code, notebooks, documents, files, terminals, collaboration, and AI assistance stay connected in shared project context.",
+    body: "Code, notebooks, documents, files, terminals, collaboration, and AI assistance stay connected in project context.",
     eyebrow: "Workspace breadth",
     icon: "project-outlined",
     title: "One technical workspace",
@@ -533,9 +533,10 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            {siteName} keeps technical work collaborative, reviewable, and
-            recoverable without splitting context across separate coding,
-            notebook, document, compute, and AI tools.
+            Start hosted on CoCalc.ai, evaluate locally with CoCalc Plus, run a
+            shared single-VM appliance with CoCalc Star, or choose a
+            customer-operated private deployment when your organization needs
+            more control.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -612,7 +613,7 @@ function ProjectSection() {
           borderRadius: PANEL_RADIUS,
           boxShadow: `0 18px 45px ${alpha(PUBLIC_COLORS.brandDark, 0.08)}`,
           display: "block",
-          objectFit: "cover",
+          objectFit: "contain",
           width: "100%",
         }}
       />

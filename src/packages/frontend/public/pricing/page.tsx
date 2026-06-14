@@ -737,13 +737,13 @@ export default function PricingPage({
       <Flex vertical gap="large">
         <PublicSection>
           <Title level={2} style={{ margin: 0 }}>
-            CoCalc.ai self-service plans
+            Hosted CoCalc.ai plans
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Use these plans for managed hosted CoCalc.ai accounts, team seats,
-            and hosted project limits. If you need procurement, governance,
-            support, rollout, or deployment rights for a group, use site
-            licensing instead.
+            Use these plans when CoCalc should be hosted and operated by us. If
+            you are choosing local use, a single-VM appliance, private
+            deployment, or an organizational agreement, start with the product
+            path and licensing sections below.
           </Paragraph>
           <Flex gap={12} wrap>
             <Button
@@ -800,12 +800,12 @@ export default function PricingPage({
 
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          Buying paths beyond hosted plans
+          Buying paths for groups and deployments
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          These options do not replace the five product paths. They explain how
-          groups buy hosted access, dedicated hosted compute, private deployment
-          rights, and organizational support.
+          For teams, courses, labs, and institutions, pricing is usually two
+          decisions: where CoCalc runs, and what purchasing or support wrapper
+          the group needs.
         </Paragraph>
         <PublicGrid columns={2}>
           <PublicSection>
@@ -830,8 +830,8 @@ export default function PricingPage({
                 Site licensing
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Use site licensing when an organization needs one agreement for
-                access, procurement, governance, support, rollout, or deployment
+                Use site licensing when an organization needs one agreement
+                around procurement, governance, support, rollout, or deployment
                 rights across CoCalc.ai, Star, Launchpad, or Rocket.
               </Paragraph>
               <Button

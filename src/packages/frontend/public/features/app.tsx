@@ -826,13 +826,12 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
   return (
     <PublicSection>
       <Title level={3} style={{ margin: 0 }}>
-        Connect this feature to a product path.
+        Decide how you want to use CoCalc.
       </Title>
       <Paragraph style={{ margin: 0 }}>
-        The feature pages describe one shared CoCalc workspace model: files,
-        compute, collaboration, history, and agents in a project. Next, decide
-        where that workspace should run and how your group should buy or deploy
-        it.
+        These feature pages describe shared workspace capabilities. Next, choose
+        hosted CoCalc.ai, local CoCalc Plus, single-VM CoCalc Star, or a
+        customer-operated private deployment with Launchpad or Rocket.
       </Paragraph>
       <Flex wrap gap={12}>
         <Button href={appPath("products")} type="primary">

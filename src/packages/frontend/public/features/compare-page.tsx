@@ -15,7 +15,7 @@ const COMPARISON_GROUPS = [
     bestAt:
       "Quick notebook startup, lightweight sharing, and easy access to hosted compute.",
     cocalc:
-      "Choose CoCalc when notebooks are part of a broader technical workspace with terminals, files, LaTeX, courses, AI agents, history, recovery, and deployment options.",
+      "Choose CoCalc when notebooks should stay close to terminals, files, LaTeX, course workflows, AI agents, history, recovery, and deployment options.",
     key: "colab",
     title: "Google Colab and quick notebook hosts",
   },
@@ -23,7 +23,7 @@ const COMPARISON_GROUPS = [
     bestAt:
       "Warehouse-connected analytics, dashboards, and SQL-heavy collaborative data work.",
     cocalc:
-      "Choose CoCalc when the center of gravity is an engineering or research workspace rather than a BI surface: notebooks, Linux tools, reproducible documents, teaching, agents, and operational control.",
+      "Choose CoCalc when the center of gravity is an engineering, research, or course workspace rather than a BI surface.",
     key: "analytics",
     title: "Deepnote and analytics-first notebook platforms",
   },
@@ -31,7 +31,7 @@ const COMPARISON_GROUPS = [
     bestAt:
       "Building-block flexibility for organizations that want to assemble and operate their own notebook stack.",
     cocalc:
-      "Choose CoCalc when you want the integrated workspace instead of assembling notebooks, terminals, collaboration, support, grading, AI agents, and deployment operations from separate systems.",
+      "Choose CoCalc when you want notebooks, terminals, collaboration, grading, AI agents, and deployment choices in a single product family.",
     key: "jupyter-stack",
     title: "JupyterHub, JupyterLab, and VS Code notebook workflows",
   },
@@ -108,13 +108,14 @@ export default function CompareFeaturePage({
           Compare CoCalc by workspace model
         </Title>
         <Paragraph style={{ fontSize: 18, margin: 0 }}>
-          CoCalc is strongest when engineering teams, research labs, and courses
-          need more than a notebook host, IDE, or dashboard surface.
+          CoCalc is a better fit when engineering teams, research labs,
+          technical courses, and platform teams need more than a notebook host,
+          IDE, or dashboard surface.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          The useful comparison is whether you want one integrated technical
-          workspace, or a narrower product that is excellent at one slice and
-          expects the rest of the workflow to live elsewhere.
+          The useful comparison is whether the work should stay in one
+          collaborative project, or whether a narrower point solution already
+          covers the job.
         </Paragraph>
         <Flex wrap gap={12}>
           <Button type="primary" href={featureAppPath("auth/sign-up")}>
@@ -135,7 +136,7 @@ export default function CompareFeaturePage({
         type="warning"
         showIcon
         title="These comparisons are intentionally high level."
-        description="Products evolve quickly, and many competitors are excellent at the workflow they target. The point here is to clarify where CoCalc's integrated model is a better fit."
+        description="Products evolve quickly, and many competitors are excellent at the workflow they target. The point here is to help readers decide whether CoCalc's integrated workspace model fits their situation."
       />
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
@@ -150,8 +151,8 @@ export default function CompareFeaturePage({
         <Paragraph style={{ margin: 0 }}>
           CoCalc AI&apos;s direction is agent-first, especially around Codex.
           The goal is not only to answer questions, but to help inspect code,
-          patch files, reason about failures, and move technical work forward
-          inside the same collaborative environment as the rest of the team.
+          patch files, reason about failures, and keep work moving inside the
+          same collaborative environment as the rest of the team.
         </Paragraph>
         <BulletList
           items={[

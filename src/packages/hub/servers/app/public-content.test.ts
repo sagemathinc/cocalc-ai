@@ -42,4 +42,15 @@ describe("public content routes", () => {
     const redirected = new URL(`http://host${location}`);
     expect(redirected.searchParams.get("target")).toBe("/guides?topic=jupyter");
   });
+
+  it("redirects Star product detail pages into the public shell", async () => {
+    const response = await request("/products/cocalc-star?source=home");
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location");
+    expect(location).toContain("/static/public.html?target=");
+    const redirected = new URL(`http://host${location}`);
+    expect(redirected.searchParams.get("target")).toBe(
+      "/products/cocalc-star?source=home",
+    );
+  });
 });

@@ -150,7 +150,7 @@ describe("PublicFeaturesApp", () => {
       within(featureNav).queryByRole("link", { name: /Previous:/ }),
     ).toBeNull();
     expect(
-      screen.getByText("Connect this feature to a product path."),
+      screen.getByText("Decide how you want to use CoCalc."),
     ).not.toBeNull();
     expect(
       screen
@@ -612,7 +612,7 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("AI-native work changes the comparison"),
     ).not.toBeNull();
     expect(
-      screen.getByText("Connect this feature to a product path."),
+      screen.getByText("Decide how you want to use CoCalc."),
     ).not.toBeNull();
     expect(
       screen

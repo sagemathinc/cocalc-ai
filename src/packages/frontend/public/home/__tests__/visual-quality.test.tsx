@@ -267,7 +267,7 @@ describe("PublicHomeApp visual quality contract", () => {
       "aspect-ratio: 16 / 9;",
     );
     expect(workflowImage.getAttribute("style") ?? "").toContain(
-      "object-fit: cover;",
+      "object-fit: contain;",
     );
   });
 });

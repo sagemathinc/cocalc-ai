@@ -85,7 +85,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(hero).getByText(
-        /CoCalc Launchpad keeps technical work collaborative, reviewable, and recoverable/i,
+        /Start hosted on CoCalc\.ai, evaluate locally with CoCalc Plus/i,
       ),
     ).not.toBeNull();
     expect(
@@ -103,6 +103,9 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero).getByRole("link", { name: "Compare deployment options" }),
     ).toHaveAttribute("href", "/products");
+    expect(
+      within(hero).queryByText(/keeps technical work collaborative/i),
+    ).toBeNull();
     for (const tag of [
       "Code and scripts",
       "Notebooks",

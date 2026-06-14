@@ -40,21 +40,21 @@ function titleForRoute(route: PublicProductsRoute): string {
 function ProductsOverviewPage() {
   const routeFamilies = [
     {
-      detail: "CoCalc operates hosted accounts and projects.",
+      detail: "CoCalc operates the hosted service for you.",
       icon: "cloud",
-      label: "Managed hosted",
+      label: "Hosted by CoCalc",
       products: "CoCalc.ai",
     },
     {
-      detail: "One operator runs a local machine or public VM.",
+      detail: "You run CoCalc on a laptop, desktop, or one VM.",
       icon: "laptop",
-      label: "Self-operated",
+      label: "Run it yourself",
       products: "CoCalc Plus or Star",
     },
     {
-      detail: "A customer team operates private deployment boundaries.",
+      detail: "Your organization operates the private environment.",
       icon: "servers",
-      label: "Customer-operated private",
+      label: "Private deployment",
       products: "CoCalc Launchpad or Rocket",
     },
   ] satisfies {
@@ -65,46 +65,50 @@ function ProductsOverviewPage() {
   }[];
   const paths = [
     {
-      chooseIf: "You want managed hosted projects and accounts run by CoCalc.",
+      bestFit:
+        "Individuals and teams that want managed hosted projects without running infrastructure.",
       href: appPath(""),
       icon: "cloud",
-      operator: "Vendor-operated hosted service",
+      runs: "Hosted service operated by CoCalc",
       title: "CoCalc.ai",
     },
     {
-      chooseIf: "You want a one-user local workspace on Linux or Mac.",
+      bestFit:
+        "Individual users who want local control or a self-directed evaluation on Linux or Mac.",
       href: publicPath("products/cocalc-plus"),
       icon: "laptop",
-      operator: "Individual-operated local runtime",
+      runs: "Local runtime operated by the user",
       title: "CoCalc Plus",
     },
     {
-      chooseIf: "You want one public Ubuntu VM that you operate directly.",
+      bestFit:
+        "Users or small teams that want a shared CoCalc instance on one public Ubuntu VM or local Lima VM.",
       href: publicPath("products/cocalc-star"),
       icon: "star",
-      operator: "Operator-owned public VM",
+      runs: "Single-VM appliance operated by the user or customer",
       title: "CoCalc Star",
     },
     {
-      chooseIf: "You need a lightweight customer-operated private deployment.",
+      bestFit:
+        "Pilots, labs, workshops, small teams, and departments that need a customer-operated private environment.",
       href: publicPath("products/cocalc-launchpad"),
       icon: "servers",
-      operator: "Customer-operated private deployment",
+      runs: "Lightweight private deployment operated by the customer",
       title: "CoCalc Launchpad",
     },
     {
-      chooseIf:
-        "You are planning a customer-operated private-cloud deployment.",
+      bestFit:
+        "Institutions and enterprises planning a broader customer-operated private-cloud deployment.",
       href: publicPath("products/cocalc-rocket"),
       icon: "rocket",
-      operator: "Customer-operated private cloud",
+      runs: "Enterprise private-cloud path operated by the customer",
       title: "CoCalc Rocket",
     },
   ] satisfies {
-    chooseIf: string;
+    bestFit: string;
     href: string;
     icon: IconName;
-    operator: string;
+    runs: string;
     title: string;
   }[];
 
@@ -112,29 +116,30 @@ function ProductsOverviewPage() {
     <Flex vertical gap={18}>
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          Choose the product path first.
+          Choose how CoCalc should run for your team.
         </Title>
         <Paragraph style={{ fontSize: 18, margin: 0 }}>
-          Each path answers where CoCalc runs and who operates it. The project
-          workspace stays familiar across hosted, local, public-VM, and private
-          deployment options.
+          CoCalc has one project workspace model across hosted, local, single-VM
+          appliance, and private deployment options. The first decision is where
+          it should run and who will operate it.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("features")}>
             Explore shared features
           </LinkButton>
           <LinkButton href={appPath("pricing")}>
-            Compare CoCalc.ai pricing
+            Pricing and licensing
           </LinkButton>
         </Flex>
       </PublicSection>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Route families
+          Start with who operates CoCalc
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Most visitors only need one first decision: who operates CoCalc for
-          this workspace?
+          Most buyers can narrow the decision quickly by separating managed
+          hosted use, self-operated use, and customer-operated private
+          deployment.
         </Paragraph>
         <div
           aria-label="CoCalc product route families"
@@ -189,129 +194,107 @@ function ProductsOverviewPage() {
       </PublicSection>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Product path chooser
+          Which path fits?
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Use this as a decision table: pick who operates CoCalc, then use
-          pricing or support for buying details. The workspace model stays
-          project-centered; the product path changes the operating boundary.
+          Use this as a buyer map. Pick the closest fit, then move to pricing,
+          documentation, or a support conversation for buying and rollout
+          details.
         </Paragraph>
-        <div style={{ overflowX: "auto" }}>
-          <table
-            aria-label="CoCalc product path chooser"
-            style={{
-              borderCollapse: "separate",
-              borderSpacing: 0,
-              minWidth: 760,
-              width: "100%",
-            }}
-          >
-            <thead>
-              <tr>
-                {[
-                  "Path",
-                  "Operator model",
-                  "Choose this if...",
-                  "Next step",
-                ].map((label) => (
-                  <th
-                    key={label}
-                    scope="col"
-                    style={{
-                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
-                      color: PUBLIC_COLORS.brand,
-                      padding: "0 14px 12px",
-                      textAlign: "left",
-                    }}
-                  >
-                    {label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paths.map((path, index) => (
-                <tr key={path.title}>
-                  <th
-                    scope="row"
-                    style={{
-                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
-                      padding: "14px",
-                      textAlign: "left",
-                      verticalAlign: "top",
-                    }}
-                  >
-                    <Flex align="center" gap={10}>
-                      <span
-                        style={{
-                          alignItems: "center",
-                          background:
-                            index === 2
-                              ? PUBLIC_COLORS.warningTint
-                              : PUBLIC_COLORS.surfaceMuted,
-                          border: `1px solid ${
-                            index === 2
-                              ? PUBLIC_COLORS.warningBorder
-                              : PUBLIC_COLORS.border
-                          }`,
-                          borderRadius: 8,
-                          color:
-                            index === 2
-                              ? PUBLIC_COLORS.warning
-                              : PUBLIC_COLORS.brand,
-                          display: "flex",
-                          flex: "0 0 38px",
-                          height: 38,
-                          justifyContent: "center",
-                          width: 38,
-                        }}
-                      >
-                        <Icon name={path.icon} />
-                      </span>
-                      <Text strong>{path.title}</Text>
-                    </Flex>
-                  </th>
-                  <td
-                    style={{
-                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
-                      padding: "14px",
-                      verticalAlign: "top",
-                    }}
-                  >
-                    {path.operator}
-                  </td>
-                  <td
-                    style={{
-                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
-                      padding: "14px",
-                      verticalAlign: "top",
-                    }}
-                  >
-                    {path.chooseIf}
-                  </td>
-                  <td
-                    style={{
-                      borderBottom: `1px solid ${PUBLIC_COLORS.border}`,
-                      padding: "14px",
-                      verticalAlign: "top",
-                    }}
-                  >
-                    <LinkButton href={path.href}>Open {path.title}</LinkButton>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div
+          aria-label="CoCalc product path chooser"
+          role="group"
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          }}
+        >
+          {paths.map((path, index) => (
+            <div
+              className="cocalc-public-products-path-card"
+              key={path.title}
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: 8,
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+                minHeight: 300,
+                padding: 16,
+              }}
+            >
+              <Flex align="center" gap={10}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background:
+                      index === 2
+                        ? PUBLIC_COLORS.warningTint
+                        : PUBLIC_COLORS.surfaceMuted,
+                    border: `1px solid ${
+                      index === 2
+                        ? PUBLIC_COLORS.warningBorder
+                        : PUBLIC_COLORS.border
+                    }`,
+                    borderRadius: 8,
+                    color:
+                      index === 2 ? PUBLIC_COLORS.warning : PUBLIC_COLORS.brand,
+                    display: "flex",
+                    flex: "0 0 38px",
+                    height: 38,
+                    justifyContent: "center",
+                    width: 38,
+                  }}
+                >
+                  <Icon name={path.icon} />
+                </span>
+                <Text strong>{path.title}</Text>
+              </Flex>
+              <div>
+                <Text
+                  style={{
+                    color: PUBLIC_COLORS.brand,
+                    display: "block",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    marginBottom: 4,
+                  }}
+                >
+                  Where it runs
+                </Text>
+                <Text>{path.runs}</Text>
+              </div>
+              <div style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    color: PUBLIC_COLORS.brand,
+                    display: "block",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    marginBottom: 4,
+                  }}
+                >
+                  Best fit
+                </Text>
+                <Text>{path.bestFit}</Text>
+              </div>
+              <LinkButton href={path.href}>Open {path.title}</LinkButton>
+            </div>
+          ))}
         </div>
       </PublicSection>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Site licensing is an organizational wrapper.
+          Site licensing wraps the product path.
         </Title>
         <Paragraph style={{ margin: 0 }}>
           Use site licensing for procurement, governance, support, rollout, and
-          broader deployment rights across the product ladder. It does not
-          replace the runtime choice; it wraps the path your group chooses.
+          broader deployment rights across the product family. It does not
+          change who operates CoCalc by itself; it wraps the hosted, local,
+          appliance, or private path your group chooses.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("pricing")}>
@@ -328,25 +311,26 @@ function CocalcRocketPage() {
     <PublicGrid columns={3}>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          What CoCalc Rocket is
+          Who CoCalc Rocket is for
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          CoCalc Rocket is the private cloud deployment path for teams that need
-          private multi-user CoCalc on infrastructure they control.
+          CoCalc Rocket is for institutions and enterprises planning a broader
+          customer-operated private-cloud deployment of CoCalc.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          Use it when a private deployment needs more planning, operating
-          boundaries, and CoCalc guidance than Star or Launchpad.
+          Use it when governance, private infrastructure, rollout planning, or
+          custom commercial terms matter more than a self-service hosted or
+          single-VM path.
         </Paragraph>
       </PublicSection>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Choose Rocket, Launchpad, or Plus
+          How Rocket differs
         </Title>
         <Paragraph style={{ margin: 0 }}>
           Choose CoCalc Plus for a free local runtime. Choose CoCalc Star for a
           single public VM appliance. Choose Launchpad for a lightweight private
-          deployment. Choose Rocket for private cloud CoCalc.
+          deployment. Choose Rocket for the enterprise private-cloud path.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={publicPath("products/cocalc-star")}>
@@ -365,9 +349,10 @@ function CocalcRocketPage() {
           Talk with us
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Rocket is the right path when private infrastructure, governance, or
-          operational planning matter. Contact us to discuss infrastructure,
-          rollout, support, and site license options.
+          Rocket conversations usually include infrastructure, rollout,
+          governance, support, and site-license options. Contact us before
+          assuming a smaller self-operated path will fit an institutional
+          deployment.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("support")}>Support</LinkButton>
@@ -387,17 +372,16 @@ function CocalcStarPage() {
       <PublicGrid columns={3}>
         <PublicSection>
           <Title level={3} style={{ margin: 0 }}>
-            What CoCalc Star is
+            Who CoCalc Star is for
           </Title>
           <Paragraph style={{ margin: 0 }}>
-            CoCalc Star is the single-VM CoCalc appliance. It is designed for a
-            fresh public Ubuntu server where port 443 is reachable from the
-            internet.
+            CoCalc Star is for technically self-directed users or small teams
+            that want a shared CoCalc instance on one VM.
           </Paragraph>
           <Paragraph style={{ margin: 0 }}>
-            The installer sets up the local control plane, project host,
-            Postgres, Caddy HTTPS, a default Jupyter/LaTeX root filesystem, and
-            a first-admin bootstrap URL.
+            It is the bridge between the single-user local runtime and broader
+            private-deployment planning: one public Ubuntu VM or local Lima VM,
+            not high availability or enterprise private cloud.
           </Paragraph>
         </PublicSection>
         <PublicSection>
@@ -469,16 +453,17 @@ function CocalcLaunchpadPage() {
       <PublicGrid columns={3}>
         <PublicSection>
           <Title level={3} style={{ margin: 0 }}>
-            What CoCalc Launchpad is
+            Who CoCalc Launchpad is for
           </Title>
           <Paragraph style={{ margin: 0 }}>
-            CoCalc Launchpad is the lightweight private deployment path. It fits
-            teams that need private deployment control, custom hosts, or
-            deployment automation without the full Rocket architecture.
+            CoCalc Launchpad is the lightweight private deployment path for
+            pilots, labs, workshops, small teams, and departments that need a
+            customer-operated environment.
           </Paragraph>
           <Paragraph style={{ margin: 0 }}>
-            If your goal is one public Ubuntu VM that you operate directly,
-            start with CoCalc Star instead.
+            If your goal is a shared instance on one public Ubuntu VM, start
+            with CoCalc Star. If the organization needs a broader private-cloud
+            path, talk with us about Rocket.
           </Paragraph>
         </PublicSection>
         <PublicSection>
@@ -526,7 +511,8 @@ function CocalcLaunchpadPage() {
         <Paragraph style={{ margin: 0 }}>
           Choose CoCalc Plus for a free local runtime. Choose CoCalc Star for a
           single public VM appliance. Choose Launchpad for a lightweight private
-          deployment. Choose Rocket when private cloud operations are required.
+          deployment. Choose Rocket when enterprise private-cloud planning is
+          required.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={publicPath("products/cocalc-star")}>
@@ -550,17 +536,17 @@ function CocalcPlusPage() {
     <PublicGrid columns={3}>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          What CoCalc Plus is
+          Who CoCalc Plus is for
         </Title>
         <Paragraph style={{ margin: 0 }}>
           CoCalc Plus is the free source-available local runtime for one user.
-          It is meant to feel more like installing VS Code or JupyterLab on your
-          own machine than signing up for a hosted multi-user service.
+          Choose it when you want to evaluate CoCalc locally or work on your own
+          machine without a hosted account.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
           It brings notebooks, terminals, files, and the CoCalc workspace model
-          to Linux or Mac without requiring a hosted account or shared
-          deployment.
+          to Linux or Mac. Choose CoCalc.ai, Star, Launchpad, or Rocket when the
+          work needs a shared or organizational environment.
         </Paragraph>
       </PublicSection>
       <PublicSection>
