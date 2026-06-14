@@ -66,6 +66,7 @@ type BackupSummary = {
   absolute?: string;
   date?: Date;
   style: CSSProperties;
+  title: string;
 };
 
 const HISTORY_MAX_POINTS = 96;
@@ -105,10 +106,13 @@ export function describeLastBackup(lastBackup: unknown): BackupSummary {
   switch (indexedBackupState(lastBackup)) {
     case "present":
       return {
-        label: "Backups",
+        label: "Backup",
         detail: "Last backup recorded.",
         absolute: date?.toLocaleString(),
         date,
+        title: date
+          ? `Last backup: ${date.toLocaleString()}`
+          : "Last backup recorded.",
         style: {
           background: COLORS.BS_GREEN_LL,
           borderColor: COLORS.BS_GREEN_D,
@@ -119,6 +123,7 @@ export function describeLastBackup(lastBackup: unknown): BackupSummary {
       return {
         label: "No backup",
         detail: "No successful backup recorded yet.",
+        title: "No successful backup has been recorded yet.",
         style: {
           background: COLORS.GRAY_LLL,
           borderColor: COLORS.ORANGE_WARN,
@@ -127,8 +132,9 @@ export function describeLastBackup(lastBackup: unknown): BackupSummary {
       };
     default:
       return {
-        label: "Backup unknown",
+        label: "Backup",
         detail: "Backup timestamp has not loaded yet.",
+        title: "Backup status has not loaded yet.",
         style: {
           background: COLORS.GRAY_LLL,
           borderColor: COLORS.GRAY_D,
@@ -993,89 +999,42 @@ export default function DiskUsage({
       style={{
         ...style,
         alignItems: "center",
-        display: "flex",
-        gap: compact ? "8px" : "10px",
-        height: "auto",
+        display: "inline-flex",
+        gap: compact ? "5px" : "8px",
+        height: compact ? "24px" : "32px",
         justifyContent: "flex-start",
-        padding: compact ? "4px 8px" : "6px 10px",
+        lineHeight: 1,
+        padding: compact ? "0 7px" : "4px 10px",
         textAlign: "left",
       }}
     >
       <Icon name="disk-round" />
-      {compact ? (
-        <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
-          <Space size={8} wrap>
-            <Text strong>Disk</Text>
-            {quota != null ? (
-              <>
-                <Progress
-                  style={{ width: "52px", marginBottom: 0 }}
-                  percent={percent}
-                  status={quotaStatus}
-                  showInfo={false}
-                />
-                <Text>
-                  {human_readable_size(quota.used)} /{" "}
-                  {human_readable_size(quota.size)}
-                </Text>
-              </>
-            ) : null}
-            <Tag style={backupSummary.style} title={backupSummary.absolute}>
-              {backupSummary.label}
-            </Tag>
-            {loading && hasSummaryData ? (
-              <Text type="secondary">Refreshing…</Text>
-            ) : null}
-          </Space>
-          {sharedScratch != null && (
-            <div
+      <Space size={compact ? 5 : 8} wrap={false} style={{ lineHeight: 1 }}>
+        {quota != null ? (
+          <>
+            <Progress
               style={{
-                color: COLORS.GRAY_D,
-                fontSize: "12px",
-                lineHeight: 1.35,
-                marginTop: "2px",
-                maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                width: compact ? "40px" : "60px",
+                marginBottom: 0,
+                lineHeight: 1,
               }}
+              percent={percent}
+              status={quotaStatus}
+              showInfo={false}
+            />
+            <Text
+              title={`${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`}
             >
-              /scratch {human_readable_size(sharedScratch.used)} /{" "}
-              {human_readable_size(sharedScratch.size)}
-            </div>
-          )}
-        </div>
-      ) : (
-        <Space size={10} wrap>
+              {human_readable_size(quota.size)}
+            </Text>
+          </>
+        ) : (
           <Text strong>Disk</Text>
-          {quota != null ? (
-            <>
-              <Progress
-                style={{ width: "60px", marginBottom: 0 }}
-                percent={percent}
-                status={quotaStatus}
-                showInfo={false}
-              />
-              <Text>
-                {human_readable_size(quota.used)} /{" "}
-                {human_readable_size(quota.size)}
-              </Text>
-            </>
-          ) : null}
-          <Tag style={backupSummary.style} title={backupSummary.absolute}>
-            {backupSummary.label}
-          </Tag>
-          {sharedScratch != null ? (
-            <Tag>
-              /scratch {human_readable_size(sharedScratch.used)} /{" "}
-              {human_readable_size(sharedScratch.size)}
-            </Tag>
-          ) : null}
-          {loading && hasSummaryData ? (
-            <Text type="secondary">Refreshing…</Text>
-          ) : null}
-        </Space>
-      )}
+        )}
+        {loading && hasSummaryData ? (
+          <Text type="secondary">Refreshing…</Text>
+        ) : null}
+      </Space>
     </Button>
   );
 
@@ -1103,9 +1062,22 @@ export default function DiskUsage({
               marginBottom: "16px",
             }}
           >
-            <h5 style={{ margin: 0 }}>
-              <Icon name="disk-round" /> Project storage overview
-            </h5>
+            <div>
+              <h5 style={{ margin: 0 }}>
+                <Icon name="disk-round" /> Project storage overview
+              </h5>
+              <Space size={8} wrap style={{ marginTop: "8px" }}>
+                <Tag style={backupSummary.style} title={backupSummary.title}>
+                  {backupSummary.label}
+                </Tag>
+                {sharedScratch != null ? (
+                  <Tag>
+                    /scratch {human_readable_size(sharedScratch.used)} /{" "}
+                    {human_readable_size(sharedScratch.size)}
+                  </Tag>
+                ) : null}
+              </Space>
+            </div>
             <div
               style={{
                 alignItems: "flex-end",

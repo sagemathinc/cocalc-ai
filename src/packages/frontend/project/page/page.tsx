@@ -92,6 +92,7 @@ import {
   hasProjectRoleForAccessLandingBypass,
   projectAccessSignInHrefForCurrentLocation,
   shouldFetchProjectAccessLandingInfo,
+  shouldShowProjectAccessSignInRequired,
 } from "./access-landing-auth";
 import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-project-modal";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -128,6 +129,7 @@ interface Props {
 export const ProjectPage: React.FC<Props> = (props: Props) => {
   const accountIsReady = !!useTypedRedux("account", "is_ready");
   const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
+  const userType = useTypedRedux("account", "user_type") as string | undefined;
   const accountId = useTypedRedux("account", "account_id") as
     | string
     | undefined;
@@ -136,8 +138,18 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   if (!accountIsReady) {
     return <Loading />;
   }
-  if (!isLoggedIn) {
+  if (
+    shouldShowProjectAccessSignInRequired({
+      accountIsReady,
+      isLoggedIn,
+      userType,
+      liteMode: lite,
+    })
+  ) {
     return <ProjectAccessSignInRequired />;
+  }
+  if (!isLoggedIn) {
+    return <Loading />;
   }
   if (
     !hasProjectRoleForAccessLandingBypass({

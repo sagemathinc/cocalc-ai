@@ -7,12 +7,12 @@ import { Modal, Radio, Space, message } from "antd";
 import * as immutable from "immutable";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { Button, ButtonToolbar } from "@cocalc/frontend/antd-bootstrap";
+import { Button } from "@cocalc/frontend/antd-bootstrap";
 import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Gap, Icon, type MenuItems } from "@cocalc/frontend/components";
+import { Icon, type MenuItems } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
@@ -40,9 +40,11 @@ import {
 } from "@cocalc/frontend/project/explorer/refresh-button";
 
 const ROW_INFO_STYLE = {
+  alignItems: "center",
   color: COLORS.TAB,
-  height: "22px",
-  margin: "5px 3px",
+  display: "inline-flex",
+  height: "32px",
+  margin: "0 3px",
 } as const;
 
 interface Props {
@@ -56,6 +58,7 @@ interface Props {
   onRefreshListing?: () => void;
   autoUpdateListing?: boolean;
   onToggleAutoUpdate?: (checked: boolean) => void;
+  suppressPendingRefresh?: boolean;
   readOnly?: boolean;
   allowCopyOut?: boolean;
 }
@@ -81,6 +84,7 @@ function ActionBarEnabled({
   onRefreshListing,
   autoUpdateListing,
   onToggleAutoUpdate,
+  suppressPendingRefresh = false,
   readOnly = false,
   allowCopyOut = false,
 }: Props) {
@@ -286,65 +290,11 @@ function ActionBarEnabled({
   const [restoreLoading, setRestoreLoading] = useState<boolean>(false);
   const [restoreError, setRestoreError] = useState<any>(null);
 
-  function clear_selection(): void {
-    actions.set_all_files_unchecked();
-  }
-
-  function check_all_click_handler(): void {
-    if (checked_files.size === 0) {
-      actions.set_file_list_checked(
-        listing.map((file) => misc.path_to_file(current_path, file.name)),
-      );
-    } else {
-      clear_selection();
-    }
-  }
-
-  function render_check_all_button(): React.JSX.Element | undefined {
-    if (readOnly && !allowCopyOut) {
-      return;
-    }
-    if (listing.length === 0) {
-      return;
-    }
-
-    const checked = checked_files.size > 0;
-    const button_text = intl.formatMessage(
-      {
-        id: "project.explorer.action-bar.check_all.button",
-        defaultMessage: `{checked, select, true {Uncheck All} other {Check All}}`,
-        description:
-          "For checking all checkboxes to select all files in a listing.",
-      },
-      { checked },
-    );
-
-    let button_icon;
-    if (checked_files.size === 0) {
-      button_icon = "square-o";
-    } else {
-      if (checked_files.size >= listing.length) {
-        button_icon = "check-square-o";
-      } else {
-        button_icon = "minus-square-o";
-      }
-    }
-
-    return (
-      <Button
-        bsSize="small"
-        cocalc-test="check-all"
-        onClick={check_all_click_handler}
-      >
-        <Icon name={button_icon} /> {button_text}
-      </Button>
-    );
-  }
-
   function render_currently_selected(): React.JSX.Element | undefined {
-    const refreshButton = hasPendingUpdate ? (
-      <RefreshButton onClick={onRefreshListing} />
-    ) : null;
+    const refreshButton =
+      hasPendingUpdate && !suppressPendingRefresh ? (
+        <RefreshButton onClick={onRefreshListing} />
+      ) : null;
     if (listing.length === 0) {
       return readOnly && refreshButton ? (
         <div style={ROW_INFO_STYLE}>
@@ -368,30 +318,19 @@ function ActionBarEnabled({
       ) : null;
 
     if (checked === 0) {
+      if (!readOnly && autoUpdateButton == null) return;
+      if (!readOnly && refreshButton == null) return;
       return (
         <div style={style}>
-          <span>
-            {total} {intl.formatMessage(labels.item_plural, { total })}
-          </span>
-          <div style={{ display: "inline" }}>
-            {" "}
-            &mdash;{" "}
-            {readOnly ? (
-              <FormattedMessage
-                id="project.explorer.action-bar.read_only.info"
-                defaultMessage="Viewer access is read-only. Select files to copy them to another project."
-              />
-            ) : (
-              <FormattedMessage
-                id="project.explorer.action-bar.currently_selected.info"
-                defaultMessage={
-                  "Click the checkbox to the left of a file to copy, download, etc."
-                }
-              />
-            )}
-          </div>
-          {refreshButton && <> &middot; {refreshButton}</>}
-          {autoUpdateButton && <> &middot; {autoUpdateButton}</>}
+          {readOnly ? (
+            <FormattedMessage
+              id="project.explorer.action-bar.read_only.info"
+              defaultMessage="Viewer access is read-only. Select files to copy them to another project."
+            />
+          ) : null}
+          {refreshButton}
+          {autoUpdateButton && refreshButton ? <> &middot; </> : null}
+          {autoUpdateButton}
         </div>
       );
     } else {
@@ -412,7 +351,6 @@ function ActionBarEnabled({
           </span>
           {refreshButton && <> &middot; {refreshButton}</>}
           {autoUpdateButton && <> &middot; {autoUpdateButton}</>}
-          <Gap />
         </div>
       );
     }
@@ -616,15 +554,30 @@ function ActionBarEnabled({
   if (checked_files.size === 0 && IS_MOBILE) {
     return null;
   }
+  const buttonArea = render_button_area();
+  const selectedInfo = render_currently_selected();
+  if (buttonArea == null && selectedInfo == null) {
+    return null;
+  }
   return (
-    <div style={{ flex: "1 0 auto" }}>
-      <div style={{ flex: "1 0 auto" }}>
-        <ButtonToolbar style={{ whiteSpace: "nowrap", padding: "0" }}>
-          <Space.Compact>{render_check_all_button()}</Space.Compact>
-          {render_button_area()}
-        </ButtonToolbar>
-      </div>
-      <div style={{ flex: "1 0 auto" }}>{render_currently_selected()}</div>
+    <div
+      style={{
+        alignItems: "center",
+        display: "flex",
+        flex: "1 0 auto",
+        flexWrap: "wrap",
+        gap: "8px",
+        height: "32px",
+      }}
+    >
+      {buttonArea != null ? (
+        <div style={{ flex: "0 0 auto", whiteSpace: "nowrap", padding: 0 }}>
+          {buttonArea}
+        </div>
+      ) : null}
+      {selectedInfo != null ? (
+        <div style={{ flex: "0 1 auto", minWidth: 0 }}>{selectedInfo}</div>
+      ) : null}
       <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );

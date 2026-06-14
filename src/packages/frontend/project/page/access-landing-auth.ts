@@ -19,6 +19,25 @@ export function shouldFetchProjectAccessLandingInfo({
   return !liteMode && isActive && accountIsReady && isLoggedIn && !hasProject;
 }
 
+export function shouldShowProjectAccessSignInRequired({
+  accountIsReady,
+  isLoggedIn,
+  userType,
+  liteMode = false,
+}: {
+  accountIsReady: boolean;
+  isLoggedIn: boolean;
+  userType?: string;
+  liteMode?: boolean;
+}): boolean {
+  return (
+    !liteMode &&
+    accountIsReady &&
+    !isLoggedIn &&
+    (userType == null || userType === "public")
+  );
+}
+
 export function hasProjectRoleForAccessLandingBypass({
   accountId,
   project,

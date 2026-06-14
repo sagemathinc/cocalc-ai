@@ -705,6 +705,7 @@ export function FilesHeader({
             mode="top"
             activeFile={activeFile}
             refreshBackups={refreshBackups}
+            showActions={false}
           />
           <div
             aria-hidden={!hasPendingUpdate}

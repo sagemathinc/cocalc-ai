@@ -387,6 +387,22 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     fingerprint: fileListingFingerprint,
   });
   const visibleListing = displayListing ?? listing;
+  const [activeUploadCount, setActiveUploadCount] = useState(0);
+  const uploadInProgress = activeUploadCount > 0;
+  const refreshAfterUploadActivity = useCallback(() => {
+    refreshListingAfterUserAction({
+      allowUpdatesFor: allowListingUpdatesFor,
+      refresh,
+    });
+  }, [allowListingUpdatesFor, refresh]);
+  const handleUploadStarted = useCallback(() => {
+    setActiveUploadCount((count) => count + 1);
+    refreshAfterUploadActivity();
+  }, [refreshAfterUploadActivity]);
+  const handleUploadFinished = useCallback(() => {
+    setActiveUploadCount((count) => Math.max(0, count - 1));
+    refreshAfterUploadActivity();
+  }, [refreshAfterUploadActivity]);
   useEffect(() => {
     return registerUserFilesystemChangeHandler(() =>
       refreshListingAfterUserAction({
@@ -1085,6 +1101,7 @@ You can either wait for this host to become available again, or move this ${proj
                       }
                       autoUpdateListing={autoUpdateListing}
                       onToggleAutoUpdate={handleAutoUpdateListingChange}
+                      suppressPendingRefresh={uploadInProgress}
                       readOnly={readOnlyViewer}
                       allowCopyOut={readOnlyViewer}
                     />
@@ -1254,6 +1271,8 @@ You can either wait for this host to become available again, or move this ${proj
                       refresh,
                     })
                   }
+                  onUploadStarted={handleUploadStarted}
+                  onUploadFinished={handleUploadFinished}
                 >
                   {(openUploadFiles) => (
                     <FileListingBody
@@ -1302,12 +1321,16 @@ function MaybeFileUploadWrapper({
   dest_path,
   enabled,
   onUploadActivity,
+  onUploadFinished,
+  onUploadStarted,
   project_id,
 }: {
   children: (openUploadFiles?: () => void) => ReactNode;
   dest_path: string;
   enabled: boolean;
   onUploadActivity: () => void;
+  onUploadFinished: () => void;
+  onUploadStarted: () => void;
   project_id: string;
 }) {
   const dropzoneRef = useRef<DropzoneRef["current"]>(null);
@@ -1336,8 +1359,9 @@ function MaybeFileUploadWrapper({
       dest_path={dest_path}
       config={{ clickable: ".upload-button" }}
       event_handlers={{
+        addedfile: onUploadStarted,
         sending: onUploadActivity,
-        complete: onUploadActivity,
+        complete: onUploadFinished,
       }}
       style={style}
       className="smc-vfill"
