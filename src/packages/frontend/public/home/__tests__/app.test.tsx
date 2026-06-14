@@ -66,6 +66,7 @@ describe("PublicHomeApp", () => {
     expect(getHomepageSectionLabels(container)).toEqual([
       "CoCalc Launchpad hero",
       "One technical workspace",
+      "Who CoCalc helps",
       "Core workflows",
       "Ways to run CoCalc",
       "Why CoCalc is different",
@@ -131,6 +132,31 @@ describe("PublicHomeApp", () => {
     expect(
       within(project).getByText("People and AI share context"),
     ).not.toBeNull();
+
+    const audiences = screen.getByRole("region", {
+      name: "Who CoCalc helps",
+    });
+    expect(
+      within(audiences).getByRole("heading", {
+        name: "One workspace for research, courses, and platform teams.",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(audiences).getByRole("link", { name: "Explore workflows" }),
+    ).toHaveAttribute("href", "/features/compare");
+    expect(
+      within(audiences).getByRole("link", { name: "Course workflows" }),
+    ).toHaveAttribute("href", "/features/teaching");
+    expect(
+      within(audiences).getByRole("link", { name: "Compare products" }),
+    ).toHaveAttribute("href", "/products");
+    for (const title of [
+      "Research and engineering teams",
+      "Technical courses and workshops",
+      "IT and platform teams",
+    ]) {
+      expect(within(audiences).getByText(title)).not.toBeNull();
+    }
 
     const workflows = screen.getByRole("region", {
       name: "Core workflows",

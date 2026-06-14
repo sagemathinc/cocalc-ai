@@ -37,6 +37,10 @@ const HOME_PAGE_CSS = `
     transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
   }
 
+  .cocalc-public-home > section {
+    scroll-margin-top: 76px;
+  }
+
   .cocalc-public-home-card-link:hover {
     border-color: ${PUBLIC_COLORS.linkHover} !important;
     box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.1)} !important;
@@ -68,6 +72,7 @@ const HOME_PAGE_CSS = `
     }
 
     .cocalc-public-home-product-grid,
+    .cocalc-public-home-audience-grid,
     .cocalc-public-home-path-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
@@ -88,6 +93,7 @@ const HOME_PAGE_CSS = `
     }
 
     .cocalc-public-home-feature-grid,
+    .cocalc-public-home-audience-grid,
     .cocalc-public-home-product-grid,
     .cocalc-public-home-difference-grid,
     .cocalc-public-home-path-grid {
@@ -179,6 +185,40 @@ const WORKFLOW_FEATURES = [
   icon: IconName;
   label: string;
   summary: string;
+  title: string;
+}>;
+
+const AUDIENCE_ROUTES = [
+  {
+    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    body: "Keep notebooks, scripts, papers, terminals, and AI assistance close to the same project history.",
+    button: "Explore workflows",
+    href: "features/compare",
+    icon: "project-outlined",
+    title: "Research and engineering teams",
+  },
+  {
+    accent: COLORS.RUN,
+    body: "Use course management for student projects, assignments, grading, shared software environments, and contextual help.",
+    button: "Course workflows",
+    href: "features/teaching",
+    icon: "graduation-cap",
+    title: "Technical courses and workshops",
+  },
+  {
+    accent: COLORS.GRAY_D,
+    body: "Choose hosted, local, single-VM, or private deployment paths without changing the core workspace model.",
+    button: "Compare products",
+    href: "products",
+    icon: "servers",
+    title: "IT and platform teams",
+  },
+] satisfies Array<{
+  accent: string;
+  body: string;
+  button: string;
+  href: string;
+  icon: IconName;
   title: string;
 }>;
 
@@ -616,6 +656,52 @@ function ProjectSection() {
           ))}
         </div>
       </Flex>
+    </section>
+  );
+}
+
+function AudienceRoutesSection() {
+  return (
+    <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
+      <SectionIntro
+        body="The same project model supports hands-on technical work, course operations, and deployment decisions."
+        eyebrow="Who it helps"
+        title="One workspace for research, courses, and platform teams."
+      />
+      <div
+        className="cocalc-public-home-audience-grid"
+        style={{
+          display: "grid",
+          gap: 18,
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          marginTop: 24,
+        }}
+      >
+        {AUDIENCE_ROUTES.map((route) => (
+          <div
+            key={route.title}
+            style={{
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${alpha(route.accent, 0.18)}`,
+              borderRadius: PANEL_RADIUS,
+              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+              minHeight: 220,
+              padding: 22,
+            }}
+          >
+            <Flex vertical gap={16}>
+              <IconTile accent={route.accent} icon={route.icon} />
+              <div>
+                <Title level={4} style={{ margin: "0 0 8px" }}>
+                  {route.title}
+                </Title>
+                <Paragraph style={{ margin: 0 }}>{route.body}</Paragraph>
+              </div>
+              <Button href={appPath(route.href)}>{route.button}</Button>
+            </Flex>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -1086,6 +1172,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       >
         <Hero authenticated={authenticated} siteName={siteName} />
         <ProjectSection />
+        <AudienceRoutesSection />
         <WorkflowsSection />
         <ProductsSection />
         <DifferenceSection />

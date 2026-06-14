@@ -97,6 +97,10 @@ describe("PublicHomeApp visual quality contract", () => {
     const workflowGrid = within(
       screen.getByRole("region", { name: "Core workflows" }),
     ).getByRole("group", { name: "CoCalc workflow feature cards" });
+    const audienceGrid = getGrid(
+      container,
+      ".cocalc-public-home-audience-grid",
+    );
     const productGrid = getGrid(container, ".cocalc-public-home-product-grid");
     const differenceGrid = getGrid(
       container,
@@ -113,6 +117,14 @@ describe("PublicHomeApp visual quality contract", () => {
       "Codex Agent Chat",
       "Teaching a Course",
       "Whiteboard",
+    ]);
+
+    expect(getDirectCards(audienceGrid)).toHaveLength(3);
+    expectGridTemplate(audienceGrid, "repeat(3, minmax(0, 1fr))");
+    expect(getCardTitles(audienceGrid)).toEqual([
+      "Research and engineering teams",
+      "Technical courses and workshops",
+      "IT and platform teams",
     ]);
 
     expect(getDirectCards(productGrid)).toHaveLength(5);
@@ -150,6 +162,7 @@ describe("PublicHomeApp visual quality contract", () => {
     const css = getHomeCss(container);
 
     expect(css).toContain("@media (max-width: 920px)");
+    expect(css).toContain(".cocalc-public-home-audience-grid");
     expect(css).toContain(".cocalc-public-home-product-grid");
     expect(css).toContain(".cocalc-public-home-path-grid");
     expect(css).toContain(
@@ -171,6 +184,10 @@ describe("PublicHomeApp visual quality contract", () => {
         { name: "CoCalc workflow feature cards" },
       ),
       { maxCardText: 230, maxTitleText: 28 },
+    );
+    expectCardsStayCompact(
+      getGrid(container, ".cocalc-public-home-audience-grid"),
+      { maxCardText: 205, maxTitleText: 36 },
     );
     expectCardsStayCompact(
       getGrid(container, ".cocalc-public-home-product-grid"),
@@ -207,6 +224,7 @@ describe("PublicHomeApp visual quality contract", () => {
       sectionHeadings.map((heading) => heading.textContent?.trim()),
     ).toEqual([
       "Bring technical work back into one context.",
+      "One workspace for research, courses, and platform teams.",
       "Use the tools you already understand, together.",
       "Hosted, local, one VM, or private from the same product family.",
       "Technical work you can review, recover, and keep moving.",
