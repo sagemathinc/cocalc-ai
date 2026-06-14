@@ -994,21 +994,21 @@ export default function DiskUsage({
         ...style,
         alignItems: "center",
         display: "inline-flex",
-        gap: compact ? "6px" : "8px",
-        height: compact ? "28px" : "32px",
+        gap: compact ? "5px" : "8px",
+        height: compact ? "24px" : "32px",
         justifyContent: "flex-start",
         lineHeight: 1,
-        padding: compact ? "2px 8px" : "4px 10px",
+        padding: compact ? "0 7px" : "4px 10px",
         textAlign: "left",
       }}
     >
       <Icon name="disk-round" />
-      <Space size={compact ? 6 : 8} wrap={false} style={{ lineHeight: 1 }}>
+      <Space size={compact ? 5 : 8} wrap={false} style={{ lineHeight: 1 }}>
         {quota != null ? (
           <>
             <Progress
               style={{
-                width: compact ? "52px" : "60px",
+                width: compact ? "40px" : "60px",
                 marginBottom: 0,
                 lineHeight: 1,
               }}

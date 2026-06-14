@@ -524,7 +524,17 @@ export function FilesSelectedControls({
     <Space
       orientation="vertical"
       size="small"
-      style={mode === "top" ? PANEL_STYLE_TOP : PANEL_STYLE_BOTTOM}
+      style={
+        mode === "top"
+          ? {
+              ...PANEL_STYLE_TOP,
+              paddingBottom: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+              width: "auto",
+            }
+          : PANEL_STYLE_BOTTOM
+      }
     >
       {singleFile
         ? singleFile.isDir

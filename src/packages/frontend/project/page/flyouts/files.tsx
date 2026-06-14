@@ -1072,6 +1072,16 @@ export function FilesFlyout({
         setTypeFilter={setTypeFilter}
         typeFilterOptions={typeFilterOptions}
         hasPendingUpdate={visiblePendingListingUpdate}
+        diskUsageControl={
+          !lite ? (
+            <DiskUsage
+              compact
+              current_path={effective_current_path}
+              project_id={project_id}
+              style={{ margin: 0 }}
+            />
+          ) : undefined
+        }
         onRefreshListing={() =>
           refreshListingAfterUserAction({
             allowUpdatesFor: allowListingUpdatesFor,
@@ -1080,14 +1090,6 @@ export function FilesFlyout({
         }
         onTerminalCommand={() => allowListingUpdatesFor()}
       />
-      {!lite && (
-        <DiskUsage
-          compact
-          current_path={effective_current_path}
-          project_id={project_id}
-          style={{ margin: "5px" }}
-        />
-      )}
       {disableUploads ? (
         renderListing()
       ) : (
