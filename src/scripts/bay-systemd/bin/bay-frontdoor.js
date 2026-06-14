@@ -374,6 +374,11 @@ function proxyUpgrade(req, socket, head) {
   const upstream = net.connect(worker.port, worker.host);
   upstream.setTimeout(upstreamTimeoutMs);
   upstream.once("connect", () => {
+    // The timeout above is only a connect timeout. After the upgrade succeeds,
+    // this is a long-lived websocket and normal Engine.IO ping intervals can be
+    // longer than the HTTP upstream timeout.
+    upstream.setTimeout(0);
+    socket.setTimeout(0);
     const requestLine = `${req.method} ${req.url} HTTP/${req.httpVersion}`;
     const rawHeaders = [...req.rawHeaders];
     rawHeaders.push("X-CoCalc-Bay-Frontdoor-Worker", `${worker.id}`);
