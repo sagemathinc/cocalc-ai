@@ -77,6 +77,20 @@ async function renderPublicApp(ui: React.ReactElement) {
   });
 }
 
+function expectNoProductDetailStalePhrasing() {
+  for (const phrase of [
+    /serious technical/i,
+    /What CoCalc/i,
+    /not HA/i,
+    /multi-bay/i,
+    /production operations matter/i,
+    /Production private cloud/i,
+    /lower-level operator control plane/i,
+  ]) {
+    expect(screen.queryByText(phrase)).toBeNull();
+  }
+}
+
 describe("section route parsers", () => {
   it("supports deeper content routes under a base path", () => {
     expect(getAboutRouteFromPath("/about")).toEqual({ view: "about" });
@@ -972,8 +986,29 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("Install CoCalc Plus")).not.toBeNull();
-    expect(screen.getByText("Who CoCalc Plus is for")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Local CoCalc for evaluation and individual work",
+      }),
+    ).not.toBeNull();
+    const positioning = screen.getByRole("group", {
+      name: "CoCalc Plus positioning",
+    });
+    for (const heading of ["Audience", "Deployment model", "Why choose it"]) {
+      expect(
+        within(positioning).getByRole("heading", { name: heading }),
+      ).not.toBeNull();
+    }
+    expect(
+      screen.getByRole("heading", { name: "Install CoCalc Plus locally" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Operational boundary" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Use hosted CoCalc.ai" }),
+    ).toHaveAttribute("href", "/");
+    expectNoProductDetailStalePhrasing();
   });
 
   it("renders the software overview page", async () => {
@@ -1068,8 +1103,29 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("Install CoCalc Launchpad")).not.toBeNull();
-    expect(screen.getByText("What the installer does")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Lightweight private deployment for teams that operate CoCalc",
+      }),
+    ).not.toBeNull();
+    const positioning = screen.getByRole("group", {
+      name: "CoCalc Launchpad positioning",
+    });
+    for (const heading of ["Audience", "Deployment model", "Why choose it"]) {
+      expect(
+        within(positioning).getByRole("heading", { name: heading }),
+      ).not.toBeNull();
+    }
+    expect(
+      screen.getByRole("heading", { name: "Install CoCalc Launchpad" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/customer-operated private environment/),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Pricing and licensing" }),
+    ).toHaveAttribute("href", "/pricing");
+    expectNoProductDetailStalePhrasing();
   });
 
   it("renders the cocalc star page", async () => {
@@ -1080,8 +1136,25 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("Install CoCalc Star")).not.toBeNull();
-    expect(screen.getByText("Who CoCalc Star is for")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Shared CoCalc on one VM" }),
+    ).not.toBeNull();
+    const positioning = screen.getByRole("group", {
+      name: "CoCalc Star positioning",
+    });
+    for (const heading of ["Audience", "Deployment model", "Why choose it"]) {
+      expect(
+        within(positioning).getByRole("heading", { name: heading }),
+      ).not.toBeNull();
+    }
+    expect(
+      screen.getByRole("heading", { name: "Install CoCalc Star" }),
+    ).not.toBeNull();
+    expect(screen.getAllByText(/public Ubuntu VM/).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/not a high-availability or scale-out/),
+    ).not.toBeNull();
+    expectNoProductDetailStalePhrasing();
   });
 
   it("renders the cocalc rocket page", async () => {
@@ -1092,14 +1165,26 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("Who CoCalc Rocket is for")).not.toBeNull();
     expect(
-      screen.getByText(/customer-operated private-cloud deployment/i),
+      screen.getByRole("heading", {
+        name: "Private-cloud path for institutional deployment",
+      }),
     ).not.toBeNull();
+    const positioning = screen.getByRole("group", {
+      name: "CoCalc Rocket positioning",
+    });
+    for (const heading of ["Audience", "Deployment model", "Why choose it"]) {
+      expect(
+        within(positioning).getByRole("heading", { name: heading }),
+      ).not.toBeNull();
+    }
+    expect(
+      screen.getAllByText(/customer-operated private-cloud path/i).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText(/governance, support/i)).not.toBeNull();
-    expect(screen.queryByText(/production multi-user CoCalc/i)).toBeNull();
-    expect(screen.queryByText(/multi-bay architecture/i)).toBeNull();
-    expect(screen.queryByText(/production operations matter/i)).toBeNull();
-    expect(screen.getByText("Talk with us")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Start the Rocket conversation" }),
+    ).toHaveAttribute("href", "/support");
+    expectNoProductDetailStalePhrasing();
   });
 });

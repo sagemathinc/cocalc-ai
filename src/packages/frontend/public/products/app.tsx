@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 
 import { Button, Flex, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -20,6 +20,18 @@ import { CodeCommand, CopyCommandButton } from "./components";
 import type { PublicProductsRoute } from "./routes";
 
 const { Paragraph, Text, Title } = Typography;
+
+interface ProductAction {
+  href: string;
+  label: string;
+  primary?: boolean;
+}
+
+interface ProductDetailPoint {
+  body: ReactNode;
+  icon: IconName;
+  title: string;
+}
 
 function titleForRoute(route: PublicProductsRoute): string {
   switch (route.view) {
@@ -306,88 +318,254 @@ function ProductsOverviewPage() {
   );
 }
 
-function CocalcRocketPage() {
+function ProductActions({ actions }: { actions: ProductAction[] }) {
   return (
-    <PublicGrid columns={3}>
-      <PublicSection>
+    <Flex gap={12} wrap>
+      {actions.map((action) => (
+        <Button
+          href={action.href}
+          key={`${action.label}-${action.href}`}
+          type={action.primary ? "primary" : "default"}
+        >
+          {action.label}
+        </Button>
+      ))}
+    </Flex>
+  );
+}
+
+function ProductLeadSection({
+  actions,
+  body,
+  title,
+}: {
+  actions: ProductAction[];
+  body: ReactNode;
+  title: string;
+}) {
+  return (
+    <PublicSection>
+      <Title level={2} style={{ margin: 0 }}>
+        {title}
+      </Title>
+      <Paragraph style={{ fontSize: 18, margin: 0, maxWidth: "72ch" }}>
+        {body}
+      </Paragraph>
+      <ProductActions actions={actions} />
+    </PublicSection>
+  );
+}
+
+function ProductDetailCard({
+  children,
+  icon,
+  title,
+}: {
+  children: ReactNode;
+  icon: IconName;
+  title: string;
+}) {
+  return (
+    <section
+      aria-label={title}
+      className="cocalc-public-products-detail-card"
+      style={{
+        background: PUBLIC_COLORS.surface,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 8,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        height: "100%",
+        minHeight: 188,
+        padding: 18,
+      }}
+    >
+      <Flex align="center" gap={10}>
+        <span
+          aria-hidden="true"
+          style={{
+            alignItems: "center",
+            background: PUBLIC_COLORS.surfaceMuted,
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: 8,
+            color: PUBLIC_COLORS.brand,
+            display: "flex",
+            flex: "0 0 38px",
+            height: 38,
+            justifyContent: "center",
+            width: 38,
+          }}
+        >
+          <Icon name={icon} />
+        </span>
         <Title level={3} style={{ margin: 0 }}>
-          Who CoCalc Rocket is for
+          {title}
         </Title>
-        <Paragraph style={{ margin: 0 }}>
-          CoCalc Rocket is for institutions and enterprises planning a broader
-          customer-operated private-cloud deployment of CoCalc.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          Use it when governance, private infrastructure, rollout planning, or
-          custom commercial terms matter more than a self-service hosted or
-          single-VM path.
-        </Paragraph>
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          How Rocket differs
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Choose CoCalc Plus for a free local runtime. Choose CoCalc Star for a
-          single public VM appliance. Choose Launchpad for a lightweight private
-          deployment. Choose Rocket for the enterprise private-cloud path.
-        </Paragraph>
-        <Flex gap={12} wrap>
-          <LinkButton href={publicPath("products/cocalc-star")}>
-            Compare with Star
-          </LinkButton>
-          <LinkButton href={publicPath("products/cocalc-launchpad")}>
-            Compare with Launchpad
-          </LinkButton>
-          <LinkButton href={publicPath("products/cocalc-plus")}>
-            Compare with CoCalc Plus
-          </LinkButton>
-        </Flex>
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Talk with us
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Rocket conversations usually include infrastructure, rollout,
-          governance, support, and site-license options. Contact us before
-          assuming a smaller self-operated path will fit an institutional
-          deployment.
-        </Paragraph>
-        <Flex gap={12} wrap>
-          <LinkButton href={appPath("support")}>Support</LinkButton>
-          <LinkButton href={appPath("pricing")}>Pricing</LinkButton>
-        </Flex>
-      </PublicSection>
-    </PublicGrid>
+      </Flex>
+      <div style={{ flex: 1 }}>{children}</div>
+    </section>
+  );
+}
+
+function ProductDetailGrid({
+  items,
+  label,
+}: {
+  items: ProductDetailPoint[];
+  label: string;
+}) {
+  return (
+    <div
+      aria-label={label}
+      role="group"
+      style={{
+        display: "grid",
+        gap: 12,
+        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+      }}
+    >
+      {items.map((item) => (
+        <ProductDetailCard icon={item.icon} key={item.title} title={item.title}>
+          <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+        </ProductDetailCard>
+      ))}
+    </div>
+  );
+}
+
+function ProductNotesList({ items }: { items: ReactNode[] }) {
+  return (
+    <ul style={{ margin: 0, paddingLeft: 20 }}>
+      {items.map((item, index) => (
+        <li
+          key={index}
+          style={{ marginBottom: index === items.length - 1 ? 0 : 8 }}
+        >
+          {item}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function CocalcRocketPage() {
+  const detailItems = [
+    {
+      body: "Institutions, enterprises, and platform teams planning a broader customer-operated CoCalc deployment with governance, procurement, support, and rollout requirements.",
+      icon: "rocket",
+      title: "Audience",
+    },
+    {
+      body: "Runs as a customer-operated private-cloud path. The preferred packaging is VM-first, with Kubernetes available for organizations that already operate that way.",
+      icon: "servers",
+      title: "Deployment model",
+    },
+    {
+      body: "Use Rocket when the deployment decision includes private infrastructure, capacity planning, operational ownership, support expectations, and commercial terms.",
+      icon: "cloud",
+      title: "Why choose it",
+    },
+  ] satisfies ProductDetailPoint[];
+
+  return (
+    <Flex vertical gap={18}>
+      <ProductLeadSection
+        actions={[
+          { href: appPath("support"), label: "Talk with us", primary: true },
+          { href: appPath("pricing"), label: "Pricing and licensing" },
+        ]}
+        title="Private-cloud path for institutional deployment"
+        body="CoCalc Rocket is the broader customer-operated private-cloud path for organizations that need CoCalc to fit infrastructure, governance, procurement, and support requirements."
+      />
+      <ProductDetailGrid
+        items={detailItems}
+        label="CoCalc Rocket positioning"
+      />
+      <PublicGrid columns={2}>
+        <ProductDetailCard icon="rocket" title="Operational boundary">
+          <ProductNotesList
+            items={[
+              "Rocket is not a self-service installer page; it starts with a deployment and commercial conversation.",
+              "Choose Launchpad for a smaller customer-operated private deployment.",
+              "Choose Star for one public Ubuntu VM, or Plus for a local one-user runtime.",
+            ]}
+          />
+        </ProductDetailCard>
+        <ProductDetailCard icon="servers" title="Next action">
+          <Paragraph style={{ marginTop: 0 }}>
+            Start with support when the conversation includes infrastructure,
+            rollout, governance, support coverage, or site licensing.
+          </Paragraph>
+          <ProductActions
+            actions={[
+              {
+                href: appPath("support"),
+                label: "Start the Rocket conversation",
+                primary: true,
+              },
+              {
+                href: publicPath("products/cocalc-launchpad"),
+                label: "Compare Launchpad",
+              },
+              {
+                href: publicPath("products"),
+                label: "All product paths",
+              },
+            ]}
+          />
+        </ProductDetailCard>
+      </PublicGrid>
+    </Flex>
   );
 }
 
 function CocalcStarPage() {
   const installCommand =
     "curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash";
+  const detailItems = [
+    {
+      body: "Users, instructors, labs, GPU-box owners, agent sandbox operators, and small teams that want collaborators in one browser-based CoCalc instance.",
+      icon: "star",
+      title: "Audience",
+    },
+    {
+      body: "Runs on one fresh public Ubuntu VM with ports 80 and 443 open. The installer sets up the CoCalc instance, HTTPS, onboarding, and the first admin flow.",
+      icon: "servers",
+      title: "Deployment model",
+    },
+    {
+      body: "Use Star when you want a shared CoCalc site on your own VM without manually assembling DNS, TLS, port forwarding, and cloud-provider-specific setup.",
+      icon: "cloud",
+      title: "Why choose it",
+    },
+  ] satisfies ProductDetailPoint[];
 
   return (
-    <>
-      <PublicGrid columns={3}>
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            Who CoCalc Star is for
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            CoCalc Star is for technically self-directed users or small teams
-            that want a shared CoCalc instance on one VM.
-          </Paragraph>
-          <Paragraph style={{ margin: 0 }}>
-            It is the bridge between the single-user local runtime and broader
-            private-deployment planning: one public Ubuntu VM or local Lima VM,
-            not high availability or enterprise private cloud.
-          </Paragraph>
-        </PublicSection>
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            Install CoCalc Star
-          </Title>
+    <Flex vertical gap={18}>
+      <ProductLeadSection
+        actions={[
+          {
+            href: "#install-cocalc-star",
+            label: "Install CoCalc Star",
+            primary: true,
+          },
+          {
+            href: publicPath("products/cocalc-launchpad"),
+            label: "Compare Launchpad",
+          },
+          {
+            href: publicPath("products/cocalc-rocket"),
+            label: "Compare Rocket",
+          },
+        ]}
+        title="Shared CoCalc on one VM"
+        body="CoCalc Star is the path for a small shared CoCalc instance on one public Ubuntu VM. It sits between local CoCalc Plus and customer-operated private deployment."
+      />
+      <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />
+      <PublicGrid columns={2}>
+        <ProductDetailCard icon="star" title="Install CoCalc Star">
+          <div id="install-cocalc-star" />
           <Paragraph style={{ margin: 0 }}>
             On a fresh Ubuntu 24.04 VM with ports 80 and 443 open, run:
           </Paragraph>
@@ -406,30 +584,25 @@ function CocalcStarPage() {
             DNS, obtains a Let's Encrypt certificate through Caddy, and shows a
             web onboarding page before continuing.
           </Paragraph>
-        </PublicSection>
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            When to choose Star
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            Choose Star for a lab, course, GPU box, agent sandbox, or small team
-            where the operator owns the VM and wants collaborators using the
-            same browser-based CoCalc workspace.
-          </Paragraph>
-          <Paragraph style={{ margin: 0 }}>
-            Star is not HA and not multi-bay. Use it for a single public VM;
-            move to Launchpad for lightweight private deployment or Rocket for
-            private cloud deployments.
-          </Paragraph>
-        </PublicSection>
+        </ProductDetailCard>
+        <ProductDetailCard icon="servers" title="Operational boundary">
+          <ProductNotesList
+            items={[
+              "Use Star for one public VM, one local project host, and a small shared site.",
+              "Star is not a high-availability or scale-out private-cloud deployment.",
+              "Move to Launchpad for a lightweight private deployment, or Rocket for institutional private cloud.",
+            ]}
+          />
+        </ProductDetailCard>
       </PublicGrid>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Star, Launchpad, and Rocket
+          Next action
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Star is the single-VM public appliance. Launchpad is the lightweight
-          private deployment. Rocket is the private cloud deployment path.
+          Install Star when you already have a fresh public Ubuntu VM. Compare
+          deployment paths first if the organization needs a private environment
+          or broader operational planning.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={publicPath("products/cocalc-launchpad")}>
@@ -440,38 +613,59 @@ function CocalcStarPage() {
           </LinkButton>
         </Flex>
       </PublicSection>
-    </>
+    </Flex>
   );
 }
 
 function CocalcLaunchpadPage() {
   const installCommand =
     "curl -fsSL https://software.cocalc.ai/software/cocalc-launchpad/install.sh | bash";
+  const detailItems = [
+    {
+      body: "Academic IT, lab operators, platform teams, workshops, and departments that need a customer-operated CoCalc environment for a bounded group.",
+      icon: "servers",
+      title: "Audience",
+    },
+    {
+      body: "Runs as a lightweight private deployment operated by the customer. It gives operators more control over the environment than Star.",
+      icon: "cloud",
+      title: "Deployment model",
+    },
+    {
+      body: "Use Launchpad when a hosted account is not the right fit and a single public-VM appliance is too constrained for the pilot or department.",
+      icon: "star",
+      title: "Why choose it",
+    },
+  ] satisfies ProductDetailPoint[];
 
   return (
-    <>
-      <PublicGrid columns={3}>
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            Who CoCalc Launchpad is for
-          </Title>
+    <Flex vertical gap={18}>
+      <ProductLeadSection
+        actions={[
+          {
+            href: "#install-cocalc-launchpad",
+            label: "Install CoCalc Launchpad",
+            primary: true,
+          },
+          { href: publicPath("products/cocalc-star"), label: "Compare Star" },
+          {
+            href: publicPath("products/cocalc-rocket"),
+            label: "Compare Rocket",
+          },
+        ]}
+        title="Lightweight private deployment for teams that operate CoCalc"
+        body="CoCalc Launchpad is the customer-operated private deployment path for pilots, labs, workshops, departments, and platform teams that need more control than hosted CoCalc.ai or a single-VM Star appliance."
+      />
+      <ProductDetailGrid
+        items={detailItems}
+        label="CoCalc Launchpad positioning"
+      />
+      <PublicGrid columns={2}>
+        <ProductDetailCard icon="servers" title="Install CoCalc Launchpad">
+          <div id="install-cocalc-launchpad" />
           <Paragraph style={{ margin: 0 }}>
-            CoCalc Launchpad is the lightweight private deployment path for
-            pilots, labs, workshops, small teams, and departments that need a
-            customer-operated environment.
-          </Paragraph>
-          <Paragraph style={{ margin: 0 }}>
-            If your goal is a shared instance on one public Ubuntu VM, start
-            with CoCalc Star. If the organization needs a broader private-cloud
-            path, talk with us about Rocket.
-          </Paragraph>
-        </PublicSection>
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            Install CoCalc Launchpad
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            Copy and run this in your terminal:
+            For evaluation or operator setup, copy and run this in your
+            terminal:
           </Paragraph>
           <CodeCommand value={installCommand} />
           <Flex gap={12} wrap>
@@ -487,34 +681,30 @@ function CocalcLaunchpadPage() {
             Current supported targets are Linux on x64 or arm64, and macOS on
             arm64.
           </Paragraph>
-        </PublicSection>
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            What the installer does
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            The installer downloads the platform-specific manifest, verifies the
-            corresponding Launchpad artifact, installs it into a user-owned
-            directory, and adds a launcher to your PATH if needed.
-          </Paragraph>
-          <Paragraph style={{ margin: 0 }}>
-            On Linux this lives under
-            <code> ~/.local/share/cocalc-launchpad</code>, and on macOS under
-            <code> ~/Library/Application Support/cocalc-launchpad</code>.
-          </Paragraph>
-        </PublicSection>
+        </ProductDetailCard>
+        <ProductDetailCard icon="cloud" title="Operational boundary">
+          <ProductNotesList
+            items={[
+              "Choose Star when the need is simply one shared public Ubuntu VM.",
+              "Choose Launchpad when the team needs a customer-operated private environment for a bounded deployment.",
+              "Choose Rocket when institutional rollout, governance, support, and broader private-cloud planning become the main decision.",
+            ]}
+          />
+        </ProductDetailCard>
       </PublicGrid>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Choose Star, Launchpad, or Plus
+          Next action
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Choose CoCalc Plus for a free local runtime. Choose CoCalc Star for a
-          single public VM appliance. Choose Launchpad for a lightweight private
-          deployment. Choose Rocket when enterprise private-cloud planning is
-          required.
+          Start with Launchpad when your team is ready to operate a private
+          CoCalc environment. Use pricing and support when procurement,
+          deployment rights, or rollout planning are part of the decision.
         </Paragraph>
         <Flex gap={12} wrap>
+          <LinkButton href={appPath("pricing")}>
+            Pricing and licensing
+          </LinkButton>
           <LinkButton href={publicPath("products/cocalc-star")}>
             Compare with Star
           </LinkButton>
@@ -524,61 +714,83 @@ function CocalcLaunchpadPage() {
           <LinkButton href={appPath("features/api")}>HTTP API</LinkButton>
         </Flex>
       </PublicSection>
-    </>
+    </Flex>
   );
 }
 
 function CocalcPlusPage() {
   const installCommand =
     "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash";
+  const detailItems = [
+    {
+      body: "Researchers, developers, instructors, and IT evaluators who want a local CoCalc workspace before choosing hosted collaboration or a shared deployment.",
+      icon: "laptop",
+      title: "Audience",
+    },
+    {
+      body: "Runs on one Linux or macOS machine and is operated by the user. It is the local, one-user runtime in the product family.",
+      icon: "cloud",
+      title: "Deployment model",
+    },
+    {
+      body: "Use Plus for local evaluation, demos, personal projects, and learning the CoCalc workspace model without creating a hosted account.",
+      icon: "star",
+      title: "Why choose it",
+    },
+  ] satisfies ProductDetailPoint[];
 
   return (
-    <PublicGrid columns={3}>
+    <Flex vertical gap={18}>
+      <ProductLeadSection
+        actions={[
+          {
+            href: "#install-cocalc-plus",
+            label: "Install CoCalc Plus",
+            primary: true,
+          },
+          { href: appPath(""), label: "Use hosted CoCalc.ai" },
+          { href: publicPath("products/cocalc-star"), label: "Compare Star" },
+        ]}
+        title="Local CoCalc for evaluation and individual work"
+        body="CoCalc Plus is the local source-available runtime for one user on Linux or macOS. It is the right starting point when you want to evaluate CoCalc or work on your own machine before choosing a shared path."
+      />
+      <ProductDetailGrid items={detailItems} label="CoCalc Plus positioning" />
+      <PublicGrid columns={2}>
+        <ProductDetailCard icon="laptop" title="Install CoCalc Plus locally">
+          <div id="install-cocalc-plus" />
+          <Paragraph style={{ margin: 0 }}>
+            The current install flow uses the hosted software distribution:
+          </Paragraph>
+          <CodeCommand value={installCommand} />
+          <Flex gap={12} wrap>
+            <CopyCommandButton value={installCommand} />
+            <Button href="https://software.cocalc.ai/software/cocalc-plus/install.sh">
+              Open install script
+            </Button>
+          </Flex>
+          <Paragraph style={{ margin: 0 }}>
+            Current target platforms are Linux and macOS. The installer places
+            the runtime in a user-owned location and adds a launcher if needed.
+          </Paragraph>
+        </ProductDetailCard>
+        <ProductDetailCard icon="cloud" title="Operational boundary">
+          <ProductNotesList
+            items={[
+              "Choose CoCalc.ai when you want managed hosted collaboration and shared projects.",
+              "Choose CoCalc Star when a small group needs one shared VM.",
+              "Choose Launchpad or Rocket when the organization needs a customer-operated environment.",
+            ]}
+          />
+        </ProductDetailCard>
+      </PublicGrid>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Who CoCalc Plus is for
+          Next action
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          CoCalc Plus is the free source-available local runtime for one user.
-          Choose it when you want to evaluate CoCalc locally or work on your own
-          machine without a hosted account.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          It brings notebooks, terminals, files, and the CoCalc workspace model
-          to Linux or Mac. Choose CoCalc.ai, Star, Launchpad, or Rocket when the
-          work needs a shared or organizational environment.
-        </Paragraph>
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Install CoCalc Plus
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          The current install flow uses the hosted software distribution:
-        </Paragraph>
-        <CodeCommand value={installCommand} />
-        <Flex gap={12} wrap>
-          <CopyCommandButton value={installCommand} />
-          <Button href="https://software.cocalc.ai/software/cocalc-plus/install.sh">
-            Open install script
-          </Button>
-        </Flex>
-        <Paragraph style={{ margin: 0 }}>
-          Current target platforms are Linux and macOS. The installer places the
-          runtime in a user-owned location and adds a launcher if needed.
-        </Paragraph>
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Choose hosted CoCalc or CoCalc Plus
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Choose CoCalc.ai when you want managed hosted collaboration and shared
-          projects. Choose CoCalc Plus when you want a free local runtime.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          Both options share the same overall approach to projects, files,
-          terminals, notebooks, and computational workflows.
+          Install Plus to evaluate the workspace model locally, then move to
+          hosted CoCalc.ai, Star, Launchpad, or Rocket when the work needs
+          shared access or an organizational operating model.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("features/jupyter-notebook")}>
@@ -587,9 +799,12 @@ function CocalcPlusPage() {
           <LinkButton href={appPath("features/linux")}>
             Linux workflow
           </LinkButton>
+          <LinkButton href={publicPath("products")}>
+            Compare product paths
+          </LinkButton>
         </Flex>
       </PublicSection>
-    </PublicGrid>
+    </Flex>
   );
 }
 
