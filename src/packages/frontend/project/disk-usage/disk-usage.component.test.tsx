@@ -142,14 +142,14 @@ describe("DiskUsage backup UI", () => {
 
     render(<DiskUsage compact project_id="project-1" />);
 
-    expect(screen.queryByText("Backups")).not.toBeInTheDocument();
+    expect(screen.queryByText("Backup")).not.toBeInTheDocument();
     expect(screen.queryByText(/Live/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Retained/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button"));
 
     await waitFor(() => {
-      expect(screen.getByText("Backups")).toBeInTheDocument();
+      expect(screen.getByText("Backup")).toBeInTheDocument();
       expect(screen.getByText("Last backup:")).toBeInTheDocument();
     });
     expect(

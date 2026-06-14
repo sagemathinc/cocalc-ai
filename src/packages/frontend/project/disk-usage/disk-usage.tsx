@@ -66,6 +66,7 @@ type BackupSummary = {
   absolute?: string;
   date?: Date;
   style: CSSProperties;
+  title: string;
 };
 
 const HISTORY_MAX_POINTS = 96;
@@ -105,10 +106,13 @@ export function describeLastBackup(lastBackup: unknown): BackupSummary {
   switch (indexedBackupState(lastBackup)) {
     case "present":
       return {
-        label: "Backups",
+        label: "Backup",
         detail: "Last backup recorded.",
         absolute: date?.toLocaleString(),
         date,
+        title: date
+          ? `Last backup: ${date.toLocaleString()}`
+          : "Last backup recorded.",
         style: {
           background: COLORS.BS_GREEN_LL,
           borderColor: COLORS.BS_GREEN_D,
@@ -119,6 +123,7 @@ export function describeLastBackup(lastBackup: unknown): BackupSummary {
       return {
         label: "No backup",
         detail: "No successful backup recorded yet.",
+        title: "No successful backup has been recorded yet.",
         style: {
           background: COLORS.GRAY_LLL,
           borderColor: COLORS.ORANGE_WARN,
@@ -127,8 +132,9 @@ export function describeLastBackup(lastBackup: unknown): BackupSummary {
       };
     default:
       return {
-        label: "Backup unknown",
+        label: "Backup",
         detail: "Backup timestamp has not loaded yet.",
+        title: "Backup status has not loaded yet.",
         style: {
           background: COLORS.GRAY_LLL,
           borderColor: COLORS.GRAY_D,
@@ -1061,7 +1067,7 @@ export default function DiskUsage({
                 <Icon name="disk-round" /> Project storage overview
               </h5>
               <Space size={8} wrap style={{ marginTop: "8px" }}>
-                <Tag style={backupSummary.style} title={backupSummary.absolute}>
+                <Tag style={backupSummary.style} title={backupSummary.title}>
                   {backupSummary.label}
                 </Tag>
                 {sharedScratch != null ? (
