@@ -28,6 +28,7 @@ import {
   getCheckoutSession,
   getCustomerSession,
   getPaymentMethods,
+  getStripeCustomer,
   processPaymentIntents,
 } from "./api";
 import { Alert, Button, Card, Modal, Space, Spin } from "antd";
@@ -55,6 +56,17 @@ import { AddressButton, StripeAddressElement } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
 const PAYMENT_UPDATE_DEBOUNCE = 2000;
+
+function hasUsableBillingDetails(customer: any): boolean {
+  const address = customer?.address ?? {};
+  return (
+    !!`${customer?.name ?? ""}`.trim() &&
+    !!`${address.line1 ?? ""}`.trim() &&
+    !!`${address.city ?? ""}`.trim() &&
+    !!`${address.country ?? ""}`.trim() &&
+    !!`${address.postal_code ?? ""}`.trim()
+  );
+}
 
 interface StripePaymentProps {
   description?: string;
@@ -780,6 +792,44 @@ export function BillingSetupModal({
   title?: ReactNode;
 }) {
   const [addressSaved, setAddressSaved] = useState<boolean>(false);
+  const [checkingAddress, setCheckingAddress] =
+    useState<boolean>(requirePaymentMethod);
+  const [addressCheckError, setAddressCheckError] = useState<string>("");
+
+  useEffect(() => {
+    let active = true;
+
+    if (!requirePaymentMethod) {
+      setAddressSaved(false);
+      setCheckingAddress(false);
+      setAddressCheckError("");
+      return;
+    }
+
+    setCheckingAddress(true);
+    setAddressCheckError("");
+    (async () => {
+      try {
+        const customer = await getStripeCustomer();
+        if (active) {
+          setAddressSaved(hasUsableBillingDetails(customer));
+        }
+      } catch (err) {
+        if (active) {
+          setAddressCheckError(`${err}`);
+        }
+      } finally {
+        if (active) {
+          setCheckingAddress(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [requirePaymentMethod]);
+
   const finishAddress = () => {
     if (requirePaymentMethod) {
       setAddressSaved(true);
@@ -789,7 +839,11 @@ export function BillingSetupModal({
   };
   return (
     <Modal open title={title} onCancel={onCancel} onOk={onCancel} footer={[]}>
-      {!addressSaved ? (
+      {checkingAddress ? (
+        <BigSpin tip="Checking billing details..." />
+      ) : addressCheckError ? (
+        <ShowError error={addressCheckError} setError={setAddressCheckError} />
+      ) : !addressSaved ? (
         <Space vertical size="middle" style={{ width: "100%" }}>
           <Alert
             showIcon

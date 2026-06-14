@@ -296,6 +296,32 @@ describe("StripePayment", () => {
     expect(screen.queryByText("Confirm security action")).toBeNull();
   });
 
+  it("skips billing details when adding a payment method with saved address", async () => {
+    jest.mocked(getStripeCustomer).mockResolvedValueOnce({
+      address: {
+        city: "San Francisco",
+        country: "US",
+        line1: "1 Main St",
+        postal_code: "94105",
+        state: "CA",
+      },
+      name: "Ada Lovelace",
+    });
+
+    render(<AddPaymentMethodButton />);
+
+    fireEvent.click(screen.getByText(/Add Payment Method/));
+
+    await waitFor(() => {
+      expect(screen.getByText("Stripe payment element")).toBeTruthy();
+    });
+    expect(screen.queryByText("Stripe address element")).toBeNull();
+    expect(setStripeCustomer).not.toHaveBeenCalled();
+    expect(createSetupIntent).toHaveBeenCalledWith({
+      description: "Add a new payment method.",
+    });
+  });
+
   it("requires email verification before adding a payment method", async () => {
     mockEmailVerificationRequired = true;
 
