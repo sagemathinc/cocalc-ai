@@ -17,12 +17,14 @@ interface Props {
   file_search: string;
   current_path: string;
   project_id: string;
+  openUploadFiles?: () => void;
 }
 
 export default function NoFiles({
   file_search = "",
   current_path,
   project_id,
+  openUploadFiles,
 }: Props) {
   let actions:
     | Pick<
@@ -121,7 +123,7 @@ export default function NoFiles({
       <Alert
         type="info"
         showIcon
-        style={{ margin: "8px 16px 0 16px" }}
+        style={{ margin: "16px 24px" }}
         title="This folder is empty."
         description={
           <Space wrap style={{ marginTop: 8 }}>
@@ -138,6 +140,7 @@ export default function NoFiles({
       openNewPage={openNewPage}
       createFile={createFile}
       aiAllowed={aiAllowed}
+      openUploadFiles={openUploadFiles}
     />
   );
 }
@@ -146,10 +149,12 @@ function EmptyDirectoryWelcome({
   createFile,
   openNewPage,
   aiAllowed,
+  openUploadFiles,
 }: {
   createFile: (ext: string) => void;
   openNewPage: () => void;
   aiAllowed: boolean;
+  openUploadFiles?: () => void;
 }) {
   const actions: {
     title: string;
@@ -189,6 +194,7 @@ function EmptyDirectoryWelcome({
       description: "Drop files here or choose them from your computer.",
       icon: "cloud-upload",
       color: COLORS.BS_GREEN_D,
+      onClick: openUploadFiles,
       className: "upload-button",
     },
     {

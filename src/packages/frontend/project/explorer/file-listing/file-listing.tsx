@@ -126,6 +126,7 @@ interface Props {
   allowReadOnlyCopy?: boolean;
   sort_by: (column_name: string) => void;
   onNavigateDirectory?: (path: string) => void;
+  openUploadFiles?: () => void;
 }
 
 interface FileEntry extends DirectoryListingEntry {
@@ -455,6 +456,7 @@ export function FileListing({
   allowReadOnlyCopy = false,
   sort_by,
   onNavigateDirectory,
+  openUploadFiles,
 }: Props) {
   const intl = useIntl();
   const selected_file_index = useTypedRedux(
@@ -1425,6 +1427,7 @@ export function FileListing({
             current_path={current_path}
             file_search={file_search}
             project_id={project_id}
+            openUploadFiles={openUploadFiles}
           />
         )}
         {modal}
@@ -1500,6 +1503,7 @@ export function FileListing({
             current_path={current_path}
             file_search={file_search}
             project_id={project_id}
+            openUploadFiles={openUploadFiles}
           />
         )
       ) : null}

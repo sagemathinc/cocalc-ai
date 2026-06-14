@@ -52,11 +52,13 @@ describe("NoFiles", () => {
   });
 
   it("shows a polished first-run empty-state with direct actions", () => {
+    const openUploadFiles = jest.fn();
     render(
       <NoFiles
         project_id="project-1"
         current_path="/home/user"
         file_search=""
+        openUploadFiles={openUploadFiles}
       />,
     );
 
@@ -68,6 +70,8 @@ describe("NoFiles", () => {
     expect(screen.getByText("Upload Files").closest("button")).toHaveClass(
       "upload-button",
     );
+    fireEvent.click(screen.getByText("Upload Files"));
+    expect(openUploadFiles).toHaveBeenCalled();
   });
 
   it("uses a compact empty-folder state away from project home", () => {

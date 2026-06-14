@@ -23,7 +23,10 @@ import {
   Loading,
 } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { FileUploadWrapper } from "@cocalc/frontend/file-upload";
+import {
+  FileUploadWrapper,
+  type DropzoneRef,
+} from "@cocalc/frontend/file-upload";
 import { ProjectStatus } from "@cocalc/frontend/todo-types";
 import { labels } from "@cocalc/frontend/i18n";
 import AskNewFilename from "../ask-filename";
@@ -1252,27 +1255,30 @@ You can either wait for this host to become available again, or move this ${proj
                     })
                   }
                 >
-                  <FileListingBody
-                    visibleListing={visibleListing}
-                    active_file_sort={active_file_sort}
-                    sort_by={(column_name: string) => {
-                      allowNextListingUpdate();
-                      void setSort({
-                        project_id,
-                        path: effective_current_path,
-                        column_name,
-                      });
-                    }}
-                    file_search={file_search}
-                    checked_files={checked_files}
-                    current_path={effective_current_path}
-                    actions={actions}
-                    project_id={project_id}
-                    shiftIsDown={shiftIsDown}
-                    onNavigateDirectory={navigateExplorer}
-                    readOnly={readOnlyViewer}
-                    allowReadOnlyCopy={readOnlyViewer}
-                  />
+                  {(openUploadFiles) => (
+                    <FileListingBody
+                      visibleListing={visibleListing}
+                      active_file_sort={active_file_sort}
+                      sort_by={(column_name: string) => {
+                        allowNextListingUpdate();
+                        void setSort({
+                          project_id,
+                          path: effective_current_path,
+                          column_name,
+                        });
+                      }}
+                      file_search={file_search}
+                      checked_files={checked_files}
+                      current_path={effective_current_path}
+                      actions={actions}
+                      project_id={project_id}
+                      shiftIsDown={shiftIsDown}
+                      onNavigateDirectory={navigateExplorer}
+                      readOnly={readOnlyViewer}
+                      allowReadOnlyCopy={readOnlyViewer}
+                      openUploadFiles={openUploadFiles}
+                    />
+                  )}
                 </MaybeFileUploadWrapper>
               </>
             )}
@@ -1298,12 +1304,19 @@ function MaybeFileUploadWrapper({
   onUploadActivity,
   project_id,
 }: {
-  children: ReactNode;
+  children: (openUploadFiles?: () => void) => ReactNode;
   dest_path: string;
   enabled: boolean;
   onUploadActivity: () => void;
   project_id: string;
 }) {
+  const dropzoneRef = useRef<DropzoneRef["current"]>(null);
+  const openUploadFiles = useCallback(() => {
+    // This is the same pragmatic approach used elsewhere in file upload UI:
+    // Dropzone's CSS-selector clickable wiring is timing-sensitive, while
+    // clicking its hidden file input is direct and reliable.
+    dropzoneRef.current?.hiddenFileInput?.click();
+  }, []);
   const style = {
     flex: "1 1 auto",
     minWidth: 0,
@@ -1313,7 +1326,7 @@ function MaybeFileUploadWrapper({
   if (!enabled) {
     return (
       <div className="smc-vfill" style={style}>
-        {children}
+        {children()}
       </div>
     );
   }
@@ -1328,8 +1341,9 @@ function MaybeFileUploadWrapper({
       }}
       style={style}
       className="smc-vfill"
+      dropzone_ref={dropzoneRef}
     >
-      {children}
+      {children(openUploadFiles)}
     </FileUploadWrapper>
   );
 }
@@ -1347,6 +1361,7 @@ function FileListingBody({
   onNavigateDirectory,
   readOnly,
   allowReadOnlyCopy,
+  openUploadFiles,
 }: {
   visibleListing: DirectoryListingEntry[] | null | undefined;
   active_file_sort: { column_name: string; is_descending: boolean };
@@ -1360,6 +1375,7 @@ function FileListingBody({
   onNavigateDirectory: (path: string) => void;
   readOnly: boolean;
   allowReadOnlyCopy: boolean;
+  openUploadFiles?: () => void;
 }) {
   if (visibleListing == null) {
     return (
@@ -1382,6 +1398,7 @@ function FileListingBody({
       onNavigateDirectory={onNavigateDirectory}
       readOnly={readOnly}
       allowReadOnlyCopy={allowReadOnlyCopy}
+      openUploadFiles={openUploadFiles}
     />
   );
 }
