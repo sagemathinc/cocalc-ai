@@ -657,6 +657,21 @@ function getClaimablePoolDisplayName(
   );
 }
 
+function getClaimableSiteLicenseDisplayName(
+  claimablePackage?: ClaimableMembershipPackage,
+): string | undefined {
+  const title = `${claimablePackage?.site_license_name ?? ""}`.trim();
+  const organization = `${claimablePackage?.organization_name ?? ""}`.trim();
+  return title || organization || undefined;
+}
+
+function getManageSiteLicenseMembershipTitle(
+  claimables: ClaimableMembershipPackage[],
+): string {
+  const siteLicenseName = getClaimableSiteLicenseDisplayName(claimables[0]);
+  return `Manage ${siteLicenseName ?? "site license"} membership`;
+}
+
 function getClaimableSeatStatus(
   claimablePackage: ClaimableMembershipPackage,
 ): NonNullable<ClaimableMembershipPackage["seat_status"]> {
@@ -1042,6 +1057,8 @@ export function ClaimableMembershipPackagesPanel({
     );
   const showVerifyEmailClaimCallout =
     !loading && !emailVerified && claimables.length === 0;
+  const manageSiteLicenseMembershipTitle =
+    getManageSiteLicenseMembershipTitle(claimables);
 
   function renderVerifyEmailClaimCallout({ compact }: { compact: boolean }) {
     return (
@@ -1282,7 +1299,7 @@ export function ClaimableMembershipPackagesPanel({
               onClick={() => setCompactModalOpen(true)}
               type={compactButtonPrimary ? "primary" : undefined}
             >
-              Claim site license membership
+              Manage site license membership
             </Button>
           </span>
         </Tooltip>
@@ -1292,7 +1309,7 @@ export function ClaimableMembershipPackagesPanel({
           : null}
         <Modal
           open={compactModalOpen}
-          title="Claim site license membership"
+          title={manageSiteLicenseMembershipTitle}
           footer={null}
           onCancel={() => setCompactModalOpen(false)}
           destroyOnHidden
@@ -1307,12 +1324,6 @@ export function ClaimableMembershipPackagesPanel({
 
   return (
     <div>
-      <Text strong>Claim memberships</Text>
-      <Paragraph type="secondary" style={{ marginTop: "6px" }}>
-        If a seat was reserved for one of your verified email addresses, or if
-        your verified domain matches an available site license, you can claim
-        that membership here.
-      </Paragraph>
       {loading ? <Loading /> : null}
       {error ? (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />

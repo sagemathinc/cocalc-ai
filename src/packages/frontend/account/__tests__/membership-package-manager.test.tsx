@@ -1702,7 +1702,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
     render(<ClaimableMembershipPackagesPanel compact />);
 
     const claimButton = await screen.findByRole("button", {
-      name: "Claim site license membership",
+      name: "Manage site license membership",
     });
 
     expect(claimButton).toHaveClass("ant-btn-primary");
@@ -1727,7 +1727,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
     render(<ClaimableMembershipPackagesPanel compact />);
 
     const claimButton = await screen.findByRole("button", {
-      name: "Claim site license membership",
+      name: "Manage site license membership",
     });
 
     expect(claimButton).not.toHaveClass("ant-btn-primary");
@@ -1751,7 +1751,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
     );
 
     const claimButton = await screen.findByRole("button", {
-      name: "Claim site license membership",
+      name: "Manage site license membership",
     });
 
     expect(claimButton).not.toHaveClass("ant-btn-primary");
@@ -1817,7 +1817,6 @@ describe("ClaimableMembershipPackagesPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Claim memberships")).toBeTruthy();
       expect(screen.getByText("Students")).toBeTruthy();
       expect(
         screen.getByText("Access for eligible example.edu users."),
@@ -1843,6 +1842,38 @@ describe("ClaimableMembershipPackagesPanel", () => {
       });
       expect(getClaimableMembershipPackages).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("uses the site-license title for the compact manage modal only", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "site-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        pool_name: "Students",
+        pool_description: "Access for eligible example.edu users.",
+        site_license_name: "CoCalc Trial",
+      },
+    ]);
+
+    render(<ClaimableMembershipPackagesPanel compact />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Manage site license membership",
+      }),
+    );
+
+    expect(screen.getByText("Manage CoCalc Trial membership")).toBeTruthy();
+    expect(screen.getByText("Students")).toBeTruthy();
+    expect(
+      screen.getByText("Access for eligible example.edu users."),
+    ).toBeTruthy();
+    expect(screen.getAllByText(/CoCalc Trial/)).toHaveLength(1);
   });
 
   it("confirms before claiming a pool that replaces an active seat", async () => {
