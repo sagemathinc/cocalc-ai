@@ -10,13 +10,18 @@ import { Button, Flex, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
+  getPublicMarketingConfig,
+  getPublicMarketingSiteName,
+  type PublicConfig,
+} from "@cocalc/frontend/public/config";
+import {
   PublicGrid,
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { navigatePublic } from "../navigation";
 import type { PublicSupportRoute, SupportView } from "./routes";
-import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
+import { COLORS, HELP_EMAIL } from "@cocalc/util/theme";
 
 const { Paragraph } = Typography;
 
@@ -24,12 +29,7 @@ const CommunityView = lazy(() => import("./community-view"));
 const SupportNew = lazy(() => import("./new-view"));
 const SupportTickets = lazy(() => import("./tickets-view"));
 
-interface SupportConfig {
-  help_email?: string;
-  is_authenticated?: boolean;
-  logo_square?: string;
-  on_cocalc_com?: boolean;
-  site_name?: string;
+interface SupportConfig extends PublicConfig {
   support?: string;
   support_video_call?: string;
   zendesk?: boolean;
@@ -210,10 +210,11 @@ export default function PublicSupportApp({
   initialRoute,
 }: PublicSupportAppProps) {
   const [view, setView] = useState(initialRoute.view);
-  const title = useMemo(
-    () => titleForView(view, config.site_name ?? SITE_NAME),
-    [config.site_name, view],
-  );
+  const marketingConfig = getPublicMarketingConfig(config) as
+    | SupportConfig
+    | undefined;
+  const siteName = getPublicMarketingSiteName(config);
+  const title = useMemo(() => titleForView(view, siteName), [siteName, view]);
 
   useEffect(() => {
     setView(initialRoute.view);
@@ -229,7 +230,7 @@ export default function PublicSupportApp({
   }
 
   return (
-    <PublicPage active="support" config={config} title={title}>
+    <PublicPage active="support" config={marketingConfig} title={title}>
       {view !== "index" ? (
         <Flex wrap gap={8}>
           <Button onClick={() => navigate("index")}>Support</Button>
@@ -259,18 +260,24 @@ export default function PublicSupportApp({
       ) : null}
       <div style={{ marginTop: 24 }}>
         {view === "index" ? (
-          <SupportIndex config={config} onNavigate={navigate} />
+          <SupportIndex
+            config={marketingConfig ?? config}
+            onNavigate={navigate}
+          />
         ) : null}
         {view === "new" ? (
           <Suspense
             fallback={<PublicSection>Loading support form…</PublicSection>}
           >
-            <SupportNew config={config} onNavigate={navigate} />
+            <SupportNew
+              config={marketingConfig ?? config}
+              onNavigate={navigate}
+            />
           </Suspense>
         ) : null}
         {view === "tickets" ? (
           <Suspense fallback={<PublicSection>Loading tickets…</PublicSection>}>
-            <SupportTickets config={config} />
+            <SupportTickets config={marketingConfig ?? config} />
           </Suspense>
         ) : null}
         {view === "community" ? (

@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import PublicSupportApp from "../app";
 import { getSupportViewFromPath } from "../routes";
@@ -39,6 +39,30 @@ describe("PublicSupportApp", () => {
       "/pricing",
     );
     expect(screen.queryByText("System status")).toBeNull();
+  });
+
+  it("uses CoCalc marketing branding for default Launchpad public support", () => {
+    render(
+      <PublicSupportApp
+        config={{
+          cocalc_product: "launchpad",
+          is_launchpad: true,
+          site_name: "CoCalc Launchpad",
+          zendesk: false,
+        }}
+        initialRoute={{ view: "index" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "CoCalc Support" }),
+    ).not.toBeNull();
+    expect(screen.queryByText("CoCalc Launchpad Support")).toBeNull();
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", {
+        name: "CoCalc home",
+      }),
+    ).not.toBeNull();
   });
 
   it("does not advertise ticket actions when zendesk is disabled", () => {
