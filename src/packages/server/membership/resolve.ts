@@ -56,7 +56,7 @@ async function buildMembershipCandidates(
   const pool = getPool("medium");
   const [subResult, adminResult, adminGroupResult, grants] = await Promise.all([
     pool.query(
-      `SELECT id, metadata, cost, interval, current_period_end, status
+      `SELECT id, metadata, cost, interval, current_period_start, current_period_end, status
        FROM subscriptions
        WHERE account_id=$1
          AND metadata->>'type'='membership'
@@ -96,6 +96,7 @@ async function buildMembershipCandidates(
       priority: tier?.priority ?? 0,
       entitlements: tierToEntitlements(tier),
       effective_limits: normalizeMembershipEffectiveLimits(tier?.usage_limits),
+      starts: sub.current_period_start,
       subscription_id: sub.id,
       subscription_status: sub.status,
       subscription_cost: normalizeSubscriptionCost(sub.cost),
@@ -148,11 +149,20 @@ async function buildMembershipCandidates(
       grant_source: grant.source,
       grant_package_id: grant.package_id ?? undefined,
       grant_purchase_id: grant.purchase_id ?? undefined,
+      pool_name: getMetadataString(grant.metadata, "pool_name"),
       expires: grant.expires_at ? new Date(grant.expires_at) : undefined,
     });
   }
 
   return dedupeEquivalentAdminCandidates(candidates);
+}
+
+function getMetadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+): string | undefined {
+  const value = `${metadata?.[key] ?? ""}`.trim();
+  return value || undefined;
 }
 
 async function buildMembershipResolutionForAccount(
@@ -276,6 +286,7 @@ function pickBestMembership(
       source: best.source,
       entitlements: best.entitlements,
       effective_limits: best.effective_limits,
+      starts: best.starts,
       subscription_id: best.subscription_id,
       subscription_status: best.subscription_status,
       subscription_cost: best.subscription_cost,
@@ -284,6 +295,7 @@ function pickBestMembership(
       grant_source: best.grant_source,
       grant_package_id: best.grant_package_id,
       grant_purchase_id: best.grant_purchase_id,
+      pool_name: best.pool_name,
       expires: best.expires,
     };
   }

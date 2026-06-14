@@ -186,6 +186,7 @@ export interface MembershipResolution {
   source: "subscription" | "admin" | "grant" | "free";
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
+  starts?: Date;
   subscription_id?: number;
   subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
   subscription_cost?: number;
@@ -194,6 +195,7 @@ export interface MembershipResolution {
   grant_source?: string;
   grant_package_id?: string;
   grant_purchase_id?: number;
+  pool_name?: string;
   expires?: Date;
 }
 
@@ -203,6 +205,7 @@ export interface MembershipCandidate {
   priority: number;
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
+  starts?: Date;
   subscription_id?: number;
   subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
   subscription_cost?: number;
@@ -211,6 +214,7 @@ export interface MembershipCandidate {
   grant_source?: string;
   grant_package_id?: string;
   grant_purchase_id?: number;
+  pool_name?: string;
   expires?: Date;
 }
 

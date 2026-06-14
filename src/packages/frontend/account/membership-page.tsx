@@ -7,6 +7,7 @@ import {
   Alert,
   Button,
   Card,
+  Modal,
   Popconfirm,
   Space,
   Tag,
@@ -107,6 +108,8 @@ function MembershipSettingsContent() {
   const [purchaseCurrentInterval, setPurchaseCurrentInterval] = useState<
     BillingInterval | undefined
   >(undefined);
+  const [siteLicenseManageOpen, setSiteLicenseManageOpen] =
+    useState<boolean>(false);
 
   if (!account_id) return null;
   if (loading && !membership) return <Loading />;
@@ -195,38 +198,48 @@ function MembershipSettingsContent() {
               dataSource={candidateRows}
               columns={[
                 {
-                  title: "Membership",
-                  dataIndex: "tier",
-                  render: (value, row) => (
-                    <Space>
-                      <Tag color={row.selected ? "blue" : undefined}>
-                        {value}
-                      </Tag>
-                    </Space>
-                  ),
-                },
-                {
                   title: "Source",
                   dataIndex: "source",
-                  render: (value, row) => (
-                    <Space vertical size={0}>
-                      <Text>{value}</Text>
-                      <Text type="secondary">{row.sourceDetail}</Text>
-                    </Space>
+                },
+                {
+                  title: "Membership",
+                  dataIndex: "membership",
+                },
+                {
+                  title: "State",
+                  dataIndex: "state",
+                  render: (value) => (
+                    <Tag color={membershipStateColor(value)}>{value}</Tag>
                   ),
                 },
                 {
-                  title: "Status",
-                  dataIndex: "status",
-                  render: (value, row) => (
-                    <Tag color={membershipStatusColor(row)}>{value}</Tag>
-                  ),
+                  title: "Note",
+                  dataIndex: "note",
                 },
                 {
-                  title: "Expires",
-                  dataIndex: "expires",
-                  render: (value) =>
-                    value ? <TimeAgo date={value} /> : <Text>Never</Text>,
+                  title: "Action",
+                  key: "action",
+                  render: (_, row) => {
+                    if (row.action === "personal") {
+                      return (
+                        <Button
+                          onClick={() =>
+                            openPurchase(row.class, row.subscriptionInterval)
+                          }
+                        >
+                          Manage
+                        </Button>
+                      );
+                    }
+                    if (row.action === "site-license") {
+                      return (
+                        <Button onClick={() => setSiteLicenseManageOpen(true)}>
+                          Manage
+                        </Button>
+                      );
+                    }
+                    return <Text type="secondary">-</Text>;
+                  },
                 },
               ]}
             />
@@ -263,6 +276,22 @@ function MembershipSettingsContent() {
           </Suspense>
         </Space>
       </Card>
+
+      <Modal
+        open={siteLicenseManageOpen}
+        title="Manage site-license membership"
+        footer={null}
+        onCancel={() => setSiteLicenseManageOpen(false)}
+        destroyOnHidden
+      >
+        <Suspense fallback={<Loading />}>
+          <ClaimableMembershipPackagesPanel
+            hasSiteLicenseMembership={hasSiteLicenseMembership}
+            onChanged={refreshMembership}
+            tiers={Object.values(tierById)}
+          />
+        </Suspense>
+      </Modal>
 
       <MembershipPurchaseModal
         currentClassOverride={purchaseCurrentClass}
@@ -315,7 +344,10 @@ function effectiveMembershipSummary({
   selectedSourceRow?: MembershipCandidateRow;
   tier?: MembershipTier;
 }): string {
-  const tierLabel = tier?.label ?? capitalize(membership.class);
+  const tierLabel =
+    selectedSourceRow?.membership ??
+    tier?.label ??
+    capitalize(membership.class);
   const price = personalMembershipPriceLabel(membership);
   const source = effectiveMembershipSourceLabel(membership, selectedSourceRow);
   return `${tierLabel}${price ? ` (${price})` : ""} - ${source}`;
@@ -326,13 +358,13 @@ function effectiveMembershipSourceLabel(
   selectedSourceRow?: MembershipCandidateRow,
 ): string {
   if (membership.source === "free") {
-    return "CoCalc";
-  }
-  if (selectedSourceRow?.source) {
-    return selectedSourceRow.source;
+    return "Personal";
   }
   if (membership.source === "subscription") {
     return "Personal membership";
+  }
+  if (selectedSourceRow?.source) {
+    return selectedSourceRow.source;
   }
   if (membership.source === "admin") {
     return "Admin assigned";
@@ -386,19 +418,16 @@ function numberValue(value: unknown): number | undefined {
   return undefined;
 }
 
-function membershipStatusColor({
-  selected,
-  subscriptionStatus,
-}: {
-  selected: boolean;
-  subscriptionStatus?: "active" | "canceled" | "unpaid" | "past_due";
-}) {
-  if (selected) return "blue";
-  if (subscriptionStatus === "canceled") return "orange";
-  if (subscriptionStatus === "past_due" || subscriptionStatus === "unpaid") {
-    return "red";
+function membershipStateColor(state: string) {
+  switch (state) {
+    case "Active":
+      return "green";
+    case "Pending":
+    case "Pending approval":
+      return "gold";
+    case "Renewal canceled":
+      return "orange";
   }
-  return undefined;
 }
 
 function PersonalSubscriptionActions({

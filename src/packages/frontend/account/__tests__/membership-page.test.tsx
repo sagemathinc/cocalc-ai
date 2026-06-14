@@ -97,6 +97,7 @@ jest.mock("antd", () => {
       </button>
     ),
     Card: Box,
+    Modal: ({ open, ...props }: any) => (open ? <Box {...props} /> : null),
     Popconfirm: ({ children }: { children?: ReactNode }) => <>{children}</>,
     Space: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
     Tag: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
@@ -106,7 +107,7 @@ jest.mock("antd", () => {
           {dataSource.map((row: any) => (
             <tr key={row.key}>
               {columns.map((column: any) => (
-                <td key={column.dataIndex}>
+                <td key={column.dataIndex ?? column.key ?? column.title}>
                   {column.render
                     ? column.render(row[column.dataIndex], row)
                     : row[column.dataIndex]}
@@ -127,7 +128,19 @@ jest.mock("antd", () => {
 function baseData(overrides: Record<string, unknown>) {
   return {
     account_id: "account-1",
-    candidateRows: [],
+    candidateRows: [
+      {
+        action: "personal",
+        class: "free",
+        key: "free-personal-default",
+        membership: "Free",
+        note: "No scheduled end",
+        selected: overrides.membership?.["source"] === "free",
+        source: "Personal",
+        sourceKind: "free",
+        state: "Active",
+      },
+    ],
     details: { candidates: [], selected: overrides.membership },
     error: "",
     loading: false,
@@ -203,7 +216,7 @@ describe("MembershipPage", () => {
     await screen.findByText("Claim site license");
     const text = container.textContent ?? "";
 
-    expect(screen.getByText("Free - CoCalc")).toBeTruthy();
+    expect(screen.getByText("Free - Personal")).toBeTruthy();
     expect(
       screen.getByText(
         "Start using CoCalc with just enough resources to explore the platform and do basic work.",
@@ -212,7 +225,7 @@ describe("MembershipPage", () => {
     expect(text.indexOf("Effective membership")).toBeLessThan(
       text.indexOf("Membership sources"),
     );
-    expect(text).toContain("No active membership sources.");
+    expect(text).toContain("PersonalFreeActiveNo scheduled endManage");
     expect(text).toContain("balance-renewal-control");
     expect(text).not.toContain("$0.00");
     expect(text).not.toContain("Project host tier");
@@ -225,14 +238,17 @@ describe("MembershipPage", () => {
       baseData({
         candidateRows: [
           {
-            expires: "2027-06-04T00:00:00.000Z",
+            action: "personal",
+            class: "standard",
             key: "subscription-standard-1",
+            membership: "Standard",
+            note: "Renews June 4, 2027",
             selected: true,
-            source: "Personal membership",
-            sourceDetail: "Managed here by you.",
-            status: "Used",
+            source: "Personal",
+            sourceKind: "subscription",
+            state: "Active",
+            subscriptionInterval: "year",
             subscriptionStatus: "active",
-            tier: "Standard",
           },
         ],
         membership: {
@@ -283,13 +299,15 @@ describe("MembershipPage", () => {
       baseData({
         candidateRows: [
           {
-            expires: "2027-06-04T00:00:00.000Z",
+            action: "site-license",
+            class: "standard",
             key: "grant-standard-1",
+            membership: "Researcher",
+            note: "Ends June 4, 2027",
             selected: true,
             source: "Site license",
-            sourceDetail: "Managed by the organization license.",
-            status: "Used",
-            tier: "Standard",
+            sourceKind: "grant",
+            state: "Active",
           },
         ],
         details: {
