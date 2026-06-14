@@ -7,7 +7,7 @@ import { Modal, Radio, Space, message } from "antd";
 import * as immutable from "immutable";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { Button, ButtonToolbar } from "@cocalc/frontend/antd-bootstrap";
+import { Button } from "@cocalc/frontend/antd-bootstrap";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -559,10 +559,8 @@ function ActionBarEnabled({
   }
   return (
     <div style={{ flex: "1 0 auto" }}>
-      <div style={{ flex: "1 0 auto" }}>
-        <ButtonToolbar style={{ whiteSpace: "nowrap", padding: "0" }}>
-          {buttonArea}
-        </ButtonToolbar>
+      <div style={{ flex: "1 0 auto", whiteSpace: "nowrap", padding: 0 }}>
+        {buttonArea}
       </div>
       <div style={{ flex: "1 0 auto" }}>{selectedInfo}</div>
       <FreshAuthModal {...freshAuthModalProps} />
