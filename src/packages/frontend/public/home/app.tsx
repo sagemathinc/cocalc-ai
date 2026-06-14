@@ -69,6 +69,11 @@ const HOME_PAGE_CSS = `
       width: 100%;
     }
 
+    .cocalc-public-home-hero-project-path,
+    .cocalc-public-home-hero-snapshot {
+      display: none !important;
+    }
+
     .cocalc-public-home-workflow-visual {
       padding: 12px !important;
     }
@@ -178,72 +183,6 @@ const HERO_PROJECT_PATH = [
     detail: "Preserve snapshots, TimeTravel, and recovery history.",
     icon: "history",
     label: "Review history",
-  },
-] satisfies {
-  accent: string;
-  detail: string;
-  icon: IconName;
-  label: string;
-}[];
-const HERO_ROUTE_CHOICES = [
-  {
-    accent: PUBLIC_COLORS.accent,
-    body: "Start with the project that holds files, notebooks, terminals, and Codex work.",
-    href: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? appPath("projects") : appPath("auth/sign-up"),
-    icon: "project-outlined",
-    label: "Workspace",
-    title: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? "Open projects" : "Create a project",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Then choose a notebook, terminal, AI, teaching, writing, or comparison workflow.",
-    href: () => appPath("features"),
-    icon: "overview",
-    label: "Workflows",
-    title: () => "Browse workflows",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    body: "Use products when the question is hosted, local, or customer-operated.",
-    href: () => appPath("products"),
-    icon: "servers",
-    label: "Deployment",
-    title: () => "Choose deployment path",
-  },
-] satisfies {
-  accent: string;
-  body: string;
-  href: (opts: { authenticated: boolean }) => string;
-  icon: IconName;
-  label: string;
-  title: (opts: { authenticated: boolean }) => string;
-}[];
-const HERO_CONTEXT_RAIL = [
-  {
-    accent: COLORS.BLUE_D,
-    detail: "Notebooks, source trees, datasets",
-    icon: "files",
-    label: "Files",
-  },
-  {
-    accent: COLORS.RUN,
-    detail: "Kernels, terminals, services",
-    icon: "terminal",
-    label: "Runtime",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    detail: "Prompts, patches, review notes",
-    icon: "robot",
-    label: "AI context",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    detail: "Snapshots, TimeTravel, history",
-    icon: "history",
-    label: "Review trail",
   },
 ] satisfies {
   accent: string;
@@ -957,6 +896,7 @@ function HeroProjectPath() {
   return (
     <div
       aria-label="CoCalc.ai hero project path"
+      className="cocalc-public-home-hero-project-path"
       role="group"
       style={{
         background: alpha(PUBLIC_COLORS.brandDark, 0.38),
@@ -1055,190 +995,6 @@ function HeroProjectPath() {
               </Text>
             </span>
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function HeroRouteChooser({ authenticated }: { authenticated: boolean }) {
-  return (
-    <div
-      aria-label="CoCalc.ai hero route chooser"
-      role="group"
-      style={{
-        background: alpha(PUBLIC_COLORS.brandDark, 0.46),
-        border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.25)}`,
-        borderRadius: PANEL_RADIUS,
-        maxWidth: 740,
-        padding: 10,
-      }}
-    >
-      <Flex align="baseline" justify="space-between" wrap gap={8}>
-        <Text strong style={{ color: PUBLIC_COLORS.surface }}>
-          Start from the project
-        </Text>
-        <Text
-          style={{
-            color: alpha(PUBLIC_COLORS.surface, 0.7),
-            fontSize: 12,
-          }}
-        >
-          Then pick the workflow or operating path.
-        </Text>
-      </Flex>
-      <div
-        aria-label="CoCalc.ai project continuity rail"
-        role="group"
-        style={{
-          background: alpha(PUBLIC_COLORS.surface, 0.1),
-          border: `1px solid ${alpha(PUBLIC_COLORS.surface, 0.18)}`,
-          borderRadius: PANEL_RADIUS,
-          display: "grid",
-          gap: 8,
-          gridTemplateColumns:
-            "repeat(auto-fit, minmax(min(100%, 132px), 1fr))",
-          marginTop: 10,
-          padding: 10,
-        }}
-      >
-        <Text
-          strong
-          style={{
-            color: alpha(PUBLIC_COLORS.surface, 0.74),
-            fontSize: 12,
-            gridColumn: "1 / -1",
-            textTransform: "uppercase",
-          }}
-        >
-          What moves with the project
-        </Text>
-        {HERO_CONTEXT_RAIL.map((item) => (
-          <span
-            key={item.label}
-            style={{
-              alignItems: "start",
-              display: "grid",
-              gap: 7,
-              gridTemplateColumns: "24px minmax(0, 1fr)",
-              minHeight: 54,
-            }}
-          >
-            <span
-              aria-hidden="true"
-              style={{
-                alignItems: "center",
-                background: alpha(item.accent, 0.13),
-                border: `1px solid ${alpha(item.accent, 0.28)}`,
-                borderRadius: PANEL_RADIUS,
-                color: item.accent,
-                display: "flex",
-                height: 24,
-                justifyContent: "center",
-                marginTop: 2,
-                width: 24,
-              }}
-            >
-              <Icon name={item.icon} />
-            </span>
-            <span style={{ minWidth: 0 }}>
-              <Text
-                strong
-                style={{ color: PUBLIC_COLORS.surface, display: "block" }}
-              >
-                {item.label}
-              </Text>
-              <Text
-                style={{
-                  color: alpha(PUBLIC_COLORS.surface, 0.64),
-                  display: "block",
-                  fontSize: 12,
-                }}
-              >
-                {item.detail}
-              </Text>
-            </span>
-          </span>
-        ))}
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gap: 8,
-          gridTemplateColumns:
-            "repeat(auto-fit, minmax(min(100%, 176px), 1fr))",
-          marginTop: 10,
-        }}
-      >
-        {HERO_ROUTE_CHOICES.map((choice) => (
-          <a
-            href={choice.href({ authenticated })}
-            key={choice.label}
-            style={{
-              alignItems: "start",
-              background: alpha(PUBLIC_COLORS.surface, 0.12),
-              border: `1px solid ${alpha(choice.accent, 0.36)}`,
-              borderRadius: PANEL_RADIUS,
-              color: PUBLIC_COLORS.surface,
-              display: "grid",
-              gap: 9,
-              gridTemplateColumns: "30px minmax(0, 1fr) 14px",
-              minHeight: 92,
-              padding: 10,
-              textDecoration: "none",
-            }}
-          >
-            <span
-              aria-hidden="true"
-              style={{
-                alignItems: "center",
-                background: alpha(choice.accent, 0.14),
-                border: `1px solid ${alpha(choice.accent, 0.3)}`,
-                borderRadius: PANEL_RADIUS,
-                color: choice.accent,
-                display: "flex",
-                fontSize: 16,
-                height: 30,
-                justifyContent: "center",
-                width: 30,
-              }}
-            >
-              <Icon name={choice.icon} />
-            </span>
-            <span style={{ minWidth: 0 }}>
-              <Text
-                strong
-                style={{
-                  color: choice.accent,
-                  display: "block",
-                  fontSize: 12,
-                  textTransform: "uppercase",
-                }}
-              >
-                {choice.label}
-              </Text>
-              <Text strong style={{ color: "inherit", display: "block" }}>
-                {choice.title({ authenticated })}
-              </Text>
-              <Text
-                style={{
-                  color: alpha(PUBLIC_COLORS.surface, 0.68),
-                  display: "block",
-                  marginTop: 4,
-                }}
-              >
-                {choice.body}
-              </Text>
-            </span>
-            <Icon
-              name="arrow-right"
-              style={{
-                alignSelf: "center",
-                color: alpha(PUBLIC_COLORS.surface, 0.58),
-                fontSize: 12,
-              }}
-            />
-          </a>
         ))}
       </div>
     </div>
@@ -2601,7 +2357,6 @@ function Hero({ config }: { config?: HomeConfig }) {
               </>
             )}
           </Flex>
-          <HeroRouteChooser authenticated={authenticated} />
         </Flex>
         <HeroWorkspaceSnapshot authenticated={authenticated} />
       </div>
