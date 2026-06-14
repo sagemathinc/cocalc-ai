@@ -117,7 +117,8 @@ load_channel_manifest() {
         ;;
       *) die "unsupported channel manifest key: $key" ;;
     esac
-    if ! printf '%s' "$value" | grep -Eq '^[A-Za-z0-9._~:/?#@%+=,;-]*$'; then
+    if [ -n "$value" ] &&
+      ! printf '%s\n' "$value" | grep -Eq '^[A-Za-z0-9._~:/?#@%+=,;-]*$'; then
       die "unsafe channel manifest value for $key"
     fi
     case "$key" in

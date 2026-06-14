@@ -124,7 +124,7 @@ textarea {
     visibility: visible;
   }
 }
-dev#cocalc-webapp-container {
+#cocalc-webapp-container {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
