@@ -504,6 +504,25 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(within(workspaceDecisionChecks).getByText(check)).not.toBeNull();
     }
+    const workspaceStartingSignals = within(workspaceOverview).getByRole(
+      "group",
+      {
+        name: "CoCalc.ai workspace starting signals",
+      },
+    );
+    for (const signal of [
+      "Match the first signal",
+      "Files and data",
+      "Runtime and output",
+      "People and agent work",
+      "Boundary and responsibility",
+      "Source, notebooks, datasets, and notes should stay visible before the next step.",
+      "Notebook output, shell sessions, packages, and logs should stay near the files.",
+      "Chat, Codex turns, patches, and comments should remain attached to the workspace.",
+      "Hosted, local, or customer-operated ownership should be clear before sharing.",
+    ]) {
+      expect(within(workspaceStartingSignals).getByText(signal)).not.toBeNull();
+    }
     const workspaceOverviewSignals = within(workspaceOverview).getByRole(
       "group",
       {

@@ -316,6 +316,41 @@ const WORKSPACE_DECISION_CHECKS = [
   icon: IconName;
   label: string;
 }[];
+const WORKSPACE_STARTING_SIGNALS = [
+  {
+    accent: COLORS.BLUE_D,
+    detail:
+      "Source, notebooks, datasets, and notes should stay visible before the next step.",
+    icon: "files",
+    label: "Files and data",
+  },
+  {
+    accent: COLORS.RUN,
+    detail:
+      "Notebook output, shell sessions, packages, and logs should stay near the files.",
+    icon: "terminal",
+    label: "Runtime and output",
+  },
+  {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    detail:
+      "Chat, Codex turns, patches, and comments should remain attached to the workspace.",
+    icon: "robot",
+    label: "People and agent work",
+  },
+  {
+    accent: PUBLIC_COLORS.warning,
+    detail:
+      "Hosted, local, or customer-operated ownership should be clear before sharing.",
+    icon: "servers",
+    label: "Boundary and responsibility",
+  },
+] satisfies {
+  accent: string;
+  detail: string;
+  icon: IconName;
+  label: string;
+}[];
 const WORKSPACE_PREVIEW_FILES = [
   {
     icon: "jupyter",
@@ -2371,6 +2406,79 @@ function WorkspaceOverviewSection({
                   </span>
                 </span>
               ))}
+            </div>
+            <div
+              aria-label="CoCalc.ai workspace starting signals"
+              role="group"
+              style={{
+                background: alpha(PUBLIC_COLORS.brand, 0.04),
+                border: `1px solid ${alpha(PUBLIC_COLORS.brand, 0.16)}`,
+                borderRadius: PANEL_RADIUS,
+                display: "grid",
+                gap: 8,
+                padding: 10,
+              }}
+            >
+              <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                Match the first signal
+              </Text>
+              <div
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(min(100%, 196px), 1fr))",
+                }}
+              >
+                {WORKSPACE_STARTING_SIGNALS.map((signal) => (
+                  <span
+                    key={signal.label}
+                    style={{
+                      alignItems: "start",
+                      background: PUBLIC_COLORS.surface,
+                      border: `1px solid ${alpha(signal.accent, 0.22)}`,
+                      borderRadius: PANEL_RADIUS,
+                      display: "grid",
+                      gap: 8,
+                      gridTemplateColumns: "28px minmax(0, 1fr)",
+                      minHeight: 108,
+                      padding: 10,
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        alignItems: "center",
+                        background: alpha(signal.accent, 0.08),
+                        border: `1px solid ${alpha(signal.accent, 0.22)}`,
+                        borderRadius: PANEL_RADIUS,
+                        color: signal.accent,
+                        display: "flex",
+                        height: 28,
+                        justifyContent: "center",
+                        marginTop: 1,
+                        width: 28,
+                      }}
+                    >
+                      <Icon name={signal.icon} />
+                    </span>
+                    <span style={{ minWidth: 0 }}>
+                      <Text
+                        strong
+                        style={{
+                          color: signal.accent,
+                          display: "block",
+                          fontSize: 12,
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {signal.label}
+                      </Text>
+                      <Text type="secondary">{signal.detail}</Text>
+                    </span>
+                  </span>
+                ))}
+              </div>
             </div>
           </Flex>
         </Col>
