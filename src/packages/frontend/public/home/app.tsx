@@ -417,36 +417,40 @@ const HERO_INSPECTABLE_RECORD = [
 const HERO_SNAPSHOT_HANDOFFS = [
   {
     accent: COLORS.BLUE_D,
-    detail: "Open the workspace that keeps the project record together.",
+    detail: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated
+        ? "Open the workspace that keeps the project record together."
+        : "Create the workspace that keeps the project record together.",
     href: ({ authenticated }: { authenticated: boolean }) =>
       authenticated ? appPath("projects") : appPath("auth/sign-up"),
     icon: "project-outlined",
     label: "Workspace handoff",
-    title: "Continue in the project",
+    title: ({ authenticated }: { authenticated: boolean }) =>
+      authenticated ? "Open projects" : "Create workspace",
   },
   {
     accent: COLORS.RUN,
-    detail: "Choose notebook, terminal, AI, writing, or teaching next.",
+    detail: () => "Choose notebook, terminal, AI, writing, or teaching next.",
     href: () => appPath("features"),
     icon: "overview",
     label: "Workflow handoff",
-    title: "Pick the next surface",
+    title: () => "Pick the next surface",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    detail: "Review hosted, local, or customer-operated boundaries.",
+    detail: () => "Review hosted, local, or customer-operated boundaries.",
     href: () => appPath("products"),
     icon: "servers",
     label: "Boundary handoff",
-    title: "Choose operating path",
+    title: () => "Choose operating path",
   },
 ] satisfies {
   accent: string;
-  detail: string;
+  detail: (opts: { authenticated: boolean }) => string;
   href: (opts: { authenticated: boolean }) => string;
   icon: IconName;
   label: string;
-  title: string;
+  title: (opts: { authenticated: boolean }) => string;
 }[];
 const HERO_WORKSPACE_TRAIL = [
   {
@@ -1506,7 +1510,7 @@ function HeroWorkspaceSnapshot({ authenticated }: { authenticated: boolean }) {
                   {handoff.label}
                 </Text>
                 <Text strong style={{ color: "inherit", display: "block" }}>
-                  {handoff.title}
+                  {handoff.title({ authenticated })}
                 </Text>
                 <Text
                   style={{
@@ -1516,7 +1520,7 @@ function HeroWorkspaceSnapshot({ authenticated }: { authenticated: boolean }) {
                     marginTop: 4,
                   }}
                 >
-                  {handoff.detail}
+                  {handoff.detail({ authenticated })}
                 </Text>
               </span>
               <Icon
@@ -1627,6 +1631,7 @@ function WorkflowVisualPanel() {
 function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
   const projectHref = authenticated ? "projects" : "auth/sign-up";
   const projectLabel = authenticated ? "Open projects" : "Start a project";
+  const projectDescription = authenticated ? "Project list" : "New workspace";
 
   return (
     <div
@@ -2124,7 +2129,7 @@ function WorkspacePreview({ authenticated }: { authenticated: boolean }) {
                   fontSize: 12,
                 }}
               >
-                New workspace
+                {projectDescription}
               </Text>
             </span>
           </a>

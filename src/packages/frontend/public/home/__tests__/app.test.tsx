@@ -462,10 +462,10 @@ describe("PublicHomeApp", () => {
       "Workspace handoff",
       "Workflow handoff",
       "Boundary handoff",
-      "Continue in the project",
+      "Create workspace",
       "Pick the next surface",
       "Choose operating path",
-      "Open the workspace that keeps the project record together.",
+      "Create the workspace that keeps the project record together.",
       "Choose notebook, terminal, AI, writing, or teaching next.",
       "Review hosted, local, or customer-operated boundaries.",
     ]) {
@@ -778,6 +778,9 @@ describe("PublicHomeApp", () => {
     ).toBe("/features/compare");
     expect(
       within(projectSurfaceLinks).getByText("One context, multiple surfaces"),
+    ).not.toBeNull();
+    expect(
+      within(projectSurfaceLinks).getByText("New workspace"),
     ).not.toBeNull();
     expect(
       within(projectSurfaceLinks).getByText("Source, notebooks, data"),
@@ -1943,6 +1946,11 @@ describe("PublicHomeApp", () => {
     ).toBe("/projects");
     expect(
       within(
+        screen.getByRole("group", { name: "CoCalc project context preview" }),
+      ).getByText("Project list"),
+    ).not.toBeNull();
+    expect(
+      within(
         screen.getByRole("group", {
           name: "CoCalc.ai workspace overview routes",
         }),
@@ -1962,6 +1970,13 @@ describe("PublicHomeApp", () => {
       }),
       ["/projects", "/features", "/products"],
     );
+    expect(
+      within(
+        screen.getByRole("group", {
+          name: "CoCalc.ai hero next handoff",
+        }),
+      ).getByText("Open the workspace that keeps the project record together."),
+    ).not.toBeNull();
     expectLinkHrefs(
       screen.getByRole("group", {
         name: "CoCalc.ai workflow handoff routes",
