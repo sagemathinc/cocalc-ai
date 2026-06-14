@@ -65,7 +65,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(getHomepageSectionLabels(container)).toEqual([
       "CoCalc Launchpad hero",
-      "The project is the product",
+      "One technical workspace",
       "Core workflows",
       "Ways to run CoCalc",
       "Why CoCalc is different",
@@ -79,12 +79,12 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero).getByRole("heading", {
         level: 1,
-        name: "AI-Native Technical Workspace for Humans and Agents",
+        name: "One workspace for code, notebooks, documents, compute, and AI",
       }),
     ).not.toBeNull();
     expect(
       within(hero).getByText(
-        /CoCalc Launchpad brings notebooks, terminals, files, LaTeX, chat/i,
+        /CoCalc Launchpad keeps serious technical work collaborative, reviewable, and recoverable/i,
       ),
     ).not.toBeNull();
     expect(
@@ -96,45 +96,40 @@ describe("PublicHomeApp", () => {
     ).toBe("/public/landing/home-hero.jpg");
     expect(
       within(hero)
-        .getByRole("link", { name: "Start free" })
+        .getByRole("link", { name: "Start on CoCalc.ai" })
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
     expect(
-      within(hero).getByRole("link", { name: "See plans" }),
-    ).toHaveAttribute("href", "/pricing");
-    expect(
-      within(hero).getByRole("link", { name: "Get CoCalc Plus" }),
-    ).toHaveAttribute("href", "/products/cocalc-plus");
+      within(hero).getByRole("link", { name: "Compare deployment options" }),
+    ).toHaveAttribute("href", "/products");
     for (const tag of [
-      "Minimal free tier",
-      "Hosted plans",
-      "Free CoCalc Plus",
-      "Self-host with Star",
+      "Code and scripts",
+      "Notebooks",
+      "Documents",
+      "AI in context",
     ]) {
       expect(within(hero).getByText(tag)).not.toBeNull();
     }
 
     const project = screen.getByRole("region", {
-      name: "The project is the product",
+      name: "One technical workspace",
     });
     expect(
       within(project)
         .getByRole("img", {
-          name: "One CoCalc project containing many workflows",
+          name: "One CoCalc workspace containing many workflows",
         })
         .getAttribute("src"),
     ).toBe("/public/landing/project-workflows.jpg");
     expect(
       within(project).getByRole("heading", {
-        name: "One durable place for technical work.",
+        name: "Bring technical work back into one context.",
       }),
     ).not.toBeNull();
-    expect(within(project).getByText("One project boundary")).not.toBeNull();
+    expect(within(project).getByText("Context stays together")).not.toBeNull();
+    expect(within(project).getByText("Work stays reviewable")).not.toBeNull();
     expect(
-      within(project).getByText("Work survives the browser"),
-    ).not.toBeNull();
-    expect(
-      within(project).getByText("People and agents share context"),
+      within(project).getByText("People and AI share context"),
     ).not.toBeNull();
 
     const workflows = screen.getByRole("region", {
@@ -175,44 +170,43 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(products).getByRole("heading", {
-        name: "Choose by who operates CoCalc.",
+        name: "Hosted, local, or private from the same product family.",
       }),
     ).not.toBeNull();
     expect(
       within(products).getByRole("link", { name: "Compare products" }),
     ).toHaveAttribute("href", "/products");
     expect(
-      within(products).getByRole("link", { name: "CoCalc Star" }),
-    ).toHaveAttribute("href", "/products/cocalc-star");
+      within(products).getByRole("link", { name: "Site licensing" }),
+    ).toHaveAttribute("href", "/pricing");
     for (const option of [
-      "Hosted CoCalc",
+      "CoCalc.ai",
       "CoCalc Plus",
-      "Launchpad + Rocket",
+      "CoCalc Launchpad",
+      "CoCalc Rocket",
       "Individual",
       "Organization",
-      "Operated by CoCalc",
-      "Operated on your VM",
-      "Lab, class, GPU box, agent sandbox, or small team",
+      "Managed hosted",
+      "Customer-operated",
+      "Customer-operated enterprise",
+      "Platform, security, and procurement-led rollouts",
     ]) {
       expect(within(products).getByText(option)).not.toBeNull();
     }
-    expect(within(products).getAllByText("CoCalc Star").length).toBeGreaterThan(
-      0,
-    );
 
     const difference = screen.getByRole("region", {
       name: "Why CoCalc is different",
     });
     expect(
       within(difference).getByRole("heading", {
-        name: "Built for real computational work, not only polished demos.",
+        name: "Technical work you can review, recover, and keep moving.",
       }),
     ).not.toBeNull();
     for (const title of [
-      "Durable execution",
-      "Real Linux projects",
-      "Realtime collaboration",
-      "Operational safety",
+      "One technical workspace",
+      "Reviewable work",
+      "Recoverable projects",
+      "Hosted, local, or private",
     ]) {
       expect(within(difference).getByText(title)).not.toBeNull();
     }
@@ -231,11 +225,11 @@ describe("PublicHomeApp", () => {
       "https://software.cocalc.ai/software/cocalc-plus/index.html",
     );
     expect(
-      within(path).getByRole("link", { name: "Install CoCalc Star" }),
-    ).toHaveAttribute("href", "/products/cocalc-star");
-    expect(
-      within(path).getByRole("link", { name: "Compare products" }),
+      within(path).getByRole("link", { name: "Compare deployment options" }),
     ).toHaveAttribute("href", "/products");
+    expect(
+      within(path).getByRole("link", { name: "Discuss site licensing" }),
+    ).toHaveAttribute("href", "/pricing");
     expect(within(path).getByRole("link", { name: "Guides" })).toHaveAttribute(
       "href",
       "/guides",
@@ -249,6 +243,11 @@ describe("PublicHomeApp", () => {
     expect(
       screen.queryByRole("region", { name: "CoCalc.ai workspace overview" }),
     ).toBeNull();
+    expect(screen.queryByText("CoCalc Star")).toBeNull();
+    expect(container.innerHTML).not.toContain("products/cocalc-star");
+    expect(container.innerHTML).not.toMatch(
+      /project hosts|backend state|logs stay scoped|RootFS|multi-bay/i,
+    );
   });
 
   it("shows project entry points when authenticated", () => {
@@ -268,6 +267,9 @@ describe("PublicHomeApp", () => {
         .every((link) => link.getAttribute("href") === "/projects"),
     ).toBe(true);
     expect(screen.queryByRole("link", { name: "Start free" })).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Start on CoCalc.ai" }),
+    ).toBeNull();
     expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
   });
 });

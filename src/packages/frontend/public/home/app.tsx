@@ -92,24 +92,24 @@ const HOME_PAGE_CSS = `
 `;
 
 const HERO_TAGS = [
-  "Minimal free tier",
-  "Hosted plans",
-  "Free CoCalc Plus",
-  "Self-host with Star",
+  "Code and scripts",
+  "Notebooks",
+  "Documents",
+  "AI in context",
 ] as const;
 
 const PROJECT_FACTS = [
   {
-    body: "Files, notebooks, terminals, chat, collaborators, secrets, agents, runtime settings, project hosts, and logs stay scoped to the project.",
-    title: "One project boundary",
+    body: "Code, notebooks, papers, terminals, chat, files, and AI assistance stay close to the same work instead of drifting into separate tools.",
+    title: "Context stays together",
   },
   {
-    body: "Notebook execution, agent turns, terminal sessions, document history, and files are backend state, not fragile browser state.",
-    title: "Work survives the browser",
+    body: "History, shared files, and recovery paths make technical work easier to inspect, continue, and hand off.",
+    title: "Work stays reviewable",
   },
   {
-    body: "Humans and Codex can work against the same files, notebooks, terminals, document history, and chat threads.",
-    title: "People and agents share context",
+    body: "Researchers, engineers, instructors, and AI assistants can work around the same artifacts without losing the thread.",
+    title: "People and AI share context",
   },
 ] as const;
 
@@ -120,7 +120,7 @@ const WORKFLOW_FEATURES = [
     icon: "jupyter",
     label: "Compute",
     summary:
-      "Run Jupyter notebooks directly in the browser with collaboration, synchronized output, time travel, and course workflows built in.",
+      "Run standard Jupyter notebooks in shared project context with synchronized output, history, and course workflows nearby.",
     title: "Jupyter Notebooks",
   },
   {
@@ -129,7 +129,7 @@ const WORKFLOW_FEATURES = [
     icon: "tex",
     label: "Writing",
     summary:
-      "Edit LaTeX in the browser with synchronized collaboration, build output, history, and the rest of the CoCalc project environment close by.",
+      "Write papers and technical documents with collaboration, build output, history, and project files close by.",
     title: "LaTeX Editor",
   },
   {
@@ -138,7 +138,7 @@ const WORKFLOW_FEATURES = [
     icon: "terminal",
     label: "Linux",
     summary:
-      "Work in a shared Linux shell, keep tools and files near your notebooks and documents, and avoid local environment drift.",
+      "Use Linux terminals in the same workspace as notebooks, documents, files, and shared project history.",
     title: "Linux Terminal",
   },
   {
@@ -147,7 +147,7 @@ const WORKFLOW_FEATURES = [
     icon: "robot",
     label: "Agent help",
     summary:
-      "Ask Codex to inspect project files, use terminals and notebooks, edit documents, and keep review context in collaborative chat threads.",
+      "Ask Codex to help with files, notebooks, terminals, and documents while humans keep review context in the same workspace.",
     title: "Codex Agent Chat",
   },
   {
@@ -156,7 +156,7 @@ const WORKFLOW_FEATURES = [
     icon: "graduation-cap",
     label: "Courses",
     summary:
-      "Organize assignments, distribute files, collect work, and grade notebooks or other project files with a workflow built for technical classes.",
+      "Run technical courses and workshops with shared files, notebooks, grading workflows, and collaborative support built into the workspace.",
     title: "Teaching a Course",
   },
   {
@@ -165,7 +165,7 @@ const WORKFLOW_FEATURES = [
     icon: "slides",
     label: "Visual work",
     summary:
-      "Use an infinite collaborative canvas with markdown, KaTeX, Jupyter cells, multiple pages, and a transparent JSONL document format.",
+      "Sketch ideas, formulas, and notebook-backed explanations on a collaborative canvas that lives with the project.",
     title: "Whiteboard",
   },
 ] satisfies Array<{
@@ -178,48 +178,48 @@ const WORKFLOW_FEATURES = [
 }>;
 
 const PROJECT_MODEL_ITEMS = [
-  { icon: "files", label: "Files" },
-  { icon: "terminal", label: "Runtime" },
-  { icon: "users", label: "People + agents" },
-  { icon: "disk-snapshot", label: "Recovery" },
+  { icon: "files", label: "Code and files" },
+  { icon: "jupyter", label: "Notebooks" },
+  { icon: "tex", label: "Documents" },
+  { icon: "history", label: "History" },
 ] satisfies Array<{ icon: IconName; label: string }>;
 
 const PRODUCT_OPTIONS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Use the public CoCalc site with a minimal free tier and a path to standard plans.",
-    fit: "Public cloud projects and accounts",
+    body: "Managed hosted workspace for teams that want the full product without running infrastructure.",
+    fit: "Teams, labs, and evaluators starting hosted",
     icon: "cloud",
     label: "Hosted",
-    operator: "Operated by CoCalc",
-    title: "Hosted CoCalc",
+    mode: "Managed hosted",
+    title: "CoCalc.ai",
   },
   {
     accent: COLORS.RUN,
-    body: "Install the free single-user app on your own Linux or Mac computer.",
-    fit: "One local Linux or Mac user",
+    body: "Free source-available local runtime for self-directed technical work and evaluation.",
+    fit: "Individual researchers and technical evaluators",
     icon: "laptop",
     label: "Local",
-    operator: "Operated by you",
+    mode: "Runs locally",
     title: "CoCalc Plus",
   },
   {
     accent: PUBLIC_COLORS.warning,
-    body: "Paste one command on a public Ubuntu VM and get a shared HTTPS CoCalc appliance.",
-    fit: "Lab, class, GPU box, agent sandbox, or small team",
-    icon: "star",
-    label: "Self-hosted",
-    operator: "Operated on your VM",
-    title: "CoCalc Star",
+    body: "Lightweight customer-operated private deployment for pilots, labs, workshops, and small teams.",
+    fit: "Private pilots and departmental environments",
+    icon: "servers",
+    label: "Private",
+    mode: "Customer-operated",
+    title: "CoCalc Launchpad",
   },
   {
     accent: COLORS.GRAY_D,
-    body: "Use Launchpad for lower-level deployment control or Rocket for production multi-user scale.",
-    fit: "Private hosts, custom deployment, production scale",
-    icon: "servers",
-    label: "Operators",
-    operator: "Operated by your organization",
-    title: "Launchpad + Rocket",
+    body: "Enterprise private-cloud deployment path for larger organizational requirements.",
+    fit: "Platform, security, and procurement-led rollouts",
+    icon: "rocket",
+    label: "Enterprise",
+    mode: "Customer-operated enterprise",
+    title: "CoCalc Rocket",
   },
 ] satisfies Array<{
   accent: string;
@@ -227,53 +227,53 @@ const PRODUCT_OPTIONS = [
   fit: string;
   icon: IconName;
   label: string;
-  operator: string;
+  mode: string;
   title: string;
 }>;
 
 const PRODUCT_MODEL_ITEMS = [
+  "Code",
   "Files",
   "Notebooks",
-  "Terminals",
-  "Chat",
-  "Agents",
+  "Documents",
+  "AI",
 ] as const;
 
 const DIFFERENCE_SIGNALS = [
-  { icon: "jupyter", label: "Notebook output" },
-  { icon: "files", label: "Linux filesystem" },
-  { icon: "robot", label: "Codex context" },
-  { icon: "disk-snapshot", label: "Snapshots and backups" },
+  { icon: "files", label: "Shared context" },
+  { icon: "users", label: "Collaboration" },
+  { icon: "history", label: "Review history" },
+  { icon: "disk-snapshot", label: "Recovery paths" },
 ] satisfies Array<{ icon: IconName; label: string }>;
 
 const DIFFERENTIATORS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Run cells, commands, terminals, and agent turns while project state remains attached to a durable backend workspace.",
-    eyebrow: "State survives",
-    icon: "clock",
-    title: "Durable execution",
+    body: "Code, notebooks, documents, files, terminals, collaboration, and AI assistance stay connected in shared project context.",
+    eyebrow: "Workspace breadth",
+    icon: "project-outlined",
+    title: "One technical workspace",
   },
   {
     accent: COLORS.RUN,
-    body: "Use sudo, apt, Python packages, RootFS images, SSH, and project snapshots instead of pretending technical work has no environment.",
-    eyebrow: "Real environment",
-    icon: "linux",
-    title: "Real Linux projects",
+    body: "Technical work remains easier to inspect, discuss, continue, and hand off after AI or human changes.",
+    eyebrow: "Inspect and continue",
+    icon: "search",
+    title: "Reviewable work",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Chat, notebooks, terminals, files, whiteboards, review, and support workflows are shared computational surfaces, not separate sharing layers.",
-    eyebrow: "Shared by default",
-    icon: "users",
-    title: "Realtime collaboration",
+    body: "History, shared files, TimeTravel, snapshots, and backups help teams recover useful work instead of rebuilding context.",
+    eyebrow: "Keep moving",
+    icon: "history",
+    title: "Recoverable projects",
   },
   {
     accent: COLORS.GRAY_M,
-    body: "TimeTravel, snapshots, backups, project movement, and RootFS versions make technical work recoverable and reusable.",
-    eyebrow: "Recoverable work",
-    icon: "database",
-    title: "Operational safety",
+    body: "Use CoCalc hosted, evaluate locally, or choose a customer-operated private deployment path when your organization needs more control.",
+    eyebrow: "Deployment choice",
+    icon: "cloud",
+    title: "Hosted, local, or private",
   },
 ] satisfies Array<{
   accent: string;
@@ -288,7 +288,7 @@ const PATH_TAGS = ["Notebooks", "Terminals", "Agents", "TimeTravel"] as const;
 const PATH_OPTIONS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Use the public CoCalc site with the minimal free tier, then move up to a standard plan when you need more.",
+    body: "Use the managed hosted workspace when your team wants CoCalc without operating infrastructure.",
     button: ({ authenticated }: { authenticated: boolean }) =>
       authenticated ? "Open projects" : "Create account",
     href: ({ authenticated }: { authenticated: boolean }) =>
@@ -298,7 +298,7 @@ const PATH_OPTIONS = [
   },
   {
     accent: COLORS.RUN,
-    body: "Install the free single-user CoCalc app on your own Linux or Mac computer.",
+    body: "Install the free local runtime for self-directed work, demos, and evaluation.",
     button: () => "Download CoCalc Plus",
     href: () => PLUS_DOWNLOAD_URL,
     icon: "laptop",
@@ -306,11 +306,19 @@ const PATH_OPTIONS = [
   },
   {
     accent: PUBLIC_COLORS.warning,
-    body: "Run a shared CoCalc appliance on a public Ubuntu VM for a lab, class, GPU box, agent sandbox, or small team.",
-    button: () => "Install CoCalc Star",
-    href: () => appPath("products/cocalc-star"),
-    icon: "star",
-    title: "CoCalc Star",
+    body: "Compare hosted, local, and customer-operated private deployment paths before choosing.",
+    button: () => "Compare deployment options",
+    href: () => appPath("products"),
+    icon: "servers",
+    title: "Deployment options",
+  },
+  {
+    accent: COLORS.GRAY_D,
+    body: "Talk with us when governance, procurement, onboarding, support, or broader deployment rights matter.",
+    button: () => "Discuss site licensing",
+    href: () => appPath("pricing"),
+    icon: "solution",
+    title: "Site licensing",
   },
 ] satisfies Array<{
   accent: string;
@@ -452,7 +460,7 @@ function Hero({
       }}
     >
       <Flex vertical gap={20}>
-        <Eyebrow>Collaborative computational projects</Eyebrow>
+        <Eyebrow>AI-native technical workspace</Eyebrow>
         <div>
           <Title
             className="cocalc-public-home-hero-title"
@@ -466,7 +474,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            AI-Native Technical Workspace for Humans and Agents
+            One workspace for code, notebooks, documents, compute, and AI
           </Title>
           <Paragraph
             style={{
@@ -477,9 +485,9 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            {siteName} brings notebooks, terminals, files, LaTeX, chat,
-            whiteboards, snapshots, backups, and Codex agent threads into one
-            collaborative Linux project.
+            {siteName} keeps serious technical work collaborative, reviewable,
+            and recoverable without splitting context across separate coding,
+            notebook, document, compute, and AI tools.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -493,13 +501,10 @@ function Hero({
             size="large"
             type="primary"
           >
-            {authenticated ? "Open projects" : "Start free"}
+            {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
-          <Button href={appPath("pricing")} size="large">
-            See plans
-          </Button>
-          <Button href={appPath("products/cocalc-plus")} size="large">
-            Get CoCalc Plus
+          <Button href={appPath("products")} size="large">
+            Compare deployment options
           </Button>
         </Flex>
         <Flex gap={8} wrap>
@@ -537,7 +542,7 @@ function Hero({
 function ProjectSection() {
   return (
     <section
-      aria-label="The project is the product"
+      aria-label="One technical workspace"
       className="cocalc-public-home-project"
       style={{
         alignItems: "center",
@@ -548,7 +553,7 @@ function ProjectSection() {
       }}
     >
       <img
-        alt="One CoCalc project containing many workflows"
+        alt="One CoCalc workspace containing many workflows"
         className="cocalc-public-home-workflow-image"
         decoding="async"
         loading="lazy"
@@ -565,14 +570,15 @@ function ProjectSection() {
       />
       <Flex vertical gap={18}>
         <div>
-          <Eyebrow>The project is the product</Eyebrow>
+          <Eyebrow>One technical workspace</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            One durable place for technical work.
+            Bring technical work back into one context.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            CoCalc is not just a notebook host or a terminal in a tab. A project
-            is a persistent workspace with files, compute, document history,
-            collaborators, chat, AI agents, snapshots, and backups.
+            Technical teams move between code, notebooks, papers, terminals,
+            files, and AI. CoCalc keeps those artifacts together so work can be
+            shared, reviewed, continued, and recovered without rebuilding
+            context across disconnected tools.
           </Paragraph>
         </div>
         <div
@@ -611,7 +617,7 @@ function WorkflowsSection() {
     <section aria-label="Core workflows" style={{ padding: "28px 0" }}>
       <SectionIntro
         action={<Button href={appPath("features")}>All features</Button>}
-        body="CoCalc keeps notebooks, papers, terminals, agents, classes, and visual thinking inside one shared project instead of scattering them across disconnected tools."
+        body="CoCalc keeps familiar research and engineering tools in one shared workspace: notebooks, papers, terminals, AI help, courses, and visual thinking."
         eyebrow="Core workflows"
         title="Use the tools you already understand, together."
       />
@@ -626,7 +632,7 @@ function WorkflowsSection() {
         }}
       >
         <aside
-          aria-label="One CoCalc project model"
+          aria-label="One CoCalc workspace model"
           style={{
             background: `linear-gradient(180deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.warningTint} 100%)`,
             border: `1px solid ${PUBLIC_COLORS.border}`,
@@ -640,10 +646,10 @@ function WorkflowsSection() {
               <IconTile accent={PUBLIC_COLORS.link} icon="project-outlined" />
               <span>
                 <Text strong style={{ color: PUBLIC_COLORS.link }}>
-                  One project
+                  Shared workspace
                 </Text>
                 <Text style={{ display: "block" }} type="secondary">
-                  Shared files, compute, history, and collaboration.
+                  Context for people, tools, and AI.
                 </Text>
               </span>
             </Flex>
@@ -748,19 +754,20 @@ function ProductsSection() {
         <div>
           <Eyebrow>Ways to run CoCalc</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Choose by who operates CoCalc.
+            Hosted, local, or private from the same product family.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Each path answers where CoCalc runs and who is responsible for
-            operating it. The project workspace stays familiar across hosted,
-            local, public-VM, and private deployment options.
+            Start with the operating model that fits the team. Use CoCalc
+            hosted, evaluate locally with CoCalc Plus, or choose a
+            customer-operated private deployment path when your organization
+            needs more control.
           </Paragraph>
         </div>
         <Flex gap={10} wrap>
           <Button href={appPath("products")} type="primary">
             Compare products
           </Button>
-          <Button href={appPath("products/cocalc-star")}>CoCalc Star</Button>
+          <Button href={appPath("pricing")}>Site licensing</Button>
         </Flex>
       </Flex>
       <div
@@ -848,10 +855,10 @@ function ProductsSection() {
                   }}
                 >
                   <Text style={{ display: "block", fontSize: 13 }}>
-                    <Text strong>Operator:</Text> {option.operator}
+                    <Text strong>Model:</Text> {option.mode}
                   </Text>
                   <Text style={{ display: "block", fontSize: 13 }}>
-                    <Text strong>Best for:</Text> {option.fit}
+                    <Text strong>Best fit:</Text> {option.fit}
                   </Text>
                 </div>
               </Flex>
@@ -897,12 +904,12 @@ function DifferenceSection() {
         <div>
           <Eyebrow>Why CoCalc is different</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Built for real computational work, not only polished demos.
+            Technical work you can review, recover, and keep moving.
           </Title>
           <Paragraph style={{ margin: 0 }}>
-            CoCalc treats a project as a durable technical environment: files,
-            running work, collaboration, history, and recovery all belong
-            together.
+            Technical teams need more than fast output. They need shared
+            context, durable artifacts, review paths, and recovery paths around
+            the same code, notebooks, documents, and compute.
           </Paragraph>
         </div>
         <div
@@ -1006,8 +1013,9 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
             Start using CoCalc
           </Title>
           <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-            Start hosted, install the free local app, or run your own CoCalc
-            site. The workspace model stays familiar across all three.
+            Start hosted, evaluate locally, compare private deployment, or talk
+            with us about organizational rollout. The point is one technical
+            workspace with multiple operating models.
           </Paragraph>
         </div>
         <Flex gap={6} wrap>
@@ -1036,7 +1044,7 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
         style={{
           display: "grid",
           gap: 18,
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
           marginTop: 26,
         }}
       >
