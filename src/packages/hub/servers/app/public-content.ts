@@ -17,26 +17,7 @@ import {
   type NewsItem,
 } from "@cocalc/util/types/news";
 import { joinUrlPath } from "@cocalc/util/url-path";
-
-function getTargetSearch(req: Request): string {
-  const url = new URL("http://host");
-  const targetPath = joinUrlPath(basePath, req.path);
-  const search = req.url.includes("?")
-    ? req.url.slice(req.url.indexOf("?"))
-    : "";
-  if (search) {
-    url.searchParams.set("target", targetPath + search);
-  } else {
-    url.searchParams.set("target", targetPath);
-  }
-  return url.search;
-}
-
-function redirectToStatic(req: Request, res: Response): void {
-  res.redirect(
-    joinUrlPath(basePath, "static/public.html") + getTargetSearch(req),
-  );
-}
+import { sendPublicAppShell } from "./public-shell";
 
 function redirectCompatibility(target: string) {
   return function (_req: Request, res: Response): void {
@@ -250,5 +231,5 @@ export default function initPublicContent(router: Router): void {
     "/products/cocalc-star/",
   ];
 
-  router.get(contentPaths, redirectToStatic);
+  router.get(contentPaths, sendPublicAppShell);
 }

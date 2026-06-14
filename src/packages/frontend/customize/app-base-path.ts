@@ -1,6 +1,17 @@
 import { APP_BASE_PATH_ROUTE_MARKERS } from "@cocalc/util/routing/app";
 import { LOCALE } from "@cocalc/util/i18n/locale";
 
+const PUBLIC_SITE_ROUTE_MARKERS = [
+  "/docs",
+  "/features",
+  "/guides",
+  "/news",
+  "/policies",
+  "/pricing",
+  "/products",
+  "/support",
+] as const;
+
 const UUID_PATTERN =
   /^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$/;
 
@@ -60,7 +71,10 @@ export function inferAppBasePath(pathname?: string): string {
     return staticIndex === 0 ? "/" : normalizedPathname.slice(0, staticIndex);
   }
 
-  for (const marker of APP_BASE_PATH_ROUTE_MARKERS) {
+  for (const marker of [
+    ...APP_BASE_PATH_ROUTE_MARKERS,
+    ...PUBLIC_SITE_ROUTE_MARKERS,
+  ]) {
     const index = normalizedPathname.indexOf(marker);
     if (index !== -1) {
       return index === 0 ? "/" : normalizedPathname.slice(0, index);

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import express from "express";
-import initPublicFeatures from "./public-features";
+import initPublicSupport from "./public-support";
 
 jest.mock("@cocalc/server/software-licenses/activation", () => ({
   isLaunchpadMode: jest.fn(() => false),
@@ -14,7 +14,7 @@ jest.mock("@cocalc/database/settings/customize", () => ({
   default: jest.fn(async () => ({ siteName: "CoCalc" })),
 }));
 
-describe("public feature and docs routes", () => {
+describe("public support routes", () => {
   let previousStaticPath: string | undefined;
   let staticPath: string;
 
@@ -40,7 +40,7 @@ describe("public feature and docs routes", () => {
   async function request(path: string) {
     const app = express();
     const router = express.Router();
-    initPublicFeatures(router);
+    initPublicSupport(router);
     app.use(router);
     const server = await new Promise<ReturnType<typeof app.listen>>(
       (resolve) => {
@@ -59,24 +59,19 @@ describe("public feature and docs routes", () => {
     }
   }
 
-  it("serves feature pages with crawler-visible metadata", async () => {
-    const response = await request("/features/python?x=1");
+  it("serves contact routes with public support metadata", async () => {
+    const response = await request(
+      "/support/new?subject=CoCalc%20Rocket&context=product-cocalc-rocket",
+    );
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBeNull();
     const html = await response.text();
-    expect(html).toContain("<title>Python | CoCalc</title>");
-    expect(html).toContain("Use Python for technical computing");
-    expect(html).toContain("/features/python");
-    expect(html).toContain('src="/static/public-test.js"');
-  });
-
-  it("serves docs pages with public documentation metadata", async () => {
-    const response = await request("/docs/projects/project-secrets?x=1");
-    expect(response.status).toBe(200);
-    const html = await response.text();
-    expect(html).toContain("<title>CoCalc Documentation | CoCalc</title>");
-    expect(html).toContain("Browse CoCalc documentation");
+    expect(html).toContain("<title>Contact CoCalc Support | CoCalc</title>");
+    expect(html).toContain(
+      "Contact CoCalc about pricing, deployment, product paths",
+    );
     expect(html).toContain('rel="canonical"');
-    expect(html).toContain("/docs");
+    expect(html).toContain("/support/new");
+    expect(html).toContain('src="/static/public-test.js"');
   });
 });

@@ -134,6 +134,17 @@ describe("public route metadata", () => {
     expect(metadata.description).toContain("collaborative workspace");
   });
 
+  it("can build canonical and image paths below a server base path", () => {
+    const metadata = getPublicRouteMetadata(
+      productRoute("products-cocalc-star"),
+      { site_name: "CoCalc" },
+      { basePath: "/base" },
+    );
+
+    expect(metadata.canonicalPath).toBe("/base/products/cocalc-star");
+    expect(metadata.imagePath).toBe("/base/public/landing/product-options.jpg");
+  });
+
   it("applies canonical and social tags for the current public route", async () => {
     render(
       <PublicRouteHeadMetadata

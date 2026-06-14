@@ -3,10 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { join } from "path";
 import type { Router } from "express";
 
-import basePath from "@cocalc/backend/base-path";
+import { sendPublicAppShell } from "./public-shell";
 
 export default function initPublicFeatures(router: Router): void {
   const featurePaths = [
@@ -17,17 +16,5 @@ export default function initPublicFeatures(router: Router): void {
     /^\/docs(?:\/.*)?$/,
   ];
 
-  router.get(featurePaths, (req, res) => {
-    const targetPath = join(basePath, req.path);
-    const url = new URL("http://host");
-    const search = req.url.includes("?")
-      ? req.url.slice(req.url.indexOf("?"))
-      : "";
-    if (search) {
-      url.searchParams.set("target", targetPath + search);
-    } else {
-      url.searchParams.set("target", targetPath);
-    }
-    res.redirect(join(basePath, "static/public.html") + url.search);
-  });
+  router.get(featurePaths, sendPublicAppShell);
 }

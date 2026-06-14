@@ -23,6 +23,10 @@ describe("inferAppBasePath", () => {
     expect(inferAppBasePath("/base/auth/sign-in")).toBe("/base");
     expect(inferAppBasePath("/base/settings/profile")).toBe("/base");
     expect(inferAppBasePath("/base/ssh")).toBe("/base");
+    expect(inferAppBasePath("/products/cocalc-star")).toBe("/");
+    expect(inferAppBasePath("/base/products/cocalc-star")).toBe("/base");
+    expect(inferAppBasePath("/features/teaching")).toBe("/");
+    expect(inferAppBasePath("/base/support/new")).toBe("/base");
     expect(
       inferAppBasePath(
         "/base/projects/00000000-1000-4000-8000-000000000000/apps",

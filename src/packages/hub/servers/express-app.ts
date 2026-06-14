@@ -27,6 +27,7 @@ import initPublicAuth from "./app/public-auth";
 import initPublicContent from "./app/public-content";
 import initPublicFeatures from "./app/public-features";
 import initPublicLang from "./app/public-lang";
+import { sendPublicAppShell } from "./app/public-shell";
 import initPublicSupport from "./app/public-support";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
@@ -689,9 +690,7 @@ function initLanding(router: express.Router) {
           return;
         }
       }
-      const url = new URL("http://host");
-      url.searchParams.set("target", base === "" || base === "/" ? "/" : base);
-      res.redirect(join(base, "static/public.html") + url.search);
+      await sendPublicAppShell(req, res);
     })().catch((err) => {
       logger.warn("landing page failed", { err });
       res.status(500).send("Landing page error.");
