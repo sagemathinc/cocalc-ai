@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import HomePageButton from "./button";
 
@@ -16,7 +16,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 jest.mock("@cocalc/frontend/project/home-directory", () => ({
-  getProjectHomeDirectory: () => "/home/user",
+  resolveProjectHomeDirectory: jest.fn(async () => "/Users/wstein"),
 }));
 
 describe("HomePageButton", () => {
@@ -24,11 +24,13 @@ describe("HomePageButton", () => {
     jest.clearAllMocks();
   });
 
-  it("opens the full-page files explorer at project home", () => {
+  it("opens the full-page files explorer at resolved project home", async () => {
     render(<HomePageButton project_id="p" active={false} width={48} />);
     fireEvent.click(screen.getByRole("button"));
 
-    expect(mockActions.open_directory).toHaveBeenCalledWith("/home/user");
+    await waitFor(() => {
+      expect(mockActions.open_directory).toHaveBeenCalledWith("/Users/wstein");
+    });
     expect(mockActions.setFlyoutExpanded).toHaveBeenCalledWith(
       "files",
       false,

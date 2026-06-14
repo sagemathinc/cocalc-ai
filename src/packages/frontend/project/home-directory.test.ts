@@ -80,6 +80,34 @@ describe("getProjectHomeDirectory", () => {
     expect(getProjectHomeDirectory("project-2")).toBe("/home/user");
   });
 
+  it("does not cache the fallback /home/user path as exact lite home", async () => {
+    getProjectStore.mockReturnValue({
+      get: (key: string) => {
+        if (key === "current_path_abs") return "/home/user";
+        if (key === "history_path_abs") return "/home/user";
+        return undefined;
+      },
+      getIn: () => undefined,
+    });
+    configuration.mockResolvedValue({
+      capabilities: {
+        homeDirectory: "/Users/wstein/Library/Application Support/CoCalc",
+      },
+    });
+
+    const {
+      getProjectHomeDirectory,
+      resolveProjectHomeDirectory,
+    } = require("./home-directory");
+    expect(getProjectHomeDirectory("project-1")).toBe("/home/user");
+    await expect(resolveProjectHomeDirectory("project-1")).resolves.toBe(
+      "/Users/wstein/Library/Application Support/CoCalc",
+    );
+    expect(getProjectHomeDirectory("project-1")).toBe(
+      "/Users/wstein/Library/Application Support/CoCalc",
+    );
+  });
+
   it("reads runtime home and user from capabilities", () => {
     getProjectStore.mockReturnValue({
       get: (key: string) => {

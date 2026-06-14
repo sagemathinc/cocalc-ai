@@ -72,7 +72,7 @@ function readHomeFromProjectStore(projectId?: string): string | undefined {
     const normalizedCandidate = normalizeHome(candidate);
     if (!normalizedCandidate || normalizedCandidate === "/") continue;
     const homeMatch = normalizedCandidate.match(/^\/home\/[^/]+/);
-    if (homeMatch) {
+    if (homeMatch && homeMatch[0] !== FALLBACK_HOME) {
       return homeMatch[0];
     }
   }
