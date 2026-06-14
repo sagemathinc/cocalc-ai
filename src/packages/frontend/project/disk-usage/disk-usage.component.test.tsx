@@ -126,7 +126,7 @@ describe("DiskUsage backup UI", () => {
     });
   });
 
-  it("shows backup status on the button and the modal", async () => {
+  it("shows backup status in the storage modal", async () => {
     useProjectMapField.mockImplementation((project_id: string, path: string) =>
       project_id === "project-1" && path === "last_backup"
         ? new Date("2026-05-05T18:00:00.000Z")
@@ -142,13 +142,14 @@ describe("DiskUsage backup UI", () => {
 
     render(<DiskUsage compact project_id="project-1" />);
 
-    expect(screen.getByText("Backups")).toBeInTheDocument();
+    expect(screen.queryByText("Backups")).not.toBeInTheDocument();
     expect(screen.queryByText(/Live/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Retained/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button"));
 
     await waitFor(() => {
+      expect(screen.getByText("Backups")).toBeInTheDocument();
       expect(screen.getByText("Last backup:")).toBeInTheDocument();
     });
     expect(

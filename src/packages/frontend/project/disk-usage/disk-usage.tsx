@@ -1002,80 +1002,28 @@ export default function DiskUsage({
       }}
     >
       <Icon name="disk-round" />
-      {compact ? (
-        <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
-          <Space size={8} wrap>
-            <Text strong>Disk</Text>
-            {quota != null ? (
-              <>
-                <Progress
-                  style={{ width: "52px", marginBottom: 0 }}
-                  percent={percent}
-                  status={quotaStatus}
-                  showInfo={false}
-                />
-                <Text>
-                  {human_readable_size(quota.used)} /{" "}
-                  {human_readable_size(quota.size)}
-                </Text>
-              </>
-            ) : null}
-            <Tag style={backupSummary.style} title={backupSummary.absolute}>
-              {backupSummary.label}
-            </Tag>
-            {loading && hasSummaryData ? (
-              <Text type="secondary">Refreshing…</Text>
-            ) : null}
-          </Space>
-          {sharedScratch != null && (
-            <div
-              style={{
-                color: COLORS.GRAY_D,
-                fontSize: "12px",
-                lineHeight: 1.35,
-                marginTop: "2px",
-                maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
+      <Space size={compact ? 8 : 10} wrap={false}>
+        {quota != null ? (
+          <>
+            <Progress
+              style={{ width: compact ? "52px" : "60px", marginBottom: 0 }}
+              percent={percent}
+              status={quotaStatus}
+              showInfo={false}
+            />
+            <Text
+              title={`${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`}
             >
-              /scratch {human_readable_size(sharedScratch.used)} /{" "}
-              {human_readable_size(sharedScratch.size)}
-            </div>
-          )}
-        </div>
-      ) : (
-        <Space size={10} wrap>
+              {human_readable_size(quota.size)}
+            </Text>
+          </>
+        ) : (
           <Text strong>Disk</Text>
-          {quota != null ? (
-            <>
-              <Progress
-                style={{ width: "60px", marginBottom: 0 }}
-                percent={percent}
-                status={quotaStatus}
-                showInfo={false}
-              />
-              <Text>
-                {human_readable_size(quota.used)} /{" "}
-                {human_readable_size(quota.size)}
-              </Text>
-            </>
-          ) : null}
-          <Tag style={backupSummary.style} title={backupSummary.absolute}>
-            {backupSummary.label}
-          </Tag>
-          {sharedScratch != null ? (
-            <Tag>
-              /scratch {human_readable_size(sharedScratch.used)} /{" "}
-              {human_readable_size(sharedScratch.size)}
-            </Tag>
-          ) : null}
-          {loading && hasSummaryData ? (
-            <Text type="secondary">Refreshing…</Text>
-          ) : null}
-        </Space>
-      )}
+        )}
+        {loading && hasSummaryData ? (
+          <Text type="secondary">Refreshing…</Text>
+        ) : null}
+      </Space>
     </Button>
   );
 
@@ -1103,9 +1051,22 @@ export default function DiskUsage({
               marginBottom: "16px",
             }}
           >
-            <h5 style={{ margin: 0 }}>
-              <Icon name="disk-round" /> Project storage overview
-            </h5>
+            <div>
+              <h5 style={{ margin: 0 }}>
+                <Icon name="disk-round" /> Project storage overview
+              </h5>
+              <Space size={8} wrap style={{ marginTop: "8px" }}>
+                <Tag style={backupSummary.style} title={backupSummary.absolute}>
+                  {backupSummary.label}
+                </Tag>
+                {sharedScratch != null ? (
+                  <Tag>
+                    /scratch {human_readable_size(sharedScratch.used)} /{" "}
+                    {human_readable_size(sharedScratch.size)}
+                  </Tag>
+                ) : null}
+              </Space>
+            </div>
             <div
               style={{
                 alignItems: "flex-end",
