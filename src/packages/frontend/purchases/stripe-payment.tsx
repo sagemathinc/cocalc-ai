@@ -28,6 +28,7 @@ import {
   getCheckoutSession,
   getCustomerSession,
   getPaymentMethods,
+  getStripeCustomer,
   processPaymentIntents,
 } from "./api";
 import { Alert, Button, Card, Modal, Space, Spin } from "antd";
@@ -55,6 +56,17 @@ import { AddressButton, StripeAddressElement } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
 const PAYMENT_UPDATE_DEBOUNCE = 2000;
+
+function hasUsableBillingDetails(customer: any): boolean {
+  const address = customer?.address ?? {};
+  return (
+    !!`${customer?.name ?? ""}`.trim() &&
+    !!`${address.line1 ?? ""}`.trim() &&
+    !!`${address.city ?? ""}`.trim() &&
+    !!`${address.country ?? ""}`.trim() &&
+    !!`${address.postal_code ?? ""}`.trim()
+  );
+}
 
 interface StripePaymentProps {
   description?: string;
@@ -696,10 +708,10 @@ export function ConfirmButton({
   );
 }
 
-export function BigSpin({ style }: { style? }) {
+export function BigSpin({ style, tip = "Loading" }: { style?; tip?: string }) {
   return (
     <div style={{ ...style, textAlign: "center" }}>
-      <Spin tip="Loading" size="large">
+      <Spin tip={tip} size="large">
         <div
           style={{
             padding: 50,
@@ -780,6 +792,44 @@ export function BillingSetupModal({
   title?: ReactNode;
 }) {
   const [addressSaved, setAddressSaved] = useState<boolean>(false);
+  const [checkingAddress, setCheckingAddress] =
+    useState<boolean>(requirePaymentMethod);
+  const [addressCheckError, setAddressCheckError] = useState<string>("");
+
+  useEffect(() => {
+    let active = true;
+
+    if (!requirePaymentMethod) {
+      setAddressSaved(false);
+      setCheckingAddress(false);
+      setAddressCheckError("");
+      return;
+    }
+
+    setCheckingAddress(true);
+    setAddressCheckError("");
+    (async () => {
+      try {
+        const customer = await getStripeCustomer();
+        if (active) {
+          setAddressSaved(hasUsableBillingDetails(customer));
+        }
+      } catch (err) {
+        if (active) {
+          setAddressCheckError(`${err}`);
+        }
+      } finally {
+        if (active) {
+          setCheckingAddress(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [requirePaymentMethod]);
+
   const finishAddress = () => {
     if (requirePaymentMethod) {
       setAddressSaved(true);
@@ -789,7 +839,11 @@ export function BillingSetupModal({
   };
   return (
     <Modal open title={title} onCancel={onCancel} onOk={onCancel} footer={[]}>
-      {!addressSaved ? (
+      {checkingAddress ? (
+        <BigSpin tip="Checking billing details..." />
+      ) : addressCheckError ? (
+        <ShowError error={addressCheckError} setError={setAddressCheckError} />
+      ) : !addressSaved ? (
         <Space vertical size="middle" style={{ width: "100%" }}>
           <Alert
             showIcon
@@ -831,23 +885,15 @@ function CollectPaymentMethodInner({
   const [error, setError] = useState<string>("");
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [freshAuthCanceled, setFreshAuthCanceled] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const load = async () => {
     try {
       setLoading(true);
-      setFreshAuthCanceled(false);
       setError("");
-      const completed = await runFreshAuthAction(async () => {
-        const intent = await createSetupIntent({
-          description: "Add a new payment method.",
-        });
-        setSecret(intent);
+      const intent = await createSetupIntent({
+        description: "Add a new payment method.",
       });
-      if (!completed) {
-        setFreshAuthCanceled(true);
-      }
+      setSecret(intent);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -855,72 +901,29 @@ function CollectPaymentMethodInner({
     }
   };
 
-  const freshAuthModal = (
-    <FreshAuthModal
-      {...freshAuthModalProps}
-      onCancel={() => {
-        setFreshAuthCanceled(true);
-        freshAuthModalProps.onCancel();
-      }}
-      onSuccess={async () => {
-        await freshAuthModalProps.onSuccess();
-        setFreshAuthCanceled(false);
-      }}
-    />
-  );
-
   useEffect(() => {
     load();
   }, []);
 
   if (loading) {
-    return (
-      <>
-        <BigSpin style={style} />
-        {freshAuthModal}
-      </>
-    );
+    return <BigSpin style={style} tip="Loading payment form..." />;
   }
 
   if (error) {
     return (
-      <>
-        <ShowError
-          style={style}
-          error={error}
-          setError={(error) => {
-            setError(error);
-            load();
-          }}
-        />
-        {freshAuthModal}
-      </>
-    );
-  }
-
-  if (freshAuthCanceled) {
-    return (
-      <>
-        <Space vertical style={{ width: "100%" }}>
-          <Alert
-            showIcon
-            type="info"
-            message="Adding a payment method requires security confirmation."
-          />
-          <Button onClick={load}>Confirm security action</Button>
-        </Space>
-        {freshAuthModal}
-      </>
+      <ShowError
+        style={style}
+        error={error}
+        setError={(error) => {
+          setError(error);
+          load();
+        }}
+      />
     );
   }
 
   if (secret == null) {
-    return (
-      <>
-        <BigSpin style={style} />
-        {freshAuthModal}
-      </>
-    );
+    return <BigSpin style={style} tip="Loading payment form..." />;
   }
 
   return (
@@ -941,7 +944,6 @@ function CollectPaymentMethodInner({
           setError={setError}
         />
       </Elements>
-      {freshAuthModal}
     </>
   );
 }
@@ -957,7 +959,7 @@ function FinishCollectingPaymentMethod({ style, onFinished, setError }) {
   }, []);
 
   if (!stripe || !elements) {
-    return <BigSpin style={style} />;
+    return <BigSpin style={style} tip="Loading payment form..." />;
   }
 
   const handleSubmit = async (e) => {
@@ -990,7 +992,7 @@ function FinishCollectingPaymentMethod({ style, onFinished, setError }) {
 
   return (
     <div style={style}>
-      {loading && <BigSpin />}
+      {loading && <BigSpin tip="Loading payment form..." />}
       <PaymentElement />
       <ConfirmButton
         disabled={loading}
