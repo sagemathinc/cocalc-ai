@@ -243,7 +243,7 @@ describe("PublicHomeApp visual quality contract", () => {
     renderHome();
 
     const heroImage = within(
-      screen.getByRole("region", { name: "CoCalc Launchpad hero" }),
+      screen.getByRole("region", { name: "CoCalc hero" }),
     ).getByRole("img", {
       name: "CoCalc-AI collaborative project overview",
     });

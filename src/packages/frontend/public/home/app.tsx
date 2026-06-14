@@ -9,7 +9,11 @@ import { Button, Flex, Tag, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { getSiteName, type PublicConfig } from "@cocalc/frontend/public/config";
+import {
+  getPublicMarketingConfig,
+  getPublicMarketingSiteName,
+  type PublicConfig,
+} from "@cocalc/frontend/public/config";
 import { PublicPage } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
@@ -1151,7 +1155,10 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
 }
 
 export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
-  const siteName = getSiteName(config);
+  const marketingConfig = getPublicMarketingConfig(config) as
+    | HomeConfig
+    | undefined;
+  const siteName = getPublicMarketingSiteName(config);
   const authenticated = !!config?.is_authenticated;
 
   useEffect(() => {
@@ -1160,7 +1167,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   }, [siteName]);
 
   return (
-    <PublicPage active="home" config={config}>
+    <PublicPage active="home" config={marketingConfig}>
       <style>{HOME_PAGE_CSS}</style>
       <div
         className="cocalc-public-home"

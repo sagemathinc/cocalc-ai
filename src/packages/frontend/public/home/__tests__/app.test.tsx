@@ -57,14 +57,24 @@ describe("PublicHomeApp", () => {
       />,
     );
 
-    expect(document.title).toBe("CoCalc Launchpad");
+    expect(document.title).toBe("CoCalc");
     expect(
       within(screen.getByRole("banner")).getByRole("link", {
-        name: "CoCalc Launchpad home",
+        name: "CoCalc home",
       }),
     ).not.toBeNull();
+    expect(
+      within(screen.getByRole("contentinfo")).getByRole("link", {
+        name: "CoCalc home",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(screen.getByRole("banner")).queryByRole("link", {
+        name: "CoCalc Launchpad home",
+      }),
+    ).toBeNull();
     expect(getHomepageSectionLabels(container)).toEqual([
-      "CoCalc Launchpad hero",
+      "CoCalc hero",
       "One technical workspace",
       "Who CoCalc helps",
       "Core workflows",
@@ -75,7 +85,7 @@ describe("PublicHomeApp", () => {
     expectHomepageSectionsLabeled(container);
 
     const hero = screen.getByRole("region", {
-      name: "CoCalc Launchpad hero",
+      name: "CoCalc hero",
     });
     expect(
       within(hero).getByRole("heading", {
