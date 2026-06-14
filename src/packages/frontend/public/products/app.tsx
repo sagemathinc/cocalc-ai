@@ -312,6 +312,7 @@ function ProductsOverviewPage() {
           <LinkButton href={appPath("pricing")}>
             See pricing and licensing
           </LinkButton>
+          <LinkButton href={appPath("support")}>Talk with CoCalc</LinkButton>
         </Flex>
       </PublicSection>
     </Flex>

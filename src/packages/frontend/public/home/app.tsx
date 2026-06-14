@@ -208,7 +208,7 @@ const AUDIENCE_ROUTES = [
   {
     accent: COLORS.GRAY_D,
     body: "Choose hosted, local, single-VM, or private deployment paths without changing the core workspace model.",
-    button: "Compare products",
+    button: "Compare product paths",
     href: "products",
     icon: "servers",
     title: "IT and platform teams",
@@ -330,7 +330,7 @@ const PATH_OPTIONS = [
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Use the managed hosted workspace when your team wants CoCalc without operating infrastructure.",
     button: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? "Open projects" : "Create account",
+      authenticated ? "Open projects" : "Start on CoCalc.ai",
     href: ({ authenticated }: { authenticated: boolean }) =>
       authenticated ? appPath("projects") : appPath("auth/sign-up"),
     icon: "cloud",
@@ -355,7 +355,7 @@ const PATH_OPTIONS = [
   {
     accent: PUBLIC_COLORS.warning,
     body: "Compare hosted, local, appliance, and private deployment paths before choosing.",
-    button: () => "Compare options",
+    button: () => "Compare paths",
     href: () => appPath("products"),
     icon: "servers",
     title: "Deployment options",
@@ -363,7 +363,7 @@ const PATH_OPTIONS = [
   {
     accent: COLORS.GRAY_D,
     body: "Talk with us when governance, procurement, onboarding, support, or broader deployment rights matter.",
-    button: () => "Discuss site licensing",
+    button: () => "Pricing and licensing",
     href: () => appPath("pricing"),
     icon: "solution",
     title: "Site licensing",
@@ -533,10 +533,9 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            Start hosted on CoCalc.ai, evaluate locally with CoCalc Plus, run a
-            shared single-VM appliance with CoCalc Star, or choose a
-            customer-operated private deployment when your organization needs
-            more control.
+            CoCalc keeps notebooks, code, terminals, documents, collaboration,
+            AI agents, course workflows, history, and recovery together in one
+            project workspace.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -553,7 +552,7 @@ function Hero({
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
           <Button href={appPath("products")} size="large">
-            Compare deployment options
+            Find your CoCalc path
           </Button>
         </Flex>
         <Flex gap={8} wrap>
@@ -860,9 +859,9 @@ function ProductsSection() {
         </div>
         <Flex gap={10} wrap>
           <Button href={appPath("products")} type="primary">
-            Compare products
+            Choose how to run CoCalc
           </Button>
-          <Button href={appPath("pricing")}>Site licensing</Button>
+          <Button href={appPath("pricing")}>Pricing and licensing</Button>
         </Flex>
       </Flex>
       <div
@@ -1084,13 +1083,13 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
       >
         <Eyebrow>Choose your path</Eyebrow>
         <Title level={2} style={{ margin: "8px 0 10px" }}>
-          Start using CoCalc
+          Choose your CoCalc path
         </Title>
         <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-          Start hosted, evaluate locally, explore the single-VM appliance,
-          compare private deployment, or talk with us about organizational
-          rollout. The point is one technical workspace with multiple operating
-          models.
+          Use hosted CoCalc.ai when you want CoCalc operated for you, Plus for
+          local evaluation, Star for one shared VM, Launchpad or Rocket for
+          customer-operated private deployment, and licensing when procurement,
+          governance, or support matter.
         </Paragraph>
       </div>
       <div
@@ -1138,11 +1137,12 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
         gap={12}
       >
         <Text type="secondary">
-          Want help choosing? Compare products or contact support.
+          Need help choosing? Compare product paths, review pricing, or contact
+          support.
         </Text>
         <Flex gap={8} wrap>
-          <Button href={appPath("products")}>Compare products</Button>
-          <Button href={appPath("guides")}>Guides</Button>
+          <Button href={appPath("products")}>Compare product paths</Button>
+          <Button href={appPath("pricing")}>Pricing</Button>
           <Button href={appPath("support")}>Support</Button>
         </Flex>
       </Flex>

@@ -228,7 +228,7 @@ describe("PublicHomeApp visual quality contract", () => {
       "Use the tools you already understand, together.",
       "Hosted, local, one VM, or private from the same product family.",
       "Technical work you can review, recover, and keep moving.",
-      "Start using CoCalc",
+      "Choose your CoCalc path",
     ]);
     for (const heading of sectionHeadings) {
       expect(textLength(heading)).toBeLessThanOrEqual(72);

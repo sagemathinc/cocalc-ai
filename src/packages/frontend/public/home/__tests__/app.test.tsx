@@ -85,7 +85,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(hero).getByText(
-        /Start hosted on CoCalc\.ai, evaluate locally with CoCalc Plus/i,
+        /CoCalc keeps notebooks, code, terminals, documents, collaboration/i,
       ),
     ).not.toBeNull();
     expect(
@@ -101,7 +101,7 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
     expect(
-      within(hero).getByRole("link", { name: "Compare deployment options" }),
+      within(hero).getByRole("link", { name: "Find your CoCalc path" }),
     ).toHaveAttribute("href", "/products");
     expect(
       within(hero).queryByText(/keeps technical work collaborative/i),
@@ -151,7 +151,9 @@ describe("PublicHomeApp", () => {
       within(audiences).getByRole("link", { name: "Course workflows" }),
     ).toHaveAttribute("href", "/features/teaching");
     expect(
-      within(audiences).getByRole("link", { name: "Compare products" }),
+      within(audiences).getByRole("link", {
+        name: "Compare product paths",
+      }),
     ).toHaveAttribute("href", "/products");
     for (const title of [
       "Research and engineering teams",
@@ -203,10 +205,12 @@ describe("PublicHomeApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      within(products).getByRole("link", { name: "Compare products" }),
+      within(products).getByRole("link", {
+        name: "Choose how to run CoCalc",
+      }),
     ).toHaveAttribute("href", "/products");
     expect(
-      within(products).getByRole("link", { name: "Site licensing" }),
+      within(products).getByRole("link", { name: "Pricing and licensing" }),
     ).toHaveAttribute("href", "/pricing");
     for (const option of [
       "CoCalc.ai",
@@ -248,10 +252,10 @@ describe("PublicHomeApp", () => {
 
     const path = screen.getByRole("region", { name: "Choose your path" });
     expect(
-      within(path).getByRole("heading", { name: "Start using CoCalc" }),
+      within(path).getByRole("heading", { name: "Choose your CoCalc path" }),
     ).not.toBeNull();
     expect(
-      within(path).getByRole("link", { name: "Create account" }),
+      within(path).getByRole("link", { name: "Start on CoCalc.ai" }),
     ).toHaveAttribute("href", "/auth/sign-up");
     expect(
       within(path).getByRole("link", { name: "Download CoCalc Plus" }),
@@ -263,14 +267,14 @@ describe("PublicHomeApp", () => {
       within(path).getByRole("link", { name: "Explore CoCalc Star" }),
     ).toHaveAttribute("href", "/products/cocalc-star");
     expect(
-      within(path).getByRole("link", { name: "Compare options" }),
+      within(path).getByRole("link", { name: "Compare paths" }),
     ).toHaveAttribute("href", "/products");
     expect(
-      within(path).getByRole("link", { name: "Discuss site licensing" }),
+      within(path).getByRole("link", { name: "Pricing and licensing" }),
     ).toHaveAttribute("href", "/pricing");
-    expect(within(path).getByRole("link", { name: "Guides" })).toHaveAttribute(
+    expect(within(path).getByRole("link", { name: "Pricing" })).toHaveAttribute(
       "href",
-      "/guides",
+      "/pricing",
     );
     expect(within(path).getByRole("link", { name: "Support" })).toHaveAttribute(
       "href",

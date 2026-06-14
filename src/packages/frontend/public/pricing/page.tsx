@@ -674,8 +674,8 @@ function HostedPlansFallback({
     ? `No ${intervalLabel} hosted plan prices are published here yet.`
     : "Hosted plan prices are not published here yet.";
   const description = hasPublicTiers
-    ? "The available hosted plans do not include pricing for this billing interval in this environment. Compare product paths or ask sales about hosted memberships and organizational buying."
-    : "Hosted memberships are the managed CoCalc.ai account path. Compare product paths for hosted, local, and customer-operated choices, or ask sales about memberships, site licensing, and quotes.";
+    ? "The available hosted plans do not include pricing for this billing interval in this environment. Compare product paths or contact CoCalc about hosted memberships and organizational buying."
+    : "Hosted memberships are the managed CoCalc.ai account path. Compare product paths for hosted, local, and customer-operated choices, or contact CoCalc about memberships, site licensing, and quotes.";
 
   return (
     <PublicSection>
@@ -685,7 +685,7 @@ function HostedPlansFallback({
           href={appPath("products")}
           icon={<DecorativeButtonIcon name="servers" />}
         >
-          Not sure which path fits?
+          Compare product paths
         </Button>
         <Button
           href={supportPurchasePath(
@@ -694,7 +694,7 @@ function HostedPlansFallback({
           )}
           icon={<DecorativeButtonIcon name="support" />}
         >
-          Ask about hosted plans
+          Contact CoCalc about hosted plans
         </Button>
       </Flex>
     </PublicSection>
@@ -750,7 +750,7 @@ export default function PricingPage({
               href={appPath("products")}
               icon={<DecorativeButtonIcon name="servers" />}
             >
-              Compare product paths
+              Choose product path
             </Button>
             <Button
               href={supportPurchasePath(
@@ -759,7 +759,7 @@ export default function PricingPage({
               )}
               icon={<DecorativeButtonIcon name="bank" />}
             >
-              Discuss site licensing
+              Talk about site licensing
             </Button>
           </Flex>
         </PublicSection>
@@ -840,7 +840,7 @@ export default function PricingPage({
                   "I want to discuss a CoCalc site license.",
                 )}
               >
-                Discuss site licensing
+                Talk about site licensing
               </Button>
             </Space>
           </PublicSection>

@@ -357,10 +357,12 @@ export default function TeachingFeaturePage({
   const primaryCtaHref = isAuthenticated
     ? appPath("projects")
     : appPath("auth/sign-up");
-  const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
+  const primaryCtaLabel = isAuthenticated
+    ? "Open projects"
+    : "Start on CoCalc.ai";
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
-    : "Start teaching with CoCalc";
+    : "Use hosted CoCalc.ai";
 
   return (
     <Flex vertical gap={18}>
@@ -391,11 +393,9 @@ export default function TeachingFeaturePage({
                 <Button type="primary" href={primaryCtaHref}>
                   {primaryCtaLabel}
                 </Button>
-                <Button href={`${GUIDE_BASE}/teaching/`}>
-                  Read the teaching guide
-                </Button>
-                <LinkButton href={`${GUIDE_BASE}/teaching/`}>
-                  Instructor manual
+                <Button href={`${GUIDE_BASE}/teaching/`}>Teaching guide</Button>
+                <LinkButton href={appPath("products")}>
+                  Compare product paths
                 </LinkButton>
               </Flex>
             </Flex>
@@ -668,8 +668,11 @@ export default function TeachingFeaturePage({
                 <Button type="primary" href={primaryCtaHref}>
                   {finalCtaLabel}
                 </Button>
+                <Button href={appPath("products")}>
+                  Compare product paths
+                </Button>
                 {helpEmail ? (
-                  <Button href={`mailto:${helpEmail}`}>Contact support</Button>
+                  <Button href={`mailto:${helpEmail}`}>Talk with CoCalc</Button>
                 ) : null}
               </Flex>
             </Col>

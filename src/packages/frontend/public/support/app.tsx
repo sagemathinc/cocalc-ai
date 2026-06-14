@@ -128,14 +128,27 @@ function SupportIndex({
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Paragraph style={{ fontSize: "16px", margin: 0 }}>
-        We provide direct support, documentation, and contact options. Use the
-        links below to open a ticket, review ticket status, or contact us.
+        Use support when you need help choosing a product path, planning
+        licensing or deployment, or resolving an existing account or project
+        issue.
       </Paragraph>
       <PublicGrid columns={3}>
+        <SupportCard
+          description="Compare hosted, local, single-VM, and private deployment options before opening a conversation."
+          title="Choose a product path"
+        >
+          <Button href={appPath("/products")}>Compare product paths</Button>
+        </SupportCard>
+        <SupportCard
+          description="Review hosted plans, site licensing, and organizational buying routes."
+          title="Pricing and licensing"
+        >
+          <Button href={appPath("/pricing")}>Open pricing</Button>
+        </SupportCard>
         {hasZendesk ? (
           <SupportCard
-            description="Create a new support ticket."
-            title="New support ticket"
+            description="Open a support or purchase ticket when you are ready to talk with CoCalc."
+            title="Contact CoCalc"
           >
             <Button type="primary" onClick={() => onNavigate("new")}>
               Open ticket form

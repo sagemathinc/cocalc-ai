@@ -27,8 +27,17 @@ describe("PublicSupportApp", () => {
     expect(
       screen.getByRole("heading", { name: "Launchpad Support" }),
     ).not.toBeNull();
-    expect(screen.getByText("New support ticket")).not.toBeNull();
+    expect(screen.getByText("Choose a product path")).not.toBeNull();
+    expect(screen.getByText("Pricing and licensing")).not.toBeNull();
+    expect(screen.getByText("Contact CoCalc")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Compare product paths" }),
+    ).toHaveAttribute("href", "/products");
+    expect(screen.getByRole("link", { name: "Open pricing" })).toHaveAttribute(
+      "href",
+      "/pricing",
+    );
     expect(screen.queryByText("System status")).toBeNull();
   });
 

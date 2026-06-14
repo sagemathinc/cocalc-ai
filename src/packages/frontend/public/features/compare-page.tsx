@@ -118,8 +118,11 @@ export default function CompareFeaturePage({
           covers the job.
         </Paragraph>
         <Flex wrap gap={12}>
-          <Button type="primary" href={featureAppPath("auth/sign-up")}>
-            Create account
+          <Button type="primary" href={featureAppPath("products")}>
+            Choose product path
+          </Button>
+          <Button href={featureAppPath("pricing")}>
+            Pricing and licensing
           </Button>
           <LinkButton href={featureAppPath("features/jupyter-notebook")}>
             Jupyter notebooks
@@ -128,7 +131,7 @@ export default function CompareFeaturePage({
             Teaching workflows
           </LinkButton>
           {helpEmail ? (
-            <Button href={`mailto:${helpEmail}`}>Contact support</Button>
+            <Button href={`mailto:${helpEmail}`}>Talk with CoCalc</Button>
           ) : null}
         </Flex>
       </PublicSection>

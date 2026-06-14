@@ -474,6 +474,12 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
     expect(
+      screen.getByRole("link", { name: "Choose product path" }),
+    ).toHaveAttribute("href", "/products");
+    expect(
+      screen.getAllByRole("link", { name: "Talk about site licensing" }).length,
+    ).toBeGreaterThan(0);
+    expect(
       screen.getByRole("heading", { name: "Site licensing" }),
     ).not.toBeNull();
     expect(
@@ -511,11 +517,11 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "Not sure which path fits?" })
+        .getByRole("link", { name: "Compare product paths" })
         .getAttribute("href"),
     ).toBe("/products");
     const hostedPlansLink = screen.getByRole("link", {
-      name: "Ask about hosted plans",
+      name: "Contact CoCalc about hosted plans",
     });
     expect(hostedPlansLink.getAttribute("href")).toContain("/support/new?");
     expect(hostedPlansLink.getAttribute("href")).toContain(
@@ -1067,6 +1073,9 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("Site licensing wraps the product path."),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc" }),
+    ).toHaveAttribute("href", "/support");
   });
 
   it("uses CoCalc marketing branding on public product pages for default Launchpad installs", async () => {

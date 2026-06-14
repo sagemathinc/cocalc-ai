@@ -150,11 +150,11 @@ describe("PublicFeaturesApp", () => {
       within(featureNav).queryByRole("link", { name: /Previous:/ }),
     ).toBeNull();
     expect(
-      screen.getByText("Decide how you want to use CoCalc."),
+      screen.getByText("Choose how CoCalc should run for you."),
     ).not.toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "Compare product paths" })
+        .getByRole("link", { name: "Choose product path" })
         .getAttribute("href"),
     ).toBe("/products");
     expect(
@@ -336,12 +336,14 @@ describe("PublicFeaturesApp", () => {
     );
     expect(
       within(screen.getByText("Technical course workspace").closest("section")!)
-        .getAllByRole("link", { name: /teaching guide|instructor manual/i })
+        .getAllByRole("link", { name: /teaching guide/i })
         .map((link) => link.getAttribute("href")),
-    ).toEqual([
-      "https://sagemathinc.github.io/cocalc-guides/teaching/",
-      "https://sagemathinc.github.io/cocalc-guides/teaching/",
-    ]);
+    ).toEqual(["https://sagemathinc.github.io/cocalc-guides/teaching/"]);
+    expect(
+      within(screen.getByText("Technical course workspace").closest("section")!)
+        .getByRole("link", { name: "Compare product paths" })
+        .getAttribute("href"),
+    ).toBe("/products");
     const disallowedTeachingCopy = [
       "RootFS",
       "rootfs",
@@ -377,7 +379,7 @@ describe("PublicFeaturesApp", () => {
     for (const link of projectLinks) {
       expect(link.getAttribute("href")).toBe("/projects");
     }
-    expect(screen.queryByText("Start teaching with CoCalc")).toBeNull();
+    expect(screen.queryByText("Use hosted CoCalc.ai")).toBeNull();
   });
 
   it("renders the richer terminal feature page", () => {
@@ -612,13 +614,19 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("AI-native work changes the comparison"),
     ).not.toBeNull();
     expect(
-      screen.getByText("Decide how you want to use CoCalc."),
+      screen.getByText("Choose how CoCalc should run for you."),
     ).not.toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "Compare product paths" })
-        .getAttribute("href"),
-    ).toBe("/products");
+        .getAllByRole("link", { name: "Choose product path" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/products", "/products"]);
+    expect(
+      screen
+        .getAllByRole("link", { name: "Pricing and licensing" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/pricing", "/pricing"]);
+    expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
     expect(
       screen.queryByRole("link", { name: "Compare workspace model" }),
     ).toBeNull();
