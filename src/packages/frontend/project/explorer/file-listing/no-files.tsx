@@ -123,7 +123,7 @@ export default function NoFiles({
       <Alert
         type="info"
         showIcon
-        style={{ margin: "16px 24px" }}
+        style={{ margin: "16px 16px 16px 0" }}
         title="This folder is empty."
         description={
           <Space wrap style={{ marginTop: 8 }}>
