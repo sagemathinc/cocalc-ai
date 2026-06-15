@@ -226,7 +226,11 @@ function MembershipSettingsContent() {
     <Space vertical size="middle" style={{ width: "100%" }}>
       <Card size="small" title={`Effective: ${effectiveSummary}`}>
         <Space vertical style={{ width: "100%" }}>
-          {tier != null ? <EffectiveTierDescription tier={tier} /> : null}
+          <EffectiveMembershipDescription
+            membership={membership}
+            selectedSourceRow={selectedSourceRow}
+            tier={tier}
+          />
           {details?.admin_override ? (
             <Alert
               type="info"
@@ -415,6 +419,28 @@ function EffectiveTierDescription({ tier }: { tier: MembershipTier }) {
       ) : null}
     </Space>
   );
+}
+
+function EffectiveMembershipDescription({
+  membership,
+  selectedSourceRow,
+  tier,
+}: {
+  membership: MembershipResolution;
+  selectedSourceRow?: MembershipCandidateRow;
+  tier?: MembershipTier;
+}) {
+  const poolDescription = `${
+    membership.grant_source === "site-license"
+      ? (membership.pool_description ??
+        selectedSourceRow?.poolDescription ??
+        "")
+      : ""
+  }`.trim();
+  if (poolDescription) {
+    return <Paragraph>{poolDescription}</Paragraph>;
+  }
+  return tier != null ? <EffectiveTierDescription tier={tier} /> : null;
 }
 
 function effectiveTierHighlights(

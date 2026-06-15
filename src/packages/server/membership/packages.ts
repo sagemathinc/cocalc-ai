@@ -705,6 +705,7 @@ function getSiteLicenseAffiliationMetadata({
     site_license_owner_account_id:
       site_license?.owner_account_id ?? pkg.owner_account_id,
     pool_name: `${pkg.metadata?.pool_name ?? ""}`.trim() || null,
+    pool_description: `${pkg.metadata?.pool_description ?? ""}`.trim() || null,
     verification_policy:
       `${pkg.metadata?.verification_policy ?? ""}`.trim() || "email-domain",
     exclusive_group: getPackageExclusiveGroup(pkg),

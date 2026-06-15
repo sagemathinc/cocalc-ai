@@ -86,6 +86,7 @@ async function buildMembershipCandidates(
   const candidates: MembershipCandidate[] = [];
   const siteLicenseDisplayNames =
     await getCurrentSiteLicenseDisplayNamesForGrants(grants);
+  const packageMetadata = await getMembershipPackageMetadataForGrants(grants);
 
   for (const sub of subResult.rows) {
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
@@ -146,6 +147,9 @@ async function buildMembershipCandidates(
       siteLicenseId == null
         ? undefined
         : siteLicenseDisplayNames.get(siteLicenseId);
+    const pkgMetadata = grant.package_id
+      ? packageMetadata.get(grant.package_id)
+      : undefined;
     candidates.push({
       class: membershipClass,
       source: "grant",
@@ -156,7 +160,12 @@ async function buildMembershipCandidates(
       grant_source: grant.source,
       grant_package_id: grant.package_id ?? undefined,
       grant_purchase_id: grant.purchase_id ?? undefined,
-      pool_name: getMetadataString(grant.metadata, "pool_name"),
+      pool_name:
+        getMetadataString(grant.metadata, "pool_name") ??
+        getMetadataString(pkgMetadata, "pool_name"),
+      pool_description:
+        getMetadataString(grant.metadata, "pool_description") ??
+        getMetadataString(pkgMetadata, "pool_description"),
       site_license_id: siteLicenseId ?? undefined,
       site_license_name:
         siteLicenseDisplayName?.name ??
@@ -169,6 +178,31 @@ async function buildMembershipCandidates(
   }
 
   return dedupeEquivalentAdminCandidates(candidates);
+}
+
+async function getMembershipPackageMetadataForGrants(
+  grants: Awaited<ReturnType<typeof listActiveMembershipGrantsForAccount>>,
+): Promise<Map<string, Record<string, unknown> | null>> {
+  const packageIds = Array.from(
+    new Set(
+      grants
+        .map((grant) => grant.package_id)
+        .filter((id): id is string => !!id),
+    ),
+  );
+  if (packageIds.length === 0) {
+    return new Map();
+  }
+  const { rows } = await getPool("medium").query<{
+    id: string;
+    metadata: Record<string, unknown> | null;
+  }>(
+    `SELECT id, metadata
+       FROM membership_packages
+      WHERE id = ANY($1::uuid[])`,
+    [packageIds],
+  );
+  return new Map(rows.map((row) => [row.id, row.metadata]));
 }
 
 async function getCurrentSiteLicenseDisplayNamesForGrants(
@@ -344,6 +378,7 @@ function pickBestMembership(
       grant_package_id: best.grant_package_id,
       grant_purchase_id: best.grant_purchase_id,
       pool_name: best.pool_name,
+      pool_description: best.pool_description,
       site_license_id: best.site_license_id,
       site_license_name: best.site_license_name,
       organization_name: best.organization_name,

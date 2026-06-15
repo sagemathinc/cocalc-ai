@@ -355,6 +355,8 @@ describe("MembershipPage", () => {
             key: "grant-pro-1",
             membership: "Researcher",
             note: "No scheduled end",
+            poolDescription: "Use CoCalc for advanced research projects.",
+            priority: 20,
             selected: true,
             source: "CoCalc Trial",
             sourceKind: "grant",
@@ -382,6 +384,7 @@ describe("MembershipPage", () => {
         membership: {
           class: "pro",
           grant_source: "site-license",
+          pool_description: "Use CoCalc for advanced research projects.",
           source: "grant",
         },
         tierById: {
@@ -402,6 +405,10 @@ describe("MembershipPage", () => {
     const { container } = render(<MembershipPage />);
     await screen.findByText("Effective: CoCalc Trial - Researcher");
 
+    expect(
+      screen.getByText("Use CoCalc for advanced research projects."),
+    ).toBeTruthy();
+    expect(screen.queryByText("A higher level for demanding work.")).toBeNull();
     expect(
       screen.getByText("Standard: $18/month, billed annually."),
     ).toBeTruthy();

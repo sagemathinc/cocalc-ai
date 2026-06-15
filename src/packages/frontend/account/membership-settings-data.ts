@@ -47,6 +47,7 @@ export type MembershipCandidateRow = {
   key: string;
   membership: string;
   note: string;
+  poolDescription?: string | null;
   priority?: number;
   selected: boolean;
   source: string;
@@ -162,6 +163,7 @@ export function useMembershipSettingsData(): {
         siteLicenseId: candidate.site_license_id,
         state: membershipCandidateState(candidate),
         note: membershipCandidateNote(candidate),
+        poolDescription: candidate.pool_description,
         priority: candidate.priority,
         selected,
         subscriptionInterval: candidate.subscription_interval,
@@ -182,13 +184,7 @@ export function useMembershipSettingsData(): {
         rows.push(claimablePackageRequestRow(claimablePackage, tierById));
       }
     }
-    return rows.sort((a, b) => {
-      const sourceOrder = membershipSourceOrder(a) - membershipSourceOrder(b);
-      if (sourceOrder !== 0) return sourceOrder;
-      const stateOrder = membershipStateOrder(a) - membershipStateOrder(b);
-      if (stateOrder !== 0) return stateOrder;
-      return (b.priority ?? 0) - (a.priority ?? 0);
-    });
+    return sortMembershipCandidateRows(rows);
   }, [claimablePackages, details, tierById]);
 
   function refresh() {
@@ -205,6 +201,18 @@ export function useMembershipSettingsData(): {
     refresh,
     tierById,
   };
+}
+
+export function sortMembershipCandidateRows(
+  rows: MembershipCandidateRow[],
+): MembershipCandidateRow[] {
+  return rows.sort((a, b) => {
+    const priorityOrder = (b.priority ?? 0) - (a.priority ?? 0);
+    if (priorityOrder !== 0) return priorityOrder;
+    const stateOrder = membershipStateOrder(a) - membershipStateOrder(b);
+    if (stateOrder !== 0) return stateOrder;
+    return membershipSourceOrder(a) - membershipSourceOrder(b);
+  });
 }
 
 function membershipName(
@@ -315,6 +323,7 @@ function claimablePackageRequestRow(
     key: `site-request-${claimablePackage.pending_request_id ?? claimablePackage.package_id}`,
     membership,
     note: "Awaiting manager approval",
+    poolDescription: claimablePackage.pool_description,
     priority: tierById[claimablePackage.membership_class]?.priority ?? 0,
     selected: false,
     siteLicenseId: claimablePackage.site_license_id,

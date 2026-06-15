@@ -15,6 +15,7 @@ import {
   createTestAccountEntitlementOverride,
   createTestAdminAssignedMembership,
   createTestMembershipGrant,
+  createTestMembershipPackage,
   createTestMembershipTier,
   createTestMembershipSubscription,
 } from "@cocalc/server/purchases/test-data";
@@ -242,8 +243,20 @@ describe("resolveMembershipForAccount", () => {
       name: "Summer CoCalc Trial",
       organization_name: "Example University",
     });
+    const package_id = await createTestMembershipPackage({
+      owner_account_id: account_id,
+      kind: "site",
+      membership_class: lowTier,
+      seat_count: 10,
+      metadata: {
+        pool_description: "Use CoCalc for advanced research projects.",
+        pool_name: "Researcher",
+        site_license_id,
+      },
+    });
     await createTestMembershipGrant(account_id, {
       membership_class: lowTier,
+      package_id,
       source: "site-license",
       metadata: {
         organization_name: "Example University",
@@ -257,12 +270,16 @@ describe("resolveMembershipForAccount", () => {
 
     expect(details.selected.site_license_name).toBe("Summer CoCalc Trial");
     expect(details.selected.organization_name).toBe("Example University");
+    expect(details.selected.pool_description).toBe(
+      "Use CoCalc for advanced research projects.",
+    );
     expect(
       details.candidates.find(
         (candidate) => candidate.grant_source === "site-license",
       ),
     ).toMatchObject({
       organization_name: "Example University",
+      pool_description: "Use CoCalc for advanced research projects.",
       pool_name: "Researcher",
       site_license_name: "Summer CoCalc Trial",
     });
