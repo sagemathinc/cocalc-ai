@@ -153,8 +153,13 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(audiences).getByRole("heading", {
-        name: "Built for research groups, courses, and platform teams.",
+        name: "Built for research, courses, and platform teams.",
       }),
+    ).not.toBeNull();
+    expect(
+      within(audiences).getByText(
+        "Start with the path that matches how your group works.",
+      ),
     ).not.toBeNull();
     expect(
       within(audiences).queryByText(/Different audiences can start/i),

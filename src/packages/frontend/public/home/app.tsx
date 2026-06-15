@@ -624,7 +624,8 @@ function AudienceRoutesSection() {
     <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
       <SectionIntro
         eyebrow="Who it helps"
-        title="Built for research groups, courses, and platform teams."
+        title="Built for research, courses, and platform teams."
+        body="Start with the path that matches how your group works."
       />
       <div
         className="cocalc-public-home-audience-grid"

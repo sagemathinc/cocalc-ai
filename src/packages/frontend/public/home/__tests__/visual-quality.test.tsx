@@ -246,7 +246,7 @@ describe("PublicHomeApp visual quality contract", () => {
     expect(
       sectionHeadings.map((heading) => heading.textContent?.trim()),
     ).toEqual([
-      "Built for research groups, courses, and platform teams.",
+      "Built for research, courses, and platform teams.",
       "Work where the project already lives.",
       "Choose the operating model that fits your team.",
       "A workspace built around the project.",
