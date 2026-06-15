@@ -41,6 +41,18 @@ const testAuthConfig = {
   },
 };
 
+function testSeaSuffix(): { machine: string; os: string } {
+  return {
+    machine:
+      process.arch === "x64"
+        ? "x86_64"
+        : process.arch === "arm64" && process.platform === "linux"
+          ? "aarch64"
+          : process.arch,
+    os: process.platform,
+  };
+}
+
 function makeDeps({
   localStore,
   runs,
@@ -74,9 +86,13 @@ function makeDeps({
       status_porcelain: "",
     }),
     repoRoot: () => repoRoot,
-    runCommand: async (command, args) => {
+    runCommand: async (command, args, options) => {
       runs?.push({ command, args });
       let bundle = command === "pnpm" ? args.at(-1) : undefined;
+      const artifactId =
+        options?.env?.COCALC_SOFTWARE_ARTIFACT_ID ??
+        env?.COCALC_SOFTWARE_ARTIFACT_ID;
+      const { machine, os } = testSeaSuffix();
       if (command === "pnpm" && args.includes("@cocalc/project-host")) {
         bundle = join(
           repoRoot,
@@ -117,6 +133,62 @@ function makeDeps({
           mkdirSync(join(toolsBundle, ".."), { recursive: true });
           writeFileSync(toolsBundle, `built tools bundle ${arch}`);
         }
+      } else if (
+        command === "pnpm" &&
+        args.includes("@cocalc/cli") &&
+        artifactId
+      ) {
+        bundle = join(
+          repoRoot,
+          "src",
+          "packages",
+          "cli",
+          "build",
+          "sea",
+          `cocalc-cli-${artifactId}-${machine}-${os}`,
+        );
+      } else if (
+        command === "pnpm" &&
+        args.includes("@cocalc/launchpad") &&
+        artifactId
+      ) {
+        bundle = join(
+          repoRoot,
+          "src",
+          "packages",
+          "launchpad",
+          "build",
+          "sea",
+          `cocalc-launchpad-${artifactId}-${machine}-${os}.tar.xz`,
+        );
+      } else if (
+        command === "pnpm" &&
+        args.includes("@cocalc/plus") &&
+        artifactId
+      ) {
+        bundle = join(
+          repoRoot,
+          "src",
+          "packages",
+          "plus",
+          "build",
+          "sea",
+          `cocalc-plus-${artifactId}-${machine}-${os}`,
+        );
+      } else if (command.endsWith("build-github-release-assets.sh")) {
+        const outDir = args[0];
+        mkdirSync(outDir, { recursive: true });
+        for (const name of [
+          "install-cocalc-star.sh",
+          "install-cocalc-star-local-lima.sh",
+          "cocalc-star-runtime-linux-x64.tar.gz",
+          "cocalc-star-runtime-linux-arm64.tar.gz",
+          "SHA256SUMS",
+          "release-notes.md",
+        ]) {
+          writeFileSync(join(outDir, name), `star ${name}`);
+        }
+        return 0;
       }
       if (bundle) {
         mkdirSync(join(bundle, ".."), { recursive: true });
@@ -495,6 +567,127 @@ test("software build tools runs the package tools builder", async () => {
           `tools-linux-${arch}.tar.xz`,
         ),
       ),
+      true,
+    );
+  }
+});
+
+test("software build cli uses the software artifact id as the SEA version", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-cli-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+  const artifactId = "20260614T235912Z-e882d124-cli-test";
+  const { machine, os } = testSeaSuffix();
+  const artifactName = `cocalc-cli-${artifactId}-${machine}-${os}`;
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "cli",
+    "cli-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/cli"), true);
+  assert.equal(runs[0].args.includes("sea"), true);
+  assert.equal(
+    existsSync(join(localStore, "cli", artifactId, "files", artifactName)),
+    true,
+  );
+});
+
+test("software build launchpad uses the software artifact id as the SEA version", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-launchpad-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+  const artifactId = "20260614T235912Z-e882d124-launchpad-test";
+  const { machine, os } = testSeaSuffix();
+  const artifactName = `cocalc-launchpad-${artifactId}-${machine}-${os}.tar.xz`;
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "launchpad",
+    "launchpad-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/launchpad"), true);
+  assert.equal(
+    existsSync(
+      join(localStore, "launchpad", artifactId, "files", artifactName),
+    ),
+    true,
+  );
+});
+
+test("software build plus uses the software artifact id as the SEA version", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-plus-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+  const artifactId = "20260614T235912Z-e882d124-plus-test";
+  const { machine, os } = testSeaSuffix();
+  const artifactName = `cocalc-plus-${artifactId}-${machine}-${os}`;
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "plus",
+    "plus-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/plus"), true);
+  assert.equal(
+    existsSync(join(localStore, "plus", artifactId, "files", artifactName)),
+    true,
+  );
+});
+
+test("software build star records GitHub release assets", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-star-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+  const artifactId = "20260614T235912Z-e882d124-star-test";
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "star",
+    "star-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(
+    runs[0].command.endsWith("build-github-release-assets.sh"),
+    true,
+  );
+  for (const name of [
+    "install-cocalc-star.sh",
+    "install-cocalc-star-local-lima.sh",
+    "cocalc-star-runtime-linux-x64.tar.gz",
+    "cocalc-star-runtime-linux-arm64.tar.gz",
+    "SHA256SUMS",
+    "release-notes.md",
+  ]) {
+    assert.equal(
+      existsSync(join(localStore, "star", artifactId, "files", name)),
       true,
     );
   }

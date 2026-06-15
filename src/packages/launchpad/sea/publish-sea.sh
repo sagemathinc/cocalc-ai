@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 NAME="cocalc-launchpad"
-VERSION="$(node -p "require('../package.json').version")"
+VERSION="${COCALC_SOFTWARE_ARTIFACT_ID:-$(node -p "require('../package.json').version")}"
 MACHINE="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 

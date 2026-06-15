@@ -966,8 +966,11 @@ Smoke tests should have explicit cleanup and should write reports under:
 Implemented:
 
 - `build`, `list`, and `push` for immutable local/R2 artifacts.
-- `build` for `static`, `hub`, `bay`, `project-host`, `project`, and
-  `tools`.
+- `build` for `static`, `hub`, `bay`, `project-host`, `project`, `tools`,
+  `cli`, `launchpad`, `plus`, and `star`.
+- `cli`, `launchpad`, and `plus` builds use the immutable software artifact id
+  as the SEA version instead of treating `package.json` semver as the deploy
+  identity. Star builds pass the same artifact id as `STAR_RELEASE_ID`.
 - `deploy` for `static`, `hub`, and `bay` through the Rocket deploy path.
 - `deploy` for `project-host`, `project`, and `tools` through
   `host upgrade --all-online --artifact-version ...`.
@@ -1004,7 +1007,6 @@ Implemented:
 
 Still not implemented:
 
-- `build` for `cli`, `launchpad`, `plus`, and `star`.
 - Deeper throwaway project lifecycle `smoke` coverage for `project-host`,
   `project`, and `tools`, plus smoke coverage for `cli`, `launchpad`, `plus`,
   and `star`.

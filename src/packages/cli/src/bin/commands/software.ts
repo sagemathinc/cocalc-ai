@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { readdir, rm, mkdtemp } from "node:fs/promises";
 import { hostname } from "node:os";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -259,12 +259,27 @@ function rocketBuildInfo(component: SoftwareBuildComponent):
   return undefined;
 }
 
-function packageBuildInfo(component: SoftwareBuildComponent):
+function seaPlatformSuffix(): { machine: string; os: string } {
+  const os = process.platform;
+  const machine =
+    process.arch === "x64"
+      ? "x86_64"
+      : process.arch === "arm64" && os === "linux"
+        ? "aarch64"
+        : process.arch;
+  return { machine, os };
+}
+
+function packageBuildInfo(
+  component: SoftwareBuildComponent,
+  artifactId: string,
+):
   | {
       packageFilter: string;
       script: string;
       artifactName: string;
       artifactPath: (srcRoot: string) => string;
+      env?: NodeJS.ProcessEnv;
       artifactFiles?: (srcRoot: string) => Array<{
         source: string;
         name: string;
@@ -314,7 +329,56 @@ function packageBuildInfo(component: SoftwareBuildComponent):
         }),
     };
   }
+  if (component === "cli") {
+    const { machine, os } = seaPlatformSuffix();
+    const artifactName = `cocalc-cli-${artifactId}-${machine}-${os}`;
+    return {
+      packageFilter: "@cocalc/cli",
+      script: "sea",
+      artifactName,
+      env: { COCALC_SOFTWARE_ARTIFACT_ID: artifactId },
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "cli", "build", "sea", artifactName),
+    };
+  }
+  if (component === "launchpad") {
+    const { machine, os } = seaPlatformSuffix();
+    const artifactName = `cocalc-launchpad-${artifactId}-${machine}-${os}.tar.xz`;
+    return {
+      packageFilter: "@cocalc/launchpad",
+      script: "sea",
+      artifactName,
+      env: { COCALC_SOFTWARE_ARTIFACT_ID: artifactId },
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "launchpad", "build", "sea", artifactName),
+    };
+  }
+  if (component === "plus") {
+    const { machine, os } = seaPlatformSuffix();
+    const artifactName = `cocalc-plus-${artifactId}-${machine}-${os}`;
+    return {
+      packageFilter: "@cocalc/plus",
+      script: "sea",
+      artifactName,
+      env: { COCALC_SOFTWARE_ARTIFACT_ID: artifactId },
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "plus", "build", "sea", artifactName),
+    };
+  }
   return undefined;
+}
+
+async function listStarReleaseFiles(
+  outputDir: string,
+): Promise<Array<{ source: string; name: string }>> {
+  const entries = await readdir(outputDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => ({
+      name: entry.name,
+      source: join(outputDir, entry.name),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function parseLimit(raw: string | undefined): number {
@@ -812,8 +876,19 @@ async function buildFromFile({
   }
   if (!sourceFile) {
     const info = rocketBuildInfo(component);
-    const packageInfo = packageBuildInfo(component);
-    if (!info && !packageInfo) {
+    const packageInfo = packageBuildInfo(component, artifactId);
+    const starInfo =
+      component === "star"
+        ? {
+            script: join(
+              srcRoot,
+              "scripts",
+              "star",
+              "build-github-release-assets.sh",
+            ),
+          }
+        : undefined;
+    if (!info && !packageInfo && !starInfo) {
       throw new Error(
         `software build ${component} is not wired yet; use --from-file <path> to create a local artifact manifest from an existing file`,
       );
@@ -821,6 +896,8 @@ async function buildFromFile({
     if (!deps.runCommand) {
       throw new Error("software build requires runCommand dependency");
     }
+    let command = "pnpm";
+    let commandEnv = deps.env;
     let args: string[];
     if (packageInfo) {
       args = [
@@ -831,6 +908,16 @@ async function buildFromFile({
         "run",
         packageInfo.script,
       ];
+      commandEnv = { ...deps.env, ...packageInfo.env };
+    } else if (starInfo) {
+      buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
+      const outputDir = join(buildTempDir, "star-github-release");
+      command = starInfo.script;
+      args = [outputDir];
+      commandEnv = {
+        ...deps.env,
+        STAR_RELEASE_ID: artifactId,
+      };
     } else {
       const rocketInfo = info!;
       buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
@@ -847,9 +934,9 @@ async function buildFromFile({
         bundle,
       ];
     }
-    const code = await deps.runCommand("pnpm", args, {
+    const code = await deps.runCommand(command, args, {
       stdio: "inherit",
-      env: deps.env,
+      env: commandEnv,
     });
     if (code !== 0) {
       throw new Error(
@@ -862,12 +949,15 @@ async function buildFromFile({
       sourceFiles = packageInfo.artifactFiles?.(srcRoot) ?? [
         { source: sourceFile, name: artifactName },
       ];
+    } else if (starInfo) {
+      const outputDir = args[0];
+      sourceFiles = await listStarReleaseFiles(outputDir);
     } else {
       sourceFile = args.at(-1);
       artifactName = info!.artifactName;
       sourceFiles = [{ source: sourceFile!, name: artifactName }];
     }
-    commandText = ["pnpm", ...args].join(" ");
+    commandText = [command, ...args].join(" ");
   }
   const dir = artifactDir({ localStore, component, artifactId });
   const filesDir = join(dir, "files");
