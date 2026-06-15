@@ -89,6 +89,11 @@ type ProjectListWindowDirtyReason =
   | "feed-remove"
   | "history-gap";
 
+function isProjectionConvergenceError(err: unknown, name: string): boolean {
+  const message = err instanceof Error ? err.message : `${err}`;
+  return message === `${name} projection did not converge`;
+}
+
 function dateOrNull(value: unknown): Date | null {
   if (value == null) return null;
   const date = value instanceof Date ? value : new Date(`${value}`);
@@ -2397,6 +2402,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } as ProjectsState);
   };
 
+  private projectLocalScalarFieldMatches = (
+    project_id: string,
+    field: "title" | "description",
+    value: string,
+  ): boolean => {
+    return store.getIn(["project_map", project_id, field]) === value;
+  };
+
   private setProjectLocalBooleanField = (
     project_id: string,
     field:
@@ -2483,12 +2496,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
     value: string,
     before: string | undefined,
   ): Promise<void> => {
+    const projectionName = `project.${field}`;
     this.setProjectLocalScalarField(project_id, field, value);
     try {
       await writeAndWaitForProjection({
         consumer: "projects",
         id: `project:${project_id}:${field}`,
-        name: `project.${field}`,
+        name: projectionName,
         write: () => this.projects_query_set({ project_id, [field]: value }),
         matchesProjection: () =>
           this.projectedProjectMetadataMatches({
@@ -2504,8 +2518,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
           }),
       });
     } catch (err) {
-      this.setProjectLocalScalarField(project_id, field, before);
-      throw err;
+      if (
+        isProjectionConvergenceError(err, projectionName) &&
+        this.projectLocalScalarFieldMatches(project_id, field, value)
+      ) {
+        this.scheduleProjectedProjectReconcile(project_id, "write-ack");
+        console.warn("project metadata projection did not converge", {
+          project_id,
+          field,
+          value,
+          err,
+        });
+      } else {
+        this.setProjectLocalScalarField(project_id, field, before);
+        throw err;
+      }
     }
     this.logProjectMetadataUpdate(project_id, {
       event: "set",
