@@ -20,6 +20,22 @@ type CapturedRun = {
   args: string[];
 };
 
+const testAuthConfig = {
+  current_profile: "staging",
+  profiles: {
+    staging: {
+      api: "https://staging.cocalc.ai",
+      account_id: "test-staging-account",
+      email_address: "operator@example.test",
+    },
+    prod: {
+      api: "https://cocalc.ai",
+      account_id: "test-prod-account",
+      email_address: "operator@example.test",
+    },
+  },
+};
+
 function makeDeps({
   localStore,
   runs,
@@ -76,6 +92,7 @@ function makeDeps({
         args.includes("@cocalc/project") &&
         args.includes("build:tools")
       ) {
+        bundle = undefined;
         for (const arch of ["amd64", "arm64"]) {
           const toolsBundle = join(
             cwd,
@@ -96,7 +113,7 @@ function makeDeps({
       return 0;
     },
     r2Client,
-    loadAuthConfig,
+    loadAuthConfig: loadAuthConfig ?? (() => testAuthConfig),
   };
 }
 
