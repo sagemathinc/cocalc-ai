@@ -656,7 +656,8 @@ Target release:   ${TARGET_RELEASE}
 Current link:     ${CURRENT_LINK}
 Bay root:         ${BAY_ROOT}
 
-Restart hub workers to serve the updated frontend/static assets.
+Static assets are served through /opt/cocalc/bay/current; no service restart is required.
+Already-open browser sessions may keep using cached chunks until refresh.
 EOF
     exit 0
   fi

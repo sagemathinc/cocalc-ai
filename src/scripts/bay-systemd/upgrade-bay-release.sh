@@ -377,9 +377,14 @@ stage_release() {
   REMOTE_BUNDLE="${REMOTE_WORK_DIR}/${bundle_name}"
   REMOTE_SCRIPT_DIR="${REMOTE_WORK_DIR}/bay-systemd"
 
-  log "Upload bay scaffold to ${REMOTE}:${REMOTE_WORK_DIR}"
-  remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_WORK_DIR")"
-  scp -r "$SCRIPT_DIR" "$REMOTE:${REMOTE_SCRIPT_DIR}"
+  remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_SCRIPT_DIR")"
+  if [[ "$STATIC_ONLY" -eq 1 ]]; then
+    log "Upload bay static deploy helper to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
+    scp "$SCRIPT_DIR/bay-bootstrap-release.sh" "$REMOTE:${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh"
+  else
+    log "Upload bay scaffold to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
+    scp -r "$SCRIPT_DIR/." "$REMOTE:${REMOTE_SCRIPT_DIR}/"
+  fi
   if [[ -n "$BUNDLE_URL" ]]; then
     log "Download bay bundle on target VM"
     remote_exec "curl -fL --retry 3 --retry-delay 2 -o $(q "$REMOTE_BUNDLE") $(q "$BUNDLE_URL")"
@@ -479,8 +484,8 @@ EOF
 restart_and_health_check() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     if [[ "$RESTART_HUB_WORKERS" -eq 0 ]]; then
-      log "Run health checks without restarting hub workers"
-      remote_exec "sudo systemctl start cocalc-bay-frontdoor.service && sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
+      log "Run health checks without touching services"
+      remote_exec "sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
         | tee "${REPORT_DIR}/bay-health.txt"
       return 0
     fi
