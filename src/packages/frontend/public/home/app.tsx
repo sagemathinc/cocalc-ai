@@ -284,7 +284,7 @@ const DIFFERENTIATORS = [
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Keep the main artifacts of computational work near the discussions, outputs, and decisions they produce.",
     ctaHref: "features/compare",
-    ctaLabel: "Explore workflows",
+    ctaLabel: "Compare workspace model",
     details: PROJECT_FACTS,
     eyebrow: "Project continuity",
     icon: "project-outlined",
@@ -294,34 +294,34 @@ const DIFFERENTIATORS = [
   },
   {
     accent: COLORS.RUN,
-    body: "Human and AI changes are easier to inspect and discuss before another person depends on them.",
-    ctaHref: "features/ai",
-    ctaLabel: "Explore AI assistance",
+    body: "Review live collaboration and AI-assisted changes in the project before teammates build on them.",
+    ctaHref: "features/compare",
+    ctaLabel: "Compare workspace model",
     details: [
       {
-        body: "AI-assisted edits happen near the files, notebooks, terminals, and documents people already review.",
-        title: "Review before relying",
+        body: "Realtime editing, chat, and shared outputs let people inspect work together before handoff.",
+        title: "Review together",
       },
       {
-        body: "Shared project context helps collaborators see what changed and why it matters.",
-        title: "Discuss with context",
+        body: "Codex edits, test output, screenshots, and discussion stay close enough for teammates to inspect.",
+        title: "Inspect exact changes",
       },
       {
-        body: "Teams can keep inspection close to the work instead of reconstructing decisions from separate tools.",
-        title: "Reduce handoff gaps",
+        body: "Teams can keep reasoning, patches, outputs, and follow-up questions close to the work.",
+        title: "Keep evidence together",
       },
     ],
     eyebrow: "Inspect before handoff",
     icon: "search",
     modalBody:
-      "CoCalc keeps review close to the project so human and AI-assisted work can be inspected before another person builds on it.",
+      "CoCalc keeps human collaboration, AI-assisted changes, files, notebooks, terminals, outputs, and discussion close enough for people to inspect the work before relying on it.",
     title: "Inspection before handoff",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    body: "History, shared files, TimeTravel, snapshots, and backups give teams paths back to useful work.",
-    ctaHref: "features",
-    ctaLabel: "Explore features",
+    body: "History, TimeTravel, snapshots, and backups help teams understand changes and return to useful states.",
+    ctaHref: "features/compare",
+    ctaLabel: "Compare workspace model",
     details: [
       {
         body: "Project history and TimeTravel help teams understand how work changed over time.",
@@ -339,14 +339,14 @@ const DIFFERENTIATORS = [
     eyebrow: "Keep moving",
     icon: "history",
     modalBody:
-      "Recovery is most useful when it restores both the work and enough surrounding context to continue confidently.",
+      "Recovery works best when history, snapshots, backups, and the surrounding project context stay close enough for teams to continue.",
     title: "Practical recovery",
   },
   {
     accent: COLORS.GRAY_M,
     body: "Start hosted, evaluate locally, use a single appliance VM, or plan a customer-operated private environment.",
     ctaHref: "products",
-    ctaLabel: "Compare product paths",
+    ctaLabel: "Compare operating models",
     details: [
       {
         body: "Use CoCalc.ai when the team wants a managed hosted workspace without operating infrastructure.",
@@ -365,7 +365,7 @@ const DIFFERENTIATORS = [
     icon: "cloud",
     modalBody:
       "The product paths are operating models, not a progression. The right choice depends on hosting, governance, support, and deployment needs.",
-    title: "Deployment path choice",
+    title: "Operating model choice",
   },
 ] satisfies Array<{
   accent: string;

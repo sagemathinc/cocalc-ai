@@ -294,7 +294,7 @@ describe("PublicHomeApp", () => {
       "Project-centered workflow",
       "Inspection before handoff",
       "Practical recovery",
-      "Deployment path choice",
+      "Operating model choice",
     ]) {
       expect(within(difference).getByText(title)).not.toBeNull();
     }
@@ -316,9 +316,56 @@ describe("PublicHomeApp", () => {
     }
     expect(
       within(continuityDialog).getByRole("link", {
-        name: "Explore workflows",
+        name: "Compare workspace model",
       }),
     ).toHaveAttribute("href", "/features/compare");
+    fireEvent.click(
+      within(difference).getByRole("button", {
+        name: /Inspection before handoff/i,
+      }),
+    );
+    expect(
+      within(
+        screen.getByRole("dialog", { name: "Inspection before handoff" }),
+      ).getByRole("link", {
+        name: "Compare workspace model",
+      }),
+    ).toHaveAttribute("href", "/features/compare");
+    expect(
+      within(
+        screen.getByRole("dialog", { name: "Inspection before handoff" }),
+      ).getByText("Review together"),
+    ).not.toBeNull();
+    fireEvent.click(
+      within(difference).getByRole("button", {
+        name: /Practical recovery/i,
+      }),
+    );
+    const recoveryDialog = screen.getByRole("dialog", {
+      name: "Practical recovery",
+    });
+    expect(
+      within(recoveryDialog).getByRole("link", {
+        name: "Compare workspace model",
+      }),
+    ).toHaveAttribute("href", "/features/compare");
+    expect(
+      within(recoveryDialog).queryByRole("link", {
+        name: "Explore features",
+      }),
+    ).toBeNull();
+    fireEvent.click(
+      within(difference).getByRole("button", {
+        name: /Operating model choice/i,
+      }),
+    );
+    expect(
+      within(
+        screen.getByRole("dialog", { name: "Operating model choice" }),
+      ).getByRole("link", {
+        name: "Compare operating models",
+      }),
+    ).toHaveAttribute("href", "/products");
 
     const path = screen.getByRole("region", { name: "Next step" });
     expect(

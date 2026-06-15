@@ -176,7 +176,7 @@ describe("PublicHomeApp visual quality contract", () => {
       "Project-centered workflow",
       "Inspection before handoff",
       "Practical recovery",
-      "Deployment path choice",
+      "Operating model choice",
     ]);
 
     expect(getDirectCards(finalActions)).toHaveLength(3);
