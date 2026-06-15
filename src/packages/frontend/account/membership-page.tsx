@@ -162,6 +162,11 @@ function MembershipSettingsContent() {
 
   const tier = tierById[membership.class];
   const selectedSourceRow = candidateRows.find((row) => row.selected);
+  const effectiveSummary = effectiveMembershipSummary({
+    membership,
+    selectedSourceRow,
+    tier,
+  });
   const personalMembership = details?.candidates.find(
     (candidate) => candidate.source === "subscription",
   );
@@ -223,15 +228,8 @@ function MembershipSettingsContent() {
 
   return (
     <Space vertical size="middle" style={{ width: "100%" }}>
-      <Card size="small" title="Effective membership">
+      <Card size="small" title={`Effective: ${effectiveSummary}`}>
         <Space vertical style={{ width: "100%" }}>
-          <Text strong>
-            {effectiveMembershipSummary({
-              membership,
-              selectedSourceRow,
-              tier,
-            })}
-          </Text>
           {tier != null ? <EffectiveTierDescription tier={tier} /> : null}
           {details?.admin_override ? (
             <Alert
@@ -264,7 +262,7 @@ function MembershipSettingsContent() {
       </Card>
 
       {isPaidPersonalMembership(personalMembership) ? (
-        <Card size="small" title="Personal membership">
+        <Card size="small" title="Personal membership billing">
           <PersonalMembershipDetails
             effective={selectedSourceRow?.sourceKind === "subscription"}
             membership={personalMembership}
@@ -485,22 +483,22 @@ function PersonalMembershipDetails({
 
   return (
     <Space vertical style={{ width: "100%" }}>
-      <Text strong>{price ? `${name}: ${price}.` : name}</Text>
+      <Text>{price ? `${name}: ${price}.` : name}</Text>
       {canceled ? (
-        <Text type="secondary">
+        <Text>
           {endDate
             ? `Ends ${endDate}. Renewal is canceled.`
             : "Renewal is canceled."}
         </Text>
       ) : (
-        <Text type="secondary">
+        <Text>
           {charge
             ? `Next charge: ${charge}.`
             : "Next charge date is not available."}
         </Text>
       )}
       {!effective ? (
-        <Text type="secondary">
+        <Text>
           This personal membership is not currently used because another
           membership has higher priority.
         </Text>

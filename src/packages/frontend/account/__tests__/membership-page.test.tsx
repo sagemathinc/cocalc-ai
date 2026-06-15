@@ -251,13 +251,13 @@ describe("MembershipPage", () => {
     await screen.findByText("Manage site license membership");
     const text = container.textContent ?? "";
 
-    expect(screen.getByText("Personal - Free")).toBeTruthy();
+    expect(screen.getByText("Effective: Personal - Free")).toBeTruthy();
     expect(
       screen.getByText(
         "Start using CoCalc with just enough resources to explore the platform and do basic work.",
       ),
     ).toBeTruthy();
-    expect(text.indexOf("Effective membership")).toBeLessThan(
+    expect(text.indexOf("Effective: Personal - Free")).toBeLessThan(
       text.indexOf("Memberships"),
     );
     expect(text).toContain("PersonalFreeActiveNo scheduled endManage");
@@ -324,14 +324,14 @@ describe("MembershipPage", () => {
     await screen.findByText("Manage site license membership");
     const text = container.textContent ?? "";
 
-    expect(screen.getByText("Personal - Standard")).toBeTruthy();
+    expect(screen.getByText("Effective: Personal - Standard")).toBeTruthy();
     expect(screen.getByText("A solid choice for everyday work.")).toBeTruthy();
     expect(screen.getByText("Better shared resources")).toBeTruthy();
     expect(
       screen.getByText("Dedicated project host access, including GPU"),
     ).toBeTruthy();
     expect(screen.getByText("More included AI usage")).toBeTruthy();
-    expect(screen.getByText("Personal membership")).toBeTruthy();
+    expect(screen.getByText("Personal membership billing")).toBeTruthy();
     expect(
       screen.getByText("Standard: $18/month, billed annually."),
     ).toBeTruthy();
@@ -409,7 +409,7 @@ describe("MembershipPage", () => {
     );
 
     const { container } = render(<MembershipPage />);
-    await screen.findByText("CoCalc Trial - Researcher");
+    await screen.findByText("Effective: CoCalc Trial - Researcher");
 
     expect(
       screen.getByText("Standard: $18/month, billed annually."),
@@ -472,7 +472,7 @@ describe("MembershipPage", () => {
     );
 
     const { container } = render(<MembershipPage />);
-    await screen.findByText("Personal membership");
+    await screen.findByText("Personal membership billing");
 
     expect(
       screen.getByText("Ends June 4, 2027. Renewal is canceled."),
@@ -554,7 +554,9 @@ describe("MembershipPage", () => {
 
     render(<MembershipPage />);
 
-    expect(screen.getByText("CoCalc Trial - Researcher")).toBeTruthy();
+    expect(
+      screen.getByText("Effective: CoCalc Trial - Researcher"),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
 
     expect(screen.getByText("Manage CoCalc Trial membership")).toBeTruthy();
