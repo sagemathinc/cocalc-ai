@@ -526,7 +526,8 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            CoCalc is a shared project workspace for computational work
+            Shared project workspaces for research, teaching, and technical
+            teams
           </Title>
           <Paragraph
             style={{
@@ -537,9 +538,9 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            Research groups, courses, and technical teams use CoCalc to keep
-            collaboration, AI assistance, history, and recovery close to the
-            project, so handoffs and decisions stay easier to inspect.
+            CoCalc keeps collaboration, AI assistance, history, and recovery
+            tied to the project, so groups can review, hand off, and continue
+            work without rebuilding context.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
