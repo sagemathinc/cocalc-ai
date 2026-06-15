@@ -50,9 +50,10 @@ jest.mock("antd", () => {
       onOk,
       open,
       title,
+      zIndex,
     }: any) =>
       open ? (
-        <section>
+        <section data-testid="antd-modal" data-z-index={zIndex}>
           <h1>{title}</h1>
           {children}
           <button onClick={onCancel} type="button">
@@ -119,6 +120,22 @@ describe("FreshAuthModal", () => {
       expect(onSuccess).toHaveBeenCalledTimes(1);
     });
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("renders above ordinary confirmation modals", async () => {
+    jest
+      .mocked(postAuthApi)
+      .mockReturnValue(new Promise(() => undefined) as any);
+
+    render(
+      <FreshAuthModal
+        open
+        onCancel={jest.fn()}
+        onSuccess={jest.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByTestId("antd-modal").dataset.zIndex).toBe("3000");
   });
 });
 
