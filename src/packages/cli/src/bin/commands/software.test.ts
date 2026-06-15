@@ -655,45 +655,51 @@ test("software deploy static invokes Rocket with a local remote-backed bundle", 
   const program = createProgram(
     makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
   );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = join(dir, "cocalc-bin");
 
-  await program.parseAsync([
-    "node",
-    "test",
-    "--quiet",
-    "software",
-    "build",
-    "static",
-    "deploy-test",
-    "--from-file",
-    source,
-  ]);
-  await program.parseAsync([
-    "node",
-    "test",
-    "--quiet",
-    "software",
-    "push",
-    "static",
-    "deploy-test",
-    "--env-file",
-    join(dir, "missing.env"),
-  ]);
-  await program.parseAsync([
-    "node",
-    "test",
-    "--quiet",
-    "software",
-    "deploy",
-    "static",
-    "deploy-test",
-    "staging",
-    "--env-file",
-    join(dir, "missing.env"),
-  ]);
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "build",
+      "static",
+      "deploy-test",
+      "--from-file",
+      source,
+    ]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "push",
+      "static",
+      "deploy-test",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "deploy",
+      "static",
+      "deploy-test",
+      "staging",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    process.argv[1] = originalArgv1;
+  }
 
   assert.equal(runs.length, 1);
   const run = runs[0];
-  assert.equal(run.command, process.execPath);
+  assert.equal(run.command, join(dir, "cocalc-bin"));
   const rocketIndex = run.args.indexOf("rocket");
   assert.notEqual(rocketIndex, -1);
   assert.deepEqual(run.args.slice(rocketIndex), [
@@ -712,6 +718,95 @@ test("software deploy static invokes Rocket with a local remote-backed bundle", 
     ),
     "--yes",
   ]);
+});
+
+test("software deploy latest chooses the newest remote artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-latest-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "static-local.tar.xz");
+  writeFileSync(source, "local static bundle");
+  const runs: CapturedRun[] = [];
+  const remoteFileKey =
+    "software/artifacts/static/20260615T000000Z-abcdef12-remote-new/files/static-remote.tar.xz";
+  const remoteIndex = {
+    schema: "cocalc-software-index-v1",
+    component: "static",
+    generated_at: "2026-06-15T00:00:00.000Z",
+    artifacts: [
+      {
+        artifact_id: "20260615T000000Z-abcdef12-remote-new",
+        tag: "remote-new",
+        tag_generated: false,
+        timestamp: "2026-06-15T00:00:00.000Z",
+        git: { commit: "abcdef123456", short: "abcdef123456", dirty: false },
+        manifest_key:
+          "software/artifacts/static/20260615T000000Z-abcdef12-remote-new/manifest.json",
+        manifest_url:
+          "https://software.example.test/software/artifacts/static/20260615T000000Z-abcdef12-remote-new/manifest.json",
+        files: [
+          {
+            name: "static-remote.tar.xz",
+            size_bytes: "remote static bundle".length,
+            sha256: "abc",
+            key: remoteFileKey,
+            url: `https://software.example.test/${remoteFileKey}`,
+          },
+        ],
+      },
+    ],
+  };
+  const r2 = makeR2Client(
+    new Map([
+      [
+        "software/indexes/static.json",
+        Buffer.from(JSON.stringify(remoteIndex), "utf8"),
+      ],
+      [remoteFileKey, Buffer.from("remote static bundle", "utf8")],
+    ]),
+  );
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "static",
+    "local-old",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "static",
+    "latest",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  assert.equal(runs.length, 1);
+  const rocketIndex = runs[0].args.indexOf("rocket");
+  assert.notEqual(rocketIndex, -1);
+  const rocketArgs = runs[0].args.slice(rocketIndex);
+  assert.deepEqual(rocketArgs.slice(0, 6), [
+    "rocket",
+    "deploy",
+    "staging",
+    "--scope",
+    "static",
+    "--bundle",
+  ]);
+  assert.match(rocketArgs[6], /cocalc-software-deploy-/);
+  assert.match(rocketArgs[6], /static-remote\.tar\.xz$/);
+  assert.equal(rocketArgs[7], "--yes");
 });
 
 test("software deploy hub pushes a local-only artifact before Rocket deploy", async () => {

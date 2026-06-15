@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import { emitSuccess, printArrayTable } from "../core/cli-output";
 import {
   chooseGeneratedTag,
   createSoftwareArtifactId,
+  isSoftwareLatestSelector,
   parseSoftwareBuildComponent,
   parseSoftwareDeployComponent,
   validateSoftwareTag,
@@ -405,10 +407,7 @@ async function resolveLocalManifestBySelector({
   selector: string;
 }) {
   const manifests = await listLocalManifests({ localStore, component });
-  const matches = manifests.filter(
-    ({ manifest }) =>
-      manifest.tag === selector || manifest.artifact_id === selector,
-  );
+  const matches = findLocalManifestMatches({ manifests, selector });
   if (matches.length === 0) {
     throw new Error(
       `local software artifact not found for ${component}: ${selector}`,
@@ -429,6 +428,9 @@ function findLocalManifestMatches({
   manifests: Awaited<ReturnType<typeof listLocalManifests>>;
   selector: string;
 }) {
+  if (isSoftwareLatestSelector(selector)) {
+    return manifests.slice(0, 1);
+  }
   return manifests.filter(
     ({ manifest }) =>
       manifest.tag === selector || manifest.artifact_id === selector,
@@ -541,6 +543,21 @@ function remoteEntryMatchesSelector(
   return entry.tag === selector || entry.artifact_id === selector;
 }
 
+function findRemoteEntryMatches({
+  entries,
+  selector,
+}: {
+  entries: SoftwareRemoteIndexEntry[];
+  selector: string;
+}) {
+  if (isSoftwareLatestSelector(selector)) {
+    return [...entries]
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(0, 1);
+  }
+  return entries.filter((entry) => remoteEntryMatchesSelector(entry, selector));
+}
+
 function rocketDeployTargetForComponent(component: SoftwareDeployComponent): {
   artifactComponent: SoftwareBuildComponent;
   scope: "static" | "bay";
@@ -561,7 +578,43 @@ function currentCliInvocation(): { command: string; args: string[] } {
   if (script && script.endsWith(".js")) {
     return { command: process.execPath, args: [script] };
   }
+  if (
+    script &&
+    script !== "software" &&
+    script !== "rocket" &&
+    (script.includes("/") || existsSync(script))
+  ) {
+    return { command: script, args: [] };
+  }
   return { command: process.execPath, args: [] };
+}
+
+function latestDeploySelector({
+  selector,
+  localManifests,
+  remoteEntries,
+}: {
+  selector: string;
+  localManifests: Awaited<ReturnType<typeof listLocalManifests>>;
+  remoteEntries: SoftwareRemoteIndexEntry[];
+}): string {
+  if (!isSoftwareLatestSelector(selector)) {
+    return selector;
+  }
+  const local = localManifests[0];
+  const remote = [...remoteEntries].sort((a, b) =>
+    b.timestamp.localeCompare(a.timestamp),
+  )[0];
+  if (!local && !remote) {
+    return selector;
+  }
+  if (
+    local &&
+    (!remote || local.manifest.created_at.localeCompare(remote.timestamp) >= 0)
+  ) {
+    return local.manifest.artifact_id;
+  }
+  return remote.artifact_id;
 }
 
 async function downloadRemoteArtifact({
@@ -614,14 +667,7 @@ async function resolveDeployArtifact({
     option: opts.localStore,
     env: deps.env ?? process.env,
   });
-  const localMatch = resolveSingleMatch({
-    matches: findLocalManifestMatches({
-      manifests: await listLocalManifests({ localStore, component }),
-      selector,
-    }),
-    selector,
-    label: `local software artifact for ${component}`,
-  });
+  const localManifests = await listLocalManifests({ localStore, component });
   const config = await resolveSoftwareRemoteConfig({
     env: deps.env ?? process.env,
     envFile: opts.envFile,
@@ -632,11 +678,25 @@ async function resolveDeployArtifact({
     auth: config.auth,
     component,
   });
-  let remoteEntry = resolveSingleMatch({
-    matches: remoteIndex.artifacts.filter((entry) =>
-      remoteEntryMatchesSelector(entry, selector),
-    ),
+  const effectiveSelector = latestDeploySelector({
     selector,
+    localManifests,
+    remoteEntries: remoteIndex.artifacts,
+  });
+  const localMatch = resolveSingleMatch({
+    matches: findLocalManifestMatches({
+      manifests: localManifests,
+      selector: effectiveSelector,
+    }),
+    selector: effectiveSelector,
+    label: `local software artifact for ${component}`,
+  });
+  let remoteEntry = resolveSingleMatch({
+    matches: findRemoteEntryMatches({
+      entries: remoteIndex.artifacts,
+      selector: effectiveSelector,
+    }),
+    selector: effectiveSelector,
     label: `remote software artifact for ${component}`,
   });
 
@@ -686,7 +746,9 @@ async function resolveDeployArtifact({
     };
   }
 
-  throw new Error(`software artifact not found for ${component}: ${selector}`);
+  throw new Error(
+    `software artifact not found for ${component}: ${effectiveSelector}`,
+  );
 }
 
 export function registerSoftwareCommand(

@@ -6,6 +6,7 @@ import {
 } from "./types";
 
 const TAG_RE = /^[A-Za-z0-9._-]+$/;
+export const SOFTWARE_LATEST_SELECTOR = "latest";
 
 export function parseSoftwareBuildComponent(
   value: string,
@@ -40,12 +41,19 @@ export function validateSoftwareTag(tag: string): string {
   if (!trimmed) {
     throw new Error("software tag must not be empty");
   }
+  if (isSoftwareLatestSelector(trimmed)) {
+    throw new Error("software tag 'latest' is reserved for artifact selection");
+  }
   if (!TAG_RE.test(trimmed)) {
     throw new Error(
       "software tag must contain only letters, numbers, dot, underscore, or dash",
     );
   }
   return trimmed;
+}
+
+export function isSoftwareLatestSelector(value: string): boolean {
+  return `${value ?? ""}`.trim() === SOFTWARE_LATEST_SELECTOR;
 }
 
 export function compactTimestamp(date: Date): string {

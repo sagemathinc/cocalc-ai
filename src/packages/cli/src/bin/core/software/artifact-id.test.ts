@@ -23,6 +23,7 @@ test("software tag validation accepts the intended operator alphabet", () => {
   assert.equal(validateSoftwareTag("fix-bug_1.2"), "fix-bug_1.2");
   assert.throws(() => validateSoftwareTag("bad tag"), /software tag/);
   assert.throws(() => validateSoftwareTag(""), /must not be empty/);
+  assert.throws(() => validateSoftwareTag("latest"), /reserved/);
 });
 
 test("software build component parser rejects deploy-only components", () => {
