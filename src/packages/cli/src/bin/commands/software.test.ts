@@ -1422,6 +1422,139 @@ test("software deploy records failed history when subprocess fails", async () =>
   assert.match(history.deployments[0].error, /exit status 7/);
 });
 
+test("software deploy cli promotes an immutable artifact to a release channel", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-cli-channel-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "cocalc-cli-bin");
+  writeFileSync(source, "cli binary");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "cli",
+    "cli-channel",
+    "--from-file",
+    source,
+    "--artifact-name",
+    "cocalc-cli-20260614T235912Z-e882d124-cli-channel-x86_64-linux",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "cli",
+    "cli-channel",
+    "candidate",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const manifest = JSON.parse(
+    r2.objects
+      .get("software/cocalc/candidate-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  assert.equal(manifest.schema, "cocalc-software-release-channel-v1");
+  assert.equal(manifest.product, "cocalc");
+  assert.equal(manifest.component, "cli");
+  assert.equal(manifest.channel, "candidate");
+  assert.equal(manifest.artifact_id, "20260614T235912Z-e882d124-cli-channel");
+  assert.equal(manifest.version, manifest.artifact_id);
+  assert.match(
+    manifest.url,
+    /software\/artifacts\/cli\/.*\/files\/cocalc-cli-/,
+  );
+  assert.equal(
+    r2.objects.has("software/cocalc/latest-linux-amd64.json"),
+    false,
+  );
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/candidate/cli/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].target.kind, "release-channel");
+  assert.equal(history.deployments[0].target.channel, "candidate");
+  const record = JSON.parse(
+    r2.objects
+      .get(
+        `software/deployments/candidate/cli/${history.deployments[0].deployment_id}.json`,
+      )!
+      .toString("utf8"),
+  );
+  assert.deepEqual(record.details.channel_manifests, [
+    "https://software.example.test/software/cocalc/candidate-linux-amd64.json",
+  ]);
+});
+
+test("software deploy plus stable also updates the legacy latest manifest", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-plus-channel-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "cocalc-plus-bin");
+  writeFileSync(source, "plus binary");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "plus",
+    "plus-stable",
+    "--from-file",
+    source,
+    "--artifact-name",
+    "cocalc-plus-20260614T235912Z-e882d124-plus-stable-x86_64-linux",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "plus",
+    "plus-stable",
+    "stable",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const stable = JSON.parse(
+    r2.objects
+      .get("software/cocalc-plus/stable-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  const latest = JSON.parse(
+    r2.objects
+      .get("software/cocalc-plus/latest-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  assert.equal(stable.artifact_id, "20260614T235912Z-e882d124-plus-stable");
+  assert.equal(latest.artifact_id, stable.artifact_id);
+  assert.equal(latest.channel, "latest");
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/stable/plus/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].target.kind, "release-channel");
+  assert.equal(history.deployments[0].target.channel, "stable");
+});
+
 test("software deploy bay uses the full bay Rocket scope", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-bay-"));
   const localStore = join(dir, "store");

@@ -987,6 +987,13 @@ Implemented:
   existing host upgrade/install code can consume immutable software artifacts
   from old-shape URLs such as
   `software/project-host/<artifact-id>/bundle-linux.tar.xz`.
+- `deploy`/promote for `cli`, `launchpad`, and `plus` release channels. These
+  publish installer-facing channel manifests under
+  `software/cocalc*/<channel>-<os>-<arch>.json`, with `stable` also updating
+  legacy `latest-<os>-<arch>.json` aliases for existing installer defaults.
+- CLI/Launchpad/Plus installers now prefer channel-manifest `artifact_id`
+  identity over package semver and persist release metadata such as
+  `published_at` and git hash for local inspection/version output.
 - R2 deployment history for implemented deploy paths, with a started record
   written before the target is mutated and a sealed `succeeded` or `failed`
   record written after completion. Unsealed `started` records display as
@@ -1010,7 +1017,13 @@ Still not implemented:
 - Deeper throwaway project lifecycle `smoke` coverage for `project-host`,
   `project`, and `tools`, plus smoke coverage for `cli`, `launchpad`, `plus`,
   and `star`.
-- `deploy`/promote for `cli`, `launchpad`, `plus`, and `star`.
+- `deploy`/promote for `star`.
+- Product/documentation updates for the new CLI channel model, including a
+  dedicated `/products/cocalc-cli` page and channel notes on public installer
+  pages.
+- Coordinated Plus/tools-minimal channel promotion. Today `plus` channel
+  promotion updates the Plus binary manifest only; the installer still resolves
+  `tools-minimal` from its own channel manifest.
 - Rollback wrappers.
 
 ### Phase 0: Documentation And Test Fixtures
@@ -1189,12 +1202,16 @@ Wrap existing SEA build/publish scripts.
 
 Short-term:
 
-- use package scripts for build
-- use common manifest/index for local/remote visibility
-- add `stable`, `candidate`, and optional `dev` channel manifests
-- keep existing `latest-<os>-<arch>.json` as stable compatibility aliases
+- use package scripts for build. Done.
+- use common manifest/index for local/remote visibility. Done.
+- add `stable`, `candidate`, and optional `dev` channel manifests. Done for
+  CLI/Launchpad/Plus.
+- keep existing `latest-<os>-<arch>.json` as stable compatibility aliases.
+  Done for CLI/Launchpad/Plus.
 - use existing publish script behavior only as a compatibility layer while the
-  common software store is being introduced
+  common software store is being introduced. Mostly superseded by common
+  channel manifest promotion; package-local publish scripts still exist for
+  manual/legacy publishing.
 
 Long-term:
 

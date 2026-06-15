@@ -36,10 +36,12 @@ import {
   loadDefaultSoftwareR2Client,
   manifestRemoteEntry,
   publishHostCompatibilityArtifact,
+  publishReleaseChannelArtifact,
   readDeploymentIndex,
   readRemoteIndex,
   resolveSoftwareRemoteConfig,
   uploadSoftwareArtifact,
+  validateSoftwareReleaseChannel,
   writeDeploymentRecord,
   type SoftwareRemoteIndexEntry,
   type SoftwareR2Client,
@@ -1515,6 +1517,21 @@ function hostDeployTargetForComponent(component: SoftwareDeployComponent):
   return undefined;
 }
 
+function releaseDeployTargetForComponent(component: SoftwareDeployComponent):
+  | {
+      artifactComponent: "cli" | "launchpad" | "plus";
+    }
+  | undefined {
+  if (
+    component === "cli" ||
+    component === "launchpad" ||
+    component === "plus"
+  ) {
+    return { artifactComponent: component };
+  }
+  return undefined;
+}
+
 function deploymentId({
   startedAt,
   artifactId,
@@ -1564,7 +1581,9 @@ function deploymentRecordBase({
     deployed_by: deployedBy({ target, deps }),
     target: {
       kind,
-      profile: profileOrChannel,
+      ...(kind === "release-channel"
+        ? { channel: profileOrChannel }
+        : { profile: profileOrChannel }),
       api: target.api,
       remote: target.remote,
     },
@@ -1847,14 +1866,20 @@ Supported deploy/smoke components:
         const startedAt = deps.now?.() ?? new Date();
         const rocketTarget = rocketDeployTargetForComponent(component);
         const hostTarget = hostDeployTargetForComponent(component);
+        const releaseTarget = releaseDeployTargetForComponent(component);
+        const releaseChannel = releaseTarget
+          ? validateSoftwareReleaseChannel(deployTarget)
+          : undefined;
         const artifactComponent =
-          rocketTarget?.artifactComponent ?? hostTarget?.artifactComponent;
+          rocketTarget?.artifactComponent ??
+          hostTarget?.artifactComponent ??
+          releaseTarget?.artifactComponent;
         if (!artifactComponent) {
           throw new Error(
-            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, bay-conat-router, bay-conat-persist, bay-frontdoor, bay-cloudflared, bay-scaffold, host-conat-router, host-conat-persist, project-host, project, tools`,
+            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, bay-conat-router, bay-conat-persist, bay-frontdoor, bay-cloudflared, bay-scaffold, host-conat-router, host-conat-persist, project-host, project, tools, cli, launchpad, plus`,
           );
         }
-        if (!deps.runCommand) {
+        if (!releaseTarget && !deps.runCommand) {
           throw new Error("software deploy requires runCommand dependency");
         }
         const artifact = await resolveDeployArtifact({
@@ -1863,22 +1888,32 @@ Supported deploy/smoke components:
           opts,
           deps,
         });
-        const target = resolveDeploySite({
-          profile: deployTarget,
-          opts,
-          deps,
-        });
+        const target = releaseTarget
+          ? {
+              profileName: releaseChannel!,
+              api: undefined,
+              remote: undefined,
+              account_id: undefined,
+              email_address: undefined,
+            }
+          : resolveDeploySite({
+              profile: deployTarget,
+              opts,
+              deps,
+            });
         const config = await resolveSoftwareRemoteConfig({
           env: deps.env ?? process.env,
           envFile: opts.envFile,
         });
         const client = softwareR2Client(deps);
         const cli = currentCliInvocation();
-        let commandArgsList: string[][];
+        let commandArgsList: string[][] = [];
         let rocketScope: string | undefined;
         let hostBaseUrl: string | undefined;
         let hostCompatUrl: string | undefined;
         let hostManagedComponent: string | undefined;
+        let releaseProduct: string | undefined;
+        let releaseChannelManifestUrls: string[] | undefined;
         let targetKind: SoftwareDeploymentRecord["target"]["kind"];
         if (rocketTarget) {
           const remoteFile = remoteBundleFile(artifact.remote_entry);
@@ -1968,6 +2003,14 @@ Supported deploy/smoke components:
               ],
             );
           }
+        } else if (releaseTarget) {
+          releaseProduct =
+            releaseTarget.artifactComponent === "cli"
+              ? "cocalc"
+              : releaseTarget.artifactComponent === "launchpad"
+                ? "cocalc-launchpad"
+                : "cocalc-plus";
+          targetKind = "release-channel";
         } else {
           throw new Error(`software deploy ${component} is not wired yet`);
         }
@@ -2002,6 +2045,8 @@ Supported deploy/smoke components:
             ...(hostManagedComponent
               ? { host_managed_component: hostManagedComponent }
               : {}),
+            ...(releaseProduct ? { release_product: releaseProduct } : {}),
+            ...(releaseChannel ? { release_channel: releaseChannel } : {}),
           },
           deps,
         });
@@ -2011,6 +2056,29 @@ Supported deploy/smoke components:
           config,
           deps,
           run: async () => {
+            if (releaseTarget) {
+              const published = await publishReleaseChannelArtifact({
+                client,
+                config,
+                entry: artifact.remote_entry,
+                channel: releaseChannel!,
+                now: deps.now?.() ?? new Date(),
+              });
+              releaseProduct = published.product;
+              releaseChannelManifestUrls = published.manifests.map(
+                (manifest) => manifest.url,
+              );
+              record.details = {
+                ...(record.details ?? {}),
+                release_product: published.product,
+                release_channel: published.channel,
+                channel_manifests: releaseChannelManifestUrls,
+                ...(published.channel === "stable"
+                  ? { latest_alias: "updated" }
+                  : {}),
+              };
+              return;
+            }
             for (const args of commandArgsList) {
               const code = await deps.runCommand!(cli.command, args, {
                 stdio: "inherit",
@@ -2053,7 +2121,18 @@ Supported deploy/smoke components:
             ...(hostManagedComponent
               ? { host_managed_component: hostManagedComponent }
               : {}),
-            profile: deployTarget,
+            ...(releaseProduct ? { release_product: releaseProduct } : {}),
+            ...(releaseChannel ? { channel: releaseChannel } : {}),
+            ...(releaseChannelManifestUrls
+              ? { channel_manifests: releaseChannelManifestUrls }
+              : {}),
+            ...(releaseChannel === "stable" ? { latest_alias: "updated" } : {}),
+            ...(releaseTarget?.artifactComponent === "plus"
+              ? {
+                  note: "Plus installer still resolves tools-minimal from its own channel manifest.",
+                }
+              : {}),
+            ...(releaseTarget ? {} : { profile: deployTarget }),
             deployment_id: finalRecord.deployment_id,
             deployment_record: `${config.publicBaseUrl}/${recordKey}`,
           },

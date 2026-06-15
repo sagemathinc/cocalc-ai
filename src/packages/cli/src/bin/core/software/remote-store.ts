@@ -91,6 +91,31 @@ export type SoftwareRemoteIndex = {
   artifacts: SoftwareRemoteIndexEntry[];
 };
 
+export type SoftwareReleaseChannel = "dev" | "candidate" | "stable";
+
+export type SoftwareReleaseChannelManifest = {
+  schema: "cocalc-software-release-channel-v1";
+  product: "cocalc" | "cocalc-launchpad" | "cocalc-plus";
+  component: "cli" | "launchpad" | "plus";
+  channel: SoftwareReleaseChannel | "latest";
+  artifact_id: string;
+  tag: string;
+  created_at: string;
+  published_at: string;
+  git: {
+    commit: string;
+    short: string;
+    dirty: boolean;
+  };
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+  filename: string;
+  size_bytes: number;
+  sha256: string;
+  url: string;
+  version: string;
+};
+
 function unquoteShellValue(value: string): string {
   const trimmed = value.trim();
   if (
@@ -560,4 +585,202 @@ export async function publishHostCompatibilityArtifact({
     base_url: `${config.publicBaseUrl}/software`,
     urls,
   };
+}
+
+function releaseProductForComponent(
+  component: SoftwareBuildComponent,
+): SoftwareReleaseChannelManifest["product"] | undefined {
+  if (component === "cli") return "cocalc";
+  if (component === "launchpad") return "cocalc-launchpad";
+  if (component === "plus") return "cocalc-plus";
+  return undefined;
+}
+
+function isReleaseComponent(
+  component: SoftwareBuildComponent,
+): component is SoftwareReleaseChannelManifest["component"] {
+  return (
+    component === "cli" || component === "launchpad" || component === "plus"
+  );
+}
+
+function normalizeReleaseMachine(
+  machine: string,
+): SoftwareReleaseChannelManifest["arch"] | undefined {
+  if (machine === "x86_64" || machine === "amd64" || machine === "x64") {
+    return "amd64";
+  }
+  if (machine === "aarch64" || machine === "arm64") {
+    return "arm64";
+  }
+  return undefined;
+}
+
+function releaseFilePlatform({
+  component,
+  fileName,
+}: {
+  component: "cli" | "launchpad" | "plus";
+  fileName: string;
+}): {
+  os: SoftwareReleaseChannelManifest["os"];
+  arch: SoftwareReleaseChannelManifest["arch"];
+} {
+  const prefix =
+    component === "cli"
+      ? "cocalc-cli-"
+      : component === "launchpad"
+        ? "cocalc-launchpad-"
+        : "cocalc-plus-";
+  if (!fileName.startsWith(prefix)) {
+    throw new Error(
+      `release channel file for ${component} must start with ${prefix}: ${fileName}`,
+    );
+  }
+  const withoutArchive = fileName.replace(/\.tar\.xz$|\.xz$/, "");
+  const parts = withoutArchive.slice(prefix.length).split("-");
+  const os = parts.at(-1);
+  const arch = normalizeReleaseMachine(parts.at(-2) ?? "");
+  if ((os !== "linux" && os !== "darwin") || !arch) {
+    throw new Error(
+      `release channel file for ${component} must end in <machine>-<os>: ${fileName}`,
+    );
+  }
+  return { os, arch };
+}
+
+export function validateSoftwareReleaseChannel(
+  raw: string,
+): SoftwareReleaseChannel {
+  const channel = raw.trim();
+  if (channel === "dev" || channel === "candidate" || channel === "stable") {
+    return channel;
+  }
+  if (channel === "latest") {
+    throw new Error(
+      "software deploy channel 'latest' is a compatibility alias; deploy to 'stable' instead",
+    );
+  }
+  throw new Error(
+    `unsupported software release channel '${raw}'; expected dev, candidate, or stable`,
+  );
+}
+
+function releaseChannelManifestKey({
+  product,
+  channel,
+  os,
+  arch,
+}: {
+  product: SoftwareReleaseChannelManifest["product"];
+  channel: SoftwareReleaseChannelManifest["channel"];
+  os: SoftwareReleaseChannelManifest["os"];
+  arch: SoftwareReleaseChannelManifest["arch"];
+}): string {
+  return `software/${product}/${channel}-${os}-${arch}.json`;
+}
+
+function releaseChannelManifest({
+  component,
+  product,
+  channel,
+  entry,
+  file,
+  publishedAt,
+}: {
+  component: "cli" | "launchpad" | "plus";
+  product: SoftwareReleaseChannelManifest["product"];
+  channel: SoftwareReleaseChannelManifest["channel"];
+  entry: SoftwareRemoteIndexEntry;
+  file: SoftwareRemoteIndexEntry["files"][number];
+  publishedAt: Date;
+}): SoftwareReleaseChannelManifest {
+  const { os, arch } = releaseFilePlatform({ component, fileName: file.name });
+  return {
+    schema: "cocalc-software-release-channel-v1",
+    product,
+    component,
+    channel,
+    artifact_id: entry.artifact_id,
+    tag: entry.tag,
+    created_at: entry.timestamp,
+    published_at: publishedAt.toISOString(),
+    git: entry.git,
+    os,
+    arch,
+    filename: file.name,
+    size_bytes: file.size_bytes,
+    sha256: file.sha256,
+    url: file.url,
+    version: entry.artifact_id,
+  };
+}
+
+export async function publishReleaseChannelArtifact({
+  client,
+  config,
+  entry,
+  channel,
+  now,
+}: {
+  client: SoftwareR2Client;
+  config: SoftwareRemoteConfig;
+  entry: SoftwareRemoteIndexEntry;
+  channel: SoftwareReleaseChannel;
+  now: Date;
+}): Promise<{
+  product: SoftwareReleaseChannelManifest["product"];
+  channel: SoftwareReleaseChannel;
+  manifests: Array<{
+    key: string;
+    url: string;
+    manifest: SoftwareReleaseChannelManifest;
+  }>;
+}> {
+  const component = entry.manifest_key.split("/")[2] as SoftwareBuildComponent;
+  const product = releaseProductForComponent(component);
+  if (!product || !isReleaseComponent(component)) {
+    throw new Error(
+      `software release channel publish does not support ${component}`,
+    );
+  }
+  if (entry.files.length < 1) {
+    throw new Error(
+      `software release channel publish expected at least one file in ${entry.artifact_id}`,
+    );
+  }
+  const aliases: Array<SoftwareReleaseChannel | "latest"> =
+    channel === "stable" ? ["stable", "latest"] : [channel];
+  const published: Array<{
+    key: string;
+    url: string;
+    manifest: SoftwareReleaseChannelManifest;
+  }> = [];
+  for (const alias of aliases) {
+    for (const file of entry.files) {
+      const manifest = releaseChannelManifest({
+        component,
+        product,
+        channel: alias,
+        entry,
+        file,
+        publishedAt: now,
+      });
+      const key = releaseChannelManifestKey({
+        product,
+        channel: alias,
+        os: manifest.os,
+        arch: manifest.arch,
+      });
+      await client.putR2ObjectFromBuffer({
+        auth: config.auth,
+        key,
+        body: Buffer.from(JSON.stringify(manifest, null, 2) + "\n", "utf8"),
+        contentType: "application/json",
+        cacheControl: config.indexCacheControl,
+      });
+      published.push({ key, url: publicUrl(config, key), manifest });
+    }
+  }
+  return { product, channel, manifests: published };
 }
