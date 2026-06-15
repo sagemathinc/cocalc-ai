@@ -278,4 +278,10 @@ describe("applyMembershipTierTemplateFallbacks", () => {
         .course_max_students_and_pending_invites,
     ).toBe(500);
   });
+
+  it("keeps the pro template hidden until public pricing is explicitly enabled", () => {
+    const tier = applyMembershipTierTemplateFallbacks({ id: "pro" });
+
+    expect(tier.store_visible).toBe(false);
+  });
 });

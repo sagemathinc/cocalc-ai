@@ -648,7 +648,7 @@ export const TIER_TEMPLATES = {
     id: "pro",
     label: "Pro",
     ...STORE_MARKETING.pro,
-    store_visible: true,
+    store_visible: false,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.pro,
     price_monthly: 200,
