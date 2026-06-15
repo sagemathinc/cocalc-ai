@@ -129,6 +129,48 @@ describe("resolveMembershipForAccount", () => {
     expect(result.subscription_status).toBe("canceled");
   });
 
+  it("ignores unpaid membership subscriptions", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createTestMembershipSubscription(account_id, {
+      class: highTier,
+      status: "unpaid",
+    });
+
+    const details = await resolveMembershipDetailsForAccount(account_id);
+
+    expect(details.selected.class).toBe("free");
+    expect(details.selected.source).toBe("free");
+    expect(
+      details.candidates.filter(
+        (candidate) => candidate.source === "subscription",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("ignores past-due membership subscriptions", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createTestMembershipSubscription(account_id, {
+      class: highTier,
+      status: "past_due",
+    });
+    await createTestMembershipSubscription(account_id, {
+      class: lowTier,
+      status: "active",
+    });
+
+    const details = await resolveMembershipDetailsForAccount(account_id);
+
+    expect(details.selected.class).toBe(lowTier);
+    expect(details.selected.source).toBe("subscription");
+    expect(
+      details.candidates
+        .filter((candidate) => candidate.source === "subscription")
+        .map((candidate) => candidate.class),
+    ).toEqual([lowTier]);
+  });
+
   it("keeps the higher paid-through subscription effective for a deferred downgrade", async () => {
     const account_id = uuid();
     const end = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);

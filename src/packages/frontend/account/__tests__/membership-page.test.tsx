@@ -478,6 +478,109 @@ describe("MembershipPage", () => {
     expect(container.textContent).not.toContain("balance-renewal-control");
   });
 
+  it("opens canceled personal membership management from the active personal baseline", async () => {
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        candidateRows: [
+          {
+            action: "personal",
+            class: "standard",
+            key: "subscription-standard-1",
+            membership: "Standard",
+            note: "Ends June 4, 2027",
+            selected: true,
+            source: "Personal",
+            sourceKind: "subscription",
+            state: "Renewal canceled",
+            subscriptionInterval: "year",
+            subscriptionStatus: "canceled",
+          },
+          {
+            action: "personal",
+            class: "basic",
+            key: "subscription-basic-1",
+            membership: "Basic",
+            note: "Renews June 4, 2027",
+            selected: false,
+            source: "Personal",
+            sourceKind: "subscription",
+            state: "Active",
+            subscriptionInterval: "month",
+            subscriptionStatus: "active",
+          },
+        ],
+        details: {
+          candidates: [],
+          selected: { class: "standard", source: "subscription" },
+        },
+        membership: {
+          class: "standard",
+          source: "subscription",
+          subscription_interval: "year",
+          subscription_status: "canceled",
+        },
+      }),
+    );
+
+    render(<MembershipPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Manage" })[0]);
+
+    await waitFor(() => {
+      expect(mockMembershipPurchaseModal.mock.calls.at(-1)?.[0]).toEqual(
+        expect.objectContaining({
+          currentClassOverride: "basic",
+          currentIntervalOverride: "month",
+          open: true,
+        }),
+      );
+    });
+  });
+
+  it("opens canceled personal membership management from Free when no active personal subscription exists", async () => {
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        candidateRows: [
+          {
+            action: "personal",
+            class: "standard",
+            key: "subscription-standard-1",
+            membership: "Standard",
+            note: "Ends June 4, 2027",
+            selected: true,
+            source: "Personal",
+            sourceKind: "subscription",
+            state: "Renewal canceled",
+            subscriptionInterval: "year",
+            subscriptionStatus: "canceled",
+          },
+        ],
+        details: {
+          candidates: [],
+          selected: { class: "standard", source: "subscription" },
+        },
+        membership: {
+          class: "standard",
+          source: "subscription",
+          subscription_interval: "year",
+          subscription_status: "canceled",
+        },
+      }),
+    );
+
+    render(<MembershipPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+
+    await waitFor(() => {
+      expect(mockMembershipPurchaseModal.mock.calls.at(-1)?.[0]).toEqual(
+        expect.objectContaining({
+          currentClassOverride: "free",
+          currentIntervalOverride: undefined,
+          open: true,
+        }),
+      );
+    });
+  });
+
   it("opens the shared site-license modal from the bottom button", async () => {
     useMembershipSettingsData.mockReturnValue(
       baseData({

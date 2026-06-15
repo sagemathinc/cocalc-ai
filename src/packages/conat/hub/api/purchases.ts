@@ -188,7 +188,7 @@ export interface MembershipResolution {
   effective_limits?: MembershipEffectiveLimits;
   starts?: Date;
   subscription_id?: number;
-  subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
+  subscription_status?: "active" | "canceled";
   subscription_cost?: number;
   subscription_interval?: "month" | "year";
   grant_id?: string;
@@ -211,7 +211,7 @@ export interface MembershipCandidate {
   effective_limits?: MembershipEffectiveLimits;
   starts?: Date;
   subscription_id?: number;
-  subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
+  subscription_status?: "active" | "canceled";
   subscription_cost?: number;
   subscription_interval?: "month" | "year";
   grant_id?: string;

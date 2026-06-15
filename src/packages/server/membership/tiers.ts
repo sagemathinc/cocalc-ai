@@ -192,7 +192,7 @@ export async function getActiveMembershipSubscription({
         AND p.service='membership'
        WHERE s.account_id=$1
          AND s.metadata->>'type'='membership'
-         AND s.status IN ('active','unpaid','past_due','canceled')
+         AND s.status IN ('active','canceled')
          AND s.current_period_end >= NOW()
        ORDER BY s.current_period_end DESC, s.id DESC`,
     [account_id],
@@ -245,10 +245,6 @@ function subscriptionStatusRank(status: string): number {
   switch (status) {
     case "active":
       return 4;
-    case "past_due":
-      return 3;
-    case "unpaid":
-      return 2;
     case "canceled":
       return 1;
     default:

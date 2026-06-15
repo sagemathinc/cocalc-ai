@@ -64,6 +64,40 @@ describe("Stripe subscription payment failure ownership checks", () => {
     expect(state.payment.status).toBe("active");
   });
 
+  it("cancels the subscription immediately when renewal payment fails", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        status: "active",
+      },
+    );
+    const pool = getPool();
+    await pool.query("UPDATE subscriptions SET payment=$2 WHERE id=$1", [
+      subscription_id,
+      {
+        payment_intent_id: "pi_owner",
+        amount: 10,
+        created: Date.now(),
+        status: "active",
+        new_expires_ms: Date.now() + 1000 * 60 * 60,
+      },
+    ]);
+
+    await processSubscriptionRenewalFailure({
+      account_id,
+      paymentIntent: {
+        id: "pi_owner",
+        metadata: { subscription_id: `${subscription_id}` },
+      },
+    });
+
+    const state = await getSubscriptionState(subscription_id);
+    expect(state.status).toBe("canceled");
+    expect(state.payment.status).toBe("canceled");
+  });
+
   it("does not let a canceled resume payment for one account clear another account's resume payment", async () => {
     const owner = uuid();
     const attacker = uuid();

@@ -189,6 +189,17 @@ function MembershipSettingsContent() {
     setSiteLicenseManageSource(source);
     setSiteLicenseManageOpen(true);
   };
+  const openPersonalMembershipManage = () => {
+    const currentPersonalRow = candidateRows.find(
+      (row) =>
+        row.sourceKind === "subscription" &&
+        row.subscriptionStatus !== "canceled",
+    );
+    openPurchase(
+      currentPersonalRow?.class ?? "free",
+      currentPersonalRow?.subscriptionInterval,
+    );
+  };
   const reverifySiteLicense = async (siteLicenseId: string) => {
     setReverifyingSiteLicenseId(siteLicenseId);
     setReverificationError("");
@@ -314,11 +325,7 @@ function MembershipSettingsContent() {
                   render: (_, row) => {
                     if (row.action === "personal") {
                       return (
-                        <Button
-                          onClick={() =>
-                            openPurchase(row.class, row.subscriptionInterval)
-                          }
-                        >
+                        <Button onClick={openPersonalMembershipManage}>
                           Manage
                         </Button>
                       );

@@ -60,7 +60,7 @@ async function buildMembershipCandidates(
        FROM subscriptions
        WHERE account_id=$1
          AND metadata->>'type'='membership'
-         AND status IN ('active','unpaid','past_due','canceled')
+         AND status IN ('active','canceled')
          AND current_period_end >= NOW()
        ORDER BY current_period_end DESC, id DESC`,
       [account_id],
@@ -406,10 +406,6 @@ function subscriptionStatusRank({
   switch (subscription_status) {
     case "active":
       return 4;
-    case "past_due":
-      return 3;
-    case "unpaid":
-      return 2;
     case "canceled":
       return 1;
     default:

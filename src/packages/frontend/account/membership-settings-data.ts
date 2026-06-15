@@ -55,7 +55,7 @@ export type MembershipCandidateRow = {
   siteLicenseId?: string;
   state: string;
   subscriptionInterval?: "month" | "year";
-  subscriptionStatus?: "active" | "canceled" | "unpaid" | "past_due";
+  subscriptionStatus?: "active" | "canceled";
 };
 
 export function useMembershipSettingsData(): {
