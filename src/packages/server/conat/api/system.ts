@@ -96,6 +96,7 @@ import {
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
+  enqueueRootfsPrepullForHost,
   enqueueRootfsPrepullForRunningHosts,
   isRootfsPrepullSiteSetting,
 } from "@cocalc/server/cloud/rootfs-prepull";
@@ -4559,6 +4560,51 @@ export async function saveRootfsCatalogEntry(
       })),
   });
   return await saveRootfsImage({ account_id, body });
+}
+
+export async function enqueueRootfsPrepull({
+  account_id,
+  host_id,
+  limit,
+}: {
+  account_id?: string;
+  host_id?: string;
+  limit?: number;
+} = {}): Promise<{
+  considered: number;
+  enqueued: number;
+  host_id?: string;
+}> {
+  await assertAdmin(account_id);
+  const normalizedHostId = `${host_id ?? ""}`.trim();
+  if (normalizedHostId) {
+    const { rows } = await getPool().query(
+      `SELECT id, metadata, last_seen
+         FROM project_hosts
+        WHERE id=$1 AND deleted IS NULL
+        LIMIT 1`,
+      [normalizedHostId],
+    );
+    const row = rows[0];
+    if (!row) {
+      throw Error(`host not found: ${normalizedHostId}`);
+    }
+    const enqueued = await enqueueRootfsPrepullForHost({
+      row,
+      source: "operator",
+      reason: "manual",
+    });
+    return {
+      considered: 1,
+      enqueued: enqueued ? 1 : 0,
+      host_id: normalizedHostId,
+    };
+  }
+  return await enqueueRootfsPrepullForRunningHosts({
+    source: "operator",
+    reason: "manual",
+    limit,
+  });
 }
 
 export async function requestRootfsImageDeletion(opts: {

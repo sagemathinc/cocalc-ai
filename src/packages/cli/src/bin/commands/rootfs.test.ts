@@ -162,3 +162,63 @@ test("rootfs shards can enrich inventory from R2 audit", async () => {
   assert.match(harness.captured, /orphan_r2_rootfs_repos:/);
   assert.match(harness.captured, /legacy_single_repo: 0 DB artifacts/);
 });
+
+test("rootfs prepull queues all running hosts", async () => {
+  let capturedArgs: any;
+  const harness = rootfsDeps({
+    system: {
+      enqueueRootfsPrepull: async (opts: any) => {
+        capturedArgs = opts;
+        return { considered: 7, enqueued: 7 };
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "prepull",
+    "--limit",
+    "7",
+  ]);
+
+  assert.deepEqual(capturedArgs, { host_id: undefined, limit: 7 });
+  assert.deepEqual(harness.captured, { considered: 7, enqueued: 7 });
+});
+
+test("rootfs prepull queues one host", async () => {
+  let capturedArgs: any;
+  const harness = rootfsDeps({
+    system: {
+      enqueueRootfsPrepull: async (opts: any) => {
+        capturedArgs = opts;
+        return {
+          considered: 1,
+          enqueued: 1,
+          host_id: "37782b66-190d-41c3-a7e5-f5662e34cd4a",
+        };
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rootfs",
+    "prepull",
+    "37782b66-190d-41c3-a7e5-f5662e34cd4a",
+    "--limit",
+    "999",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    host_id: "37782b66-190d-41c3-a7e5-f5662e34cd4a",
+    limit: undefined,
+  });
+  assert.equal(harness.captured.enqueued, 1);
+});

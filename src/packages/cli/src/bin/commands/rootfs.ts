@@ -850,6 +850,27 @@ export function registerRootfsCommand(
     );
 
   rootfs
+    .command("prepull [host_id]")
+    .description(
+      "queue RootFS pre-pull reconciliation for all running hosts or one host",
+    )
+    .option("--limit <n>", "maximum running hosts to queue", "5000")
+    .action(
+      async (
+        hostId: string | undefined,
+        opts: { limit?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs prepull", async (ctx) => {
+          return await ctx.hub.system.enqueueRootfsPrepull({
+            host_id: `${hostId ?? ""}`.trim() || undefined,
+            limit: hostId ? undefined : parseLimit(opts.limit, 5000),
+          });
+        });
+      },
+    );
+
+  rootfs
     .command("delete")
     .description("soft-delete a RootFS catalog entry and request safe GC")
     .requiredOption("--image-id <id>", "catalog image id")

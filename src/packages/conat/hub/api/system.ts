@@ -130,6 +130,7 @@ export const system = {
   getRootfsCatalogAdmin: authFirstRequireAccount,
   getRootfsCatalogAdminPage: authFirstRequireAccount,
   getRootfsRusticReposAdmin: authFirstRequireAccount,
+  enqueueRootfsPrepull: authFirstRequireAccount,
   saveRootfsCatalogEntry: authFirstRequireAccount,
   requestRootfsImageDeletion: authFirstRequireAccount,
   runRootfsReleaseGc: authFirstRequireAccount,
@@ -2375,6 +2376,16 @@ export interface System {
     region?: string;
     status?: string;
   }) => Promise<RootfsRusticRepoListResult>;
+
+  enqueueRootfsPrepull: (opts?: {
+    account_id?: string;
+    host_id?: string;
+    limit?: number;
+  }) => Promise<{
+    considered: number;
+    enqueued: number;
+    host_id?: string;
+  }>;
 
   saveRootfsCatalogEntry: (
     opts: RootfsCatalogSaveBody & {
