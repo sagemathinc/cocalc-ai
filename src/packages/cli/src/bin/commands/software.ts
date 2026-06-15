@@ -13,6 +13,7 @@ import {
 } from "../../core/auth-config";
 import { emitSuccess, printArrayTable } from "../core/cli-output";
 import {
+  compactTimestamp,
   chooseGeneratedTag,
   createSoftwareArtifactId,
   isSoftwareLatestSelector,
@@ -30,12 +31,16 @@ import {
   writeLocalManifest,
 } from "../core/software/local-store";
 import {
+  deploymentRecordKey,
   indexKey,
   loadDefaultSoftwareR2Client,
   manifestRemoteEntry,
+  publishHostCompatibilityArtifact,
+  readDeploymentIndex,
   readRemoteIndex,
   resolveSoftwareRemoteConfig,
   uploadSoftwareArtifact,
+  writeDeploymentRecord,
   type SoftwareRemoteIndexEntry,
   type SoftwareR2Client,
 } from "../core/software/remote-store";
@@ -43,6 +48,9 @@ import type {
   SoftwareArtifactManifest,
   SoftwareBuildComponent,
   SoftwareDeployComponent,
+  SoftwareDeploymentHistoryRow,
+  SoftwareDeploymentIndexEntry,
+  SoftwareDeploymentRecord,
   SoftwareGitMetadata,
   SoftwareListRow,
 } from "../core/software/types";
@@ -93,6 +101,11 @@ type DeployOptions = {
   config?: string;
   remote?: string;
   api?: string;
+};
+
+type HistoryOptions = {
+  envFile?: string;
+  limit?: string;
 };
 
 const BUILD_COMPONENTS_HELP = SOFTWARE_BUILD_COMPONENTS.join("|");
@@ -239,6 +252,58 @@ function formatDurationMs(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = Math.round(seconds % 60);
   return `${minutes}m ${remainingSeconds}s`;
+}
+
+function deploymentStatusForDisplay(
+  status: SoftwareDeploymentIndexEntry["status"],
+): string {
+  return status === "started" ? "unknown" : status;
+}
+
+function formatDeployedBy(
+  deployedBy: SoftwareDeploymentIndexEntry["deployed_by"],
+): string {
+  return (
+    deployedBy.email_address ||
+    deployedBy.account_id ||
+    deployedBy.user ||
+    "unknown"
+  );
+}
+
+function formatDeployTarget(
+  target: SoftwareDeploymentIndexEntry["target"],
+): string {
+  if (target.profile) {
+    return `${target.kind}:${target.profile}`;
+  }
+  if (target.channel) {
+    return `${target.kind}:${target.channel}`;
+  }
+  return target.kind;
+}
+
+function deploymentHistoryRow(
+  entry: SoftwareDeploymentIndexEntry,
+): SoftwareDeploymentHistoryRow {
+  return {
+    deployed_at: entry.started_at,
+    component: entry.component,
+    profile_or_channel: entry.profile_or_channel,
+    artifact_id: entry.artifact_id,
+    tag: entry.tag,
+    git: entry.git.short,
+    dirty: entry.git.dirty,
+    deployed_by: formatDeployedBy(entry.deployed_by),
+    target: formatDeployTarget(entry.target),
+    status: deploymentStatusForDisplay(entry.status),
+    duration:
+      entry.duration_ms == null
+        ? undefined
+        : formatDurationMs(entry.duration_ms),
+    error: entry.error,
+    record: entry.record_url,
+  };
 }
 
 function elapsedMsSince(
@@ -596,10 +661,12 @@ function findRemoteEntryMatches({
   return entries.filter((entry) => remoteEntryMatchesSelector(entry, selector));
 }
 
-function rocketDeployTargetForComponent(component: SoftwareDeployComponent): {
-  artifactComponent: SoftwareBuildComponent;
-  scope: "static" | "hub" | "bay";
-} {
+function rocketDeployTargetForComponent(component: SoftwareDeployComponent):
+  | {
+      artifactComponent: SoftwareBuildComponent;
+      scope: "static" | "hub" | "bay";
+    }
+  | undefined {
   if (component === "static") {
     return { artifactComponent: "static", scope: "static" };
   }
@@ -609,9 +676,7 @@ function rocketDeployTargetForComponent(component: SoftwareDeployComponent): {
   if (component === "bay") {
     return { artifactComponent: "bay", scope: "bay" };
   }
-  throw new Error(
-    `software deploy ${component} is not wired yet; currently supported: static, hub, bay`,
-  );
+  return undefined;
 }
 
 function currentCliInvocation(): { command: string; args: string[] } {
@@ -658,16 +723,48 @@ function resolveDeploySite({
   profile: string | undefined;
   opts: DeployOptions;
   deps: SoftwareCommandDeps;
-}): { api?: string; remote?: string } {
+}): {
+  profileName: string;
+  api?: string;
+  remote?: string;
+  account_id?: string;
+  email_address?: string;
+} {
   if (opts.api && opts.remote) {
-    return { api: opts.api, remote: opts.remote };
+    return {
+      profileName: profile ?? "explicit",
+      api: opts.api,
+      remote: opts.remote,
+    };
   }
   const config = (deps.loadAuthConfig ?? loadDefaultAuthConfig)();
   const profileName = profile ?? config.current_profile ?? "default";
   const authProfile = config.profiles[profileName];
   const api = opts.api ?? authProfile?.api;
   const remote = opts.remote ?? inferRocketRemote(api);
-  return { api, remote };
+  return {
+    profileName,
+    api,
+    remote,
+    account_id: authProfile?.account_id,
+    email_address: authProfile?.email_address,
+  };
+}
+
+function deployedBy({
+  target,
+  deps,
+}: {
+  target: ReturnType<typeof resolveDeploySite>;
+  deps: SoftwareCommandDeps;
+}): SoftwareDeploymentRecord["deployed_by"] {
+  const env = deps.env ?? process.env;
+  return {
+    user: env.USER || env.LOGNAME || undefined,
+    host: hostname(),
+    account_id: target.account_id,
+    email_address: target.email_address,
+  };
 }
 
 function latestDeploySelector({
@@ -724,6 +821,7 @@ async function resolveDeployArtifact({
   remote_manifest: string;
   bundle_url: string;
   bundle_sha256: string;
+  remote_entry: SoftwareRemoteIndexEntry;
 }> {
   const localStore = resolveSoftwareLocalStore({
     option: opts.localStore,
@@ -782,6 +880,7 @@ async function resolveDeployArtifact({
       remote_manifest: remoteEntry.manifest_url,
       bundle_url: remoteFile.url,
       bundle_sha256: remoteFile.sha256,
+      remote_entry: remoteEntry,
     };
   }
 
@@ -794,6 +893,7 @@ async function resolveDeployArtifact({
       remote_manifest: remoteEntry.manifest_url,
       bundle_url: remoteFile.url,
       bundle_sha256: remoteFile.sha256,
+      remote_entry: remoteEntry,
     };
   }
 
@@ -806,12 +906,168 @@ async function resolveDeployArtifact({
       remote_manifest: remoteEntry.manifest_url,
       bundle_url: remoteFile.url,
       bundle_sha256: remoteFile.sha256,
+      remote_entry: remoteEntry,
     };
   }
 
   throw new Error(
     `software artifact not found for ${component}: ${effectiveSelector}`,
   );
+}
+
+function hostDeployArtifactForComponent(
+  component: SoftwareDeployComponent,
+): SoftwareBuildComponent | undefined {
+  if (
+    component === "project-host" ||
+    component === "project" ||
+    component === "tools"
+  ) {
+    return component;
+  }
+  return undefined;
+}
+
+function deploymentId({
+  startedAt,
+  artifactId,
+}: {
+  startedAt: Date;
+  artifactId: string;
+}): string {
+  return `${compactTimestamp(startedAt)}-${artifactId}`;
+}
+
+function deploymentRecordBase({
+  component,
+  artifactComponent,
+  profileOrChannel,
+  startedAt,
+  artifact,
+  target,
+  kind,
+  details,
+  deps,
+}: {
+  component: SoftwareDeployComponent;
+  artifactComponent: SoftwareBuildComponent;
+  profileOrChannel: string;
+  startedAt: Date;
+  artifact: Awaited<ReturnType<typeof resolveDeployArtifact>>;
+  target: ReturnType<typeof resolveDeploySite>;
+  kind: SoftwareDeploymentRecord["target"]["kind"];
+  details?: Record<string, unknown>;
+  deps: SoftwareCommandDeps;
+}): SoftwareDeploymentRecord {
+  const git = artifact.remote_entry.git;
+  return {
+    schema: "cocalc-software-deployment-v1",
+    deployment_id: deploymentId({
+      startedAt,
+      artifactId: artifact.artifact_id,
+    }),
+    component,
+    artifact_component: artifactComponent,
+    profile_or_channel: profileOrChannel,
+    started_at: startedAt.toISOString(),
+    updated_at: startedAt.toISOString(),
+    artifact_id: artifact.artifact_id,
+    tag: artifact.tag,
+    git,
+    deployed_by: deployedBy({ target, deps }),
+    target: {
+      kind,
+      profile: profileOrChannel,
+      api: target.api,
+      remote: target.remote,
+    },
+    status: "started",
+    details,
+  };
+}
+
+async function writeDeploymentRecordBestEffort({
+  client,
+  config,
+  record,
+  deps,
+}: {
+  client: SoftwareR2Client;
+  config: Awaited<ReturnType<typeof resolveSoftwareRemoteConfig>>;
+  record: SoftwareDeploymentRecord;
+  deps: SoftwareCommandDeps;
+}): Promise<void> {
+  await writeDeploymentRecord({
+    client,
+    config,
+    record,
+    now: deps.now?.() ?? new Date(),
+  });
+}
+
+async function runWithDeploymentHistory({
+  record,
+  client,
+  config,
+  deps,
+  run,
+}: {
+  record: SoftwareDeploymentRecord;
+  client: SoftwareR2Client;
+  config: Awaited<ReturnType<typeof resolveSoftwareRemoteConfig>>;
+  deps: SoftwareCommandDeps;
+  run: () => Promise<void>;
+}): Promise<SoftwareDeploymentRecord> {
+  await writeDeploymentRecordBestEffort({ client, config, record, deps });
+  try {
+    await run();
+  } catch (err) {
+    const finishedAt = deps.now?.() ?? new Date();
+    const failed: SoftwareDeploymentRecord = {
+      ...record,
+      updated_at: finishedAt.toISOString(),
+      finished_at: finishedAt.toISOString(),
+      status: "failed",
+      duration_ms: Math.max(
+        0,
+        finishedAt.getTime() - new Date(record.started_at).getTime(),
+      ),
+      error: err instanceof Error ? err.message : `${err}`,
+    };
+    try {
+      await writeDeploymentRecordBestEffort({
+        client,
+        config,
+        record: failed,
+        deps,
+      });
+    } catch (historyErr) {
+      process.stderr.write(
+        `WARNING: failed to seal software deployment failure history: ${
+          historyErr instanceof Error ? historyErr.message : historyErr
+        }\n`,
+      );
+    }
+    throw err;
+  }
+  const finishedAt = deps.now?.() ?? new Date();
+  const succeeded: SoftwareDeploymentRecord = {
+    ...record,
+    updated_at: finishedAt.toISOString(),
+    finished_at: finishedAt.toISOString(),
+    status: "succeeded",
+    duration_ms: Math.max(
+      0,
+      finishedAt.getTime() - new Date(record.started_at).getTime(),
+    ),
+  };
+  await writeDeploymentRecordBestEffort({
+    client,
+    config,
+    record: succeeded,
+    deps,
+  });
+  return succeeded;
 }
 
 export function registerSoftwareCommand(
@@ -996,9 +1252,20 @@ Supported deploy/smoke components:
         command: Command,
       ) => {
         const component = parseSoftwareDeployComponent(componentArg);
+        const deployTarget = `${profileOrChannel ?? ""}`.trim();
+        if (!deployTarget) {
+          throw new Error("software deploy requires <profile-or-channel>");
+        }
         const startedAt = deps.now?.() ?? new Date();
-        const { artifactComponent, scope } =
-          rocketDeployTargetForComponent(component);
+        const rocketTarget = rocketDeployTargetForComponent(component);
+        const hostArtifactComponent = hostDeployArtifactForComponent(component);
+        const artifactComponent =
+          rocketTarget?.artifactComponent ?? hostArtifactComponent;
+        if (!artifactComponent) {
+          throw new Error(
+            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, project-host, project, tools`,
+          );
+        }
         if (!deps.runCommand) {
           throw new Error("software deploy requires runCommand dependency");
         }
@@ -1009,36 +1276,106 @@ Supported deploy/smoke components:
           deps,
         });
         const target = resolveDeploySite({
-          profile: profileOrChannel,
+          profile: deployTarget,
           opts,
           deps,
         });
-        const cli = currentCliInvocation();
-        const args = [
-          ...cli.args,
-          "rocket",
-          "deploy",
-          ...(profileOrChannel ? [profileOrChannel] : []),
-          "--scope",
-          scope,
-          "--bundle-url",
-          artifact.bundle_url,
-          "--bundle-sha256",
-          artifact.bundle_sha256,
-          ...(opts.config ? ["--config", opts.config] : []),
-          ...(target.remote ? ["--remote", target.remote] : []),
-          ...(target.api ? ["--api", target.api] : []),
-          "--yes",
-        ];
-        const code = await deps.runCommand(cli.command, args, {
-          stdio: "inherit",
+        const config = await resolveSoftwareRemoteConfig({
           env: deps.env ?? process.env,
+          envFile: opts.envFile,
         });
-        if (code !== 0) {
-          throw new Error(
-            `software deploy ${component} failed with exit status ${code}`,
-          );
+        const client = softwareR2Client(deps);
+        const cli = currentCliInvocation();
+        let args: string[];
+        let rocketScope: string | undefined;
+        let hostBaseUrl: string | undefined;
+        let hostCompatUrl: string | undefined;
+        let targetKind: SoftwareDeploymentRecord["target"]["kind"];
+        if (rocketTarget) {
+          rocketScope = rocketTarget.scope;
+          targetKind = "rocket-bay";
+          args = [
+            ...cli.args,
+            "rocket",
+            "deploy",
+            deployTarget,
+            "--scope",
+            rocketScope,
+            "--bundle-url",
+            artifact.bundle_url,
+            "--bundle-sha256",
+            artifact.bundle_sha256,
+            ...(opts.config ? ["--config", opts.config] : []),
+            ...(target.remote ? ["--remote", target.remote] : []),
+            ...(target.api ? ["--api", target.api] : []),
+            "--yes",
+          ];
+        } else {
+          const compat = await publishHostCompatibilityArtifact({
+            client,
+            config,
+            entry: artifact.remote_entry,
+          });
+          hostBaseUrl = compat.base_url;
+          hostCompatUrl = compat.url;
+          targetKind = "project-host-fleet";
+          args = [
+            ...cli.args,
+            "--profile",
+            deployTarget,
+            "host",
+            "upgrade",
+            "--all-online",
+            "--artifact",
+            component,
+            "--artifact-version",
+            artifact.artifact_id,
+            "--base-url",
+            hostBaseUrl,
+            "--wait",
+          ];
         }
+        const record = deploymentRecordBase({
+          component,
+          artifactComponent,
+          profileOrChannel: deployTarget,
+          startedAt,
+          artifact,
+          target,
+          kind: targetKind,
+          details: {
+            source: artifact.source,
+            remote_manifest: artifact.remote_manifest,
+            bundle_url: artifact.bundle_url,
+            bundle_sha256: artifact.bundle_sha256,
+            ...(rocketScope ? { rocket_scope: rocketScope } : {}),
+            ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
+            ...(hostCompatUrl ? { host_compat_url: hostCompatUrl } : {}),
+          },
+          deps,
+        });
+        const finalRecord = await runWithDeploymentHistory({
+          record,
+          client,
+          config,
+          deps,
+          run: async () => {
+            const code = await deps.runCommand!(cli.command, args, {
+              stdio: "inherit",
+              env: deps.env ?? process.env,
+            });
+            if (code !== 0) {
+              throw new Error(
+                `software deploy ${component} failed with exit status ${code}`,
+              );
+            }
+          },
+        });
+        const recordKey = deploymentRecordKey({
+          component,
+          profileOrChannel: deployTarget,
+          deploymentId: finalRecord.deployment_id,
+        });
         emitSuccess(
           { globals: command.optsWithGlobals() as any },
           "software deploy",
@@ -1051,10 +1388,64 @@ Supported deploy/smoke components:
             remote_manifest: artifact.remote_manifest,
             bundle_url: artifact.bundle_url,
             bundle_sha256: artifact.bundle_sha256,
-            rocket_scope: scope,
-            profile: profileOrChannel ?? null,
+            ...(rocketScope ? { rocket_scope: rocketScope } : {}),
+            ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
+            profile: deployTarget,
+            deployment_id: finalRecord.deployment_id,
+            deployment_record: `${config.publicBaseUrl}/${recordKey}`,
           },
         );
+      },
+    );
+
+  software
+    .command("history")
+    .description("show deployment history for a component and profile/channel")
+    .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
+    .argument("<profile-or-channel>", "site profile or release channel")
+    .option(
+      "--env-file <path>",
+      "R2 credential env file",
+      "/run/secrets/cocalc/rocket-software-env.sh",
+    )
+    .option("--limit <n>", "maximum rows to show", "10")
+    .action(
+      async (
+        componentArg: string,
+        profileOrChannel: string,
+        opts: HistoryOptions,
+        command: Command,
+      ) => {
+        const component = parseSoftwareDeployComponent(componentArg);
+        const target = `${profileOrChannel ?? ""}`.trim();
+        if (!target) {
+          throw new Error("software history requires <profile-or-channel>");
+        }
+        const limit = parseLimit(opts.limit);
+        const config = await resolveSoftwareRemoteConfig({
+          env: deps.env ?? process.env,
+          envFile: opts.envFile,
+        });
+        const client = softwareR2Client(deps);
+        const index = await readDeploymentIndex({
+          client,
+          auth: config.auth,
+          component,
+          profileOrChannel: target,
+        });
+        const rows = index.deployments
+          .slice(0, limit)
+          .map(deploymentHistoryRow);
+        const globals = command.optsWithGlobals() as any;
+        if (globals.json || globals.output === "json") {
+          emitSuccess({ globals }, "software history", {
+            component,
+            profile_or_channel: target,
+            deployments: rows,
+          });
+          return;
+        }
+        printArrayTable(rows);
       },
     );
 

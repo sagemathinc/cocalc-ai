@@ -39,6 +39,8 @@ export type SoftwareComponent =
   | SoftwareBuildComponent
   | SoftwareDeployComponent;
 
+export type SoftwareDeploymentStatus = "started" | "succeeded" | "failed";
+
 export type SoftwareGitMetadata = {
   commit: string;
   short: string;
@@ -94,4 +96,87 @@ export type SoftwareListRow = {
   created: string;
   local?: string;
   remote?: string;
+};
+
+export type SoftwareDeploymentRecord = {
+  schema: "cocalc-software-deployment-v1";
+  deployment_id: string;
+  component: SoftwareDeployComponent;
+  artifact_component: SoftwareBuildComponent;
+  profile_or_channel: string;
+  started_at: string;
+  updated_at: string;
+  finished_at?: string;
+  artifact_id: string;
+  tag: string;
+  git: {
+    commit: string;
+    short: string;
+    dirty: boolean;
+  };
+  deployed_by: {
+    user?: string;
+    host?: string;
+    account_id?: string;
+    email_address?: string;
+  };
+  target: {
+    kind: "rocket-bay" | "project-host-fleet" | "release-channel";
+    profile?: string;
+    channel?: string;
+    api?: string;
+    remote?: string;
+  };
+  status: SoftwareDeploymentStatus;
+  duration_ms?: number;
+  error?: string;
+  details?: Record<string, unknown>;
+};
+
+export type SoftwareDeploymentIndexEntry = {
+  deployment_id: string;
+  component: SoftwareDeployComponent;
+  artifact_component: SoftwareBuildComponent;
+  profile_or_channel: string;
+  started_at: string;
+  updated_at: string;
+  finished_at?: string;
+  artifact_id: string;
+  tag: string;
+  git: {
+    commit: string;
+    short: string;
+    dirty: boolean;
+  };
+  deployed_by: SoftwareDeploymentRecord["deployed_by"];
+  target: SoftwareDeploymentRecord["target"];
+  status: SoftwareDeploymentStatus;
+  duration_ms?: number;
+  error?: string;
+  record_key: string;
+  record_url: string;
+};
+
+export type SoftwareDeploymentIndex = {
+  schema: "cocalc-software-deployment-index-v1";
+  component: SoftwareDeployComponent;
+  profile_or_channel: string;
+  generated_at: string;
+  deployments: SoftwareDeploymentIndexEntry[];
+};
+
+export type SoftwareDeploymentHistoryRow = {
+  deployed_at: string;
+  component: string;
+  profile_or_channel: string;
+  artifact_id: string;
+  tag: string;
+  git: string;
+  dirty: boolean;
+  deployed_by: string;
+  target: string;
+  status: string;
+  duration?: string;
+  error?: string;
+  record?: string;
 };

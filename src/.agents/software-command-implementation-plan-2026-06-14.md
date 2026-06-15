@@ -961,6 +961,41 @@ Smoke tests should have explicit cleanup and should write reports under:
 
 ## Implementation Phases
 
+### Current Implementation Status, 2026-06-15
+
+Implemented:
+
+- `build`, `list`, and `push` for immutable local/R2 artifacts.
+- `build` for `static`, `hub`, `bay`, `project-host`, `project`, and
+  `tools`.
+- `deploy` for `static`, `hub`, and `bay` through the Rocket deploy path.
+- `deploy` for `project-host`, `project`, and `tools` through
+  `host upgrade --all-online --artifact-version ...`.
+- Compatibility publishing for `project-host`, `project`, and `tools` so
+  existing host upgrade/install code can consume immutable software artifacts
+  from old-shape URLs such as
+  `software/project-host/<artifact-id>/bundle-linux.tar.xz`.
+- R2 deployment history for implemented deploy paths, with a started record
+  written before the target is mutated and a sealed `succeeded` or `failed`
+  record written after completion. Unsealed `started` records display as
+  `unknown` in `software history`.
+- `latest` as a reserved selector that resolves to the newest local or remote
+  artifact for a component.
+- Human-readable build/deploy durations and artifact sizes.
+- Fast hub/static build paths that avoid rebuilding unrelated static/runtime
+  content.
+
+Still not implemented:
+
+- `smoke`.
+- `deploy`/promote for `cli`, `launchpad`, `plus`, and `star`.
+- Precise bay-side service deploys for `bay-conat-router`,
+  `bay-conat-persist`, `bay-frontdoor`, `bay-cloudflared`, and
+  `bay-scaffold`.
+- Host-side component-only deploys for `host-conat-router` and
+  `host-conat-persist`.
+- Rollback wrappers.
+
 ### Phase 0: Documentation And Test Fixtures
 
 - Add this plan.
@@ -1326,7 +1361,7 @@ sha256-identical artifact.
 
 - Should `deploy` auto-push local-only artifacts, or should it fail and ask the
   operator to run `push`? Current preference: auto-push is acceptable for
-  `deploy`, but `build` must not push.  (ANS: auto-push for deploy).
+  `deploy`, but `build` must not push. (ANS: auto-push for deploy).
 - Should `software list` default to merged local+remote, or show remote first
   and local-only rows separately? Current preference: merged with `source`.
 - Should CLI/Launchpad/Plus channel manifests be written only by

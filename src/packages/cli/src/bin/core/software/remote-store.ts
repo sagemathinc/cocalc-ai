@@ -3,11 +3,19 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  copyR2Object,
   getR2ObjectBuffer,
   putR2ObjectFromBuffer,
   putR2ObjectFromFile,
 } from "@cocalc/backend/r2";
-import type { SoftwareArtifactManifest, SoftwareBuildComponent } from "./types";
+import type {
+  SoftwareArtifactManifest,
+  SoftwareBuildComponent,
+  SoftwareDeployComponent,
+  SoftwareDeploymentIndex,
+  SoftwareDeploymentIndexEntry,
+  SoftwareDeploymentRecord,
+} from "./types";
 
 export const DEFAULT_SOFTWARE_R2_ENV_FILE =
   "/run/secrets/cocalc/rocket-software-env.sh";
@@ -41,6 +49,11 @@ export type SoftwareR2Client = {
     auth: SoftwareR2Auth;
     key: string;
   }) => Promise<Buffer | undefined>;
+  copyR2Object: (opts: {
+    auth: SoftwareR2Auth;
+    sourceKey: string;
+    destKey: string;
+  }) => Promise<void>;
 };
 
 export type SoftwareRemoteConfig = {
@@ -163,6 +176,7 @@ export function loadDefaultSoftwareR2Client(): SoftwareR2Client {
     putR2ObjectFromFile,
     putR2ObjectFromBuffer,
     getR2ObjectBuffer,
+    copyR2Object,
   };
 }
 
@@ -176,6 +190,32 @@ export function indexKey(component: SoftwareBuildComponent): string {
 
 export function publicUrl(config: SoftwareRemoteConfig, key: string): string {
   return `${config.publicBaseUrl}/${key}`;
+}
+
+function keySegment(value: string): string {
+  return encodeURIComponent(value).replace(/%2F/gi, "%252F");
+}
+
+export function deploymentIndexKey({
+  component,
+  profileOrChannel,
+}: {
+  component: SoftwareDeployComponent;
+  profileOrChannel: string;
+}): string {
+  return `software/deployments/${keySegment(profileOrChannel)}/${component}/index.json`;
+}
+
+export function deploymentRecordKey({
+  component,
+  profileOrChannel,
+  deploymentId,
+}: {
+  component: SoftwareDeployComponent;
+  profileOrChannel: string;
+  deploymentId: string;
+}): string {
+  return `software/deployments/${keySegment(profileOrChannel)}/${component}/${deploymentId}.json`;
 }
 
 export function manifestRemoteEntry({
@@ -330,4 +370,192 @@ export async function uploadSoftwareArtifact({
     cacheControl: config.indexCacheControl,
   });
   return next;
+}
+
+export function emptyDeploymentIndex({
+  component,
+  profileOrChannel,
+}: {
+  component: SoftwareDeployComponent;
+  profileOrChannel: string;
+}): SoftwareDeploymentIndex {
+  return {
+    schema: "cocalc-software-deployment-index-v1",
+    component,
+    profile_or_channel: profileOrChannel,
+    generated_at: new Date(0).toISOString(),
+    deployments: [],
+  };
+}
+
+export async function readDeploymentIndex({
+  client,
+  auth,
+  component,
+  profileOrChannel,
+}: {
+  client: SoftwareR2Client;
+  auth: SoftwareR2Auth;
+  component: SoftwareDeployComponent;
+  profileOrChannel: string;
+}): Promise<SoftwareDeploymentIndex> {
+  try {
+    const body = await client.getR2ObjectBuffer({
+      auth,
+      key: deploymentIndexKey({ component, profileOrChannel }),
+    });
+    if (!body) {
+      return emptyDeploymentIndex({ component, profileOrChannel });
+    }
+    const parsed = JSON.parse(body.toString("utf8"));
+    if (
+      parsed?.schema !== "cocalc-software-deployment-index-v1" ||
+      parsed?.component !== component ||
+      parsed?.profile_or_channel !== profileOrChannel ||
+      !Array.isArray(parsed?.deployments)
+    ) {
+      throw new Error(
+        `invalid software deployment index for ${component}/${profileOrChannel}`,
+      );
+    }
+    return parsed;
+  } catch (err: any) {
+    const message = `${err?.message || err}`;
+    if (err?.statusCode === 404 || /\b404\b|not found/i.test(message)) {
+      return emptyDeploymentIndex({ component, profileOrChannel });
+    }
+    throw err;
+  }
+}
+
+export function deploymentIndexEntry({
+  record,
+  config,
+}: {
+  record: SoftwareDeploymentRecord;
+  config: SoftwareRemoteConfig;
+}): SoftwareDeploymentIndexEntry {
+  const record_key = deploymentRecordKey({
+    component: record.component,
+    profileOrChannel: record.profile_or_channel,
+    deploymentId: record.deployment_id,
+  });
+  return {
+    deployment_id: record.deployment_id,
+    component: record.component,
+    artifact_component: record.artifact_component,
+    profile_or_channel: record.profile_or_channel,
+    started_at: record.started_at,
+    updated_at: record.updated_at,
+    finished_at: record.finished_at,
+    artifact_id: record.artifact_id,
+    tag: record.tag,
+    git: record.git,
+    deployed_by: record.deployed_by,
+    target: record.target,
+    status: record.status,
+    duration_ms: record.duration_ms,
+    error: record.error,
+    record_key,
+    record_url: publicUrl(config, record_key),
+  };
+}
+
+export async function writeDeploymentRecord({
+  client,
+  config,
+  record,
+  now,
+}: {
+  client: SoftwareR2Client;
+  config: SoftwareRemoteConfig;
+  record: SoftwareDeploymentRecord;
+  now: Date;
+}): Promise<SoftwareDeploymentIndex> {
+  const current = await readDeploymentIndex({
+    client,
+    auth: config.auth,
+    component: record.component,
+    profileOrChannel: record.profile_or_channel,
+  });
+  const recordKey = deploymentRecordKey({
+    component: record.component,
+    profileOrChannel: record.profile_or_channel,
+    deploymentId: record.deployment_id,
+  });
+  await client.putR2ObjectFromBuffer({
+    auth: config.auth,
+    key: recordKey,
+    body: Buffer.from(JSON.stringify(record, null, 2) + "\n", "utf8"),
+    contentType: "application/json",
+    cacheControl: config.indexCacheControl,
+  });
+  const entry = deploymentIndexEntry({ record, config });
+  const deployments = [
+    entry,
+    ...current.deployments.filter(
+      (candidate) => candidate.deployment_id !== record.deployment_id,
+    ),
+  ].sort((a, b) => b.started_at.localeCompare(a.started_at));
+  const next: SoftwareDeploymentIndex = {
+    schema: "cocalc-software-deployment-index-v1",
+    component: record.component,
+    profile_or_channel: record.profile_or_channel,
+    generated_at: now.toISOString(),
+    deployments,
+  };
+  await client.putR2ObjectFromBuffer({
+    auth: config.auth,
+    key: deploymentIndexKey({
+      component: record.component,
+      profileOrChannel: record.profile_or_channel,
+    }),
+    body: Buffer.from(JSON.stringify(next, null, 2) + "\n", "utf8"),
+    contentType: "application/json",
+    cacheControl: config.indexCacheControl,
+  });
+  return next;
+}
+
+export async function publishHostCompatibilityArtifact({
+  client,
+  config,
+  entry,
+}: {
+  client: SoftwareR2Client;
+  config: SoftwareRemoteConfig;
+  entry: SoftwareRemoteIndexEntry;
+}): Promise<{ base_url: string; url: string }> {
+  if (
+    entry.files.length !== 1 ||
+    !["project-host", "project", "tools"].includes(
+      entry.manifest_key.split("/")[2] ?? "",
+    )
+  ) {
+    throw new Error(
+      `software host compatibility publish expected one project-host/project/tools file in ${entry.artifact_id}`,
+    );
+  }
+  const artifact = entry.manifest_key.split("/")[2] as
+    | "project-host"
+    | "project"
+    | "tools";
+  const file = entry.files[0];
+  const compatKey = `software/${artifact}/${entry.artifact_id}/${file.name}`;
+  await client.copyR2Object({
+    auth: config.auth,
+    sourceKey: file.key,
+    destKey: compatKey,
+  });
+  await client.putR2ObjectFromBuffer({
+    auth: config.auth,
+    key: `${compatKey}.sha256`,
+    body: Buffer.from(`${file.sha256}  ${file.name}\n`, "utf8"),
+    contentType: "text/plain",
+    cacheControl: config.artifactCacheControl,
+  });
+  return {
+    base_url: `${config.publicBaseUrl}/software`,
+    url: publicUrl(config, compatKey),
+  };
 }
