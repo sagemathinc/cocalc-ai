@@ -17,8 +17,8 @@ operator profiles.
 Primary commands:
 
 ```sh
-cocalc software build <component> <tag>
-cocalc software push <component> <tag>
+cocalc software build <component> [tag]
+cocalc software push <component> <tag-or-id>
 cocalc software list <component>
 cocalc software deploy <component> <tag-or-id> <profile-or-channel>
 cocalc software smoke <component> <profile-or-channel>
@@ -64,10 +64,13 @@ Important operator semantics:
 - `deploy` requires the artifact to exist remotely. If it exists locally but not
   remotely, `deploy` may push it first. If the artifact exists nowhere, fail
   with a clear error.
-- The build tag is required.
-- Tags must be unique per component across both local and remote indexes.
+- The build tag is optional. If omitted, generate a safe tag and print it in
+  the build summary.
+- Explicit and generated tags must be unique per component across both local
+  and remote indexes.
 - `deploy ... --build` can be added as the only convenience flag if desired:
-  fail if the tag already exists; otherwise build, push, then deploy.
+  if an explicit tag is provided, fail when it already exists; if no tag is
+  provided, generate a tag; otherwise build, push, then deploy.
 - `star` uses the third positional argument as a channel (`stable`,
   `candidate`, or `dev`) instead of an auth profile.
 - `cli`, `launchpad`, and `plus` are publish/promote style components. They do
@@ -252,13 +255,18 @@ Rules:
 
 - Timestamp is UTC ISO-like compact format: `YYYYMMDDTHHMMSSZ`.
 - `git8` is the first 8 characters of `git rev-parse HEAD`.
-- `tag` is required and must match `^[A-Za-z0-9._-]+$`.
+- `tag` is optional for `build`. If provided, it must match
+  `^[A-Za-z0-9._-]+$`.
+- If `tag` is omitted, generate one from the UTC build time. First try
+  `YYYYMMDDTHHMMZ`, then `YYYYMMDDTHHMMSSZ`, then append `-2`, `-3`, etc. if
+  needed to avoid local or remote conflicts.
 - `dirty` suffix is present when the repo has unstaged or staged changes in the
   source tree at build time.
 - Dirty builds are allowed, but the dirty flag must be explicit in the manifest
   and the artifact id.
 - Tag uniqueness is per component. A tag cannot be reused for the same
   component locally or remotely.
+- The manifest must record whether the tag was explicit or generated.
 
 Selectors accepted by `deploy`:
 
@@ -340,6 +348,7 @@ Remote index schema:
     {
       "artifact_id": "20260614T235912Z-e882d124-fix-bug",
       "tag": "fix-bug",
+      "tag_generated": false,
       "timestamp": "2026-06-14T23:59:12.000Z",
       "git": {
         "commit": "e882d124c7...",
@@ -372,6 +381,7 @@ Each local and remote artifact must have:
   "component": "hub",
   "artifact_id": "20260614T235912Z-e882d124-fix-bug",
   "tag": "fix-bug",
+  "tag_generated": false,
   "created_at": "2026-06-14T23:59:12.000Z",
   "source": {
     "repo_root": "/home/user/cocalc-ai",
@@ -619,10 +629,10 @@ intentionally migrate Star installer distribution to R2.
 
 ## Push Semantics
 
-`cocalc software push <component> <tag>`:
+`cocalc software push <component> <tag-or-id>`:
 
 1. Load config and credentials.
-2. Resolve the local artifact by exact tag.
+2. Resolve the local artifact by exact tag or exact artifact id.
 3. Fetch remote index for the component.
 4. If tag already exists remotely, fail.
 5. Upload each file and `.sha256`.
@@ -880,6 +890,7 @@ Implement:
 
 - component parsing
 - tag validation
+- generated tag selection
 - artifact id generation
 - git metadata collection
 - local store scanning
@@ -1097,12 +1108,29 @@ Build success:
 Built software artifact
 component: hub
 tag: fix-bug
+tag_source: explicit
 artifact_id: 20260614T235912Z-e882d124-fix-bug
 git: e882d124 clean
 local: /tmp/cocalc-software/hub/20260614T235912Z-e882d124-fix-bug
 
 files:
   cocalc-bay-runtime-linux-x64.tar.xz  46M  sha256:...
+```
+
+Build success with generated tag:
+
+```text
+Built software artifact
+component: hub
+tag: 20260614T2359Z
+tag_source: generated
+artifact_id: 20260614T235912Z-e882d124-20260614T2359Z
+git: e882d124 clean
+local: /tmp/cocalc-software/hub/20260614T235912Z-e882d124-20260614T2359Z
+
+Next:
+  cocalc software push hub 20260614T2359Z
+  cocalc software deploy hub 20260614T2359Z staging
 ```
 
 Push success:
@@ -1140,6 +1168,9 @@ cocalc software deploy hub fix-bug prod
 cocalc software smoke hub prod
 ```
 
+For routine unnamed builds, the operator can omit the tag and use the generated
+tag printed in the build summary for subsequent `push` and `deploy` commands.
+
 This replaces the current manual pattern:
 
 ```sh
@@ -1154,7 +1185,7 @@ sha256-identical artifact.
 
 - Should `deploy` auto-push local-only artifacts, or should it fail and ask the
   operator to run `push`? Current preference: auto-push is acceptable for
-  `deploy`, but `build` must not push.
+  `deploy`, but `build` must not push.  (ANS: auto-push for deploy).
 - Should `software list` default to merged local+remote, or show remote first
   and local-only rows separately? Current preference: merged with `source`.
 - Should CLI/Launchpad/Plus channel manifests be written only by
@@ -1178,4 +1209,3 @@ sha256-identical artifact.
 - Do not implement a full lock service for R2 indexes.
 - Do not make every smoke test comprehensive before exposing the build/list/push
   workflow.
-
