@@ -16,6 +16,7 @@ import type {
   SoftwareBuildComponent,
   SoftwareListRow,
 } from "./types";
+import type { SoftwareRemoteIndexEntry } from "./remote-store";
 
 export const DEFAULT_SOFTWARE_LOCAL_STORE = "/tmp/cocalc-software";
 
@@ -191,5 +192,21 @@ export function manifestToListRow({
     size: formatSize(size),
     created: manifest.created_at,
     local: path,
+  };
+}
+
+export function remoteIndexEntryToListRow(
+  entry: SoftwareRemoteIndexEntry,
+): SoftwareListRow {
+  const size = entry.files.reduce((total, file) => total + file.size_bytes, 0);
+  return {
+    source: "remote",
+    tag: entry.tag,
+    artifact_id: entry.artifact_id,
+    git: entry.git.short,
+    dirty: entry.git.dirty,
+    size: formatSize(size),
+    created: entry.timestamp,
+    remote: entry.manifest_url,
   };
 }

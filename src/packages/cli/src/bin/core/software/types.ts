@@ -80,12 +80,13 @@ export type SoftwareArtifactManifest = {
 };
 
 export type SoftwareListRow = {
-  source: "local";
+  source: "local" | "remote" | "local+remote";
   tag: string;
   artifact_id: string;
   git: string;
   dirty: boolean;
   size: string;
   created: string;
-  local: string;
+  local?: string;
+  remote?: string;
 };

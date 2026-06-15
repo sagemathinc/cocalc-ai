@@ -17,6 +17,7 @@ import {
   copyArtifactFile,
   listLocalManifests,
   manifestToListRow,
+  remoteIndexEntryToListRow,
   resolveSoftwareLocalStore,
   writeLocalManifest,
 } from "../core/software/local-store";
@@ -24,6 +25,7 @@ import {
   indexKey,
   loadDefaultSoftwareR2Client,
   manifestRemoteEntry,
+  readRemoteIndex,
   resolveSoftwareRemoteConfig,
   uploadSoftwareArtifact,
   type SoftwareR2Client,
@@ -32,6 +34,7 @@ import type {
   SoftwareArtifactManifest,
   SoftwareBuildComponent,
   SoftwareGitMetadata,
+  SoftwareListRow,
 } from "../core/software/types";
 import {
   SOFTWARE_BUILD_COMPONENTS,
@@ -64,6 +67,8 @@ type BuildOptions = {
 type ListOptions = {
   localStore?: string;
   limit?: string;
+  remote?: boolean;
+  envFile?: string;
 };
 
 type PushOptions = {
@@ -415,6 +420,65 @@ function softwareR2Client(deps: SoftwareCommandDeps): SoftwareR2Client {
   return typeof deps.r2Client === "function" ? deps.r2Client() : deps.r2Client;
 }
 
+function isMissingRemoteConfigError(err: unknown): boolean {
+  return `${(err as any)?.message || err}`.includes(
+    "Missing R2 software credentials",
+  );
+}
+
+function mergeListRows({
+  localRows,
+  remoteRows,
+}: {
+  localRows: SoftwareListRow[];
+  remoteRows: SoftwareListRow[];
+}): SoftwareListRow[] {
+  const rows = new Map<string, SoftwareListRow>();
+  for (const row of localRows) {
+    rows.set(row.artifact_id, { ...row });
+  }
+  for (const row of remoteRows) {
+    const existing = rows.get(row.artifact_id);
+    if (existing) {
+      existing.source =
+        existing.source === "local" ? "local+remote" : existing.source;
+      existing.remote = row.remote;
+      continue;
+    }
+    rows.set(row.artifact_id, { ...row });
+  }
+  return [...rows.values()].sort((a, b) => b.created.localeCompare(a.created));
+}
+
+async function listRemoteRows({
+  component,
+  opts,
+  deps,
+}: {
+  component: SoftwareBuildComponent;
+  opts: ListOptions;
+  deps: SoftwareCommandDeps;
+}): Promise<SoftwareListRow[]> {
+  try {
+    const config = await resolveSoftwareRemoteConfig({
+      env: deps.env ?? process.env,
+      envFile: opts.envFile,
+    });
+    const client = softwareR2Client(deps);
+    const index = await readRemoteIndex({
+      client,
+      auth: config.auth,
+      component,
+    });
+    return index.artifacts.map(remoteIndexEntryToListRow);
+  } catch (err) {
+    if (isMissingRemoteConfigError(err)) {
+      return [];
+    }
+    throw err;
+  }
+}
+
 export function registerSoftwareCommand(
   program: Command,
   deps: SoftwareCommandDeps = {},
@@ -479,6 +543,12 @@ Supported deploy/smoke components:
     .description("list local software artifacts")
     .argument("<component>", BUILD_COMPONENT_ARGUMENT)
     .option("--local-store <path>", "local artifact store")
+    .option("--no-remote", "only show local artifacts")
+    .option(
+      "--env-file <path>",
+      "R2 credential env file",
+      "/run/secrets/cocalc/rocket-software-env.sh",
+    )
     .option("--limit <n>", "maximum rows to show", "10")
     .action(
       async (componentArg: string, opts: ListOptions, command: Command) => {
@@ -488,9 +558,14 @@ Supported deploy/smoke components:
           env: deps.env ?? process.env,
         });
         const limit = parseLimit(opts.limit);
-        const rows = (await listLocalManifests({ localStore, component }))
-          .slice(0, limit)
-          .map(manifestToListRow);
+        const localRows = (
+          await listLocalManifests({ localStore, component })
+        ).map(manifestToListRow);
+        const remoteRows =
+          opts.remote === false
+            ? []
+            : await listRemoteRows({ component, opts, deps });
+        const rows = mergeListRows({ localRows, remoteRows }).slice(0, limit);
         const globals = command.optsWithGlobals() as any;
         if (globals.json || globals.output === "json") {
           emitSuccess({ globals }, "software list", {

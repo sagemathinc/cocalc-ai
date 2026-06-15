@@ -432,6 +432,7 @@ test("software list emits local artifacts as json", async () => {
       "software",
       "list",
       "hub",
+      "--no-remote",
     ]);
   } finally {
     console.log = originalLog;
@@ -505,6 +506,141 @@ test("software push uploads files manifest and component index", async () => {
   assert.equal(payload.ok, true);
   assert.equal(payload.command, "software push");
   assert.equal(payload.data.tag, "push-test");
+});
+
+test("software list merges local and remote artifacts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-list-remote-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "artifact.tar.xz");
+  writeFileSync(source, "artifact contents");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "hub",
+    "push-test",
+    "--from-file",
+    source,
+  ]);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "push",
+    "hub",
+    "push-test",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "list",
+      "hub",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  const artifact = payload.data.artifacts[0];
+  assert.equal(artifact.tag, "push-test");
+  assert.equal(artifact.source, "local+remote");
+  assert.match(
+    artifact.remote,
+    /^https:\/\/software\.example\.test\/software\/artifacts\/hub\/20260614T235912Z-e882d124-push-test\/manifest\.json$/,
+  );
+  assert.match(artifact.local, /manifest\.json$/);
+});
+
+test("software list shows remote-only artifacts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-list-remote-only-"));
+  const localStore = join(dir, "store");
+  const index = {
+    schema: "cocalc-software-index-v1",
+    component: "static",
+    generated_at: "2026-06-15T00:00:00.000Z",
+    artifacts: [
+      {
+        artifact_id: "20260615T000000Z-abcdef12-remote-test",
+        tag: "remote-test",
+        tag_generated: false,
+        timestamp: "2026-06-15T00:00:00.000Z",
+        git: { commit: "abcdef123456", short: "abcdef123456", dirty: false },
+        manifest_key:
+          "software/artifacts/static/20260615T000000Z-abcdef12-remote-test/manifest.json",
+        manifest_url:
+          "https://software.example.test/software/artifacts/static/20260615T000000Z-abcdef12-remote-test/manifest.json",
+        files: [
+          {
+            name: "cocalc-bay-static-linux-x64.tar.xz",
+            size_bytes: 1234,
+            sha256: "abc",
+            key: "software/artifacts/static/20260615T000000Z-abcdef12-remote-test/files/cocalc-bay-static-linux-x64.tar.xz",
+            url: "https://software.example.test/software/artifacts/static/20260615T000000Z-abcdef12-remote-test/files/cocalc-bay-static-linux-x64.tar.xz",
+          },
+        ],
+      },
+    ],
+  };
+  const r2 = makeR2Client(
+    new Map([
+      [
+        "software/indexes/static.json",
+        Buffer.from(JSON.stringify(index), "utf8"),
+      ],
+    ]),
+  );
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "list",
+      "static",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  const artifact = payload.data.artifacts[0];
+  assert.equal(artifact.tag, "remote-test");
+  assert.equal(artifact.source, "remote");
+  assert.equal(artifact.local, undefined);
+  assert.match(artifact.remote, /remote-test\/manifest\.json$/);
 });
 
 test("software push rejects remote duplicate tags", async () => {
