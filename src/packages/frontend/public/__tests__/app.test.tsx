@@ -438,10 +438,9 @@ describe("PublicApp", () => {
     expect(screen.getByText("8 GB")).not.toBeNull();
     expect(screen.getAllByText("10 GB").length).toBe(2);
     expect(screen.getByText("125 GB")).not.toBeNull();
-    expect(screen.getByText("Included AI usage")).not.toBeNull();
-    expect(screen.getByText("Minimal")).not.toBeNull();
-    expect(screen.getByText("Standard")).not.toBeNull();
-    expect(screen.getByText("Expanded")).not.toBeNull();
+    expect(screen.queryByText("Collaborators")).toBeNull();
+    expect(screen.queryByText("Included AI usage")).toBeNull();
+    expect(screen.queryByText("Launchpad license")).toBeNull();
     expect(screen.getByRole("link", { name: /Member/ })).toHaveAttribute(
       "href",
       "/settings/membership",
