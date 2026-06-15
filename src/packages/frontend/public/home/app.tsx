@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { type CSSProperties, type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
-import { Button, Flex, Tag, Typography } from "antd";
+import { Button, Flex, Modal, Tag, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -29,8 +29,6 @@ const HERO_IMAGE_URL = "/public/landing/home-hero.jpg";
 const WORKFLOW_IMAGE_URL = "/public/landing/project-workflows.jpg";
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
 const PANEL_RADIUS = 8;
-const PLUS_DOWNLOAD_URL =
-  "https://software.cocalc.ai/software/cocalc-plus/index.html";
 
 const HOME_PAGE_CSS = `
   .cocalc-public-home {
@@ -58,11 +56,9 @@ const HOME_PAGE_CSS = `
 
   @media (max-width: 920px) {
     .cocalc-public-home-hero,
-    .cocalc-public-home-project,
     .cocalc-public-home-products,
     .cocalc-public-home-difference,
-    .cocalc-public-home-workflow-layout,
-    .cocalc-public-home-path {
+    .cocalc-public-home-workflow-layout {
       grid-template-columns: minmax(0, 1fr) !important;
     }
 
@@ -76,13 +72,13 @@ const HOME_PAGE_CSS = `
     }
 
     .cocalc-public-home-product-grid,
-    .cocalc-public-home-audience-grid,
-    .cocalc-public-home-path-grid {
+    .cocalc-public-home-audience-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
   }
 
   @media (max-width: 1120px) {
+    .cocalc-public-home-final-layout,
     .cocalc-public-home-workflow-layout {
       grid-template-columns: minmax(0, 1fr) !important;
     }
@@ -98,16 +94,16 @@ const HOME_PAGE_CSS = `
     }
 
     .cocalc-public-home-actions .ant-btn,
-    .cocalc-public-home-final-links .ant-btn {
+    .cocalc-public-home-final-actions .ant-btn {
       width: 100%;
     }
 
     .cocalc-public-home-feature-grid,
-    .cocalc-public-home-project-card-grid,
     .cocalc-public-home-audience-grid,
     .cocalc-public-home-product-grid,
     .cocalc-public-home-difference-grid,
-    .cocalc-public-home-path-grid {
+    .cocalc-public-home-modal-grid,
+    .cocalc-public-home-final-actions {
       grid-template-columns: minmax(0, 1fr) !important;
     }
   }
@@ -230,6 +226,7 @@ const PRODUCT_OPTIONS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Managed hosted workspace for individuals and teams that do not want to run infrastructure.",
+    href: "auth/sign-up",
     icon: "cloud",
     label: "Hosted",
     title: "CoCalc.ai",
@@ -237,6 +234,7 @@ const PRODUCT_OPTIONS = [
   {
     accent: COLORS.RUN,
     body: "Free source-available local runtime for self-directed technical work and evaluation.",
+    href: "products/cocalc-plus",
     icon: "laptop",
     label: "Local",
     title: "CoCalc Plus",
@@ -244,6 +242,7 @@ const PRODUCT_OPTIONS = [
   {
     accent: COLORS.AI_ASSISTANT_FONT,
     body: "Single-VM appliance for a shared CoCalc instance on a public Ubuntu VM or local Lima VM.",
+    href: "products/cocalc-star",
     icon: "star",
     label: "One VM",
     title: "CoCalc Star",
@@ -251,6 +250,7 @@ const PRODUCT_OPTIONS = [
   {
     accent: PUBLIC_COLORS.warning,
     body: "Lightweight customer-operated private deployment for pilots, labs, workshops, and small teams.",
+    href: "products/cocalc-launchpad",
     icon: "servers",
     label: "Private",
     title: "CoCalc Launchpad",
@@ -258,6 +258,7 @@ const PRODUCT_OPTIONS = [
   {
     accent: COLORS.GRAY_D,
     body: "Enterprise private-cloud path for institutions and organizations with broader deployment requirements.",
+    href: "products/cocalc-rocket",
     icon: "rocket",
     label: "Enterprise",
     title: "CoCalc Rocket",
@@ -265,6 +266,7 @@ const PRODUCT_OPTIONS = [
 ] satisfies Array<{
   accent: string;
   body: string;
+  href: string;
   icon: IconName;
   label: string;
   title: string;
@@ -281,88 +283,102 @@ const DIFFERENTIATORS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Keep the main artifacts of computational work near the discussions, outputs, and decisions they produce.",
+    ctaHref: "features/compare",
+    ctaLabel: "Explore workflows",
+    details: PROJECT_FACTS,
     eyebrow: "Project continuity",
     icon: "project-outlined",
+    modalBody:
+      "CoCalc projects keep the working record close to the files, outputs, notes, and decisions people need to understand later.",
     title: "Project-centered workflow",
   },
   {
     accent: COLORS.RUN,
     body: "Human and AI changes are easier to inspect and discuss before another person depends on them.",
+    ctaHref: "features/ai",
+    ctaLabel: "Explore AI assistance",
+    details: [
+      {
+        body: "AI-assisted edits happen near the files, notebooks, terminals, and documents people already review.",
+        title: "Review before relying",
+      },
+      {
+        body: "Shared project context helps collaborators see what changed and why it matters.",
+        title: "Discuss with context",
+      },
+      {
+        body: "Teams can keep inspection close to the work instead of reconstructing decisions from separate tools.",
+        title: "Reduce handoff gaps",
+      },
+    ],
     eyebrow: "Inspect before handoff",
     icon: "search",
+    modalBody:
+      "CoCalc keeps review close to the project so human and AI-assisted work can be inspected before another person builds on it.",
     title: "Inspection before handoff",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
     body: "History, shared files, TimeTravel, snapshots, and backups give teams paths back to useful work.",
+    ctaHref: "features",
+    ctaLabel: "Explore features",
+    details: [
+      {
+        body: "Project history and TimeTravel help teams understand how work changed over time.",
+        title: "Trace what changed",
+      },
+      {
+        body: "Snapshots and backups give teams practical ways to resume from known project states.",
+        title: "Recover useful states",
+      },
+      {
+        body: "Shared files, notes, and outputs keep recovery grounded in the project record.",
+        title: "Resume with context",
+      },
+    ],
     eyebrow: "Keep moving",
     icon: "history",
+    modalBody:
+      "Recovery is most useful when it restores both the work and enough surrounding context to continue confidently.",
     title: "Practical recovery",
   },
   {
     accent: COLORS.GRAY_M,
     body: "Start hosted, evaluate locally, use a single appliance VM, or plan a customer-operated private environment.",
+    ctaHref: "products",
+    ctaLabel: "Compare product paths",
+    details: [
+      {
+        body: "Use CoCalc.ai when the team wants a managed hosted workspace without operating infrastructure.",
+        title: "Hosted workspace",
+      },
+      {
+        body: "Use Plus or Star when local evaluation or a bounded single-VM appliance is the right fit.",
+        title: "Local or single-VM",
+      },
+      {
+        body: "Use Launchpad or Rocket when the organization needs a customer-operated private environment.",
+        title: "Private deployment",
+      },
+    ],
     eyebrow: "Choose where it runs",
     icon: "cloud",
+    modalBody:
+      "The product paths are operating models, not a progression. The right choice depends on hosting, governance, support, and deployment needs.",
     title: "Deployment path choice",
   },
 ] satisfies Array<{
   accent: string;
   body: string;
+  ctaHref: string;
+  ctaLabel: string;
+  details: ReadonlyArray<{
+    body: string;
+    title: string;
+  }>;
   eyebrow: string;
   icon: IconName;
-  title: string;
-}>;
-
-const PATH_OPTIONS = [
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Use the managed hosted workspace when your team wants CoCalc without operating infrastructure.",
-    button: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? "Open projects" : "Start on CoCalc.ai",
-    href: ({ authenticated }: { authenticated: boolean }) =>
-      authenticated ? appPath("projects") : appPath("auth/sign-up"),
-    icon: "cloud",
-    title: "Hosted CoCalc",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Install the free local runtime for self-directed work, demos, and evaluation.",
-    button: () => "Download CoCalc Plus",
-    href: () => PLUS_DOWNLOAD_URL,
-    icon: "laptop",
-    title: "CoCalc Plus",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Explore the single-VM appliance for a shared CoCalc instance on a public Ubuntu VM or local Lima VM.",
-    button: () => "Explore CoCalc Star",
-    href: () => appPath("products/cocalc-star"),
-    icon: "star",
-    title: "CoCalc Star",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    body: "Compare hosted, local, appliance, and private deployment paths before choosing.",
-    button: () => "Compare paths",
-    href: () => appPath("products"),
-    icon: "servers",
-    title: "Deployment options",
-  },
-  {
-    accent: COLORS.GRAY_D,
-    body: "Talk with CoCalc when governance, procurement, onboarding, support, or broader deployment rights matter.",
-    button: () => "Pricing and licensing",
-    href: () => appPath("pricing"),
-    icon: "solution",
-    title: "Site licensing",
-  },
-] satisfies Array<{
-  accent: string;
-  body: string;
-  button: (opts: { authenticated: boolean }) => string;
-  href: (opts: { authenticated: boolean }) => string;
-  icon: IconName;
+  modalBody: string;
   title: string;
 }>;
 
@@ -433,20 +449,6 @@ function IconTile({
 function DecorativeButtonIcon({ name }: { name: IconName }) {
   return (
     <span aria-hidden="true" style={{ display: "inline-flex" }}>
-      <Icon name={name} />
-    </span>
-  );
-}
-
-function DecorativeInlineIcon({
-  name,
-  style,
-}: {
-  name: IconName;
-  style?: CSSProperties;
-}) {
-  return (
-    <span aria-hidden="true" style={{ display: "inline-flex", ...style }}>
       <Icon name={name} />
     </span>
   );
@@ -563,62 +565,6 @@ function Hero({
   );
 }
 
-function ProjectSection() {
-  return (
-    <section
-      aria-label="Project continuity"
-      className="cocalc-public-home-project"
-      style={{
-        alignItems: "start",
-        display: "grid",
-        gap: 28,
-        gridTemplateColumns: "minmax(0, 0.72fr) minmax(0, 1.28fr)",
-        padding: "16px 0 10px",
-      }}
-    >
-      <div>
-        <Eyebrow>Project continuity</Eyebrow>
-        <Title level={2} style={{ margin: "8px 0 10px" }}>
-          Keep the record with the work.
-        </Title>
-        <Paragraph style={{ fontSize: 18, margin: 0 }}>
-          A result is easier to trust, teach, hand off, or extend when the
-          source, discussion, history, environment, and decisions are still
-          nearby. CoCalc organizes that continuity around the project so teams
-          can review, recover, and continue without reconstructing context.
-        </Paragraph>
-      </div>
-      <div
-        className="cocalc-public-home-project-card-grid"
-        style={{
-          display: "grid",
-          gap: 14,
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-        }}
-      >
-        {PROJECT_FACTS.map((fact) => (
-          <div
-            key={fact.title}
-            style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
-              minHeight: 170,
-              padding: 20,
-            }}
-          >
-            <Title level={4} style={{ margin: "0 0 10px" }}>
-              {fact.title}
-            </Title>
-            <Paragraph style={{ margin: 0 }}>{fact.body}</Paragraph>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function AudienceRoutesSection() {
   return (
     <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
@@ -637,19 +583,22 @@ function AudienceRoutesSection() {
         }}
       >
         {AUDIENCE_ROUTES.map((route) => (
-          <div
-            className="cocalc-public-home-audience-card"
+          <a
+            className="cocalc-public-home-card-link cocalc-public-home-audience-card"
+            href={appPath(route.href)}
             key={route.title}
             style={{
               background: PUBLIC_COLORS.surface,
               border: `1px solid ${alpha(route.accent, 0.18)}`,
               borderRadius: PANEL_RADIUS,
               boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+              color: "inherit",
               display: "grid",
               gap: 16,
               gridTemplateRows: "44px minmax(96px, 1fr) auto",
               minHeight: 220,
               padding: 22,
+              textDecoration: "none",
             }}
           >
             <IconTile accent={route.accent} icon={route.icon} />
@@ -659,10 +608,19 @@ function AudienceRoutesSection() {
               </Title>
               <Paragraph style={{ margin: 0 }}>{route.body}</Paragraph>
             </div>
-            <Button href={appPath(route.href)} style={{ width: "100%" }}>
+            <Text
+              className="cocalc-public-home-audience-action"
+              strong
+              style={{
+                alignItems: "center",
+                color: PUBLIC_COLORS.link,
+                display: "inline-flex",
+                gap: 6,
+              }}
+            >
               {route.button}
-            </Button>
-          </div>
+            </Text>
+          </a>
         ))}
       </div>
     </section>
@@ -779,13 +737,7 @@ function WorkflowsSection() {
               }}
             >
               <Flex vertical gap={14}>
-                <Flex align="center" justify="space-between">
-                  <IconTile accent={feature.accent} icon={feature.icon} />
-                  <DecorativeInlineIcon
-                    name="arrow-right"
-                    style={{ color: feature.accent, fontSize: 16 }}
-                  />
-                </Flex>
+                <IconTile accent={feature.accent} icon={feature.icon} />
                 <div>
                   <Title level={4} style={{ margin: "0 0 8px" }}>
                     {feature.title}
@@ -851,24 +803,23 @@ function ProductsSection() {
           }}
         >
           {PRODUCT_OPTIONS.map((option) => (
-            <div
+            <a
+              className="cocalc-public-home-card-link"
+              href={appPath(option.href)}
               key={option.title}
               style={{
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${alpha(option.accent, 0.18)}`,
                 borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                display: "block",
                 minHeight: 225,
                 padding: 16,
+                textDecoration: "none",
               }}
             >
               <Flex vertical gap={12}>
-                <Flex align="center" justify="space-between">
-                  <IconTile accent={option.accent} icon={option.icon} />
-                  <DecorativeInlineIcon
-                    name="arrow-right"
-                    style={{ color: alpha(option.accent, 0.68) }}
-                  />
-                </Flex>
+                <IconTile accent={option.accent} icon={option.icon} />
                 <Tag
                   style={{
                     alignSelf: "flex-start",
@@ -887,7 +838,7 @@ function ProductsSection() {
                   <Paragraph style={{ margin: 0 }}>{option.body}</Paragraph>
                 </div>
               </Flex>
-            </div>
+            </a>
           ))}
         </div>
       </div>
@@ -896,111 +847,164 @@ function ProductsSection() {
 }
 
 function DifferenceSection() {
+  const [activeTitle, setActiveTitle] = useState<string | null>(null);
+  const activeItem =
+    DIFFERENTIATORS.find((item) => item.title === activeTitle) ?? null;
+
   return (
-    <section
-      aria-label="Why CoCalc is different"
-      className="cocalc-public-home-difference"
-      style={{
-        background: `linear-gradient(135deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 100%)`,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
-        display: "grid",
-        gap: 34,
-        gridTemplateColumns: "minmax(0, 0.7fr) minmax(0, 1.3fr)",
-        margin: "16px 0",
-        padding: 36,
-      }}
-    >
-      <Flex vertical gap={18}>
-        <div>
-          <Eyebrow>Why CoCalc is different</Eyebrow>
-          <Title level={2} style={{ margin: "8px 0 10px" }}>
-            A workspace built around the project.
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            A project is more than a place to store files. CoCalc gives it
-            enough structure to hold collaboration, history, recovery, and
-            operating choices alongside the work people need to understand.
-          </Paragraph>
-        </div>
-        <div
-          style={{
-            background: PUBLIC_COLORS.surface,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            display: "grid",
-            gap: 10,
-            padding: 14,
-          }}
-        >
-          {DIFFERENCE_SIGNALS.map((signal) => (
-            <Flex align="center" gap={10} key={signal.label}>
-              <IconTile
-                accent={PUBLIC_COLORS.link}
-                icon={signal.icon}
-                size={28}
-              />
-              <Text strong>{signal.label}</Text>
-            </Flex>
-          ))}
-        </div>
-      </Flex>
-      <div
-        className="cocalc-public-home-difference-grid"
+    <>
+      <section
+        aria-label="Why CoCalc is different"
+        className="cocalc-public-home-difference"
         style={{
+          background: `linear-gradient(135deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 100%)`,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: PANEL_RADIUS,
           display: "grid",
-          gap: 18,
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          gap: 34,
+          gridTemplateColumns: "minmax(0, 0.7fr) minmax(0, 1.3fr)",
+          margin: "16px 0",
+          padding: 36,
         }}
       >
-        {DIFFERENTIATORS.map((item) => (
+        <Flex vertical gap={18}>
+          <div>
+            <Eyebrow>Why CoCalc is different</Eyebrow>
+            <Title level={2} style={{ margin: "8px 0 10px" }}>
+              A workspace built around the project.
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              A project is more than a place to store files. CoCalc gives it
+              enough structure to hold collaboration, history, recovery, and
+              operating choices alongside the work people need to understand.
+            </Paragraph>
+          </div>
           <div
-            key={item.title}
             style={{
               background: PUBLIC_COLORS.surface,
               border: `1px solid ${PUBLIC_COLORS.border}`,
               borderRadius: PANEL_RADIUS,
-              minHeight: 240,
-              padding: 22,
+              display: "grid",
+              gap: 10,
+              padding: 14,
             }}
           >
-            <Flex vertical gap={14}>
-              <Flex align="center" justify="space-between">
-                <IconTile accent={item.accent} icon={item.icon} />
-                <DecorativeInlineIcon
-                  name="arrow-right"
-                  style={{ color: alpha(item.accent, 0.55) }}
+            {DIFFERENCE_SIGNALS.map((signal) => (
+              <Flex align="center" gap={10} key={signal.label}>
+                <IconTile
+                  accent={PUBLIC_COLORS.link}
+                  icon={signal.icon}
+                  size={28}
                 />
+                <Text strong>{signal.label}</Text>
               </Flex>
-              <div>
-                <Text
-                  strong
+            ))}
+          </div>
+        </Flex>
+        <div
+          className="cocalc-public-home-difference-grid"
+          style={{
+            display: "grid",
+            gap: 18,
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          }}
+        >
+          {DIFFERENTIATORS.map((item) => (
+            <button
+              aria-haspopup="dialog"
+              className="cocalc-public-home-card-link cocalc-public-home-difference-card"
+              key={item.title}
+              onClick={() => setActiveTitle(item.title)}
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                color: "inherit",
+                cursor: "pointer",
+                minHeight: 240,
+                padding: 22,
+                textAlign: "left",
+              }}
+              type="button"
+            >
+              <Flex vertical gap={14}>
+                <IconTile accent={item.accent} icon={item.icon} />
+                <div>
+                  <Text
+                    strong
+                    style={{
+                      color: item.accent,
+                      display: "block",
+                      fontSize: 12,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {item.eyebrow}
+                  </Text>
+                  <Title level={4} style={{ margin: "8px 0" }}>
+                    {item.title}
+                  </Title>
+                  <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+                </div>
+                <Text strong style={{ color: PUBLIC_COLORS.link }}>
+                  View details
+                </Text>
+              </Flex>
+            </button>
+          ))}
+        </div>
+      </section>
+      <Modal
+        footer={null}
+        onCancel={() => setActiveTitle(null)}
+        open={activeItem != null}
+        title={activeItem?.title}
+        width={720}
+      >
+        {activeItem == null ? null : (
+          <Flex vertical gap={18}>
+            <Paragraph style={{ fontSize: 16, margin: 0 }}>
+              {activeItem.modalBody}
+            </Paragraph>
+            <div
+              className="cocalc-public-home-modal-grid"
+              style={{
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              }}
+            >
+              {activeItem.details.map((detail) => (
+                <div
+                  key={detail.title}
                   style={{
-                    color: item.accent,
-                    display: "block",
-                    fontSize: 12,
-                    textTransform: "uppercase",
+                    background: PUBLIC_COLORS.surfaceMuted,
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: PANEL_RADIUS,
+                    padding: 14,
                   }}
                 >
-                  {item.eyebrow}
-                </Text>
-                <Title level={4} style={{ margin: "8px 0" }}>
-                  {item.title}
-                </Title>
-                <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
-              </div>
-            </Flex>
-          </div>
-        ))}
-      </div>
-    </section>
+                  <Text strong>{detail.title}</Text>
+                  <Paragraph style={{ margin: "8px 0 0" }}>
+                    {detail.body}
+                  </Paragraph>
+                </div>
+              ))}
+            </div>
+            <Button href={appPath(activeItem.ctaHref)} type="primary">
+              {activeItem.ctaLabel}
+            </Button>
+          </Flex>
+        )}
+      </Modal>
+    </>
   );
 }
 
 function PathSection({ authenticated }: { authenticated: boolean }) {
   return (
     <section
-      aria-label="Choose your path"
+      aria-label="Next step"
       style={{
         background: `linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.warningTint} 100%)`,
         border: `1px solid ${PUBLIC_COLORS.border}`,
@@ -1010,76 +1014,43 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
       }}
     >
       <div
-        className="cocalc-public-home-path"
+        className="cocalc-public-home-final-layout"
         style={{
-          maxWidth: 780,
-        }}
-      >
-        <Eyebrow>Choose your path</Eyebrow>
-        <Title level={2} style={{ margin: "8px 0 10px" }}>
-          Pick the next step that matches your situation.
-        </Title>
-        <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-          Start on hosted CoCalc.ai for a managed workspace, install Plus for
-          local evaluation, use Star for one shared VM, compare Launchpad or
-          Rocket for private deployment, or review licensing when procurement,
-          governance, or support are part of the decision.
-        </Paragraph>
-      </div>
-      <div
-        className="cocalc-public-home-path-grid"
-        style={{
+          alignItems: "center",
           display: "grid",
-          gap: 18,
-          gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-          marginTop: 26,
+          gap: 24,
+          gridTemplateColumns: "minmax(0, 1fr) auto",
         }}
       >
-        {PATH_OPTIONS.map((option) => (
-          <div
-            key={option.title}
-            style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              boxShadow: `0 16px 42px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
-              minHeight: 245,
-              padding: 22,
-            }}
+        <div>
+          <Eyebrow>Next step</Eyebrow>
+          <Title level={2} style={{ margin: "8px 0 10px" }}>
+            Ready to choose how CoCalc fits?
+          </Title>
+          <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
+            Start with the hosted workspace, compare the operating models, or
+            contact CoCalc when licensing, procurement, support, or private
+            deployment are part of the decision.
+          </Paragraph>
+        </div>
+        <div
+          className="cocalc-public-home-final-actions"
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns: "repeat(3, max-content)",
+          }}
+        >
+          <Button
+            href={authenticated ? appPath("projects") : appPath("auth/sign-up")}
+            type="primary"
           >
-            <Flex vertical gap={16}>
-              <IconTile accent={option.accent} icon={option.icon} size={48} />
-              <div>
-                <Title level={4} style={{ margin: "0 0 10px" }}>
-                  {option.title}
-                </Title>
-                <Paragraph style={{ margin: 0 }}>{option.body}</Paragraph>
-              </div>
-              <Button href={option.href({ authenticated })} type="primary">
-                {option.button({ authenticated })}
-              </Button>
-            </Flex>
-          </div>
-        ))}
-      </div>
-      <Flex
-        align="center"
-        className="cocalc-public-home-final-links"
-        justify="space-between"
-        style={{ marginTop: 22 }}
-        wrap
-        gap={12}
-      >
-        <Text type="secondary">
-          Still narrowing it down? Compare product paths, review pricing, or
-          contact support.
-        </Text>
-        <Flex gap={8} wrap>
+            {authenticated ? "Open projects" : "Start on CoCalc.ai"}
+          </Button>
           <Button href={appPath("products")}>Compare product paths</Button>
-          <Button href={appPath("pricing")}>Pricing</Button>
-          <Button href={appPath("support")}>Support</Button>
-        </Flex>
-      </Flex>
+          <Button href={appPath("support")}>Talk to CoCalc</Button>
+        </div>
+      </div>
     </section>
   );
 }
@@ -1113,7 +1084,6 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
         <WorkflowsSection />
         <ProductsSection />
         <DifferenceSection />
-        <ProjectSection />
         <PathSection authenticated={authenticated} />
       </div>
     </PublicPage>

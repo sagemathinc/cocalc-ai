@@ -68,6 +68,14 @@ describe("PublicPage", () => {
     );
 
     const footer = screen.getByRole("contentinfo");
+    expect(
+      within(footer).getByText(
+        "AI-native workspaces for research, teaching, and engineering teams.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(footer).queryByText(/agent-assisted computational work/i),
+    ).toBeNull();
     expect(within(footer).getByText("Platform")).not.toBeNull();
     expect(within(footer).getByText("Resources")).not.toBeNull();
     expect(within(footer).getByText("Company")).not.toBeNull();

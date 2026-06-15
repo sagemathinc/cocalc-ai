@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import PublicHomeApp from "../app";
 
@@ -43,6 +43,11 @@ beforeAll(() => {
       removeListener: jest.fn(),
     }),
   });
+  const getComputedStyle = window.getComputedStyle.bind(window);
+  Object.defineProperty(window, "getComputedStyle", {
+    writable: true,
+    value: (element: Element) => getComputedStyle(element),
+  });
 });
 
 describe("PublicHomeApp", () => {
@@ -79,8 +84,7 @@ describe("PublicHomeApp", () => {
       "Core workflows",
       "Ways to run CoCalc",
       "Why CoCalc is different",
-      "Project continuity",
-      "Choose your path",
+      "Next step",
     ]);
     expectHomepageSectionsLabeled(container);
 
@@ -127,27 +131,6 @@ describe("PublicHomeApp", () => {
       expect(within(hero).queryByText(tag)).toBeNull();
     }
 
-    const project = screen.getByRole("region", {
-      name: "Project continuity",
-    });
-    expect(
-      within(project).queryByRole("img", {
-        name: "One CoCalc workspace containing many workflows",
-      }),
-    ).toBeNull();
-    expect(
-      within(project).getByRole("heading", {
-        name: "Keep the record with the work.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(project).getByText("Context survives handoff"),
-    ).not.toBeNull();
-    expect(within(project).getByText("Review stays close")).not.toBeNull();
-    expect(
-      within(project).getByText("Recovery remains practical"),
-    ).not.toBeNull();
-
     const audiences = screen.getByRole("region", {
       name: "Who CoCalc helps",
     });
@@ -165,14 +148,18 @@ describe("PublicHomeApp", () => {
       within(audiences).queryByText(/Different audiences can start/i),
     ).toBeNull();
     expect(
-      within(audiences).getByRole("link", { name: "Explore workflows" }),
+      within(audiences).getByRole("link", {
+        name: /Research and engineering teams/i,
+      }),
     ).toHaveAttribute("href", "/features/compare");
     expect(
-      within(audiences).getByRole("link", { name: "Course workflows" }),
+      within(audiences).getByRole("link", {
+        name: /Technical courses and workshops/i,
+      }),
     ).toHaveAttribute("href", "/features/teaching");
     expect(
       within(audiences).getByRole("link", {
-        name: "Compare product paths",
+        name: /IT and platform teams/i,
       }),
     ).toHaveAttribute("href", "/products");
     for (const title of [
@@ -249,6 +236,21 @@ describe("PublicHomeApp", () => {
     expect(
       within(products).getByRole("link", { name: "Pricing and licensing" }),
     ).toHaveAttribute("href", "/pricing");
+    expect(
+      within(products).getByRole("link", { name: /CoCalc\.ai/i }),
+    ).toHaveAttribute("href", "/auth/sign-up");
+    expect(
+      within(products).getByRole("link", { name: /CoCalc Plus/i }),
+    ).toHaveAttribute("href", "/products/cocalc-plus");
+    expect(
+      within(products).getByRole("link", { name: /CoCalc Star/i }),
+    ).toHaveAttribute("href", "/products/cocalc-star");
+    expect(
+      within(products).getByRole("link", { name: /CoCalc Launchpad/i }),
+    ).toHaveAttribute("href", "/products/cocalc-launchpad");
+    expect(
+      within(products).getByRole("link", { name: /CoCalc Rocket/i }),
+    ).toHaveAttribute("href", "/products/cocalc-rocket");
     for (const option of [
       "CoCalc.ai",
       "CoCalc Plus",
@@ -296,39 +298,46 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(within(difference).getByText(title)).not.toBeNull();
     }
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(
+      within(difference).getByRole("button", {
+        name: /Project-centered workflow/i,
+      }),
+    );
+    const continuityDialog = screen.getByRole("dialog", {
+      name: "Project-centered workflow",
+    });
+    for (const title of [
+      "Context survives handoff",
+      "Review stays close",
+      "Recovery remains practical",
+    ]) {
+      expect(within(continuityDialog).getByText(title)).not.toBeNull();
+    }
+    expect(
+      within(continuityDialog).getByRole("link", {
+        name: "Explore workflows",
+      }),
+    ).toHaveAttribute("href", "/features/compare");
 
-    const path = screen.getByRole("region", { name: "Choose your path" });
+    const path = screen.getByRole("region", { name: "Next step" });
     expect(
       within(path).getByRole("heading", {
-        name: "Pick the next step that matches your situation.",
+        name: "Ready to choose how CoCalc fits?",
       }),
     ).not.toBeNull();
     expect(
       within(path).getByRole("link", { name: "Start on CoCalc.ai" }),
     ).toHaveAttribute("href", "/auth/sign-up");
     expect(
-      within(path).getByRole("link", { name: "Download CoCalc Plus" }),
-    ).toHaveAttribute(
-      "href",
-      "https://software.cocalc.ai/software/cocalc-plus/index.html",
-    );
-    expect(
-      within(path).getByRole("link", { name: "Explore CoCalc Star" }),
-    ).toHaveAttribute("href", "/products/cocalc-star");
-    expect(
-      within(path).getByRole("link", { name: "Compare paths" }),
+      within(path).getByRole("link", { name: "Compare product paths" }),
     ).toHaveAttribute("href", "/products");
     expect(
-      within(path).getByRole("link", { name: "Pricing and licensing" }),
-    ).toHaveAttribute("href", "/pricing");
-    expect(within(path).getByRole("link", { name: "Pricing" })).toHaveAttribute(
-      "href",
-      "/pricing",
-    );
-    expect(within(path).getByRole("link", { name: "Support" })).toHaveAttribute(
-      "href",
-      "/support",
-    );
+      within(path).getByRole("link", { name: "Talk to CoCalc" }),
+    ).toHaveAttribute("href", "/support");
+    expect(within(path).queryByText("Hosted CoCalc")).toBeNull();
+    expect(within(path).queryByText("CoCalc Plus")).toBeNull();
+    expect(within(path).queryByText("CoCalc Star")).toBeNull();
 
     expect(screen.queryByText("Recent News")).toBeNull();
     expect(
