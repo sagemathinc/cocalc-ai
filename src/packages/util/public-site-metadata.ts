@@ -165,7 +165,7 @@ const PUBLIC_FEATURE_METADATA_MAP = new Map(
 );
 
 export const PUBLIC_SITE_DESCRIPTION =
-  "CoCalc is a collaborative workspace for research, teaching, and teams, with notebooks, code, documents, terminals, compute, course workflows, and AI in shared projects.";
+  "CoCalc keeps research, coursework, and team computation in a shared project record that is easier to share, review, recover, and continue.";
 
 function normalizeBasePath(basePath?: string): string {
   const trimmed = `${basePath ?? ""}`.trim();

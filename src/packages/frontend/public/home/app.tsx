@@ -107,24 +107,24 @@ const HOME_PAGE_CSS = `
 `;
 
 const HERO_TAGS = [
-  "Shared projects",
-  "Review history",
+  "Shared project record",
+  "Reviewable context",
   "Course workflows",
-  "Deployment choice",
+  "Recoverable work",
 ] as const;
 
 const PROJECT_FACTS = [
   {
-    body: "Files, notebooks, documents, terminals, chat, and outputs stay near the decisions they support.",
-    title: "The project becomes the record",
+    body: "Source files, outputs, notes, and decisions stay tied to the project instead of disappearing across separate places.",
+    title: "Context survives handoff",
   },
   {
-    body: "History, shared files, and recovery paths make it easier to inspect changes and hand projects off.",
-    title: "Review comes with the work",
+    body: "History and shared artifacts make human and AI-assisted changes easier to inspect before the next person builds on them.",
+    title: "Review stays close",
   },
   {
-    body: "Agents work against the same project artifacts people are already using, so help stays tied to the work.",
-    title: "AI works inside the project",
+    body: "Snapshots, backups, and project history help teams resume useful work instead of piecing context back together.",
+    title: "Recovery remains practical",
   },
 ] as const;
 
@@ -526,7 +526,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            Collaborative computing for research, teaching, and teams
+            Make computational work easier to share, review, and continue
           </Title>
           <Paragraph
             style={{
@@ -537,9 +537,9 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            CoCalc gives technical groups a shared project space for notebooks,
-            code, documents, terminals, AI assistance, and course workflows,
-            with hosted, local, single-VM, and private deployment paths.
+            CoCalc keeps research, coursework, and team computation in a shared
+            project record, so collaborators and AI assistance work from context
+            that stays inspectable and recoverable.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -624,13 +624,13 @@ function ProjectSection() {
         <div>
           <Eyebrow>Project continuity</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Keep the work connected after the first result.
+            Keep the record with the work.
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Research, teaching, and computational projects rarely end at a
-            single output. CoCalc keeps the working record around the project so
-            teams can share it, review it, continue it, and recover it without
-            reconstructing what happened.
+            A result is easier to trust, teach, hand off, or extend when the
+            source, discussion, history, environment, and decisions are still
+            nearby. CoCalc organizes that continuity around the project so teams
+            can review, recover, and continue without reconstructing context.
           </Paragraph>
         </div>
         <div
@@ -668,7 +668,7 @@ function AudienceRoutesSection() {
   return (
     <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
       <SectionIntro
-        body="Researchers get productive projects, instructors get course workflows, and IT teams get deployment choices without changing the core product story."
+        body="Researchers get productive projects, instructors get course workflows, and IT teams get deployment choices without forcing a different model for each audience."
         eyebrow="Who it helps"
         title="Built for research groups, courses, and platform teams."
       />

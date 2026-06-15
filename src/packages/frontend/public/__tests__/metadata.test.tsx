@@ -131,7 +131,8 @@ describe("public route metadata", () => {
     );
 
     expect(metadata.title).toBe("CoCalc");
-    expect(metadata.description).toContain("collaborative workspace");
+    expect(metadata.description).toContain("shared project record");
+    expect(metadata.description).not.toMatch(/notebooks, code, documents/i);
   });
 
   it("can build canonical and image paths below a server base path", () => {

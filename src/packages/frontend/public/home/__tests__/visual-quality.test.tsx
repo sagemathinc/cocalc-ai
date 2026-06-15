@@ -8,7 +8,7 @@ const INTERNAL_IMPLEMENTATION_TERMS =
   /serious\s+technical\s+work|project hosts|backend state|logs stay scoped|RootFS|multi-bay|control plane|postgres|kubernetes|systemd|conat/i;
 
 const STALE_REPETITIVE_HOME_LINES =
-  /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Use the tools you already understand, together/i;
+  /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Use the tools you already understand, together|Collaborative computing for research, teaching, and teams|shared project space for notebooks, code, documents, terminals/i;
 
 function renderHome() {
   return render(
@@ -226,7 +226,7 @@ describe("PublicHomeApp visual quality contract", () => {
     expect(
       sectionHeadings.map((heading) => heading.textContent?.trim()),
     ).toEqual([
-      "Keep the work connected after the first result.",
+      "Keep the record with the work.",
       "Built for research groups, courses, and platform teams.",
       "Use notebooks, terminals, documents, and AI in context.",
       "Choose the operating model that fits your team.",
@@ -242,6 +242,10 @@ describe("PublicHomeApp visual quality contract", () => {
     );
     expect(container.textContent ?? "").not.toMatch(
       STALE_REPETITIVE_HOME_LINES,
+    );
+    const hero = screen.getByRole("region", { name: "CoCalc hero" });
+    expect(hero.textContent ?? "").not.toMatch(
+      /notebooks, code, documents|hosted, local, single-VM/i,
     );
   });
 

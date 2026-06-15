@@ -90,14 +90,16 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero).getByRole("heading", {
         level: 1,
-        name: "Collaborative computing for research, teaching, and teams",
+        name: "Make computational work easier to share, review, and continue",
       }),
     ).not.toBeNull();
     expect(
       within(hero).getByText(
-        /shared project space for notebooks, code, documents, terminals/i,
+        /shared project record, so collaborators and AI assistance work from context/i,
       ),
     ).not.toBeNull();
+    expect(within(hero).queryByText(/notebooks, code, documents/i)).toBeNull();
+    expect(within(hero).queryByText(/hosted, local, single-VM/i)).toBeNull();
     expect(
       within(hero)
         .getByRole("img", {
@@ -117,10 +119,10 @@ describe("PublicHomeApp", () => {
       within(hero).queryByText(/keeps technical work collaborative/i),
     ).toBeNull();
     for (const tag of [
-      "Shared projects",
-      "Review history",
+      "Shared project record",
+      "Reviewable context",
       "Course workflows",
-      "Deployment choice",
+      "Recoverable work",
     ]) {
       expect(within(hero).getByText(tag)).not.toBeNull();
     }
@@ -137,17 +139,15 @@ describe("PublicHomeApp", () => {
     ).toBe("/public/landing/project-workflows.jpg");
     expect(
       within(project).getByRole("heading", {
-        name: "Keep the work connected after the first result.",
+        name: "Keep the record with the work.",
       }),
     ).not.toBeNull();
     expect(
-      within(project).getByText("The project becomes the record"),
+      within(project).getByText("Context survives handoff"),
     ).not.toBeNull();
+    expect(within(project).getByText("Review stays close")).not.toBeNull();
     expect(
-      within(project).getByText("Review comes with the work"),
-    ).not.toBeNull();
-    expect(
-      within(project).getByText("AI works inside the project"),
+      within(project).getByText("Recovery remains practical"),
     ).not.toBeNull();
 
     const audiences = screen.getByRole("region", {
