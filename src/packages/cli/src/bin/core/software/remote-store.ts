@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
+import {
+  getR2ObjectBuffer,
+  putR2ObjectFromBuffer,
+  putR2ObjectFromFile,
+} from "@cocalc/backend/r2";
 import type { SoftwareArtifactManifest, SoftwareBuildComponent } from "./types";
-
-const requireCjs = createRequire(__filename);
 
 export const DEFAULT_SOFTWARE_R2_ENV_FILE =
   "/run/secrets/cocalc/rocket-software-env.sh";
@@ -156,37 +158,12 @@ export async function resolveSoftwareRemoteConfig({
   };
 }
 
-function tryResolveBackendR2FromPackage(): string | undefined {
-  try {
-    return requireCjs.resolve("@cocalc/backend/r2");
-  } catch {
-    return undefined;
-  }
-}
-
-export function resolveDefaultSoftwareR2ModulePath(
-  cwd = process.cwd(),
-): string {
-  const packageResolved = tryResolveBackendR2FromPackage();
-  if (packageResolved) {
-    return packageResolved;
-  }
-  const candidates = [
-    join(cwd, "packages", "backend", "dist", "r2.js"),
-    join(cwd, "src", "packages", "backend", "dist", "r2.js"),
-    resolve(__dirname, "../../../../../backend/dist/r2.js"),
-  ];
-  const found = candidates.find((candidate) => existsSync(candidate));
-  if (found) {
-    return found;
-  }
-  throw new Error(
-    "failed to load R2 uploader: @cocalc/backend/r2 is not available and packages/backend/dist/r2.js was not found. Run `pnpm -C src/packages/backend build` or run this command from a CoCalc source checkout.",
-  );
-}
-
 export function loadDefaultSoftwareR2Client(): SoftwareR2Client {
-  return requireCjs(resolveDefaultSoftwareR2ModulePath()) as SoftwareR2Client;
+  return {
+    putR2ObjectFromFile,
+    putR2ObjectFromBuffer,
+    getR2ObjectBuffer,
+  };
 }
 
 export function artifactPrefix(manifest: SoftwareArtifactManifest): string {

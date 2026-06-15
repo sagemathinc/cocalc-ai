@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveDefaultSoftwareR2ModulePath } from "./remote-store";
+import { loadDefaultSoftwareR2Client } from "./remote-store";
 
-test("software R2 loader resolves backend helper from source checkout", () => {
-  assert.match(
-    resolveDefaultSoftwareR2ModulePath(`${process.cwd()}/src`),
-    /packages\/backend\/dist\/r2\.js$/,
-  );
+test("software R2 loader exposes backend helper functions", () => {
+  const client = loadDefaultSoftwareR2Client();
+  assert.equal(typeof client.putR2ObjectFromFile, "function");
+  assert.equal(typeof client.putR2ObjectFromBuffer, "function");
+  assert.equal(typeof client.getR2ObjectBuffer, "function");
 });
