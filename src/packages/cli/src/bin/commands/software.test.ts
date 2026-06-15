@@ -13,6 +13,7 @@ import test from "node:test";
 import { Command } from "commander";
 
 import { registerSoftwareCommand, type SoftwareCommandDeps } from "./software";
+import type { SoftwareR2Client } from "../core/software/remote-store";
 
 type CapturedRun = {
   command: string;
@@ -23,14 +24,18 @@ function makeDeps({
   localStore,
   runs,
   cwd = "/repo",
+  env,
+  r2Client,
 }: {
   localStore: string;
   runs?: CapturedRun[];
   cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  r2Client?: SoftwareR2Client;
 }): SoftwareCommandDeps {
   return {
     cwd,
-    env: { COCALC_SOFTWARE_LOCAL_STORE: localStore },
+    env: { COCALC_SOFTWARE_LOCAL_STORE: localStore, ...env },
     now: () => new Date("2026-06-14T23:59:12.345Z"),
     gitMetadata: () => ({
       commit: "e882d124c7abcdef",
@@ -83,8 +88,43 @@ function makeDeps({
       }
       return 0;
     },
+    r2Client,
   };
 }
+
+function makeR2Client(objects = new Map<string, Buffer>()): {
+  client: SoftwareR2Client;
+  objects: Map<string, Buffer>;
+} {
+  return {
+    objects,
+    client: {
+      putR2ObjectFromFile: async ({ key, filePath }) => {
+        objects.set(key, readFileSync(filePath));
+      },
+      putR2ObjectFromBuffer: async ({ key, body }) => {
+        objects.set(key, Buffer.from(body));
+      },
+      getR2ObjectBuffer: async ({ key }) => {
+        const value = objects.get(key);
+        if (!value) {
+          const err: any = new Error(`404 not found: ${key}`);
+          err.statusCode = 404;
+          throw err;
+        }
+        return value;
+      },
+    },
+  };
+}
+
+const r2Env = {
+  COCALC_R2_ACCOUNT_ID: "account",
+  COCALC_R2_ACCESS_KEY_ID: "access",
+  COCALC_R2_SECRET_ACCESS_KEY: "secret",
+  COCALC_R2_BUCKET: "bucket",
+  COCALC_R2_PUBLIC_BASE_URL: "https://software.example.test",
+};
 
 function createProgram(deps: SoftwareCommandDeps): Command {
   const program = new Command();
@@ -401,4 +441,130 @@ test("software list emits local artifacts as json", async () => {
   assert.equal(payload.command, "software list");
   assert.equal(payload.data.artifacts[0].tag, "fix-bug");
   assert.equal(payload.data.artifacts[0].source, "local");
+});
+
+test("software push uploads files manifest and component index", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-push-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "artifact.tar.xz");
+  writeFileSync(source, "artifact contents");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "hub",
+    "push-test",
+    "--from-file",
+    source,
+  ]);
+
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "push",
+      "hub",
+      "push-test",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const artifactId = "20260614T235912Z-e882d124-push-test";
+  const prefix = `software/artifacts/hub/${artifactId}`;
+  assert.equal(r2.objects.has(`${prefix}/files/artifact.tar.xz`), true);
+  assert.equal(r2.objects.has(`${prefix}/files/artifact.tar.xz.sha256`), true);
+  assert.equal(r2.objects.has(`${prefix}/manifest.json`), true);
+  assert.equal(r2.objects.has("software/indexes/hub.json"), true);
+  const index = JSON.parse(
+    r2.objects.get("software/indexes/hub.json")!.toString("utf8"),
+  );
+  assert.equal(index.schema, "cocalc-software-index-v1");
+  assert.equal(index.artifacts[0].tag, "push-test");
+  assert.equal(
+    index.artifacts[0].manifest_url,
+    `https://software.example.test/${prefix}/manifest.json`,
+  );
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.command, "software push");
+  assert.equal(payload.data.tag, "push-test");
+});
+
+test("software push rejects remote duplicate tags", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-push-duplicate-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "artifact.tar.xz");
+  writeFileSync(source, "artifact contents");
+  const existingIndex = {
+    schema: "cocalc-software-index-v1",
+    component: "hub",
+    generated_at: "2026-06-14T00:00:00.000Z",
+    artifacts: [
+      {
+        artifact_id: "old",
+        tag: "push-test",
+        tag_generated: false,
+        timestamp: "2026-06-14T00:00:00.000Z",
+        git: { commit: "old", short: "old", dirty: false },
+        manifest_key: "old",
+        manifest_url: "old",
+        files: [],
+      },
+    ],
+  };
+  const r2 = makeR2Client(
+    new Map([
+      [
+        "software/indexes/hub.json",
+        Buffer.from(JSON.stringify(existingIndex), "utf8"),
+      ],
+    ]),
+  );
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "hub",
+    "push-test",
+    "--from-file",
+    source,
+  ]);
+
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "software",
+        "push",
+        "hub",
+        "push-test",
+        "--env-file",
+        join(dir, "missing.env"),
+      ]),
+    /remote software artifact already exists/,
+  );
 });

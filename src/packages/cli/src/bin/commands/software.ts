@@ -20,6 +20,14 @@ import {
   resolveSoftwareLocalStore,
   writeLocalManifest,
 } from "../core/software/local-store";
+import {
+  indexKey,
+  loadDefaultSoftwareR2Client,
+  manifestRemoteEntry,
+  resolveSoftwareRemoteConfig,
+  uploadSoftwareArtifact,
+  type SoftwareR2Client,
+} from "../core/software/remote-store";
 import type {
   SoftwareArtifactManifest,
   SoftwareBuildComponent,
@@ -43,6 +51,7 @@ export type SoftwareCommandDeps = {
       env?: NodeJS.ProcessEnv;
     },
   ) => Promise<number>;
+  r2Client?: SoftwareR2Client | (() => SoftwareR2Client);
 };
 
 type BuildOptions = {
@@ -55,6 +64,11 @@ type BuildOptions = {
 type ListOptions = {
   localStore?: string;
   limit?: string;
+};
+
+type PushOptions = {
+  localStore?: string;
+  envFile?: string;
 };
 
 const BUILD_COMPONENTS_HELP = SOFTWARE_BUILD_COMPONENTS.join("|");
@@ -367,6 +381,40 @@ function buildSummary(
   };
 }
 
+async function resolveLocalManifestBySelector({
+  localStore,
+  component,
+  selector,
+}: {
+  localStore: string;
+  component: SoftwareBuildComponent;
+  selector: string;
+}) {
+  const manifests = await listLocalManifests({ localStore, component });
+  const matches = manifests.filter(
+    ({ manifest }) =>
+      manifest.tag === selector || manifest.artifact_id === selector,
+  );
+  if (matches.length === 0) {
+    throw new Error(
+      `local software artifact not found for ${component}: ${selector}`,
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `local software artifact selector is ambiguous for ${component}: ${selector}`,
+    );
+  }
+  return matches[0];
+}
+
+function softwareR2Client(deps: SoftwareCommandDeps): SoftwareR2Client {
+  if (!deps.r2Client) {
+    return loadDefaultSoftwareR2Client();
+  }
+  return typeof deps.r2Client === "function" ? deps.r2Client() : deps.r2Client;
+}
+
 export function registerSoftwareCommand(
   program: Command,
   deps: SoftwareCommandDeps = {},
@@ -461,9 +509,56 @@ Supported deploy/smoke components:
     .description("push a local software artifact to the remote software store")
     .argument("<component>", BUILD_COMPONENT_ARGUMENT)
     .argument("<tag-or-id>", "artifact tag or id")
-    .action(() => {
-      throw new Error("software push is not implemented yet");
-    });
+    .option("--local-store <path>", "local artifact store")
+    .option(
+      "--env-file <path>",
+      "R2 credential env file",
+      "/run/secrets/cocalc/rocket-software-env.sh",
+    )
+    .action(
+      async (
+        componentArg: string,
+        selector: string,
+        opts: PushOptions,
+        command: Command,
+      ) => {
+        const component = parseSoftwareBuildComponent(componentArg);
+        const localStore = resolveSoftwareLocalStore({
+          option: opts.localStore,
+          env: deps.env ?? process.env,
+        });
+        const { manifest, path } = await resolveLocalManifestBySelector({
+          localStore,
+          component,
+          selector,
+        });
+        const config = await resolveSoftwareRemoteConfig({
+          env: deps.env ?? process.env,
+          envFile: opts.envFile,
+        });
+        const client = softwareR2Client(deps);
+        await uploadSoftwareArtifact({
+          client,
+          config,
+          manifest,
+          manifestPath: path,
+          now: deps.now?.() ?? new Date(),
+        });
+        const entry = manifestRemoteEntry({ manifest, config });
+        emitSuccess(
+          { globals: command.optsWithGlobals() as any },
+          "software push",
+          {
+            component,
+            tag: manifest.tag,
+            artifact_id: manifest.artifact_id,
+            remote_manifest: entry.manifest_url,
+            index: `${config.publicBaseUrl}/${indexKey(component)}`,
+            files: entry.files.map((file) => file.url),
+          },
+        );
+      },
+    );
 
   software
     .command("deploy")
