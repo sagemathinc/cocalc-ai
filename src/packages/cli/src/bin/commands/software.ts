@@ -189,6 +189,7 @@ function packageBuildInfo(component: SoftwareBuildComponent):
       script: string;
       artifactName: string;
       artifactPath: (srcRoot: string) => string;
+      env?: Record<string, string>;
     }
   | undefined {
   if (component === "project-host") {
@@ -224,6 +225,7 @@ function packageBuildInfo(component: SoftwareBuildComponent):
       artifactName,
       artifactPath: (srcRoot) =>
         join(srcRoot, "packages", "project", "build", artifactName),
+      env: { COCALC_TOOLS_ARCHES: toolsArch },
     };
   }
   return undefined;
@@ -420,7 +422,7 @@ async function buildFromFile({
     }
     const code = await deps.runCommand("pnpm", args, {
       stdio: "inherit",
-      env: deps.env,
+      env: { ...deps.env, ...(packageInfo?.env ?? {}) },
     });
     if (code !== 0) {
       throw new Error(

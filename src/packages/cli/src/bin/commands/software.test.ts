@@ -18,6 +18,7 @@ import type { SoftwareR2Client } from "../core/software/remote-store";
 type CapturedRun = {
   command: string;
   args: string[];
+  env?: NodeJS.ProcessEnv;
 };
 
 function makeDeps({
@@ -46,8 +47,8 @@ function makeDeps({
       dirty: false,
       status_porcelain: "",
     }),
-    runCommand: async (command, args) => {
-      runs?.push({ command, args });
+    runCommand: async (command, args, options) => {
+      runs?.push({ command, args, env: options?.env });
       let bundle = command === "pnpm" ? args.at(-1) : undefined;
       if (command === "pnpm" && args.includes("@cocalc/project-host")) {
         bundle = join(
@@ -399,6 +400,7 @@ test("software build tools runs the package tools builder", async () => {
   assert.equal(runs.length, 1);
   assert.equal(runs[0].args.includes("@cocalc/project"), true);
   assert.equal(runs[0].args.includes("build:tools"), true);
+  assert.equal(runs[0].env?.COCALC_TOOLS_ARCHES, toolsArch);
   assert.equal(
     existsSync(
       join(

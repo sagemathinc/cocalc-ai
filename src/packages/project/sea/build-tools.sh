@@ -16,7 +16,11 @@ ROOT="$(realpath "$(dirname "$0")/../../..")"
 OUT_DIR="${1:-$ROOT/packages/project/build}"
 WORK_DIR="$OUT_DIR/tools"
 OS="linux"
-ARCHES=("amd64" "arm64")
+if [ -n "${COCALC_TOOLS_ARCHES:-}" ]; then
+  IFS=', ' read -r -a ARCHES <<<"$COCALC_TOOLS_ARCHES"
+else
+  ARCHES=("amd64" "arm64")
+fi
 CLI_PKG_DIR="$ROOT/packages/cli"
 CLI_BUNDLE_JS="$CLI_PKG_DIR/build/bundle/index.js"
 CLI_BUNDLE_LICENSES="$CLI_PKG_DIR/build/bundle/licenses.txt"
