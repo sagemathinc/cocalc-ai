@@ -44,6 +44,7 @@ function makeDeps({
   env,
   r2Client,
   loadAuthConfig,
+  fetch,
 }: {
   localStore: string;
   runs?: CapturedRun[];
@@ -52,6 +53,7 @@ function makeDeps({
   env?: NodeJS.ProcessEnv;
   r2Client?: SoftwareR2Client;
   loadAuthConfig?: SoftwareCommandDeps["loadAuthConfig"];
+  fetch?: SoftwareCommandDeps["fetch"];
 }): SoftwareCommandDeps {
   return {
     cwd,
@@ -117,6 +119,7 @@ function makeDeps({
     },
     r2Client,
     loadAuthConfig: loadAuthConfig ?? (() => testAuthConfig),
+    fetch,
   };
 }
 
@@ -1438,6 +1441,88 @@ test("software deploy rejects unwired explicit bay service components", async ()
         "prod",
       ]),
     /software deploy bay-conat-router is not wired yet/,
+  );
+});
+
+test("software smoke static runs HTTP checks against the profile API", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-static-"));
+  const urls: string[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      fetch: async (input) => {
+        urls.push(`${input}`);
+        return { ok: true, status: 200 } as Response;
+      },
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "smoke",
+    "static",
+    "staging",
+  ]);
+
+  assert.deepEqual(urls, [
+    "https://staging.cocalc.ai/",
+    "https://staging.cocalc.ai/static/app.html",
+    "https://staging.cocalc.ai/webapp/favicon.ico",
+    "https://staging.cocalc.ai/api/v2/auth/bootstrap",
+  ]);
+});
+
+test("software smoke hub also runs Rocket host route health", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-hub-"));
+  const runs: CapturedRun[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      runs,
+      fetch: async () => ({ ok: true, status: 200 }) as Response,
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "smoke",
+    "hub",
+    "prod",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.deepEqual(runs[0].args.slice(-7), [
+    "--profile",
+    "prod",
+    "rocket",
+    "health",
+    "host-routes",
+    "--api",
+    "https://cocalc.ai",
+  ]);
+});
+
+test("software smoke rejects components that are not wired yet", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-unwired-"));
+  const program = createProgram(makeDeps({ localStore: join(dir, "store") }));
+
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "software",
+        "smoke",
+        "project-host",
+        "staging",
+      ]),
+    /software smoke project-host is not implemented yet/,
   );
 });
 

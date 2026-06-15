@@ -75,6 +75,7 @@ export type SoftwareCommandDeps = {
   ) => Promise<number>;
   r2Client?: SoftwareR2Client | (() => SoftwareR2Client);
   loadAuthConfig?: () => AuthConfig;
+  fetch?: typeof fetch;
 };
 
 type BuildOptions = {
@@ -107,6 +108,19 @@ type DeployOptions = {
 type HistoryOptions = {
   envFile?: string;
   limit?: string;
+};
+
+type SmokeOptions = {
+  api?: string;
+  remote?: string;
+  timeout?: string;
+};
+
+type SoftwareSmokeCheck = {
+  check: string;
+  status: "ok" | "failed";
+  detail: string;
+  duration?: string;
 };
 
 const BUILD_COMPONENTS_HELP = SOFTWARE_BUILD_COMPONENTS.join("|");
@@ -281,6 +295,14 @@ function parseLimit(raw: string | undefined): number {
   return value;
 }
 
+function parseTimeoutMs(raw: string | undefined): number {
+  const value = raw == null || raw.trim() === "" ? 15_000 : Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("--timeout must be a positive number of milliseconds");
+  }
+  return Math.max(1, Math.floor(value));
+}
+
 function formatDurationMs(ms: number): string {
   const value = Math.max(0, Math.round(ms));
   if (value < 1000) {
@@ -293,6 +315,111 @@ function formatDurationMs(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = Math.round(seconds % 60);
   return `${minutes}m ${remainingSeconds}s`;
+}
+
+function appendUrlPath(base: string, path: string): string {
+  const url = new URL(base);
+  const basePath = url.pathname.replace(/\/+$/, "");
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  url.pathname = `${basePath}${suffix}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+async function runTimedSmokeCheck(
+  check: string,
+  fn: () => Promise<string>,
+  deps: Pick<SoftwareCommandDeps, "now">,
+): Promise<SoftwareSmokeCheck> {
+  const startedAt = deps.now?.() ?? new Date();
+  try {
+    const detail = await fn();
+    return {
+      check,
+      status: "ok",
+      detail,
+      duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+    };
+  } catch (err) {
+    return {
+      check,
+      status: "failed",
+      detail: err instanceof Error ? err.message : `${err}`,
+      duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+    };
+  }
+}
+
+async function fetchSmokeUrl({
+  url,
+  timeoutMs,
+  deps,
+}: {
+  url: string;
+  timeoutMs: number;
+  deps: SoftwareCommandDeps;
+}): Promise<string> {
+  const smokeFetch = deps.fetch ?? globalThis.fetch;
+  if (!smokeFetch) {
+    throw new Error("software smoke requires fetch support");
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await smokeFetch(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`GET ${url} returned HTTP ${response.status}`);
+    }
+    return `HTTP ${response.status}`;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function smokeHttpChecks({
+  api,
+  timeoutMs,
+  deps,
+}: {
+  api: string;
+  timeoutMs: number;
+  deps: SoftwareCommandDeps;
+}): Promise<SoftwareSmokeCheck[]> {
+  const checks: SoftwareSmokeCheck[] = [];
+  for (const [check, path] of [
+    ["homepage", "/"],
+    ["static app shell", "/static/app.html"],
+    ["webapp favicon", "/webapp/favicon.ico"],
+    ["auth bootstrap", "/api/v2/auth/bootstrap"],
+  ] as const) {
+    checks.push(
+      await runTimedSmokeCheck(
+        check,
+        async () =>
+          await fetchSmokeUrl({
+            url: appendUrlPath(api, path),
+            timeoutMs,
+            deps,
+          }),
+        deps,
+      ),
+    );
+  }
+  return checks;
+}
+
+function assertSmokeChecks(checks: SoftwareSmokeCheck[]): void {
+  const failures = checks.filter((check) => check.status !== "ok");
+  if (!failures.length) return;
+  throw new Error(
+    `software smoke failed: ${failures
+      .map((failure) => `${failure.check}: ${failure.detail}`)
+      .join("; ")}`,
+  );
 }
 
 function deploymentStatusForDisplay(
@@ -1525,10 +1652,99 @@ Supported deploy/smoke components:
     .command("smoke")
     .description("run a software smoke test")
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
-    .argument("[profile-or-channel]", "site profile or release channel")
-    .action(() => {
-      throw new Error("software smoke is not implemented yet");
-    });
+    .argument("<profile-or-channel>", "site profile or release channel")
+    .option("--api <url>", "site API URL")
+    .option("--remote <ssh-target>", "bay SSH target")
+    .option("--timeout <ms>", "per HTTP check timeout in milliseconds", "15000")
+    .action(
+      async (
+        componentArg: string,
+        profileOrChannel: string,
+        opts: SmokeOptions,
+        command: Command,
+      ) => {
+        const component = parseSoftwareDeployComponent(componentArg);
+        const targetName = `${profileOrChannel ?? ""}`.trim();
+        if (!targetName) {
+          throw new Error("software smoke requires <profile-or-channel>");
+        }
+        if (
+          component !== "static" &&
+          component !== "hub" &&
+          component !== "bay"
+        ) {
+          throw new Error(
+            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay`,
+          );
+        }
+        const startedAt = deps.now?.() ?? new Date();
+        const timeoutMs = parseTimeoutMs(opts.timeout);
+        const target = resolveDeploySite({
+          profile: targetName,
+          opts,
+          deps,
+        });
+        if (!target.api) {
+          throw new Error(
+            `software smoke ${component} requires an API URL from auth profile ${targetName} or --api`,
+          );
+        }
+        if ((component === "hub" || component === "bay") && !deps.runCommand) {
+          throw new Error("software smoke hub requires runCommand dependency");
+        }
+        const checks = await smokeHttpChecks({
+          api: target.api,
+          timeoutMs,
+          deps,
+        });
+        if (component === "hub" || component === "bay") {
+          const cli = currentCliInvocation();
+          checks.push(
+            await runTimedSmokeCheck(
+              "host route health",
+              async () => {
+                const code = await deps.runCommand!(
+                  cli.command,
+                  [
+                    ...cli.args,
+                    "--profile",
+                    targetName,
+                    "rocket",
+                    "health",
+                    "host-routes",
+                    "--api",
+                    target.api!,
+                  ],
+                  {
+                    stdio: "inherit",
+                    env: deps.env ?? process.env,
+                  },
+                );
+                if (code !== 0) {
+                  throw new Error(
+                    `rocket health host-routes failed with exit status ${code}`,
+                  );
+                }
+                return "rocket health host-routes ok";
+              },
+              deps,
+            ),
+          );
+        }
+        assertSmokeChecks(checks);
+        emitSuccess(
+          { globals: command.optsWithGlobals() as any },
+          "software smoke",
+          {
+            component,
+            profile: targetName,
+            api: target.api,
+            duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+            checks,
+          },
+        );
+      },
+    );
 
   return software;
 }

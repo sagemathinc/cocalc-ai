@@ -979,6 +979,10 @@ Implemented:
   written before the target is mutated and a sealed `succeeded` or `failed`
   record written after completion. Unsealed `started` records display as
   `unknown` in `software history`.
+- First `smoke` slice for `static`, `hub`, and `bay`. Static smoke fetches the
+  homepage, `/static/app.html`, `/webapp/favicon.ico`, and
+  `/api/v2/auth/bootstrap`. Hub/bay smoke additionally runs
+  `cocalc rocket health host-routes` using the selected auth profile.
 - `latest` as a reserved selector that resolves to the newest local or remote
   artifact for a component.
 - Human-readable build/deploy durations and artifact sizes.
@@ -987,7 +991,9 @@ Implemented:
 
 Still not implemented:
 
-- `smoke`.
+- Deeper `smoke` coverage for `project-host`, `project`, `tools`, `cli`,
+  `launchpad`, `plus`, and `star`, including throwaway project lifecycle checks
+  where appropriate.
 - `deploy`/promote for `cli`, `launchpad`, `plus`, and `star`.
 - Precise bay-side service deploys for `bay-conat-router`,
   `bay-conat-persist`, `bay-frontdoor`, `bay-cloudflared`, and
