@@ -64,6 +64,7 @@ export type SoftwareCommandDeps = {
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   gitMetadata?: (cwd: string) => SoftwareGitMetadata;
+  repoRoot?: (cwd: string) => string;
   runCommand?: (
     command: string,
     args: string[],
@@ -147,8 +148,36 @@ function defaultGitMetadata(cwd: string): SoftwareGitMetadata {
   };
 }
 
-function repoSrcRoot(cwd: string): string {
-  return cwd.endsWith("/src") ? cwd : resolve(cwd, "src");
+function defaultRepoRoot(cwd: string): string {
+  const root = runGitText(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!root) {
+    throw new Error(
+      `software build must be run inside a cocalc-ai source git repository (cwd=${cwd})`,
+    );
+  }
+  const srcRoot = join(root, "src");
+  if (!existsSync(join(srcRoot, "packages", "pnpm-workspace.yaml"))) {
+    throw new Error(
+      `software build must be run inside a cocalc-ai source git repository; expected ${join(
+        srcRoot,
+        "packages",
+        "pnpm-workspace.yaml",
+      )}`,
+    );
+  }
+  return root;
+}
+
+function resolveRepoLayout({
+  cwd,
+  deps,
+}: {
+  cwd: string;
+  deps: Pick<SoftwareCommandDeps, "repoRoot">;
+}): { repoRoot: string; srcRoot: string } {
+  const repoRoot = resolve(deps.repoRoot?.(cwd) ?? defaultRepoRoot(cwd));
+  const srcRoot = repoRoot.endsWith("/src") ? repoRoot : join(repoRoot, "src");
+  return { repoRoot, srcRoot };
 }
 
 function rocketBuildInfo(component: SoftwareBuildComponent):
@@ -348,15 +377,19 @@ async function buildFromFile({
   tagArg: string | undefined;
   opts: BuildOptions;
   deps: Required<Pick<SoftwareCommandDeps, "env" | "now">> &
-    Pick<SoftwareCommandDeps, "cwd" | "gitMetadata" | "runCommand">;
+    Pick<
+      SoftwareCommandDeps,
+      "cwd" | "gitMetadata" | "repoRoot" | "runCommand"
+    >;
 }): Promise<SoftwareArtifactManifest & { local_dir: string }> {
   const cwd = resolve(deps.cwd ?? process.cwd());
+  const { repoRoot, srcRoot } = resolveRepoLayout({ cwd, deps });
   const localStore = resolveSoftwareLocalStore({
     option: opts.localStore,
     env: deps.env,
   });
   const createdAt = deps.now();
-  const git = deps.gitMetadata?.(cwd) ?? defaultGitMetadata(cwd);
+  const git = deps.gitMetadata?.(repoRoot) ?? defaultGitMetadata(repoRoot);
   const existingManifests = await listLocalManifests({ localStore, component });
   const tagGenerated = tagArg == null || tagArg.trim() === "";
   const tag = tagGenerated
@@ -412,7 +445,6 @@ async function buildFromFile({
     if (!deps.runCommand) {
       throw new Error("software build requires runCommand dependency");
     }
-    const srcRoot = repoSrcRoot(cwd);
     let args: string[];
     if (packageInfo) {
       args = [
@@ -488,8 +520,8 @@ async function buildFromFile({
       tag_generated: tagGenerated,
       created_at: createdAt.toISOString(),
       source: {
-        repo_root: cwd,
-        src_root: repoSrcRoot(cwd),
+        repo_root: repoRoot,
+        src_root: srcRoot,
         branch: git.branch,
         git_commit: git.commit,
         git_short: git.short,
@@ -1142,6 +1174,7 @@ Supported deploy/smoke components:
             env: deps.env ?? process.env,
             now: deps.now ?? (() => new Date()),
             gitMetadata: deps.gitMetadata,
+            repoRoot: deps.repoRoot,
             runCommand: deps.runCommand,
           },
         });

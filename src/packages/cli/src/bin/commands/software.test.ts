@@ -40,6 +40,7 @@ function makeDeps({
   localStore,
   runs,
   cwd = "/repo",
+  repoRoot = "/repo",
   env,
   r2Client,
   loadAuthConfig,
@@ -47,6 +48,7 @@ function makeDeps({
   localStore: string;
   runs?: CapturedRun[];
   cwd?: string;
+  repoRoot?: string;
   env?: NodeJS.ProcessEnv;
   r2Client?: SoftwareR2Client;
   loadAuthConfig?: SoftwareCommandDeps["loadAuthConfig"];
@@ -62,12 +64,13 @@ function makeDeps({
       dirty: false,
       status_porcelain: "",
     }),
+    repoRoot: () => repoRoot,
     runCommand: async (command, args) => {
       runs?.push({ command, args });
       let bundle = command === "pnpm" ? args.at(-1) : undefined;
       if (command === "pnpm" && args.includes("@cocalc/project-host")) {
         bundle = join(
-          cwd,
+          repoRoot,
           "src",
           "packages",
           "project-host",
@@ -80,7 +83,7 @@ function makeDeps({
         args.includes("build:bundle")
       ) {
         bundle = join(
-          cwd,
+          repoRoot,
           "src",
           "packages",
           "project",
@@ -95,7 +98,7 @@ function makeDeps({
         bundle = undefined;
         for (const arch of ["amd64", "arm64"]) {
           const toolsBundle = join(
-            cwd,
+            repoRoot,
             "src",
             "packages",
             "project",
@@ -261,6 +264,51 @@ test("software build hub runs the Rocket bay hub builder", async () => {
   );
   assert.equal(manifest.files[0].name, artifactName);
   assert.match(manifest.build.command, /build:bay-hub-bundle/);
+});
+
+test("software build resolves the cocalc-ai repo root from subdirectories", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-subdir-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore,
+      runs,
+      cwd: "/repo/src/packages/cli",
+      repoRoot: "/repo",
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "hub",
+    "subdir-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.deepEqual(runs[0].args.slice(0, 4), [
+    "-C",
+    "/repo/src/packages",
+    "--filter",
+    "@cocalc/rocket",
+  ]);
+  const manifest = JSON.parse(
+    readFileSync(
+      join(
+        localStore,
+        "hub",
+        "20260614T235912Z-e882d124-subdir-test",
+        "manifest.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(manifest.source.repo_root, "/repo");
+  assert.equal(manifest.source.src_root, "/repo/src");
 });
 
 test("software build bay runs the full Rocket bay runtime builder", async () => {
