@@ -21,6 +21,7 @@ cocalc software build <component> [tag]
 cocalc software push <component> <tag-or-id>
 cocalc software list <component>
 cocalc software deploy <component> <tag-or-id> <profile-or-channel>
+cocalc software history <component> <profile-or-channel> [--limit <n>]
 cocalc software smoke <component> <profile-or-channel>
 ```
 
@@ -330,6 +331,8 @@ software/artifacts/<component>/<artifact-id>/manifest.json
 software/artifacts/<component>/<artifact-id>/files/<filename>
 software/artifacts/<component>/<artifact-id>/files/<filename>.sha256
 software/indexes/<component>.json
+software/deployments/<profile-or-channel>/<component>/<timestamp>-<artifact-id>.json
+software/deployments/<profile-or-channel>/<component>/index.json
 ```
 
 Example:
@@ -339,16 +342,20 @@ software/artifacts/hub/20260614T235912Z-e882d124-fix-bug/manifest.json
 software/artifacts/hub/20260614T235912Z-e882d124-fix-bug/files/cocalc-bay-runtime-linux-x64.tar.xz
 software/artifacts/hub/20260614T235912Z-e882d124-fix-bug/files/cocalc-bay-runtime-linux-x64.tar.xz.sha256
 software/indexes/hub.json
+software/deployments/staging/hub/20260615T050500Z-20260614T235912Z-e882d124-fix-bug.json
+software/deployments/staging/hub/index.json
 ```
 
-Index files are mutable and small. Artifact files and artifact manifests are
-immutable.
+Index files are mutable and small. Artifact files, artifact manifests, and
+individual deployment records are immutable.
 
 Cache headers:
 
 - artifact files: `public, max-age=31536000, immutable`
 - artifact manifests: `public, max-age=31536000, immutable`
+- deployment records: `public, max-age=31536000, immutable`
 - component indexes: `public, max-age=60` or `public, max-age=300`
+- deployment indexes: `public, max-age=60` or `public, max-age=300`
 
 Remote index schema:
 
@@ -383,6 +390,48 @@ Remote index schema:
 ```
 
 Indexes should be sorted newest first.
+
+Deployment record schema:
+
+```json
+{
+  "schema": "cocalc-software-deployment-v1",
+  "component": "hub",
+  "profile_or_channel": "staging",
+  "deployed_at": "2026-06-15T05:05:00.000Z",
+  "artifact_id": "20260614T235912Z-e882d124-fix-bug",
+  "tag": "fix-bug",
+  "git": {
+    "commit": "e882d124c7...",
+    "short": "e882d124",
+    "dirty": false
+  },
+  "deployed_by": {
+    "user": "wstein",
+    "host": "alpha",
+    "account_id": "14a0013f-5cb5-45a0-9836-c94963076a87"
+  },
+  "target": {
+    "kind": "rocket-bay",
+    "profile": "staging",
+    "api": "https://staging.cocalc.ai",
+    "remote": "ubuntu@10.206.0.27",
+    "bay_id": "bay-0"
+  },
+  "status": "succeeded",
+  "duration_ms": 15417,
+  "report": {
+    "local_dir": "/home/user/cocalc-ai/tmp/bay-upgrade-20260615T041843Z",
+    "remote_log_url": null
+  }
+}
+```
+
+Deployment indexes should be append-only from the operator point of view and
+sorted newest first. R2 is the durable audit store because it survives bay VM
+rebuilds, project-host replacement, and local `/tmp` cleanup. Site-local state
+may cache the current deployment or write operational logs, but it must not be
+the only deployment history source.
 
 ## Artifact Manifest Schema
 
@@ -1126,15 +1175,47 @@ Validation:
 - GCP disposable VM smoke install.
 - manual promotion from candidate to stable after testing.
 
-### Phase 9: Deploy Logs And Rollback Ergonomics
+### Phase 9: Deployment History And Rollback Ergonomics
 
 Add:
 
-- `software deploy-log <component> <profile>` if needed later.
-- remote deploy reports under `software/deployments/<profile>/...`.
+- `software history <component> <profile-or-channel> [--limit <n>]`.
+- immutable deployment records under
+  `software/deployments/<profile-or-channel>/<component>/...`.
+- mutable deployment indexes under
+  `software/deployments/<profile-or-channel>/<component>/index.json`.
 - rollback-by-artifact id wrappers for the components where rollback is safe.
 
-This is intentionally not part of the first cut.
+`history` output should be similar to `software list`, but it answers a
+different question: what exact artifact was deployed to this bay, host fleet, or
+channel, when did it happen, who initiated it, and did it succeed?
+
+Suggested columns:
+
+```text
+deployed_at
+component
+profile_or_channel
+artifact_id
+tag
+git
+dirty
+deployed_by
+target
+status
+duration
+```
+
+R2 is the authoritative history store. This differs from Kubernetes, where
+cluster state naturally lives in etcd. Rocket bays and project hosts are meant
+to be rebuildable, so the deployment history must live outside the bay/host
+that is being changed. The bay database, `/mnt/cocalc/bays/<bay>/state`, and
+local report directories can still store operational details, but they are
+secondary evidence, not the durable audit log.
+
+This is intentionally not part of the first cut, but the plan should not be
+considered complete until deployment history exists for every deploy/promote
+component.
 
 ## Failure Modes To Handle Explicitly
 
@@ -1145,6 +1226,8 @@ This is intentionally not part of the first cut.
 - Local artifact manifest exists but files are missing.
 - Remote index exists but manifest fetch fails.
 - Manifest sha256 does not match uploaded file.
+- Deployment record upload succeeds but deployment index update fails.
+- Deployment history index exists but a referenced deployment record is missing.
 - Dirty repo build.
 - Build command succeeds but expected output file missing.
 - R2 credentials missing or insecurely stored.
