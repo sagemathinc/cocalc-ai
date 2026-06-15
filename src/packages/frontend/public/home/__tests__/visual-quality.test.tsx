@@ -142,6 +142,12 @@ describe("PublicHomeApp visual quality contract", () => {
       "Technical courses and workshops",
       "IT and platform teams",
     ]);
+    for (const card of getDirectCards(audienceGrid)) {
+      expect(card.className).toContain("cocalc-public-home-audience-card");
+      expect(card.getAttribute("style") ?? "").toContain("display: flex");
+      const cta = card.querySelector(".ant-btn");
+      expect(cta?.getAttribute("style") ?? "").toContain("margin-top: auto");
+    }
 
     expect(getDirectCards(productGrid)).toHaveLength(5);
     expectGridTemplate(productGrid, "repeat(5, minmax(0, 1fr))");

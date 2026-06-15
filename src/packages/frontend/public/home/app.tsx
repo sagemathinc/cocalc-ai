@@ -638,25 +638,29 @@ function AudienceRoutesSection() {
       >
         {AUDIENCE_ROUTES.map((route) => (
           <div
+            className="cocalc-public-home-audience-card"
             key={route.title}
             style={{
               background: PUBLIC_COLORS.surface,
               border: `1px solid ${alpha(route.accent, 0.18)}`,
               borderRadius: PANEL_RADIUS,
               boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+              display: "flex",
               minHeight: 220,
               padding: 22,
             }}
           >
-            <Flex vertical gap={16}>
+            <Flex style={{ flex: 1 }} vertical gap={16}>
               <IconTile accent={route.accent} icon={route.icon} />
-              <div>
+              <div style={{ flex: 1 }}>
                 <Title level={4} style={{ margin: "0 0 8px" }}>
                   {route.title}
                 </Title>
                 <Paragraph style={{ margin: 0 }}>{route.body}</Paragraph>
               </div>
-              <Button href={appPath(route.href)}>{route.button}</Button>
+              <Button href={appPath(route.href)} style={{ marginTop: "auto" }}>
+                {route.button}
+              </Button>
             </Flex>
           </div>
         ))}
