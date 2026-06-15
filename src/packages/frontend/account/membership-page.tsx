@@ -8,7 +8,6 @@ import {
   Button,
   Card,
   Modal,
-  Popconfirm,
   Space,
   Tag,
   Table,
@@ -17,19 +16,13 @@ import {
 import { lazy, Suspense, useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { labels } from "@cocalc/frontend/i18n";
 import {
-  cancelSubscription,
   getSiteLicenseAffiliationReverificationStatus,
   refreshSiteLicenseAffiliationVerification,
-  resumeSubscription,
 } from "@cocalc/frontend/purchases/api";
 import type { BillingInterval } from "./membership-pricing-chooser";
 import type {
@@ -167,6 +160,9 @@ function MembershipSettingsContent() {
     selectedSourceRow,
     tier,
   });
+  const hasSiteLicenseRow = candidateRows.some(
+    (row) => row.action === "site-license",
+  );
   const personalMembership = details?.candidates.find(
     (candidate) => candidate.source === "subscription",
   );
@@ -358,27 +354,13 @@ function MembershipSettingsContent() {
               ]}
             />
           )}
-          <Space wrap>
-            <Button
-              onClick={() => {
-                openPurchase(
-                  personalMembership?.class ?? "free",
-                  personalMembership?.subscription_interval,
-                );
-              }}
-            >
-              Configure personal membership
-            </Button>
-            {personalMembership ? (
-              <PersonalSubscriptionActions
-                membership={personalMembership}
-                refresh={refreshMembership}
-              />
-            ) : null}
-            <Button onClick={() => openSiteLicenseManage()}>
-              Manage site license membership
-            </Button>
-          </Space>
+          {!hasSiteLicenseRow ? (
+            <Space wrap>
+              <Button onClick={() => openSiteLicenseManage()}>
+                Manage site license membership
+              </Button>
+            </Space>
+          ) : null}
           {reverificationError ? (
             <Alert type="error" title={reverificationError} />
           ) : null}
@@ -670,78 +652,4 @@ function membershipStateColor(state: string) {
     case "Renewal canceled":
       return "orange";
   }
-}
-
-function PersonalSubscriptionActions({
-  membership,
-  refresh,
-}: {
-  membership: MembershipCandidate;
-  refresh: () => void;
-}) {
-  const subscriptionId = membership.subscription_id;
-  const [error, setError] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
-
-  if (subscriptionId == null) {
-    return null;
-  }
-
-  const canceled = membership.subscription_status === "canceled";
-  const cancel = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      await runFreshAuthAction(async () => {
-        await cancelSubscription({
-          subscription_id: subscriptionId,
-          reason: "Canceled from Membership settings.",
-        });
-        refresh();
-      });
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-  const resume = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      await runFreshAuthAction(async () => {
-        await resumeSubscription(subscriptionId);
-        refresh();
-      });
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <>
-      {error && <Alert type="error" message={error} closable />}
-      {canceled ? (
-        <Button loading={loading} onClick={resume}>
-          Resume renewal
-        </Button>
-      ) : (
-        <Popconfirm
-          title="Cancel membership renewal?"
-          description="Your current paid membership remains active until its listed expiration date."
-          okButtonProps={{ danger: true, loading }}
-          okText="Cancel renewal"
-          onConfirm={cancel}
-        >
-          <Button danger loading={loading}>
-            Cancel...
-          </Button>
-        </Popconfirm>
-      )}
-      <FreshAuthModal {...freshAuthModalProps} />
-    </>
-  );
 }

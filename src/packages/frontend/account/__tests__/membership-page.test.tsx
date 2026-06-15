@@ -68,21 +68,11 @@ jest.mock("../balance-toward-subs", () => ({
   UseBalance: () => <div>balance-renewal-control</div>,
 }));
 
-jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
-  FreshAuthModal: () => null,
-  useFreshAuthAction: () => ({
-    freshAuthModalProps: {},
-    runFreshAuthAction: (fn: () => Promise<void>) => fn(),
-  }),
-}));
-
 jest.mock("@cocalc/frontend/purchases/api", () => ({
-  cancelSubscription: jest.fn(),
   getSiteLicenseAffiliationReverificationStatus: (...args: any[]) =>
     getSiteLicenseAffiliationReverificationStatus(...args),
   refreshSiteLicenseAffiliationVerification: (...args: any[]) =>
     refreshSiteLicenseAffiliationVerification(...args),
-  resumeSubscription: jest.fn(),
 }));
 
 jest.mock("antd", () => {
@@ -117,7 +107,6 @@ jest.mock("antd", () => {
     ),
     Card: Box,
     Modal,
-    Popconfirm: ({ children }: { children?: ReactNode }) => <>{children}</>,
     Space: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
     Tag: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
     Table: ({ columns, dataSource }: any) => (
@@ -337,6 +326,8 @@ describe("MembershipPage", () => {
     ).toBeTruthy();
     expect(screen.getByText("Next charge: $216 on June 4, 2027.")).toBeTruthy();
     expect(text).toContain("balance-renewal-control");
+    expect(text).not.toContain("Configure personal membership");
+    expect(text).not.toContain("Cancel...");
     expect(text).not.toContain("Billing:");
     expect(text).not.toContain("Limits:");
   });
@@ -557,6 +548,7 @@ describe("MembershipPage", () => {
     expect(
       screen.getByText("Effective: CoCalc Trial - Researcher"),
     ).toBeTruthy();
+    expect(screen.queryByText("Manage site license membership")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
 
     expect(screen.getByText("Manage CoCalc Trial membership")).toBeTruthy();
@@ -729,6 +721,7 @@ describe("MembershipPage", () => {
     render(<MembershipPage />);
     await screen.findByText(/Reverify by/);
 
+    expect(screen.queryByText("Manage site license membership")).toBeNull();
     const pendingRow = screen.getByText("Instructor").closest("tr")!;
     expect(
       within(pendingRow).getByText("Awaiting manager approval"),
