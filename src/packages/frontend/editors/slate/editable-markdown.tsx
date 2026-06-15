@@ -101,6 +101,7 @@ import {
 } from "./sync";
 import { ensureRange, pointAtPath } from "./slate-util";
 import { handleForcedPlainTextPaste } from "./clipboard";
+import { differsOnlyByTrailingMarkdownBlankWhitespace } from "./trailing-whitespace";
 import {
   applyBlockDiffPatch,
   diffBlockSignatures,
@@ -512,6 +513,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const mergeHelperRef = useRef<SimpleInputMerge>(
     new SimpleInputMerge(value ?? ""),
   );
+  const valueRef = useRef<string | undefined>(value);
+  valueRef.current = value;
   const remoteMergeConfig =
     typeof window === "undefined"
       ? {}
@@ -1308,6 +1311,16 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
 
     const markdown = editor.getMarkdownValue();
+    const currentMarkdown = valueRef.current;
+    if (
+      currentMarkdown != null &&
+      differsOnlyByTrailingMarkdownBlankWhitespace(currentMarkdown, markdown)
+    ) {
+      mergeHelperRef.current.noteSaved(currentMarkdown);
+      editor.resetHasUnsavedChanges();
+      editor.markdownValue = currentMarkdown;
+      return;
+    }
     lastSetValueRef.current = markdown;
     mergeHelperRef.current.noteSaved(markdown);
     actions.set_value?.(markdown, undefined, "slate");
