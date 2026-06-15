@@ -131,12 +131,10 @@ describe("PublicHomeApp", () => {
       name: "Project continuity",
     });
     expect(
-      within(project)
-        .getByRole("img", {
-          name: "One CoCalc workspace containing many workflows",
-        })
-        .getAttribute("src"),
-    ).toBe("/public/landing/project-workflows.jpg");
+      within(project).queryByRole("img", {
+        name: "One CoCalc workspace containing many workflows",
+      }),
+    ).toBeNull();
     expect(
       within(project).getByRole("heading", {
         name: "Keep the record with the work.",
@@ -188,6 +186,13 @@ describe("PublicHomeApp", () => {
     expect(
       within(workflows).getByRole("link", { name: "All features" }),
     ).toHaveAttribute("href", "/features");
+    expect(
+      within(workflows)
+        .getByRole("img", {
+          name: "One CoCalc workspace containing many workflows",
+        })
+        .getAttribute("src"),
+    ).toBe("/public/landing/project-workflows.jpg");
     const workflowCards = within(workflows).getByRole("group", {
       name: "CoCalc workflow feature cards",
     });

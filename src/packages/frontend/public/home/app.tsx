@@ -82,6 +82,12 @@ const HOME_PAGE_CSS = `
     }
   }
 
+  @media (max-width: 1120px) {
+    .cocalc-public-home-workflow-layout {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+  }
+
   @media (max-width: 560px) {
     .cocalc-public-home {
       gap: 28px !important;
@@ -97,6 +103,7 @@ const HOME_PAGE_CSS = `
     }
 
     .cocalc-public-home-feature-grid,
+    .cocalc-public-home-project-card-grid,
     .cocalc-public-home-audience-grid,
     .cocalc-public-home-product-grid,
     .cocalc-public-home-difference-grid,
@@ -575,69 +582,52 @@ function ProjectSection() {
       aria-label="Project continuity"
       className="cocalc-public-home-project"
       style={{
-        alignItems: "center",
+        alignItems: "start",
         display: "grid",
-        gap: 34,
-        gridTemplateColumns: "minmax(320px, 0.9fr) minmax(0, 1fr)",
-        padding: "24px 0",
+        gap: 28,
+        gridTemplateColumns: "minmax(0, 0.72fr) minmax(0, 1.28fr)",
+        padding: "16px 0 10px",
       }}
     >
-      <img
-        alt="One CoCalc workspace containing many workflows"
-        className="cocalc-public-home-workflow-image"
-        decoding="async"
-        loading="lazy"
-        src={WORKFLOW_IMAGE_URL}
+      <div>
+        <Eyebrow>Project continuity</Eyebrow>
+        <Title level={2} style={{ margin: "8px 0 10px" }}>
+          Keep the record with the work.
+        </Title>
+        <Paragraph style={{ fontSize: 18, margin: 0 }}>
+          A result is easier to trust, teach, hand off, or extend when the
+          source, discussion, history, environment, and decisions are still
+          nearby. CoCalc organizes that continuity around the project so teams
+          can review, recover, and continue without reconstructing context.
+        </Paragraph>
+      </div>
+      <div
+        className="cocalc-public-home-project-card-grid"
         style={{
-          aspectRatio: "16 / 9",
-          border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: PANEL_RADIUS,
-          boxShadow: `0 18px 45px ${alpha(PUBLIC_COLORS.brandDark, 0.08)}`,
-          display: "block",
-          objectFit: "contain",
-          width: "100%",
+          display: "grid",
+          gap: 14,
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
         }}
-      />
-      <Flex vertical gap={18}>
-        <div>
-          <Eyebrow>Project continuity</Eyebrow>
-          <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Keep the record with the work.
-          </Title>
-          <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            A result is easier to trust, teach, hand off, or extend when the
-            source, discussion, history, environment, and decisions are still
-            nearby. CoCalc organizes that continuity around the project so teams
-            can review, recover, and continue without reconstructing context.
-          </Paragraph>
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gap: 14,
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          }}
-        >
-          {PROJECT_FACTS.map((fact) => (
-            <div
-              key={fact.title}
-              style={{
-                background: PUBLIC_COLORS.surface,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PANEL_RADIUS,
-                boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
-                minHeight: 154,
-                padding: 22,
-              }}
-            >
-              <Title level={4} style={{ margin: "0 0 10px" }}>
-                {fact.title}
-              </Title>
-              <Paragraph style={{ margin: 0 }}>{fact.body}</Paragraph>
-            </div>
-          ))}
-        </div>
-      </Flex>
+      >
+        {PROJECT_FACTS.map((fact) => (
+          <div
+            key={fact.title}
+            style={{
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+              minHeight: 170,
+              padding: 20,
+            }}
+          >
+            <Title level={4} style={{ margin: "0 0 10px" }}>
+              {fact.title}
+            </Title>
+            <Paragraph style={{ margin: 0 }}>{fact.body}</Paragraph>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -703,56 +693,74 @@ function WorkflowsSection() {
           alignItems: "stretch",
           display: "grid",
           gap: 18,
-          gridTemplateColumns: "250px minmax(0, 1fr)",
+          gridTemplateColumns: "400px minmax(0, 1fr)",
           marginTop: 26,
         }}
       >
-        <aside
-          aria-label="One CoCalc project model"
-          style={{
-            background: `linear-gradient(180deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.warningTint} 100%)`,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
-            padding: 18,
-          }}
-        >
-          <Flex vertical gap={14}>
-            <Flex align="center" gap={12}>
-              <IconTile accent={PUBLIC_COLORS.link} icon="project-outlined" />
-              <span>
-                <Text strong style={{ color: PUBLIC_COLORS.link }}>
-                  Project context
-                </Text>
-                <Text style={{ display: "block" }} type="secondary">
-                  People, tools, and AI use the same materials.
-                </Text>
-              </span>
+        <Flex vertical gap={16}>
+          <img
+            alt="One CoCalc workspace containing many workflows"
+            className="cocalc-public-home-workflow-image"
+            decoding="async"
+            loading="eager"
+            src={WORKFLOW_IMAGE_URL}
+            style={{
+              aspectRatio: "16 / 9",
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+              display: "block",
+              objectFit: "contain",
+              width: "100%",
+            }}
+          />
+          <aside
+            aria-label="One CoCalc project model"
+            style={{
+              background: `linear-gradient(180deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.warningTint} 100%)`,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
+              padding: 18,
+            }}
+          >
+            <Flex vertical gap={14}>
+              <Flex align="center" gap={12}>
+                <IconTile accent={PUBLIC_COLORS.link} icon="project-outlined" />
+                <span>
+                  <Text strong style={{ color: PUBLIC_COLORS.link }}>
+                    Project context
+                  </Text>
+                  <Text style={{ display: "block" }} type="secondary">
+                    People, tools, and AI use the same materials.
+                  </Text>
+                </span>
+              </Flex>
+              {PROJECT_MODEL_ITEMS.map((item) => (
+                <div
+                  key={item.label}
+                  style={{
+                    alignItems: "center",
+                    background: PUBLIC_COLORS.surface,
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: PANEL_RADIUS,
+                    display: "grid",
+                    gap: 10,
+                    gridTemplateColumns: "24px minmax(0, 1fr)",
+                    minHeight: 42,
+                    padding: "9px 10px",
+                  }}
+                >
+                  <Icon
+                    name={item.icon}
+                    style={{ color: PUBLIC_COLORS.link, fontSize: 15 }}
+                  />
+                  <Text>{item.label}</Text>
+                </div>
+              ))}
             </Flex>
-            {PROJECT_MODEL_ITEMS.map((item) => (
-              <div
-                key={item.label}
-                style={{
-                  alignItems: "center",
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: PANEL_RADIUS,
-                  display: "grid",
-                  gap: 10,
-                  gridTemplateColumns: "24px minmax(0, 1fr)",
-                  minHeight: 42,
-                  padding: "9px 10px",
-                }}
-              >
-                <Icon
-                  name={item.icon}
-                  style={{ color: PUBLIC_COLORS.link, fontSize: 15 }}
-                />
-                <Text>{item.label}</Text>
-              </div>
-            ))}
-          </Flex>
-        </aside>
+          </aside>
+        </Flex>
         <div
           aria-label="CoCalc workflow feature cards"
           className="cocalc-public-home-feature-grid"

@@ -100,6 +100,10 @@ describe("PublicHomeApp visual quality contract", () => {
     const workflowGrid = within(
       screen.getByRole("region", { name: "Core workflows" }),
     ).getByRole("group", { name: "CoCalc workflow feature cards" });
+    const projectGrid = getGrid(
+      container,
+      ".cocalc-public-home-project-card-grid",
+    );
     const audienceGrid = getGrid(
       container,
       ".cocalc-public-home-audience-grid",
@@ -120,6 +124,14 @@ describe("PublicHomeApp visual quality contract", () => {
       "Codex Agent Chat",
       "Teaching a Course",
       "Whiteboard",
+    ]);
+
+    expect(getDirectCards(projectGrid)).toHaveLength(3);
+    expectGridTemplate(projectGrid, "repeat(3, minmax(0, 1fr))");
+    expect(getCardTitles(projectGrid)).toEqual([
+      "Context survives handoff",
+      "Review stays close",
+      "Recovery remains practical",
     ]);
 
     expect(getDirectCards(audienceGrid)).toHaveLength(3);
@@ -165,6 +177,9 @@ describe("PublicHomeApp visual quality contract", () => {
     const css = getHomeCss(container);
 
     expect(css).toContain("@media (max-width: 920px)");
+    expect(css).toContain(".cocalc-public-home-project-card-grid");
+    expect(css).toContain("@media (max-width: 1120px)");
+    expect(css).toContain(".cocalc-public-home-workflow-layout");
     expect(css).toContain(".cocalc-public-home-audience-grid");
     expect(css).toContain(".cocalc-public-home-product-grid");
     expect(css).toContain(".cocalc-public-home-path-grid");
@@ -187,6 +202,10 @@ describe("PublicHomeApp visual quality contract", () => {
         { name: "CoCalc workflow feature cards" },
       ),
       { maxCardText: 230, maxTitleText: 28 },
+    );
+    expectCardsStayCompact(
+      getGrid(container, ".cocalc-public-home-project-card-grid"),
+      { maxCardText: 185, maxTitleText: 28 },
     );
     expectCardsStayCompact(
       getGrid(container, ".cocalc-public-home-audience-grid"),
@@ -265,8 +284,16 @@ describe("PublicHomeApp visual quality contract", () => {
       "object-fit: contain;",
     );
 
+    expect(
+      within(
+        screen.getByRole("region", { name: "Project continuity" }),
+      ).queryByRole("img", {
+        name: "One CoCalc workspace containing many workflows",
+      }),
+    ).toBeNull();
+
     const workflowImage = within(
-      screen.getByRole("region", { name: "Project continuity" }),
+      screen.getByRole("region", { name: "Core workflows" }),
     ).getByRole("img", {
       name: "One CoCalc workspace containing many workflows",
     });
