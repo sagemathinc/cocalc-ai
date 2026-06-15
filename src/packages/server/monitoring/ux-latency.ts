@@ -40,13 +40,13 @@ export type UxLatencySlaThresholds = {
 };
 
 export const DEFAULT_UX_LATENCY_SLA_THRESHOLDS: UxLatencySlaThresholds = {
-  project_start_warm_p95_ms: 2000,
-  project_start_overall_p95_ms: 10_000,
+  project_start_warm_p95_ms: 10_000,
+  project_start_overall_p95_ms: 5000,
   project_terminal_ready_p95_ms: 5000,
-  project_jupyter_ready_p95_ms: 5000,
-  project_exec_ready_p95_ms: 5000,
-  file_open_visible_p95_ms: 3000,
-  file_open_sync_ready_p95_ms: 8000,
+  project_jupyter_ready_p95_ms: 10_000,
+  project_exec_ready_p95_ms: 500,
+  file_open_visible_p95_ms: 10_000,
+  file_open_sync_ready_p95_ms: 5000,
 };
 
 let schemaReady: Promise<void> | undefined;

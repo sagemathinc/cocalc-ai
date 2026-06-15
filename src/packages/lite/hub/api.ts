@@ -737,6 +737,7 @@ async function getCodexPaymentSource(opts?: {
 async function getCodexUsageStatus(opts?: {
   account_id?: string;
   project_id?: string;
+  timeout?: number;
 }): Promise<CodexUsageStatusInfo> {
   const checkedAt = new Date().toISOString();
   const paymentSource = await getCodexPaymentSource(opts);
