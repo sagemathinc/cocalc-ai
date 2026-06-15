@@ -29,6 +29,7 @@ Accepted build components:
 ```text
 static
 hub
+bay
 project-host
 project
 tools
@@ -43,8 +44,12 @@ Accepted deploy components:
 ```text
 static
 hub
-hub-conat-router
-hub-conat-persist
+bay
+bay-conat-router
+bay-conat-persist
+bay-frontdoor
+bay-cloudflared
+bay-scaffold
 host-conat-router
 host-conat-persist
 project-host
@@ -77,6 +82,9 @@ Important operator semantics:
   not deploy to a Rocket site profile. They should still have explicit
   channels so an operator can publish a candidate, test it on real machines,
   then promote the same immutable artifact to stable.
+- This plan is not 100% complete until `bay`, `bay-conat-router`,
+  `bay-conat-persist`, `bay-frontdoor`, `bay-cloudflared`, and `bay-scaffold`
+  are fully supported or deliberately removed from the accepted component list.
 
 ## Current Repository Facts
 
@@ -85,14 +93,16 @@ Important operator semantics:
 `src/packages/cli/src/bin/commands/rocket.ts` currently implements:
 
 - `cocalc rocket release build --kind bay-runtime`
+- `cocalc rocket release build --kind bay-hub`
 - `cocalc rocket release build --kind bay-static`
 - `cocalc rocket release build --kind project-host-software`
-- `cocalc rocket deploy --scope static|bay|hosts|all ...`
+- `cocalc rocket deploy --scope static|hub|bay|hosts|all ...`
 - `cocalc rocket health host-routes ...`
 
 The current Rocket release builder delegates to package `@cocalc/rocket`:
 
 - `build:bay-bundle` -> `src/packages/rocket/bay/build-bundle.sh`
+- `build:bay-hub-bundle` -> `src/packages/rocket/bay/build-hub-bundle.sh`
 - `build:bay-static-bundle` -> `src/packages/rocket/bay/build-static-bundle.sh`
 - `build:project-host-software-bundle` ->
   `src/packages/rocket/bay/build-project-host-software-bundle.sh`
@@ -106,10 +116,9 @@ The existing `bay-runtime` tarball includes:
 - bay systemd scaffold
 - bay-local project-host daemon bundle
 
-For the high-level operator interface, call this component `hub` even though the
-current artifact is wider than just hub workers. If we later split the bay
-runtime further, keep the `hub` UI stable and change only the build/deploy
-backend.
+For the high-level operator interface, call the full runtime component `bay`.
+The `hub` component is the smaller control-plane-only artifact intended for
+normal hub/backend deploys.
 
 The current `project-host-software` tarball includes:
 
@@ -141,9 +150,9 @@ they can be tested and deployed independently.
 - `acp-worker`
 
 Those are project-host-local components. They are not the same as the bay
-`hub-conat-router` and `hub-conat-persist` services requested for
-`cocalc software deploy hub-conat-router ...` and `cocalc software deploy
-hub-conat-persist ...`.
+`bay-conat-router` and `bay-conat-persist` services requested for
+`cocalc software deploy bay-conat-router ...` and `cocalc software deploy
+bay-conat-persist ...`.
 
 ### Existing R2 Publishing Scripts
 
@@ -219,8 +228,12 @@ There are two different Conat router/persist service families:
 
 Use explicit names in the high-level `software` command:
 
-- `hub-conat-router` means the Rocket bay/hub Conat router service.
-- `hub-conat-persist` means the Rocket bay/hub Conat persist service.
+- `bay-conat-router` means the Rocket bay/hub Conat router service.
+- `bay-conat-persist` means the Rocket bay/hub Conat persist service.
+- `bay-frontdoor` means the Rocket bay frontdoor/sticky-session service.
+- `bay-cloudflared` means the Rocket bay Cloudflare tunnel service/helper.
+- `bay-scaffold` means Rocket bay systemd units, scripts, and env templates
+  without necessarily changing application runtime code.
 - `host-conat-router` means the project-host-local Conat router component.
 - `host-conat-persist` means the project-host-local Conat persist component.
 
@@ -708,13 +721,26 @@ consume an R2 URL directly.
 Backend:
 
 ```sh
-cocalc rocket deploy <profile> --scope bay --bundle <downloaded-or-local-runtime-tarball> --yes
+cocalc rocket deploy <profile> --scope hub --bundle <downloaded-or-local-hub-tarball> --yes
 ```
 
 This should not upgrade project hosts unless the operator deploys
 `project-host`, `project`, or `tools`.
 
-### `deploy hub-conat-router` and `deploy hub-conat-persist`
+### `deploy bay`
+
+Backend:
+
+```sh
+cocalc rocket deploy <profile> --scope bay --bundle <downloaded-or-local-runtime-tarball> --yes
+```
+
+This is the full bay runtime deploy escape hatch. It may update broader bay
+runtime content than `hub`, but it still should not upgrade project hosts unless
+the operator deploys `project-host`, `project`, `tools`, or uses a lower-level
+full `rocket --scope all` workflow.
+
+### `deploy bay-conat-router` and `deploy bay-conat-persist`
 
 These refer to bay systemd services.
 
@@ -736,7 +762,30 @@ Required lower-level work:
   as high-level commands.
 
 Do not use `cocalc host rollout --component conat-router` for
-`hub-conat-router`; that is the project-host component.
+`bay-conat-router`; that is the project-host component.
+
+### `deploy bay-frontdoor`, `deploy bay-cloudflared`, and `deploy bay-scaffold`
+
+These are bay-side operational components and must not be confused with
+project-host runtime rollouts.
+
+Initial backend:
+
+- `bay-frontdoor`: deploy the selected bay/hub runtime artifact if required,
+  then restart or reload only `cocalc-bay-frontdoor.service`.
+- `bay-cloudflared`: deploy the selected bay/hub runtime artifact if required,
+  then restart only `cocalc-bay-cloudflared.service`.
+- `bay-scaffold`: deploy systemd units/scripts/env templates and run
+  `systemctl daemon-reload` without forcing a hub code rollout unless the
+  artifact requires it.
+
+Required lower-level work:
+
+- Add precise Rocket primitives for these service/scaffold actions.
+- Define artifact dependency rules for each component. For example,
+  `bay-cloudflared` may depend on a full `bay` artifact rather than a `hub`
+  artifact if helper scripts or unit files changed.
+- Add health checks specific to each component before wiring high-level deploy.
 
 ### `deploy host-conat-router` and `deploy host-conat-persist`
 
@@ -903,7 +952,7 @@ Validation:
 - unit tests for tag conflict detection
 - unit tests for list sorting and source merging
 
-### Phase 2: Build For `static`, `hub`, `project-host`, `project`, `tools`
+### Phase 2: Build For `static`, `hub`, `bay`, `project-host`, `project`, `tools`
 
 Implement command wrappers that call existing build tools and copy outputs into
 the local store.
@@ -958,13 +1007,14 @@ Deploy flow:
 - push if local-only
 - download remote artifact to `/tmp/cocalc-software-deploy/...` if not already
   present locally
-- call `rocket deploy --scope static|bay --bundle ... --yes`
+- call `rocket deploy --scope static|hub|bay --bundle ... --yes`
 - write deploy report
 
 Validation:
 
 - deploy `static` to staging from an immutable artifact.
 - deploy `hub` to staging from an immutable artifact.
+- deploy `bay` to staging from an immutable artifact.
 - confirm a second deploy to delta/prod uses the bitwise identical artifact.
 
 ### Phase 5: Deploy `project-host`, `project`, `tools`
@@ -999,15 +1049,23 @@ Validation:
 Add or expose a low-level Rocket primitive that can:
 
 - stage a hub/bay-runtime artifact if needed
-- restart only hub-conat-router or hub-conat-persist
+- restart only bay-conat-router or bay-conat-persist
 - avoid restarting cloudflared unless explicitly requested elsewhere
 - avoid accidentally using project-host-local `host rollout` for hub services
 
 Then wire:
 
 ```sh
-cocalc software deploy hub-conat-router <hub-tag-or-id> <profile>
-cocalc software deploy hub-conat-persist <hub-tag-or-id> <profile>
+cocalc software deploy bay-conat-router <hub-tag-or-id> <profile>
+cocalc software deploy bay-conat-persist <hub-tag-or-id> <profile>
+```
+
+Also add bay-side service/scaffold component support:
+
+```sh
+cocalc software deploy bay-frontdoor <hub-or-bay-tag-or-id> <profile>
+cocalc software deploy bay-cloudflared <hub-or-bay-tag-or-id> <profile>
+cocalc software deploy bay-scaffold <bay-tag-or-id> <profile>
 ```
 
 Add host-side component wiring separately:
@@ -1095,7 +1153,7 @@ This is intentionally not part of the first cut.
 - Deploy target is Star but third positional argument is not a valid channel.
 - Deploy target is non-Star but third positional argument is not a configured
   profile.
-- `hub-conat-router`/`hub-conat-persist` requested before the low-level precise
+- `bay-conat-router`/`bay-conat-persist` requested before the low-level precise
   bay restart primitive exists.
 - `host-conat-router`/`host-conat-persist` requested without a configured host
   selection policy, if the implementation chooses not to default to all-online.
@@ -1114,7 +1172,7 @@ git: e882d124 clean
 local: /tmp/cocalc-software/hub/20260614T235912Z-e882d124-fix-bug
 
 files:
-  cocalc-bay-runtime-linux-x64.tar.xz  46M  sha256:...
+  cocalc-bay-hub-linux-x64.tar.xz  20M  sha256:...
 ```
 
 Build success with generated tag:

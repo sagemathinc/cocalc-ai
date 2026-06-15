@@ -28,8 +28,9 @@ test("software tag validation accepts the intended operator alphabet", () => {
 
 test("software build component parser rejects deploy-only components", () => {
   assert.equal(parseSoftwareBuildComponent("hub"), "hub");
+  assert.equal(parseSoftwareBuildComponent("bay"), "bay");
   assert.throws(
-    () => parseSoftwareBuildComponent("hub-conat-router"),
+    () => parseSoftwareBuildComponent("bay-conat-router"),
     /unknown software build component/,
   );
 });

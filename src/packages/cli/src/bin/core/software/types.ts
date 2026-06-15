@@ -1,6 +1,7 @@
 export const SOFTWARE_BUILD_COMPONENTS = [
   "static",
   "hub",
+  "bay",
   "project-host",
   "project",
   "tools",
@@ -13,8 +14,12 @@ export const SOFTWARE_BUILD_COMPONENTS = [
 export const SOFTWARE_DEPLOY_COMPONENTS = [
   "static",
   "hub",
-  "hub-conat-router",
-  "hub-conat-persist",
+  "bay",
+  "bay-conat-router",
+  "bay-conat-persist",
+  "bay-frontdoor",
+  "bay-cloudflared",
+  "bay-scaffold",
   "host-conat-router",
   "host-conat-persist",
   "project-host",

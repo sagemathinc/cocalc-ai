@@ -152,6 +152,13 @@ function rocketBuildInfo(component: SoftwareBuildComponent):
       artifactName: `cocalc-bay-hub-linux-${nodeArch}.tar.xz`,
     };
   }
+  if (component === "bay") {
+    return {
+      script: "build:bay-bundle",
+      kind: "bay-runtime",
+      artifactName: `cocalc-bay-runtime-linux-${nodeArch}.tar.xz`,
+    };
+  }
   if (component === "static") {
     return {
       script: "build:bay-static-bundle",
@@ -565,8 +572,11 @@ function rocketDeployTargetForComponent(component: SoftwareDeployComponent): {
   if (component === "hub") {
     return { artifactComponent: "hub", scope: "hub" };
   }
+  if (component === "bay") {
+    return { artifactComponent: "bay", scope: "bay" };
+  }
   throw new Error(
-    `software deploy ${component} is not wired yet; currently supported: static, hub`,
+    `software deploy ${component} is not wired yet; currently supported: static, hub, bay`,
   );
 }
 
@@ -931,7 +941,7 @@ Supported deploy/smoke components:
     .description("deploy or promote a software artifact")
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
     .argument("<tag-or-id>", "artifact tag or id")
-    .argument("[profile-or-channel]", "site profile or release channel")
+    .argument("<profile-or-channel>", "site profile or release channel")
     .option("--local-store <path>", "local artifact store")
     .option("--config <path>", "rocket config path")
     .option("--remote <ssh-target>", "bay SSH target")

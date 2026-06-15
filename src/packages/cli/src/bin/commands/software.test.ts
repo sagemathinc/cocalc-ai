@@ -155,9 +155,10 @@ test("software help lists supported components", () => {
   assert.ok(build);
   assert.ok(list);
   assert.ok(deploy);
-  assert.match(build.helpInformation(), /static\|hub\|project-host/);
+  assert.match(build.helpInformation(), /static\|hub\|bay\|project-host/);
   assert.match(list.helpInformation(), /cli\|launchpad\|plus\|star/);
-  assert.match(deploy.helpInformation(), /hub-conat-router/);
+  assert.match(deploy.helpInformation(), /bay-conat-router/);
+  assert.doesNotMatch(deploy.helpInformation(), /hub-conat-router/);
 });
 
 test("software build records an existing file with a generated tag", async () => {
@@ -231,6 +232,40 @@ test("software build hub runs the Rocket bay hub builder", async () => {
   );
   assert.equal(manifest.files[0].name, artifactName);
   assert.match(manifest.build.command, /build:bay-hub-bundle/);
+});
+
+test("software build bay runs the full Rocket bay runtime builder", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-bay-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs }));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "bay",
+    "full-runtime-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("build:bay-bundle"), true);
+  const artifactName = `cocalc-bay-runtime-linux-${
+    process.arch === "arm64" ? "arm64" : "x64"
+  }.tar.xz`;
+  const artifactDir = join(
+    localStore,
+    "bay",
+    "20260614T235912Z-e882d124-full-runtime-test",
+  );
+  assert.equal(existsSync(join(artifactDir, "files", artifactName)), true);
+  const manifest = JSON.parse(
+    readFileSync(join(artifactDir, "manifest.json"), "utf8"),
+  );
+  assert.equal(manifest.files[0].name, artifactName);
+  assert.match(manifest.build.command, /build:bay-bundle/);
 });
 
 test("software build static runs the Rocket bay static builder", async () => {
@@ -719,6 +754,10 @@ test("software deploy static invokes Rocket with a local remote-backed bundle", 
     file.url,
     "--bundle-sha256",
     file.sha256,
+    "--remote",
+    "ubuntu@10.206.0.27",
+    "--api",
+    "https://staging.cocalc.ai",
     "--yes",
   ]);
 });
@@ -810,7 +849,13 @@ test("software deploy latest chooses the newest remote artifact", async () => {
   assert.equal(rocketArgs[6], `https://software.example.test/${remoteFileKey}`);
   assert.equal(rocketArgs[7], "--bundle-sha256");
   assert.equal(rocketArgs[8], "abc");
-  assert.equal(rocketArgs[9], "--yes");
+  assert.deepEqual(rocketArgs.slice(9), [
+    "--remote",
+    "ubuntu@10.206.0.27",
+    "--api",
+    "https://staging.cocalc.ai",
+    "--yes",
+  ]);
 });
 
 test("software deploy resolves API from auth profile and infers known bay remote", async () => {
@@ -952,7 +997,67 @@ test("software deploy hub pushes a local-only artifact before Rocket deploy", as
   ]);
 });
 
-test("software deploy rejects unwired explicit conat components", async () => {
+test("software deploy bay uses the full bay Rocket scope", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-bay-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "bay.tar.xz");
+  writeFileSync(source, "bay bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "bay",
+    "full-deploy",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "bay",
+    "full-deploy",
+    "prod",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  assert.equal(runs.length, 1);
+  const rocketIndex = runs[0].args.indexOf("rocket");
+  assert.notEqual(rocketIndex, -1);
+  const index = JSON.parse(
+    r2.objects.get("software/indexes/bay.json")!.toString("utf8"),
+  );
+  const file = index.artifacts[0].files[0];
+  assert.deepEqual(runs[0].args.slice(rocketIndex), [
+    "rocket",
+    "deploy",
+    "prod",
+    "--scope",
+    "bay",
+    "--bundle-url",
+    file.url,
+    "--bundle-sha256",
+    file.sha256,
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
+    "--yes",
+  ]);
+});
+
+test("software deploy rejects unwired explicit bay service components", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-unwired-"));
   const program = createProgram(makeDeps({ localStore: join(dir, "store") }));
 
@@ -963,11 +1068,11 @@ test("software deploy rejects unwired explicit conat components", async () => {
         "test",
         "software",
         "deploy",
-        "hub-conat-router",
+        "bay-conat-router",
         "tag",
         "prod",
       ]),
-    /software deploy hub-conat-router is not wired yet/,
+    /software deploy bay-conat-router is not wired yet/,
   );
 });
 

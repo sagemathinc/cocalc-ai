@@ -14,6 +14,7 @@ export function parseSoftwareBuildComponent(
   switch (value) {
     case "static":
     case "hub":
+    case "bay":
     case "project-host":
     case "project":
     case "tools":
