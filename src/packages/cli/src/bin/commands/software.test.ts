@@ -76,15 +76,18 @@ function makeDeps({
         args.includes("@cocalc/project") &&
         args.includes("build:tools")
       ) {
-        const toolsArch = process.arch === "arm64" ? "arm64" : "amd64";
-        bundle = join(
-          cwd,
-          "src",
-          "packages",
-          "project",
-          "build",
-          `tools-linux-${toolsArch}.tar.xz`,
-        );
+        for (const arch of ["amd64", "arm64"]) {
+          const toolsBundle = join(
+            cwd,
+            "src",
+            "packages",
+            "project",
+            "build",
+            `tools-linux-${arch}.tar.xz`,
+          );
+          mkdirSync(join(toolsBundle, ".."), { recursive: true });
+          writeFileSync(toolsBundle, `built tools bundle ${arch}`);
+        }
       }
       if (bundle) {
         mkdirSync(join(bundle, ".."), { recursive: true });
@@ -118,6 +121,15 @@ function makeR2Client(objects = new Map<string, Buffer>()): {
           throw err;
         }
         return value;
+      },
+      copyR2Object: async ({ sourceKey, destKey }) => {
+        const value = objects.get(sourceKey);
+        if (!value) {
+          const err: any = new Error(`404 not found: ${sourceKey}`);
+          err.statusCode = 404;
+          throw err;
+        }
+        objects.set(destKey, Buffer.from(value));
       },
     },
   };
@@ -374,8 +386,6 @@ test("software build tools runs the package tools builder", async () => {
   const localStore = join(dir, "store");
   const runs: CapturedRun[] = [];
   const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
-  const toolsArch = process.arch === "arm64" ? "arm64" : "amd64";
-  const artifactName = `tools-linux-${toolsArch}.tar.xz`;
 
   await program.parseAsync([
     "node",
@@ -390,18 +400,20 @@ test("software build tools runs the package tools builder", async () => {
   assert.equal(runs.length, 1);
   assert.equal(runs[0].args.includes("@cocalc/project"), true);
   assert.equal(runs[0].args.includes("build:tools"), true);
-  assert.equal(
-    existsSync(
-      join(
-        localStore,
-        "tools",
-        "20260614T235912Z-e882d124-tools-test",
-        "files",
-        artifactName,
+  for (const arch of ["amd64", "arm64"]) {
+    assert.equal(
+      existsSync(
+        join(
+          localStore,
+          "tools",
+          "20260614T235912Z-e882d124-tools-test",
+          "files",
+          `tools-linux-${arch}.tar.xz`,
+        ),
       ),
-    ),
-    true,
-  );
+      true,
+    );
+  }
 });
 
 test("software build rejects duplicate explicit local tags", async () => {
@@ -761,6 +773,77 @@ test("software deploy static invokes Rocket with a local remote-backed bundle", 
     "https://staging.cocalc.ai",
     "--yes",
   ]);
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/static/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].tag, "deploy-test");
+  assert.equal(history.deployments[0].profile_or_channel, "staging");
+});
+
+test("software history shows unknown for unsealed started deployments", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-history-started-"));
+  const localStore = join(dir, "store");
+  const deploymentIndex = {
+    schema: "cocalc-software-deployment-index-v1",
+    component: "hub",
+    profile_or_channel: "staging",
+    generated_at: "2026-06-15T00:00:00.000Z",
+    deployments: [
+      {
+        deployment_id: "20260615T000000Z-artifact",
+        component: "hub",
+        artifact_component: "hub",
+        profile_or_channel: "staging",
+        started_at: "2026-06-15T00:00:00.000Z",
+        updated_at: "2026-06-15T00:00:00.000Z",
+        artifact_id: "artifact",
+        tag: "tag",
+        git: { commit: "abcdef", short: "abcdef", dirty: false },
+        deployed_by: { user: "alice", host: "workstation" },
+        target: { kind: "rocket-bay", profile: "staging" },
+        status: "started",
+        record_key: "software/deployments/staging/hub/record.json",
+        record_url:
+          "https://software.example.test/software/deployments/staging/hub/record.json",
+      },
+    ],
+  };
+  const r2 = makeR2Client(
+    new Map([
+      [
+        "software/deployments/staging/hub/index.json",
+        Buffer.from(JSON.stringify(deploymentIndex), "utf8"),
+      ],
+    ]),
+  );
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "history",
+      "hub",
+      "staging",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.data.deployments[0].status, "unknown");
 });
 
 test("software deploy latest chooses the newest remote artifact", async () => {
@@ -998,6 +1081,70 @@ test("software deploy hub pushes a local-only artifact before Rocket deploy", as
   ]);
 });
 
+test("software deploy records failed history when subprocess fails", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-failed-history-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "hub.tar.xz");
+  writeFileSync(source, "hub bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const deps = makeDeps({
+    localStore,
+    runs,
+    env: r2Env,
+    r2Client: r2.client,
+  });
+  deps.runCommand = async (command, args) => {
+    runs.push({ command, args });
+    if (args.includes("deploy")) {
+      return 7;
+    }
+    const bundle = args.at(-1);
+    if (bundle) {
+      mkdirSync(join(bundle, ".."), { recursive: true });
+      writeFileSync(bundle, "built bundle");
+    }
+    return 0;
+  };
+  const program = createProgram(deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "hub",
+    "fail-deploy",
+    "--from-file",
+    source,
+  ]);
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "deploy",
+        "hub",
+        "fail-deploy",
+        "prod",
+        "--env-file",
+        join(dir, "missing.env"),
+      ]),
+    /failed with exit status 7/,
+  );
+
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/prod/hub/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "failed");
+  assert.match(history.deployments[0].error, /exit status 7/);
+});
+
 test("software deploy bay uses the full bay Rocket scope", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-bay-"));
   const localStore = join(dir, "store");
@@ -1056,6 +1203,158 @@ test("software deploy bay uses the full bay Rocket scope", async () => {
     "https://cocalc.ai",
     "--yes",
   ]);
+});
+
+test("software deploy project-host publishes compatibility object and runs host upgrade", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-project-host-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "bundle-linux.tar.xz");
+  writeFileSync(source, "project host bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = "software";
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "build",
+      "project-host",
+      "host-deploy",
+      "--from-file",
+      source,
+      "--artifact-name",
+      "bundle-linux.tar.xz",
+    ]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "deploy",
+      "project-host",
+      "host-deploy",
+      "staging",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    process.argv[1] = originalArgv1;
+  }
+
+  const artifactId = "20260614T235912Z-e882d124-host-deploy";
+  assert.equal(
+    r2.objects.has(`software/project-host/${artifactId}/bundle-linux.tar.xz`),
+    true,
+  );
+  assert.equal(
+    r2.objects.has(
+      `software/project-host/${artifactId}/bundle-linux.tar.xz.sha256`,
+    ),
+    true,
+  );
+  assert.equal(runs.length, 1);
+  assert.deepEqual(runs[0].args, [
+    "--profile",
+    "staging",
+    "host",
+    "upgrade",
+    "--all-online",
+    "--artifact",
+    "project-host",
+    "--artifact-version",
+    artifactId,
+    "--base-url",
+    "https://software.example.test/software",
+    "--wait",
+  ]);
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/project-host/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].artifact_id, artifactId);
+});
+
+test("software deploy tools publishes both architecture compatibility objects", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-tools-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, cwd: dir, env: r2Env, r2Client: r2.client }),
+  );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = "software";
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "build",
+      "tools",
+      "tools-deploy",
+    ]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "deploy",
+      "tools",
+      "tools-deploy",
+      "staging",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    process.argv[1] = originalArgv1;
+  }
+
+  const artifactId = "20260614T235912Z-e882d124-tools-deploy";
+  for (const arch of ["amd64", "arm64"]) {
+    assert.equal(
+      r2.objects.has(`software/tools/${artifactId}/tools-linux-${arch}.tar.xz`),
+      true,
+    );
+    assert.equal(
+      r2.objects.has(
+        `software/tools/${artifactId}/tools-linux-${arch}.tar.xz.sha256`,
+      ),
+      true,
+    );
+  }
+  assert.equal(runs.length, 2);
+  assert.deepEqual(runs[1].args, [
+    "--profile",
+    "staging",
+    "host",
+    "upgrade",
+    "--all-online",
+    "--artifact",
+    "tools",
+    "--artifact-version",
+    artifactId,
+    "--base-url",
+    "https://software.example.test/software",
+    "--wait",
+  ]);
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/tools/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].artifact_id, artifactId);
 });
 
 test("software deploy rejects unwired explicit bay service components", async () => {
