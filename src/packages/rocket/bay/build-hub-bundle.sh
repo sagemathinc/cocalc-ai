@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 
-# Build a self-contained CoCalc Rocket bay runtime bundle.
+# Build a compact control-plane-only CoCalc Rocket bay update bundle.
 #
-# The resulting tarball is intentionally a systemd-friendly runtime bundle,
-# not a SEA binary. Phase 2 can embed this tarball in a SEA launcher once the
-# bundle contract is stable.
+# This artifact is for hub/backend deploys where the current target release
+# already has valid static assets, project-host runtime, and systemd scaffold.
+# The remote bootstrap path creates a new release from the current release,
+# replaces only hub/control-plane runtime files, flips the current symlink, and
+# the upgrade wrapper rolls hub workers after running migrations.
 #
 # Usage:
-#   ./build-bundle.sh [output-directory] [tarball-path]
+#   ./build-hub-bundle.sh [output-directory] [tarball-path]
 
 set -euo pipefail
 
 ROOT="$(realpath "$(dirname "$0")/../../..")"
-DEFAULT_OUT="$ROOT/packages/rocket/build/bay-runtime"
+DEFAULT_OUT="$ROOT/packages/rocket/build/bay-hub"
 OUT_ARG="${1:-}"
 if [[ -n "$OUT_ARG" && "$OUT_ARG" != --* ]]; then
   OUT="$(realpath -m "$OUT_ARG")"
@@ -30,7 +32,7 @@ else
     aarch64|arm64) ARCH="arm64" ;;
     *) ARCH="$(uname -m)" ;;
   esac
-  TARBALL="$ROOT/packages/rocket/build/cocalc-bay-runtime-linux-${ARCH}.tar.xz"
+  TARBALL="$ROOT/packages/rocket/build/cocalc-bay-hub-linux-${ARCH}.tar.xz"
 fi
 
 if [[ "$#" -gt 0 ]]; then
@@ -42,7 +44,6 @@ FINAL_OUT="$OUT"
 FINAL_TARBALL="$TARBALL"
 OUT_PARENT="$(dirname "$OUT")"
 OUT_NAME="$(basename "$OUT")"
-LOCKFILE="$OUT_PARENT/.${OUT_NAME}.build.lock"
 TMP_ROOT=""
 TMP_TARBALL=""
 
@@ -72,26 +73,18 @@ copy_native_pkg() {
 validate_file() {
   local path="$1"
   if [[ ! -f "$path" ]]; then
-    echo "ERROR: bundle validation failed; missing file: $path" >&2
+    echo "ERROR: hub bundle validation failed; missing file: $path" >&2
     exit 1
   fi
 }
 
 mkdir -p "$OUT_PARENT"
-if [[ -d "$LOCKFILE" ]]; then
-  rmdir "$LOCKFILE" 2>/dev/null || {
-    echo "ERROR: stale bundle lock directory exists at $LOCKFILE" >&2
-    exit 1
-  }
-fi
-exec 9>"$LOCKFILE"
-flock 9
 trap cleanup EXIT
 
 TMP_ROOT="$(mktemp -d "$OUT_PARENT/.${OUT_NAME}.tmp.XXXXXX")"
 OUT="$TMP_ROOT/$OUT_NAME"
 
-echo "Building CoCalc Rocket bay runtime bundle..."
+echo "Building CoCalc Rocket bay hub bundle..."
 echo "  root:    $ROOT"
 echo "  out:     $OUT"
 echo "  tarball: $FINAL_TARBALL"
@@ -100,27 +93,13 @@ mkdir -p "$OUT/runtime"
 
 cd "$ROOT"
 
-echo "- Build project-host bundle"
-pnpm --filter @cocalc/project-host run build:bundle
-
-echo "- Clean static frontend outputs"
-rm -rf packages/static/dist
-
-echo "- Build static frontend assets"
-pnpm static
-
 echo "- Build compact control-plane bundle"
 "$ROOT/scripts/control-plane-bundle/build-bundle.sh" \
   --entrypoint packages/rocket/bin/start-hub-worker.js \
   --out "$OUT/runtime/control-plane" \
   --package-filter @cocalc/rocket \
   --include-pglite \
-  --exclude-static 'embed-*.js'
-
-echo "- Copy project-host daemon bundle"
-mkdir -p "$OUT/runtime/project-host"
-cp -a "$ROOT/packages/project-host/build/bundle/main"/. \
-  "$OUT/runtime/project-host"/
+  --no-static
 
 echo "- Bundle schema migration helper with @vercel/ncc"
 pnpm --filter @cocalc/project-host exec ncc build "$ROOT/packages/rocket/bin/bay-migrate-schema.js" \
@@ -132,22 +111,8 @@ pnpm --filter @cocalc/project-host exec ncc build "$ROOT/packages/rocket/bin/bay
 copy_native_pkg "bufferutil" "$OUT/runtime/migrate-schema"
 copy_native_pkg "utf-8-validate" "$OUT/runtime/migrate-schema"
 
-echo "- Bundle cloudflared systemd helper with @vercel/ncc"
-pnpm --filter @cocalc/project-host exec ncc build "$ROOT/packages/rocket/bin/bay-cloudflared.js" \
-  -o "$OUT/runtime/cloudflared" \
-  --external bufferutil \
-  --external utf-8-validate \
-  --license licenses.txt
-
-copy_native_pkg "bufferutil" "$OUT/runtime/cloudflared"
-copy_native_pkg "utf-8-validate" "$OUT/runtime/cloudflared"
-
-echo "- Copy bay systemd scaffold"
-mkdir -p "$OUT/scripts"
-cp -a "$ROOT/scripts/bay-systemd" "$OUT/scripts/"
-
-echo "- Write runtime manifest"
-node - "$OUT/bay-runtime-manifest.json" "$ROOT" <<'NODE'
+echo "- Write hub manifest"
+node - "$OUT/bay-hub-manifest.json" "$ROOT" <<'NODE'
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const [out, root] = process.argv.slice(2);
@@ -165,7 +130,7 @@ function run(command, args) {
 }
 
 const manifest = {
-  kind: "cocalc-bay-runtime",
+  kind: "cocalc-bay-hub",
   version: 1,
   created: new Date().toISOString(),
   git: {
@@ -180,35 +145,22 @@ const manifest = {
     modules: process.versions.modules,
   },
   entrypoints: {
-    projectHost: "runtime/project-host/index.js",
     hub: "runtime/control-plane/bundle/index.js",
     migrateSchema: "runtime/migrate-schema/index.js",
-    cloudflared: "runtime/cloudflared/index.js",
     apiV2Root: "runtime/control-plane/http-api-dist/pages/api/v2",
     apiV2Routes: "runtime/control-plane/api-v2-routes/index.js",
   },
-  scaffold: "scripts/bay-systemd",
 };
 
 fs.writeFileSync(out, JSON.stringify(manifest, null, 2) + "\n");
 NODE
 
-echo "- Validate runtime bundle"
-validate_file "$OUT/runtime/project-host/index.js"
+echo "- Validate hub bundle"
 validate_file "$OUT/runtime/control-plane/bundle/index.js"
 validate_file "$OUT/runtime/control-plane/api-v2-routes/index.js"
-validate_file "$OUT/runtime/migrate-schema/index.js"
-validate_file "$OUT/runtime/cloudflared/index.js"
 validate_file "$OUT/runtime/control-plane/http-api-dist/pages/api/v2/index.js"
-validate_file "$OUT/runtime/control-plane/static/public.html"
-validate_file "$OUT/runtime/control-plane/public/cocalc-content.css"
-validate_file "$OUT/runtime/control-plane/webapp/favicon.ico"
-validate_file "$OUT/runtime/control-plane/bundle/gcp/gcp-setup.sh"
-validate_file "$OUT/runtime/control-plane/bundle/nebius/nebius-setup.sh"
-validate_file "$OUT/scripts/bay-systemd/install-scaffold.sh"
-validate_file "$OUT/scripts/bay-systemd/bay-bootstrap-release.sh"
-validate_file "$OUT/scripts/bay-systemd/env/bay-rocket-bundle-overlay.env.example"
-validate_file "$OUT/bay-runtime-manifest.json"
+validate_file "$OUT/runtime/migrate-schema/index.js"
+validate_file "$OUT/bay-hub-manifest.json"
 
 echo "- Publish output directory"
 rm -rf "$FINAL_OUT"
@@ -224,6 +176,6 @@ tar -C "$(dirname "$FINAL_OUT")" -cJf "$TMP_TARBALL" "$(basename "$FINAL_OUT")"
 mv "$TMP_TARBALL" "$FINAL_TARBALL"
 TMP_TARBALL=""
 
-echo "Bay runtime bundle ready:"
-echo "  directory: $FINAL_OUT"
-echo "  tarball:   $FINAL_TARBALL"
+echo "Bay hub bundle ready:"
+echo "  out:     $FINAL_OUT"
+echo "  tarball: $FINAL_TARBALL"

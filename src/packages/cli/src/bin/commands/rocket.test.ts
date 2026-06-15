@@ -125,6 +125,44 @@ test("rocket release build --out-dir keeps the default tarball beside that direc
   assert.deepEqual(runs[0].args.slice(-2), [outDir, bundle]);
 });
 
+test("rocket release build --kind bay-hub builds a control-plane artifact", async () => {
+  const runs: CapturedRun[] = [];
+  const dir = mkdtempSync(join(tmpdir(), "rocket-hub-build-"));
+  const outDir = join(dir, "bay-hub");
+  const bundle = join(dir, "cocalc-bay-hub-linux-x64.tar.xz");
+  const manifest = join(outDir, "bay-hub-manifest.json");
+  const program = createProgram({
+    runs,
+    onRun: async () => {
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(bundle, "hub artifact");
+      writeFileSync(
+        manifest,
+        JSON.stringify({
+          kind: "cocalc-bay-hub",
+          git: { commit: "abc123" },
+        }),
+      );
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "release",
+    "build",
+    "--kind",
+    "bay-hub",
+    "--out-dir",
+    outDir,
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("build:bay-hub-bundle"), true);
+  assert.deepEqual(runs[0].args.slice(-2), [outDir, bundle]);
+});
+
 test("rocket release build --kind project-host-software builds separate host payload", async () => {
   const runs: CapturedRun[] = [];
   const dir = mkdtempSync(join(tmpdir(), "rocket-host-software-build-"));
@@ -294,6 +332,32 @@ test("rocket deploy can request a cloudflared restart explicitly", async () => {
   assert.equal(runs[0].args.includes("--skip-host-upgrade"), true);
 });
 
+test("rocket deploy --scope hub wraps upgrade-bay-release as hub-only", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({ runs });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "deploy",
+    "--scope",
+    "hub",
+    "--build",
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
+    "--yes",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("--build-bundle"), true);
+  assert.equal(runs[0].args.includes("--hub-only"), true);
+  assert.equal(runs[0].args.includes("--skip-host-upgrade"), false);
+  assert.equal(runs[0].args.includes("--static-only"), false);
+});
+
 test("rocket deploy --static-only keeps compatibility with static deploys", async () => {
   const runs: CapturedRun[] = [];
   const program = createProgram({ runs });
@@ -317,6 +381,44 @@ test("rocket deploy --static-only keeps compatibility with static deploys", asyn
   assert.equal(runs[0].args.includes("--static-only"), true);
   assert.equal(runs[0].args.includes("--restart-hub-workers"), true);
   assert.equal(runs[0].args.includes("--skip-host-upgrade"), false);
+});
+
+test("rocket deploy can ask target VM to download bundle by URL", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({ runs });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "deploy",
+    "--scope",
+    "static",
+    "--bundle-url",
+    "https://software.example.test/software/artifacts/static/build/files/static.tar.xz",
+    "--bundle-sha256",
+    "abc123",
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
+    "--yes",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("--static-only"), true);
+  assert.deepEqual(
+    runs[0].args.slice(
+      runs[0].args.indexOf("--bundle-url"),
+      runs[0].args.indexOf("--bundle-url") + 4,
+    ),
+    [
+      "--bundle-url",
+      "https://software.example.test/software/artifacts/static/build/files/static.tar.xz",
+      "--bundle-sha256",
+      "abc123",
+    ],
+  );
 });
 
 test("rocket deploy --scope all builds bay and host software separately", async () => {

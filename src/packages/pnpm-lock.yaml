@@ -304,6 +304,9 @@ importers:
       '@cocalc/app-tasks':
         specifier: workspace:*
         version: link:../apps/tasks
+      '@cocalc/backend':
+        specifier: workspace:*
+        version: link:../backend
       '@cocalc/chat':
         specifier: workspace:*
         version: link:../chat

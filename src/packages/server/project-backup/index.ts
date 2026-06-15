@@ -327,6 +327,9 @@ async function ensureProjectBackupIndexSchema(): Promise<void> {
         )
       `);
       await pool().query(
+        "ALTER TABLE project_backup_indexes ALTER COLUMN id SET DEFAULT gen_random_uuid()",
+      );
+      await pool().query(
         "CREATE INDEX IF NOT EXISTS project_backup_indexes_project_id_idx ON project_backup_indexes(project_id)",
       );
       await pool().query(
@@ -1584,9 +1587,9 @@ export async function recordProjectBackupIndex({
   }
   await pool().query(
     `INSERT INTO project_backup_indexes (
-      project_id, backup_id, backup_time, status, storage_backend, bucket_id,
+      id, project_id, backup_id, backup_time, status, storage_backend, bucket_id,
       object_key, compression, sqlite_bytes, object_bytes, sha256, error, host_id
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    ) VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     ON CONFLICT (project_id, backup_id) DO UPDATE SET
       backup_time = EXCLUDED.backup_time,
       status = EXCLUDED.status,

@@ -63,6 +63,7 @@
   "dependencies": {
     "@cocalc/app-notebook": "workspace:*",
     "@cocalc/app-tasks": "workspace:*",
+    "@cocalc/backend": "workspace:*",
     "@cocalc/chat": "workspace:*",
     "@cocalc/comm": "workspace:*",
     "@cocalc/conat": "workspace:*",

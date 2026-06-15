@@ -43,6 +43,11 @@ type RoutedHubClientState = {
 };
 
 const routedHubClients: Record<string, RoutedHubClientState> = {};
+const HOST_CONTROL_DIRECT_INTEREST_TIMEOUT_MS = 1_500;
+
+function hostControlSubject(host_id: string): string {
+  return `project-host.${host_id}.api`;
+}
 
 type RoutedTarget =
   | {
@@ -318,13 +323,16 @@ function hasRoutedClient(target?: RoutedTarget): target is { client: Client } {
 export async function getExplicitProjectRoutedClient({
   project_id,
   fresh = false,
+  account_id,
 }: {
   project_id: string;
   fresh?: boolean;
+  account_id?: string;
 }): Promise<Client> {
   const routed = routeTargetToClient(
     `project.${project_id}`,
     await materializeProjectHostTarget(project_id, { fresh }),
+    account_id,
   );
   if (!hasRoutedClient(routed)) {
     throw new Error(`unable to route project ${project_id} to a host`);
@@ -358,9 +366,29 @@ export async function getExplicitHostControlClient({
 }): Promise<Client> {
   const routed = await materializeHostRouteTarget(host_id, { fresh });
   if (routed?.host_id) {
-    const target = routeTargetToClient(`project-host.${host_id}.api`, routed);
+    const subject = hostControlSubject(host_id);
+    const target = routeTargetToClient(subject, routed);
     if (hasRoutedClient(target)) {
-      return target.client;
+      try {
+        if (
+          await target.client.waitForInterest(subject, {
+            timeout: HOST_CONTROL_DIRECT_INTEREST_TIMEOUT_MS,
+          })
+        ) {
+          return target.client;
+        }
+      } catch (err) {
+        log.debug("direct host control service interest check failed", {
+          host_id,
+          address: routed.address,
+          err: `${err}`,
+        });
+      }
+      log.debug("falling back to legacy host control route", {
+        host_id,
+        address: routed.address,
+      });
+      return conatWithProjectRouting();
     }
     throw new Error(`unable to route host ${host_id} to its control service`);
   }

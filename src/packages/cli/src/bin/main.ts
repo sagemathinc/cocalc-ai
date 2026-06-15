@@ -141,6 +141,10 @@ import {
   registerRocketCommand,
   type RocketCommandDeps,
 } from "./commands/rocket";
+import {
+  registerSoftwareCommand,
+  type SoftwareCommandDeps,
+} from "./commands/software";
 import { registerHostCommand, type HostCommandDeps } from "./commands/host";
 import {
   registerProjectCommand,
@@ -2576,6 +2580,14 @@ const rocketCommandDeps = {
 } satisfies RocketCommandDeps;
 
 registerRocketCommand(program, rocketCommandDeps);
+
+const softwareCommandDeps = {
+  cwd: process.cwd(),
+  env: process.env,
+  runCommand,
+} satisfies SoftwareCommandDeps;
+
+registerSoftwareCommand(program, softwareCommandDeps);
 
 const notificationsCommandDeps = {
   withContext,

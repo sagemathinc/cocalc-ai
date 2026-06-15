@@ -156,6 +156,31 @@ function eventEquivalent(
   );
 }
 
+function isServingSpotFallbackPhase(value: unknown): boolean {
+  return value === "running_standard_fallback" || value === "probing_spot";
+}
+
+function isMisclassifiedServingSpotFallbackEvent(
+  row: HostAvailabilityRow | undefined,
+  observation: Required<
+    Pick<
+      HostAvailabilityObservation,
+      "state" | "planned" | "category" | "source" | "details"
+    >
+  > & { summary?: string | null },
+): boolean {
+  return (
+    !!row &&
+    row.state === "recovering" &&
+    row.category === "spot_interruption" &&
+    observation.state === "online" &&
+    observation.planned === false &&
+    observation.category === "unknown" &&
+    isServingSpotFallbackPhase(row.details?.recovery_phase) &&
+    isServingSpotFallbackPhase(observation.details?.recovery_phase)
+  );
+}
+
 export async function recordHostAvailabilityObservation(
   observation: HostAvailabilityObservation,
 ): Promise<void> {
@@ -180,6 +205,29 @@ export async function recordHostAvailabilityObservation(
     [hostId],
   );
   const open = rows[0];
+  if (isMisclassifiedServingSpotFallbackEvent(open, normalized)) {
+    await pool().query(
+      `UPDATE ${TABLE}
+          SET state=$2,
+              planned=$3,
+              category=$4,
+              source=$5,
+              summary=$6,
+              details=$7::jsonb,
+              updated_at=NOW()
+        WHERE id=$1`,
+      [
+        open.id,
+        normalized.state,
+        normalized.planned,
+        normalized.category,
+        normalized.source,
+        normalized.summary,
+        JSON.stringify(normalized.details),
+      ],
+    );
+    return;
+  }
   if (eventEquivalent(open, normalized)) {
     return;
   }
@@ -236,6 +284,26 @@ export function classifyHostAvailabilitySnapshot(
       category: "user_stopped",
       summary: "Host is deleted.",
     };
+  }
+  if (isServingSpotFallbackPhase(recoveryPhase)) {
+    if (status === "running" && heartbeatFresh) {
+      return {
+        ...base,
+        state: "online",
+        planned: false,
+        category: "unknown",
+        summary: "Host is online on standard fallback.",
+      };
+    }
+    if (status === "running") {
+      return {
+        ...base,
+        state: "unavailable",
+        planned: false,
+        category: "host_stale",
+        summary: "Host is running at the provider but not reporting.",
+      };
+    }
   }
   if (recoveryPhase && recoveryPhase !== "idle") {
     return {

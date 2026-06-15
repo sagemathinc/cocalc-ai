@@ -9,6 +9,8 @@
       "@cocalc/app-notebook/*": ["../apps/notebook/src/*"],
       "@cocalc/app-tasks": ["../apps/tasks/src"],
       "@cocalc/app-tasks/*": ["../apps/tasks/src/*"],
+      "@cocalc/backend": ["../backend"],
+      "@cocalc/backend/*": ["../backend/*"],
       "@cocalc/chat": ["../chat"],
       "@cocalc/chat/*": ["../chat/*"],
       "@cocalc/chat/server": ["../chat/src/server"],
@@ -47,6 +49,9 @@
     },
     {
       "path": "../apps/tasks"
+    },
+    {
+      "path": "../backend"
     },
     {
       "path": "../chat"

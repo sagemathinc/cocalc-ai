@@ -4,8 +4,7 @@
 #
 # This artifact is meant for fast dogfood frontend deploys. The remote
 # bootstrap path creates a new versioned bay release from the current release,
-# replaces only these static asset directories, flips the current symlink, and
-# restarts hub workers.
+# replaces only these static asset directories, and flips the current symlink.
 #
 # Usage:
 #   ./build-static-bundle.sh [output-directory] [tarball-path]
@@ -118,8 +117,11 @@ mkdir -p "$OUT/runtime/control-plane"
 
 cd "$ROOT"
 
+echo "- Clean static frontend outputs"
+rm -rf packages/static/dist
+
 echo "- Build static frontend assets"
-pnpm --filter @cocalc/launchpad run build:static
+pnpm static
 
 echo "- Copy static frontend assets"
 mkdir -p "$OUT/runtime/control-plane/static"

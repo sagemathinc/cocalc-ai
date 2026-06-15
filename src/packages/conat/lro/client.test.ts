@@ -1,3 +1,5 @@
+import { EventEmitter } from "events";
+
 describe("lro client explicit routing", () => {
   it("requires an explicit Conat client for get", async () => {
     const { get } = await import("./client");
@@ -50,5 +52,38 @@ describe("lro client explicit routing", () => {
         allow_msg_ttl: true,
       },
     });
+  });
+
+  it("can finish from a durable summary fallback when the stream has no terminal event", async () => {
+    const { waitForCompletion } = await import("./client");
+    const stream = Object.assign(new EventEmitter(), {
+      getAll: jest.fn(() => []),
+      close: jest.fn(),
+    });
+    const client = {
+      sync: {
+        dstream: jest.fn(async () => stream),
+      },
+    } as any;
+    const summary = {
+      op_id: "op-1",
+      kind: "project-backup",
+      scope_type: "project",
+      scope_id: "00000000-1000-4000-8000-000000000000",
+      status: "succeeded",
+    } as any;
+
+    await expect(
+      waitForCompletion({
+        op_id: "op-1",
+        scope_type: "project",
+        scope_id: "00000000-1000-4000-8000-000000000000",
+        client,
+        poll_ms: 250,
+        getSummary: jest.fn(async () => summary),
+      }),
+    ).resolves.toBe(summary);
+
+    expect(stream.close).toHaveBeenCalled();
   });
 });

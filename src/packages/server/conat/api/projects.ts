@@ -93,7 +93,6 @@ import {
   getProjectOwnerAccountId,
 } from "@cocalc/server/membership/project-limits";
 import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
-import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
 import {
   drainProjectRehome as drainProjectRehomeControl,
   getProjectRehomeOperation as getProjectRehomeOperationControl,
@@ -2913,13 +2912,15 @@ export async function archiveProject({
     backup_repo_id: string | null;
     provisioned: boolean | null;
     state: { state?: string } | null;
+    last_backup: Date | string | null;
   }>(
     `
       SELECT projects.host_id,
              project_hosts.status AS host_status,
              projects.backup_repo_id,
              projects.provisioned,
-             projects.state
+             projects.state,
+             projects.last_backup
       FROM projects
       LEFT JOIN project_hosts
         ON project_hosts.id = projects.host_id
@@ -2949,7 +2950,9 @@ export async function archiveProject({
     !hostStatus || hostStatus === "active" || hostStatus === "running";
 
   if (!hostDeprovisioned) {
-    const routedClient = conatWithProjectRoutingForAccount({
+    const routedClient = await getExplicitProjectRoutedClient({
+      project_id,
+      fresh: true,
       account_id: account_id!,
     });
     try {
@@ -2967,12 +2970,16 @@ export async function archiveProject({
       } catch (err) {
         if (
           !isArchiveInfoUnavailableError(err) ||
-          !(await hasIndexedProjectBackup(project_id))
+          !(
+            (await hasIndexedProjectBackup(project_id)) ||
+            row.last_backup != null
+          )
         ) {
           throw err;
         }
-        log.warn("archiveProject: verified backup via database index", {
+        log.warn("archiveProject: verified backup via database metadata", {
           project_id,
+          last_backup: row.last_backup,
           error: `${err}`,
         });
       }
