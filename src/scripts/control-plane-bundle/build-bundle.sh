@@ -14,6 +14,7 @@ OUT=""
 PACKAGE_FILTER=""
 INCLUDE_PGLITE=0
 COPY_BOOTSTRAP=1
+COPY_STATIC=1
 STATIC_EXCLUDES=()
 
 usage() {
@@ -26,6 +27,7 @@ Options:
   --package-filter <name>   optional package to build before common deps
   --include-pglite          externalize and copy @electric-sql/pglite
   --exclude-static <glob>   rsync exclude applied when copying static assets
+  --no-static               do not copy frontend/static, public, or webapp assets
   --no-bootstrap            do not copy server/cloud/bootstrap/bootstrap.py
   -h, --help                show help
 EOF
@@ -57,6 +59,10 @@ while [[ $# -gt 0 ]]; do
     --exclude-static)
       STATIC_EXCLUDES+=("$2")
       shift 2
+      ;;
+    --no-static)
+      COPY_STATIC=0
+      shift
       ;;
     --no-bootstrap)
       COPY_BOOTSTRAP=0
@@ -371,20 +377,22 @@ if [[ "$INCLUDE_PGLITE" -eq 1 ]]; then
   fi
 fi
 
-echo "- Copy static frontend assets"
-mkdir -p "$OUT"/static
-RSYNC_EXCLUDES=(--exclude '*.map')
-for pattern in "${STATIC_EXCLUDES[@]}"; do
-  RSYNC_EXCLUDES+=(--exclude "$pattern")
-done
-rsync -a --delete "${RSYNC_EXCLUDES[@]}" \
-  packages/static/dist/ "$OUT/static/"
+if [[ "$COPY_STATIC" -eq 1 ]]; then
+  echo "- Copy static frontend assets"
+  mkdir -p "$OUT"/static
+  RSYNC_EXCLUDES=(--exclude '*.map')
+  for pattern in "${STATIC_EXCLUDES[@]}"; do
+    RSYNC_EXCLUDES+=(--exclude "$pattern")
+  done
+  rsync -a --delete "${RSYNC_EXCLUDES[@]}" \
+    packages/static/dist/ "$OUT/static/"
 
-echo "- Copy public assets"
-mkdir -p "$OUT"/public
-rsync -a --delete packages/assets/public/ "$OUT/public/"
+  echo "- Copy public assets"
+  mkdir -p "$OUT"/public
+  rsync -a --delete packages/assets/public/ "$OUT/public/"
 
-copy_webapp_assets "$OUT"
+  copy_webapp_assets "$OUT"
+fi
 
 echo "- Copy http-api handlers"
 mkdir -p "$OUT"/http-api-dist

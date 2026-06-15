@@ -13,6 +13,7 @@ HOST_SOFTWARE_BUNDLE_PATH=""
 BUILD_BUNDLE=0
 BUILD_HOST_SOFTWARE_BUNDLE=0
 STATIC_ONLY=0
+HUB_ONLY=0
 RESTART_HUB_WORKERS=0
 RESTART_SHARED_SERVICES=0
 RESTART_CLOUDFLARED=0
@@ -63,8 +64,9 @@ This is an operational wrapper around the proven manual lifecycle:
 Required:
   --remote <ssh-target>       SSH target, e.g. ubuntu@10.206.15.209
   --api <url>                 public API URL, e.g. https://delta.cocalc.ai
-  --bundle <tarball>          local cocalc-bay-runtime-linux-x64.tar.xz, or
-                              cocalc-bay-static-linux-*.tar.xz with --static-only
+  --bundle <tarball>          local cocalc-bay-runtime-linux-x64.tar.xz,
+                              cocalc-bay-static-linux-*.tar.xz with --static-only,
+                              or cocalc-bay-hub-linux-*.tar.xz with --hub-only
   --bundle-url <url>          URL for the target VM to download the bay runtime
                               or static bundle directly
   --bundle-sha256 <sha256>    expected SHA256 for --bundle-url
@@ -79,6 +81,9 @@ Required:
                               new release from the current VM release and
                               flipping the current release symlink without
                               restarting hub workers
+  --hub-only                  deploy only hub/control-plane code by creating a
+                              new release from the current VM release, running
+                              migrations, and rolling hub workers
   --restart-hub-workers       with --static-only, restart hub workers one at a
                               time after flipping the current release symlink
 
@@ -186,6 +191,8 @@ parse_args() {
         BUILD_HOST_SOFTWARE_BUNDLE=1; shift ;;
       --static-only)
         STATIC_ONLY=1; shift ;;
+      --hub-only)
+        HUB_ONLY=1; shift ;;
       --restart-hub-workers)
         RESTART_HUB_WORKERS=1; shift ;;
       --restart-shared-services)
@@ -260,6 +267,12 @@ validate_args() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     SKIP_HOST_UPGRADE=1
   fi
+  if [[ "$HUB_ONLY" -eq 1 ]]; then
+    SKIP_HOST_UPGRADE=1
+  fi
+  if [[ "$STATIC_ONLY" -eq 1 && "$HUB_ONLY" -eq 1 ]]; then
+    die "use only one of --static-only or --hub-only"
+  fi
   if [[ "$SKIP_HOST_UPGRADE" -eq 0 ]]; then
     if [[ -z "$COOKIE_HEADER" && -z "$ADMIN_ACCOUNT_ID" && -z "$ADMIN_EMAIL" ]]; then
       die "host upgrade needs --cookie, --admin-account-id, --admin-email, or --skip-host-upgrade"
@@ -286,6 +299,10 @@ build_bundle() {
     log "Build bay static/frontend bundle"
     (cd "$REPO_ROOT" && pnpm -C src/packages --filter @cocalc/rocket run build:bay-static-bundle)
     name_glob='cocalc-bay-static-linux-*.tar.xz'
+  elif [[ "$HUB_ONLY" -eq 1 ]]; then
+    log "Build bay hub/control-plane bundle"
+    (cd "$REPO_ROOT" && pnpm -C src/packages --filter @cocalc/rocket run build:bay-hub-bundle)
+    name_glob='cocalc-bay-hub-linux-*.tar.xz'
   else
     log "Build bay runtime bundle"
     (cd "$REPO_ROOT" && pnpm -C src/packages --filter @cocalc/rocket run build:bay-bundle)
@@ -361,6 +378,9 @@ stage_release() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     cp "${SRC_ROOT}/packages/rocket/build/bay-static/bay-static-manifest.json" \
       "${REPORT_DIR}/bay-static-manifest.json" 2>/dev/null || true
+  elif [[ "$HUB_ONLY" -eq 1 ]]; then
+    cp "${SRC_ROOT}/packages/rocket/build/bay-hub/bay-hub-manifest.json" \
+      "${REPORT_DIR}/bay-hub-manifest.json" 2>/dev/null || true
   else
     cp "${SRC_ROOT}/packages/rocket/build/bay-runtime/bay-runtime-manifest.json" \
       "${REPORT_DIR}/bay-runtime-manifest.json" 2>/dev/null || true
@@ -378,8 +398,8 @@ stage_release() {
   REMOTE_SCRIPT_DIR="${REMOTE_WORK_DIR}/bay-systemd"
 
   remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_SCRIPT_DIR")"
-  if [[ "$STATIC_ONLY" -eq 1 ]]; then
-    log "Upload bay static deploy helper to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
+  if [[ "$STATIC_ONLY" -eq 1 || "$HUB_ONLY" -eq 1 ]]; then
+    log "Upload bay partial deploy helper to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
     scp "$SCRIPT_DIR/bay-bootstrap-release.sh" "$REMOTE:${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh"
   else
     log "Upload bay scaffold to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
@@ -399,6 +419,10 @@ stage_release() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     log "Stage bay static/frontend release"
     remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --static-bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID")${worker_count_arg} --public-url $(q "$PUBLIC_URL") --retain-releases $(q "$RETAIN_RELEASES")" \
+      | tee "${REPORT_DIR}/stage-release.log"
+  elif [[ "$HUB_ONLY" -eq 1 ]]; then
+    log "Stage bay hub/control-plane release"
+    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --hub-bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID")${worker_count_arg} --public-url $(q "$PUBLIC_URL") --retain-releases $(q "$RETAIN_RELEASES")" \
       | tee "${REPORT_DIR}/stage-release.log"
   else
     log "Stage bay release"
@@ -495,6 +519,45 @@ set -euo pipefail
 source /etc/cocalc/bay-workers.env
 systemctl daemon-reload
 systemctl start cocalc-bay-frontdoor.service
+roll_worker() {
+  local worker_id="$1"
+  /opt/cocalc/bay/current/bin/bay-frontdoor-drain "$worker_id"
+  if systemctl restart "cocalc-bay-hub@${worker_id}.service" \
+    && /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"; then
+    /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id"
+    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    return 0
+  fi
+  local status=$?
+  /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id" || true
+  return "$status"
+}
+for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
+  roll_worker "$worker_id"
+done
+/opt/cocalc/bay/current/bin/bay-status
+/opt/cocalc/bay/current/bin/bay-health
+EOF
+  elif [[ "$HUB_ONLY" -eq 1 ]]; then
+    log "Run migrations, roll hub workers, and run health checks"
+    remote_exec "sudo env BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+set -euo pipefail
+source /etc/cocalc/bay-workers.env
+systemctl start cocalc-bay-frontdoor.service
+
+credential_dir="$(mktemp -d /run/cocalc-bay-deploy-credentials.XXXXXX)"
+cleanup() {
+  rm -rf "$credential_dir"
+}
+trap cleanup EXIT
+install -o "$BAY_USER" -g "$BAY_USER" -m 0700 -d "$credential_dir"
+install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
+  /etc/cocalc/site-master-key "$credential_dir/site-master-key"
+runuser -u "$BAY_USER" -- env \
+  CREDENTIALS_DIRECTORY="$credential_dir" \
+  COCALC_REQUIRE_SITE_MASTER_KEY=1 \
+  /opt/cocalc/bay/current/bin/bay-migrate
+
 roll_worker() {
   local worker_id="$1"
   /opt/cocalc/bay/current/bin/bay-frontdoor-drain "$worker_id"
@@ -790,6 +853,7 @@ api=${API_URL}
 public_url=${PUBLIC_URL}
 bay_id=${BAY_ID}
 static_only=${STATIC_ONLY}
+hub_only=${HUB_ONLY}
 bundle=${BUNDLE_PATH}
 host_software_bundle=${HOST_SOFTWARE_BUNDLE_PATH}
 worker_count_override=${WORKER_COUNT}

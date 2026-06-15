@@ -192,7 +192,7 @@ test("software build records an existing file with a generated tag", async () =>
   assert.equal(manifest.files[0].size_bytes, "artifact contents".length);
 });
 
-test("software build hub runs the Rocket bay runtime builder", async () => {
+test("software build hub runs the Rocket bay hub builder", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-hub-build-"));
   const localStore = join(dir, "store");
   const runs: CapturedRun[] = [];
@@ -216,8 +216,8 @@ test("software build hub runs the Rocket bay runtime builder", async () => {
     "--filter",
     "@cocalc/rocket",
   ]);
-  assert.equal(runs[0].args.includes("build:bay-bundle"), true);
-  const artifactName = `cocalc-bay-runtime-linux-${
+  assert.equal(runs[0].args.includes("build:bay-hub-bundle"), true);
+  const artifactName = `cocalc-bay-hub-linux-${
     process.arch === "arm64" ? "arm64" : "x64"
   }.tar.xz`;
   const artifactDir = join(
@@ -230,7 +230,7 @@ test("software build hub runs the Rocket bay runtime builder", async () => {
     readFileSync(join(artifactDir, "manifest.json"), "utf8"),
   );
   assert.equal(manifest.files[0].name, artifactName);
-  assert.match(manifest.build.command, /build:bay-bundle/);
+  assert.match(manifest.build.command, /build:bay-hub-bundle/);
 });
 
 test("software build static runs the Rocket bay static builder", async () => {
@@ -939,11 +939,15 @@ test("software deploy hub pushes a local-only artifact before Rocket deploy", as
     "deploy",
     "prod",
     "--scope",
-    "bay",
+    "hub",
     "--bundle-url",
     file.url,
     "--bundle-sha256",
     file.sha256,
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
     "--yes",
   ]);
 });

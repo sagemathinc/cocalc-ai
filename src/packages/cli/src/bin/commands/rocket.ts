@@ -16,8 +16,12 @@ import { Command } from "commander";
 import { buildCookieHeader } from "../../core/auth-cookies";
 import { applyAuthProfile, loadAuthConfig } from "../../core/auth-config";
 
-type DeployScope = "static" | "bay" | "hosts" | "all";
-type ReleaseBuildKind = "bay-runtime" | "bay-static" | "project-host-software";
+type DeployScope = "static" | "hub" | "bay" | "hosts" | "all";
+type ReleaseBuildKind =
+  | "bay-runtime"
+  | "bay-hub"
+  | "bay-static"
+  | "project-host-software";
 
 type RocketConfig = {
   clusters?: Record<string, RocketClusterConfig>;
@@ -195,7 +199,7 @@ export function registerRocketCommand(
     .command("build")
     .description("build a Rocket release artifact without deploying it")
     .requiredOption(
-      "--kind <bay-runtime|bay-static|project-host-software>",
+      "--kind <bay-runtime|bay-hub|bay-static|project-host-software>",
       "artifact kind to build",
     )
     .option("--out-dir <path>", "output directory for unpacked artifact")
@@ -293,17 +297,17 @@ export function registerRocketCommand(
     .option("--cluster <name>", "cluster name from rocket config")
     .option("--config <path>", "rocket config path")
     .option(
-      "--scope <static|bay|hosts|all>",
+      "--scope <static|hub|bay|hosts|all>",
       "deployment scope; required unless using a compatibility alias",
     )
     .option("--static-only", "compatibility alias for --scope static")
-    .option("--hub-only", "compatibility alias for --scope bay")
+    .option("--hub-only", "compatibility alias for --scope hub")
     .option("--skip-hosts", "compatibility alias for --scope bay")
     .option("--build", "build the required bundle before deploying")
-    .option("--bundle <path>", "existing bay runtime or static bundle")
+    .option("--bundle <path>", "existing bay runtime, hub, or static bundle")
     .option(
       "--bundle-url <url>",
-      "URL for the target VM to download the bay runtime or static bundle",
+      "URL for the target VM to download the bay runtime, hub, or static bundle",
     )
     .option("--bundle-sha256 <sha256>", "expected SHA256 for --bundle-url")
     .option(
@@ -417,9 +421,11 @@ function buildReleaseBuildPlan({
   const scriptName =
     kind === "bay-runtime"
       ? "build:bay-bundle"
-      : kind === "bay-static"
-        ? "build:bay-static-bundle"
-        : "build:project-host-software-bundle";
+      : kind === "bay-hub"
+        ? "build:bay-hub-bundle"
+        : kind === "bay-static"
+          ? "build:bay-static-bundle"
+          : "build:project-host-software-bundle";
   const args = [
     "-C",
     join(srcRoot, "packages"),
@@ -1073,6 +1079,9 @@ function buildDeployPlan({
       args.push("--restart-hub-workers");
     }
   }
+  if (scope === "hub") {
+    args.push("--hub-only");
+  }
   if (scope === "bay") {
     args.push("--skip-host-upgrade");
   }
@@ -1166,11 +1175,11 @@ function buildHostsDeployPlan({
 function resolveScope(opts: DeployOptions): DeployScope {
   const aliases: DeployScope[] = [];
   if (opts.staticOnly) aliases.push("static");
-  if (opts.hubOnly) aliases.push("bay");
+  if (opts.hubOnly) aliases.push("hub");
   if (opts.skipHosts) aliases.push("bay");
   const explicit = stringOption(opts.scope)?.toLowerCase();
   if (explicit && !isDeployScope(explicit)) {
-    throw new Error("--scope must be one of: static, bay, hosts, all");
+    throw new Error("--scope must be one of: static, hub, bay, hosts, all");
   }
   const explicitScope = explicit as DeployScope | undefined;
   if (aliases.length > 0) {
@@ -1187,7 +1196,7 @@ function resolveScope(opts: DeployOptions): DeployScope {
   }
   if (!explicitScope) {
     throw new Error(
-      "Rocket deploy requires explicit --scope static|bay|hosts|all",
+      "Rocket deploy requires explicit --scope static|hub|bay|hosts|all",
     );
   }
   return explicitScope;
@@ -1196,6 +1205,7 @@ function resolveScope(opts: DeployOptions): DeployScope {
 function isDeployScope(value: string): value is DeployScope {
   return (
     value === "static" ||
+    value === "hub" ||
     value === "bay" ||
     value === "hosts" ||
     value === "all"
@@ -1398,6 +1408,9 @@ function normalizeReleaseBuildKind(kind: string | undefined): ReleaseBuildKind {
   if (value === "bay-runtime" || value === "runtime") {
     return "bay-runtime";
   }
+  if (value === "bay-hub" || value === "hub") {
+    return "bay-hub";
+  }
   if (value === "bay-static" || value === "static") {
     return "bay-static";
   }
@@ -1409,7 +1422,7 @@ function normalizeReleaseBuildKind(kind: string | undefined): ReleaseBuildKind {
     return "project-host-software";
   }
   throw new Error(
-    "--kind must be one of: bay-runtime, bay-static, project-host-software",
+    "--kind must be one of: bay-runtime, bay-hub, bay-static, project-host-software",
   );
 }
 
@@ -1430,15 +1443,19 @@ function releaseBuildPaths({
     buildRoot,
     kind === "bay-runtime"
       ? "bay-runtime"
-      : kind === "bay-static"
-        ? "bay-static"
-        : "project-host-software",
+      : kind === "bay-hub"
+        ? "bay-hub"
+        : kind === "bay-static"
+          ? "bay-static"
+          : "project-host-software",
   );
   const defaultArtifact = join(
     buildRoot,
     kind === "project-host-software"
       ? `cocalc-project-host-software-linux-${arch}.tar.xz`
-      : `cocalc-${kind}-linux-${arch}.tar.xz`,
+      : kind === "bay-hub"
+        ? `cocalc-bay-hub-linux-${arch}.tar.xz`
+        : `cocalc-${kind}-linux-${arch}.tar.xz`,
   );
   const resolvedOutDir = expandPath(outDir ?? defaultOutDir);
   const resolvedArtifact = expandPath(
@@ -1448,7 +1465,9 @@ function releaseBuildPaths({
             dirname(resolvedOutDir),
             kind === "project-host-software"
               ? `cocalc-project-host-software-linux-${arch}.tar.xz`
-              : `cocalc-${kind}-linux-${arch}.tar.xz`,
+              : kind === "bay-hub"
+                ? `cocalc-bay-hub-linux-${arch}.tar.xz`
+                : `cocalc-${kind}-linux-${arch}.tar.xz`,
           )
         : defaultArtifact),
   );
@@ -1456,9 +1475,11 @@ function releaseBuildPaths({
     resolvedOutDir,
     kind === "bay-runtime"
       ? "bay-runtime-manifest.json"
-      : kind === "bay-static"
-        ? "bay-static-manifest.json"
-        : "project-host-software-manifest.json",
+      : kind === "bay-hub"
+        ? "bay-hub-manifest.json"
+        : kind === "bay-static"
+          ? "bay-static-manifest.json"
+          : "project-host-software-manifest.json",
   );
   return {
     out_dir: resolvedOutDir,
@@ -1685,7 +1706,13 @@ function printReleaseBuildSummary(
     );
   } else {
     console.log(
-      `Deploy this exact artifact with: cocalc rocket deploy --scope ${summary.kind === "bay-static" ? "static" : "bay"} --bundle ${shellQuote(summary.artifact)} ...`,
+      `Deploy this exact artifact with: cocalc rocket deploy --scope ${
+        summary.kind === "bay-static"
+          ? "static"
+          : summary.kind === "bay-hub"
+            ? "hub"
+            : "bay"
+      } --bundle ${shellQuote(summary.artifact)} ...`,
     );
   }
 }

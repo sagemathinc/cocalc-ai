@@ -4,6 +4,7 @@ set -euo pipefail
 SOURCE_ROOT=""
 BUNDLE_PATH=""
 STATIC_BUNDLE_PATH=""
+HUB_BUNDLE_PATH=""
 BAY_ID="bay-0"
 BAY_USER="cocalc-bay"
 BAY_GROUP="cocalc-bay"
@@ -30,7 +31,7 @@ RETAIN_RELEASES="${COCALC_BAY_RETAIN_RELEASES:-3}"
 
 usage() {
   cat <<'EOF'
-Usage: bay-bootstrap-release.sh (--source <built-src-root> | --bundle <tarball> | --static-bundle <tarball>) [options]
+Usage: bay-bootstrap-release.sh (--source <built-src-root> | --bundle <tarball> | --static-bundle <tarball> | --hub-bundle <tarball>) [options]
 
 Stage a built CoCalc src tree as a bay release, install the scaffold, and
 write bay env/secrets files.
@@ -39,6 +40,7 @@ Options:
   --source <dir>           built src root to stage (required)
   --bundle <tarball>       packaged Rocket bay runtime tarball to stage
   --static-bundle <tarball> packaged static/frontend-only update tarball
+  --hub-bundle <tarball>   packaged hub/control-plane-only update tarball
   --bay-id <id>            bay id (default: bay-0)
   --bay-user <user>        service user / db user (default: cocalc-bay)
   --bay-group <group>      service group (default: cocalc-bay)
@@ -252,6 +254,8 @@ derive_release_id() {
     git_short="$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
   elif [[ -n "$STATIC_BUNDLE_PATH" ]]; then
     git_short="static"
+  elif [[ -n "$HUB_BUNDLE_PATH" ]]; then
+    git_short="hub"
   else
     git_short="bundle"
   fi
@@ -331,6 +335,64 @@ stage_static_bundle_release() {
     "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp" \
     "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius" \
     "${TARGET_RELEASE}/bay-static-manifest.json"
+  rm -rf "$extract_dir"
+  trap - RETURN
+}
+
+stage_hub_bundle_release() {
+  if [[ ! -f "$HUB_BUNDLE_PATH" ]]; then
+    echo "hub bundle does not exist: $HUB_BUNDLE_PATH" >&2
+    exit 1
+  fi
+  if [[ ! -L "$CURRENT_LINK" ]]; then
+    echo "hub bundle deploy requires an existing current release at ${CURRENT_LINK}" >&2
+    exit 1
+  fi
+
+  local current_release
+  current_release="$(readlink -f "$CURRENT_LINK")"
+  if [[ -z "$current_release" || ! -d "$current_release" ]]; then
+    echo "current release does not resolve to a directory: ${CURRENT_LINK}" >&2
+    exit 1
+  fi
+
+  run rm -rf "$TARGET_RELEASE"
+  run mkdir -p "$TARGET_RELEASE"
+  make_target_release_accessible
+  run cp -al "${current_release}/." "$TARGET_RELEASE/"
+  make_target_release_accessible
+
+  local extract_dir
+  extract_dir="$(mktemp -d "${TARGET_RELEASE}.hub-bundle.XXXXXX")"
+  trap 'rm -rf "$extract_dir"' RETURN
+  run tar --no-same-owner -xf "$HUB_BUNDLE_PATH" -C "$extract_dir" --strip-components=1
+
+  for required_file in \
+    "${extract_dir}/bay-hub-manifest.json" \
+    "${extract_dir}/runtime/control-plane/bundle/index.js" \
+    "${extract_dir}/runtime/control-plane/api-v2-routes/index.js" \
+    "${extract_dir}/runtime/control-plane/http-api-dist/pages/api/v2/index.js" \
+    "${extract_dir}/runtime/migrate-schema/index.js"; do
+    if [[ ! -f "$required_file" ]]; then
+      echo "hub bundle is missing required file: $required_file" >&2
+      exit 1
+    fi
+  done
+
+  run rm -rf \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle" \
+    "${TARGET_RELEASE}/runtime/control-plane/api-v2-routes" \
+    "${TARGET_RELEASE}/runtime/control-plane/http-api-dist" \
+    "${TARGET_RELEASE}/runtime/migrate-schema" \
+    "${TARGET_RELEASE}/bay-hub-manifest.json"
+  run rsync -a "${extract_dir}/" "$TARGET_RELEASE/"
+  make_target_release_accessible
+  run chown -R "${BAY_USER}:${BAY_GROUP}" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle" \
+    "${TARGET_RELEASE}/runtime/control-plane/api-v2-routes" \
+    "${TARGET_RELEASE}/runtime/control-plane/http-api-dist" \
+    "${TARGET_RELEASE}/runtime/migrate-schema" \
+    "${TARGET_RELEASE}/bay-hub-manifest.json"
   rm -rf "$extract_dir"
   trap - RETURN
 }
@@ -479,6 +541,10 @@ main() {
         STATIC_BUNDLE_PATH="$2"
         shift 2
         ;;
+      --hub-bundle)
+        HUB_BUNDLE_PATH="$2"
+        shift 2
+        ;;
       --bay-id)
         BAY_ID="$2"
         shift 2
@@ -582,13 +648,14 @@ main() {
   [[ -n "$SOURCE_ROOT" ]] && input_count=$((input_count + 1))
   [[ -n "$BUNDLE_PATH" ]] && input_count=$((input_count + 1))
   [[ -n "$STATIC_BUNDLE_PATH" ]] && input_count=$((input_count + 1))
+  [[ -n "$HUB_BUNDLE_PATH" ]] && input_count=$((input_count + 1))
   if [[ "$input_count" -ne 1 ]]; then
-    echo "exactly one of --source, --bundle, or --static-bundle is required" >&2
+    echo "exactly one of --source, --bundle, --static-bundle, or --hub-bundle is required" >&2
     usage >&2
     exit 2
   fi
   if [[ -z "$OVERLAY_MODE" ]]; then
-    if [[ -n "$BUNDLE_PATH" || -n "$STATIC_BUNDLE_PATH" ]]; then
+    if [[ -n "$BUNDLE_PATH" || -n "$STATIC_BUNDLE_PATH" || -n "$HUB_BUNDLE_PATH" ]]; then
       OVERLAY_MODE="rocket-bundle"
     else
       OVERLAY_MODE="current-cocalc"
@@ -637,6 +704,8 @@ main() {
 
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
     stage_static_bundle_release
+  elif [[ -n "$HUB_BUNDLE_PATH" ]]; then
+    stage_hub_bundle_release
   elif [[ -n "$BUNDLE_PATH" ]]; then
     stage_bundle_release
   else
@@ -658,6 +727,22 @@ Bay root:         ${BAY_ROOT}
 
 Static assets are served through /opt/cocalc/bay/current; no service restart is required.
 Already-open browser sessions may keep using cached chunks until refresh.
+EOF
+    exit 0
+  fi
+
+  if [[ -n "$HUB_BUNDLE_PATH" ]]; then
+    prune_old_releases
+    cat <<EOF
+Hub release bootstrap complete.
+
+Hub bundle:       ${HUB_BUNDLE_PATH}
+Release id:       ${RELEASE_ID}
+Target release:   ${TARGET_RELEASE}
+Current link:     ${CURRENT_LINK}
+Bay root:         ${BAY_ROOT}
+
+Run migrations and roll hub workers to activate the updated hub/control-plane code.
 EOF
     exit 0
   fi

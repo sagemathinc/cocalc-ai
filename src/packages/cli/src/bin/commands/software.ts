@@ -140,16 +140,16 @@ function repoSrcRoot(cwd: string): string {
 function rocketBuildInfo(component: SoftwareBuildComponent):
   | {
       script: string;
-      kind: "bay-runtime" | "bay-static";
+      kind: "bay-runtime" | "bay-hub" | "bay-static";
       artifactName: string;
     }
   | undefined {
   const nodeArch = process.arch === "arm64" ? "arm64" : "x64";
   if (component === "hub") {
     return {
-      script: "build:bay-bundle",
-      kind: "bay-runtime",
-      artifactName: `cocalc-bay-runtime-linux-${nodeArch}.tar.xz`,
+      script: "build:bay-hub-bundle",
+      kind: "bay-hub",
+      artifactName: `cocalc-bay-hub-linux-${nodeArch}.tar.xz`,
     };
   }
   if (component === "static") {
@@ -557,13 +557,13 @@ function findRemoteEntryMatches({
 
 function rocketDeployTargetForComponent(component: SoftwareDeployComponent): {
   artifactComponent: SoftwareBuildComponent;
-  scope: "static" | "bay";
+  scope: "static" | "hub" | "bay";
 } {
   if (component === "static") {
     return { artifactComponent: "static", scope: "static" };
   }
   if (component === "hub") {
-    return { artifactComponent: "hub", scope: "bay" };
+    return { artifactComponent: "hub", scope: "hub" };
   }
   throw new Error(
     `software deploy ${component} is not wired yet; currently supported: static, hub`,
