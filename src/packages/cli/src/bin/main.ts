@@ -2584,6 +2584,7 @@ registerRocketCommand(program, rocketCommandDeps);
 const softwareCommandDeps = {
   cwd: process.cwd(),
   env: process.env,
+  runCommand,
 } satisfies SoftwareCommandDeps;
 
 registerSoftwareCommand(program, softwareCommandDeps);

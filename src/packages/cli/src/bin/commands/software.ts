@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import { hostname } from "node:os";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 
@@ -29,12 +31,21 @@ export type SoftwareCommandDeps = {
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   gitMetadata?: (cwd: string) => SoftwareGitMetadata;
+  runCommand?: (
+    command: string,
+    args: string[],
+    options?: {
+      stdio?: "inherit" | "pipe";
+      env?: NodeJS.ProcessEnv;
+    },
+  ) => Promise<number>;
 };
 
 type BuildOptions = {
   localStore?: string;
   fromFile?: string;
   artifactName?: string;
+  keepBuildDir?: boolean;
 };
 
 type ListOptions = {
@@ -75,6 +86,31 @@ function repoSrcRoot(cwd: string): string {
   return cwd.endsWith("/src") ? cwd : resolve(cwd, "src");
 }
 
+function rocketBuildInfo(component: SoftwareBuildComponent):
+  | {
+      script: string;
+      kind: "bay-runtime" | "bay-static";
+      artifactName: string;
+    }
+  | undefined {
+  const nodeArch = process.arch === "arm64" ? "arm64" : "x64";
+  if (component === "hub") {
+    return {
+      script: "build:bay-bundle",
+      kind: "bay-runtime",
+      artifactName: `cocalc-bay-runtime-linux-${nodeArch}.tar.xz`,
+    };
+  }
+  if (component === "static") {
+    return {
+      script: "build:bay-static-bundle",
+      kind: "bay-static",
+      artifactName: `cocalc-bay-static-linux-${nodeArch}.tar.xz`,
+    };
+  }
+  return undefined;
+}
+
 function parseLimit(raw: string | undefined): number {
   if (raw == null || raw.trim() === "") {
     return 10;
@@ -106,13 +142,8 @@ async function buildFromFile({
   tagArg: string | undefined;
   opts: BuildOptions;
   deps: Required<Pick<SoftwareCommandDeps, "env" | "now">> &
-    Pick<SoftwareCommandDeps, "cwd" | "gitMetadata">;
+    Pick<SoftwareCommandDeps, "cwd" | "gitMetadata" | "runCommand">;
 }): Promise<SoftwareArtifactManifest & { local_dir: string }> {
-  if (!opts.fromFile) {
-    throw new Error(
-      "software build component wrappers are not wired yet; use --from-file <path> to create a local artifact manifest from an existing file",
-    );
-  }
   const cwd = resolve(deps.cwd ?? process.cwd());
   const localStore = resolveSoftwareLocalStore({
     option: opts.localStore,
@@ -149,47 +180,94 @@ async function buildFromFile({
     git,
     tag,
   });
+  let buildTempDir: string | undefined;
+  let sourceFile = opts.fromFile;
+  let artifactName = opts.artifactName;
+  let commandText = `cocalc software build ${component}${
+    tagArg ? ` ${tagArg}` : ""
+  }`;
+  if (!sourceFile) {
+    const info = rocketBuildInfo(component);
+    if (!info) {
+      throw new Error(
+        `software build ${component} is not wired yet; use --from-file <path> to create a local artifact manifest from an existing file`,
+      );
+    }
+    if (!deps.runCommand) {
+      throw new Error("software build requires runCommand dependency");
+    }
+    const srcRoot = repoSrcRoot(cwd);
+    buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
+    const outDir = join(buildTempDir, info.kind);
+    const bundle = join(buildTempDir, info.artifactName);
+    const args = [
+      "-C",
+      join(srcRoot, "packages"),
+      "--filter",
+      "@cocalc/rocket",
+      "run",
+      info.script,
+      outDir,
+      bundle,
+    ];
+    const code = await deps.runCommand("pnpm", args, {
+      stdio: "inherit",
+      env: deps.env,
+    });
+    if (code !== 0) {
+      throw new Error(
+        `software build ${component} failed with exit status ${code}`,
+      );
+    }
+    sourceFile = bundle;
+    artifactName = info.artifactName;
+    commandText = ["pnpm", ...args].join(" ");
+  }
   const dir = artifactDir({ localStore, component, artifactId });
   const filesDir = join(dir, "files");
-  const artifactFile = await copyArtifactFile({
-    source: opts.fromFile,
-    destinationFilesDir: filesDir,
-    name: opts.artifactName,
-  });
-  const finishedAt = deps.now();
-  const manifest: SoftwareArtifactManifest & { local_dir: string } = {
-    schema: "cocalc-software-artifact-v1",
-    component,
-    artifact_id: artifactId,
-    tag,
-    tag_generated: tagGenerated,
-    created_at: createdAt.toISOString(),
-    source: {
-      repo_root: cwd,
-      src_root: repoSrcRoot(cwd),
-      branch: git.branch,
-      git_commit: git.commit,
-      git_short: git.short,
-      git_dirty: git.dirty,
-      git_status_porcelain: git.status_porcelain,
-    },
-    build: {
-      host: hostname(),
-      platform: process.platform,
-      arch: process.arch,
-      node: process.version,
-      command: `cocalc software build ${component}${
-        tagArg ? ` ${tagArg}` : ""
-      } --from-file ${opts.fromFile}`,
-      started_at: startedAt.toISOString(),
-      finished_at: finishedAt.toISOString(),
-      duration_ms: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
-    },
-    files: [artifactFile],
-    local_dir: dir,
-  };
-  await writeLocalManifest({ localStore, manifest });
-  return manifest;
+  try {
+    const artifactFile = await copyArtifactFile({
+      source: sourceFile,
+      destinationFilesDir: filesDir,
+      name: artifactName,
+    });
+    const finishedAt = deps.now();
+    const manifest: SoftwareArtifactManifest & { local_dir: string } = {
+      schema: "cocalc-software-artifact-v1",
+      component,
+      artifact_id: artifactId,
+      tag,
+      tag_generated: tagGenerated,
+      created_at: createdAt.toISOString(),
+      source: {
+        repo_root: cwd,
+        src_root: repoSrcRoot(cwd),
+        branch: git.branch,
+        git_commit: git.commit,
+        git_short: git.short,
+        git_dirty: git.dirty,
+        git_status_porcelain: git.status_porcelain,
+      },
+      build: {
+        host: hostname(),
+        platform: process.platform,
+        arch: process.arch,
+        node: process.version,
+        command: commandText,
+        started_at: startedAt.toISOString(),
+        finished_at: finishedAt.toISOString(),
+        duration_ms: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
+      },
+      files: [artifactFile],
+      local_dir: dir,
+    };
+    await writeLocalManifest({ localStore, manifest });
+    return manifest;
+  } finally {
+    if (buildTempDir && !opts.keepBuildDir) {
+      await rm(buildTempDir, { recursive: true, force: true });
+    }
+  }
 }
 
 function buildSummary(
@@ -229,6 +307,7 @@ export function registerSoftwareCommand(
       "record an existing artifact file in the local software store",
     )
     .option("--artifact-name <name>", "override stored artifact file name")
+    .option("--keep-build-dir", "keep temporary component build directory")
     .action(
       async (
         componentArg: string,
@@ -246,6 +325,7 @@ export function registerSoftwareCommand(
             env: deps.env ?? process.env,
             now: deps.now ?? (() => new Date()),
             gitMetadata: deps.gitMetadata,
+            runCommand: deps.runCommand,
           },
         });
         emitSuccess(
