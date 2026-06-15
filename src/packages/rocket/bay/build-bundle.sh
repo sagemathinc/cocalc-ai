@@ -103,6 +103,9 @@ cd "$ROOT"
 echo "- Build project-host bundle"
 pnpm --filter @cocalc/project-host run build:bundle
 
+echo "- Clean static frontend outputs"
+rm -rf packages/static/dist packages/static/dist-ts packages/static/tsconfig.tsbuildinfo
+
 echo "- Build static frontend assets"
 pnpm static
 
