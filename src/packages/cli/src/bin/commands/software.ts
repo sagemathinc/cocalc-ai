@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { hostname } from "node:os";
@@ -73,6 +73,13 @@ export type SoftwareCommandDeps = {
       env?: NodeJS.ProcessEnv;
     },
   ) => Promise<number>;
+  runCommandOutput?: (
+    command: string,
+    args: string[],
+    options?: {
+      env?: NodeJS.ProcessEnv;
+    },
+  ) => Promise<{ code: number; stdout: string; stderr: string }>;
   r2Client?: SoftwareR2Client | (() => SoftwareR2Client);
   loadAuthConfig?: () => AuthConfig;
   fetch?: typeof fetch;
@@ -113,6 +120,7 @@ type HistoryOptions = {
 type SmokeOptions = {
   api?: string;
   remote?: string;
+  host?: string;
   timeout?: string;
 };
 
@@ -142,6 +150,31 @@ function runGitText(cwd: string, args: string[]): string | null {
     return null;
   }
   return `${result.stdout ?? ""}`.trim() || null;
+}
+
+async function defaultRunCommandOutput(
+  command: string,
+  args: string[],
+  options: { env?: NodeJS.ProcessEnv } = {},
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: options.env ?? process.env,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+  });
 }
 
 function defaultGitMetadata(cwd: string): SoftwareGitMetadata {
@@ -420,6 +453,222 @@ function assertSmokeChecks(checks: SoftwareSmokeCheck[]): void {
       .map((failure) => `${failure.check}: ${failure.detail}`)
       .join("; ")}`,
   );
+}
+
+function parseCommandJsonOutput({
+  command,
+  stdout,
+}: {
+  command: string;
+  stdout: string;
+}): any {
+  try {
+    const parsed = JSON.parse(stdout);
+    if (parsed?.ok === false) {
+      throw new Error(parsed?.error?.message ?? `${command} failed`);
+    }
+    return parsed?.data;
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new Error(`${command} returned invalid JSON`);
+    }
+    throw err;
+  }
+}
+
+async function runCliJson({
+  args,
+  deps,
+}: {
+  args: string[];
+  deps: SoftwareCommandDeps;
+}): Promise<any> {
+  const cli = currentCliInvocation();
+  const runCommandOutput = deps.runCommandOutput ?? defaultRunCommandOutput;
+  const result = await runCommandOutput(cli.command, [...cli.args, ...args], {
+    env: deps.env ?? process.env,
+  });
+  if (result.code !== 0) {
+    throw new Error(
+      `${args.join(" ")} failed with exit status ${result.code}: ${
+        result.stderr.trim() || result.stdout.trim() || "no output"
+      }`,
+    );
+  }
+  return parseCommandJsonOutput({
+    command: args.join(" "),
+    stdout: result.stdout,
+  });
+}
+
+function hostArtifactForSmoke(
+  component: SoftwareDeployComponent,
+): string | undefined {
+  if (component === "project-host") return "project-host";
+  if (component === "project") return "project-bundle";
+  if (component === "tools") return "tools";
+  return undefined;
+}
+
+function selectRepresentativeHost(rows: any[], requestedHost?: string): any {
+  const requested = `${requestedHost ?? ""}`.trim();
+  const candidates = Array.isArray(rows) ? rows : [];
+  const match = requested
+    ? candidates.find(
+        (row) => row.host_id === requested || row.name === requested,
+      )
+    : candidates.find((row) =>
+        ["running", "active"].includes(`${row.status ?? ""}`.trim()),
+      );
+  if (!match) {
+    throw new Error(
+      requested
+        ? `host not found or not listed: ${requested}`
+        : "no running project host found for smoke test",
+    );
+  }
+  const status = `${match.status ?? ""}`.trim();
+  if (!["running", "active"].includes(status)) {
+    throw new Error(
+      `representative host ${match.host_id ?? match.name} is not running: ${status}`,
+    );
+  }
+  return match;
+}
+
+function validateHostDeploymentStatus({
+  status,
+  component,
+}: {
+  status: any;
+  component: SoftwareDeployComponent;
+}): string {
+  if (`${status?.observation_error ?? ""}`.trim()) {
+    throw new Error(
+      `host runtime observation error: ${status.observation_error}`,
+    );
+  }
+  const artifact = hostArtifactForSmoke(component);
+  if (!artifact) {
+    throw new Error(`software smoke ${component} has no host artifact mapping`);
+  }
+  const observedArtifact = (status?.observed_artifacts ?? []).find(
+    (entry: any) => entry?.artifact === artifact,
+  );
+  if (!observedArtifact?.current_version) {
+    throw new Error(`host is missing observed ${artifact} current_version`);
+  }
+  if (component === "project-host") {
+    const projectHost = (status?.observed_components ?? []).find(
+      (entry: any) => entry?.component === "project-host",
+    );
+    if (!projectHost) {
+      throw new Error("host is missing observed project-host component");
+    }
+    if (projectHost.runtime_state !== "running") {
+      throw new Error(
+        `project-host runtime_state is ${projectHost.runtime_state ?? "unknown"}`,
+      );
+    }
+    if (
+      projectHost.version_state &&
+      !["aligned", "newer"].includes(projectHost.version_state)
+    ) {
+      throw new Error(
+        `project-host version_state is ${projectHost.version_state}`,
+      );
+    }
+    const rollout = status?.observed_host_agent?.project_host?.rollout;
+    if (rollout && rollout.healthy === false) {
+      throw new Error("project-host rollout is unhealthy");
+    }
+  }
+  return `${artifact} current_version=${observedArtifact.current_version}`;
+}
+
+async function smokeHostSoftwareChecks({
+  component,
+  profile,
+  host,
+  deps,
+}: {
+  component: SoftwareDeployComponent;
+  profile: string;
+  host?: string;
+  deps: SoftwareCommandDeps;
+}): Promise<SoftwareSmokeCheck[]> {
+  const checks: SoftwareSmokeCheck[] = [];
+  let selectedHost: any;
+  checks.push(
+    await runTimedSmokeCheck(
+      "representative host",
+      async () => {
+        const data = await runCliJson({
+          args: [
+            "--profile",
+            profile,
+            "--output",
+            "json",
+            "host",
+            "list",
+            "--limit",
+            host ? "500" : "50",
+          ],
+          deps,
+        });
+        selectedHost = selectRepresentativeHost(data, host);
+        return `${selectedHost.name ?? selectedHost.host_id} (${selectedHost.host_id})`;
+      },
+      deps,
+    ),
+  );
+  if (!selectedHost) return checks;
+
+  checks.push(
+    await runTimedSmokeCheck(
+      "host deploy status",
+      async () => {
+        const status = await runCliJson({
+          args: [
+            "--profile",
+            profile,
+            "--output",
+            "json",
+            "host",
+            "deploy",
+            "status",
+            selectedHost.host_id,
+          ],
+          deps,
+        });
+        return validateHostDeploymentStatus({ status, component });
+      },
+      deps,
+    ),
+  );
+
+  checks.push(
+    await runTimedSmokeCheck(
+      "host rootfs rpc",
+      async () => {
+        const data = await runCliJson({
+          args: [
+            "--profile",
+            profile,
+            "--output",
+            "json",
+            "host",
+            "rootfs",
+            selectedHost.host_id,
+          ],
+          deps,
+        });
+        return `cached_rootfs=${data?.summary?.total ?? 0}`;
+      },
+      deps,
+    ),
+  );
+  return checks;
 }
 
 function deploymentStatusForDisplay(
@@ -1655,6 +1904,7 @@ Supported deploy/smoke components:
     .argument("<profile-or-channel>", "site profile or release channel")
     .option("--api <url>", "site API URL")
     .option("--remote <ssh-target>", "bay SSH target")
+    .option("--host <host>", "representative project host id or name")
     .option("--timeout <ms>", "per HTTP check timeout in milliseconds", "15000")
     .action(
       async (
@@ -1668,13 +1918,13 @@ Supported deploy/smoke components:
         if (!targetName) {
           throw new Error("software smoke requires <profile-or-channel>");
         }
+        const hostSmokeArtifact = hostArtifactForSmoke(component);
         if (
-          component !== "static" &&
-          component !== "hub" &&
-          component !== "bay"
+          !["static", "hub", "bay"].includes(component) &&
+          !hostSmokeArtifact
         ) {
           throw new Error(
-            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay`,
+            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools`,
           );
         }
         const startedAt = deps.now?.() ?? new Date();
@@ -1692,11 +1942,20 @@ Supported deploy/smoke components:
         if ((component === "hub" || component === "bay") && !deps.runCommand) {
           throw new Error("software smoke hub requires runCommand dependency");
         }
-        const checks = await smokeHttpChecks({
-          api: target.api,
-          timeoutMs,
-          deps,
-        });
+        const checks: SoftwareSmokeCheck[] = [];
+        if (
+          component === "static" ||
+          component === "hub" ||
+          component === "bay"
+        ) {
+          checks.push(
+            ...(await smokeHttpChecks({
+              api: target.api,
+              timeoutMs,
+              deps,
+            })),
+          );
+        }
         if (component === "hub" || component === "bay") {
           const cli = currentCliInvocation();
           checks.push(
@@ -1729,6 +1988,16 @@ Supported deploy/smoke components:
               },
               deps,
             ),
+          );
+        }
+        if (hostSmokeArtifact) {
+          checks.push(
+            ...(await smokeHostSoftwareChecks({
+              component,
+              profile: targetName,
+              host: opts.host,
+              deps,
+            })),
           );
         }
         assertSmokeChecks(checks);

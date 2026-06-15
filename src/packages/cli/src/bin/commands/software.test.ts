@@ -20,6 +20,11 @@ type CapturedRun = {
   args: string[];
 };
 
+type CapturedOutputRun = CapturedRun & {
+  stdout: string;
+  stderr: string;
+};
+
 const testAuthConfig = {
   current_profile: "staging",
   profiles: {
@@ -45,9 +50,11 @@ function makeDeps({
   r2Client,
   loadAuthConfig,
   fetch,
+  outputRuns,
 }: {
   localStore: string;
   runs?: CapturedRun[];
+  outputRuns?: CapturedOutputRun[];
   cwd?: string;
   repoRoot?: string;
   env?: NodeJS.ProcessEnv;
@@ -116,6 +123,15 @@ function makeDeps({
         writeFileSync(bundle, "built bundle");
       }
       return 0;
+    },
+    runCommandOutput: async (command, args) => {
+      const next = outputRuns?.shift();
+      if (next) {
+        next.command = command;
+        next.args = args;
+        return { code: 0, stdout: next.stdout, stderr: next.stderr };
+      }
+      return { code: 1, stdout: "", stderr: "unexpected command" };
     },
     r2Client,
     loadAuthConfig: loadAuthConfig ?? (() => testAuthConfig),
@@ -1508,6 +1524,157 @@ test("software smoke hub also runs Rocket host route health", async () => {
   ]);
 });
 
+test("software smoke project-host validates representative host status", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-project-host-"));
+  const hostListRun: CapturedOutputRun = {
+    command: "",
+    args: [],
+    stdout: JSON.stringify({
+      ok: true,
+      data: [
+        {
+          host_id: "host-1",
+          name: "host one",
+          status: "running",
+        },
+      ],
+    }),
+    stderr: "",
+  };
+  const deployStatusRun: CapturedOutputRun = {
+    command: "",
+    args: [],
+    stdout: JSON.stringify({
+      ok: true,
+      data: {
+        observed_artifacts: [
+          {
+            artifact: "project-host",
+            current_version: "20260615T000000Z-test",
+          },
+        ],
+        observed_components: [
+          {
+            component: "project-host",
+            runtime_state: "running",
+            version_state: "aligned",
+          },
+        ],
+        observed_host_agent: {
+          project_host: {
+            rollout: { healthy: true },
+          },
+        },
+      },
+    }),
+    stderr: "",
+  };
+  const rootfsRun: CapturedOutputRun = {
+    command: "",
+    args: [],
+    stdout: JSON.stringify({
+      ok: true,
+      data: { summary: { total: 2 } },
+    }),
+    stderr: "",
+  };
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      outputRuns: [hostListRun, deployStatusRun, rootfsRun],
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "smoke",
+    "project-host",
+    "staging",
+    "--host",
+    "host-1",
+  ]);
+
+  assert.deepEqual(hostListRun.args.slice(-8), [
+    "--profile",
+    "staging",
+    "--output",
+    "json",
+    "host",
+    "list",
+    "--limit",
+    "500",
+  ]);
+  assert.deepEqual(deployStatusRun.args.slice(-8), [
+    "--profile",
+    "staging",
+    "--output",
+    "json",
+    "host",
+    "deploy",
+    "status",
+    "host-1",
+  ]);
+  assert.deepEqual(rootfsRun.args.slice(-7), [
+    "--profile",
+    "staging",
+    "--output",
+    "json",
+    "host",
+    "rootfs",
+    "host-1",
+  ]);
+});
+
+test("software smoke project validates project bundle artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-project-"));
+  const outputRuns: CapturedOutputRun[] = [
+    {
+      command: "",
+      args: [],
+      stdout: JSON.stringify({
+        ok: true,
+        data: [{ host_id: "host-1", name: "host one", status: "running" }],
+      }),
+      stderr: "",
+    },
+    {
+      command: "",
+      args: [],
+      stdout: JSON.stringify({
+        ok: true,
+        data: {
+          observed_artifacts: [
+            { artifact: "project-bundle", current_version: "1781500000000" },
+          ],
+        },
+      }),
+      stderr: "",
+    },
+    {
+      command: "",
+      args: [],
+      stdout: JSON.stringify({ ok: true, data: { summary: { total: 0 } } }),
+      stderr: "",
+    },
+  ];
+  const program = createProgram(
+    makeDeps({ localStore: join(dir, "store"), outputRuns }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "smoke",
+    "project",
+    "staging",
+  ]);
+});
+
 test("software smoke rejects components that are not wired yet", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-smoke-unwired-"));
   const program = createProgram(makeDeps({ localStore: join(dir, "store") }));
@@ -1519,10 +1686,10 @@ test("software smoke rejects components that are not wired yet", async () => {
         "test",
         "software",
         "smoke",
-        "project-host",
+        "cli",
         "staging",
       ]),
-    /software smoke project-host is not implemented yet/,
+    /software smoke cli is not implemented yet/,
   );
 });
 

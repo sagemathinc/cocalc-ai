@@ -983,6 +983,10 @@ Implemented:
   homepage, `/static/app.html`, `/webapp/favicon.ico`, and
   `/api/v2/auth/bootstrap`. Hub/bay smoke additionally runs
   `cocalc rocket health host-routes` using the selected auth profile.
+- Representative-host `smoke` slice for `project-host`, `project`, and
+  `tools`. These select a running host, validate `host deploy status` observed
+  artifact/component state, and run a routed `host rootfs` RPC against that
+  host.
 - `latest` as a reserved selector that resolves to the newest local or remote
   artifact for a component.
 - Human-readable build/deploy durations and artifact sizes.
@@ -991,9 +995,9 @@ Implemented:
 
 Still not implemented:
 
-- Deeper `smoke` coverage for `project-host`, `project`, `tools`, `cli`,
-  `launchpad`, `plus`, and `star`, including throwaway project lifecycle checks
-  where appropriate.
+- Deeper throwaway project lifecycle `smoke` coverage for `project-host`,
+  `project`, and `tools`, plus smoke coverage for `cli`, `launchpad`, `plus`,
+  and `star`.
 - `deploy`/promote for `cli`, `launchpad`, `plus`, and `star`.
 - Precise bay-side service deploys for `bay-conat-router`,
   `bay-conat-persist`, `bay-frontdoor`, `bay-cloudflared`, and
