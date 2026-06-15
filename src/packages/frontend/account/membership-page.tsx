@@ -125,11 +125,6 @@ function MembershipSettingsContent() {
   const personalMembership = details?.candidates.find(
     (candidate) => candidate.source === "subscription",
   );
-  const hasSiteLicenseMembership =
-    membership.grant_source === "site-license" ||
-    details?.candidates.some(
-      (candidate) => candidate.grant_source === "site-license",
-    ) === true;
   const refreshMembership = () => {
     window.dispatchEvent(new Event("cocalc:membership-changed"));
     refresh();
@@ -148,6 +143,10 @@ function MembershipSettingsContent() {
     setPurchaseCurrentClass(undefined);
     setPurchaseCurrentInterval(undefined);
     refreshMembership();
+  };
+  const openSiteLicenseManage = (source = "site license") => {
+    setSiteLicenseManageSource(source);
+    setSiteLicenseManageOpen(true);
   };
 
   return (
@@ -239,10 +238,7 @@ function MembershipSettingsContent() {
                     if (row.action === "site-license") {
                       return (
                         <Button
-                          onClick={() => {
-                            setSiteLicenseManageSource(row.source);
-                            setSiteLicenseManageOpen(true);
-                          }}
+                          onClick={() => openSiteLicenseManage(row.source)}
                         >
                           Manage
                         </Button>
@@ -271,15 +267,9 @@ function MembershipSettingsContent() {
                 refresh={refreshMembership}
               />
             ) : null}
-            <Suspense fallback={null}>
-              <ClaimableMembershipPackagesPanel
-                compact
-                hasSiteLicenseMembership={hasSiteLicenseMembership}
-                onChanged={refreshMembership}
-                refreshToken={siteLicenseRefreshToken}
-                tiers={Object.values(tierById)}
-              />
-            </Suspense>
+            <Button onClick={() => openSiteLicenseManage()}>
+              Manage site license membership
+            </Button>
           </Space>
           {stripeEnabled ? <UseBalance /> : null}
           <Suspense fallback={null}>
@@ -297,10 +287,13 @@ function MembershipSettingsContent() {
       >
         <Suspense fallback={<Loading />}>
           <ClaimableMembershipPackagesPanel
-            hasSiteLicenseMembership={hasSiteLicenseMembership}
             onChanged={refreshMembership}
+            onSiteLicenseTitleChange={(source) => {
+              if (source) {
+                setSiteLicenseManageSource(source);
+              }
+            }}
             refreshToken={siteLicenseRefreshToken}
-            tiers={Object.values(tierById)}
           />
         </Suspense>
       </Modal>

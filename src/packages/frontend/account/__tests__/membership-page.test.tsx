@@ -3,7 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MembershipPage } from "../membership-page";
 
@@ -46,7 +52,7 @@ jest.mock("../settings-routing", () => ({
 jest.mock("../membership-package-manager", () => ({
   ClaimableMembershipPackagesPanel: (props: unknown) => {
     mockClaimableMembershipPackagesPanel(props);
-    return <button>Claim site license</button>;
+    return <div>site license panel</div>;
   },
   SiteLicenseReverificationPanel: () => null,
 }));
@@ -168,7 +174,8 @@ describe("MembershipPage", () => {
     const dispatchEvent = jest.spyOn(window, "dispatchEvent");
 
     render(<MembershipPage />);
-    await screen.findByText("Claim site license");
+    fireEvent.click(await screen.findByText("Manage site license membership"));
+    await screen.findByText("site license panel");
     const props = mockMembershipPurchaseModal.mock.calls[0][0] as {
       onClose: () => void;
       onChanged: () => void;
@@ -222,7 +229,7 @@ describe("MembershipPage", () => {
     );
 
     const { container } = render(<MembershipPage />);
-    await screen.findByText("Claim site license");
+    await screen.findByText("Manage site license membership");
     const text = container.textContent ?? "";
 
     expect(screen.getByText("Free - Personal")).toBeTruthy();
@@ -282,7 +289,7 @@ describe("MembershipPage", () => {
     );
 
     const { container } = render(<MembershipPage />);
-    await screen.findByText("Claim site license");
+    await screen.findByText("Manage site license membership");
     const text = container.textContent ?? "";
 
     expect(
@@ -298,12 +305,39 @@ describe("MembershipPage", () => {
     expect(screen.getByText("More included AI usage")).toBeTruthy();
     expect(text).not.toContain("Billing:");
     expect(text).not.toContain("Limits:");
-    expect(mockClaimableMembershipPackagesPanel.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({ hasSiteLicenseMembership: false }),
-    );
   });
 
-  it("marks the claim panel only for site-license membership sources", async () => {
+  it("opens the shared site-license modal from the bottom button", async () => {
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        membership: { class: "free", source: "free" },
+      }),
+    );
+
+    render(<MembershipPage />);
+    fireEvent.click(await screen.findByText("Manage site license membership"));
+
+    expect(screen.getByText("site license panel")).toBeTruthy();
+    expect(mockClaimableMembershipPackagesPanel.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        onChanged: expect.any(Function),
+        onSiteLicenseTitleChange: expect.any(Function),
+      }),
+    );
+
+    const panelProps = mockClaimableMembershipPackagesPanel.mock.calls.at(
+      -1,
+    )?.[0] as {
+      onSiteLicenseTitleChange: (title?: string) => void;
+    };
+    await act(async () => {
+      panelProps.onSiteLicenseTitleChange("CoCalc Trial");
+    });
+
+    expect(screen.getByText("Manage CoCalc Trial membership")).toBeTruthy();
+  });
+
+  it("opens the shared site-license modal from a site-license source row", async () => {
     useMembershipSettingsData.mockReturnValue(
       baseData({
         candidateRows: [
@@ -346,11 +380,17 @@ describe("MembershipPage", () => {
     );
 
     render(<MembershipPage />);
-    await screen.findByText("Claim site license");
 
     expect(screen.getByText("Researcher - CoCalc Trial")).toBeTruthy();
-    expect(mockClaimableMembershipPackagesPanel.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({ hasSiteLicenseMembership: true }),
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+
+    expect(screen.getByText("Manage CoCalc Trial membership")).toBeTruthy();
+    expect(screen.getByText("site license panel")).toBeTruthy();
+    expect(mockClaimableMembershipPackagesPanel.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        onChanged: expect.any(Function),
+        onSiteLicenseTitleChange: expect.any(Function),
+      }),
     );
   });
 });

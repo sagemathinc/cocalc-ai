@@ -101,7 +101,6 @@ import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { COLORS } from "@cocalc/util/theme";
 import type { LineItem } from "@cocalc/util/stripe/types";
-import { openAccountSettings } from "./settings-routing";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -150,11 +149,9 @@ function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
 }
 
 interface ClaimableMembershipPackagesPanelProps {
-  compact?: boolean;
-  hasSiteLicenseMembership?: boolean;
   onChanged?: () => void;
+  onSiteLicenseTitleChange?: (title?: string) => void;
   refreshToken?: number;
-  tiers?: MembershipTierLike[];
 }
 
 function CompactField({
@@ -665,13 +662,6 @@ function getClaimableSiteLicenseDisplayName(
   return title || organization || undefined;
 }
 
-function getManageSiteLicenseMembershipTitle(
-  claimables: ClaimableMembershipPackage[],
-): string {
-  const siteLicenseName = getClaimableSiteLicenseDisplayName(claimables[0]);
-  return `Manage ${siteLicenseName ?? "site license"} membership`;
-}
-
 function getClaimableSeatStatus(
   claimablePackage: ClaimableMembershipPackage,
 ): NonNullable<ClaimableMembershipPackage["seat_status"]> {
@@ -841,9 +831,8 @@ function canManageSiteLicenseOverview({
 }
 
 export function ClaimableMembershipPackagesPanel({
-  compact,
-  hasSiteLicenseMembership = false,
   onChanged,
+  onSiteLicenseTitleChange,
   refreshToken,
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
@@ -868,7 +857,6 @@ export function ClaimableMembershipPackagesPanel({
   const [termsTarget, setTermsTarget] =
     useState<ClaimableMembershipPackage | null>(null);
   const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
-  const [compactModalOpen, setCompactModalOpen] = useState<boolean>(false);
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
@@ -882,10 +870,12 @@ export function ClaimableMembershipPackagesPanel({
     setLoading(true);
     setError("");
     try {
-      setClaimables(
-        await getClaimableMembershipPackages({
-          include_claimed_site_license_pools: true,
-        }),
+      const nextClaimables = await getClaimableMembershipPackages({
+        include_claimed_site_license_pools: true,
+      });
+      setClaimables(nextClaimables);
+      onSiteLicenseTitleChange?.(
+        getClaimableSiteLicenseDisplayName(nextClaimables[0]),
       );
     } catch (err) {
       setError(`${err}`);
@@ -924,7 +914,6 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
-      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -946,7 +935,6 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
-      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -1049,25 +1037,15 @@ export function ClaimableMembershipPackagesPanel({
   }
   const emailVerified =
     !!email_address && !!email_address_verified?.get?.(email_address);
-  const compactButtonPrimary =
-    !hasSiteLicenseMembership &&
-    claimables.some(
-      (claimablePackage) =>
-        getClaimableSeatStatus(claimablePackage) === "claimable",
-    );
-  const showVerifyEmailClaimCallout =
-    !loading && !emailVerified && claimables.length === 0;
-  const manageSiteLicenseMembershipTitle =
-    getManageSiteLicenseMembershipTitle(claimables);
 
-  function renderVerifyEmailClaimCallout({ compact }: { compact: boolean }) {
+  function renderVerifyEmailClaimCallout() {
     return (
       <Alert
         type="warning"
         showIcon
         title="Verify your email to claim site-license memberships"
         description={
-          <Space orientation="vertical" size="small">
+          <Space vertical size="small">
             <span>
               Verify your signed-in email address{" "}
               <Text code>{email_address}</Text> to claim reserved seats or
@@ -1088,18 +1066,10 @@ export function ClaimableMembershipPackagesPanel({
               >
                 {verificationSent ? "Verification sent" : "Resend verification"}
               </Button>
-              {compact ? (
-                <Button
-                  size="small"
-                  onClick={() => openAccountSettings({ page: "profile" })}
-                >
-                  Open Profile
-                </Button>
-              ) : null}
             </Space>
           </Space>
         }
-        style={{ marginTop: compact ? 12 : undefined, marginBottom: 12 }}
+        style={{ marginBottom: 12 }}
       />
     );
   }
@@ -1282,46 +1252,6 @@ export function ClaimableMembershipPackagesPanel({
     </Modal>
   );
 
-  if (compact) {
-    const disabledReason =
-      claimables.length > 0
-        ? undefined
-        : emailVerified
-          ? `Your signed-in email address ${email_address} is verified, but no reserved seats or matching site-license pools are available for it right now.`
-          : `Verify your signed-in email address ${email_address} to claim reserved seats or matching site-license memberships.`;
-    return (
-      <>
-        <Tooltip title={disabledReason}>
-          <span>
-            <Button
-              disabled={!loading && claimables.length === 0}
-              loading={loading}
-              onClick={() => setCompactModalOpen(true)}
-              type={compactButtonPrimary ? "primary" : undefined}
-            >
-              Manage site license membership
-            </Button>
-          </span>
-        </Tooltip>
-        {error ? <Alert type="error" message={error} showIcon /> : null}
-        {showVerifyEmailClaimCallout
-          ? renderVerifyEmailClaimCallout({ compact: true })
-          : null}
-        <Modal
-          open={compactModalOpen}
-          title={manageSiteLicenseMembershipTitle}
-          footer={null}
-          onCancel={() => setCompactModalOpen(false)}
-          destroyOnHidden
-        >
-          {renderClaimablePackages()}
-        </Modal>
-        {termsModal}
-        {replacementClaimModal}
-      </>
-    );
-  }
-
   return (
     <div>
       {loading ? <Loading /> : null}
@@ -1343,7 +1273,7 @@ export function ClaimableMembershipPackagesPanel({
             }
           />
         ) : (
-          renderVerifyEmailClaimCallout({ compact: false })
+          renderVerifyEmailClaimCallout()
         )
       ) : null}
       {!loading && claimables.length > 0 ? renderClaimablePackages() : null}
