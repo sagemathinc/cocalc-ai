@@ -96,6 +96,25 @@ function createProgram(deps: SoftwareCommandDeps): Command {
   return program;
 }
 
+test("software help lists supported components", () => {
+  const program = createProgram(makeDeps({ localStore: "/tmp/software-help" }));
+  const software = program.commands.find(
+    (command) => command.name() === "software",
+  );
+  assert.ok(software);
+  const build = software.commands.find((command) => command.name() === "build");
+  const list = software.commands.find((command) => command.name() === "list");
+  const deploy = software.commands.find(
+    (command) => command.name() === "deploy",
+  );
+  assert.ok(build);
+  assert.ok(list);
+  assert.ok(deploy);
+  assert.match(build.helpInformation(), /static\|hub\|project-host/);
+  assert.match(list.helpInformation(), /cli\|launchpad\|plus\|star/);
+  assert.match(deploy.helpInformation(), /hub-conat-router/);
+});
+
 test("software build records an existing file with a generated tag", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-build-"));
   const localStore = join(dir, "store");

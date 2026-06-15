@@ -25,6 +25,10 @@ import type {
   SoftwareBuildComponent,
   SoftwareGitMetadata,
 } from "../core/software/types";
+import {
+  SOFTWARE_BUILD_COMPONENTS,
+  SOFTWARE_DEPLOY_COMPONENTS,
+} from "../core/software/types";
 
 export type SoftwareCommandDeps = {
   cwd?: string;
@@ -52,6 +56,11 @@ type ListOptions = {
   localStore?: string;
   limit?: string;
 };
+
+const BUILD_COMPONENTS_HELP = SOFTWARE_BUILD_COMPONENTS.join("|");
+const DEPLOY_COMPONENTS_HELP = SOFTWARE_DEPLOY_COMPONENTS.join("|");
+const BUILD_COMPONENT_ARGUMENT = `software component (${BUILD_COMPONENTS_HELP})`;
+const DEPLOY_COMPONENT_ARGUMENT = `software component (${DEPLOY_COMPONENTS_HELP})`;
 
 function runGitText(cwd: string, args: string[]): string | null {
   const result = spawnSync("git", args, {
@@ -364,12 +373,22 @@ export function registerSoftwareCommand(
 ): Command {
   const software = program
     .command("software")
-    .description("high-level CoCalc software artifact lifecycle");
+    .description("high-level CoCalc software artifact lifecycle")
+    .addHelpText(
+      "after",
+      `
+
+Supported build/list/push components:
+  ${BUILD_COMPONENTS_HELP}
+
+Supported deploy/smoke components:
+  ${DEPLOY_COMPONENTS_HELP}`,
+    );
 
   software
     .command("build")
     .description("build or record a local immutable software artifact")
-    .argument("<component>", "software component")
+    .argument("<component>", BUILD_COMPONENT_ARGUMENT)
     .argument("[tag]", "optional human tag; generated if omitted")
     .option("--local-store <path>", "local artifact store")
     .option(
@@ -410,7 +429,7 @@ export function registerSoftwareCommand(
     .command("list")
     .alias("ls")
     .description("list local software artifacts")
-    .argument("<component>", "software component")
+    .argument("<component>", BUILD_COMPONENT_ARGUMENT)
     .option("--local-store <path>", "local artifact store")
     .option("--limit <n>", "maximum rows to show", "10")
     .action(
@@ -440,7 +459,7 @@ export function registerSoftwareCommand(
   software
     .command("push")
     .description("push a local software artifact to the remote software store")
-    .argument("<component>", "software component")
+    .argument("<component>", BUILD_COMPONENT_ARGUMENT)
     .argument("<tag-or-id>", "artifact tag or id")
     .action(() => {
       throw new Error("software push is not implemented yet");
@@ -449,7 +468,7 @@ export function registerSoftwareCommand(
   software
     .command("deploy")
     .description("deploy or promote a software artifact")
-    .argument("<component>", "software component")
+    .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
     .argument("<tag-or-id>", "artifact tag or id")
     .argument("[profile-or-channel]", "site profile or release channel")
     .action(() => {
@@ -459,7 +478,7 @@ export function registerSoftwareCommand(
   software
     .command("smoke")
     .description("run a software smoke test")
-    .argument("<component>", "software component")
+    .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
     .argument("[profile-or-channel]", "site profile or release channel")
     .action(() => {
       throw new Error("software smoke is not implemented yet");
