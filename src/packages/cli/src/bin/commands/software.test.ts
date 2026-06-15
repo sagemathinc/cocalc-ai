@@ -18,7 +18,6 @@ import type { SoftwareR2Client } from "../core/software/remote-store";
 type CapturedRun = {
   command: string;
   args: string[];
-  env?: NodeJS.ProcessEnv;
 };
 
 function makeDeps({
@@ -47,8 +46,8 @@ function makeDeps({
       dirty: false,
       status_porcelain: "",
     }),
-    runCommand: async (command, args, options) => {
-      runs?.push({ command, args, env: options?.env });
+    runCommand: async (command, args) => {
+      runs?.push({ command, args });
       let bundle = command === "pnpm" ? args.at(-1) : undefined;
       if (command === "pnpm" && args.includes("@cocalc/project-host")) {
         bundle = join(
@@ -77,15 +76,18 @@ function makeDeps({
         args.includes("@cocalc/project") &&
         args.includes("build:tools")
       ) {
-        const toolsArch = process.arch === "arm64" ? "arm64" : "amd64";
-        bundle = join(
-          cwd,
-          "src",
-          "packages",
-          "project",
-          "build",
-          `tools-linux-${toolsArch}.tar.xz`,
-        );
+        for (const arch of ["amd64", "arm64"]) {
+          const toolsBundle = join(
+            cwd,
+            "src",
+            "packages",
+            "project",
+            "build",
+            `tools-linux-${arch}.tar.xz`,
+          );
+          mkdirSync(join(toolsBundle, ".."), { recursive: true });
+          writeFileSync(toolsBundle, `built tools bundle ${arch}`);
+        }
       }
       if (bundle) {
         mkdirSync(join(bundle, ".."), { recursive: true });
@@ -384,8 +386,6 @@ test("software build tools runs the package tools builder", async () => {
   const localStore = join(dir, "store");
   const runs: CapturedRun[] = [];
   const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
-  const toolsArch = process.arch === "arm64" ? "arm64" : "amd64";
-  const artifactName = `tools-linux-${toolsArch}.tar.xz`;
 
   await program.parseAsync([
     "node",
@@ -400,19 +400,20 @@ test("software build tools runs the package tools builder", async () => {
   assert.equal(runs.length, 1);
   assert.equal(runs[0].args.includes("@cocalc/project"), true);
   assert.equal(runs[0].args.includes("build:tools"), true);
-  assert.equal(runs[0].env?.COCALC_TOOLS_ARCHES, toolsArch);
-  assert.equal(
-    existsSync(
-      join(
-        localStore,
-        "tools",
-        "20260614T235912Z-e882d124-tools-test",
-        "files",
-        artifactName,
+  for (const arch of ["amd64", "arm64"]) {
+    assert.equal(
+      existsSync(
+        join(
+          localStore,
+          "tools",
+          "20260614T235912Z-e882d124-tools-test",
+          "files",
+          `tools-linux-${arch}.tar.xz`,
+        ),
       ),
-    ),
-    true,
-  );
+      true,
+    );
+  }
 });
 
 test("software build rejects duplicate explicit local tags", async () => {
@@ -1276,6 +1277,80 @@ test("software deploy project-host publishes compatibility object and runs host 
   const history = JSON.parse(
     r2.objects
       .get("software/deployments/staging/project-host/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].artifact_id, artifactId);
+});
+
+test("software deploy tools publishes both architecture compatibility objects", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-tools-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, cwd: dir, env: r2Env, r2Client: r2.client }),
+  );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = "software";
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "build",
+      "tools",
+      "tools-deploy",
+    ]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "deploy",
+      "tools",
+      "tools-deploy",
+      "staging",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    process.argv[1] = originalArgv1;
+  }
+
+  const artifactId = "20260614T235912Z-e882d124-tools-deploy";
+  for (const arch of ["amd64", "arm64"]) {
+    assert.equal(
+      r2.objects.has(`software/tools/${artifactId}/tools-linux-${arch}.tar.xz`),
+      true,
+    );
+    assert.equal(
+      r2.objects.has(
+        `software/tools/${artifactId}/tools-linux-${arch}.tar.xz.sha256`,
+      ),
+      true,
+    );
+  }
+  assert.equal(runs.length, 2);
+  assert.deepEqual(runs[1].args, [
+    "--profile",
+    "staging",
+    "host",
+    "upgrade",
+    "--all-online",
+    "--artifact",
+    "tools",
+    "--artifact-version",
+    artifactId,
+    "--base-url",
+    "https://software.example.test/software",
+    "--wait",
+  ]);
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/tools/index.json")!
       .toString("utf8"),
   );
   assert.equal(history.deployments[0].status, "succeeded");

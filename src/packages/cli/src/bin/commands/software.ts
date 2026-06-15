@@ -189,7 +189,10 @@ function packageBuildInfo(component: SoftwareBuildComponent):
       script: string;
       artifactName: string;
       artifactPath: (srcRoot: string) => string;
-      env?: Record<string, string>;
+      artifactFiles?: (srcRoot: string) => Array<{
+        source: string;
+        name: string;
+      }>;
     }
   | undefined {
   if (component === "project-host") {
@@ -225,7 +228,14 @@ function packageBuildInfo(component: SoftwareBuildComponent):
       artifactName,
       artifactPath: (srcRoot) =>
         join(srcRoot, "packages", "project", "build", artifactName),
-      env: { COCALC_TOOLS_ARCHES: toolsArch },
+      artifactFiles: (srcRoot) =>
+        ["amd64", "arm64"].map((arch) => {
+          const name = `tools-linux-${arch}.tar.xz`;
+          return {
+            name,
+            source: join(srcRoot, "packages", "project", "build", name),
+          };
+        }),
     };
   }
   return undefined;
@@ -379,9 +389,18 @@ async function buildFromFile({
   let buildTempDir: string | undefined;
   let sourceFile = opts.fromFile;
   let artifactName = opts.artifactName;
+  let sourceFiles:
+    | Array<{
+        source: string;
+        name?: string;
+      }>
+    | undefined;
   let commandText = `cocalc software build ${component}${
     tagArg ? ` ${tagArg}` : ""
   }`;
+  if (sourceFile) {
+    sourceFiles = [{ source: sourceFile, name: artifactName }];
+  }
   if (!sourceFile) {
     const info = rocketBuildInfo(component);
     const packageInfo = packageBuildInfo(component);
@@ -422,7 +441,7 @@ async function buildFromFile({
     }
     const code = await deps.runCommand("pnpm", args, {
       stdio: "inherit",
-      env: { ...deps.env, ...(packageInfo?.env ?? {}) },
+      env: deps.env,
     });
     if (code !== 0) {
       throw new Error(
@@ -432,25 +451,34 @@ async function buildFromFile({
     if (packageInfo) {
       sourceFile = packageInfo.artifactPath(srcRoot);
       artifactName = packageInfo.artifactName;
+      sourceFiles = packageInfo.artifactFiles?.(srcRoot) ?? [
+        { source: sourceFile, name: artifactName },
+      ];
     } else {
       sourceFile = args.at(-1);
       artifactName = info!.artifactName;
+      sourceFiles = [{ source: sourceFile!, name: artifactName }];
     }
     commandText = ["pnpm", ...args].join(" ");
   }
   const dir = artifactDir({ localStore, component, artifactId });
   const filesDir = join(dir, "files");
   try {
-    if (!sourceFile) {
+    if (!sourceFiles?.length) {
       throw new Error(
         `software build ${component} did not resolve an artifact`,
       );
     }
-    const artifactFile = await copyArtifactFile({
-      source: sourceFile,
-      destinationFilesDir: filesDir,
-      name: artifactName,
-    });
+    const artifactFiles: SoftwareArtifactManifest["files"] = [];
+    for (const file of sourceFiles) {
+      artifactFiles.push(
+        await copyArtifactFile({
+          source: file.source,
+          destinationFilesDir: filesDir,
+          name: file.name,
+        }),
+      );
+    }
     const finishedAt = deps.now();
     const manifest: SoftwareArtifactManifest & { local_dir: string } = {
       schema: "cocalc-software-artifact-v1",
@@ -478,7 +506,7 @@ async function buildFromFile({
         finished_at: finishedAt.toISOString(),
         duration_ms: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
       },
-      files: [artifactFile],
+      files: artifactFiles,
       local_dir: dir,
     };
     await writeLocalManifest({ localStore, manifest });
@@ -821,8 +849,9 @@ async function resolveDeployArtifact({
   artifact_id: string;
   source: "local+remote" | "local+pushed" | "remote";
   remote_manifest: string;
-  bundle_url: string;
-  bundle_sha256: string;
+  files: SoftwareRemoteIndexEntry["files"];
+  bundle_url?: string;
+  bundle_sha256?: string;
   remote_entry: SoftwareRemoteIndexEntry;
 }> {
   const localStore = resolveSoftwareLocalStore({
@@ -874,40 +903,34 @@ async function resolveDeployArtifact({
       manifest: localMatch.manifest,
       config,
     });
-    const remoteFile = remoteBundleFile(remoteEntry);
     return {
       tag: localMatch.manifest.tag,
       artifact_id: localMatch.manifest.artifact_id,
       source: "local+pushed",
       remote_manifest: remoteEntry.manifest_url,
-      bundle_url: remoteFile.url,
-      bundle_sha256: remoteFile.sha256,
+      files: remoteEntry.files,
       remote_entry: remoteEntry,
     };
   }
 
   if (localMatch && remoteEntry) {
-    const remoteFile = remoteBundleFile(remoteEntry);
     return {
       tag: localMatch.manifest.tag,
       artifact_id: localMatch.manifest.artifact_id,
       source: "local+remote",
       remote_manifest: remoteEntry.manifest_url,
-      bundle_url: remoteFile.url,
-      bundle_sha256: remoteFile.sha256,
+      files: remoteEntry.files,
       remote_entry: remoteEntry,
     };
   }
 
   if (remoteEntry) {
-    const remoteFile = remoteBundleFile(remoteEntry);
     return {
       tag: remoteEntry.tag,
       artifact_id: remoteEntry.artifact_id,
       source: "remote",
       remote_manifest: remoteEntry.manifest_url,
-      bundle_url: remoteFile.url,
-      bundle_sha256: remoteFile.sha256,
+      files: remoteEntry.files,
       remote_entry: remoteEntry,
     };
   }
@@ -1294,6 +1317,9 @@ Supported deploy/smoke components:
         let hostCompatUrl: string | undefined;
         let targetKind: SoftwareDeploymentRecord["target"]["kind"];
         if (rocketTarget) {
+          const remoteFile = remoteBundleFile(artifact.remote_entry);
+          artifact.bundle_url = remoteFile.url;
+          artifact.bundle_sha256 = remoteFile.sha256;
           rocketScope = rocketTarget.scope;
           targetKind = "rocket-bay";
           args = [
@@ -1319,7 +1345,7 @@ Supported deploy/smoke components:
             entry: artifact.remote_entry,
           });
           hostBaseUrl = compat.base_url;
-          hostCompatUrl = compat.url;
+          hostCompatUrl = compat.urls.join("\n");
           targetKind = "project-host-fleet";
           args = [
             ...cli.args,
@@ -1348,8 +1374,16 @@ Supported deploy/smoke components:
           details: {
             source: artifact.source,
             remote_manifest: artifact.remote_manifest,
-            bundle_url: artifact.bundle_url,
-            bundle_sha256: artifact.bundle_sha256,
+            files: artifact.files.map((file) => ({
+              name: file.name,
+              url: file.url,
+              sha256: file.sha256,
+              size_bytes: file.size_bytes,
+            })),
+            ...(artifact.bundle_url ? { bundle_url: artifact.bundle_url } : {}),
+            ...(artifact.bundle_sha256
+              ? { bundle_sha256: artifact.bundle_sha256 }
+              : {}),
             ...(rocketScope ? { rocket_scope: rocketScope } : {}),
             ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
             ...(hostCompatUrl ? { host_compat_url: hostCompatUrl } : {}),
@@ -1388,8 +1422,11 @@ Supported deploy/smoke components:
             duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
             source: artifact.source,
             remote_manifest: artifact.remote_manifest,
-            bundle_url: artifact.bundle_url,
-            bundle_sha256: artifact.bundle_sha256,
+            files: artifact.files.map((file) => file.url),
+            ...(artifact.bundle_url ? { bundle_url: artifact.bundle_url } : {}),
+            ...(artifact.bundle_sha256
+              ? { bundle_sha256: artifact.bundle_sha256 }
+              : {}),
             ...(rocketScope ? { rocket_scope: rocketScope } : {}),
             ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
             profile: deployTarget,

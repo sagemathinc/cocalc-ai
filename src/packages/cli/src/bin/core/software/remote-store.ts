@@ -525,37 +525,39 @@ export async function publishHostCompatibilityArtifact({
   client: SoftwareR2Client;
   config: SoftwareRemoteConfig;
   entry: SoftwareRemoteIndexEntry;
-}): Promise<{ base_url: string; url: string }> {
-  if (
-    entry.files.length !== 1 ||
-    !["project-host", "project", "tools"].includes(
-      entry.manifest_key.split("/")[2] ?? "",
-    )
-  ) {
-    throw new Error(
-      `software host compatibility publish expected one project-host/project/tools file in ${entry.artifact_id}`,
-    );
-  }
+}): Promise<{ base_url: string; urls: string[] }> {
   const artifact = entry.manifest_key.split("/")[2] as
     | "project-host"
     | "project"
     | "tools";
-  const file = entry.files[0];
-  const compatKey = `software/${artifact}/${entry.artifact_id}/${file.name}`;
-  await client.copyR2Object({
-    auth: config.auth,
-    sourceKey: file.key,
-    destKey: compatKey,
-  });
-  await client.putR2ObjectFromBuffer({
-    auth: config.auth,
-    key: `${compatKey}.sha256`,
-    body: Buffer.from(`${file.sha256}  ${file.name}\n`, "utf8"),
-    contentType: "text/plain",
-    cacheControl: config.artifactCacheControl,
-  });
+  if (
+    !["project-host", "project", "tools"].includes(artifact) ||
+    (artifact !== "tools" && entry.files.length !== 1) ||
+    entry.files.length < 1
+  ) {
+    throw new Error(
+      `software host compatibility publish expected project-host/project to have one file and tools to have one or more files in ${entry.artifact_id}`,
+    );
+  }
+  const urls: string[] = [];
+  for (const file of entry.files) {
+    const compatKey = `software/${artifact}/${entry.artifact_id}/${file.name}`;
+    await client.copyR2Object({
+      auth: config.auth,
+      sourceKey: file.key,
+      destKey: compatKey,
+    });
+    await client.putR2ObjectFromBuffer({
+      auth: config.auth,
+      key: `${compatKey}.sha256`,
+      body: Buffer.from(`${file.sha256}  ${file.name}\n`, "utf8"),
+      contentType: "text/plain",
+      cacheControl: config.artifactCacheControl,
+    });
+    urls.push(publicUrl(config, compatKey));
+  }
   return {
     base_url: `${config.publicBaseUrl}/software`,
-    url: publicUrl(config, compatKey),
+    urls,
   };
 }
