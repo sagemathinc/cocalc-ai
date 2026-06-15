@@ -5,6 +5,7 @@ import { hostname } from "node:os";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
+import { humanSize } from "@cocalc/util/misc";
 
 import {
   loadAuthConfig as loadDefaultAuthConfig,
@@ -425,6 +426,10 @@ async function buildFromFile({
 function buildSummary(
   manifest: SoftwareArtifactManifest & { local_dir: string },
 ) {
+  const totalSizeBytes = manifest.files.reduce(
+    (total, file) => total + file.size_bytes,
+    0,
+  );
   return {
     component: manifest.component,
     tag: manifest.tag,
@@ -435,8 +440,12 @@ function buildSummary(
       manifest.source.git_dirty ? "dirty" : "clean"
     }`,
     local: manifest.local_dir,
+    size: `${humanSize(totalSizeBytes)} (${totalSizeBytes} bytes)`,
     files: manifest.files
-      .map((file) => `${file.name} ${file.size_bytes}B sha256:${file.sha256}`)
+      .map(
+        (file) =>
+          `${file.name} ${humanSize(file.size_bytes)} (${file.size_bytes} bytes) sha256:${file.sha256}`,
+      )
       .join("\n"),
   };
 }
