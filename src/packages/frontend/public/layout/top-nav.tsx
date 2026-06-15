@@ -38,6 +38,7 @@ export type PublicTopNavActiveKey = PublicInfoPageKey | "auth";
 type PublicTopNavItemKey = PublicInfoPageKey;
 
 const COMPACT_NAV_MEDIA_QUERY = "(max-width: 875px)";
+const DESKTOP_LOGO_MENU_GAP_PX = 32;
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -240,7 +241,7 @@ export default function PublicTopNav({
   }
 
   return (
-    <Flex>
+    <Flex align="center">
       <HomeLogoLink
         active={active}
         config={config}
@@ -257,6 +258,7 @@ export default function PublicTopNav({
           background: "transparent",
           borderBottom: 0,
           flex: "1 1 auto",
+          marginInlineStart: DESKTOP_LOGO_MENU_GAP_PX,
         }}
       />
       <Space>{isAuthenticated ? appActions : authActions}</Space>

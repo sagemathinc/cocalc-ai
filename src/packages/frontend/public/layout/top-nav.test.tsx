@@ -303,7 +303,9 @@ describe("PublicTopNav", () => {
     setViewportWidth(876);
     await renderTopNav(<PublicTopNav />);
 
-    expect(screen.getByRole("menu", { name: "Public pages" })).not.toBeNull();
+    const publicPages = screen.getByRole("menu", { name: "Public pages" });
+    expect(publicPages).not.toBeNull();
+    expect(publicPages).toHaveStyle({ marginInlineStart: "32px" });
     expect(
       screen.queryByRole("button", { name: "Open navigation menu" }),
     ).toBeNull();
