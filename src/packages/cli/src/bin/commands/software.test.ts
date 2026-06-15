@@ -1537,6 +1537,99 @@ test("software deploy bay-scaffold uses bay artifact and scaffold-only Rocket fl
   ]);
 });
 
+test("software deploy host-conat-router installs project-host artifact and reconciles one component", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-host-router-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "project-host.tar.xz");
+  writeFileSync(source, "project host bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project-host",
+    "host-router-deploy",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "host-conat-router",
+    "host-router-deploy",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = JSON.parse(
+    r2.objects.get("software/indexes/project-host.json")!.toString("utf8"),
+  ).artifacts[0].artifact_id;
+
+  assert.equal(runs.length, 3);
+  assert.deepEqual(runs[0].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "upgrade",
+    "--all-online",
+    "--artifact",
+    "project-host",
+    "--artifact-version",
+    artifactId,
+    "--base-url",
+    "https://software.example.test/software",
+    "--wait",
+  ]);
+  assert.deepEqual(runs[1].args.slice(-14), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--component",
+    "conat-router",
+    "--desired-version",
+    artifactId,
+    "--policy",
+    "restart_now",
+    "--reason",
+    "software-deploy-host-conat-router",
+  ]);
+  assert.deepEqual(runs[2].args.slice(-11), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "reconcile",
+    "--all-online",
+    "--component",
+    "conat-router",
+    "--reason",
+    "software-deploy-host-conat-router",
+    "--wait",
+  ]);
+
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/host-conat-router/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].artifact_component, "project-host");
+  assert.equal(history.deployments[0].target.kind, "project-host-fleet");
+});
+
 test("software smoke static runs HTTP checks against the profile API", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-smoke-static-"));
   const urls: string[] = [];

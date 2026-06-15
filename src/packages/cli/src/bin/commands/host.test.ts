@@ -2123,6 +2123,70 @@ test("host reconcile --all-online --wait returns all successful hosts", async ()
   assert.equal(capture.data.hosts.length, 2);
 });
 
+test("host deploy reconcile --all-online reconciles selected runtime components", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture, {
+    listHosts: async () => [
+      {
+        id: "online-1",
+        name: "online-1",
+        status: "running",
+        last_seen: new Date().toISOString(),
+      },
+      {
+        id: "online-2",
+        name: "online-2",
+        status: "active",
+        last_seen: new Date().toISOString(),
+      },
+      {
+        id: "stale-1",
+        name: "stale-1",
+        status: "running",
+        last_seen: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      },
+    ],
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "reconcile",
+    "--all-online",
+    "--component",
+    "conat-router",
+    "--reason",
+    "software-deploy-host-conat-router",
+    "--wait",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentReconciles, [
+    {
+      id: "online-1",
+      components: ["conat-router"],
+      reason: "software-deploy-host-conat-router",
+    },
+    {
+      id: "online-2",
+      components: ["conat-router"],
+      reason: "software-deploy-host-conat-router",
+    },
+  ]);
+  assert.equal(capture.data.status, "succeeded");
+  assert.equal(capture.data.count, 2);
+});
+
 test("host rollout queues managed component rollout and waits for completion", async () => {
   const capture: Capture = {
     upgrades: [],

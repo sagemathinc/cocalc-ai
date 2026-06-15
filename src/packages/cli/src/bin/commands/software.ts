@@ -1391,15 +1391,36 @@ async function resolveDeployArtifact({
   );
 }
 
-function hostDeployArtifactForComponent(
-  component: SoftwareDeployComponent,
-): SoftwareBuildComponent | undefined {
+function hostDeployTargetForComponent(component: SoftwareDeployComponent):
+  | {
+      artifactComponent: SoftwareBuildComponent;
+      upgradeArtifact: "project-host" | "project" | "tools";
+      managedComponent?: "conat-router" | "conat-persist";
+    }
+  | undefined {
   if (
     component === "project-host" ||
     component === "project" ||
     component === "tools"
   ) {
-    return component;
+    return {
+      artifactComponent: component,
+      upgradeArtifact: component,
+    };
+  }
+  if (component === "host-conat-router") {
+    return {
+      artifactComponent: "project-host",
+      upgradeArtifact: "project-host",
+      managedComponent: "conat-router",
+    };
+  }
+  if (component === "host-conat-persist") {
+    return {
+      artifactComponent: "project-host",
+      upgradeArtifact: "project-host",
+      managedComponent: "conat-persist",
+    };
   }
   return undefined;
 }
@@ -1735,12 +1756,12 @@ Supported deploy/smoke components:
         }
         const startedAt = deps.now?.() ?? new Date();
         const rocketTarget = rocketDeployTargetForComponent(component);
-        const hostArtifactComponent = hostDeployArtifactForComponent(component);
+        const hostTarget = hostDeployTargetForComponent(component);
         const artifactComponent =
-          rocketTarget?.artifactComponent ?? hostArtifactComponent;
+          rocketTarget?.artifactComponent ?? hostTarget?.artifactComponent;
         if (!artifactComponent) {
           throw new Error(
-            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, project-host, project, tools`,
+            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, bay-conat-router, bay-conat-persist, bay-frontdoor, bay-cloudflared, bay-scaffold, host-conat-router, host-conat-persist, project-host, project, tools`,
           );
         }
         if (!deps.runCommand) {
@@ -1763,10 +1784,11 @@ Supported deploy/smoke components:
         });
         const client = softwareR2Client(deps);
         const cli = currentCliInvocation();
-        let args: string[];
+        let commandArgsList: string[][];
         let rocketScope: string | undefined;
         let hostBaseUrl: string | undefined;
         let hostCompatUrl: string | undefined;
+        let hostManagedComponent: string | undefined;
         let targetKind: SoftwareDeploymentRecord["target"]["kind"];
         if (rocketTarget) {
           const remoteFile = remoteBundleFile(artifact.remote_entry);
@@ -1774,24 +1796,26 @@ Supported deploy/smoke components:
           artifact.bundle_sha256 = remoteFile.sha256;
           rocketScope = rocketTarget.scope;
           targetKind = "rocket-bay";
-          args = [
-            ...cli.args,
-            "rocket",
-            "deploy",
-            deployTarget,
-            "--scope",
-            rocketScope,
-            "--bundle-url",
-            artifact.bundle_url,
-            "--bundle-sha256",
-            artifact.bundle_sha256,
-            ...(opts.config ? ["--config", opts.config] : []),
-            ...(target.remote ? ["--remote", target.remote] : []),
-            ...(target.api ? ["--api", target.api] : []),
-            ...(rocketTarget.extraArgs ?? []),
-            "--yes",
+          commandArgsList = [
+            [
+              ...cli.args,
+              "rocket",
+              "deploy",
+              deployTarget,
+              "--scope",
+              rocketScope,
+              "--bundle-url",
+              artifact.bundle_url,
+              "--bundle-sha256",
+              artifact.bundle_sha256,
+              ...(opts.config ? ["--config", opts.config] : []),
+              ...(target.remote ? ["--remote", target.remote] : []),
+              ...(target.api ? ["--api", target.api] : []),
+              ...(rocketTarget.extraArgs ?? []),
+              "--yes",
+            ],
           ];
-        } else {
+        } else if (hostTarget) {
           const compat = await publishHostCompatibilityArtifact({
             client,
             config,
@@ -1799,22 +1823,63 @@ Supported deploy/smoke components:
           });
           hostBaseUrl = compat.base_url;
           hostCompatUrl = compat.urls.join("\n");
+          hostManagedComponent = hostTarget.managedComponent;
           targetKind = "project-host-fleet";
-          args = [
-            ...cli.args,
-            "--profile",
-            deployTarget,
-            "host",
-            "upgrade",
-            "--all-online",
-            "--artifact",
-            component,
-            "--artifact-version",
-            artifact.artifact_id,
-            "--base-url",
-            hostBaseUrl,
-            "--wait",
+          commandArgsList = [
+            [
+              ...cli.args,
+              "--profile",
+              deployTarget,
+              "host",
+              "upgrade",
+              "--all-online",
+              "--artifact",
+              hostTarget.upgradeArtifact,
+              "--artifact-version",
+              artifact.artifact_id,
+              "--base-url",
+              hostBaseUrl,
+              "--wait",
+            ],
           ];
+          if (hostManagedComponent) {
+            const reason = `software-deploy-${component}`;
+            commandArgsList.push(
+              [
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "deploy",
+                "set",
+                "--global",
+                "--component",
+                hostManagedComponent,
+                "--desired-version",
+                artifact.artifact_id,
+                "--policy",
+                "restart_now",
+                "--reason",
+                reason,
+              ],
+              [
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "deploy",
+                "reconcile",
+                "--all-online",
+                "--component",
+                hostManagedComponent,
+                "--reason",
+                reason,
+                "--wait",
+              ],
+            );
+          }
+        } else {
+          throw new Error(`software deploy ${component} is not wired yet`);
         }
         const record = deploymentRecordBase({
           component,
@@ -1844,6 +1909,9 @@ Supported deploy/smoke components:
             ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
             ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
             ...(hostCompatUrl ? { host_compat_url: hostCompatUrl } : {}),
+            ...(hostManagedComponent
+              ? { host_managed_component: hostManagedComponent }
+              : {}),
           },
           deps,
         });
@@ -1853,14 +1921,16 @@ Supported deploy/smoke components:
           config,
           deps,
           run: async () => {
-            const code = await deps.runCommand!(cli.command, args, {
-              stdio: "inherit",
-              env: deps.env ?? process.env,
-            });
-            if (code !== 0) {
-              throw new Error(
-                `software deploy ${component} failed with exit status ${code}`,
-              );
+            for (const args of commandArgsList) {
+              const code = await deps.runCommand!(cli.command, args, {
+                stdio: "inherit",
+                env: deps.env ?? process.env,
+              });
+              if (code !== 0) {
+                throw new Error(
+                  `software deploy ${component} failed with exit status ${code}`,
+                );
+              }
             }
           },
         });
@@ -1890,6 +1960,9 @@ Supported deploy/smoke components:
               : {}),
             ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
             ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
+            ...(hostManagedComponent
+              ? { host_managed_component: hostManagedComponent }
+              : {}),
             profile: deployTarget,
             deployment_id: finalRecord.deployment_id,
             deployment_record: `${config.publicBaseUrl}/${recordKey}`,

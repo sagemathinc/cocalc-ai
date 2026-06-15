@@ -976,6 +976,10 @@ Implemented:
   flags. These resolve a `bay` artifact and stage the full bay runtime, but
   restart only the requested bay service or install/daemon-reload only the
   scaffold instead of rolling hub workers.
+- `deploy` for `host-conat-router` and `host-conat-persist` through the
+  project-host software artifact path. These install the selected
+  `project-host` artifact on online hosts, set only the requested host managed
+  component desired version, and reconcile only that component.
 - Compatibility publishing for `project-host`, `project`, and `tools` so
   existing host upgrade/install code can consume immutable software artifacts
   from old-shape URLs such as
@@ -1000,12 +1004,11 @@ Implemented:
 
 Still not implemented:
 
+- `build` for `cli`, `launchpad`, `plus`, and `star`.
 - Deeper throwaway project lifecycle `smoke` coverage for `project-host`,
   `project`, and `tools`, plus smoke coverage for `cli`, `launchpad`, `plus`,
   and `star`.
 - `deploy`/promote for `cli`, `launchpad`, `plus`, and `star`.
-- Host-side component-only deploys for `host-conat-router` and
-  `host-conat-persist`.
 - Rollback wrappers.
 
 ### Phase 0: Documentation And Test Fixtures
