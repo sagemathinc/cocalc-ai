@@ -354,7 +354,9 @@ describe("PublicApp", () => {
               disk_quota: 1000,
               memory: 2000,
             },
-            usage_limits: {},
+            usage_limits: {
+              shared_compute_priority: 1,
+            },
             store_description: "Start exploring CoCalc.",
             store_visible: true,
           },
@@ -375,6 +377,7 @@ describe("PublicApp", () => {
               credit_spend_limit_7d_usd: 1000,
               max_sponsored_running_projects: 3,
               project_max_collaborators_and_pending_invites: 50,
+              shared_compute_priority: 2,
               total_storage_hard_bytes: 125_000_000_000,
             },
             store_description: "A solid choice for everyday work.",
@@ -398,6 +401,7 @@ describe("PublicApp", () => {
             },
             usage_limits: {
               credit_spend_limit_7d_usd: 1000,
+              shared_compute_priority: 8,
             },
             store_description: "For demanding projects.",
             store_visible: true,
@@ -435,6 +439,10 @@ describe("PublicApp", () => {
     expect(screen.getByText("Global Limits")).not.toBeNull();
     expect(screen.getByText("Functionality")).not.toBeNull();
     expect(screen.getByText("Postpaid dedicated-host billing")).not.toBeNull();
+    expect(screen.getByText("CPU priority")).not.toBeNull();
+    expect(screen.getByText("Low")).not.toBeNull();
+    expect(screen.getByText("Medium")).not.toBeNull();
+    expect(screen.getByText("Highest")).not.toBeNull();
     expect(screen.getByText("8 GB")).not.toBeNull();
     expect(screen.getAllByText("10 GB").length).toBe(2);
     expect(screen.getByText("125 GB")).not.toBeNull();

@@ -111,6 +111,14 @@ function formatBytesValue(value: unknown): ReactNode {
   return numberValue == null ? EMPTY_COMPARISON_VALUE : humanSize(numberValue);
 }
 
+function formatCpuPriority(value: unknown): ReactNode {
+  const priority = asNumber(value);
+  if (priority == null || priority <= 1) return "Low";
+  if (priority <= 2) return "Medium";
+  if (priority < 8) return "High";
+  return "Highest";
+}
+
 function formatBooleanValue(value: unknown): ReactNode {
   return value === true ? (
     <Text aria-label="Yes">✓</Text>
@@ -210,6 +218,11 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
   {
     title: "Project Limits",
     rows: [
+      {
+        label: "CPU priority",
+        value: ({ tier }) =>
+          formatCpuPriority(usageLimits(tier).shared_compute_priority),
+      },
       {
         label: "RAM",
         value: ({ tier }) => formatMbValue(projectDefaults(tier).memory),
