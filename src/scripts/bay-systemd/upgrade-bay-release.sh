@@ -7,6 +7,8 @@ REPO_ROOT="$(cd "${SRC_ROOT}/.." && pwd)"
 
 REMOTE=""
 BUNDLE_PATH=""
+BUNDLE_URL=""
+BUNDLE_SHA256=""
 HOST_SOFTWARE_BUNDLE_PATH=""
 BUILD_BUNDLE=0
 BUILD_HOST_SOFTWARE_BUNDLE=0
@@ -45,7 +47,7 @@ TEMP_COOKIE_TTL="2 hours"
 
 usage() {
   cat <<'EOF'
-Usage: upgrade-bay-release.sh --remote <ssh-target> --api <url> (--bundle <tarball> | --build-bundle) [options]
+Usage: upgrade-bay-release.sh --remote <ssh-target> --api <url> (--bundle <tarball> | --bundle-url <url> | --build-bundle) [options]
 
 Upgrade a one-VM systemd bay from a packaged Rocket bay runtime bundle, then
 optionally upgrade all online project hosts through the site's CLI API.
@@ -63,6 +65,9 @@ Required:
   --api <url>                 public API URL, e.g. https://delta.cocalc.ai
   --bundle <tarball>          local cocalc-bay-runtime-linux-x64.tar.xz, or
                               cocalc-bay-static-linux-*.tar.xz with --static-only
+  --bundle-url <url>          URL for the target VM to download the bay runtime
+                              or static bundle directly
+  --bundle-sha256 <sha256>    expected SHA256 for --bundle-url
     or
   --build-bundle              build the bundle before upgrading
   --host-software-bundle <tarball>
@@ -169,6 +174,10 @@ parse_args() {
         REMOTE="$2"; shift 2 ;;
       --bundle)
         BUNDLE_PATH="$2"; shift 2 ;;
+      --bundle-url)
+        BUNDLE_URL="$2"; shift 2 ;;
+      --bundle-sha256)
+        BUNDLE_SHA256="$2"; shift 2 ;;
       --host-software-bundle)
         HOST_SOFTWARE_BUNDLE_PATH="$2"; shift 2 ;;
       --build-bundle)
@@ -232,14 +241,21 @@ parse_args() {
 validate_args() {
   [[ -n "$REMOTE" ]] || die "--remote is required"
   [[ -n "$API_URL" ]] || die "--api is required"
-  if [[ "$BUILD_BUNDLE" -eq 1 && -n "$BUNDLE_PATH" ]]; then
-    die "use either --bundle or --build-bundle, not both"
+  local bundle_sources=0
+  [[ "$BUILD_BUNDLE" -eq 1 ]] && bundle_sources=$((bundle_sources + 1))
+  [[ -n "$BUNDLE_PATH" ]] && bundle_sources=$((bundle_sources + 1))
+  [[ -n "$BUNDLE_URL" ]] && bundle_sources=$((bundle_sources + 1))
+  if [[ "$bundle_sources" -gt 1 ]]; then
+    die "use only one of --bundle, --bundle-url, or --build-bundle"
   fi
   if [[ "$BUILD_HOST_SOFTWARE_BUNDLE" -eq 1 && -n "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
     die "use either --host-software-bundle or --build-host-software-bundle, not both"
   fi
-  if [[ "$BUILD_BUNDLE" -eq 0 && -z "$BUNDLE_PATH" ]]; then
-    die "specify --bundle or --build-bundle"
+  if [[ "$bundle_sources" -eq 0 ]]; then
+    die "specify --bundle, --bundle-url, or --build-bundle"
+  fi
+  if [[ -n "$BUNDLE_SHA256" && -z "$BUNDLE_URL" ]]; then
+    die "--bundle-sha256 requires --bundle-url"
   fi
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     SKIP_HOST_UPGRADE=1
@@ -334,7 +350,9 @@ EOF
 }
 
 stage_release() {
-  [[ -f "$BUNDLE_PATH" ]] || die "bundle not found: $BUNDLE_PATH"
+  if [[ -z "$BUNDLE_URL" ]]; then
+    [[ -f "$BUNDLE_PATH" ]] || die "bundle not found: $BUNDLE_PATH"
+  fi
   mkdir -p "$REPORT_DIR"
   local worker_count_arg=""
   if [[ -n "$WORKER_COUNT" ]]; then
@@ -349,13 +367,29 @@ stage_release() {
   fi
 
   REMOTE_WORK_DIR="/tmp/cocalc-bay-upgrade-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-  REMOTE_BUNDLE="${REMOTE_WORK_DIR}/$(basename "$BUNDLE_PATH")"
+  local bundle_name
+  if [[ -n "$BUNDLE_URL" ]]; then
+    bundle_name="$(basename "${BUNDLE_URL%%\?*}")"
+  else
+    bundle_name="$(basename "$BUNDLE_PATH")"
+  fi
+  [[ -n "$bundle_name" && "$bundle_name" != "." && "$bundle_name" != "/" ]] || die "could not determine bundle name"
+  REMOTE_BUNDLE="${REMOTE_WORK_DIR}/${bundle_name}"
   REMOTE_SCRIPT_DIR="${REMOTE_WORK_DIR}/bay-systemd"
 
-  log "Upload bay scaffold and bundle to ${REMOTE}:${REMOTE_WORK_DIR}"
+  log "Upload bay scaffold to ${REMOTE}:${REMOTE_WORK_DIR}"
   remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_WORK_DIR")"
   scp -r "$SCRIPT_DIR" "$REMOTE:${REMOTE_SCRIPT_DIR}"
-  scp "$BUNDLE_PATH" "$REMOTE:${REMOTE_BUNDLE}"
+  if [[ -n "$BUNDLE_URL" ]]; then
+    log "Download bay bundle on target VM"
+    remote_exec "curl -fL --retry 3 --retry-delay 2 -o $(q "$REMOTE_BUNDLE") $(q "$BUNDLE_URL")"
+    if [[ -n "$BUNDLE_SHA256" ]]; then
+      remote_exec "printf '%s  %s\n' $(q "$BUNDLE_SHA256") $(q "$REMOTE_BUNDLE") | sha256sum -c -"
+    fi
+  else
+    log "Upload bay bundle to ${REMOTE}:${REMOTE_BUNDLE}"
+    scp "$BUNDLE_PATH" "$REMOTE:${REMOTE_BUNDLE}"
+  fi
 
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     log "Stage bay static/frontend release"

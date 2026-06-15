@@ -53,6 +53,8 @@ type DeployOptions = {
   skipHosts?: boolean;
   build?: boolean;
   bundle?: string;
+  bundleUrl?: string;
+  bundleSha256?: string;
   buildHostSoftware?: boolean;
   hostSoftwareBundle?: string;
   remote?: string;
@@ -299,6 +301,11 @@ export function registerRocketCommand(
     .option("--skip-hosts", "compatibility alias for --scope bay")
     .option("--build", "build the required bundle before deploying")
     .option("--bundle <path>", "existing bay runtime or static bundle")
+    .option(
+      "--bundle-url <url>",
+      "URL for the target VM to download the bay runtime or static bundle",
+    )
+    .option("--bundle-sha256 <sha256>", "expected SHA256 for --bundle-url")
     .option(
       "--build-host-software",
       "build project-host software bundle before host upgrades",
@@ -988,11 +995,21 @@ function buildDeployPlan({
       "Rocket bay deploy requires --api or clusters.<name>.hub_url",
     );
   }
-  if (!opts.build && !opts.bundle) {
-    throw new Error("Rocket bay deploy requires --build or --bundle <path>");
+  if (!opts.build && !opts.bundle && !opts.bundleUrl) {
+    throw new Error(
+      "Rocket bay deploy requires --build, --bundle <path>, or --bundle-url <url>",
+    );
   }
-  if (opts.build && opts.bundle) {
-    throw new Error("use either --build or --bundle <path>, not both");
+  if (
+    [opts.build === true, !!opts.bundle, !!opts.bundleUrl].filter(Boolean)
+      .length > 1
+  ) {
+    throw new Error(
+      "use only one of --build, --bundle <path>, or --bundle-url <url>",
+    );
+  }
+  if (opts.bundleSha256 && !opts.bundleUrl) {
+    throw new Error("--bundle-sha256 requires --bundle-url");
   }
   if (opts.buildHostSoftware && opts.hostSoftwareBundle) {
     throw new Error(
@@ -1025,6 +1042,11 @@ function buildDeployPlan({
     args.push("--build-bundle");
   } else if (opts.bundle) {
     args.push("--bundle", expandPath(opts.bundle));
+  } else if (opts.bundleUrl) {
+    args.push("--bundle-url", opts.bundleUrl);
+    if (opts.bundleSha256) {
+      args.push("--bundle-sha256", opts.bundleSha256);
+    }
   }
   if (opts.buildHostSoftware || (scope === "all" && opts.build)) {
     args.push("--build-host-software-bundle");

@@ -319,6 +319,44 @@ test("rocket deploy --static-only keeps compatibility with static deploys", asyn
   assert.equal(runs[0].args.includes("--skip-host-upgrade"), false);
 });
 
+test("rocket deploy can ask target VM to download bundle by URL", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({ runs });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "deploy",
+    "--scope",
+    "static",
+    "--bundle-url",
+    "https://software.example.test/software/artifacts/static/build/files/static.tar.xz",
+    "--bundle-sha256",
+    "abc123",
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
+    "--yes",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("--static-only"), true);
+  assert.deepEqual(
+    runs[0].args.slice(
+      runs[0].args.indexOf("--bundle-url"),
+      runs[0].args.indexOf("--bundle-url") + 4,
+    ),
+    [
+      "--bundle-url",
+      "https://software.example.test/software/artifacts/static/build/files/static.tar.xz",
+      "--bundle-sha256",
+      "abc123",
+    ],
+  );
+});
+
 test("rocket deploy --scope all builds bay and host software separately", async () => {
   const runs: CapturedRun[] = [];
   const program = createProgram({ runs });

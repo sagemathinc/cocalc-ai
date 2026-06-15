@@ -702,20 +702,20 @@ test("software deploy static invokes Rocket with a local remote-backed bundle", 
   assert.equal(run.command, join(dir, "cocalc-bin"));
   const rocketIndex = run.args.indexOf("rocket");
   assert.notEqual(rocketIndex, -1);
+  const index = JSON.parse(
+    r2.objects.get("software/indexes/static.json")!.toString("utf8"),
+  );
+  const file = index.artifacts[0].files[0];
   assert.deepEqual(run.args.slice(rocketIndex), [
     "rocket",
     "deploy",
     "staging",
     "--scope",
     "static",
-    "--bundle",
-    join(
-      localStore,
-      "static",
-      "20260614T235912Z-e882d124-deploy-test",
-      "files",
-      "static.tar.xz",
-    ),
+    "--bundle-url",
+    file.url,
+    "--bundle-sha256",
+    file.sha256,
     "--yes",
   ]);
 });
@@ -802,11 +802,12 @@ test("software deploy latest chooses the newest remote artifact", async () => {
     "staging",
     "--scope",
     "static",
-    "--bundle",
+    "--bundle-url",
   ]);
-  assert.match(rocketArgs[6], /cocalc-software-deploy-/);
-  assert.match(rocketArgs[6], /static-remote\.tar\.xz$/);
-  assert.equal(rocketArgs[7], "--yes");
+  assert.equal(rocketArgs[6], `https://software.example.test/${remoteFileKey}`);
+  assert.equal(rocketArgs[7], "--bundle-sha256");
+  assert.equal(rocketArgs[8], "abc");
+  assert.equal(rocketArgs[9], "--yes");
 });
 
 test("software deploy hub pushes a local-only artifact before Rocket deploy", async () => {
@@ -848,20 +849,20 @@ test("software deploy hub pushes a local-only artifact before Rocket deploy", as
   assert.equal(runs.length, 1);
   const rocketIndex = runs[0].args.indexOf("rocket");
   assert.notEqual(rocketIndex, -1);
+  const index = JSON.parse(
+    r2.objects.get("software/indexes/hub.json")!.toString("utf8"),
+  );
+  const file = index.artifacts[0].files[0];
   assert.deepEqual(runs[0].args.slice(rocketIndex), [
     "rocket",
     "deploy",
     "prod",
     "--scope",
     "bay",
-    "--bundle",
-    join(
-      localStore,
-      "hub",
-      "20260614T235912Z-e882d124-local-deploy",
-      "files",
-      "hub.tar.xz",
-    ),
+    "--bundle-url",
+    file.url,
+    "--bundle-sha256",
+    file.sha256,
     "--yes",
   ]);
 });

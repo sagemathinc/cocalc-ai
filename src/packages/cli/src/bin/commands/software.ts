@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { hostname } from "node:os";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -31,7 +31,6 @@ import {
   readRemoteIndex,
   resolveSoftwareRemoteConfig,
   uploadSoftwareArtifact,
-  type SoftwareRemoteConfig,
   type SoftwareRemoteIndexEntry,
   type SoftwareR2Client,
 } from "../core/software/remote-store";
@@ -455,21 +454,6 @@ function resolveSingleMatch<T>({
   return matches[0];
 }
 
-function localBundlePath({
-  manifest,
-  path,
-}: {
-  manifest: SoftwareArtifactManifest;
-  path: string;
-}): string {
-  if (manifest.files.length !== 1) {
-    throw new Error(
-      `software deploy expected exactly one file in ${manifest.artifact_id}`,
-    );
-  }
-  return join(path, "..", manifest.files[0].path);
-}
-
 function softwareR2Client(deps: SoftwareCommandDeps): SoftwareR2Client {
   if (!deps.r2Client) {
     return loadDefaultSoftwareR2Client();
@@ -617,32 +601,13 @@ function latestDeploySelector({
   return remote.artifact_id;
 }
 
-async function downloadRemoteArtifact({
-  client,
-  config,
-  entry,
-}: {
-  client: SoftwareR2Client;
-  config: SoftwareRemoteConfig;
-  entry: SoftwareRemoteIndexEntry;
-}): Promise<{ bundle: string; tempDir: string }> {
+function remoteBundleFile(entry: SoftwareRemoteIndexEntry) {
   if (entry.files.length !== 1) {
     throw new Error(
       `software deploy expected exactly one remote file in ${entry.artifact_id}`,
     );
   }
-  const file = entry.files[0];
-  const body = await client.getR2ObjectBuffer({
-    auth: config.auth,
-    key: file.key,
-  });
-  if (!body) {
-    throw new Error(`remote software artifact file is empty: ${file.key}`);
-  }
-  const tempDir = await mkdtemp(join(tmpdir(), "cocalc-software-deploy-"));
-  const bundle = join(tempDir, file.name);
-  await writeFile(bundle, body);
-  return { bundle, tempDir };
+  return entry.files[0];
 }
 
 async function resolveDeployArtifact({
@@ -656,12 +621,12 @@ async function resolveDeployArtifact({
   opts: DeployOptions;
   deps: SoftwareCommandDeps;
 }): Promise<{
-  bundle: string;
-  tempDir?: string;
   tag: string;
   artifact_id: string;
   source: "local+remote" | "local+pushed" | "remote";
   remote_manifest: string;
+  bundle_url: string;
+  bundle_sha256: string;
 }> {
   const localStore = resolveSoftwareLocalStore({
     option: opts.localStore,
@@ -712,37 +677,38 @@ async function resolveDeployArtifact({
       manifest: localMatch.manifest,
       config,
     });
+    const remoteFile = remoteBundleFile(remoteEntry);
     return {
-      bundle: localBundlePath(localMatch),
       tag: localMatch.manifest.tag,
       artifact_id: localMatch.manifest.artifact_id,
       source: "local+pushed",
       remote_manifest: remoteEntry.manifest_url,
+      bundle_url: remoteFile.url,
+      bundle_sha256: remoteFile.sha256,
     };
   }
 
   if (localMatch && remoteEntry) {
+    const remoteFile = remoteBundleFile(remoteEntry);
     return {
-      bundle: localBundlePath(localMatch),
       tag: localMatch.manifest.tag,
       artifact_id: localMatch.manifest.artifact_id,
       source: "local+remote",
       remote_manifest: remoteEntry.manifest_url,
+      bundle_url: remoteFile.url,
+      bundle_sha256: remoteFile.sha256,
     };
   }
 
   if (remoteEntry) {
-    const downloaded = await downloadRemoteArtifact({
-      client,
-      config,
-      entry: remoteEntry,
-    });
+    const remoteFile = remoteBundleFile(remoteEntry);
     return {
-      ...downloaded,
       tag: remoteEntry.tag,
       artifact_id: remoteEntry.artifact_id,
       source: "remote",
       remote_manifest: remoteEntry.manifest_url,
+      bundle_url: remoteFile.url,
+      bundle_sha256: remoteFile.sha256,
     };
   }
 
@@ -947,24 +913,20 @@ Supported deploy/smoke components:
           ...(profileOrChannel ? [profileOrChannel] : []),
           "--scope",
           scope,
-          "--bundle",
-          artifact.bundle,
+          "--bundle-url",
+          artifact.bundle_url,
+          "--bundle-sha256",
+          artifact.bundle_sha256,
           "--yes",
         ];
-        try {
-          const code = await deps.runCommand(cli.command, args, {
-            stdio: "inherit",
-            env: deps.env ?? process.env,
-          });
-          if (code !== 0) {
-            throw new Error(
-              `software deploy ${component} failed with exit status ${code}`,
-            );
-          }
-        } finally {
-          if (artifact.tempDir) {
-            await rm(artifact.tempDir, { recursive: true, force: true });
-          }
+        const code = await deps.runCommand(cli.command, args, {
+          stdio: "inherit",
+          env: deps.env ?? process.env,
+        });
+        if (code !== 0) {
+          throw new Error(
+            `software deploy ${component} failed with exit status ${code}`,
+          );
         }
         emitSuccess(
           { globals: command.optsWithGlobals() as any },
@@ -975,6 +937,8 @@ Supported deploy/smoke components:
             artifact_id: artifact.artifact_id,
             source: artifact.source,
             remote_manifest: artifact.remote_manifest,
+            bundle_url: artifact.bundle_url,
+            bundle_sha256: artifact.bundle_sha256,
             rocket_scope: scope,
             profile: profileOrChannel ?? null,
           },
