@@ -187,7 +187,7 @@ function ProductsOverviewPage() {
           Start with who operates CoCalc
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Most buyers can narrow the decision quickly by separating managed
+          Most groups can narrow the decision quickly by separating managed
           hosted use, self-operated use, and customer-operated private
           deployment.
         </Paragraph>
@@ -247,9 +247,8 @@ function ProductsOverviewPage() {
           Which path fits?
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Use this as a buyer map. Pick the closest fit, then move to pricing,
-          documentation, or a support conversation for buying and rollout
-          details.
+          Use this as a decision guide. Pick the closest fit, then move to
+          pricing, documentation, or a support conversation for rollout details.
         </Paragraph>
         <div
           aria-label="CoCalc product path chooser"

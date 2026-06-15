@@ -1058,9 +1058,11 @@ describe("PublicApp", () => {
     expect(screen.getByText("Start with who operates CoCalc")).not.toBeNull();
     expect(
       screen.getByText(
-        "Most buyers can narrow the decision quickly by separating managed hosted use, self-operated use, and customer-operated private deployment.",
+        "Most groups can narrow the decision quickly by separating managed hosted use, self-operated use, and customer-operated private deployment.",
       ),
     ).not.toBeNull();
+    expect(screen.getByText(/Use this as a decision guide/i)).not.toBeNull();
+    expect(screen.queryByText(/buyer map/i)).toBeNull();
     const routeFamilies = screen.getByRole("group", {
       name: "CoCalc product route families",
     });
