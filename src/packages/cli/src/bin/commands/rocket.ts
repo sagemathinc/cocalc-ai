@@ -76,6 +76,8 @@ type DeployOptions = {
   restartHubWorkers?: boolean;
   restartSharedServices?: boolean;
   restartCloudflared?: boolean;
+  bayService?: string;
+  scaffoldOnly?: boolean;
   keepRemoteArtifacts?: boolean;
   cleanupLocalBundle?: boolean;
   allowDirty?: boolean;
@@ -346,6 +348,15 @@ export function registerRocketCommand(
     .option(
       "--restart-cloudflared",
       "restart the bay Cloudflare tunnel during deploys",
+      false,
+    )
+    .option(
+      "--bay-service <conat-router|conat-persist|frontdoor|cloudflared|peer-health>",
+      "restart exactly one bay service after staging a full bay runtime bundle",
+    )
+    .option(
+      "--scaffold-only",
+      "install bay scaffold and daemon-reload without rolling workers or restarting app services",
       false,
     )
     .option("--keep-remote-artifacts", "do not delete remote /tmp artifacts")
@@ -1102,6 +1113,12 @@ function buildDeployPlan({
   }
   if (opts.restartCloudflared) {
     args.push("--restart-cloudflared");
+  }
+  if (opts.bayService) {
+    args.push("--restart-bay-service", opts.bayService);
+  }
+  if (opts.scaffoldOnly) {
+    args.push("--scaffold-only");
   }
   if (opts.cleanupLocalBundle) {
     args.push("--cleanup-local-bundle");

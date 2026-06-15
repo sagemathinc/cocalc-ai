@@ -17,6 +17,8 @@ HUB_ONLY=0
 RESTART_HUB_WORKERS=0
 RESTART_SHARED_SERVICES=0
 RESTART_CLOUDFLARED=0
+RESTART_BAY_SERVICE=""
+SCAFFOLD_ONLY=0
 API_URL=""
 PUBLIC_URL=""
 BAY_ID="bay-0"
@@ -113,6 +115,12 @@ Options:
                               deploy; default only rolls hub workers
   --restart-cloudflared       restart the Cloudflare tunnel after frontdoor
                               startup to apply tunnel origin/config changes
+  --restart-bay-service <svc> restart exactly one bay service after staging:
+                              conat-router, conat-persist, frontdoor,
+                              cloudflared, or peer-health
+  --scaffold-only             install/daemon-reload bay scaffold from the
+                              bundle without rolling hub workers or restarting
+                              application services
   --keep-remote-artifacts     leave uploaded /tmp artifacts on the VM
   --cleanup-local-bundle      remove the local bundle after upload
   -h, --help                  show help
@@ -199,6 +207,10 @@ parse_args() {
         RESTART_SHARED_SERVICES=1; shift ;;
       --restart-cloudflared)
         RESTART_CLOUDFLARED=1; shift ;;
+      --restart-bay-service)
+        RESTART_BAY_SERVICE="$2"; shift 2 ;;
+      --scaffold-only)
+        SCAFFOLD_ONLY=1; shift ;;
       --api)
         API_URL="$2"; shift 2 ;;
       --public-url)
@@ -272,6 +284,25 @@ validate_args() {
   fi
   if [[ "$STATIC_ONLY" -eq 1 && "$HUB_ONLY" -eq 1 ]]; then
     die "use only one of --static-only or --hub-only"
+  fi
+  if [[ -n "$RESTART_BAY_SERVICE" ]]; then
+    case "$RESTART_BAY_SERVICE" in
+      conat-router|conat-persist|frontdoor|cloudflared|peer-health) ;;
+      *) die "--restart-bay-service must be one of conat-router, conat-persist, frontdoor, cloudflared, peer-health" ;;
+    esac
+    SKIP_HOST_UPGRADE=1
+  fi
+  if [[ "$SCAFFOLD_ONLY" -eq 1 ]]; then
+    SKIP_HOST_UPGRADE=1
+  fi
+  if [[ "$SCAFFOLD_ONLY" -eq 1 && -n "$RESTART_BAY_SERVICE" ]]; then
+    die "use only one of --scaffold-only or --restart-bay-service"
+  fi
+  if [[ "$SCAFFOLD_ONLY" -eq 1 && ( "$STATIC_ONLY" -eq 1 || "$HUB_ONLY" -eq 1 ) ]]; then
+    die "--scaffold-only requires a full bay runtime bundle"
+  fi
+  if [[ -n "$RESTART_BAY_SERVICE" && ( "$STATIC_ONLY" -eq 1 || "$HUB_ONLY" -eq 1 ) ]]; then
+    die "--restart-bay-service requires a full bay runtime bundle"
   fi
   if [[ "$SKIP_HOST_UPGRADE" -eq 0 ]]; then
     if [[ -z "$COOKIE_HEADER" && -z "$ADMIN_ACCOUNT_ID" && -z "$ADMIN_EMAIL" ]]; then
@@ -426,7 +457,11 @@ stage_release() {
       | tee "${REPORT_DIR}/stage-release.log"
   else
     log "Stage bay release"
-    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID")${worker_count_arg} --public-url $(q "$PUBLIC_URL") --force-overlay --retain-releases $(q "$RETAIN_RELEASES") --start" \
+    local start_arg=" --start"
+    if [[ "$SCAFFOLD_ONLY" -eq 1 || -n "$RESTART_BAY_SERVICE" ]]; then
+      start_arg=""
+    fi
+    remote_exec "sudo $(q "${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh") --bundle $(q "$REMOTE_BUNDLE") --bay-id $(q "$BAY_ID")${worker_count_arg} --public-url $(q "$PUBLIC_URL") --force-overlay --retain-releases $(q "$RETAIN_RELEASES")${start_arg}" \
       | tee "${REPORT_DIR}/stage-release.log"
   fi
 }
@@ -535,6 +570,74 @@ roll_worker() {
 for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
   roll_worker "$worker_id"
 done
+/opt/cocalc/bay/current/bin/bay-status
+/opt/cocalc/bay/current/bin/bay-health
+EOF
+  elif [[ "$SCAFFOLD_ONLY" -eq 1 ]]; then
+    log "Reload bay scaffold and run health checks"
+    remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+set -euo pipefail
+systemctl daemon-reload
+/opt/cocalc/bay/current/bin/bay-status
+/opt/cocalc/bay/current/bin/bay-health
+EOF
+  elif [[ -n "$RESTART_BAY_SERVICE" ]]; then
+    log "Run migrations, restart bay service ${RESTART_BAY_SERVICE}, and run health checks"
+    remote_exec "sudo env BAY_SERVICE=$(q "$RESTART_BAY_SERVICE") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+set -euo pipefail
+systemctl daemon-reload
+systemctl start cocalc-bay.target
+systemctl start cocalc-bay-frontdoor.service
+
+credential_dir="$(mktemp -d /run/cocalc-bay-deploy-credentials.XXXXXX)"
+cleanup() {
+  rm -rf "$credential_dir"
+}
+trap cleanup EXIT
+install -o "$BAY_USER" -g "$BAY_USER" -m 0700 -d "$credential_dir"
+install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
+  /etc/cocalc/site-master-key "$credential_dir/site-master-key"
+runuser -u "$BAY_USER" -- env \
+  CREDENTIALS_DIRECTORY="$credential_dir" \
+  COCALC_REQUIRE_SITE_MASTER_KEY=1 \
+  /opt/cocalc/bay/current/bin/bay-migrate
+
+case "$BAY_SERVICE" in
+  conat-router)
+    systemctl restart cocalc-bay-conat-router.service
+    ;;
+  conat-persist)
+    systemctl restart cocalc-bay-conat-persist.service
+    ;;
+  frontdoor)
+    systemctl restart cocalc-bay-frontdoor.service
+    ;;
+  cloudflared)
+    systemctl restart cocalc-bay-cloudflared.service
+    ;;
+  peer-health)
+    systemctl restart cocalc-bay-peer-health.service
+    ;;
+  *)
+    echo "unknown BAY_SERVICE: $BAY_SERVICE" >&2
+    exit 1
+    ;;
+esac
+
+case "$BAY_SERVICE" in
+  conat-persist)
+    /opt/cocalc/bay/current/bin/bay-persist-health
+    ;;
+  frontdoor)
+    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    ;;
+  cloudflared)
+    systemctl is-active --quiet cocalc-bay-cloudflared.service
+    ;;
+  *)
+    /opt/cocalc/bay/current/bin/bay-health
+    ;;
+esac
 /opt/cocalc/bay/current/bin/bay-status
 /opt/cocalc/bay/current/bin/bay-health
 EOF
@@ -859,6 +962,8 @@ host_software_bundle=${HOST_SOFTWARE_BUNDLE_PATH}
 worker_count_override=${WORKER_COUNT}
 restart_shared_services=${RESTART_SHARED_SERVICES}
 restart_cloudflared=${RESTART_CLOUDFLARED}
+restart_bay_service=${RESTART_BAY_SERVICE}
+scaffold_only=${SCAFFOLD_ONLY}
 report_dir=${REPORT_DIR}
 EOF
 

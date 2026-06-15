@@ -1441,23 +1441,100 @@ test("software deploy tools publishes both architecture compatibility objects", 
   assert.equal(history.deployments[0].artifact_id, artifactId);
 });
 
-test("software deploy rejects unwired explicit bay service components", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "software-deploy-unwired-"));
-  const program = createProgram(makeDeps({ localStore: join(dir, "store") }));
-
-  await assert.rejects(
-    async () =>
-      await program.parseAsync([
-        "node",
-        "test",
-        "software",
-        "deploy",
-        "bay-conat-router",
-        "tag",
-        "prod",
-      ]),
-    /software deploy bay-conat-router is not wired yet/,
+test("software deploy bay-conat-router uses bay artifact and one-service Rocket flag", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-bay-router-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "bay.tar.xz");
+  writeFileSync(source, "bay bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
   );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "bay",
+    "router-deploy",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "bay-conat-router",
+    "router-deploy",
+    "prod",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const rocketIndex = runs[0].args.indexOf("rocket");
+  assert.notEqual(rocketIndex, -1);
+  assert.deepEqual(runs[0].args.slice(-5), [
+    "--api",
+    "https://cocalc.ai",
+    "--bay-service",
+    "conat-router",
+    "--yes",
+  ]);
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/prod/bay-conat-router/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].artifact_component, "bay");
+  assert.equal(history.deployments[0].target.kind, "rocket-bay");
+});
+
+test("software deploy bay-scaffold uses bay artifact and scaffold-only Rocket flag", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-bay-scaffold-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "bay.tar.xz");
+  writeFileSync(source, "bay bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "bay",
+    "scaffold-deploy",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "bay-scaffold",
+    "scaffold-deploy",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  assert.deepEqual(runs[0].args.slice(-4), [
+    "--api",
+    "https://staging.cocalc.ai",
+    "--scaffold-only",
+    "--yes",
+  ]);
 });
 
 test("software smoke static runs HTTP checks against the profile API", async () => {

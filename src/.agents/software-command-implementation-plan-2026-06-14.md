@@ -971,6 +971,11 @@ Implemented:
 - `deploy` for `static`, `hub`, and `bay` through the Rocket deploy path.
 - `deploy` for `project-host`, `project`, and `tools` through
   `host upgrade --all-online --artifact-version ...`.
+- `deploy` for `bay-conat-router`, `bay-conat-persist`, `bay-frontdoor`,
+  `bay-cloudflared`, and `bay-scaffold` through precise Rocket bay deploy
+  flags. These resolve a `bay` artifact and stage the full bay runtime, but
+  restart only the requested bay service or install/daemon-reload only the
+  scaffold instead of rolling hub workers.
 - Compatibility publishing for `project-host`, `project`, and `tools` so
   existing host upgrade/install code can consume immutable software artifacts
   from old-shape URLs such as
@@ -999,9 +1004,6 @@ Still not implemented:
   `project`, and `tools`, plus smoke coverage for `cli`, `launchpad`, `plus`,
   and `star`.
 - `deploy`/promote for `cli`, `launchpad`, `plus`, and `star`.
-- Precise bay-side service deploys for `bay-conat-router`,
-  `bay-conat-persist`, `bay-frontdoor`, `bay-cloudflared`, and
-  `bay-scaffold`.
 - Host-side component-only deploys for `host-conat-router` and
   `host-conat-persist`.
 - Rollback wrappers.

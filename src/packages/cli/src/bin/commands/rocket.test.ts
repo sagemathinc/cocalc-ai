@@ -421,6 +421,63 @@ test("rocket deploy can ask target VM to download bundle by URL", async () => {
   );
 });
 
+test("rocket deploy passes precise bay service restart to script", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({ runs });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "deploy",
+    "--scope",
+    "bay",
+    "--bundle-url",
+    "https://software.example.test/software/artifacts/bay/build/files/bay.tar.xz",
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
+    "--bay-service",
+    "frontdoor",
+    "--yes",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.deepEqual(
+    runs[0].args.slice(
+      runs[0].args.indexOf("--restart-bay-service"),
+      runs[0].args.indexOf("--restart-bay-service") + 2,
+    ),
+    ["--restart-bay-service", "frontdoor"],
+  );
+});
+
+test("rocket deploy passes scaffold-only to script", async () => {
+  const runs: CapturedRun[] = [];
+  const program = createProgram({ runs });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "rocket",
+    "deploy",
+    "--scope",
+    "bay",
+    "--bundle-url",
+    "https://software.example.test/software/artifacts/bay/build/files/bay.tar.xz",
+    "--remote",
+    "ubuntu@10.206.0.38",
+    "--api",
+    "https://cocalc.ai",
+    "--scaffold-only",
+    "--yes",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("--scaffold-only"), true);
+});
+
 test("rocket deploy --scope all builds bay and host software separately", async () => {
   const runs: CapturedRun[] = [];
   const program = createProgram({ runs });

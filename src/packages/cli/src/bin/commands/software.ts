@@ -1103,6 +1103,9 @@ function rocketDeployTargetForComponent(component: SoftwareDeployComponent):
   | {
       artifactComponent: SoftwareBuildComponent;
       scope: "static" | "hub" | "bay";
+      extraArgs?: string[];
+      bayService?: string;
+      scaffoldOnly?: boolean;
     }
   | undefined {
   if (component === "static") {
@@ -1113,6 +1116,46 @@ function rocketDeployTargetForComponent(component: SoftwareDeployComponent):
   }
   if (component === "bay") {
     return { artifactComponent: "bay", scope: "bay" };
+  }
+  if (component === "bay-conat-router") {
+    return {
+      artifactComponent: "bay",
+      scope: "bay",
+      extraArgs: ["--bay-service", "conat-router"],
+      bayService: "conat-router",
+    };
+  }
+  if (component === "bay-conat-persist") {
+    return {
+      artifactComponent: "bay",
+      scope: "bay",
+      extraArgs: ["--bay-service", "conat-persist"],
+      bayService: "conat-persist",
+    };
+  }
+  if (component === "bay-frontdoor") {
+    return {
+      artifactComponent: "bay",
+      scope: "bay",
+      extraArgs: ["--bay-service", "frontdoor"],
+      bayService: "frontdoor",
+    };
+  }
+  if (component === "bay-cloudflared") {
+    return {
+      artifactComponent: "bay",
+      scope: "bay",
+      extraArgs: ["--bay-service", "cloudflared"],
+      bayService: "cloudflared",
+    };
+  }
+  if (component === "bay-scaffold") {
+    return {
+      artifactComponent: "bay",
+      scope: "bay",
+      extraArgs: ["--scaffold-only"],
+      scaffoldOnly: true,
+    };
   }
   return undefined;
 }
@@ -1745,6 +1788,7 @@ Supported deploy/smoke components:
             ...(opts.config ? ["--config", opts.config] : []),
             ...(target.remote ? ["--remote", target.remote] : []),
             ...(target.api ? ["--api", target.api] : []),
+            ...(rocketTarget.extraArgs ?? []),
             "--yes",
           ];
         } else {
@@ -1794,6 +1838,10 @@ Supported deploy/smoke components:
               ? { bundle_sha256: artifact.bundle_sha256 }
               : {}),
             ...(rocketScope ? { rocket_scope: rocketScope } : {}),
+            ...(rocketTarget?.bayService
+              ? { bay_service: rocketTarget.bayService }
+              : {}),
+            ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
             ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
             ...(hostCompatUrl ? { host_compat_url: hostCompatUrl } : {}),
           },
@@ -1837,6 +1885,10 @@ Supported deploy/smoke components:
               ? { bundle_sha256: artifact.bundle_sha256 }
               : {}),
             ...(rocketScope ? { rocket_scope: rocketScope } : {}),
+            ...(rocketTarget?.bayService
+              ? { bay_service: rocketTarget.bayService }
+              : {}),
+            ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
             ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
             profile: deployTarget,
             deployment_id: finalRecord.deployment_id,
