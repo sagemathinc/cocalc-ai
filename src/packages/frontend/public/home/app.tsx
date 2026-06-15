@@ -133,7 +133,6 @@ const WORKFLOW_FEATURES = [
     accent: COLORS.RUN,
     href: "features/jupyter-notebook",
     icon: "jupyter",
-    label: "Compute",
     summary:
       "Run standard Jupyter notebooks in shared project context with synchronized output, history, and course workflows nearby.",
     title: "Jupyter Notebooks",
@@ -142,7 +141,6 @@ const WORKFLOW_FEATURES = [
     accent: PUBLIC_COLORS.warning,
     href: "features/latex-editor",
     icon: "tex",
-    label: "Writing",
     summary:
       "Write papers and technical documents with collaboration, build output, history, and project files close by.",
     title: "LaTeX Editor",
@@ -151,7 +149,6 @@ const WORKFLOW_FEATURES = [
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     href: "features/terminal",
     icon: "terminal",
-    label: "Linux",
     summary:
       "Use Linux terminals in the same workspace as notebooks, documents, files, and shared project history.",
     title: "Linux Terminal",
@@ -160,7 +157,6 @@ const WORKFLOW_FEATURES = [
     accent: COLORS.AI_ASSISTANT_FONT,
     href: "features/ai",
     icon: "robot",
-    label: "Agent help",
     summary:
       "Ask Codex to help with files, notebooks, terminals, and documents while humans keep review context in the same workspace.",
     title: "Codex Agent Chat",
@@ -169,7 +165,6 @@ const WORKFLOW_FEATURES = [
     accent: PUBLIC_COLORS.success,
     href: "features/teaching",
     icon: "graduation-cap",
-    label: "Courses",
     summary:
       "Run technical courses and workshops with shared files, notebooks, grading workflows, and collaborative support built into the workspace.",
     title: "Teaching a Course",
@@ -178,7 +173,6 @@ const WORKFLOW_FEATURES = [
     accent: COLORS.ANTD_RED,
     href: "features/whiteboard",
     icon: "slides",
-    label: "Visual work",
     summary:
       "Sketch ideas, formulas, and notebook-backed explanations on a collaborative canvas that lives with the project.",
     title: "Whiteboard",
@@ -187,7 +181,6 @@ const WORKFLOW_FEATURES = [
   accent: string;
   href: string;
   icon: IconName;
-  label: string;
   summary: string;
   title: string;
 }>;
@@ -774,7 +767,7 @@ function WorkflowsSection() {
                 borderRadius: PANEL_RADIUS,
                 boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
                 color: "inherit",
-                minHeight: 210,
+                minHeight: 190,
                 padding: 18,
                 textDecoration: "none",
               }}
@@ -787,17 +780,6 @@ function WorkflowsSection() {
                     style={{ color: feature.accent, fontSize: 16 }}
                   />
                 </Flex>
-                <Tag
-                  style={{
-                    alignSelf: "flex-start",
-                    background: alpha(feature.accent, 0.08),
-                    borderColor: alpha(feature.accent, 0.2),
-                    color: feature.accent,
-                    marginInlineEnd: 0,
-                  }}
-                >
-                  {feature.label}
-                </Tag>
                 <div>
                   <Title level={4} style={{ margin: "0 0 8px" }}>
                     {feature.title}

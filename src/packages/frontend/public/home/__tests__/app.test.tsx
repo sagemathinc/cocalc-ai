@@ -214,6 +214,16 @@ describe("PublicHomeApp", () => {
     ]) {
       expect(within(workflowCards).getByText(title)).not.toBeNull();
     }
+    for (const removedLabel of [
+      "Compute",
+      "Writing",
+      "Linux",
+      "Agent help",
+      "Courses",
+      "Visual work",
+    ]) {
+      expect(within(workflowCards).queryByText(removedLabel)).toBeNull();
+    }
 
     const products = screen.getByRole("region", {
       name: "Ways to run CoCalc",

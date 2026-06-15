@@ -125,6 +125,7 @@ describe("PublicHomeApp visual quality contract", () => {
       "Teaching a Course",
       "Whiteboard",
     ]);
+    expect(workflowGrid.querySelectorAll(".ant-tag")).toHaveLength(0);
 
     expect(getDirectCards(projectGrid)).toHaveLength(3);
     expectGridTemplate(projectGrid, "repeat(3, minmax(0, 1fr))");
