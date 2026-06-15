@@ -281,6 +281,10 @@ test("software help lists supported components", () => {
   assert.match(build.helpInformation(), /static\|hub\|bay\|project-host/);
   assert.match(list.helpInformation(), /cli\|launchpad\|plus\|star/);
   assert.match(deploy.helpInformation(), /bay-conat-router/);
+  assert.match(
+    deploy.helpInformation(),
+    /site profile \(see cocalc auth list\) or release channel\s+\(dev, candidate or stable\)/,
+  );
   assert.doesNotMatch(deploy.helpInformation(), /hub-conat-router/);
 });
 

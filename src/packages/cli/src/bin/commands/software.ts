@@ -137,6 +137,8 @@ const BUILD_COMPONENTS_HELP = SOFTWARE_BUILD_COMPONENTS.join("|");
 const DEPLOY_COMPONENTS_HELP = SOFTWARE_DEPLOY_COMPONENTS.join("|");
 const BUILD_COMPONENT_ARGUMENT = `software component (${BUILD_COMPONENTS_HELP})`;
 const DEPLOY_COMPONENT_ARGUMENT = `software component (${DEPLOY_COMPONENTS_HELP})`;
+const PROFILE_OR_CHANNEL_ARGUMENT =
+  "site profile (see cocalc auth list) or release channel (dev, candidate or stable)";
 const KNOWN_ROCKET_REMOTES: Record<string, string> = {
   "https://staging.cocalc.ai": "ubuntu@10.206.0.27",
   "https://cocalc.ai": "ubuntu@10.206.0.38",
@@ -1840,7 +1842,7 @@ Supported deploy/smoke components:
     .description("deploy or promote a software artifact")
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
     .argument("<tag-or-id>", "artifact tag or id")
-    .argument("<profile-or-channel>", "site profile or release channel")
+    .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
     .option("--local-store <path>", "local artifact store")
     .option("--config <path>", "rocket config path")
     .option("--remote <ssh-target>", "bay SSH target")
@@ -2144,7 +2146,7 @@ Supported deploy/smoke components:
     .command("history")
     .description("show deployment history for a component and profile/channel")
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
-    .argument("<profile-or-channel>", "site profile or release channel")
+    .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
     .option(
       "--env-file <path>",
       "R2 credential env file",
@@ -2195,7 +2197,7 @@ Supported deploy/smoke components:
     .command("smoke")
     .description("run a software smoke test")
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
-    .argument("<profile-or-channel>", "site profile or release channel")
+    .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
     .option("--api <url>", "site API URL")
     .option("--remote <ssh-target>", "bay SSH target")
     .option("--host <host>", "representative project host id or name")
