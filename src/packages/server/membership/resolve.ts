@@ -56,11 +56,11 @@ async function buildMembershipCandidates(
   const pool = getPool("medium");
   const [subResult, adminResult, adminGroupResult, grants] = await Promise.all([
     pool.query(
-      `SELECT id, metadata, cost, interval, current_period_end, status
+      `SELECT id, metadata, cost, interval, current_period_start, current_period_end, status
        FROM subscriptions
        WHERE account_id=$1
          AND metadata->>'type'='membership'
-         AND status IN ('active','unpaid','past_due','canceled')
+         AND status IN ('active','canceled')
          AND current_period_end >= NOW()
        ORDER BY current_period_end DESC, id DESC`,
       [account_id],
@@ -84,6 +84,9 @@ async function buildMembershipCandidates(
   ]);
 
   const candidates: MembershipCandidate[] = [];
+  const siteLicenseDisplayNames =
+    await getCurrentSiteLicenseDisplayNamesForGrants(grants);
+  const packageMetadata = await getMembershipPackageMetadataForGrants(grants);
 
   for (const sub of subResult.rows) {
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
@@ -96,6 +99,7 @@ async function buildMembershipCandidates(
       priority: tier?.priority ?? 0,
       entitlements: tierToEntitlements(tier),
       effective_limits: normalizeMembershipEffectiveLimits(tier?.usage_limits),
+      starts: sub.current_period_start,
       subscription_id: sub.id,
       subscription_status: sub.status,
       subscription_cost: normalizeSubscriptionCost(sub.cost),
@@ -138,6 +142,14 @@ async function buildMembershipCandidates(
     const tier =
       tiers[membershipClass] ??
       (await getMembershipTierById({ id: membershipClass }));
+    const siteLicenseId = getMetadataString(grant.metadata, "site_license_id");
+    const siteLicenseDisplayName =
+      siteLicenseId == null
+        ? undefined
+        : siteLicenseDisplayNames.get(siteLicenseId);
+    const pkgMetadata = grant.package_id
+      ? packageMetadata.get(grant.package_id)
+      : undefined;
     candidates.push({
       class: membershipClass,
       source: "grant",
@@ -148,11 +160,91 @@ async function buildMembershipCandidates(
       grant_source: grant.source,
       grant_package_id: grant.package_id ?? undefined,
       grant_purchase_id: grant.purchase_id ?? undefined,
+      pool_name:
+        getMetadataString(grant.metadata, "pool_name") ??
+        getMetadataString(pkgMetadata, "pool_name"),
+      pool_description:
+        getMetadataString(grant.metadata, "pool_description") ??
+        getMetadataString(pkgMetadata, "pool_description"),
+      site_license_id: siteLicenseId ?? undefined,
+      site_license_name:
+        siteLicenseDisplayName?.name ??
+        getMetadataString(grant.metadata, "site_license_name"),
+      organization_name:
+        siteLicenseDisplayName?.organization_name ??
+        getMetadataString(grant.metadata, "organization_name"),
       expires: grant.expires_at ? new Date(grant.expires_at) : undefined,
     });
   }
 
   return dedupeEquivalentAdminCandidates(candidates);
+}
+
+async function getMembershipPackageMetadataForGrants(
+  grants: Awaited<ReturnType<typeof listActiveMembershipGrantsForAccount>>,
+): Promise<Map<string, Record<string, unknown> | null>> {
+  const packageIds = Array.from(
+    new Set(
+      grants
+        .map((grant) => grant.package_id)
+        .filter((id): id is string => !!id),
+    ),
+  );
+  if (packageIds.length === 0) {
+    return new Map();
+  }
+  const { rows } = await getPool("medium").query<{
+    id: string;
+    metadata: Record<string, unknown> | null;
+  }>(
+    `SELECT id, metadata
+       FROM membership_packages
+      WHERE id = ANY($1::uuid[])`,
+    [packageIds],
+  );
+  return new Map(rows.map((row) => [row.id, row.metadata]));
+}
+
+async function getCurrentSiteLicenseDisplayNamesForGrants(
+  grants: Awaited<ReturnType<typeof listActiveMembershipGrantsForAccount>>,
+): Promise<Map<string, { name?: string; organization_name?: string }>> {
+  const siteLicenseIds = Array.from(
+    new Set(
+      grants
+        .map((grant) => getMetadataString(grant.metadata, "site_license_id"))
+        .filter((siteLicenseId): siteLicenseId is string => !!siteLicenseId),
+    ),
+  );
+  if (siteLicenseIds.length === 0) {
+    return new Map();
+  }
+  const { rows } = await getPool("medium").query<{
+    id: string;
+    name?: string | null;
+    organization_name?: string | null;
+  }>(
+    `SELECT id::text AS id, name, organization_name
+       FROM site_licenses
+      WHERE id::text = ANY($1::text[])`,
+    [siteLicenseIds],
+  );
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        name: getMetadataString(row, "name"),
+        organization_name: getMetadataString(row, "organization_name"),
+      },
+    ]),
+  );
+}
+
+function getMetadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+): string | undefined {
+  const value = `${metadata?.[key] ?? ""}`.trim();
+  return value || undefined;
 }
 
 async function buildMembershipResolutionForAccount(
@@ -276,6 +368,7 @@ function pickBestMembership(
       source: best.source,
       entitlements: best.entitlements,
       effective_limits: best.effective_limits,
+      starts: best.starts,
       subscription_id: best.subscription_id,
       subscription_status: best.subscription_status,
       subscription_cost: best.subscription_cost,
@@ -284,6 +377,11 @@ function pickBestMembership(
       grant_source: best.grant_source,
       grant_package_id: best.grant_package_id,
       grant_purchase_id: best.grant_purchase_id,
+      pool_name: best.pool_name,
+      pool_description: best.pool_description,
+      site_license_id: best.site_license_id,
+      site_license_name: best.site_license_name,
+      organization_name: best.organization_name,
       expires: best.expires,
     };
   }
@@ -308,10 +406,6 @@ function subscriptionStatusRank({
   switch (subscription_status) {
     case "active":
       return 4;
-    case "past_due":
-      return 3;
-    case "unpaid":
-      return 2;
     case "canceled":
       return 1;
     default:

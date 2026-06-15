@@ -27,9 +27,9 @@ export function UseBalance() {
             );
           }}
         />
-        <Text strong>Use account balance for renewals</Text>
+        <Text>Use account balance for renewals</Text>
       </Space>
-      <Text type="secondary">
+      <Text>
         {checked
           ? "Renewals use your account balance only when it covers the full renewal amount; otherwise CoCalc charges your payment method in full."
           : "Renewals charge your payment method."}

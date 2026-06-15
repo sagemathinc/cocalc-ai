@@ -705,6 +705,7 @@ function getSiteLicenseAffiliationMetadata({
     site_license_owner_account_id:
       site_license?.owner_account_id ?? pkg.owner_account_id,
     pool_name: `${pkg.metadata?.pool_name ?? ""}`.trim() || null,
+    pool_description: `${pkg.metadata?.pool_description ?? ""}`.trim() || null,
     verification_policy:
       `${pkg.metadata?.verification_policy ?? ""}`.trim() || "email-domain",
     exclusive_group: getPackageExclusiveGroup(pkg),
@@ -2220,6 +2221,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "domain-match",
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          site_license_name: terms.name ?? null,
+          organization_name: terms.organization_name ?? null,
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(
@@ -2257,6 +2260,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "email-assignment",
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          site_license_name: terms.name ?? null,
+          organization_name: terms.organization_name ?? null,
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(
@@ -2334,6 +2339,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           reason: "domain-match",
           requires_approval: packageRequiresApproval(pkg),
           site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          site_license_name: terms.name ?? null,
+          organization_name: terms.organization_name ?? null,
           pool_name: getPackageStringMetadata(pkg, "pool_name"),
           pool_description: getPackageStringMetadata(pkg, "pool_description"),
           verification_policy: getPackageStringMetadata(
