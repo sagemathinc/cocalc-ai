@@ -188,7 +188,7 @@ const WORKFLOW_FEATURES = [
 const AUDIENCE_ROUTES = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Give teams a common place for experiments, code, papers, outputs, and AI-assisted changes they can inspect together.",
+    body: "Give teams one place to inspect experiments, code, papers, outputs, and AI-assisted changes.",
     button: "Explore workflows",
     href: "features/compare",
     icon: "project-outlined",
@@ -196,7 +196,7 @@ const AUDIENCE_ROUTES = [
   },
   {
     accent: COLORS.RUN,
-    body: "Organize assignments, grading, shared environments, and student support around the technical project work.",
+    body: "Organize assignments, grading, shared environments, and student support around project work.",
     button: "Course workflows",
     href: "features/teaching",
     icon: "graduation-cap",
@@ -204,7 +204,7 @@ const AUDIENCE_ROUTES = [
   },
   {
     accent: COLORS.GRAY_D,
-    body: "Separate everyday hosted use from local evaluation, single-VM appliance, and customer-operated deployment decisions.",
+    body: "Compare hosted use, local evaluation, a single-VM appliance, and customer-operated deployment options.",
     button: "Compare product paths",
     href: "products",
     icon: "servers",
@@ -645,23 +645,23 @@ function AudienceRoutesSection() {
               border: `1px solid ${alpha(route.accent, 0.18)}`,
               borderRadius: PANEL_RADIUS,
               boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
-              display: "flex",
+              display: "grid",
+              gap: 16,
+              gridTemplateRows: "44px minmax(96px, 1fr) auto",
               minHeight: 220,
               padding: 22,
             }}
           >
-            <Flex style={{ flex: 1 }} vertical gap={16}>
-              <IconTile accent={route.accent} icon={route.icon} />
-              <div style={{ flex: 1 }}>
-                <Title level={4} style={{ margin: "0 0 8px" }}>
-                  {route.title}
-                </Title>
-                <Paragraph style={{ margin: 0 }}>{route.body}</Paragraph>
-              </div>
-              <Button href={appPath(route.href)} style={{ marginTop: "auto" }}>
-                {route.button}
-              </Button>
-            </Flex>
+            <IconTile accent={route.accent} icon={route.icon} />
+            <div>
+              <Title level={4} style={{ margin: "0 0 8px" }}>
+                {route.title}
+              </Title>
+              <Paragraph style={{ margin: 0 }}>{route.body}</Paragraph>
+            </div>
+            <Button href={appPath(route.href)} style={{ width: "100%" }}>
+              {route.button}
+            </Button>
           </div>
         ))}
       </div>

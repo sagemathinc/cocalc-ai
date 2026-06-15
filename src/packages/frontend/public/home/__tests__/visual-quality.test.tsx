@@ -144,9 +144,12 @@ describe("PublicHomeApp visual quality contract", () => {
     ]);
     for (const card of getDirectCards(audienceGrid)) {
       expect(card.className).toContain("cocalc-public-home-audience-card");
-      expect(card.getAttribute("style") ?? "").toContain("display: flex");
+      expect(card.getAttribute("style") ?? "").toContain("display: grid");
+      expect(card.getAttribute("style") ?? "").toContain(
+        "grid-template-rows: 44px minmax(96px, 1fr) auto",
+      );
       const cta = card.querySelector(".ant-btn");
-      expect(cta?.getAttribute("style") ?? "").toContain("margin-top: auto");
+      expect(cta?.getAttribute("style") ?? "").toContain("width: 100%");
     }
 
     expect(getDirectCards(productGrid)).toHaveLength(5);
