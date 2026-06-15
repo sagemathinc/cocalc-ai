@@ -24,7 +24,6 @@ import { PAYMENT_METHODS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/paymen
 import { PAYMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payments-page";
 import { PURCHASES_SETTINGS_PAGE } from "@cocalc/frontend/purchases/purchases-page";
 import { STATEMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/statements-page";
-import { SUBSCRIPTIONS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/subscriptions-page";
 import { USAGE_LIMITS_SETTINGS_PAGE } from "./usage-limits-page";
 import { SUPPORT_TICKETS_SETTINGS_PAGE } from "@cocalc/frontend/support/tickets";
 import type { SettingsPageDefinition } from "./settings-page";
@@ -46,7 +45,6 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   profile: ACCOUNT_PREFERENCES_PROFILE_PAGE,
   purchases: PURCHASES_SETTINGS_PAGE,
   statements: STATEMENTS_SETTINGS_PAGE,
-  subscriptions: SUBSCRIPTIONS_SETTINGS_PAGE,
   "team-licenses": TEAM_LICENSES_SETTINGS_PAGE,
   support: SUPPORT_TICKETS_SETTINGS_PAGE,
   "site-licenses": SITE_LICENSES_SETTINGS_PAGE,
