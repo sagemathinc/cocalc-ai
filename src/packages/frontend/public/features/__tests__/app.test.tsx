@@ -611,6 +611,9 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Google Colab and quick notebook hosts"),
     ).not.toBeNull();
     expect(
+      screen.getByText(/The shared project workspace: notebooks, terminals/i),
+    ).not.toBeNull();
+    expect(
       screen.getByText("AI-native work changes the comparison"),
     ).not.toBeNull();
     expect(

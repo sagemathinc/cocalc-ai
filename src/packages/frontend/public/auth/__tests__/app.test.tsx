@@ -192,6 +192,11 @@ describe("PublicAuthApp", () => {
     expect(
       screen.getByRole("heading", { name: "Create your Launchpad account" }),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Create an account to start hosted projects, then compare product paths whenever your needs change.",
+      ),
+    ).not.toBeNull();
     expect(await screen.findByText("Registration token")).not.toBeNull();
   });
 

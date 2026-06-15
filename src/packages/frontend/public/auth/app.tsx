@@ -99,6 +99,17 @@ function subtitleForRoute(
       return `Finish signing in to ${siteName}`;
     case "auth-password-reset-done":
       return siteName;
+    case "auth-form":
+      switch (route.view) {
+        case "sign-up":
+          return "Create an account to start hosted projects, then compare product paths whenever your needs change.";
+        case "sign-in":
+          return "Sign in to open projects, manage your account, or continue from a product or support link.";
+        case "password-reset":
+          return `Reset your ${siteName} password.`;
+        default:
+          return siteName;
+      }
     case "redeem":
       return `Sign in or create an account to apply voucher credit to your ${siteName} account.`;
     case "project-invite":

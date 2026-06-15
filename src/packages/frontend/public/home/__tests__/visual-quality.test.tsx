@@ -8,7 +8,7 @@ const INTERNAL_IMPLEMENTATION_TERMS =
   /serious\s+technical\s+work|project hosts|backend state|logs stay scoped|RootFS|multi-bay|control plane|postgres|kubernetes|systemd|conat/i;
 
 const STALE_REPETITIVE_HOME_LINES =
-  /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Use the tools you already understand, together|Collaborative computing for research, teaching, and teams|shared project space for notebooks, code, documents, terminals/i;
+  /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Use the tools you already understand, together|Collaborative computing for research, teaching, and teams|shared project space for notebooks, code, documents, terminals|Make computational work easier to share, review, and continue/i;
 
 function renderHome() {
   return render(

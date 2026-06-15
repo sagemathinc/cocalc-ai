@@ -131,7 +131,7 @@ describe("public route metadata", () => {
     );
 
     expect(metadata.title).toBe("CoCalc");
-    expect(metadata.description).toContain("shared project record");
+    expect(metadata.description).toContain("shared project workspace");
     expect(metadata.description).not.toMatch(/notebooks, code, documents/i);
   });
 

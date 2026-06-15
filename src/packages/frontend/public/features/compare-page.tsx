@@ -48,7 +48,7 @@ const COMPARISON_GROUPS = [
 const DECISION_ROWS = [
   {
     cocalc:
-      "The shared technical workspace: notebooks, terminals, files, documents, whiteboards, support, AI agents, history, and recovery in one project.",
+      "The shared project workspace: notebooks, terminals, files, documents, whiteboards, support, AI agents, history, and recovery stay with one project.",
     key: "unit",
     question: "What is the unit of work?",
     typical:

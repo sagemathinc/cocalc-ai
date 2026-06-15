@@ -90,12 +90,12 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero).getByRole("heading", {
         level: 1,
-        name: "Make computational work easier to share, review, and continue",
+        name: "CoCalc is a shared project workspace for computational work",
       }),
     ).not.toBeNull();
     expect(
       within(hero).getByText(
-        /shared project record, so collaborators and AI assistance work from context/i,
+        /Research groups, courses, and technical teams use CoCalc to keep collaboration/i,
       ),
     ).not.toBeNull();
     expect(within(hero).queryByText(/notebooks, code, documents/i)).toBeNull();
@@ -307,7 +307,7 @@ describe("PublicHomeApp", () => {
       /project hosts|backend state|logs stay scoped|RootFS|multi-bay/i,
     );
     expect(container.textContent ?? "").not.toMatch(
-      /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams/i,
+      /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Make computational work easier to share, review, and continue/i,
     );
   });
 
