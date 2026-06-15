@@ -45,7 +45,9 @@ function getAcpFailureReply(err: unknown): string {
   if (
     normalized.includes("token_expired") ||
     normalized.includes("provided authentication token is expired") ||
-    normalized.includes("please try signing in again")
+    normalized.includes("please try signing in again") ||
+    normalized.includes("invalidated oauth token") ||
+    normalized.includes("identity_edge_internal_error")
   ) {
     return "Codex authentication expired.";
   }

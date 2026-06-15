@@ -67,6 +67,7 @@ import {
   resolvePublicViewerDns,
 } from "@cocalc/util/public-viewer-origin";
 import { isValidUUID } from "@cocalc/util/misc";
+import type { CodexUsageStatusInfo } from "@cocalc/conat/hub/api/system";
 import {
   cancelCopy as cancelCopyDb,
   listCopiesByOpId,
@@ -4473,6 +4474,33 @@ export async function codexUploadAuthFile({
   throw Error(
     "codex auth-file upload is not implemented on central hub; call a project-host endpoint via project routing",
   );
+}
+
+export async function getCodexUsageStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  timeout?: number;
+}): Promise<CodexUsageStatusInfo> {
+  await assertCollab({ account_id, project_id });
+  return {
+    available: false,
+    checkedAt: new Date().toISOString(),
+    paymentSource: {
+      source: "none",
+      hasSubscription: false,
+      hasProjectApiKey: false,
+      hasAccountApiKey: false,
+      hasSiteApiKey: false,
+      sharedHomeMode: "disabled",
+      project_id,
+    },
+    project_id,
+    reason:
+      "ChatGPT Codex usage is only available through a running project's project-host. Open the project and retry.",
+  };
 }
 
 export async function chatStoreStats({

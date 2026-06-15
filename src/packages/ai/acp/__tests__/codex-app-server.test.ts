@@ -745,7 +745,7 @@ describe("CodexAppServerAgent", () => {
               turnId,
               error: {
                 message:
-                  "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again., cf-ray: test, auth error code: token_expired",
+                  "unexpected status 401 Unauthorized: Encountered invalidated oauth token for user, failing request, url: https://chatgpt.com/backend-api/codex/responses, cf-ray: test, auth error: identity_edge_internal_error",
               },
             });
             fake.sendNotification("turn/completed", {

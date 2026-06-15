@@ -18,6 +18,7 @@ import {
   type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
+import type { CodexUsageStatusInfo } from "./system";
 import type {
   ProjectUserRole,
   ProjectViewerReadPolicy,
@@ -753,6 +754,7 @@ export const projects = {
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
+  getCodexUsageStatus: authFirstRequireAccount,
   chatStoreStats: authFirstRequireAccount,
   chatStoreRotate: authFirstRequireAccount,
   chatStoreListSegments: authFirstRequireAccount,
@@ -1642,6 +1644,12 @@ export interface Projects {
     filename?: string;
     content: string;
   }) => Promise<{ ok: true; codexHome: string; bytes: number }>;
+
+  getCodexUsageStatus: (opts: {
+    account_id?: string;
+    project_id: string;
+    timeout?: number;
+  }) => Promise<CodexUsageStatusInfo>;
 
   chatStoreStats: (opts: {
     account_id?: string;

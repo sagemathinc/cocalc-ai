@@ -60,6 +60,17 @@ describe("classifyCodexAuthErrorMessage", () => {
     });
   });
 
+  it("detects invalidated ChatGPT OAuth tokens as expired auth", () => {
+    expect(
+      classifyCodexAuthErrorMessage(
+        "unexpected status 401 Unauthorized: Encountered invalidated oauth token for user, failing request, url: https://chatgpt.com/backend-api/codex/responses, auth error: identity_edge_internal_error",
+      ),
+    ).toMatchObject({
+      kind: "expired-auth",
+      actionLabel: "Sign in again",
+    });
+  });
+
   it("detects missing API auth", () => {
     expect(
       classifyCodexAuthErrorMessage(

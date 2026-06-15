@@ -35,6 +35,11 @@ const deleteChatStoreData = jest.fn();
 const vacuumChatStore = jest.fn();
 const upsertProjectStopState = jest.fn();
 const assertManagedRawNetworkStartAllowedBestEffortMock = jest.fn();
+const getCodexAppServerAccountStatus = jest.fn();
+const resolveCodexAuthRuntime = jest.fn();
+const uploadSubscriptionAuthFile = jest.fn();
+const ensureCodexAuthFileExists = jest.fn();
+const ensureCodexCredentialsStoreFile = jest.fn();
 const acquireProjectPortLease = jest.fn();
 const coolDownProjectPortOffset = jest.fn();
 const getCoolingProjectPortOffsets = jest.fn(() => new Set());
@@ -133,6 +138,26 @@ jest.mock("../raw-network-egress", () => ({
   assertManagedRawNetworkStartAllowedBestEffort: (...args: any[]) =>
     assertManagedRawNetworkStartAllowedBestEffortMock(...args),
 }));
+jest.mock("@cocalc/ai/acp", () => ({
+  getCodexAppServerAccountStatus: (...args: any[]) =>
+    getCodexAppServerAccountStatus(...args),
+}));
+jest.mock("../codex/codex-auth", () => ({
+  ensureCodexAuthFileExists: (...args: any[]) =>
+    ensureCodexAuthFileExists(...args),
+  ensureCodexCredentialsStoreFile: (...args: any[]) =>
+    ensureCodexCredentialsStoreFile(...args),
+  resolveCodexAuthRuntime: (...args: any[]) => resolveCodexAuthRuntime(...args),
+  resolveSubscriptionCodexHome: () => "/tmp/codex-home",
+  subscriptionRuntime: (...args: any[]) => ({
+    source: "subscription",
+    contextId: "subscription-context",
+    codexHome: args[0]?.codexHome,
+    env: {},
+  }),
+  uploadSubscriptionAuthFile: (...args: any[]) =>
+    uploadSubscriptionAuthFile(...args),
+}));
 jest.mock("../sqlite/port-leases", () => ({
   acquireProjectPortLease: (...args: any[]) => acquireProjectPortLease(...args),
   coolDownProjectPortOffset: (...args: any[]) =>
@@ -205,6 +230,11 @@ describe("project host start ACP rehydrate ordering", () => {
     vacuumChatStore.mockReset();
     upsertProjectStopState.mockReset();
     assertManagedRawNetworkStartAllowedBestEffortMock.mockReset();
+    getCodexAppServerAccountStatus.mockReset();
+    resolveCodexAuthRuntime.mockReset();
+    uploadSubscriptionAuthFile.mockReset();
+    ensureCodexAuthFileExists.mockReset();
+    ensureCodexCredentialsStoreFile.mockReset();
     assertManagedRawNetworkStartAllowedBestEffortMock.mockResolvedValue(
       undefined,
     );
@@ -377,6 +407,83 @@ describe("project host start ACP rehydrate ordering", () => {
 
     expect(ensureVolume).not.toHaveBeenCalled();
     expect(runnerApi.start).not.toHaveBeenCalled();
+  });
+
+  it("checks Codex subscription usage through the hosted project app-server", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce({
+      account: { account: { email: "user@example.com" } },
+      rateLimits: { rateLimits: true },
+      tokenUsage: { tokens: 7 },
+      errors: {},
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    const result = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      timeout: 60_000,
+    });
+
+    expect(resolveCodexAuthRuntime).toHaveBeenCalledWith({
+      projectId: project_id,
+      accountId: "acct-1",
+    });
+    expect(getCodexAppServerAccountStatus).toHaveBeenCalledWith({
+      projectId: project_id,
+      accountId: "acct-1",
+      timeoutMs: 45_000,
+    });
+    expect(result).toMatchObject({
+      available: true,
+      project_id,
+      paymentSource: {
+        source: "subscription",
+      },
+      account: { account: { email: "user@example.com" } },
+    });
+  });
+
+  it("does not start the Codex app-server for API-key usage sources", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "project-api-key",
+      contextId: "project-key-context",
+      env: { OPENAI_API_KEY: "sk-test" },
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    const result = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+    });
+
+    expect(getCodexAppServerAccountStatus).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      available: false,
+      project_id,
+      paymentSource: {
+        source: "project-api-key",
+      },
+      reason:
+        "Live ChatGPT Codex usage is only available when Codex is using a ChatGPT Plan.",
+    });
   });
 
   it("rehydrates ACP automations only after runner start on createProject when start is true", async () => {
