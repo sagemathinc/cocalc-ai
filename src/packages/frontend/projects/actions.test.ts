@@ -206,6 +206,55 @@ describe("ProjectsActions project metadata updates", () => {
     ).toBe("Old title");
   });
 
+  it("keeps a successful metadata write when only the projection ack lags", async () => {
+    jest.useFakeTimers();
+    let projectMap = baseProjectMap;
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? projectMap : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+
+    const { actions, async_log, redux } = makeActions();
+    const warn = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    redux._set_state.mockImplementation((state) => {
+      const nextProjectMap = state?.projects?.project_map;
+      if (nextProjectMap != null) {
+        projectMap = nextProjectMap;
+      }
+    });
+    actions.projects_query_set = jest.fn(async () => undefined);
+    actions.projectedProjectMetadataMatches = jest.fn(async () => false);
+    actions.repairProjectProjection = jest.fn(async () => undefined);
+
+    try {
+      const save = actions.set_project_title(project_id, "New title");
+      await jest.advanceTimersByTimeAsync(11_000);
+      await expect(save).resolves.toBeUndefined();
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+      warn.mockRestore();
+    }
+
+    expect(actions.projects_query_set).toHaveBeenCalledWith({
+      project_id,
+      title: "New title",
+    });
+    expect(projectMap.getIn([project_id, "title"])).toBe("New title");
+    expect(async_log).toHaveBeenCalledWith({
+      event: "set",
+      title: "New title",
+    });
+    expect(redux._set_state).toHaveBeenCalledTimes(1);
+  });
+
   it("setProjectTheme bypasses synced table writes that require project-host routing", async () => {
     const { actions, async_log, redux } = makeActions();
     actions.projects_table_set = jest.fn(async () => {
