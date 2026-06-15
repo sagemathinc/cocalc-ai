@@ -26,12 +26,14 @@ function makeDeps({
   cwd = "/repo",
   env,
   r2Client,
+  loadAuthConfig,
 }: {
   localStore: string;
   runs?: CapturedRun[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   r2Client?: SoftwareR2Client;
+  loadAuthConfig?: SoftwareCommandDeps["loadAuthConfig"];
 }): SoftwareCommandDeps {
   return {
     cwd,
@@ -91,6 +93,7 @@ function makeDeps({
       return 0;
     },
     r2Client,
+    loadAuthConfig,
   };
 }
 
@@ -808,6 +811,84 @@ test("software deploy latest chooses the newest remote artifact", async () => {
   assert.equal(rocketArgs[7], "--bundle-sha256");
   assert.equal(rocketArgs[8], "abc");
   assert.equal(rocketArgs[9], "--yes");
+});
+
+test("software deploy resolves API from auth profile and infers known bay remote", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-profile-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "static.tar.xz");
+  writeFileSync(source, "static bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({
+      localStore,
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+      loadAuthConfig: () => ({
+        current_profile: "default",
+        profiles: {
+          default: { api: "https://cocalc.ai" },
+          "staging-load": { api: "https://staging.cocalc.ai" },
+        },
+      }),
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "static",
+    "profile-test",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "push",
+    "static",
+    "profile-test",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "static",
+    "profile-test",
+    "staging-load",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  assert.equal(runs.length, 1);
+  const rocketIndex = runs[0].args.indexOf("rocket");
+  assert.notEqual(rocketIndex, -1);
+  const rocketArgs = runs[0].args.slice(rocketIndex);
+  assert.deepEqual(
+    rocketArgs.slice(
+      rocketArgs.indexOf("--remote"),
+      rocketArgs.indexOf("--remote") + 2,
+    ),
+    ["--remote", "ubuntu@10.206.0.27"],
+  );
+  assert.deepEqual(
+    rocketArgs.slice(
+      rocketArgs.indexOf("--api"),
+      rocketArgs.indexOf("--api") + 2,
+    ),
+    ["--api", "https://staging.cocalc.ai"],
+  );
 });
 
 test("software deploy hub pushes a local-only artifact before Rocket deploy", async () => {

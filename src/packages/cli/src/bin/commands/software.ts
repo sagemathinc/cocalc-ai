@@ -6,6 +6,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 
+import {
+  loadAuthConfig as loadDefaultAuthConfig,
+  type AuthConfig,
+} from "../../core/auth-config";
 import { emitSuccess, printArrayTable } from "../core/cli-output";
 import {
   chooseGeneratedTag,
@@ -60,6 +64,7 @@ export type SoftwareCommandDeps = {
     },
   ) => Promise<number>;
   r2Client?: SoftwareR2Client | (() => SoftwareR2Client);
+  loadAuthConfig?: () => AuthConfig;
 };
 
 type BuildOptions = {
@@ -84,12 +89,20 @@ type PushOptions = {
 type DeployOptions = {
   localStore?: string;
   envFile?: string;
+  config?: string;
+  remote?: string;
+  api?: string;
 };
 
 const BUILD_COMPONENTS_HELP = SOFTWARE_BUILD_COMPONENTS.join("|");
 const DEPLOY_COMPONENTS_HELP = SOFTWARE_DEPLOY_COMPONENTS.join("|");
 const BUILD_COMPONENT_ARGUMENT = `software component (${BUILD_COMPONENTS_HELP})`;
 const DEPLOY_COMPONENT_ARGUMENT = `software component (${DEPLOY_COMPONENTS_HELP})`;
+const KNOWN_ROCKET_REMOTES: Record<string, string> = {
+  "https://staging.cocalc.ai": "ubuntu@10.206.0.27",
+  "https://cocalc.ai": "ubuntu@10.206.0.38",
+  "https://delta.cocalc.ai": "ubuntu@10.206.15.209",
+};
 
 function runGitText(cwd: string, args: string[]): string | null {
   const result = spawnSync("git", args, {
@@ -573,6 +586,46 @@ function currentCliInvocation(): { command: string; args: string[] } {
   return { command: process.execPath, args: [] };
 }
 
+function normalizeApiOrigin(api: string | undefined): string | undefined {
+  const raw = `${api ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(
+      raw.startsWith("http://") || raw.startsWith("https://")
+        ? raw
+        : `https://${raw}`,
+    );
+    return url.origin;
+  } catch {
+    return raw.replace(/\/+$/, "");
+  }
+}
+
+function inferRocketRemote(api: string | undefined): string | undefined {
+  const origin = normalizeApiOrigin(api);
+  return origin ? KNOWN_ROCKET_REMOTES[origin] : undefined;
+}
+
+function resolveDeploySite({
+  profile,
+  opts,
+  deps,
+}: {
+  profile: string | undefined;
+  opts: DeployOptions;
+  deps: SoftwareCommandDeps;
+}): { api?: string; remote?: string } {
+  if (opts.api && opts.remote) {
+    return { api: opts.api, remote: opts.remote };
+  }
+  const config = (deps.loadAuthConfig ?? loadDefaultAuthConfig)();
+  const profileName = profile ?? config.current_profile ?? "default";
+  const authProfile = config.profiles[profileName];
+  const api = opts.api ?? authProfile?.api;
+  const remote = opts.remote ?? inferRocketRemote(api);
+  return { api, remote };
+}
+
 function latestDeploySelector({
   selector,
   localManifests,
@@ -880,6 +933,9 @@ Supported deploy/smoke components:
     .argument("<tag-or-id>", "artifact tag or id")
     .argument("[profile-or-channel]", "site profile or release channel")
     .option("--local-store <path>", "local artifact store")
+    .option("--config <path>", "rocket config path")
+    .option("--remote <ssh-target>", "bay SSH target")
+    .option("--api <url>", "site API URL")
     .option(
       "--env-file <path>",
       "R2 credential env file",
@@ -905,6 +961,11 @@ Supported deploy/smoke components:
           opts,
           deps,
         });
+        const target = resolveDeploySite({
+          profile: profileOrChannel,
+          opts,
+          deps,
+        });
         const cli = currentCliInvocation();
         const args = [
           ...cli.args,
@@ -917,6 +978,9 @@ Supported deploy/smoke components:
           artifact.bundle_url,
           "--bundle-sha256",
           artifact.bundle_sha256,
+          ...(opts.config ? ["--config", opts.config] : []),
+          ...(target.remote ? ["--remote", target.remote] : []),
+          ...(target.api ? ["--api", target.api] : []),
           "--yes",
         ];
         const code = await deps.runCommand(cli.command, args, {
