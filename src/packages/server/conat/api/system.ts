@@ -82,10 +82,6 @@ import getLogger from "@cocalc/backend/logger";
 import basePath from "@cocalc/backend/base-path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
-  codexAuthJsonToAppServerLogin,
-  getCodexAppServerAccountStatus,
-} from "@cocalc/ai/acp";
-import {
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
   listAccountExternalCredentialsRouted,
@@ -6230,6 +6226,7 @@ export async function getCodexUsageStatus({
 }: {
   account_id?: string;
   project_id?: string;
+  timeout?: number;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
@@ -6255,53 +6252,15 @@ export async function getCodexUsageStatus({
   if (project_id) {
     await assertProjectCollaborator(account_id, project_id);
   }
-  try {
-    const credential = await getExternalCredentialRouted({
-      selector: {
-        provider: "openai",
-        kind: CODEX_SUBSCRIPTION_KIND,
-        scope: "account",
-        owner_account_id: account_id,
-      },
-      touchLastUsed: true,
-    });
-    const appServerLogin = codexAuthJsonToAppServerLogin(credential?.payload);
-    if (!appServerLogin) {
-      return {
-        available: false,
-        checkedAt,
-        paymentSource,
-        project_id,
-        reason: "ChatGPT Codex credentials are missing or incomplete.",
-      };
-    }
-    const status = await getCodexAppServerAccountStatus({
-      accountId: account_id,
-      appServerLogin,
-    });
-    return {
-      available: !!status.rateLimits,
-      checkedAt,
-      paymentSource,
-      project_id,
-      account: status.account,
-      rateLimits: status.rateLimits,
-      tokenUsage: status.tokenUsage,
-      errors: status.errors,
-      reason:
-        !status.rateLimits && status.errors?.rateLimits
-          ? status.errors.rateLimits
-          : undefined,
-    };
-  } catch (err) {
-    return {
-      available: false,
-      checkedAt,
-      paymentSource,
-      project_id,
-      reason: `${err}`,
-    };
-  }
+  return {
+    available: false,
+    checkedAt,
+    paymentSource,
+    project_id,
+    reason: project_id
+      ? "Live ChatGPT Codex usage must be checked through the running project's project-host. Open the project and retry."
+      : "Open a running project before checking live ChatGPT Codex usage in CoCalc.",
+  };
 }
 
 export async function upsertBrowserSession({

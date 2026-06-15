@@ -28,6 +28,7 @@ import {
 import {
   CODEX_USAGE_LABEL,
   CODEX_USAGE_URL,
+  getLiveCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import Password from "@cocalc/frontend/components/password";
@@ -545,10 +546,9 @@ function CodexCredentialsPanelBody({
       }
       setCodexUsageLoading(true);
       try {
-        const result =
-          await webapp_client.conat_client.hub.system.getCodexUsageStatus({
-            project_id: authProjectId || undefined,
-          });
+        const result = await getLiveCodexUsageStatus({
+          projectId: authProjectId || undefined,
+        });
         if (!isMounted()) return;
         setCodexUsageStatus(result as CodexUsageStatusInfo);
       } catch (err) {

@@ -664,7 +664,7 @@ describe("processAcpLLM", () => {
     jest.spyOn(console, "error").mockImplementation(() => undefined);
     mockStreamAcp.mockRejectedValue(
       new Error(
-        "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again. auth error code: token_expired",
+        "unexpected status 401 Unauthorized: Encountered invalidated oauth token for user, failing request, url: https://chatgpt.com/backend-api/codex/responses, auth error: identity_edge_internal_error",
       ),
     );
 

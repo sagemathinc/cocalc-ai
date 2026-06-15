@@ -132,6 +132,7 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.codexDeviceAuthStatus",
   "projects.codexDeviceAuthCancel",
   "projects.codexUploadAuthFile",
+  "projects.getCodexUsageStatus",
   "projects.chatStoreStats",
   "projects.chatStoreRotate",
   "projects.chatStoreListSegments",

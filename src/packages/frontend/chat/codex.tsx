@@ -27,6 +27,7 @@ import {
 import {
   CODEX_USAGE_LABEL,
   CODEX_USAGE_URL,
+  getLiveCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
 import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -453,9 +454,7 @@ export function CodexConfigButton({
     }
     let cancelled = false;
     setCodexUsageLoading(true);
-    const systemApi: any = webapp_client.conat_client.hub.system as any;
-    void systemApi
-      .getCodexUsageStatus({ project_id: projectId || undefined })
+    void getLiveCodexUsageStatus({ projectId })
       .then((status: CodexUsageStatusInfo) => {
         if (!cancelled) setCodexUsageStatus(status);
       })

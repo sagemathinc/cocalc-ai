@@ -2345,6 +2345,7 @@ export interface System {
   getCodexUsageStatus: (opts: {
     account_id?: string;
     project_id?: string;
+    timeout?: number;
   }) => Promise<CodexUsageStatusInfo>;
 
   getFrontendSourceFingerprint: (opts?: {

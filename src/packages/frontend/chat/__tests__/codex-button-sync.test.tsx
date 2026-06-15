@@ -73,6 +73,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       hub: {
+        projects: {
+          getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
+        },
         system: {
           getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
         },
@@ -297,6 +300,7 @@ describe("CodexConfigButton", () => {
     await waitFor(() => {
       expect(getCodexUsageStatus).toHaveBeenCalledWith({
         project_id: "project-1",
+        timeout: 60_000,
       });
       expect(
         screen.getByText("compact usage meters usage loaded"),

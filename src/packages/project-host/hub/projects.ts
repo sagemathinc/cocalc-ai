@@ -35,9 +35,11 @@ import type {
   ChatStoreStats,
   ProjectEnv,
 } from "@cocalc/conat/hub/api/projects";
+import type { CodexUsageStatusInfo } from "@cocalc/conat/hub/api/system";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
 import type { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
+import { getCodexAppServerAccountStatus } from "@cocalc/ai/acp";
 import {
   DEFAULT_PROJECT_IMAGE,
   PROJECT_IMAGE_PATH,
@@ -82,7 +84,10 @@ import {
   getCodexDeviceAuthStatus,
   cancelCodexDeviceAuth,
 } from "../codex/codex-device-auth";
-import { uploadSubscriptionAuthFile } from "../codex/codex-auth";
+import {
+  resolveCodexAuthRuntime,
+  uploadSubscriptionAuthFile,
+} from "../codex/codex-auth";
 import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
 import { clearProjectHostConatAuthCaches } from "../conat-auth";
 import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
@@ -1944,6 +1949,99 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     }
   }
 
+  async function getCodexUsageStatus({
+    account_id,
+    project_id,
+    timeout,
+  }: {
+    account_id?: string;
+    project_id: string;
+    timeout?: number;
+  }): Promise<CodexUsageStatusInfo> {
+    assertHostedProjectAccess({ account_id, project_id });
+    const checkedAt = new Date().toISOString();
+    let source: CodexUsageStatusInfo["paymentSource"]["source"];
+    try {
+      source = (
+        await resolveCodexAuthRuntime({
+          projectId: project_id,
+          accountId: account_id,
+        })
+      ).source;
+    } catch (err) {
+      const reason = `${err}`;
+      return {
+        available: false,
+        checkedAt,
+        paymentSource: {
+          source: "none",
+          hasSubscription: false,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+          project_id,
+        },
+        project_id,
+        reason: reason.includes("No Codex auth source configured")
+          ? "Codex is not connected."
+          : reason,
+      };
+    }
+    const paymentSource = {
+      source,
+      hasSubscription: source === "subscription",
+      hasProjectApiKey: source === "project-api-key",
+      hasAccountApiKey: source === "account-api-key",
+      hasSiteApiKey: source === "site-api-key",
+      sharedHomeMode: source === "shared-home" ? "always" : "disabled",
+      project_id,
+    } satisfies CodexUsageStatusInfo["paymentSource"];
+    if (paymentSource.source !== "subscription") {
+      return {
+        available: false,
+        checkedAt,
+        paymentSource,
+        project_id,
+        reason:
+          "Live ChatGPT Codex usage is only available when Codex is using a ChatGPT Plan.",
+      };
+    }
+    const timeoutMs = Math.min(
+      45_000,
+      Math.max(5_000, Number(timeout ?? 45_000)),
+    );
+    try {
+      const status = await getCodexAppServerAccountStatus({
+        projectId: project_id,
+        accountId: account_id,
+        timeoutMs,
+      });
+      return {
+        available: !!status.rateLimits,
+        checkedAt,
+        paymentSource,
+        project_id,
+        account: status.account,
+        rateLimits: status.rateLimits,
+        tokenUsage: status.tokenUsage,
+        errors: status.errors,
+        reason:
+          !status.rateLimits && status.errors?.rateLimits
+            ? status.errors.rateLimits
+            : undefined,
+      };
+    } catch (err) {
+      return {
+        available: false,
+        checkedAt,
+        paymentSource,
+        project_id,
+        reason: `${err}`,
+      };
+    }
+  }
+
   async function resolveChatStorePaths({
     account_id,
     project_id,
@@ -2246,6 +2344,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
   hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;
+  hubApi.projects.getCodexUsageStatus = getCodexUsageStatus;
   hubApi.projects.chatStoreStats = chatStoreStats;
   hubApi.projects.chatStoreRotate = chatStoreRotate;
   hubApi.projects.chatStoreListSegments = chatStoreListSegments;
