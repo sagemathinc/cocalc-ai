@@ -111,9 +111,6 @@ jest.mock("./../membership-package-manager", () => ({
   ClaimableMembershipPackagesPanel: () => (
     <div>claimable-membership-packages-panel</div>
   ),
-  SiteLicenseReverificationPanel: () => (
-    <div>site-license-reverification-panel</div>
-  ),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({

@@ -186,14 +186,20 @@ export interface MembershipResolution {
   source: "subscription" | "admin" | "grant" | "free";
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
+  starts?: Date;
   subscription_id?: number;
-  subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
+  subscription_status?: "active" | "canceled";
   subscription_cost?: number;
   subscription_interval?: "month" | "year";
   grant_id?: string;
   grant_source?: string;
   grant_package_id?: string;
   grant_purchase_id?: number;
+  pool_name?: string;
+  pool_description?: string | null;
+  site_license_id?: string;
+  site_license_name?: string;
+  organization_name?: string;
   expires?: Date;
 }
 
@@ -203,14 +209,20 @@ export interface MembershipCandidate {
   priority: number;
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
+  starts?: Date;
   subscription_id?: number;
-  subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
+  subscription_status?: "active" | "canceled";
   subscription_cost?: number;
   subscription_interval?: "month" | "year";
   grant_id?: string;
   grant_source?: string;
   grant_package_id?: string;
   grant_purchase_id?: number;
+  pool_name?: string;
+  pool_description?: string | null;
+  site_license_id?: string;
+  site_license_name?: string;
+  organization_name?: string;
   expires?: Date;
 }
 
@@ -267,6 +279,8 @@ export interface ClaimableMembershipPackage {
   reason: "email-assignment" | "domain-match";
   requires_approval?: boolean;
   site_license_id?: string;
+  site_license_name?: string | null;
+  organization_name?: string | null;
   pool_name?: string;
   pool_description?: string;
   verification_policy?: SiteLicenseVerificationPolicy;

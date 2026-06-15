@@ -36,6 +36,8 @@ type PendingFreshAuthAction = {
   reject: (err: unknown) => void;
 };
 
+const FRESH_AUTH_MODAL_Z_INDEX = 3000;
+
 function normalizeFreshAuthEmail(email: string): string {
   return `${email ?? ""}`.trim().toLowerCase();
 }
@@ -170,6 +172,7 @@ export function FreshAuthModal({
       onCancel={onCancel}
       onOk={submit}
       okText={saving ? "Verifying..." : "Verify"}
+      zIndex={FRESH_AUTH_MODAL_Z_INDEX}
       okButtonProps={{
         disabled:
           saving ||

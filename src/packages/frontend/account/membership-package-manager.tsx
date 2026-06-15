@@ -56,7 +56,6 @@ import {
   assignMembershipPackageSeat,
   cancelSiteLicensePoolRequest,
   claimMembershipPackageSeat,
-  getSiteLicenseAffiliationReverificationStatus,
   getClaimableMembershipPackages,
   getMembershipPackageQuote,
   getMembershipPackages,
@@ -65,7 +64,6 @@ import {
   processPaymentIntents,
   purchaseMembershipPackage,
   releaseSiteLicensePoolSeat,
-  refreshSiteLicenseAffiliationVerification,
   removeSiteLicenseManager,
   requestSiteLicensePool,
   reviewSiteLicensePoolRequest,
@@ -85,7 +83,6 @@ import type {
   MembershipPackageKind,
   MembershipPackageQuote,
   SiteLicenseManagerRole,
-  SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
@@ -101,7 +98,6 @@ import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { COLORS } from "@cocalc/util/theme";
 import type { LineItem } from "@cocalc/util/stripe/types";
-import { openAccountSettings } from "./settings-routing";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -150,10 +146,9 @@ function packageUserSearchLabel(user: PackageUserSearchResult): ReactNode {
 }
 
 interface ClaimableMembershipPackagesPanelProps {
-  compact?: boolean;
-  hasSiteLicenseMembership?: boolean;
   onChanged?: () => void;
-  tiers?: MembershipTierLike[];
+  onSiteLicenseTitleChange?: (title?: string) => void;
+  refreshToken?: number;
 }
 
 function CompactField({
@@ -648,6 +643,22 @@ function ClaimablePoolSummary({
   return <Text type="secondary">{description}</Text>;
 }
 
+function getClaimablePoolDisplayName(
+  claimablePackage: ClaimableMembershipPackage,
+): string {
+  return (
+    `${claimablePackage.pool_name ?? ""}`.trim() || "Site license membership"
+  );
+}
+
+function getClaimableSiteLicenseDisplayName(
+  claimablePackage?: ClaimableMembershipPackage,
+): string | undefined {
+  const title = `${claimablePackage?.site_license_name ?? ""}`.trim();
+  const organization = `${claimablePackage?.organization_name ?? ""}`.trim();
+  return title || organization || undefined;
+}
+
 function getClaimableSeatStatus(
   claimablePackage: ClaimableMembershipPackage,
 ): NonNullable<ClaimableMembershipPackage["seat_status"]> {
@@ -817,9 +828,9 @@ function canManageSiteLicenseOverview({
 }
 
 export function ClaimableMembershipPackagesPanel({
-  compact,
-  hasSiteLicenseMembership = false,
   onChanged,
+  onSiteLicenseTitleChange,
+  refreshToken,
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
   const email_address = useTypedRedux("account", "email_address");
@@ -843,7 +854,6 @@ export function ClaimableMembershipPackagesPanel({
   const [termsTarget, setTermsTarget] =
     useState<ClaimableMembershipPackage | null>(null);
   const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
-  const [compactModalOpen, setCompactModalOpen] = useState<boolean>(false);
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
@@ -857,10 +867,12 @@ export function ClaimableMembershipPackagesPanel({
     setLoading(true);
     setError("");
     try {
-      setClaimables(
-        await getClaimableMembershipPackages({
-          include_claimed_site_license_pools: true,
-        }),
+      const nextClaimables = await getClaimableMembershipPackages({
+        include_claimed_site_license_pools: true,
+      });
+      setClaimables(nextClaimables);
+      onSiteLicenseTitleChange?.(
+        getClaimableSiteLicenseDisplayName(nextClaimables[0]),
       );
     } catch (err) {
       setError(`${err}`);
@@ -871,7 +883,7 @@ export function ClaimableMembershipPackagesPanel({
 
   useEffect(() => {
     void refreshClaimables();
-  }, [account_id]);
+  }, [account_id, refreshToken]);
 
   async function resendVerificationEmail(): Promise<void> {
     setError("");
@@ -899,7 +911,6 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
-      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -921,7 +932,6 @@ export function ClaimableMembershipPackagesPanel({
         ...(accepted_terms ? { accepted_terms: true } : {}),
       });
       await refreshClaimables();
-      setCompactModalOpen(false);
       onChanged?.();
     } catch (err) {
       setError(`${err}`);
@@ -1024,23 +1034,15 @@ export function ClaimableMembershipPackagesPanel({
   }
   const emailVerified =
     !!email_address && !!email_address_verified?.get?.(email_address);
-  const compactButtonPrimary =
-    !hasSiteLicenseMembership &&
-    claimables.some(
-      (claimablePackage) =>
-        getClaimableSeatStatus(claimablePackage) === "claimable",
-    );
-  const showVerifyEmailClaimCallout =
-    !loading && !emailVerified && claimables.length === 0;
 
-  function renderVerifyEmailClaimCallout({ compact }: { compact: boolean }) {
+  function renderVerifyEmailClaimCallout() {
     return (
       <Alert
         type="warning"
         showIcon
         title="Verify your email to claim site-license memberships"
         description={
-          <Space orientation="vertical" size="small">
+          <Space vertical size="small">
             <span>
               Verify your signed-in email address{" "}
               <Text code>{email_address}</Text> to claim reserved seats or
@@ -1061,18 +1063,10 @@ export function ClaimableMembershipPackagesPanel({
               >
                 {verificationSent ? "Verification sent" : "Resend verification"}
               </Button>
-              {compact ? (
-                <Button
-                  size="small"
-                  onClick={() => openAccountSettings({ page: "profile" })}
-                >
-                  Open Profile
-                </Button>
-              ) : null}
             </Space>
           </Space>
         }
-        style={{ marginTop: compact ? 12 : undefined, marginBottom: 12 }}
+        style={{ marginBottom: 12 }}
       />
     );
   }
@@ -1082,9 +1076,7 @@ export function ClaimableMembershipPackagesPanel({
       <Space vertical size="middle" style={{ width: "100%" }}>
         {claimables.map((claimablePackage) => {
           const seatStatus = getClaimableSeatStatus(claimablePackage);
-          const title =
-            `${claimablePackage.pool_name ?? ""}`.trim() ||
-            "Site license membership";
+          const title = getClaimablePoolDisplayName(claimablePackage);
           return (
             <Card
               key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
@@ -1106,7 +1098,7 @@ export function ClaimableMembershipPackagesPanel({
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   {seatStatus === "claimed" ? (
                     <Popconfirm
-                      title="Release this seat?"
+                      title={`Release ${title} seat?`}
                       description="This will remove this site-license membership from your account."
                       okText="Release seat"
                       okButtonProps={{ danger: true }}
@@ -1124,7 +1116,7 @@ export function ClaimableMembershipPackagesPanel({
                   ) : claimablePackage.requires_approval ? (
                     seatStatus === "pending" ? (
                       <Popconfirm
-                        title="Withdraw this request?"
+                        title={`Withdraw ${title} request?`}
                         description="This will remove your pending request for this site-license membership."
                         okText="Withdraw request"
                         okButtonProps={{ danger: true }}
@@ -1257,54 +1249,8 @@ export function ClaimableMembershipPackagesPanel({
     </Modal>
   );
 
-  if (compact) {
-    const disabledReason =
-      claimables.length > 0
-        ? undefined
-        : emailVerified
-          ? `Your signed-in email address ${email_address} is verified, but no reserved seats or matching site-license pools are available for it right now.`
-          : `Verify your signed-in email address ${email_address} to claim reserved seats or matching site-license memberships.`;
-    return (
-      <>
-        <Tooltip title={disabledReason}>
-          <span>
-            <Button
-              disabled={!loading && claimables.length === 0}
-              loading={loading}
-              onClick={() => setCompactModalOpen(true)}
-              type={compactButtonPrimary ? "primary" : undefined}
-            >
-              Claim site license membership
-            </Button>
-          </span>
-        </Tooltip>
-        {error ? <Alert type="error" message={error} showIcon /> : null}
-        {showVerifyEmailClaimCallout
-          ? renderVerifyEmailClaimCallout({ compact: true })
-          : null}
-        <Modal
-          open={compactModalOpen}
-          title="Claim site license membership"
-          footer={null}
-          onCancel={() => setCompactModalOpen(false)}
-          destroyOnHidden
-        >
-          {renderClaimablePackages()}
-        </Modal>
-        {termsModal}
-        {replacementClaimModal}
-      </>
-    );
-  }
-
   return (
     <div>
-      <Text strong>Claim memberships</Text>
-      <Paragraph type="secondary" style={{ marginTop: "6px" }}>
-        If a seat was reserved for one of your verified email addresses, or if
-        your verified domain matches an available site license, you can claim
-        that membership here.
-      </Paragraph>
       {loading ? <Loading /> : null}
       {error ? (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
@@ -1324,138 +1270,13 @@ export function ClaimableMembershipPackagesPanel({
             }
           />
         ) : (
-          renderVerifyEmailClaimCallout({ compact: false })
+          renderVerifyEmailClaimCallout()
         )
       ) : null}
       {!loading && claimables.length > 0 ? renderClaimablePackages() : null}
       {termsModal}
       {replacementClaimModal}
     </div>
-  );
-}
-
-export function SiteLicenseReverificationPanel({
-  onChanged,
-}: {
-  onChanged?: () => void;
-}) {
-  const account_id = useTypedRedux("account", "account_id");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [refreshing, setRefreshing] = useState<string>("");
-  const [error, setError] = useState<string>("");
-  const [status, setStatus] =
-    useState<SiteLicenseAffiliationReverificationUserStatus | null>(null);
-
-  async function refreshStatus() {
-    if (!account_id) {
-      setStatus(null);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      setStatus(await getSiteLicenseAffiliationReverificationStatus());
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void refreshStatus();
-  }, [account_id]);
-
-  async function refreshAffiliation(site_license_id?: string) {
-    setRefreshing(site_license_id ?? "all");
-    setError("");
-    try {
-      await refreshSiteLicenseAffiliationVerification({ site_license_id });
-      await refreshStatus();
-      onChanged?.();
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setRefreshing("");
-    }
-  }
-
-  if (!account_id) return null;
-  if (loading && status == null) return null;
-  if (!error && (!status || status.seats.length === 0)) return null;
-
-  return (
-    <Card
-      size="small"
-      title={
-        <Space>
-          <Icon name="refresh" />
-          <span>Site-license affiliation</span>
-          {status?.pending_count ? (
-            <Tag color="gold">{status.pending_count} need review</Tag>
-          ) : null}
-          {status?.grace_expired_count ? (
-            <Tag color="red">{status.grace_expired_count} grace expired</Tag>
-          ) : null}
-        </Space>
-      }
-      extra={
-        <Button
-          size="small"
-          loading={refreshing === "all"}
-          onClick={() => void refreshAffiliation()}
-        >
-          Refresh with verified email
-        </Button>
-      }
-    >
-      {error ? (
-        <Alert type="error" title={error} style={{ marginBottom: 12 }} />
-      ) : null}
-      <Space orientation="vertical" style={{ width: "100%" }}>
-        {(status?.seats ?? []).map((seat) => (
-          <div
-            key={`${seat.site_license_id}-${seat.package_id}`}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 12,
-              borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
-              paddingBottom: 8,
-            }}
-          >
-            <Space orientation="vertical" size={1}>
-              <Space wrap>
-                <Text strong>
-                  {seat.organization_name ||
-                    seat.site_license_name ||
-                    seat.site_license_id}
-                </Text>
-                <Tag color={seat.state === "current" ? "green" : "gold"}>
-                  {seat.state.replace(/_/g, " ")}
-                </Tag>
-                <Tag>{capitalize(seat.membership_class)}</Tag>
-                {seat.pool_name ? <Tag>{seat.pool_name}</Tag> : null}
-              </Space>
-              <Text type="secondary">
-                Verified {dateLabel(seat.affiliation_verified_at)} using{" "}
-                {seat.matched_email_address || seat.verification_policy}.
-                Reverify by {dateLabel(seat.reverification_due_at)}; grace ends{" "}
-                {dateLabel(seat.reverification_grace_expires_at)}.
-              </Text>
-            </Space>
-            <Button
-              size="small"
-              disabled={!seat.can_refresh_with_verified_email}
-              loading={refreshing === seat.site_license_id}
-              onClick={() => void refreshAffiliation(seat.site_license_id)}
-            >
-              Refresh
-            </Button>
-          </div>
-        ))}
-      </Space>
-    </Card>
   );
 }
 

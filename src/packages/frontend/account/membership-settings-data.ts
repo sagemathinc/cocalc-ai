@@ -9,9 +9,12 @@ import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
 import api from "@cocalc/frontend/client/api";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
+  ClaimableMembershipPackage,
+  MembershipCandidate,
   MembershipDetails,
   MembershipResolution,
 } from "@cocalc/conat/hub/api/purchases";
+import { getClaimableMembershipPackages } from "@cocalc/frontend/purchases/api";
 
 import type { MembershipTierWithPresentation } from "./membership-tier-benefits";
 import { dispatchMembershipDetailsRefreshed } from "./membership-usage-events";
@@ -36,15 +39,23 @@ interface MembershipTiersResponse {
 }
 
 export type MembershipCandidateRow = {
-  expires?: Date | string | null;
+  action?: "personal" | "site-license";
+  class: string;
+  grantId?: string;
+  grantPackageId?: string;
+  grantPurchaseId?: number;
   key: string;
+  membership: string;
+  note: string;
+  poolDescription?: string | null;
   priority?: number;
   selected: boolean;
   source: string;
-  sourceDetail: string;
-  status: string;
-  subscriptionStatus?: "active" | "canceled" | "unpaid" | "past_due";
-  tier: string;
+  sourceKind: "subscription" | "admin" | "grant" | "free" | "site-request";
+  siteLicenseId?: string;
+  state: string;
+  subscriptionInterval?: "month" | "year";
+  subscriptionStatus?: "active" | "canceled";
 };
 
 export function useMembershipSettingsData(): {
@@ -63,6 +74,9 @@ export function useMembershipSettingsData(): {
   );
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
   const [details, setDetails] = useState<MembershipDetails | null>(null);
+  const [claimablePackages, setClaimablePackages] = useState<
+    ClaimableMembershipPackage[]
+  >([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
@@ -84,23 +98,28 @@ export function useMembershipSettingsData(): {
         setMembership(null);
         setTiers([]);
         setDetails(null);
+        setClaimablePackages([]);
       }
       setLoading(true);
       setError("");
       try {
-        const [membershipResult, tiersResult, detailsResult] =
+        const [membershipResult, tiersResult, detailsResult, claimableResult] =
           await Promise.all([
             api("purchases/get-membership"),
             api("purchases/get-membership-tiers"),
             webapp_client.conat_client.hub.purchases.getMembershipDetails({
               refresh_usage_status: true,
             }),
+            getClaimableMembershipPackages({
+              include_claimed_site_license_pools: true,
+            }).catch(() => []),
           ]);
         if (!isMounted()) return;
         const nextDetails = (detailsResult as MembershipDetails) ?? null;
         setMembership(membershipResult as MembershipResolution);
         setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
         setDetails(nextDetails);
+        setClaimablePackages(claimableResult);
         if (nextDetails) {
           dispatchMembershipDetailsRefreshed(nextDetails);
         }
@@ -128,29 +147,45 @@ export function useMembershipSettingsData(): {
 
   const candidateRows = useMemo(() => {
     const candidates = details?.candidates ?? [];
-    return candidates
-      .map((candidate) => {
-        const selected =
-          details?.selected.class === candidate.class &&
-          details?.selected.source === candidate.source;
-        const tierLabel = tierById[candidate.class]?.label ?? candidate.class;
-        return {
-          key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? candidate.grant_id ?? "admin"}`,
-          tier: tierLabel,
-          source: membershipSourceLabel(candidate),
-          sourceDetail: membershipSourceDetail(candidate),
-          status: membershipCandidateStatus(candidate, selected),
-          priority: candidate.priority,
-          expires: candidate.expires,
-          subscriptionStatus: candidate.subscription_status,
-          selected,
-        };
-      })
-      .sort((a, b) => {
-        if (a.selected !== b.selected) return a.selected ? -1 : 1;
-        return (b.priority ?? 0) - (a.priority ?? 0);
-      });
-  }, [details, tierById]);
+    const rows: MembershipCandidateRow[] = candidates.map((candidate) => {
+      const selected =
+        details?.selected.class === candidate.class &&
+        details?.selected.source === candidate.source;
+      return {
+        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? candidate.grant_id ?? "admin"}`,
+        class: candidate.class,
+        grantId: candidate.grant_id,
+        grantPackageId: candidate.grant_package_id,
+        grantPurchaseId: candidate.grant_purchase_id,
+        membership: membershipName(candidate, tierById),
+        source: membershipSourceLabel(candidate),
+        sourceKind: candidate.source,
+        siteLicenseId: candidate.site_license_id,
+        state: membershipCandidateState(candidate),
+        note: membershipCandidateNote(candidate),
+        poolDescription: candidate.pool_description,
+        priority: candidate.priority,
+        selected,
+        subscriptionInterval: candidate.subscription_interval,
+        subscriptionStatus: candidate.subscription_status,
+        action: membershipCandidateAction(candidate),
+      } satisfies MembershipCandidateRow;
+    });
+    if (!candidates.some((candidate) => candidate.source === "subscription")) {
+      rows.push(
+        defaultPersonalFreeRow(tierById, details?.selected.source === "free"),
+      );
+    }
+    for (const claimablePackage of claimablePackages) {
+      if (
+        claimablePackage.seat_status === "pending" ||
+        claimablePackage.pending_request_id
+      ) {
+        rows.push(claimablePackageRequestRow(claimablePackage, tierById));
+      }
+    }
+    return sortMembershipCandidateRows(rows);
+  }, [claimablePackages, details, tierById]);
 
   function refresh() {
     setRefreshToken((value) => value + 1);
@@ -168,64 +203,189 @@ export function useMembershipSettingsData(): {
   };
 }
 
+export function sortMembershipCandidateRows(
+  rows: MembershipCandidateRow[],
+): MembershipCandidateRow[] {
+  return rows.sort((a, b) => {
+    const priorityOrder = (b.priority ?? 0) - (a.priority ?? 0);
+    if (priorityOrder !== 0) return priorityOrder;
+    const stateOrder = membershipStateOrder(a) - membershipStateOrder(b);
+    if (stateOrder !== 0) return stateOrder;
+    return membershipSourceOrder(a) - membershipSourceOrder(b);
+  });
+}
+
+function membershipName(
+  candidate: MembershipCandidate,
+  tierById: Record<string, MembershipTier>,
+): string {
+  if (candidate.grant_source === "site-license") {
+    const poolName = `${candidate.pool_name ?? ""}`.trim();
+    if (poolName) return poolName;
+  }
+  return tierById[candidate.class]?.label ?? candidate.class;
+}
+
 function membershipSourceLabel({
   grant_source,
+  organization_name,
+  site_license_name,
   source,
 }: {
   grant_source?: string;
+  organization_name?: string | null;
+  site_license_name?: string | null;
   source: "subscription" | "admin" | "grant";
 }) {
-  if (source === "subscription") return "Personal membership";
+  if (source === "subscription") return "Personal";
   if (source === "admin") return "Admin assigned";
   if (grant_source === "team-seat") return "Team license";
-  if (grant_source === "site-license") return "Site license";
+  if (grant_source === "site-license") {
+    return (
+      siteLicenseDisplayName({ organization_name, site_license_name }) ??
+      "Site license"
+    );
+  }
   if (grant_source?.includes("course")) return "Course membership";
   return "Granted";
 }
 
-function membershipSourceDetail({
-  grant_source,
-  source,
-}: {
-  grant_source?: string;
-  source: "subscription" | "admin" | "grant";
-}) {
-  if (source === "subscription") {
-    return "Managed here by you.";
+function membershipCandidateState(candidate: MembershipCandidate): string {
+  if (candidate.source === "subscription") {
+    if (candidate.subscription_status === "canceled") {
+      return "Renewal canceled";
+    }
+    if (startsInFuture(candidate.starts)) {
+      return "Pending";
+    }
   }
-  if (source === "admin") {
-    return "Managed by site administrators.";
-  }
-  if (grant_source === "team-seat") {
-    return "Managed by the team license owner.";
-  }
-  if (grant_source === "site-license") {
-    return "Managed by the organization license.";
-  }
-  if (grant_source?.includes("course")) {
-    return "Managed through a course or instructor workflow.";
-  }
-  return "Managed outside personal membership settings.";
+  return "Active";
 }
 
-function membershipCandidateStatus(
-  {
-    source,
-    subscription_status,
-  }: {
-    source: "subscription" | "admin" | "grant";
-    subscription_status?: "active" | "canceled" | "unpaid" | "past_due";
-  },
+function membershipCandidateNote(candidate: MembershipCandidate): string {
+  if (candidate.source === "subscription") {
+    if (candidate.subscription_status === "canceled") {
+      return `Ends ${formatLongDate(candidate.expires) ?? "at period end"}`;
+    }
+    if (startsInFuture(candidate.starts)) {
+      return `Starts ${formatLongDate(candidate.starts) ?? "later"}`;
+    }
+    if (candidate.expires) {
+      return `Renews ${formatLongDate(candidate.expires)}`;
+    }
+  }
+  if (candidate.expires) {
+    return `Ends ${formatLongDate(candidate.expires)}`;
+  }
+  return "No scheduled end";
+}
+
+function membershipCandidateAction(
+  candidate: MembershipCandidate,
+): MembershipCandidateRow["action"] {
+  if (candidate.source === "subscription") {
+    return "personal";
+  }
+  if (candidate.grant_source === "site-license") {
+    return "site-license";
+  }
+}
+
+function defaultPersonalFreeRow(
+  tierById: Record<string, MembershipTier>,
   selected: boolean,
-) {
-  if (source === "subscription" && subscription_status === "canceled") {
-    return selected ? "Used; renewal canceled" : "Renewal canceled";
+): MembershipCandidateRow {
+  return {
+    action: "personal",
+    class: "free",
+    key: "free-personal-default",
+    membership: tierById.free?.label ?? "Free",
+    note: "No scheduled end",
+    priority: tierById.free?.priority ?? 0,
+    selected,
+    source: "Personal",
+    sourceKind: "free",
+    state: "Active",
+  };
+}
+
+function claimablePackageRequestRow(
+  claimablePackage: ClaimableMembershipPackage,
+  tierById: Record<string, MembershipTier>,
+): MembershipCandidateRow {
+  const membership =
+    `${claimablePackage.pool_name ?? ""}`.trim() ||
+    tierById[claimablePackage.membership_class]?.label ||
+    claimablePackage.membership_class;
+  return {
+    action: "site-license",
+    class: claimablePackage.membership_class,
+    key: `site-request-${claimablePackage.pending_request_id ?? claimablePackage.package_id}`,
+    membership,
+    note: "Awaiting manager approval",
+    poolDescription: claimablePackage.pool_description,
+    priority: tierById[claimablePackage.membership_class]?.priority ?? 0,
+    selected: false,
+    siteLicenseId: claimablePackage.site_license_id,
+    source: siteLicenseDisplayName(claimablePackage) ?? "Site license",
+    sourceKind: "site-request",
+    state: "Pending approval",
+  };
+}
+
+function siteLicenseDisplayName({
+  organization_name,
+  site_license_name,
+}: {
+  organization_name?: string | null;
+  site_license_name?: string | null;
+}): string | undefined {
+  const title = `${site_license_name ?? ""}`.trim();
+  const organization = `${organization_name ?? ""}`.trim();
+  return title || organization || undefined;
+}
+
+function startsInFuture(value?: Date | string): boolean {
+  if (value == null) return false;
+  const date = new Date(value);
+  return Number.isFinite(date.valueOf()) && date.valueOf() > Date.now();
+}
+
+function formatLongDate(value?: Date | string | null): string | undefined {
+  if (value == null) return;
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) return;
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
+function membershipSourceOrder(row: MembershipCandidateRow): number {
+  switch (row.sourceKind) {
+    case "subscription":
+    case "free":
+      return 0;
+    case "site-request":
+      return 1;
+    case "grant":
+      return row.action === "site-license" ? 1 : 2;
+    case "admin":
+      return 3;
   }
-  if (source === "subscription" && subscription_status === "past_due") {
-    return selected ? "Used; payment past due" : "Payment past due";
+}
+
+function membershipStateOrder(row: MembershipCandidateRow): number {
+  switch (row.state) {
+    case "Renewal canceled":
+      return 0;
+    case "Pending":
+    case "Pending approval":
+      return 1;
+    case "Active":
+      return 2;
+    default:
+      return 3;
   }
-  if (source === "subscription" && subscription_status === "unpaid") {
-    return selected ? "Used; payment pending" : "Payment pending";
-  }
-  return selected ? "Used" : "Available";
 }

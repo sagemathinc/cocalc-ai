@@ -118,11 +118,6 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
     pages: [
       {
         type: "page",
-        page: "subscriptions",
-        visible: ({ stripeEnabled }) => stripeEnabled,
-      },
-      {
-        type: "page",
         page: "balance",
       },
       {

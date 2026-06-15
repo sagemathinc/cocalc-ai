@@ -27,9 +27,6 @@ describe("settings-routing", () => {
     expect(parseAccountSettingsRoute("settings/site-licenses")).toEqual({
       page: "site-licenses",
     });
-    expect(parseAccountSettingsRoute("settings/subscriptions")).toEqual({
-      page: "subscriptions",
-    });
     expect(parseAccountSettingsRoute("settings/balance")).toEqual({
       page: "balance",
     });
@@ -41,6 +38,7 @@ describe("settings-routing", () => {
   it("does not map menu groups as settings routes", () => {
     expect(parseAccountSettingsRoute("settings/preferences")).toBeUndefined();
     expect(parseAccountSettingsRoute("settings/billing")).toBeUndefined();
+    expect(parseAccountSettingsRoute("settings/subscriptions")).toBeUndefined();
     expect(parseAccountSettingsRoute("settings/licenses")).toBeUndefined();
     expect(parseAccountSettingsRoute("settings/licenses/team")).toBeUndefined();
     expect(parseAccountSettingsRoute("settings/not-real")).toBeUndefined();
@@ -48,9 +46,6 @@ describe("settings-routing", () => {
 
   it("builds canonical settings paths from leaf pages", () => {
     expect(getSettingsTargetPath({ page: "index" })).toBe("settings");
-    expect(getSettingsTargetPath({ page: "subscriptions" })).toBe(
-      "settings/subscriptions",
-    );
     expect(getSettingsTargetPath({ page: "balance" })).toBe("settings/balance");
     expect(getSettingsTargetPath({ page: "membership" })).toBe(
       "settings/membership",

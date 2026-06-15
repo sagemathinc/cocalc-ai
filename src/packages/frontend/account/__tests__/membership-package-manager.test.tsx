@@ -35,8 +35,6 @@ const removeSiteLicenseManager = jest.fn();
 const updateMembershipPackage = jest.fn();
 const assignMembershipPackageSeat = jest.fn();
 const revokeMembershipPackageSeat = jest.fn();
-const getSiteLicenseAffiliationReverificationStatus = jest.fn();
-const refreshSiteLicenseAffiliationVerification = jest.fn();
 const userSearch = jest.fn();
 const getNames = jest.fn();
 const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
@@ -162,10 +160,6 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
     assignMembershipPackageSeat(...args),
   revokeMembershipPackageSeat: (...args: any[]) =>
     revokeMembershipPackageSeat(...args),
-  getSiteLicenseAffiliationReverificationStatus: (...args: any[]) =>
-    getSiteLicenseAffiliationReverificationStatus(...args),
-  refreshSiteLicenseAffiliationVerification: (...args: any[]) =>
-    refreshSiteLicenseAffiliationVerification(...args),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -1686,82 +1680,11 @@ describe("ClaimableMembershipPackagesPanel", () => {
     sendVerificationEmail.mockResolvedValue(undefined);
   });
 
-  it("promotes the compact claim button when a site-license seat is claimable", async () => {
-    getClaimableMembershipPackages.mockResolvedValue([
-      {
-        package_id: "site-1",
-        kind: "site",
-        membership_class: "member",
-        owner_account_id: "owner-1",
-        available_seat_count: 3,
-        matched_email_address: "ada@example.edu",
-        reason: "domain-match",
-      },
-    ]);
-
-    render(<ClaimableMembershipPackagesPanel compact />);
-
-    const claimButton = await screen.findByRole("button", {
-      name: "Claim site license membership",
-    });
-
-    expect(claimButton).toHaveClass("ant-btn-primary");
-  });
-
-  it("does not promote the compact claim button after a request is pending", async () => {
-    getClaimableMembershipPackages.mockResolvedValue([
-      {
-        package_id: "site-1",
-        kind: "site",
-        membership_class: "member",
-        owner_account_id: "owner-1",
-        available_seat_count: 3,
-        matched_email_address: "ada@example.edu",
-        reason: "domain-match",
-        requires_approval: true,
-        pending_request_id: "request-1",
-        pending_request_state: "pending",
-      },
-    ]);
-
-    render(<ClaimableMembershipPackagesPanel compact />);
-
-    const claimButton = await screen.findByRole("button", {
-      name: "Claim site license membership",
-    });
-
-    expect(claimButton).not.toHaveClass("ant-btn-primary");
-  });
-
-  it("does not promote the compact claim button after a site-license claim", async () => {
-    getClaimableMembershipPackages.mockResolvedValue([
-      {
-        package_id: "site-1",
-        kind: "site",
-        membership_class: "member",
-        owner_account_id: "owner-1",
-        available_seat_count: 3,
-        matched_email_address: "ada@example.edu",
-        reason: "domain-match",
-      },
-    ]);
-
-    render(
-      <ClaimableMembershipPackagesPanel compact hasSiteLicenseMembership />,
-    );
-
-    const claimButton = await screen.findByRole("button", {
-      name: "Claim site license membership",
-    });
-
-    expect(claimButton).not.toHaveClass("ant-btn-primary");
-  });
-
-  it("shows a resend verification callout when compact claiming is blocked by unverified email", async () => {
+  it("shows a resend verification callout when claiming is blocked by unverified email", async () => {
     emailVerified = false;
     getClaimableMembershipPackages.mockResolvedValue([]);
 
-    render(<ClaimableMembershipPackagesPanel compact />);
+    render(<ClaimableMembershipPackagesPanel />);
 
     expect(
       await screen.findByText(
@@ -1782,6 +1705,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
   });
 
   it("claims a package for the signed-in account", async () => {
+    const onSiteLicenseTitleChange = jest.fn();
     getClaimableMembershipPackages.mockResolvedValue([
       {
         package_id: "site-1",
@@ -1793,6 +1717,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
         reason: "domain-match",
         pool_name: "Students",
         pool_description: "Access for eligible example.edu users.",
+        site_license_name: "CoCalc Trial",
       },
     ]);
     claimMembershipPackageSeat.mockResolvedValue({
@@ -1803,25 +1728,17 @@ describe("ClaimableMembershipPackagesPanel", () => {
 
     render(
       <ClaimableMembershipPackagesPanel
-        tiers={[
-          {
-            id: "member",
-            label: "Member",
-            site_license_pool_description:
-              "Tier default description should not show.",
-            store_highlights: ["More shared resources"],
-          },
-        ]}
+        onSiteLicenseTitleChange={onSiteLicenseTitleChange}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Claim memberships")).toBeTruthy();
       expect(screen.getByText("Students")).toBeTruthy();
       expect(
         screen.getByText("Access for eligible example.edu users."),
       ).toBeTruthy();
     });
+    expect(screen.queryByText("CoCalc Trial")).toBeNull();
     expect(screen.queryByText("Member")).toBeNull();
     expect(
       screen.queryByText("Tier default description should not show."),
@@ -1841,6 +1758,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
       });
       expect(getClaimableMembershipPackages).toHaveBeenCalledTimes(2);
     });
+    expect(onSiteLicenseTitleChange).toHaveBeenCalledWith("CoCalc Trial");
   });
 
   it("confirms before claiming a pool that replaces an active seat", async () => {
@@ -1918,18 +1836,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
       state: "pending",
     });
 
-    render(
-      <ClaimableMembershipPackagesPanel
-        tiers={[
-          {
-            id: "pro",
-            label: "Pro",
-            site_license_pool_description:
-              "Tier default description should not show.",
-          },
-        ]}
-      />,
-    );
+    render(<ClaimableMembershipPackagesPanel />);
 
     await waitFor(() => {
       expect(screen.getByText("Instructors")).toBeTruthy();
@@ -1984,7 +1891,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
       expect(screen.getByText("Student access for example.edu.")).toBeTruthy();
     });
     fireEvent.click(screen.getByRole("button", { name: "Release seat" }));
-    await screen.findByText("Release this seat?");
+    await screen.findByText("Release Students seat?");
     const releaseButtons = screen.getAllByText("Release seat");
     fireEvent.click(releaseButtons[releaseButtons.length - 1]);
 
@@ -2029,7 +1936,7 @@ describe("ClaimableMembershipPackagesPanel", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel request" }));
-    await screen.findByText("Withdraw this request?");
+    await screen.findByText("Withdraw Instructors request?");
     fireEvent.click(screen.getByText("Withdraw request"));
 
     await waitFor(() => {
