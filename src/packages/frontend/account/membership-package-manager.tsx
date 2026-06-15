@@ -56,7 +56,6 @@ import {
   assignMembershipPackageSeat,
   cancelSiteLicensePoolRequest,
   claimMembershipPackageSeat,
-  getSiteLicenseAffiliationReverificationStatus,
   getClaimableMembershipPackages,
   getMembershipPackageQuote,
   getMembershipPackages,
@@ -65,7 +64,6 @@ import {
   processPaymentIntents,
   purchaseMembershipPackage,
   releaseSiteLicensePoolSeat,
-  refreshSiteLicenseAffiliationVerification,
   removeSiteLicenseManager,
   requestSiteLicensePool,
   reviewSiteLicensePoolRequest,
@@ -85,7 +83,6 @@ import type {
   MembershipPackageKind,
   MembershipPackageQuote,
   SiteLicenseManagerRole,
-  SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
@@ -1280,131 +1277,6 @@ export function ClaimableMembershipPackagesPanel({
       {termsModal}
       {replacementClaimModal}
     </div>
-  );
-}
-
-export function SiteLicenseReverificationPanel({
-  onChanged,
-}: {
-  onChanged?: () => void;
-}) {
-  const account_id = useTypedRedux("account", "account_id");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [refreshing, setRefreshing] = useState<string>("");
-  const [error, setError] = useState<string>("");
-  const [status, setStatus] =
-    useState<SiteLicenseAffiliationReverificationUserStatus | null>(null);
-
-  async function refreshStatus() {
-    if (!account_id) {
-      setStatus(null);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      setStatus(await getSiteLicenseAffiliationReverificationStatus());
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void refreshStatus();
-  }, [account_id]);
-
-  async function refreshAffiliation(site_license_id?: string) {
-    setRefreshing(site_license_id ?? "all");
-    setError("");
-    try {
-      await refreshSiteLicenseAffiliationVerification({ site_license_id });
-      await refreshStatus();
-      onChanged?.();
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setRefreshing("");
-    }
-  }
-
-  if (!account_id) return null;
-  if (loading && status == null) return null;
-  if (!error && (!status || status.seats.length === 0)) return null;
-
-  return (
-    <Card
-      size="small"
-      title={
-        <Space>
-          <Icon name="refresh" />
-          <span>Site-license affiliation</span>
-          {status?.pending_count ? (
-            <Tag color="gold">{status.pending_count} need review</Tag>
-          ) : null}
-          {status?.grace_expired_count ? (
-            <Tag color="red">{status.grace_expired_count} grace expired</Tag>
-          ) : null}
-        </Space>
-      }
-      extra={
-        <Button
-          size="small"
-          loading={refreshing === "all"}
-          onClick={() => void refreshAffiliation()}
-        >
-          Refresh with verified email
-        </Button>
-      }
-    >
-      {error ? (
-        <Alert type="error" title={error} style={{ marginBottom: 12 }} />
-      ) : null}
-      <Space orientation="vertical" style={{ width: "100%" }}>
-        {(status?.seats ?? []).map((seat) => (
-          <div
-            key={`${seat.site_license_id}-${seat.package_id}`}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 12,
-              borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
-              paddingBottom: 8,
-            }}
-          >
-            <Space orientation="vertical" size={1}>
-              <Space wrap>
-                <Text strong>
-                  {seat.organization_name ||
-                    seat.site_license_name ||
-                    seat.site_license_id}
-                </Text>
-                <Tag color={seat.state === "current" ? "green" : "gold"}>
-                  {seat.state.replace(/_/g, " ")}
-                </Tag>
-                <Tag>{capitalize(seat.membership_class)}</Tag>
-                {seat.pool_name ? <Tag>{seat.pool_name}</Tag> : null}
-              </Space>
-              <Text type="secondary">
-                Verified {dateLabel(seat.affiliation_verified_at)} using{" "}
-                {seat.matched_email_address || seat.verification_policy}.
-                Reverify by {dateLabel(seat.reverification_due_at)}; grace ends{" "}
-                {dateLabel(seat.reverification_grace_expires_at)}.
-              </Text>
-            </Space>
-            <Button
-              size="small"
-              disabled={!seat.can_refresh_with_verified_email}
-              loading={refreshing === seat.site_license_id}
-              onClick={() => void refreshAffiliation(seat.site_license_id)}
-            >
-              Refresh
-            </Button>
-          </div>
-        ))}
-      </Space>
-    </Card>
   );
 }
 

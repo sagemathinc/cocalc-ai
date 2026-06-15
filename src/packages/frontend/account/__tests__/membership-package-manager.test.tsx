@@ -35,8 +35,6 @@ const removeSiteLicenseManager = jest.fn();
 const updateMembershipPackage = jest.fn();
 const assignMembershipPackageSeat = jest.fn();
 const revokeMembershipPackageSeat = jest.fn();
-const getSiteLicenseAffiliationReverificationStatus = jest.fn();
-const refreshSiteLicenseAffiliationVerification = jest.fn();
 const userSearch = jest.fn();
 const getNames = jest.fn();
 const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
@@ -162,10 +160,6 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
     assignMembershipPackageSeat(...args),
   revokeMembershipPackageSeat: (...args: any[]) =>
     revokeMembershipPackageSeat(...args),
-  getSiteLicenseAffiliationReverificationStatus: (...args: any[]) =>
-    getSiteLicenseAffiliationReverificationStatus(...args),
-  refreshSiteLicenseAffiliationVerification: (...args: any[]) =>
-    refreshSiteLicenseAffiliationVerification(...args),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({

@@ -157,6 +157,7 @@ async function buildMembershipCandidates(
       grant_package_id: grant.package_id ?? undefined,
       grant_purchase_id: grant.purchase_id ?? undefined,
       pool_name: getMetadataString(grant.metadata, "pool_name"),
+      site_license_id: siteLicenseId ?? undefined,
       site_license_name:
         siteLicenseDisplayName?.name ??
         getMetadataString(grant.metadata, "site_license_name"),
@@ -343,6 +344,7 @@ function pickBestMembership(
       grant_package_id: best.grant_package_id,
       grant_purchase_id: best.grant_purchase_id,
       pool_name: best.pool_name,
+      site_license_id: best.site_license_id,
       site_license_name: best.site_license_name,
       organization_name: best.organization_name,
       expires: best.expires,

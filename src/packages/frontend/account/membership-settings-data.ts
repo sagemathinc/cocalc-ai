@@ -41,6 +41,9 @@ interface MembershipTiersResponse {
 export type MembershipCandidateRow = {
   action?: "personal" | "site-license";
   class: string;
+  grantId?: string;
+  grantPackageId?: string;
+  grantPurchaseId?: number;
   key: string;
   membership: string;
   note: string;
@@ -48,6 +51,7 @@ export type MembershipCandidateRow = {
   selected: boolean;
   source: string;
   sourceKind: "subscription" | "admin" | "grant" | "free" | "site-request";
+  siteLicenseId?: string;
   state: string;
   subscriptionInterval?: "month" | "year";
   subscriptionStatus?: "active" | "canceled" | "unpaid" | "past_due";
@@ -149,9 +153,13 @@ export function useMembershipSettingsData(): {
       return {
         key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? candidate.grant_id ?? "admin"}`,
         class: candidate.class,
+        grantId: candidate.grant_id,
+        grantPackageId: candidate.grant_package_id,
+        grantPurchaseId: candidate.grant_purchase_id,
         membership: membershipName(candidate, tierById),
         source: membershipSourceLabel(candidate),
         sourceKind: candidate.source,
+        siteLicenseId: candidate.site_license_id,
         state: membershipCandidateState(candidate),
         note: membershipCandidateNote(candidate),
         priority: candidate.priority,
@@ -309,6 +317,7 @@ function claimablePackageRequestRow(
     note: "Awaiting manager approval",
     priority: tierById[claimablePackage.membership_class]?.priority ?? 0,
     selected: false,
+    siteLicenseId: claimablePackage.site_license_id,
     source: siteLicenseDisplayName(claimablePackage) ?? "Site license",
     sourceKind: "site-request",
     state: "Pending approval",

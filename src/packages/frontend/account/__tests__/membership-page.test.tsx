@@ -9,6 +9,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MembershipPage } from "../membership-page";
@@ -16,6 +17,8 @@ import { MembershipPage } from "../membership-page";
 const useMembershipSettingsData = jest.fn();
 const mockClaimableMembershipPackagesPanel = jest.fn();
 const mockMembershipPurchaseModal = jest.fn();
+const getSiteLicenseAffiliationReverificationStatus = jest.fn();
+const refreshSiteLicenseAffiliationVerification = jest.fn();
 const refresh = jest.fn();
 
 jest.mock("../membership-settings-data", () => ({
@@ -54,7 +57,6 @@ jest.mock("../membership-package-manager", () => ({
     mockClaimableMembershipPackagesPanel(props);
     return <div>site license panel</div>;
   },
-  SiteLicenseReverificationPanel: () => null,
 }));
 
 jest.mock("../membership-purchase-modal", () => (props: unknown) => {
@@ -76,6 +78,10 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
 
 jest.mock("@cocalc/frontend/purchases/api", () => ({
   cancelSubscription: jest.fn(),
+  getSiteLicenseAffiliationReverificationStatus: (...args: any[]) =>
+    getSiteLicenseAffiliationReverificationStatus(...args),
+  refreshSiteLicenseAffiliationVerification: (...args: any[]) =>
+    refreshSiteLicenseAffiliationVerification(...args),
   resumeSubscription: jest.fn(),
 }));
 
@@ -159,6 +165,12 @@ function baseData(overrides: Record<string, unknown>) {
 describe("MembershipPage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    getSiteLicenseAffiliationReverificationStatus.mockResolvedValue({
+      grace_expired_count: 0,
+      pending_count: 0,
+      seats: [],
+    });
+    refreshSiteLicenseAffiliationVerification.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -392,5 +404,133 @@ describe("MembershipPage", () => {
         onSiteLicenseTitleChange: expect.any(Function),
       }),
     );
+  });
+
+  it("shows site-license reverification in the membership source row", async () => {
+    getSiteLicenseAffiliationReverificationStatus.mockResolvedValue({
+      grace_expired_count: 0,
+      pending_count: 0,
+      seats: [
+        {
+          account_id: "account-1",
+          assignment_id: "assignment-1",
+          can_refresh_with_verified_email: true,
+          exclusive_group: "researcher",
+          membership_class: "standard",
+          package_id: "package-1",
+          pool_name: "Researcher",
+          reverification_due_at: new Date("2999-06-14T00:00:00Z"),
+          site_license_id: "license-1",
+          state: "current",
+          verification_policy: "email-domain",
+        },
+      ],
+    });
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        candidateRows: [
+          {
+            action: "site-license",
+            class: "standard",
+            grantPackageId: "package-1",
+            key: "grant-standard-1",
+            membership: "Researcher",
+            note: "Ends June 4, 2027",
+            selected: true,
+            siteLicenseId: "license-1",
+            source: "CoCalc Trial",
+            sourceKind: "grant",
+            state: "Active",
+          },
+        ],
+        details: {
+          candidates: [
+            {
+              class: "standard",
+              grant_package_id: "package-1",
+              grant_source: "site-license",
+              site_license_id: "license-1",
+              source: "grant",
+            },
+          ],
+          selected: { class: "standard", source: "grant" },
+        },
+        membership: {
+          class: "standard",
+          grant_source: "site-license",
+          source: "grant",
+        },
+      }),
+    );
+
+    render(<MembershipPage />);
+    await screen.findByText(/Reverify by/);
+
+    const row = screen.getByText("Researcher").closest("tr")!;
+    expect(
+      within(row)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Manage", "Reverify"]);
+    expect(screen.queryByText("Site-license affiliation")).toBeNull();
+
+    fireEvent.click(within(row).getByRole("button", { name: "Reverify" }));
+
+    await waitFor(() => {
+      expect(refreshSiteLicenseAffiliationVerification).toHaveBeenCalledWith({
+        site_license_id: "license-1",
+      });
+    });
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("shows overdue site-license reverification as due now", async () => {
+    getSiteLicenseAffiliationReverificationStatus.mockResolvedValue({
+      grace_expired_count: 1,
+      pending_count: 0,
+      seats: [
+        {
+          account_id: "account-1",
+          assignment_id: "assignment-1",
+          can_refresh_with_verified_email: true,
+          exclusive_group: "researcher",
+          membership_class: "standard",
+          package_id: "package-1",
+          pool_name: "Researcher",
+          reverification_due_at: new Date("2000-06-14T00:00:00Z"),
+          site_license_id: "license-1",
+          state: "grace_expired",
+          verification_policy: "email-domain",
+        },
+      ],
+    });
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        candidateRows: [
+          {
+            action: "site-license",
+            class: "standard",
+            grantPackageId: "package-1",
+            key: "grant-standard-1",
+            membership: "Researcher",
+            note: "Ends June 4, 2027",
+            selected: true,
+            siteLicenseId: "license-1",
+            source: "CoCalc Trial",
+            sourceKind: "grant",
+            state: "Active",
+          },
+        ],
+        membership: {
+          class: "standard",
+          grant_source: "site-license",
+          source: "grant",
+        },
+      }),
+    );
+
+    render(<MembershipPage />);
+
+    expect(await screen.findByText("Reverify now")).toBeTruthy();
   });
 });

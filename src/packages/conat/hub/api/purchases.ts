@@ -196,6 +196,7 @@ export interface MembershipResolution {
   grant_package_id?: string;
   grant_purchase_id?: number;
   pool_name?: string;
+  site_license_id?: string;
   site_license_name?: string;
   organization_name?: string;
   expires?: Date;
@@ -217,6 +218,7 @@ export interface MembershipCandidate {
   grant_package_id?: string;
   grant_purchase_id?: number;
   pool_name?: string;
+  site_license_id?: string;
   site_license_name?: string;
   organization_name?: string;
   expires?: Date;

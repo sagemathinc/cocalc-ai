@@ -14,7 +14,7 @@ import {
   Table,
   Typography,
 } from "antd";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 
 import {
@@ -27,12 +27,16 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   cancelSubscription,
+  getSiteLicenseAffiliationReverificationStatus,
+  refreshSiteLicenseAffiliationVerification,
   resumeSubscription,
 } from "@cocalc/frontend/purchases/api";
 import type { BillingInterval } from "./membership-pricing-chooser";
 import type {
   MembershipCandidate,
   MembershipResolution,
+  SiteLicenseAffiliationReverificationUserSeat,
+  SiteLicenseAffiliationReverificationUserStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import { capitalize, currency } from "@cocalc/util/misc";
 import { buildMembershipTierPresentation } from "@cocalc/util/membership-tier-presentation";
@@ -51,11 +55,6 @@ const { Paragraph, Text } = Typography;
 const ClaimableMembershipPackagesPanel = lazy(async () => ({
   default: (await import("./membership-package-manager"))
     .ClaimableMembershipPackagesPanel,
-}));
-
-const SiteLicenseReverificationPanel = lazy(async () => ({
-  default: (await import("./membership-package-manager"))
-    .SiteLicenseReverificationPanel,
 }));
 
 export const MEMBERSHIP_SETTINGS_PAGE = {
@@ -114,6 +113,42 @@ function MembershipSettingsContent() {
     useState<string>("site-license");
   const [siteLicenseRefreshToken, setSiteLicenseRefreshToken] =
     useState<number>(0);
+  const [reverificationStatus, setReverificationStatus] =
+    useState<SiteLicenseAffiliationReverificationUserStatus | null>(null);
+  const [reverificationError, setReverificationError] = useState<string>("");
+  const [reverifyingSiteLicenseId, setReverifyingSiteLicenseId] =
+    useState<string>("");
+  const siteLicenseReverificationKey = candidateRows
+    .filter((row) => row.action === "site-license" && row.grantPackageId)
+    .map((row) => `${row.siteLicenseId ?? ""}:${row.grantPackageId}`)
+    .sort()
+    .join("|");
+
+  useEffect(() => {
+    let canceled = false;
+    async function loadReverificationStatus() {
+      if (!account_id || !siteLicenseReverificationKey) {
+        setReverificationStatus(null);
+        setReverificationError("");
+        return;
+      }
+      setReverificationError("");
+      try {
+        const next = await getSiteLicenseAffiliationReverificationStatus();
+        if (!canceled) {
+          setReverificationStatus(next);
+        }
+      } catch (err) {
+        if (!canceled) {
+          setReverificationError(`${err}`);
+        }
+      }
+    }
+    void loadReverificationStatus();
+    return () => {
+      canceled = true;
+    };
+  }, [account_id, siteLicenseReverificationKey, siteLicenseRefreshToken]);
 
   if (!account_id) return null;
   if (loading && !membership) return <Loading />;
@@ -147,6 +182,20 @@ function MembershipSettingsContent() {
   const openSiteLicenseManage = (source = "site license") => {
     setSiteLicenseManageSource(source);
     setSiteLicenseManageOpen(true);
+  };
+  const reverifySiteLicense = async (siteLicenseId: string) => {
+    setReverifyingSiteLicenseId(siteLicenseId);
+    setReverificationError("");
+    try {
+      await refreshSiteLicenseAffiliationVerification({
+        site_license_id: siteLicenseId,
+      });
+      refreshMembership();
+    } catch (err) {
+      setReverificationError(`${err}`);
+    } finally {
+      setReverifyingSiteLicenseId("");
+    }
   };
 
   return (
@@ -219,6 +268,10 @@ function MembershipSettingsContent() {
                 {
                   title: "Note",
                   dataIndex: "note",
+                  render: (value, row) =>
+                    siteLicenseReverificationNote(
+                      reverificationSeatForRow(reverificationStatus, row),
+                    ) ?? value,
                 },
                 {
                   title: "Action",
@@ -236,12 +289,32 @@ function MembershipSettingsContent() {
                       );
                     }
                     if (row.action === "site-license") {
+                      const seat = reverificationSeatForRow(
+                        reverificationStatus,
+                        row,
+                      );
                       return (
-                        <Button
-                          onClick={() => openSiteLicenseManage(row.source)}
-                        >
-                          Manage
-                        </Button>
+                        <Space wrap size="small">
+                          <Button
+                            onClick={() => openSiteLicenseManage(row.source)}
+                          >
+                            Manage
+                          </Button>
+                          {seat != null ? (
+                            <Button
+                              disabled={!seat.can_refresh_with_verified_email}
+                              loading={
+                                reverifyingSiteLicenseId ===
+                                seat.site_license_id
+                              }
+                              onClick={() =>
+                                void reverifySiteLicense(seat.site_license_id)
+                              }
+                            >
+                              Reverify
+                            </Button>
+                          ) : null}
+                        </Space>
                       );
                     }
                     return <Text type="secondary">-</Text>;
@@ -272,9 +345,9 @@ function MembershipSettingsContent() {
             </Button>
           </Space>
           {stripeEnabled ? <UseBalance /> : null}
-          <Suspense fallback={null}>
-            <SiteLicenseReverificationPanel onChanged={refreshMembership} />
-          </Suspense>
+          {reverificationError ? (
+            <Alert type="error" title={reverificationError} />
+          ) : null}
         </Space>
       </Card>
 
@@ -356,6 +429,39 @@ function effectiveMembershipSummary({
   const price = personalMembershipPriceLabel(membership);
   const source = effectiveMembershipSourceLabel(membership, selectedSourceRow);
   return `${tierLabel}${price ? ` (${price})` : ""} - ${source}`;
+}
+
+function reverificationSeatForRow(
+  status: SiteLicenseAffiliationReverificationUserStatus | null,
+  row: MembershipCandidateRow,
+): SiteLicenseAffiliationReverificationUserSeat | undefined {
+  if (status == null || row.action !== "site-license") return;
+  return status.seats.find((seat) => {
+    if (row.grantPackageId && seat.package_id === row.grantPackageId) {
+      return true;
+    }
+    return !!row.siteLicenseId && seat.site_license_id === row.siteLicenseId;
+  });
+}
+
+function siteLicenseReverificationNote(
+  seat: SiteLicenseAffiliationReverificationUserSeat | undefined,
+): string | undefined {
+  if (seat?.reverification_due_at == null) return;
+  const due = new Date(seat.reverification_due_at);
+  if (!Number.isFinite(due.valueOf())) return;
+  if (due.getTime() <= Date.now()) {
+    return "Reverify now";
+  }
+  return `Reverify by ${formatLongDate(due)}`;
+}
+
+function formatLongDate(value: Date): string {
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(value);
 }
 
 function effectiveMembershipSourceLabel(
