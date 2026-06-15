@@ -251,17 +251,17 @@ describe("MembershipPage", () => {
     await screen.findByText("Manage site license membership");
     const text = container.textContent ?? "";
 
-    expect(screen.getByText("Free - Personal")).toBeTruthy();
+    expect(screen.getByText("Personal - Free")).toBeTruthy();
     expect(
       screen.getByText(
         "Start using CoCalc with just enough resources to explore the platform and do basic work.",
       ),
     ).toBeTruthy();
     expect(text.indexOf("Effective membership")).toBeLessThan(
-      text.indexOf("Membership sources"),
+      text.indexOf("Memberships"),
     );
     expect(text).toContain("PersonalFreeActiveNo scheduled endManage");
-    expect(text).toContain("balance-renewal-control");
+    expect(text).not.toContain("balance-renewal-control");
     expect(text).not.toContain("$0.00");
     expect(text).not.toContain("Project host tier");
     expect(text).not.toContain("Shared compute priority");
@@ -292,6 +292,19 @@ describe("MembershipPage", () => {
           subscription_cost: 216,
           subscription_interval: "year",
         },
+        details: {
+          candidates: [
+            {
+              class: "standard",
+              source: "subscription",
+              subscription_cost: 216,
+              subscription_interval: "year",
+              subscription_status: "active",
+              expires: new Date("2027-06-04T12:00:00Z"),
+            },
+          ],
+          selected: { class: "standard", source: "subscription" },
+        },
         tierById: {
           standard: {
             id: "standard",
@@ -311,19 +324,160 @@ describe("MembershipPage", () => {
     await screen.findByText("Manage site license membership");
     const text = container.textContent ?? "";
 
-    expect(
-      screen.getByText(
-        "Standard ($18/month, billed annually) - Personal membership",
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText("Personal - Standard")).toBeTruthy();
     expect(screen.getByText("A solid choice for everyday work.")).toBeTruthy();
     expect(screen.getByText("Better shared resources")).toBeTruthy();
     expect(
       screen.getByText("Dedicated project host access, including GPU"),
     ).toBeTruthy();
     expect(screen.getByText("More included AI usage")).toBeTruthy();
+    expect(screen.getByText("Personal membership")).toBeTruthy();
+    expect(
+      screen.getByText("Standard: $18/month, billed annually."),
+    ).toBeTruthy();
+    expect(screen.getByText("Next charge: $216 on June 4, 2027.")).toBeTruthy();
+    expect(text).toContain("balance-renewal-control");
     expect(text).not.toContain("Billing:");
     expect(text).not.toContain("Limits:");
+  });
+
+  it("shows paid personal membership details when another membership is effective", async () => {
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        candidateRows: [
+          {
+            action: "personal",
+            class: "standard",
+            key: "subscription-standard-1",
+            membership: "Standard",
+            note: "Renews June 4, 2027",
+            selected: false,
+            source: "Personal",
+            sourceKind: "subscription",
+            state: "Active",
+            subscriptionInterval: "year",
+            subscriptionStatus: "active",
+          },
+          {
+            action: "site-license",
+            class: "pro",
+            key: "grant-pro-1",
+            membership: "Researcher",
+            note: "No scheduled end",
+            selected: true,
+            source: "CoCalc Trial",
+            sourceKind: "grant",
+            state: "Active",
+          },
+        ],
+        details: {
+          candidates: [
+            {
+              class: "standard",
+              source: "subscription",
+              subscription_cost: 216,
+              subscription_interval: "year",
+              subscription_status: "active",
+              expires: new Date("2027-06-04T12:00:00Z"),
+            },
+            {
+              class: "pro",
+              grant_source: "site-license",
+              source: "grant",
+            },
+          ],
+          selected: { class: "pro", source: "grant" },
+        },
+        membership: {
+          class: "pro",
+          grant_source: "site-license",
+          source: "grant",
+        },
+        tierById: {
+          pro: {
+            id: "pro",
+            label: "Pro",
+            store_description: "A higher level for demanding work.",
+            store_highlights: [],
+          },
+          standard: {
+            id: "standard",
+            label: "Standard",
+          },
+        },
+      }),
+    );
+
+    const { container } = render(<MembershipPage />);
+    await screen.findByText("CoCalc Trial - Researcher");
+
+    expect(
+      screen.getByText("Standard: $18/month, billed annually."),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "This personal membership is not currently used because another membership has higher priority.",
+      ),
+    ).toBeTruthy();
+    expect(container.textContent).toContain("balance-renewal-control");
+  });
+
+  it("does not show the renewal balance switch for canceled personal membership", async () => {
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        candidateRows: [
+          {
+            action: "personal",
+            class: "standard",
+            key: "subscription-standard-1",
+            membership: "Standard",
+            note: "Ends June 4, 2027",
+            selected: true,
+            source: "Personal",
+            sourceKind: "subscription",
+            state: "Renewal canceled",
+            subscriptionInterval: "year",
+            subscriptionStatus: "canceled",
+          },
+        ],
+        details: {
+          candidates: [
+            {
+              class: "standard",
+              source: "subscription",
+              subscription_cost: 216,
+              subscription_interval: "year",
+              subscription_status: "canceled",
+              expires: new Date("2027-06-04T12:00:00Z"),
+            },
+          ],
+          selected: { class: "standard", source: "subscription" },
+        },
+        membership: {
+          class: "standard",
+          source: "subscription",
+          subscription_cost: 216,
+          subscription_interval: "year",
+          subscription_status: "canceled",
+        },
+        tierById: {
+          standard: {
+            id: "standard",
+            label: "Standard",
+            store_description: "A solid choice for everyday work.",
+            store_highlights: [],
+          },
+        },
+      }),
+    );
+
+    const { container } = render(<MembershipPage />);
+    await screen.findByText("Personal membership");
+
+    expect(
+      screen.getByText("Ends June 4, 2027. Renewal is canceled."),
+    ).toBeTruthy();
+    expect(container.textContent).not.toContain("balance-renewal-control");
   });
 
   it("opens the shared site-license modal from the bottom button", async () => {
@@ -400,7 +554,7 @@ describe("MembershipPage", () => {
 
     render(<MembershipPage />);
 
-    expect(screen.getByText("Researcher - CoCalc Trial")).toBeTruthy();
+    expect(screen.getByText("CoCalc Trial - Researcher")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
 
     expect(screen.getByText("Manage CoCalc Trial membership")).toBeTruthy();

@@ -263,10 +263,24 @@ function MembershipSettingsContent() {
         </Space>
       </Card>
 
-      <Card size="small" title="Membership sources">
+      {isPaidPersonalMembership(personalMembership) ? (
+        <Card size="small" title="Personal membership">
+          <PersonalMembershipDetails
+            effective={selectedSourceRow?.sourceKind === "subscription"}
+            membership={personalMembership}
+            showBalanceControl={
+              stripeEnabled &&
+              personalMembership.subscription_status !== "canceled"
+            }
+            tier={tierById[personalMembership.class]}
+          />
+        </Card>
+      ) : null}
+
+      <Card size="small" title="Memberships">
         <Space vertical style={{ width: "100%" }}>
           {candidateRows.length === 0 ? (
-            <Text type="secondary">No active membership sources.</Text>
+            <Text type="secondary">No active memberships.</Text>
           ) : (
             <Table
               size="small"
@@ -367,7 +381,6 @@ function MembershipSettingsContent() {
               Manage site license membership
             </Button>
           </Space>
-          {stripeEnabled ? <UseBalance /> : null}
           {reverificationError ? (
             <Alert type="error" title={reverificationError} />
           ) : null}
@@ -449,9 +462,61 @@ function effectiveMembershipSummary({
     selectedSourceRow?.membership ??
     tier?.label ??
     capitalize(membership.class);
-  const price = personalMembershipPriceLabel(membership);
   const source = effectiveMembershipSourceLabel(membership, selectedSourceRow);
-  return `${tierLabel}${price ? ` (${price})` : ""} - ${source}`;
+  return `${source} - ${tierLabel}`;
+}
+
+function PersonalMembershipDetails({
+  effective,
+  membership,
+  showBalanceControl,
+  tier,
+}: {
+  effective: boolean;
+  membership: MembershipCandidate;
+  showBalanceControl: boolean;
+  tier?: MembershipTier;
+}) {
+  const name = tier?.label ?? capitalize(membership.class);
+  const price = personalMembershipPriceLabel(membership);
+  const charge = personalMembershipChargeLabel(membership);
+  const canceled = membership.subscription_status === "canceled";
+  const endDate = formatOptionalLongDate(membership.expires);
+
+  return (
+    <Space vertical style={{ width: "100%" }}>
+      <Text strong>{price ? `${name}: ${price}.` : name}</Text>
+      {canceled ? (
+        <Text type="secondary">
+          {endDate
+            ? `Ends ${endDate}. Renewal is canceled.`
+            : "Renewal is canceled."}
+        </Text>
+      ) : (
+        <Text type="secondary">
+          {charge
+            ? `Next charge: ${charge}.`
+            : "Next charge date is not available."}
+        </Text>
+      )}
+      {!effective ? (
+        <Text type="secondary">
+          This personal membership is not currently used because another
+          membership has higher priority.
+        </Text>
+      ) : null}
+      {showBalanceControl ? <UseBalance /> : null}
+    </Space>
+  );
+}
+
+function isPaidPersonalMembership(
+  membership: MembershipCandidate | undefined,
+): membership is MembershipCandidate {
+  return (
+    membership?.source === "subscription" &&
+    (numberValue(membership.subscription_cost) ?? 0) > 0
+  );
 }
 
 function reverificationSeatForRow(
@@ -496,14 +561,14 @@ function effectiveMembershipSourceLabel(
   membership: MembershipResolution,
   selectedSourceRow?: MembershipCandidateRow,
 ): string {
+  if (selectedSourceRow?.source) {
+    return selectedSourceRow.source;
+  }
   if (membership.source === "free") {
     return "Personal";
   }
   if (membership.source === "subscription") {
-    return "Personal membership";
-  }
-  if (selectedSourceRow?.source) {
-    return selectedSourceRow.source;
+    return "Personal";
   }
   if (membership.source === "admin") {
     return "Admin assigned";
@@ -535,7 +600,10 @@ function siteLicenseDisplayName(
 }
 
 function personalMembershipPriceLabel(
-  membership: MembershipResolution,
+  membership: Pick<
+    MembershipCandidate | MembershipResolution,
+    "source" | "subscription_cost" | "subscription_interval"
+  >,
 ): string | undefined {
   if (membership.source !== "subscription") {
     return;
@@ -550,6 +618,29 @@ function personalMembershipPriceLabel(
   if (membership.subscription_interval === "year") {
     return `${formatMonthlyPrice(cost / 12)}/month, billed annually`;
   }
+}
+
+function personalMembershipChargeLabel(
+  membership: MembershipCandidate,
+): string | undefined {
+  const cost = numberValue(membership.subscription_cost);
+  if (cost == null || cost <= 0) return;
+  const date = formatOptionalLongDate(membership.expires);
+  const amount = formatCurrencyAmount(cost);
+  return date ? `${amount} on ${date}` : amount;
+}
+
+function formatOptionalLongDate(
+  value?: Date | string | null,
+): string | undefined {
+  if (value == null) return;
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) return;
+  return formatLongDate(date);
+}
+
+function formatCurrencyAmount(value: number): string {
+  return Number.isInteger(value) ? currency(value, 0) : currency(value);
 }
 
 function formatMonthlyPrice(value: number): string {
