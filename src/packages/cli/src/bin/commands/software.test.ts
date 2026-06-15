@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -13,12 +19,17 @@ type CapturedRun = {
   args: string[];
 };
 
-function makeDeps(
-  localStore: string,
-  runs?: CapturedRun[],
-): SoftwareCommandDeps {
+function makeDeps({
+  localStore,
+  runs,
+  cwd = "/repo",
+}: {
+  localStore: string;
+  runs?: CapturedRun[];
+  cwd?: string;
+}): SoftwareCommandDeps {
   return {
-    cwd: "/repo",
+    cwd,
     env: { COCALC_SOFTWARE_LOCAL_STORE: localStore },
     now: () => new Date("2026-06-14T23:59:12.345Z"),
     gitMetadata: () => ({
@@ -30,8 +41,44 @@ function makeDeps(
     }),
     runCommand: async (command, args) => {
       runs?.push({ command, args });
-      const bundle = args.at(-1);
+      let bundle = args.at(-1);
+      if (args.includes("@cocalc/project-host")) {
+        bundle = join(
+          cwd,
+          "src",
+          "packages",
+          "project-host",
+          "build",
+          "bundle-linux.tar.xz",
+        );
+      } else if (
+        args.includes("@cocalc/project") &&
+        args.includes("build:bundle")
+      ) {
+        bundle = join(
+          cwd,
+          "src",
+          "packages",
+          "project",
+          "build",
+          "bundle-linux.tar.xz",
+        );
+      } else if (
+        args.includes("@cocalc/project") &&
+        args.includes("build:tools")
+      ) {
+        const toolsArch = process.arch === "arm64" ? "arm64" : "amd64";
+        bundle = join(
+          cwd,
+          "src",
+          "packages",
+          "project",
+          "build",
+          `tools-linux-${toolsArch}.tar.xz`,
+        );
+      }
       if (bundle) {
+        mkdirSync(join(bundle, ".."), { recursive: true });
         writeFileSync(bundle, "built bundle");
       }
       return 0;
@@ -54,7 +101,7 @@ test("software build records an existing file with a generated tag", async () =>
   const localStore = join(dir, "store");
   const source = join(dir, "artifact.tar.xz");
   writeFileSync(source, "artifact contents");
-  const program = createProgram(makeDeps(localStore));
+  const program = createProgram(makeDeps({ localStore }));
 
   await program.parseAsync([
     "node",
@@ -85,7 +132,7 @@ test("software build hub runs the Rocket bay runtime builder", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-hub-build-"));
   const localStore = join(dir, "store");
   const runs: CapturedRun[] = [];
-  const program = createProgram(makeDeps(localStore, runs));
+  const program = createProgram(makeDeps({ localStore, runs }));
 
   await program.parseAsync([
     "node",
@@ -126,7 +173,7 @@ test("software build static runs the Rocket bay static builder", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-static-build-"));
   const localStore = join(dir, "store");
   const runs: CapturedRun[] = [];
-  const program = createProgram(makeDeps(localStore, runs));
+  const program = createProgram(makeDeps({ localStore, runs }));
 
   await program.parseAsync([
     "node",
@@ -157,12 +204,113 @@ test("software build static runs the Rocket bay static builder", async () => {
   );
 });
 
+test("software build project-host runs the package bundle builder", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-project-host-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project-host",
+    "host-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/project-host"), true);
+  assert.equal(runs[0].args.includes("build:bundle"), true);
+  assert.equal(
+    existsSync(
+      join(
+        localStore,
+        "project-host",
+        "20260614T235912Z-e882d124-host-test",
+        "files",
+        "bundle-linux.tar.xz",
+      ),
+    ),
+    true,
+  );
+});
+
+test("software build project runs the package bundle builder", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-project-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project",
+    "project-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/project"), true);
+  assert.equal(runs[0].args.includes("build:bundle"), true);
+  assert.equal(
+    existsSync(
+      join(
+        localStore,
+        "project",
+        "20260614T235912Z-e882d124-project-test",
+        "files",
+        "bundle-linux.tar.xz",
+      ),
+    ),
+    true,
+  );
+});
+
+test("software build tools runs the package tools builder", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-tools-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+  const toolsArch = process.arch === "arm64" ? "arm64" : "amd64";
+  const artifactName = `tools-linux-${toolsArch}.tar.xz`;
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "tools",
+    "tools-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/project"), true);
+  assert.equal(runs[0].args.includes("build:tools"), true);
+  assert.equal(
+    existsSync(
+      join(
+        localStore,
+        "tools",
+        "20260614T235912Z-e882d124-tools-test",
+        "files",
+        artifactName,
+      ),
+    ),
+    true,
+  );
+});
+
 test("software build rejects duplicate explicit local tags", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-duplicate-"));
   const localStore = join(dir, "store");
   const source = join(dir, "artifact.tar.xz");
   writeFileSync(source, "artifact contents");
-  const program = createProgram(makeDeps(localStore));
+  const program = createProgram(makeDeps({ localStore }));
 
   await program.parseAsync([
     "node",
@@ -198,7 +346,7 @@ test("software list emits local artifacts as json", async () => {
   const localStore = join(dir, "store");
   const source = join(dir, "artifact.tar.xz");
   writeFileSync(source, "artifact contents");
-  const program = createProgram(makeDeps(localStore));
+  const program = createProgram(makeDeps({ localStore }));
 
   await program.parseAsync([
     "node",

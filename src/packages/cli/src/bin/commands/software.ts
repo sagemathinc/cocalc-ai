@@ -111,6 +111,52 @@ function rocketBuildInfo(component: SoftwareBuildComponent):
   return undefined;
 }
 
+function packageBuildInfo(component: SoftwareBuildComponent):
+  | {
+      packageFilter: string;
+      script: string;
+      artifactName: string;
+      artifactPath: (srcRoot: string) => string;
+    }
+  | undefined {
+  if (component === "project-host") {
+    return {
+      packageFilter: "@cocalc/project-host",
+      script: "build:bundle",
+      artifactName: "bundle-linux.tar.xz",
+      artifactPath: (srcRoot) =>
+        join(
+          srcRoot,
+          "packages",
+          "project-host",
+          "build",
+          "bundle-linux.tar.xz",
+        ),
+    };
+  }
+  if (component === "project") {
+    return {
+      packageFilter: "@cocalc/project",
+      script: "build:bundle",
+      artifactName: "bundle-linux.tar.xz",
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "project", "build", "bundle-linux.tar.xz"),
+    };
+  }
+  if (component === "tools") {
+    const toolsArch = process.arch === "arm64" ? "arm64" : "amd64";
+    const artifactName = `tools-linux-${toolsArch}.tar.xz`;
+    return {
+      packageFilter: "@cocalc/project",
+      script: "build:tools",
+      artifactName,
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "project", "build", artifactName),
+    };
+  }
+  return undefined;
+}
+
 function parseLimit(raw: string | undefined): number {
   if (raw == null || raw.trim() === "") {
     return 10;
@@ -188,7 +234,8 @@ async function buildFromFile({
   }`;
   if (!sourceFile) {
     const info = rocketBuildInfo(component);
-    if (!info) {
+    const packageInfo = packageBuildInfo(component);
+    if (!info && !packageInfo) {
       throw new Error(
         `software build ${component} is not wired yet; use --from-file <path> to create a local artifact manifest from an existing file`,
       );
@@ -197,19 +244,32 @@ async function buildFromFile({
       throw new Error("software build requires runCommand dependency");
     }
     const srcRoot = repoSrcRoot(cwd);
-    buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
-    const outDir = join(buildTempDir, info.kind);
-    const bundle = join(buildTempDir, info.artifactName);
-    const args = [
-      "-C",
-      join(srcRoot, "packages"),
-      "--filter",
-      "@cocalc/rocket",
-      "run",
-      info.script,
-      outDir,
-      bundle,
-    ];
+    let args: string[];
+    if (packageInfo) {
+      args = [
+        "-C",
+        join(srcRoot, "packages"),
+        "--filter",
+        packageInfo.packageFilter,
+        "run",
+        packageInfo.script,
+      ];
+    } else {
+      const rocketInfo = info!;
+      buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
+      const outDir = join(buildTempDir, rocketInfo.kind);
+      const bundle = join(buildTempDir, rocketInfo.artifactName);
+      args = [
+        "-C",
+        join(srcRoot, "packages"),
+        "--filter",
+        "@cocalc/rocket",
+        "run",
+        rocketInfo.script,
+        outDir,
+        bundle,
+      ];
+    }
     const code = await deps.runCommand("pnpm", args, {
       stdio: "inherit",
       env: deps.env,
@@ -219,13 +279,23 @@ async function buildFromFile({
         `software build ${component} failed with exit status ${code}`,
       );
     }
-    sourceFile = bundle;
-    artifactName = info.artifactName;
+    if (packageInfo) {
+      sourceFile = packageInfo.artifactPath(srcRoot);
+      artifactName = packageInfo.artifactName;
+    } else {
+      sourceFile = args.at(-1);
+      artifactName = info!.artifactName;
+    }
     commandText = ["pnpm", ...args].join(" ");
   }
   const dir = artifactDir({ localStore, component, artifactId });
   const filesDir = join(dir, "files");
   try {
+    if (!sourceFile) {
+      throw new Error(
+        `software build ${component} did not resolve an artifact`,
+      );
+    }
     const artifactFile = await copyArtifactFile({
       source: sourceFile,
       destinationFilesDir: filesDir,
