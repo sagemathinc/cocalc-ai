@@ -104,6 +104,8 @@ export async function waitForCompletion({
   scope_id,
   client,
   timeout_ms,
+  poll_ms = 1000,
+  getSummary,
   onProgress,
   onSummary,
 }: {
@@ -113,6 +115,8 @@ export async function waitForCompletion({
   scope_id?: string;
   client?: Client;
   timeout_ms?: number;
+  poll_ms?: number;
+  getSummary?: () => Promise<LroSummary | null | undefined>;
   onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
   onSummary?: (summary: LroSummary) => void;
 }): Promise<LroSummary> {
@@ -126,8 +130,29 @@ export async function waitForCompletion({
   let lastIndex = 0;
   let done = false;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let pollId: ReturnType<typeof setInterval> | undefined;
+  let pollInFlight = false;
+  let lastSummaryKey = "";
 
   return await new Promise<LroSummary>((resolve, reject) => {
+    const handleSummary = (summary: LroSummary) => {
+      const summaryKey = JSON.stringify({
+        status: summary.status,
+        error: summary.error ?? null,
+        progress_summary: summary.progress_summary ?? null,
+        result: summary.result ?? null,
+      });
+      if (summaryKey !== lastSummaryKey) {
+        lastSummaryKey = summaryKey;
+        onSummary?.(summary);
+      }
+      if (TERMINAL_STATUSES.has(summary.status)) {
+        finish(summary);
+        return true;
+      }
+      return false;
+    };
+
     const finish = (summary: LroSummary) => {
       if (done) return;
       done = true;
@@ -160,9 +185,7 @@ export async function waitForCompletion({
           onProgress?.(event);
         }
         if (event.type === "summary") {
-          onSummary?.(event.summary);
-          if (TERMINAL_STATUSES.has(event.summary.status)) {
-            finish(event.summary);
+          if (handleSummary(event.summary)) {
             return;
           }
         }
@@ -178,14 +201,36 @@ export async function waitForCompletion({
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
+      if (pollId) {
+        clearInterval(pollId);
+      }
       stream.removeListener("change", handleChange);
       stream.removeListener("closed", handleClosed);
       stream.close();
     };
 
+    const pollSummary = async () => {
+      if (done || pollInFlight || getSummary == null) return;
+      pollInFlight = true;
+      try {
+        const summary = await getSummary();
+        if (summary != null) {
+          handleSummary(summary);
+        }
+      } catch {
+        // Keep the stream wait authoritative if the durable summary fallback is temporarily unavailable.
+      } finally {
+        pollInFlight = false;
+      }
+    };
+
     stream.on("change", handleChange);
     stream.on("closed", handleClosed);
     handleChange();
+    void pollSummary();
+    if (getSummary != null) {
+      pollId = setInterval(pollSummary, Math.max(250, poll_ms));
+    }
 
     if (timeout_ms && timeout_ms > 0) {
       timeoutId = setTimeout(() => {

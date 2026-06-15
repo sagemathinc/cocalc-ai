@@ -3172,10 +3172,17 @@ export class ConatClient extends EventEmitter {
     scope_type: LroScopeType;
     scope_id?: string;
     timeout_ms?: number;
+    poll_ms?: number;
     onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
     onSummary?: (summary: LroSummary) => void;
   }) => {
-    return waitForLroCompletion({ client: this.conat(), ...opts });
+    return waitForLroCompletion({
+      client: this.conat(),
+      getSummary: opts.op_id
+        ? async () => await this.hub.lro.get({ op_id: opts.op_id! })
+        : undefined,
+      ...opts,
+    });
   };
 
   terminalClient = (opts: {
