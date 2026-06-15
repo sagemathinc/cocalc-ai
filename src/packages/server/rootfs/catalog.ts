@@ -50,6 +50,7 @@ import {
   getConfiguredClusterSeedBayId,
 } from "@cocalc/server/cluster-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { enqueueRootfsPrepullForRunningHosts } from "@cocalc/server/cloud/rootfs-prepull";
 
 const logger = getLogger("server:rootfs:catalog");
 const SEED_CATALOG_SYNC_TTL_MS = 60_000;
@@ -1344,6 +1345,20 @@ async function upsertRootfsRow({
       theme ? JSON.stringify(theme) : null,
     ],
   );
+
+  if (prepull) {
+    try {
+      await enqueueRootfsPrepullForRunningHosts({
+        source: "rootfs_catalog",
+        reason: image_id,
+      });
+    } catch (err) {
+      logger.warn("failed to queue RootFS pre-pull after catalog save", {
+        image_id,
+        err,
+      });
+    }
+  }
 
   const effectiveReleaseId = release_id ?? previous?.release_id ?? null;
   if (!previous) {

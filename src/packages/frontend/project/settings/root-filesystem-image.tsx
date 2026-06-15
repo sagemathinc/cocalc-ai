@@ -2063,7 +2063,7 @@ export default function RootFilesystemImage({
                               }))
                             }
                           >
-                            Pre-pull on new hosts
+                            Pre-pull on all hosts
                           </Checkbox>
                           <Checkbox
                             checked={publishDraft.hidden}

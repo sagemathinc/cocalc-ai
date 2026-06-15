@@ -1107,7 +1107,7 @@ export const site_settings_conf: SiteSettings = {
   },
   project_rootfs_prepull_images: {
     name: "Project RootFS Prepull Images",
-    desc: "Comma-separated list of OCI images to pre-pull to every host (in addition to the default image).",
+    desc: "Comma-separated list of OCI images to pre-pull to all running and future hosts (in addition to the default image).",
     default: "",
     to_val: to_trimmed_str,
     tags: ["Workspace", "RootFS", "OCI"],

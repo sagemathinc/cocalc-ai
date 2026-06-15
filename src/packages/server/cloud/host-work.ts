@@ -47,6 +47,7 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { computeHostOperationalAvailability } from "@cocalc/server/conat/api/hosts-normalization";
+import { enqueueRootfsPrepullForHost } from "./rootfs-prepull";
 
 const logger = getLogger("server:cloud:host-work");
 const pool = () => getPool();
@@ -105,7 +106,17 @@ async function listPrepullRootfsImages(row: any): Promise<string[]> {
   const arch = hostRootfsArch(row);
   const { rows } = await pool().query<{ runtime_image: string }>(
     `
-      SELECT runtime_image
+      WITH candidates AS (
+        SELECT
+          image_id,
+          runtime_image,
+          supersedes_image_id,
+          COALESCE(NULLIF(family, ''), image_id) AS release_group,
+          COALESCE(NULLIF(channel, ''), 'stable') AS release_channel,
+          COALESCE(NULLIF(arch, ''), 'any') AS release_arch,
+          COALESCE(gpu, false) AS release_gpu,
+          COALESCE(created, updated) AS release_created,
+          COALESCE(updated, created) AS release_updated
         FROM rootfs_images
        WHERE COALESCE(prepull, false) = true
          AND COALESCE(deleted, false) = false
@@ -115,7 +126,32 @@ async function listPrepullRootfsImages(row: any): Promise<string[]> {
          AND (
            arch IS NULL OR arch = '' OR arch = 'any' OR arch = $1
          )
-       ORDER BY COALESCE(updated, created) DESC NULLS LAST, image_id ASC
+      ),
+      active AS (
+        SELECT *
+        FROM candidates AS candidate
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM candidates AS newer
+          WHERE newer.supersedes_image_id = candidate.image_id
+        )
+      ),
+      ranked AS (
+        SELECT *,
+          ROW_NUMBER() OVER (
+            PARTITION BY release_group, release_channel, release_arch, release_gpu
+            ORDER BY release_created DESC NULLS LAST,
+                     release_updated DESC NULLS LAST,
+                     image_id DESC
+          ) AS row_rank
+        FROM active
+      )
+      SELECT runtime_image
+        FROM ranked
+       WHERE row_rank = 1
+       ORDER BY release_created DESC NULLS LAST,
+                release_updated DESC NULLS LAST,
+                image_id ASC
     `,
     [arch],
   );
@@ -125,26 +161,6 @@ async function listPrepullRootfsImages(row: any): Promise<string[]> {
   }
 
   return Array.from(images);
-}
-
-async function scheduleRootfsPrepullForHost({
-  row,
-  source,
-}: {
-  row: any;
-  source: string;
-}): Promise<void> {
-  await enqueueCloudVmWorkOnce({
-    vm_id: row.id,
-    action: "prepull_rootfs",
-    payload: {
-      source,
-      provider: normalizeProviderId(row.metadata?.machine?.cloud),
-      host_last_seen: row.last_seen
-        ? new Date(row.last_seen as any).toISOString()
-        : undefined,
-    },
-  });
 }
 
 async function waitForProviderStatus(opts: {
@@ -2312,10 +2328,17 @@ async function handleVerifyHostReady(row: any) {
         }
       }
     }
-    await scheduleRootfsPrepullForHost({
-      row: host,
-      source: "verify_host_ready",
-    });
+    try {
+      await enqueueRootfsPrepullForHost({
+        row: host,
+        source: "verify_host_ready",
+      });
+    } catch (err) {
+      logger.warn("failed to queue RootFS pre-pull for ready host", {
+        host_id: host.id,
+        err,
+      });
+    }
     return;
   }
 

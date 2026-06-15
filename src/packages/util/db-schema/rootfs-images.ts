@@ -79,7 +79,7 @@ Table({
     },
     prepull: {
       type: "boolean",
-      desc: "Whether new hosts should pre-pull this image.",
+      desc: "Whether running and future hosts should pre-pull this image.",
     },
     hidden: {
       type: "boolean",

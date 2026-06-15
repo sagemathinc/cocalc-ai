@@ -543,8 +543,7 @@ describe("cloud host start failures", () => {
       dns: "launchpad.example.test",
       project_rootfs_default_image: "default/rootfs:latest",
       project_rootfs_default_image_gpu: "",
-      project_rootfs_prepull_images:
-        "extra/rootfs:one, cocalc.local/rootfs/catalog-amd64",
+      project_rootfs_prepull_images: "extra/rootfs:one",
     });
     await upsertProjectHost({
       id: hostId,
@@ -570,17 +569,21 @@ describe("cloud host start failures", () => {
     await getPool().query(
       `
         INSERT INTO rootfs_images
-          (image_id, runtime_image, label, visibility, prepull, arch,
+          (image_id, runtime_image, label, family, version, visibility, prepull, arch,
            deleted, hidden, blocked, created, updated)
         VALUES
-          ('test-prepull-amd64', 'cocalc.local/rootfs/catalog-amd64', 'amd64 image',
-           'public', true, 'amd64', false, false, false, NOW(), NOW()),
+          ('test-prepull-amd64-v1', 'cocalc.local/rootfs/catalog-amd64-v1', 'amd64 image v1',
+           'test-family', '1.0', 'public', true, 'amd64', false, false, false, NOW() - interval '1 day', NOW() - interval '1 day'),
+          ('test-prepull-amd64-v2', 'cocalc.local/rootfs/catalog-amd64-v2', 'amd64 image v2',
+           'test-family', '1.1', 'public', true, 'amd64', false, false, false, NOW(), NOW()),
           ('test-prepull-arm64', 'cocalc.local/rootfs/catalog-arm64', 'arm64 image',
-           'public', true, 'arm64', false, false, false, NOW(), NOW()),
+           'test-family', '1.1', 'public', true, 'arm64', false, false, false, NOW(), NOW()),
           ('test-prepull-hidden', 'cocalc.local/rootfs/hidden', 'hidden image',
-           'public', true, 'amd64', false, true, false, NOW(), NOW())
+           'hidden-family', '1.0', 'public', true, 'amd64', false, true, false, NOW(), NOW())
         ON CONFLICT (image_id) DO UPDATE SET
           runtime_image = EXCLUDED.runtime_image,
+          family = EXCLUDED.family,
+          version = EXCLUDED.version,
           prepull = EXCLUDED.prepull,
           arch = EXCLUDED.arch,
           deleted = EXCLUDED.deleted,
@@ -601,7 +604,7 @@ describe("cloud host start failures", () => {
     expect(pullRootfsImage.mock.calls.map(([arg]) => arg.image)).toEqual([
       "default/rootfs:latest",
       "extra/rootfs:one",
-      "cocalc.local/rootfs/catalog-amd64",
+      "cocalc.local/rootfs/catalog-amd64-v2",
     ]);
     expect(getRoutedHostControlClientMock).toHaveBeenCalledWith({
       host_id: hostId,

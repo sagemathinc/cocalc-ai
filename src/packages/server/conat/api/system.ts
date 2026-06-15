@@ -96,6 +96,10 @@ import {
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
+  enqueueRootfsPrepullForRunningHosts,
+  isRootfsPrepullSiteSetting,
+} from "@cocalc/server/cloud/rootfs-prepull";
+import {
   isAiLaunchDisabled,
   LAUNCH_KILL_SWITCHES,
 } from "@cocalc/server/launch/kill-switches";
@@ -740,6 +744,19 @@ async function setSiteSettingLocal(update: SiteSettingUpdate): Promise<void> {
   const normalized = normalizeSiteSettingUpdate(update);
   await assertSiteSettingWritable(normalized.name);
   await callback2(db().set_server_setting, normalized);
+  if (isRootfsPrepullSiteSetting(normalized.name)) {
+    try {
+      await enqueueRootfsPrepullForRunningHosts({
+        source: "site_settings",
+        reason: normalized.name,
+      });
+    } catch (err) {
+      logger.warn("failed to queue RootFS pre-pull after site setting update", {
+        setting: normalized.name,
+        err,
+      });
+    }
+  }
 }
 
 function isSignupEmailDomainPolicySetting(name: string): boolean {
