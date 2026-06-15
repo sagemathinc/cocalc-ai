@@ -459,7 +459,7 @@ function SectionIntro({
   action,
 }: {
   action?: ReactNode;
-  body: ReactNode;
+  body?: ReactNode;
   eyebrow: ReactNode;
   title: ReactNode;
 }) {
@@ -470,7 +470,9 @@ function SectionIntro({
         <Title level={2} style={{ margin: "8px 0 10px" }}>
           {title}
         </Title>
-        <Paragraph style={{ fontSize: 18, margin: 0 }}>{body}</Paragraph>
+        {body == null ? null : (
+          <Paragraph style={{ fontSize: 18, margin: 0 }}>{body}</Paragraph>
+        )}
       </div>
       {action}
     </Flex>
@@ -621,7 +623,6 @@ function AudienceRoutesSection() {
   return (
     <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
       <SectionIntro
-        body="Different audiences can start from their own question: how to collaborate, how to teach, or how to operate CoCalc."
         eyebrow="Who it helps"
         title="Built for research groups, courses, and platform teams."
       />

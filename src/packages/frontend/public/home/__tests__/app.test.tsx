@@ -157,6 +157,9 @@ describe("PublicHomeApp", () => {
       }),
     ).not.toBeNull();
     expect(
+      within(audiences).queryByText(/Different audiences can start/i),
+    ).toBeNull();
+    expect(
       within(audiences).getByRole("link", { name: "Explore workflows" }),
     ).toHaveAttribute("href", "/features/compare");
     expect(
