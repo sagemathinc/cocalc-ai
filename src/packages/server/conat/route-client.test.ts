@@ -85,6 +85,7 @@ function createFakeClient() {
   emitter.connect = jest.fn(() => {
     emitter.conn.connected = true;
   });
+  emitter.waitForInterest = jest.fn(async () => true);
   emitter.close = jest.fn(() => {
     emitter.emit("closed");
   });
@@ -332,6 +333,39 @@ describe("server/conat route-client", () => {
         address: "https://host-3.example",
         noCache: true,
         forceNew: true,
+      }),
+    );
+    expect(routed.waitForInterest).toHaveBeenCalledWith(
+      "project-host.host-3.api",
+      { timeout: 1500 },
+    );
+  });
+
+  it("falls back to the legacy host control route when direct host control is absent", async () => {
+    const routed = createFakeClient();
+    routed.waitForInterest = jest.fn(async () => false);
+    const central = createFakeClient();
+    connectMock
+      .mockImplementationOnce(() => routed)
+      .mockImplementationOnce(() => central);
+    materializeHostRouteTargetMock.mockResolvedValue({
+      host_id: "host-3",
+      address: "https://host-3.example",
+      host_session_id: "session-3",
+    });
+
+    const { getExplicitHostControlClient } = await import("./route-client");
+
+    await expect(
+      getExplicitHostControlClient({ host_id: "host-3" }),
+    ).resolves.toBe(central);
+    expect(routed.waitForInterest).toHaveBeenCalledWith(
+      "project-host.host-3.api",
+      { timeout: 1500 },
+    );
+    expect(connectMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        address: "https://hub.example",
       }),
     );
   });
