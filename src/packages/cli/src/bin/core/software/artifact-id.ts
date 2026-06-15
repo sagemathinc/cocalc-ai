@@ -1,4 +1,9 @@
-import type { SoftwareBuildComponent, SoftwareGitMetadata } from "./types";
+import {
+  SOFTWARE_DEPLOY_COMPONENTS,
+  type SoftwareBuildComponent,
+  type SoftwareDeployComponent,
+  type SoftwareGitMetadata,
+} from "./types";
 
 const TAG_RE = /^[A-Za-z0-9._-]+$/;
 
@@ -19,6 +24,15 @@ export function parseSoftwareBuildComponent(
     default:
       throw new Error(`unknown software build component: ${value}`);
   }
+}
+
+export function parseSoftwareDeployComponent(
+  value: string,
+): SoftwareDeployComponent {
+  if (SOFTWARE_DEPLOY_COMPONENTS.includes(value as SoftwareDeployComponent)) {
+    return value as SoftwareDeployComponent;
+  }
+  throw new Error(`unknown software deploy component: ${value}`);
 }
 
 export function validateSoftwareTag(tag: string): string {

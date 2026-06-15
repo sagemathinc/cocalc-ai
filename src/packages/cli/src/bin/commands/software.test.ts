@@ -46,8 +46,8 @@ function makeDeps({
     }),
     runCommand: async (command, args) => {
       runs?.push({ command, args });
-      let bundle = args.at(-1);
-      if (args.includes("@cocalc/project-host")) {
+      let bundle = command === "pnpm" ? args.at(-1) : undefined;
+      if (command === "pnpm" && args.includes("@cocalc/project-host")) {
         bundle = join(
           cwd,
           "src",
@@ -57,6 +57,7 @@ function makeDeps({
           "bundle-linux.tar.xz",
         );
       } else if (
+        command === "pnpm" &&
         args.includes("@cocalc/project") &&
         args.includes("build:bundle")
       ) {
@@ -69,6 +70,7 @@ function makeDeps({
           "bundle-linux.tar.xz",
         );
       } else if (
+        command === "pnpm" &&
         args.includes("@cocalc/project") &&
         args.includes("build:tools")
       ) {
@@ -641,6 +643,151 @@ test("software list shows remote-only artifacts", async () => {
   assert.equal(artifact.source, "remote");
   assert.equal(artifact.local, undefined);
   assert.match(artifact.remote, /remote-test\/manifest\.json$/);
+});
+
+test("software deploy static invokes Rocket with a local remote-backed bundle", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-static-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "static.tar.xz");
+  writeFileSync(source, "static bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "static",
+    "deploy-test",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "push",
+    "static",
+    "deploy-test",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "static",
+    "deploy-test",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  assert.equal(runs.length, 1);
+  const run = runs[0];
+  assert.equal(run.command, process.execPath);
+  const rocketIndex = run.args.indexOf("rocket");
+  assert.notEqual(rocketIndex, -1);
+  assert.deepEqual(run.args.slice(rocketIndex), [
+    "rocket",
+    "deploy",
+    "staging",
+    "--scope",
+    "static",
+    "--bundle",
+    join(
+      localStore,
+      "static",
+      "20260614T235912Z-e882d124-deploy-test",
+      "files",
+      "static.tar.xz",
+    ),
+    "--yes",
+  ]);
+});
+
+test("software deploy hub pushes a local-only artifact before Rocket deploy", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-hub-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "hub.tar.xz");
+  writeFileSync(source, "hub bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "hub",
+    "local-deploy",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "hub",
+    "local-deploy",
+    "prod",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  assert.equal(r2.objects.has("software/indexes/hub.json"), true);
+  assert.equal(runs.length, 1);
+  const rocketIndex = runs[0].args.indexOf("rocket");
+  assert.notEqual(rocketIndex, -1);
+  assert.deepEqual(runs[0].args.slice(rocketIndex), [
+    "rocket",
+    "deploy",
+    "prod",
+    "--scope",
+    "bay",
+    "--bundle",
+    join(
+      localStore,
+      "hub",
+      "20260614T235912Z-e882d124-local-deploy",
+      "files",
+      "hub.tar.xz",
+    ),
+    "--yes",
+  ]);
+});
+
+test("software deploy rejects unwired explicit conat components", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-unwired-"));
+  const program = createProgram(makeDeps({ localStore: join(dir, "store") }));
+
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "software",
+        "deploy",
+        "hub-conat-router",
+        "tag",
+        "prod",
+      ]),
+    /software deploy hub-conat-router is not wired yet/,
+  );
 });
 
 test("software push rejects remote duplicate tags", async () => {

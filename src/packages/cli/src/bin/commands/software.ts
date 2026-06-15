@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -10,6 +10,7 @@ import {
   chooseGeneratedTag,
   createSoftwareArtifactId,
   parseSoftwareBuildComponent,
+  parseSoftwareDeployComponent,
   validateSoftwareTag,
 } from "../core/software/artifact-id";
 import {
@@ -28,11 +29,14 @@ import {
   readRemoteIndex,
   resolveSoftwareRemoteConfig,
   uploadSoftwareArtifact,
+  type SoftwareRemoteConfig,
+  type SoftwareRemoteIndexEntry,
   type SoftwareR2Client,
 } from "../core/software/remote-store";
 import type {
   SoftwareArtifactManifest,
   SoftwareBuildComponent,
+  SoftwareDeployComponent,
   SoftwareGitMetadata,
   SoftwareListRow,
 } from "../core/software/types";
@@ -72,6 +76,11 @@ type ListOptions = {
 };
 
 type PushOptions = {
+  localStore?: string;
+  envFile?: string;
+};
+
+type DeployOptions = {
   localStore?: string;
   envFile?: string;
 };
@@ -413,6 +422,52 @@ async function resolveLocalManifestBySelector({
   return matches[0];
 }
 
+function findLocalManifestMatches({
+  manifests,
+  selector,
+}: {
+  manifests: Awaited<ReturnType<typeof listLocalManifests>>;
+  selector: string;
+}) {
+  return manifests.filter(
+    ({ manifest }) =>
+      manifest.tag === selector || manifest.artifact_id === selector,
+  );
+}
+
+function resolveSingleMatch<T>({
+  matches,
+  selector,
+  label,
+}: {
+  matches: T[];
+  selector: string;
+  label: string;
+}): T | undefined {
+  if (matches.length === 0) {
+    return undefined;
+  }
+  if (matches.length > 1) {
+    throw new Error(`${label} selector is ambiguous: ${selector}`);
+  }
+  return matches[0];
+}
+
+function localBundlePath({
+  manifest,
+  path,
+}: {
+  manifest: SoftwareArtifactManifest;
+  path: string;
+}): string {
+  if (manifest.files.length !== 1) {
+    throw new Error(
+      `software deploy expected exactly one file in ${manifest.artifact_id}`,
+    );
+  }
+  return join(path, "..", manifest.files[0].path);
+}
+
 function softwareR2Client(deps: SoftwareCommandDeps): SoftwareR2Client {
   if (!deps.r2Client) {
     return loadDefaultSoftwareR2Client();
@@ -477,6 +532,161 @@ async function listRemoteRows({
     }
     throw err;
   }
+}
+
+function remoteEntryMatchesSelector(
+  entry: SoftwareRemoteIndexEntry,
+  selector: string,
+): boolean {
+  return entry.tag === selector || entry.artifact_id === selector;
+}
+
+function rocketDeployTargetForComponent(component: SoftwareDeployComponent): {
+  artifactComponent: SoftwareBuildComponent;
+  scope: "static" | "bay";
+} {
+  if (component === "static") {
+    return { artifactComponent: "static", scope: "static" };
+  }
+  if (component === "hub") {
+    return { artifactComponent: "hub", scope: "bay" };
+  }
+  throw new Error(
+    `software deploy ${component} is not wired yet; currently supported: static, hub`,
+  );
+}
+
+function currentCliInvocation(): { command: string; args: string[] } {
+  const script = process.argv[1];
+  if (script && script.endsWith(".js")) {
+    return { command: process.execPath, args: [script] };
+  }
+  return { command: process.execPath, args: [] };
+}
+
+async function downloadRemoteArtifact({
+  client,
+  config,
+  entry,
+}: {
+  client: SoftwareR2Client;
+  config: SoftwareRemoteConfig;
+  entry: SoftwareRemoteIndexEntry;
+}): Promise<{ bundle: string; tempDir: string }> {
+  if (entry.files.length !== 1) {
+    throw new Error(
+      `software deploy expected exactly one remote file in ${entry.artifact_id}`,
+    );
+  }
+  const file = entry.files[0];
+  const body = await client.getR2ObjectBuffer({
+    auth: config.auth,
+    key: file.key,
+  });
+  if (!body) {
+    throw new Error(`remote software artifact file is empty: ${file.key}`);
+  }
+  const tempDir = await mkdtemp(join(tmpdir(), "cocalc-software-deploy-"));
+  const bundle = join(tempDir, file.name);
+  await writeFile(bundle, body);
+  return { bundle, tempDir };
+}
+
+async function resolveDeployArtifact({
+  component,
+  selector,
+  opts,
+  deps,
+}: {
+  component: SoftwareBuildComponent;
+  selector: string;
+  opts: DeployOptions;
+  deps: SoftwareCommandDeps;
+}): Promise<{
+  bundle: string;
+  tempDir?: string;
+  tag: string;
+  artifact_id: string;
+  source: "local+remote" | "local+pushed" | "remote";
+  remote_manifest: string;
+}> {
+  const localStore = resolveSoftwareLocalStore({
+    option: opts.localStore,
+    env: deps.env ?? process.env,
+  });
+  const localMatch = resolveSingleMatch({
+    matches: findLocalManifestMatches({
+      manifests: await listLocalManifests({ localStore, component }),
+      selector,
+    }),
+    selector,
+    label: `local software artifact for ${component}`,
+  });
+  const config = await resolveSoftwareRemoteConfig({
+    env: deps.env ?? process.env,
+    envFile: opts.envFile,
+  });
+  const client = softwareR2Client(deps);
+  const remoteIndex = await readRemoteIndex({
+    client,
+    auth: config.auth,
+    component,
+  });
+  let remoteEntry = resolveSingleMatch({
+    matches: remoteIndex.artifacts.filter((entry) =>
+      remoteEntryMatchesSelector(entry, selector),
+    ),
+    selector,
+    label: `remote software artifact for ${component}`,
+  });
+
+  if (localMatch && !remoteEntry) {
+    await uploadSoftwareArtifact({
+      client,
+      config,
+      manifest: localMatch.manifest,
+      manifestPath: localMatch.path,
+      now: deps.now?.() ?? new Date(),
+    });
+    remoteEntry = manifestRemoteEntry({
+      manifest: localMatch.manifest,
+      config,
+    });
+    return {
+      bundle: localBundlePath(localMatch),
+      tag: localMatch.manifest.tag,
+      artifact_id: localMatch.manifest.artifact_id,
+      source: "local+pushed",
+      remote_manifest: remoteEntry.manifest_url,
+    };
+  }
+
+  if (localMatch && remoteEntry) {
+    return {
+      bundle: localBundlePath(localMatch),
+      tag: localMatch.manifest.tag,
+      artifact_id: localMatch.manifest.artifact_id,
+      source: "local+remote",
+      remote_manifest: remoteEntry.manifest_url,
+    };
+  }
+
+  if (remoteEntry) {
+    const downloaded = await downloadRemoteArtifact({
+      client,
+      config,
+      entry: remoteEntry,
+    });
+    return {
+      ...downloaded,
+      tag: remoteEntry.tag,
+      artifact_id: remoteEntry.artifact_id,
+      source: "remote",
+      remote_manifest: remoteEntry.manifest_url,
+    };
+  }
+
+  throw new Error(`software artifact not found for ${component}: ${selector}`);
 }
 
 export function registerSoftwareCommand(
@@ -641,9 +851,74 @@ Supported deploy/smoke components:
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
     .argument("<tag-or-id>", "artifact tag or id")
     .argument("[profile-or-channel]", "site profile or release channel")
-    .action(() => {
-      throw new Error("software deploy is not implemented yet");
-    });
+    .option("--local-store <path>", "local artifact store")
+    .option(
+      "--env-file <path>",
+      "R2 credential env file",
+      "/run/secrets/cocalc/rocket-software-env.sh",
+    )
+    .action(
+      async (
+        componentArg: string,
+        selector: string,
+        profileOrChannel: string | undefined,
+        opts: DeployOptions,
+        command: Command,
+      ) => {
+        const component = parseSoftwareDeployComponent(componentArg);
+        const { artifactComponent, scope } =
+          rocketDeployTargetForComponent(component);
+        if (!deps.runCommand) {
+          throw new Error("software deploy requires runCommand dependency");
+        }
+        const artifact = await resolveDeployArtifact({
+          component: artifactComponent,
+          selector,
+          opts,
+          deps,
+        });
+        const cli = currentCliInvocation();
+        const args = [
+          ...cli.args,
+          "rocket",
+          "deploy",
+          ...(profileOrChannel ? [profileOrChannel] : []),
+          "--scope",
+          scope,
+          "--bundle",
+          artifact.bundle,
+          "--yes",
+        ];
+        try {
+          const code = await deps.runCommand(cli.command, args, {
+            stdio: "inherit",
+            env: deps.env ?? process.env,
+          });
+          if (code !== 0) {
+            throw new Error(
+              `software deploy ${component} failed with exit status ${code}`,
+            );
+          }
+        } finally {
+          if (artifact.tempDir) {
+            await rm(artifact.tempDir, { recursive: true, force: true });
+          }
+        }
+        emitSuccess(
+          { globals: command.optsWithGlobals() as any },
+          "software deploy",
+          {
+            component,
+            tag: artifact.tag,
+            artifact_id: artifact.artifact_id,
+            source: artifact.source,
+            remote_manifest: artifact.remote_manifest,
+            rocket_scope: scope,
+            profile: profileOrChannel ?? null,
+          },
+        );
+      },
+    );
 
   software
     .command("smoke")
