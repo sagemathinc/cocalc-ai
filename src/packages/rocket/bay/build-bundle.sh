@@ -104,7 +104,7 @@ echo "- Build project-host bundle"
 pnpm --filter @cocalc/project-host run build:bundle
 
 echo "- Build static frontend assets"
-pnpm --filter @cocalc/launchpad run build:static
+pnpm static
 
 echo "- Build compact control-plane bundle"
 "$ROOT/scripts/control-plane-bundle/build-bundle.sh" \
