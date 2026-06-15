@@ -106,13 +106,6 @@ const HOME_PAGE_CSS = `
   }
 `;
 
-const HERO_TAGS = [
-  "Shared project record",
-  "Reviewable context",
-  "Course workflows",
-  "Recoverable work",
-] as const;
-
 const PROJECT_FACTS = [
   {
     body: "Source files, outputs, notes, and decisions stay tied to the project instead of disappearing across separate places.",
@@ -507,7 +500,7 @@ function Hero({
         alignItems: "center",
         display: "grid",
         gap: 42,
-        gridTemplateColumns: "minmax(0, 0.9fr) minmax(320px, 1.1fr)",
+        gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 1fr)",
         padding: "32px 0 12px",
       }}
     >
@@ -526,8 +519,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            Shared project workspaces for research, teaching, and technical
-            teams
+            Shared projects for research, teaching, and technical teams
           </Title>
           <Paragraph
             style={{
@@ -559,21 +551,6 @@ function Hero({
           <Button href={appPath("products")} size="large">
             Compare product paths
           </Button>
-        </Flex>
-        <Flex gap={8} wrap>
-          {HERO_TAGS.map((tag) => (
-            <Tag
-              key={tag}
-              style={{
-                background: PUBLIC_COLORS.brandSubtle,
-                borderColor: alpha(PUBLIC_COLORS.link, 0.16),
-                color: PUBLIC_COLORS.link,
-                marginInlineEnd: 0,
-              }}
-            >
-              {tag}
-            </Tag>
-          ))}
         </Flex>
       </Flex>
       <img

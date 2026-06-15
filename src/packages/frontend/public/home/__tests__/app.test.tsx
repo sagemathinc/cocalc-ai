@@ -90,7 +90,7 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero).getByRole("heading", {
         level: 1,
-        name: "Shared project workspaces for research, teaching, and technical teams",
+        name: "Shared projects for research, teaching, and technical teams",
       }),
     ).not.toBeNull();
     expect(
@@ -124,7 +124,7 @@ describe("PublicHomeApp", () => {
       "Course workflows",
       "Recoverable work",
     ]) {
-      expect(within(hero).getByText(tag)).not.toBeNull();
+      expect(within(hero).queryByText(tag)).toBeNull();
     }
 
     const project = screen.getByRole("region", {
