@@ -323,13 +323,16 @@ function hasRoutedClient(target?: RoutedTarget): target is { client: Client } {
 export async function getExplicitProjectRoutedClient({
   project_id,
   fresh = false,
+  account_id,
 }: {
   project_id: string;
   fresh?: boolean;
+  account_id?: string;
 }): Promise<Client> {
   const routed = routeTargetToClient(
     `project.${project_id}`,
     await materializeProjectHostTarget(project_id, { fresh }),
+    account_id,
   );
   if (!hasRoutedClient(routed)) {
     throw new Error(`unable to route project ${project_id} to a host`);

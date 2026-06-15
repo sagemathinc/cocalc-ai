@@ -117,6 +117,52 @@ describe("server/conat route-client", () => {
     jest.useRealTimers();
   });
 
+  it("creates an account-scoped explicit project routed client", async () => {
+    const routed = createFakeClient();
+    let authValue: any;
+    let authPromise: Promise<void> | undefined;
+    connectMock.mockImplementationOnce((opts) => {
+      authPromise = Promise.resolve(
+        opts.auth((value) => {
+          authValue = value;
+        }),
+      );
+      return routed;
+    });
+    materializeProjectHostTargetMock.mockResolvedValue({
+      host_id: "host-local",
+      address: "https://host-local.example",
+    });
+
+    const { getExplicitProjectRoutedClient } = await import("./route-client");
+    await expect(
+      getExplicitProjectRoutedClient({
+        project_id: "12345678-1234-1234-1234-123456789012",
+        fresh: true,
+        account_id: "account-1",
+      }),
+    ).resolves.toBe(routed);
+
+    await authPromise;
+    expect(materializeProjectHostTargetMock).toHaveBeenCalledWith(
+      "12345678-1234-1234-1234-123456789012",
+      { fresh: true },
+    );
+    expect(issueProjectHostAuthTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "account",
+        account_id: "account-1",
+        host_id: "host-local",
+      }),
+    );
+    expect(connectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inboxPrefix: "inbox.account-1",
+      }),
+    );
+    expect(authValue).toEqual({ bearer: "token-1" });
+  });
+
   it("reconnects routed host clients after connect_error", async () => {
     const central = createFakeClient();
     const routed = createFakeClient();

@@ -12,6 +12,7 @@ let appendProjectOutboxEventForProjectMock: jest.Mock;
 let assertProjectNotRehomingMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let routedClientCloseMock: jest.Mock;
+let getExplicitProjectRoutedClientMock: jest.Mock;
 let assertCanPerformDestructiveStorageActionMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
@@ -75,7 +76,8 @@ jest.mock("@cocalc/server/project-host/control", () => ({
 
 jest.mock("@cocalc/server/conat/route-client", () => ({
   __esModule: true,
-  getExplicitProjectRoutedClient: jest.fn(),
+  getExplicitProjectRoutedClient: (...args: any[]) =>
+    getExplicitProjectRoutedClientMock(...args),
   conatWithProjectRoutingForAccount: jest.fn(() => ({
     close: (...args: any[]) => routedClientCloseMock(...args),
   })),
@@ -201,6 +203,9 @@ describe("projects.archiveProject", () => {
       async () => undefined,
     );
     routedClientCloseMock = jest.fn();
+    getExplicitProjectRoutedClientMock = jest.fn(async () => ({
+      close: (...args: any[]) => routedClientCloseMock(...args),
+    }));
     assertCanPerformDestructiveStorageActionMock = jest.fn(
       async () => undefined,
     );
@@ -236,6 +241,11 @@ describe("projects.archiveProject", () => {
       client: expect.any(Object),
       project_id: "proj-1",
       indexed_only: true,
+    });
+    expect(getExplicitProjectRoutedClientMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      fresh: true,
+      account_id: "owner-1",
     });
     expect(resolveProjectBayMock).toHaveBeenCalledWith("proj-1");
     expect(interBayStopMock).toHaveBeenCalledWith({
@@ -314,6 +324,47 @@ describe("projects.archiveProject", () => {
     getBackupsMock = jest.fn(async () => {
       throw new Error(
         "request -- no subscribers matching 'project.proj-1.archive-info.-'",
+      );
+    });
+
+    const { archiveProject } = await import("./projects");
+    await expect(
+      archiveProject({
+        account_id: "owner-1",
+        project_id: "proj-1",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      host_id: "host-1",
+    });
+    expect(poolConnectQueryMock).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects"),
+      expect.anything(),
+    );
+  });
+
+  it("continues when archive-info is unavailable and only last_backup is recorded", async () => {
+    poolQueryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            host_id: "host-1",
+            backup_repo_id: "repo-1",
+            provisioned: true,
+            state: { state: "opened" },
+            host_status: "running",
+            last_backup: new Date("2026-06-15T04:32:34.102Z"),
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [],
+      });
+    getBackupsMock = jest.fn(async () => {
+      throw new Error(
+        "request -- no subscribers matching 'project.proj-1.archive-info.-' - callHub: subject='hub.account.owner-1.api', name='projects.archiveProject', code='503'",
       );
     });
 
