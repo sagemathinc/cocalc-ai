@@ -277,14 +277,6 @@ const PRODUCT_OPTIONS = [
   title: string;
 }>;
 
-const PRODUCT_MODEL_ITEMS = [
-  "Code",
-  "Files",
-  "Notebooks",
-  "Documents",
-  "AI",
-] as const;
-
 const DIFFERENCE_SIGNALS = [
   { icon: "files", label: "Shared context" },
   { icon: "users", label: "Collaboration" },
@@ -862,33 +854,12 @@ function ProductsSection() {
           padding: 20,
         }}
       >
-        <Flex align="center" justify="space-between" wrap gap={12}>
-          <Text strong style={{ color: PUBLIC_COLORS.link }}>
-            Same CoCalc project model
-          </Text>
-          <Flex gap={6} wrap>
-            {PRODUCT_MODEL_ITEMS.map((item) => (
-              <Tag
-                key={item}
-                style={{
-                  background: PUBLIC_COLORS.brandSubtle,
-                  borderColor: alpha(PUBLIC_COLORS.link, 0.14),
-                  color: PUBLIC_COLORS.link,
-                  marginInlineEnd: 0,
-                }}
-              >
-                {item}
-              </Tag>
-            ))}
-          </Flex>
-        </Flex>
         <div
           className="cocalc-public-home-product-grid"
           style={{
             display: "grid",
             gap: 12,
             gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-            marginTop: 18,
           }}
         >
           {PRODUCT_OPTIONS.map((option) => (
@@ -931,20 +902,6 @@ function ProductsSection() {
             </div>
           ))}
         </div>
-        <Flex align="center" gap={8} style={{ marginTop: 16 }}>
-          <Text type="secondary">Individual</Text>
-          <span
-            aria-hidden="true"
-            style={{
-              background: `linear-gradient(90deg, ${COLORS.ANTD_LINK_BLUE_DARK}, ${PUBLIC_COLORS.success}, ${COLORS.AI_ASSISTANT_FONT}, ${PUBLIC_COLORS.warning}, ${COLORS.GRAY_D})`,
-              borderRadius: PANEL_RADIUS,
-              display: "block",
-              flex: 1,
-              height: 4,
-            }}
-          />
-          <Text type="secondary">Organization</Text>
-        </Flex>
       </div>
     </section>
   );
@@ -1164,11 +1121,11 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
         }}
       >
         <Hero authenticated={authenticated} siteName={siteName} />
-        <ProjectSection />
         <AudienceRoutesSection />
         <WorkflowsSection />
         <ProductsSection />
         <DifferenceSection />
+        <ProjectSection />
         <PathSection authenticated={authenticated} />
       </div>
     </PublicPage>

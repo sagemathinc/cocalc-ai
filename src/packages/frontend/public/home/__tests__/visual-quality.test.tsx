@@ -245,11 +245,11 @@ describe("PublicHomeApp visual quality contract", () => {
     expect(
       sectionHeadings.map((heading) => heading.textContent?.trim()),
     ).toEqual([
-      "Keep the record with the work.",
       "Built for research groups, courses, and platform teams.",
       "Work where the project already lives.",
       "Choose the operating model that fits your team.",
       "A workspace built around the project.",
+      "Keep the record with the work.",
       "Pick the next step that matches your situation.",
     ]);
     for (const heading of sectionHeadings) {

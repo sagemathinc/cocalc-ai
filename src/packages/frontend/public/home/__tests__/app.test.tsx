@@ -75,11 +75,11 @@ describe("PublicHomeApp", () => {
     ).toBeNull();
     expect(getHomepageSectionLabels(container)).toEqual([
       "CoCalc hero",
-      "Project continuity",
       "Who CoCalc helps",
       "Core workflows",
       "Ways to run CoCalc",
       "Why CoCalc is different",
+      "Project continuity",
       "Choose your path",
     ]);
     expectHomepageSectionsLabeled(container);
@@ -242,10 +242,20 @@ describe("PublicHomeApp", () => {
       "One VM",
       "Private",
       "Enterprise",
+    ]) {
+      expect(within(products).getByText(option)).not.toBeNull();
+    }
+    for (const removedLabel of [
+      "Same CoCalc project model",
+      "Code",
+      "Files",
+      "Notebooks",
+      "Documents",
+      "AI",
       "Individual",
       "Organization",
     ]) {
-      expect(within(products).getByText(option)).not.toBeNull();
+      expect(within(products).queryByText(removedLabel)).toBeNull();
     }
     expect(
       within(products).getAllByText(/customer-operated private deployment/i)
