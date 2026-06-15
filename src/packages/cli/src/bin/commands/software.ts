@@ -226,6 +226,30 @@ function parseLimit(raw: string | undefined): number {
   return value;
 }
 
+function formatDurationMs(ms: number): string {
+  const value = Math.max(0, Math.round(ms));
+  if (value < 1000) {
+    return `${value}ms`;
+  }
+  const seconds = value / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(seconds < 10 ? 2 : 1)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function elapsedMsSince(
+  startedAt: Date,
+  deps: Pick<SoftwareCommandDeps, "now">,
+): number {
+  return Math.max(
+    0,
+    (deps.now?.() ?? new Date()).getTime() - startedAt.getTime(),
+  );
+}
+
 async function localTagExists({
   manifests,
   tag,
@@ -406,6 +430,7 @@ function buildSummary(
     tag: manifest.tag,
     tag_source: manifest.tag_generated ? "generated" : "explicit",
     artifact_id: manifest.artifact_id,
+    duration: formatDurationMs(manifest.build.duration_ms),
     git: `${manifest.source.git_short} ${
       manifest.source.git_dirty ? "dirty" : "clean"
     }`,
@@ -899,6 +924,7 @@ Supported deploy/smoke components:
         command: Command,
       ) => {
         const component = parseSoftwareBuildComponent(componentArg);
+        const startedAt = deps.now?.() ?? new Date();
         const localStore = resolveSoftwareLocalStore({
           option: opts.localStore,
           env: deps.env ?? process.env,
@@ -928,6 +954,7 @@ Supported deploy/smoke components:
             component,
             tag: manifest.tag,
             artifact_id: manifest.artifact_id,
+            duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
             remote_manifest: entry.manifest_url,
             index: `${config.publicBaseUrl}/${indexKey(component)}`,
             files: entry.files.map((file) => file.url),
@@ -960,6 +987,7 @@ Supported deploy/smoke components:
         command: Command,
       ) => {
         const component = parseSoftwareDeployComponent(componentArg);
+        const startedAt = deps.now?.() ?? new Date();
         const { artifactComponent, scope } =
           rocketDeployTargetForComponent(component);
         if (!deps.runCommand) {
@@ -1009,6 +1037,7 @@ Supported deploy/smoke components:
             component,
             tag: artifact.tag,
             artifact_id: artifact.artifact_id,
+            duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
             source: artifact.source,
             remote_manifest: artifact.remote_manifest,
             bundle_url: artifact.bundle_url,

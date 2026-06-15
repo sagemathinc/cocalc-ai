@@ -546,6 +546,7 @@ test("software push uploads files manifest and component index", async () => {
   assert.equal(payload.ok, true);
   assert.equal(payload.command, "software push");
   assert.equal(payload.data.tag, "push-test");
+  assert.equal(payload.data.duration, "0ms");
 });
 
 test("software list merges local and remote artifacts", async () => {
