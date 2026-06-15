@@ -43,8 +43,10 @@ Accepted deploy components:
 ```text
 static
 hub
-conat-router
-conat-persist
+hub-conat-router
+hub-conat-persist
+host-conat-router
+host-conat-persist
 project-host
 project
 tools
@@ -69,7 +71,9 @@ Important operator semantics:
 - `star` uses the third positional argument as a channel (`stable`,
   `candidate`, or `dev`) instead of an auth profile.
 - `cli`, `launchpad`, and `plus` are publish/promote style components. They do
-  not deploy to a Rocket site profile.
+  not deploy to a Rocket site profile. They should still have explicit
+  channels so an operator can publish a candidate, test it on real machines,
+  then promote the same immutable artifact to stable.
 
 ## Current Repository Facts
 
@@ -134,8 +138,9 @@ they can be tested and deployed independently.
 - `acp-worker`
 
 Those are project-host-local components. They are not the same as the bay
-`conat-router` and `conat-persist` services requested for `cocalc software
-deploy conat-router ...` and `cocalc software deploy conat-persist ...`.
+`hub-conat-router` and `hub-conat-persist` services requested for
+`cocalc software deploy hub-conat-router ...` and `cocalc software deploy
+hub-conat-persist ...`.
 
 ### Existing R2 Publishing Scripts
 
@@ -202,26 +207,27 @@ the Star installer path is intentionally changed.
 
 ## Names And Disambiguation
 
-There are two different meanings for `conat-router` and `conat-persist`:
+There are two different Conat router/persist service families:
 
-- Bay services under Rocket systemd, e.g. `cocalc-bay-conat-router.service` and
+- Hub/bay services under Rocket systemd, e.g.
+  `cocalc-bay-conat-router.service` and
   `cocalc-bay-conat-persist.service`.
 - Project-host-local managed components controlled by `cocalc host rollout`.
 
-For `cocalc software deploy conat-router ...` and `cocalc software deploy
-conat-persist ...`, use the bay meaning. These are deployable components for a
-Rocket site profile, not build artifacts.
+Use explicit names in the high-level `software` command:
 
-Recommended implementation detail:
+- `hub-conat-router` means the Rocket bay/hub Conat router service.
+- `hub-conat-persist` means the Rocket bay/hub Conat persist service.
+- `host-conat-router` means the project-host-local Conat router component.
+- `host-conat-persist` means the project-host-local Conat persist component.
 
-- Accept `conat-router` and `conat-persist` as the human-facing names.
-- Also accept future aliases `bay-conat-router` and `bay-conat-persist` if
-  confusion continues.
-- In human output always print `bay conat-router` or `bay conat-persist`.
-- Do not call `cocalc host rollout --component conat-router` for these names.
+Do not accept bare `conat-router` or `conat-persist` in `cocalc software`.
+The whole point of the high-level command is to be memorable under pressure,
+and bare names are ambiguous during incidents.
 
 Project-host-local component rollouts should remain lower-level host operations
-for now:
+until `host-conat-router` and `host-conat-persist` are deliberately wired into
+`cocalc software`:
 
 ```sh
 cocalc host rollout <host> --component conat-router --wait
@@ -698,14 +704,14 @@ cocalc rocket deploy <profile> --scope bay --bundle <downloaded-or-local-runtime
 This should not upgrade project hosts unless the operator deploys
 `project-host`, `project`, or `tools`.
 
-### `deploy conat-router` and `deploy conat-persist`
+### `deploy hub-conat-router` and `deploy hub-conat-persist`
 
 These refer to bay systemd services.
 
 Initial backend:
 
-- Resolve a `hub` artifact, because the bay `conat-router` and
-  `conat-persist` code is shipped in the bay runtime.
+- Resolve a `hub` artifact, because the bay/hub Conat router and persist code
+  is shipped in the bay runtime.
 - Stage/deploy the `hub` artifact to the bay if it is not already the current
   runtime.
 - Restart only the requested bay shared service if the low-level Rocket script
@@ -719,8 +725,26 @@ Required lower-level work:
   for a one-component deploy. Add a lower-level primitive before exposing these
   as high-level commands.
 
-Do not use `cocalc host rollout --component conat-router` here; that is the
-project-host component.
+Do not use `cocalc host rollout --component conat-router` for
+`hub-conat-router`; that is the project-host component.
+
+### `deploy host-conat-router` and `deploy host-conat-persist`
+
+These refer to project-host-local managed components.
+
+Initial backend:
+
+- Resolve a `project-host` artifact, because host Conat router/persist code is
+  shipped in the project-host bundle.
+- Ensure the selected project-host artifact is installed on the target hosts.
+- Run project-host component rollout for only the requested component.
+
+Required design decision:
+
+- Decide whether high-level deploy should target all online hosts by default,
+  or require a configured host selection policy. Emergency fleet upgrades argue
+  for all-online by default in production profiles, but staging may need host
+  subsets.
 
 ### `deploy project-host`
 
@@ -759,11 +783,28 @@ First implementation:
 
 - `build` creates local manifest and files.
 - `push` uploads files to R2.
-- `deploy` updates the public channel/latest manifest for that product.
+- `deploy` updates a public channel manifest for that product.
 
-The third positional value can be optional or a channel in the future. For now,
-document that `profile-or-channel` is ignored or rejected for these until the
-channel model is made explicit.
+Third positional argument is a channel:
+
+```sh
+cocalc software deploy cli <tag-or-id> candidate
+cocalc software deploy cli <tag-or-id> stable
+cocalc software deploy launchpad <tag-or-id> candidate
+cocalc software deploy plus <tag-or-id> candidate
+```
+
+Channel set:
+
+- `stable`: default installer channel.
+- `candidate`: public pre-release channel for real-machine testing.
+- `dev`: optional fast-moving channel for internal tests.
+
+The existing `latest-<os>-<arch>.json` files should become compatibility
+aliases for the `stable` channel, not the primary model. Candidate/dev channel
+manifests should be added for CLI/Launchpad/Plus even if the first
+implementation still delegates uploading to the existing package-local publish
+scripts.
 
 ### `deploy star`
 
@@ -942,20 +983,27 @@ Validation:
 - deploy project/tools to staging.
 - check `host deploy status` before and after.
 
-### Phase 6: Bay `conat-router` And `conat-persist`
+### Phase 6: Hub And Host Conat Components
 
 Add or expose a low-level Rocket primitive that can:
 
 - stage a hub/bay-runtime artifact if needed
-- restart only bay conat-router or bay conat-persist
+- restart only hub-conat-router or hub-conat-persist
 - avoid restarting cloudflared unless explicitly requested elsewhere
-- avoid project-host-local `host rollout`
+- avoid accidentally using project-host-local `host rollout` for hub services
 
 Then wire:
 
 ```sh
-cocalc software deploy conat-router <hub-tag-or-id> <profile>
-cocalc software deploy conat-persist <hub-tag-or-id> <profile>
+cocalc software deploy hub-conat-router <hub-tag-or-id> <profile>
+cocalc software deploy hub-conat-persist <hub-tag-or-id> <profile>
+```
+
+Add host-side component wiring separately:
+
+```sh
+cocalc software deploy host-conat-router <project-host-tag-or-id> <profile>
+cocalc software deploy host-conat-persist <project-host-tag-or-id> <profile>
 ```
 
 Validation:
@@ -973,11 +1021,16 @@ Short-term:
 
 - use package scripts for build
 - use common manifest/index for local/remote visibility
-- use existing publish script behavior for public latest/channel manifests
+- add `stable`, `candidate`, and optional `dev` channel manifests
+- keep existing `latest-<os>-<arch>.json` as stable compatibility aliases
+- use existing publish script behavior only as a compatibility layer while the
+  common software store is being introduced
 
 Long-term:
 
 - move package-local R2 publishing to the common software store.
+- make all installer docs and scripts consume channel manifests, not ad hoc
+  latest files.
 
 Validation:
 
@@ -1031,8 +1084,10 @@ This is intentionally not part of the first cut.
 - Deploy target is Star but third positional argument is not a valid channel.
 - Deploy target is non-Star but third positional argument is not a configured
   profile.
-- Bay `conat-router`/`conat-persist` requested before the low-level precise
-  restart primitive exists.
+- `hub-conat-router`/`hub-conat-persist` requested before the low-level precise
+  bay restart primitive exists.
+- `host-conat-router`/`host-conat-persist` requested without a configured host
+  selection policy, if the implementation chooses not to default to all-online.
 
 ## Suggested Human Output
 
@@ -1102,9 +1157,10 @@ sha256-identical artifact.
   `deploy`, but `build` must not push.
 - Should `software list` default to merged local+remote, or show remote first
   and local-only rows separately? Current preference: merged with `source`.
-- Should `cli`, `launchpad`, and `plus` use channels immediately, or keep their
-  existing `latest-<os>-<arch>.json` semantics until the common channel model is
-  needed?
+- Should CLI/Launchpad/Plus channel manifests be written only by
+  `cocalc software deploy`, or should package-local publish scripts learn the
+  same channel model directly? Current preference: put channel behavior in
+  `cocalc software` first, then simplify package-local scripts later.
 - Should R2 indexes have optimistic generation numbers to prevent concurrent
   updates? Current preference: not in first cut, but design schema so it can be
   added.
