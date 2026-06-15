@@ -144,9 +144,9 @@ describe("PublicHomeApp visual quality contract", () => {
     expectGridTemplate(differenceGrid, "repeat(2, minmax(0, 1fr))");
     expect(getCardTitles(differenceGrid)).toEqual([
       "Project-centered workflow",
-      "Reviewable work",
-      "Recoverable projects",
-      "Hosted, local, one VM, or private",
+      "Inspection before handoff",
+      "Practical recovery",
+      "Deployment path choice",
     ]);
 
     expect(getDirectCards(pathGrid)).toHaveLength(5);
@@ -228,10 +228,10 @@ describe("PublicHomeApp visual quality contract", () => {
     ).toEqual([
       "Keep the record with the work.",
       "Built for research groups, courses, and platform teams.",
-      "Use notebooks, terminals, documents, and AI in context.",
+      "Work where the project already lives.",
       "Choose the operating model that fits your team.",
-      "Work you can review, recover, and continue.",
-      "Start with the path that matches your operating model.",
+      "A workspace built around the project.",
+      "Pick the next step that matches your situation.",
     ]);
     for (const heading of sectionHeadings) {
       expect(textLength(heading)).toBeLessThanOrEqual(72);

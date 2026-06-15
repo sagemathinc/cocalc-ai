@@ -182,7 +182,7 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(workflows).getByRole("heading", {
-        name: "Use notebooks, terminals, documents, and AI in context.",
+        name: "Work where the project already lives.",
       }),
     ).not.toBeNull();
     expect(
@@ -252,14 +252,14 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(difference).getByRole("heading", {
-        name: "Work you can review, recover, and continue.",
+        name: "A workspace built around the project.",
       }),
     ).not.toBeNull();
     for (const title of [
       "Project-centered workflow",
-      "Reviewable work",
-      "Recoverable projects",
-      "Hosted, local, one VM, or private",
+      "Inspection before handoff",
+      "Practical recovery",
+      "Deployment path choice",
     ]) {
       expect(within(difference).getByText(title)).not.toBeNull();
     }
@@ -267,7 +267,7 @@ describe("PublicHomeApp", () => {
     const path = screen.getByRole("region", { name: "Choose your path" });
     expect(
       within(path).getByRole("heading", {
-        name: "Start with the path that matches your operating model.",
+        name: "Pick the next step that matches your situation.",
       }),
     ).not.toBeNull();
     expect(

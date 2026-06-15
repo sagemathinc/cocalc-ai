@@ -195,7 +195,7 @@ const WORKFLOW_FEATURES = [
 const AUDIENCE_ROUTES = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Keep experiments, code, papers, outputs, and AI assistance tied to a project record the team can inspect and continue.",
+    body: "Give teams a common place for experiments, code, papers, outputs, and AI-assisted changes they can inspect together.",
     button: "Explore workflows",
     href: "features/compare",
     icon: "project-outlined",
@@ -203,7 +203,7 @@ const AUDIENCE_ROUTES = [
   },
   {
     accent: COLORS.RUN,
-    body: "Run technical course workflows around student projects, assignments, grading, shared environments, and contextual help.",
+    body: "Organize assignments, grading, shared environments, and student support around the technical project work.",
     button: "Course workflows",
     href: "features/teaching",
     icon: "graduation-cap",
@@ -211,7 +211,7 @@ const AUDIENCE_ROUTES = [
   },
   {
     accent: COLORS.GRAY_D,
-    body: "Match the operating model to your requirements: hosted, local, single-VM, or customer-operated private deployment.",
+    body: "Separate everyday hosted use from local evaluation, single-VM appliance, and customer-operated deployment decisions.",
     button: "Compare product paths",
     href: "products",
     icon: "servers",
@@ -302,24 +302,24 @@ const DIFFERENTIATORS = [
   },
   {
     accent: COLORS.RUN,
-    body: "Human and AI changes remain easier to inspect, discuss, continue, and hand off.",
-    eyebrow: "Inspect and continue",
+    body: "Human and AI changes are easier to inspect and discuss before another person depends on them.",
+    eyebrow: "Inspect before handoff",
     icon: "search",
-    title: "Reviewable work",
+    title: "Inspection before handoff",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    body: "History, shared files, TimeTravel, snapshots, and backups help teams recover useful work instead of rebuilding context.",
+    body: "History, shared files, TimeTravel, snapshots, and backups give teams paths back to useful work.",
     eyebrow: "Keep moving",
     icon: "history",
-    title: "Recoverable projects",
+    title: "Practical recovery",
   },
   {
     accent: COLORS.GRAY_M,
-    body: "Start hosted, evaluate locally, use one shared VM, or move to a customer-operated private deployment path.",
-    eyebrow: "Deployment choice",
+    body: "Start hosted, evaluate locally, use a single appliance VM, or plan a customer-operated private environment.",
+    eyebrow: "Choose where it runs",
     icon: "cloud",
-    title: "Hosted, local, one VM, or private",
+    title: "Deployment path choice",
   },
 ] satisfies Array<{
   accent: string;
@@ -668,7 +668,7 @@ function AudienceRoutesSection() {
   return (
     <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
       <SectionIntro
-        body="Researchers get productive projects, instructors get course workflows, and IT teams get deployment choices without forcing a different model for each audience."
+        body="Different audiences can start from their own question: how to collaborate, how to teach, or how to operate CoCalc."
         eyebrow="Who it helps"
         title="Built for research groups, courses, and platform teams."
       />
@@ -715,9 +715,9 @@ function WorkflowsSection() {
     <section aria-label="Core workflows" style={{ padding: "28px 0" }}>
       <SectionIntro
         action={<Button href={appPath("features")}>All features</Button>}
-        body="Open the workflow you need without moving the project into another product: notebooks, writing, terminals, agents, courses, and visual collaboration."
+        body="Open notebooks, writing, terminals, agents, courses, and visual collaboration without moving work into a separate product."
         eyebrow="Core workflows"
-        title="Use notebooks, terminals, documents, and AI in context."
+        title="Work where the project already lives."
       />
       <div
         className="cocalc-public-home-workflow-layout"
@@ -730,7 +730,7 @@ function WorkflowsSection() {
         }}
       >
         <aside
-          aria-label="One CoCalc workspace model"
+          aria-label="One CoCalc project model"
           style={{
             background: `linear-gradient(180deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.warningTint} 100%)`,
             border: `1px solid ${PUBLIC_COLORS.border}`,
@@ -744,10 +744,10 @@ function WorkflowsSection() {
               <IconTile accent={PUBLIC_COLORS.link} icon="project-outlined" />
               <span>
                 <Text strong style={{ color: PUBLIC_COLORS.link }}>
-                  Shared workspace
+                  Project context
                 </Text>
                 <Text style={{ display: "block" }} type="secondary">
-                  Context for people, tools, and AI.
+                  People, tools, and AI use the same materials.
                 </Text>
               </span>
             </Flex>
@@ -984,12 +984,12 @@ function DifferenceSection() {
         <div>
           <Eyebrow>Why CoCalc is different</Eyebrow>
           <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Work you can review, recover, and continue.
+            A workspace built around the project.
           </Title>
           <Paragraph style={{ margin: 0 }}>
-            Fast output matters less if nobody can explain, resume, or recover
-            it. CoCalc keeps collaboration, history, artifacts, and deployment
-            options around the project.
+            A project is more than a place to store files. CoCalc gives it
+            enough structure to hold collaboration, history, recovery, and
+            operating choices alongside the work people need to understand.
           </Paragraph>
         </div>
         <div
@@ -1086,13 +1086,13 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
       >
         <Eyebrow>Choose your path</Eyebrow>
         <Title level={2} style={{ margin: "8px 0 10px" }}>
-          Start with the path that matches your operating model.
+          Pick the next step that matches your situation.
         </Title>
         <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-          Use hosted CoCalc.ai when you want CoCalc operated for you, Plus for
-          local evaluation, Star for one shared VM, Launchpad or Rocket for
-          customer-operated private deployment, and licensing when procurement,
-          governance, or support matter.
+          Start on hosted CoCalc.ai for a managed workspace, install Plus for
+          local evaluation, use Star for one shared VM, compare Launchpad or
+          Rocket for private deployment, or review licensing when procurement,
+          governance, or support are part of the decision.
         </Paragraph>
       </div>
       <div
@@ -1140,8 +1140,8 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
         gap={12}
       >
         <Text type="secondary">
-          Need help choosing? Compare product paths, review pricing, or contact
-          support.
+          Still narrowing it down? Compare product paths, review pricing, or
+          contact support.
         </Text>
         <Flex gap={8} wrap>
           <Button href={appPath("products")}>Compare product paths</Button>
