@@ -99,7 +99,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(hero).getByText(
-        /CoCalc keeps collaboration, AI assistance, history, and recovery tied to the project/i,
+        /CoCalc keeps the work in one project, so people and AI agents can review what happened/i,
       ),
     ).not.toBeNull();
     expect(within(hero).queryByText(/notebooks, code, documents/i)).toBeNull();
@@ -328,9 +328,9 @@ describe("PublicHomeApp", () => {
       within(
         screen.getByRole("dialog", { name: "Inspection before handoff" }),
       ).getByRole("link", {
-        name: "Compare workspace model",
+        name: "Explore AI workflows",
       }),
-    ).toHaveAttribute("href", "/features/compare");
+    ).toHaveAttribute("href", "/features/ai");
     expect(
       within(
         screen.getByRole("dialog", { name: "Inspection before handoff" }),
@@ -346,9 +346,9 @@ describe("PublicHomeApp", () => {
     });
     expect(
       within(recoveryDialog).getByRole("link", {
-        name: "Compare workspace model",
+        name: "See TimeTravel in notebooks",
       }),
-    ).toHaveAttribute("href", "/features/compare");
+    ).toHaveAttribute("href", "/features/jupyter-notebook");
     expect(
       within(recoveryDialog).queryByRole("link", {
         name: "Explore features",

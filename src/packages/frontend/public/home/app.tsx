@@ -295,8 +295,8 @@ const DIFFERENTIATORS = [
   {
     accent: COLORS.RUN,
     body: "Review live collaboration and AI-assisted changes in the project before teammates build on them.",
-    ctaHref: "features/compare",
-    ctaLabel: "Compare workspace model",
+    ctaHref: "features/ai",
+    ctaLabel: "Explore AI workflows",
     details: [
       {
         body: "Realtime editing, chat, and shared outputs let people inspect work together before handoff.",
@@ -311,7 +311,7 @@ const DIFFERENTIATORS = [
         title: "Keep evidence together",
       },
     ],
-    eyebrow: "Inspect before handoff",
+    eyebrow: "Review together",
     icon: "search",
     modalBody:
       "CoCalc keeps human collaboration, AI-assisted changes, files, notebooks, terminals, outputs, and discussion close enough for people to inspect the work before relying on it.",
@@ -320,8 +320,8 @@ const DIFFERENTIATORS = [
   {
     accent: COLORS.AI_ASSISTANT_FONT,
     body: "History, TimeTravel, snapshots, and backups help teams understand changes and return to useful states.",
-    ctaHref: "features/compare",
-    ctaLabel: "Compare workspace model",
+    ctaHref: "features/jupyter-notebook",
+    ctaLabel: "See TimeTravel in notebooks",
     details: [
       {
         body: "Project history and TimeTravel help teams understand how work changed over time.",
@@ -526,9 +526,9 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            CoCalc keeps collaboration, AI assistance, history, and recovery
-            tied to the project, so groups can review, hand off, and continue
-            work without rebuilding context.
+            CoCalc keeps the work in one project, so people and AI agents can
+            review what happened, pick up where someone left off, and keep
+            moving without recreating the setup.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>

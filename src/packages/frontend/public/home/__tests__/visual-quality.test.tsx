@@ -178,6 +178,9 @@ describe("PublicHomeApp visual quality contract", () => {
       "Practical recovery",
       "Operating model choice",
     ]);
+    expect(differenceGrid.textContent ?? "").not.toMatch(
+      /Inspect before handoff\s*Inspection before handoff/i,
+    );
 
     expect(getDirectCards(finalActions)).toHaveLength(3);
     expectGridTemplate(finalActions, "repeat(3, max-content)");

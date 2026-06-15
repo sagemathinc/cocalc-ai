@@ -3,98 +3,313 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Col, Flex, Row, Table, Typography } from "antd";
+import type { CSSProperties, ReactNode } from "react";
+
+import { Button, Flex, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { BulletList, LinkButton, featureAppPath } from "./page-components";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { COLORS } from "@cocalc/util/theme";
+import { LinkButton, featureAppPath } from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;
 
-const COMPARISON_GROUPS = [
-  {
-    bestAt:
-      "Quick notebook startup, lightweight sharing, and easy access to hosted compute.",
-    cocalc:
-      "Choose CoCalc when notebooks should stay close to terminals, files, LaTeX, course workflows, AI agents, history, recovery, and deployment options.",
-    key: "colab",
-    title: "Google Colab and quick notebook hosts",
-  },
-  {
-    bestAt:
-      "Warehouse-connected analytics, dashboards, and SQL-heavy collaborative data work.",
-    cocalc:
-      "Choose CoCalc when the center of gravity is an engineering, research, or course workspace rather than a BI surface.",
-    key: "analytics",
-    title: "Deepnote and analytics-first notebook platforms",
-  },
-  {
-    bestAt:
-      "Building-block flexibility for organizations that want to assemble and operate their own notebook stack.",
-    cocalc:
-      "Choose CoCalc when you want notebooks, terminals, collaboration, grading, AI agents, and deployment choices in a single product family.",
-    key: "jupyter-stack",
-    title: "JupyterHub, JupyterLab, and VS Code notebook workflows",
-  },
-  {
-    bestAt:
-      "IDE-first application development, app shipping, and product-style coding workflows.",
-    cocalc:
-      "Choose CoCalc when the team also needs notebook-native research, mathematical documents, shared Linux environments, teaching workflows, or agent-assisted work beyond an IDE.",
-    key: "ide",
-    title: "Replit and other IDE-first coding platforms",
-  },
-];
+const PANEL_RADIUS = 8;
+const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
+
+const COCALC_FITS = [
+  "The project is more than one notebook, editor, terminal, or dashboard.",
+  "People need to review work while it is still changing.",
+  "AI agents should work from the same files, notebooks, terminals, and chat as the team.",
+  "History, TimeTravel, snapshots, or backups need to stay close to the work.",
+  "The operating model may change: hosted, local, single-VM, or customer-operated.",
+] as const;
+
+const NARROWER_FITS = [
+  "A single notebook, dashboard, IDE, or reporting surface is enough.",
+  "Collaboration mostly happens after the work is finished.",
+  "Course administration is separate from the computational environment.",
+  "Your organization wants to assemble and maintain separate open-source pieces itself.",
+  "Governance, hosting, and operations are already settled around one tool.",
+] as const;
 
 const DECISION_ROWS = [
   {
     cocalc:
-      "The shared project workspace: notebooks, terminals, files, documents, whiteboards, support, AI agents, history, and recovery stay with one project.",
-    key: "unit",
-    question: "What is the unit of work?",
-    typical:
-      "A single notebook, dashboard, editor, or app builder is the center, and the rest lives elsewhere.",
+      "Use CoCalc when files, notebooks, terminals, documents, output, discussion, and recovery should stay with the project.",
+    other:
+      "Use a narrower tool when the surrounding artifacts already live somewhere stable.",
+    question: "What needs to stay together?",
   },
   {
     cocalc:
-      "Realtime collaboration spans notebooks, terminals, documents, whiteboards, and chat, backed by Patchflow.",
-    key: "collab",
-    question: "How broad is collaboration?",
-    typical:
-      "Collaboration is strongest in one surface, while adjacent tools are separate or less synchronized.",
+      "Use CoCalc when researchers, instructors, support staff, and AI agents need to inspect the same working state.",
+    other:
+      "Use a narrower tool when collaboration mostly happens in one surface.",
+    question: "Who needs to inspect the work?",
   },
   {
     cocalc:
-      "Courses, assignments, collection, grading, and student support live in the same environment as the technical work.",
-    key: "teaching",
-    question: "How important is teaching or structured support?",
-    typical:
-      "Teaching, LMS integration, or support workflows often require separate systems and operational glue.",
+      "Use CoCalc when teammates review, explain, and hand off work while it is still active.",
+    other:
+      "Use a narrower tool when review happens after the work is complete.",
+    question: "When does collaboration happen?",
   },
   {
     cocalc:
-      "Teams can start on CoCalc.ai, use CoCalc Plus locally, run CoCalc Star on a public VM, or move to Launchpad, Rocket, and site licensing without changing the core workspace model.",
-    key: "deployment",
-    question: "Do deployment options matter?",
-    typical:
-      "The product is optimized around a single hosted or self-assembled deployment model.",
+      "Use CoCalc when assignments, grading, lab support, or workshops need the same environment as the computation.",
+    other:
+      "Use an LMS or lightweight notebook host when course administration and computation can stay separate.",
+    question: "Is teaching part of the workflow?",
   },
   {
     cocalc:
-      "Agent workflows live inside the same collaborative project, so Codex can work with real files, notebooks, terminals, screenshots, and team chat context.",
-    key: "agents",
-    question: "How agent-native is the AI story?",
-    typical:
-      "AI may be useful, but it often behaves more like a sidecar prompt box, autocomplete layer, or isolated assistant tied to one surface.",
+      "Use CoCalc when you need a path from hosted use to local, single-VM, or customer-operated deployments.",
+    other:
+      "Use a narrower tool when the hosting and operations model is already fixed.",
+    question: "Who operates it?",
+  },
+] as const;
+
+const NEXT_ROUTES = [
+  {
+    body: "Hosted, local, single-VM, Launchpad, and Rocket.",
+    href: "products",
+    label: "Compare operating models",
+    title: "Choosing how CoCalc runs",
   },
   {
-    cocalc:
-      "You can keep shell tools, documents, slides, and notebooks close together instead of splitting work across services.",
-    key: "breadth",
-    question: "How broad is the technical workflow?",
-    typical:
-      "The product is excellent at its slice, but you still need other tools for the rest of the workflow.",
+    body: "Codex and AI assistance inside shared project context.",
+    href: "features/ai",
+    label: "AI workflows",
+    title: "Reviewing AI-assisted work",
   },
-];
+  {
+    body: "Assignments, grading, support, and shared environments.",
+    href: "features/teaching",
+    label: "Teaching workflows",
+    title: "Planning a course or workshop",
+  },
+  {
+    body: "Hosted plans, organizational buying, and quotes.",
+    href: "pricing",
+    label: "Review pricing options",
+    title: "Understanding buying options",
+  },
+] as const;
+
+function alpha(hexColor: string, opacity: number): string {
+  const hex = hexColor.replace("#", "");
+  if (hex.length !== 6) return hexColor;
+  const red = parseInt(hex.slice(0, 2), 16);
+  const green = parseInt(hex.slice(2, 4), 16);
+  const blue = parseInt(hex.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
+}
+
+function Panel({
+  accent = PUBLIC_COLORS.brand,
+  children,
+  className,
+  muted = false,
+}: {
+  accent?: string;
+  children: ReactNode;
+  className?: string;
+  muted?: boolean;
+}) {
+  return (
+    <div
+      className={className}
+      style={{
+        background: muted
+          ? PUBLIC_COLORS.paperBackground
+          : PUBLIC_COLORS.surface,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderTop: `4px solid ${accent}`,
+        borderRadius: PANEL_RADIUS,
+        boxShadow: PANEL_SHADOW,
+        height: "100%",
+        padding: 20,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DecisionList({
+  accent,
+  items,
+  title,
+}: {
+  accent: string;
+  items: readonly string[];
+  title: string;
+}) {
+  return (
+    <Panel accent={accent} className="cocalc-compare-decision-panel">
+      <Title level={3} style={{ margin: 0 }}>
+        {title}
+      </Title>
+      <ul className="cocalc-compare-list">
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+function DecisionRow({
+  cocalc,
+  other,
+  question,
+}: {
+  cocalc: string;
+  other: string;
+  question: string;
+}) {
+  return (
+    <div className="cocalc-compare-row">
+      <Text strong className="cocalc-compare-row-question">
+        {question}
+      </Text>
+      <Paragraph style={{ margin: 0 }}>{cocalc}</Paragraph>
+      <Paragraph style={{ margin: 0 }}>{other}</Paragraph>
+    </div>
+  );
+}
+
+function RouteRow({
+  body,
+  href,
+  label,
+  title,
+}: {
+  body: string;
+  href: string;
+  label: string;
+  title: string;
+}) {
+  return (
+    <div className="cocalc-compare-route-row">
+      <div>
+        <Text strong>{title}</Text>
+        <Paragraph style={{ margin: "4px 0 0" }}>{body}</Paragraph>
+      </div>
+      <LinkButton href={featureAppPath(href)}>{label}</LinkButton>
+    </div>
+  );
+}
+
+const COMPARE_PAGE_CSS = `
+  .cocalc-compare-hero {
+    background: linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.brandTint} 100%);
+    border: 1px solid ${PUBLIC_COLORS.border};
+    border-radius: ${PANEL_RADIUS}px;
+    box-shadow: ${PANEL_SHADOW};
+    display: grid;
+    gap: 24px;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+    padding: 28px;
+  }
+
+  .cocalc-compare-quick-read {
+    background: ${alpha(PUBLIC_COLORS.surface, 0.78)};
+    border: 1px solid ${PUBLIC_COLORS.border};
+    border-radius: ${PANEL_RADIUS}px;
+    padding: 18px;
+  }
+
+  .cocalc-compare-split {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cocalc-compare-list {
+    display: grid;
+    gap: 10px;
+    margin: 16px 0 0;
+    padding-left: 20px;
+  }
+
+  .cocalc-compare-checklist {
+    background: ${PUBLIC_COLORS.surface};
+    border: 1px solid ${PUBLIC_COLORS.border};
+    border-radius: ${PANEL_RADIUS}px;
+    box-shadow: ${PANEL_SHADOW};
+    overflow: hidden;
+  }
+
+  .cocalc-compare-row {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: 0.75fr 1fr 1fr;
+    padding: 18px 20px;
+  }
+
+  .cocalc-compare-row + .cocalc-compare-row {
+    border-top: 1px solid ${PUBLIC_COLORS.border};
+  }
+
+  .cocalc-compare-row-question {
+    color: ${PUBLIC_COLORS.heading};
+    font-size: 16px;
+  }
+
+  .cocalc-compare-route-panel {
+    background: ${PUBLIC_COLORS.surface};
+    border: 1px solid ${PUBLIC_COLORS.border};
+    border-radius: ${PANEL_RADIUS}px;
+    box-shadow: ${PANEL_SHADOW};
+  }
+
+  .cocalc-compare-route-row {
+    align-items: center;
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    padding: 16px 20px;
+  }
+
+  .cocalc-compare-route-row + .cocalc-compare-route-row {
+    border-top: 1px solid ${PUBLIC_COLORS.border};
+  }
+
+  @media (max-width: 900px) {
+    .cocalc-compare-hero,
+    .cocalc-compare-split,
+    .cocalc-compare-row {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .cocalc-compare-row {
+      gap: 8px;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .cocalc-compare-hero {
+      padding: 20px;
+    }
+
+    .cocalc-compare-hero .ant-btn,
+    .cocalc-compare-route-row .ant-btn {
+      width: 100%;
+    }
+
+    .cocalc-compare-route-row {
+      align-items: stretch;
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+  }
+`;
+
+const HERO_ACTION_STYLE = {
+  alignItems: "flex-start",
+} satisfies CSSProperties;
 
 export default function CompareFeaturePage({
   helpEmail,
@@ -102,202 +317,101 @@ export default function CompareFeaturePage({
   helpEmail?: string;
 }) {
   return (
-    <Flex vertical gap={18}>
-      <PublicSection>
-        <Title level={2} style={{ margin: 0 }}>
-          Compare CoCalc by workspace model
-        </Title>
-        <Paragraph style={{ fontSize: 18, margin: 0 }}>
-          CoCalc is a better fit when engineering teams, research labs,
-          technical courses, and platform teams need more than a notebook host,
-          IDE, or dashboard surface.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          The useful comparison is whether the work should stay in one
-          collaborative project, or whether a narrower point solution already
-          covers the job.
-        </Paragraph>
-        <Flex wrap gap={12}>
-          <Button type="primary" href={featureAppPath("products")}>
-            Compare product paths
-          </Button>
-          <Button href={featureAppPath("pricing")}>
-            Pricing and licensing
-          </Button>
-          <LinkButton href={featureAppPath("features/jupyter-notebook")}>
-            Jupyter notebooks
-          </LinkButton>
-          <LinkButton href={featureAppPath("features/teaching")}>
-            Teaching workflows
-          </LinkButton>
-          {helpEmail ? (
-            <Button href={`mailto:${helpEmail}`}>Talk with CoCalc</Button>
-          ) : null}
-        </Flex>
-      </PublicSection>
-      <Alert
-        type="warning"
-        showIcon
-        title="These comparisons are intentionally high level."
-        description="Products evolve quickly, and many competitors are excellent at the workflow they target. The point here is to help readers decide whether CoCalc's integrated workspace model fits their situation."
-      />
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          AI-native work changes the comparison
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          A lot of products now have some version of AI help. What matters is
-          whether that help sits next to your work, or whether it can
-          participate inside the workspace where files, notebooks, shell
-          commands, screenshots, and conversations already live.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          CoCalc AI&apos;s direction is agent-first, especially around Codex.
-          The goal is not only to answer questions, but to help inspect code,
-          patch files, reason about failures, and keep work moving inside the
-          same collaborative environment as the rest of the team.
-        </Paragraph>
-        <BulletList
-          items={[
-            "Use agents in the same chats and projects where the actual work is happening.",
-            "Keep notebooks, terminals, files, screenshots, and collaborators near the model instead of reconstructing context elsewhere.",
-            "Treat AI as part of the workflow for debugging, migration, support, and technical writing, not only as answer generation.",
-          ]}
-        />
-        <Flex wrap gap={12}>
-          <LinkButton href={featureAppPath("features/ai")}>
-            AI agents
-          </LinkButton>
-          <LinkButton href="https://github.com/sagemathinc/patchflow">
-            Patchflow
-          </LinkButton>
-        </Flex>
-      </PublicSection>
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Pick CoCalc if you want
+    <Flex vertical gap={30}>
+      <style>{COMPARE_PAGE_CSS}</style>
+
+      <section aria-label="Compare CoCalc workspace model">
+        <div className="cocalc-compare-hero">
+          <Flex vertical gap={16}>
+            <Text
+              strong
+              style={{
+                color: PUBLIC_COLORS.brand,
+                letterSpacing: 0,
+                textTransform: "uppercase",
+              }}
+            >
+              Workspace model
+            </Text>
+            <Title level={2} style={{ margin: 0 }}>
+              Decide whether your group needs a shared project workspace.
             </Title>
-            <BulletList
-              items={[
-                "One workspace for notebooks, Linux tools, files, technical documents, whiteboards, and collaboration.",
-                "Realtime editing that extends beyond notebook cells, backed by Patchflow.",
-                "AI agents that work inside shared projects instead of detached prompt boxes.",
-                "A fit for research labs, engineering teams, technical courses, and advanced support workflows.",
-                "A product ladder from CoCalc.ai to Plus, Star, Launchpad, Rocket, and site licensing.",
-              ]}
-            />
-          </PublicSection>
-        </Col>
-        <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Another tool may fit better if you mainly want
-            </Title>
-            <BulletList
-              items={[
-                "A lightweight hosted notebook with quick access to compute and sharing.",
-                "An analytics-first environment centered on SQL, dashboards, and data-source integrations.",
-                "A do-it-yourself Jupyter stack where building blocks matter more than integrated product behavior.",
-                "An IDE-first app-building workflow where notebooks and teaching are secondary.",
-              ]}
-            />
-          </PublicSection>
-        </Col>
-      </Row>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          How CoCalc compares by category
-        </Title>
-        <Row gutter={[16, 16]}>
-          {COMPARISON_GROUPS.map((group) => (
-            <Col key={group.key} xs={24} md={12}>
-              <PublicSection>
-                <Title level={4} style={{ margin: 0 }}>
-                  {group.title}
-                </Title>
-                <Paragraph style={{ margin: 0 }}>
-                  <Text strong>Usually best at: </Text>
-                  {group.bestAt}
-                </Paragraph>
-                <Paragraph style={{ margin: 0 }}>
-                  <Text strong>Why people still choose CoCalc: </Text>
-                  {group.cocalc}
-                </Paragraph>
-              </PublicSection>
-            </Col>
+            <Paragraph style={{ fontSize: 18, margin: 0, maxWidth: "65ch" }}>
+              CoCalc is worth evaluating when people, notebooks, terminals,
+              documents, AI assistance, and project history need to stay
+              together. If one notebook, dashboard, or editor is enough, a
+              narrower tool may be simpler.
+            </Paragraph>
+            <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
+              <Button type="primary" href={featureAppPath("products")}>
+                Compare operating models
+              </Button>
+              <Button href={featureAppPath("pricing")}>
+                Pricing and licensing
+              </Button>
+              {helpEmail ? (
+                <Button href={`mailto:${helpEmail}`}>Talk with CoCalc</Button>
+              ) : null}
+            </Flex>
+          </Flex>
+          <div className="cocalc-compare-quick-read">
+            <Text strong style={{ color: PUBLIC_COLORS.heading }}>
+              Quick read
+            </Text>
+            <ul className="cocalc-compare-list">
+              <li>Best fit: work that needs review, handoff, and recovery.</li>
+              <li>Probably too much: one-off notebooks or isolated reports.</li>
+              <li>Next question: who operates the workspace?</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <PublicSection
+        ariaLabel="CoCalc compare fit"
+        intro="Start with the shape of the work, not the names of competing tools."
+        title="The practical split."
+      >
+        <div className="cocalc-compare-split">
+          <DecisionList
+            accent={PUBLIC_COLORS.brand}
+            items={COCALC_FITS}
+            title="CoCalc fits when..."
+          />
+          <DecisionList
+            accent={COLORS.GRAY_M}
+            items={NARROWER_FITS}
+            title="A narrower tool fits when..."
+          />
+        </div>
+      </PublicSection>
+
+      <PublicSection
+        ariaLabel="CoCalc compare decision checklist"
+        intro="These questions help decide whether CoCalc belongs in the evaluation before pricing, procurement, or deployment details take over."
+        title="Decision checklist."
+      >
+        <div
+          aria-label="CoCalc compare decision rows"
+          className="cocalc-compare-checklist"
+          role="group"
+        >
+          {DECISION_ROWS.map((row) => (
+            <DecisionRow key={row.question} {...row} />
           ))}
-        </Row>
+        </div>
       </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Questions technical teams usually care about
-        </Title>
-        <Table
-          bordered
-          columns={[
-            {
-              dataIndex: "question",
-              key: "question",
-              title: "Question",
-              width: "22%",
-            },
-            {
-              dataIndex: "cocalc",
-              key: "cocalc",
-              title: "If you choose CoCalc",
-              width: "39%",
-            },
-            {
-              dataIndex: "typical",
-              key: "typical",
-              title: "If you choose a narrower point solution",
-              width: "39%",
-            },
-          ]}
-          dataSource={DECISION_ROWS}
-          pagination={false}
-          rowKey="key"
-          size="middle"
-        />
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Best fit
-        </Title>
-        <BulletList
-          items={[
-            "Research labs and engineering teams that need notebooks, terminals, files, agents, and technical documents in one collaborative environment.",
-            "Technical courses and labs where grading, support, shared infrastructure, and student work need to live together.",
-            "Organizations that may start hosted and later need CoCalc Plus, CoCalc Star, Launchpad, Rocket, or site licensing without changing the user model.",
-          ]}
-        />
-      </PublicSection>
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Related feature pages
-        </Title>
-        <Flex wrap gap={12}>
-          <LinkButton href={featureAppPath("features/jupyter-notebook")}>
-            Jupyter notebooks
-          </LinkButton>
-          <LinkButton href={featureAppPath("features/terminal")}>
-            Linux terminal
-          </LinkButton>
-          <LinkButton href={featureAppPath("features/teaching")}>
-            Teaching a course
-          </LinkButton>
-          <LinkButton href={featureAppPath("features/latex-editor")}>
-            LaTeX editor
-          </LinkButton>
-          <LinkButton href={featureAppPath("features/ai")}>
-            AI agents
-          </LinkButton>
-          <LinkButton href="https://github.com/sagemathinc/patchflow">
-            Patchflow
-          </LinkButton>
-        </Flex>
+
+      <PublicSection
+        ariaLabel="CoCalc compare next routes"
+        intro="Follow the route that matches the question your group is trying to answer next."
+        title="Where to go next."
+      >
+        <div className="cocalc-compare-route-panel">
+          {NEXT_ROUTES.map((route) => (
+            <RouteRow key={route.href} {...route} />
+          ))}
+        </div>
       </PublicSection>
     </Flex>
   );

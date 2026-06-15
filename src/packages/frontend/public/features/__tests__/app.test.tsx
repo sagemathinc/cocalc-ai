@@ -21,6 +21,14 @@ beforeAll(() => {
   });
 });
 
+function textLength(element: Element): number {
+  return (element.textContent ?? "").replace(/\s+/g, " ").trim().length;
+}
+
+function getDirectChildren(element: HTMLElement): HTMLElement[] {
+  return Array.from(element.children) as HTMLElement[];
+}
+
 describe("getFeaturesRouteFromPath", () => {
   it("supports the features index and detail routes", () => {
     expect(getFeaturesRouteFromPath(featurePath())).toEqual({ view: "index" });
@@ -596,7 +604,7 @@ describe("PublicFeaturesApp", () => {
   );
 
   it("renders the compare feature page", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "compare", view: "detail" }}
@@ -604,24 +612,37 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("Compare CoCalc by workspace model"),
-    ).not.toBeNull();
-    expect(screen.getByText("How CoCalc compares by category")).not.toBeNull();
-    expect(
-      screen.getByText("Google Colab and quick notebook hosts"),
+      screen.getByRole("heading", {
+        name: "Decide whether your group needs a shared project workspace.",
+      }),
     ).not.toBeNull();
     expect(
-      screen.getByText(/The shared project workspace: notebooks, terminals/i),
+      screen.getByRole("heading", {
+        name: "The practical split.",
+      }),
     ).not.toBeNull();
     expect(
-      screen.getByText("AI-native work changes the comparison"),
+      screen.getByRole("heading", {
+        name: "CoCalc fits when...",
+      }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Choose the operating model that fits."),
+      screen.getByRole("heading", {
+        name: "A narrower tool fits when...",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Decision checklist." }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Where to go next." }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/Best fit: work that needs review/i),
     ).not.toBeNull();
     expect(
       screen
-        .getAllByRole("link", { name: "Compare product paths" })
+        .getAllByRole("link", { name: "Compare operating models" })
         .map((link) => link.getAttribute("href")),
     ).toEqual(["/products", "/products"]);
     expect(
@@ -629,9 +650,79 @@ describe("PublicFeaturesApp", () => {
         .getAllByRole("link", { name: "Pricing and licensing" })
         .map((link) => link.getAttribute("href")),
     ).toEqual(["/pricing", "/pricing"]);
+    expect(
+      screen
+        .getByRole("link", { name: "Review pricing options" })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(
+      screen.getByRole("link", { name: "AI workflows" }).getAttribute("href"),
+    ).toBe("/features/ai");
+    expect(
+      screen
+        .getByRole("link", { name: "Teaching workflows" })
+        .getAttribute("href"),
+    ).toBe("/features/teaching");
+    expect(
+      screen
+        .getByRole("link", { name: "Talk with CoCalc" })
+        .getAttribute("href"),
+    ).toBe("mailto:help@example.com");
     expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
     expect(
       screen.queryByRole("link", { name: "Compare workspace model" }),
     ).toBeNull();
+    expect(container.querySelector("table")).toBeNull();
+    expect(container.textContent ?? "").not.toMatch(
+      /These comparisons are intentionally high level|How CoCalc compares by category|Google Colab|Deepnote|narrower point solution|product ladder|card wall/i,
+    );
+  });
+
+  it("keeps the compare page scannable and route-focused", () => {
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "compare", view: "detail" }}
+      />,
+    );
+
+    const decisionRows = screen.getByRole("group", {
+      name: "CoCalc compare decision rows",
+    });
+
+    expect(
+      container.querySelectorAll(".cocalc-compare-decision-panel"),
+    ).toHaveLength(2);
+    expect(getDirectChildren(decisionRows)).toHaveLength(5);
+    expect(
+      container.querySelectorAll(".cocalc-compare-route-row"),
+    ).toHaveLength(4);
+    expect(
+      container.querySelectorAll(
+        ".cocalc-compare-signal-card,.cocalc-compare-narrow-card,.cocalc-compare-question-card,.cocalc-compare-next-step",
+      ),
+    ).toHaveLength(0);
+
+    for (const panel of container.querySelectorAll(
+      ".cocalc-compare-decision-panel",
+    )) {
+      expect(textLength(panel)).toBeLessThanOrEqual(480);
+    }
+    for (const row of getDirectChildren(decisionRows)) {
+      expect(textLength(row)).toBeLessThanOrEqual(310);
+    }
+
+    const css = Array.from(container.querySelectorAll("style"))
+      .map((style) => style.textContent ?? "")
+      .join("\n");
+    expect(css).toContain(".cocalc-compare-hero");
+    expect(css).toContain(".cocalc-compare-split");
+    expect(css).toContain(".cocalc-compare-checklist");
+    expect(css).toContain("@media (max-width: 900px)");
+    expect(css).toContain("@media (max-width: 560px)");
+
+    expect(container.textContent ?? "").not.toMatch(
+      /serious technical work|internal planning|multi-bay|project hosts|control plane|stale files/i,
+    );
   });
 });
