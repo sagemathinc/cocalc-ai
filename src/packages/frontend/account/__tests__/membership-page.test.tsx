@@ -101,6 +101,13 @@ jest.mock("antd", () => {
       {children}
     </section>
   );
+  const Modal = Object.assign(
+    ({ open, ...props }: any) => (open ? <Box {...props} /> : null),
+    {
+      error: jest.fn(),
+      success: jest.fn(),
+    },
+  );
   return {
     Alert: Box,
     Button: ({ children, onClick }: any) => (
@@ -109,7 +116,7 @@ jest.mock("antd", () => {
       </button>
     ),
     Card: Box,
-    Modal: ({ open, ...props }: any) => (open ? <Box {...props} /> : null),
+    Modal,
     Popconfirm: ({ children }: { children?: ReactNode }) => <>{children}</>,
     Space: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
     Tag: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
@@ -407,6 +414,20 @@ describe("MembershipPage", () => {
   });
 
   it("shows site-license reverification in the membership source row", async () => {
+    refreshSiteLicenseAffiliationVerification.mockResolvedValue([
+      {
+        account_id: "account-1",
+        assignment_id: "assignment-1",
+        exclusive_group: "researcher",
+        membership_class: "standard",
+        package_id: "package-1",
+        pool_name: "Researcher",
+        reverification_due_at: new Date("2999-06-14T12:00:00Z"),
+        site_license_id: "license-1",
+        state: "current",
+        verification_policy: "email-domain",
+      },
+    ]);
     getSiteLicenseAffiliationReverificationStatus.mockResolvedValue({
       grace_expired_count: 0,
       pending_count: 0,
@@ -481,7 +502,86 @@ describe("MembershipPage", () => {
         site_license_id: "license-1",
       });
     });
+    const { Modal } = jest.requireMock("antd") as {
+      Modal: { success: jest.Mock };
+    };
+    expect(Modal.success).toHaveBeenCalledWith({
+      title: "Affiliation reverified",
+      content:
+        "Your site-license membership affiliation was reverified. Reverify by June 14, 2999.",
+    });
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it("does not show reverification controls on pending approval rows", async () => {
+    getSiteLicenseAffiliationReverificationStatus.mockResolvedValue({
+      grace_expired_count: 0,
+      pending_count: 0,
+      seats: [
+        {
+          account_id: "account-1",
+          assignment_id: "assignment-1",
+          can_refresh_with_verified_email: true,
+          exclusive_group: "researcher",
+          membership_class: "standard",
+          package_id: "package-1",
+          pool_name: "Researcher",
+          reverification_due_at: new Date("2999-06-14T00:00:00Z"),
+          site_license_id: "license-1",
+          state: "current",
+          verification_policy: "email-domain",
+        },
+      ],
+    });
+    useMembershipSettingsData.mockReturnValue(
+      baseData({
+        candidateRows: [
+          {
+            action: "site-license",
+            class: "standard",
+            grantPackageId: "package-1",
+            key: "grant-standard-1",
+            membership: "Researcher",
+            note: "Ends June 4, 2027",
+            selected: true,
+            siteLicenseId: "license-1",
+            source: "CoCalc Trial",
+            sourceKind: "grant",
+            state: "Active",
+          },
+          {
+            action: "site-license",
+            class: "pro",
+            key: "site-request-package-2",
+            membership: "Instructor",
+            note: "Awaiting manager approval",
+            selected: false,
+            siteLicenseId: "license-1",
+            source: "CoCalc Trial",
+            sourceKind: "site-request",
+            state: "Pending approval",
+          },
+        ],
+        membership: {
+          class: "standard",
+          grant_source: "site-license",
+          source: "grant",
+        },
+      }),
+    );
+
+    render(<MembershipPage />);
+    await screen.findByText(/Reverify by/);
+
+    const pendingRow = screen.getByText("Instructor").closest("tr")!;
+    expect(
+      within(pendingRow).getByText("Awaiting manager approval"),
+    ).toBeTruthy();
+    expect(
+      within(pendingRow)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Manage"]);
   });
 
   it("shows overdue site-license reverification as due now", async () => {

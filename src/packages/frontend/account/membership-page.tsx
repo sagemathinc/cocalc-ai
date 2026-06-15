@@ -119,7 +119,12 @@ function MembershipSettingsContent() {
   const [reverifyingSiteLicenseId, setReverifyingSiteLicenseId] =
     useState<string>("");
   const siteLicenseReverificationKey = candidateRows
-    .filter((row) => row.action === "site-license" && row.grantPackageId)
+    .filter(
+      (row) =>
+        row.action === "site-license" &&
+        row.sourceKind === "grant" &&
+        row.grantPackageId,
+    )
     .map((row) => `${row.siteLicenseId ?? ""}:${row.grantPackageId}`)
     .sort()
     .join("|");
@@ -187,12 +192,30 @@ function MembershipSettingsContent() {
     setReverifyingSiteLicenseId(siteLicenseId);
     setReverificationError("");
     try {
-      await refreshSiteLicenseAffiliationVerification({
+      const refreshed = await refreshSiteLicenseAffiliationVerification({
         site_license_id: siteLicenseId,
+      });
+      const nextDueDate = refreshed
+        .map((seat) => seat.reverification_due_at)
+        .filter((date) => date != null)
+        .map((date) => new Date(date as Date | string))
+        .filter((date) => Number.isFinite(date.valueOf()))
+        .sort((left, right) => left.getTime() - right.getTime())[0];
+      Modal.success({
+        title: "Affiliation reverified",
+        content:
+          nextDueDate == null
+            ? "Your site-license membership affiliation was reverified."
+            : `Your site-license membership affiliation was reverified. Reverify by ${formatLongDate(nextDueDate)}.`,
       });
       refreshMembership();
     } catch (err) {
-      setReverificationError(`${err}`);
+      const message = `${err}`;
+      setReverificationError(message);
+      Modal.error({
+        title: "Reverification failed",
+        content: message,
+      });
     } finally {
       setReverifyingSiteLicenseId("");
     }
@@ -435,12 +458,17 @@ function reverificationSeatForRow(
   status: SiteLicenseAffiliationReverificationUserStatus | null,
   row: MembershipCandidateRow,
 ): SiteLicenseAffiliationReverificationUserSeat | undefined {
-  if (status == null || row.action !== "site-license") return;
+  if (
+    status == null ||
+    row.action !== "site-license" ||
+    row.sourceKind !== "grant" ||
+    !row.grantPackageId
+  ) {
+    return;
+  }
   return status.seats.find((seat) => {
-    if (row.grantPackageId && seat.package_id === row.grantPackageId) {
-      return true;
-    }
-    return !!row.siteLicenseId && seat.site_license_id === row.siteLicenseId;
+    if (seat.package_id !== row.grantPackageId) return false;
+    return !row.siteLicenseId || seat.site_license_id === row.siteLicenseId;
   });
 }
 
