@@ -22,7 +22,7 @@ describe("account_project_index rebuild", () => {
 
   afterEach(async () => {
     await getPool().query(
-      "TRUNCATE account_project_index, projects, accounts CASCADE",
+      "TRUNCATE account_project_index, projects, accounts, rootfs_images CASCADE",
     );
   });
 
@@ -38,10 +38,10 @@ describe("account_project_index rebuild", () => {
     );
     await getPool().query(
       `INSERT INTO projects
-        (project_id, title, description, users, state, host_id, owning_bay_id, last_edited, last_active, created)
+        (project_id, title, description, users, state, host_id, rootfs_image_id, owning_bay_id, last_edited, last_active, created)
        VALUES
-        ($1, 'Visible Project', 'shown', $3, $4, $5, $6, NOW(), $7, NOW()),
-        ($2, 'Hidden Project', 'hidden', $8, $9, NULL, NULL, NOW(), $10, NOW())`,
+        ($1, 'Visible Project', 'shown', $3, $4, $5, $6, $7, NOW(), $8, NOW()),
+        ($2, 'Hidden Project', 'hidden', $9, $10, NULL, NULL, NULL, NOW(), $11, NOW())`,
       [
         PROJECT_VISIBLE,
         PROJECT_HIDDEN,
@@ -50,6 +50,7 @@ describe("account_project_index rebuild", () => {
         }),
         JSON.stringify({ state: "running" }),
         "44444444-4444-4444-8444-444444444444",
+        "official-minimal",
         LOCAL_BAY_ID,
         JSON.stringify({
           [ACCOUNT_ID]: "2026-04-03T22:00:00.000Z",
@@ -112,7 +113,7 @@ describe("account_project_index rebuild", () => {
 
     const { rows } = await getPool().query(
       `SELECT project_id, owning_bay_id, host_id, title, description, is_hidden,
-              users_summary, state_summary, last_edited, last_backup
+              rootfs_image_id, users_summary, state_summary, last_edited, last_backup
          FROM account_project_index
         WHERE account_id = $1
         ORDER BY project_id`,
@@ -125,6 +126,7 @@ describe("account_project_index rebuild", () => {
         host_id: "44444444-4444-4444-8444-444444444444",
         title: "Visible Project",
         description: "shown",
+        rootfs_image_id: "official-minimal",
         is_hidden: false,
         users_summary: {
           [ACCOUNT_ID]: { group: "owner" },
@@ -139,6 +141,7 @@ describe("account_project_index rebuild", () => {
         host_id: null,
         title: "Hidden Project",
         description: "hidden",
+        rootfs_image_id: null,
         is_hidden: true,
         users_summary: {
           [ACCOUNT_ID]: { group: "collaborator", hide: true },
@@ -223,20 +226,24 @@ describe("account_project_index rebuild", () => {
 
   it("supports backend project list windows with search, sort, and offset", async () => {
     await getPool().query(
+      `INSERT INTO rootfs_images (image_id, label, family, version, created, updated)
+       VALUES ('official-minimal', 'Minimal Image - Jupyter and Latex', 'minimal-jupyter-latex', '1.3', NOW(), NOW())`,
+    );
+    await getPool().query(
       `INSERT INTO account_project_index
-         (account_id, project_id, owning_bay_id, host_id, title, description,
+         (account_id, project_id, owning_bay_id, host_id, rootfs_image_id, title, description,
           users_summary, state_summary, last_activity_at, last_opened_at,
           is_hidden, sort_key, updated_at)
        VALUES
-         ($1, $2, $7, NULL, 'Alpha Notes', 'linear algebra',
+         ($1, $2, $7, NULL, 'official-minimal', 'Alpha Notes', 'linear algebra',
           '{}'::JSONB, '{"state":"running"}'::JSONB, NULL, NULL, FALSE, $8, $8),
-         ($1, $3, $7, NULL, 'Beta Search Hit', 'topology',
+         ($1, $3, $7, NULL, NULL, 'Beta Search Hit', 'topology',
           '{}'::JSONB, '{"state":"stopped"}'::JSONB, NULL, NULL, FALSE, $9, $9),
-         ($1, $4, $7, NULL, 'Gamma Search Hit', 'geometry',
+         ($1, $4, $7, NULL, NULL, 'Gamma Search Hit', 'geometry',
           '{}'::JSONB, '{"state":"running"}'::JSONB, NULL, NULL, FALSE, $10, $10),
-         ($1, $5, $7, NULL, 'Hidden Search Hit', 'geometry',
+         ($1, $5, $7, NULL, NULL, 'Hidden Search Hit', 'geometry',
           '{}'::JSONB, '{"state":"running"}'::JSONB, NULL, NULL, TRUE, $11, $11),
-         ($1, $6, $7, NULL, 'Delta', 'searchable geometry',
+         ($1, $6, $7, NULL, NULL, 'Delta', 'searchable geometry',
           '{}'::JSONB, '{"state":"starting"}'::JSONB, NULL, NULL, FALSE, $12, $12)`,
       [
         ACCOUNT_ID,
@@ -290,6 +297,19 @@ describe("account_project_index rebuild", () => {
       expect.objectContaining({
         title: "Delta",
         state_summary: { state: "starting" },
+      }),
+    ]);
+
+    await expect(
+      listProjectedProjectsForAccount({
+        account_id: ACCOUNT_ID,
+        search: "jupyter latex 1.3",
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        title: "Alpha Notes",
+        rootfs_image_id: "official-minimal",
       }),
     ]);
   });

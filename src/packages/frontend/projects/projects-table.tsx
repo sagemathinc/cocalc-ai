@@ -24,10 +24,7 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
-import {
-  managedRootfsCatalogUrl,
-  useRootfsImages,
-} from "@cocalc/frontend/rootfs/manifest";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
 import { ProjectRootfsRuntimeModal } from "./project-rootfs-badge";
 import { ProjectActionsMenu } from "./projects-actions-menu";
@@ -41,6 +38,7 @@ import { useProjectTableRecords } from "./use-project-table-records";
 
 interface Props {
   visible_projects: string[];
+  rootfsImages: RootfsImageEntry[];
   height?: number;
   narrow: boolean; // if narrow, then remove columns like "Collaborators" to safe space
   filteredCollaborators: string[] | null;
@@ -54,6 +52,7 @@ const PROJECTS_TABLE_SORT_KEY = "projects-table-sort";
 
 export function ProjectsTable({
   visible_projects,
+  rootfsImages,
   height = 600,
   narrow = false,
   filteredCollaborators,
@@ -68,10 +67,6 @@ export function ProjectsTable({
   const project_map = useTypedRedux("projects", "project_map");
   const user_map = useTypedRedux("users", "user_map");
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
-  const { images: rootfsImages } = useRootfsImages(
-    [managedRootfsCatalogUrl()],
-    { limit: 200 },
-  );
   const [sortState, setSortState] = useState<SortState>({
     columnKey: "last_edited",
     order: "descend",

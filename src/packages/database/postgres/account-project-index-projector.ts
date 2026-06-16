@@ -223,6 +223,7 @@ function projectRowForFeed(opts: {
     description: payload.description ?? "",
     theme: payload.theme ?? null,
     host_id: payload.host_id ?? null,
+    rootfs_image_id: payload.rootfs_image_id ?? null,
     owning_bay_id: normalizeBayId(payload.owning_bay_id),
     manage_users_owner_only: payload.manage_users_owner_only ?? null,
     deletion_protection: payload.deletion_protection ?? null,
@@ -291,16 +292,17 @@ async function applyProjectEventToAccountProjectIndex(opts: {
       parseDate(payload.last_activity_by_account?.[account_id]) ?? null;
     await db.query(
       `INSERT INTO account_project_index
-         (account_id, project_id, owning_bay_id, host_id, title, description,
+         (account_id, project_id, owning_bay_id, host_id, rootfs_image_id, title, description,
           theme, users_summary, state_summary, last_edited, last_backup, last_activity_at,
           last_opened_at, is_hidden, deletion_protection, sort_key, updated_at)
        VALUES
-         ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, $13, $14, $15, $16, NOW())`,
+         ($1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10::JSONB, $11, $12, $13, $14, $15, $16, $17, NOW())`,
       [
         account_id,
         payload.project_id,
         normalizeBayId(payload.owning_bay_id),
         payload.host_id,
+        payload.rootfs_image_id ?? null,
         payload.title,
         payload.description,
         JSON.stringify(payload.theme ?? {}),

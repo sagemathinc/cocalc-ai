@@ -158,6 +158,7 @@ export function buildProjectRecordFromFeedRow(
     description: row.description,
     theme: row.theme ?? null,
     host_id: row.host_id,
+    rootfs_image_id: row.rootfs_image_id ?? null,
     owning_bay_id: row.owning_bay_id,
     manage_users_owner_only: row.manage_users_owner_only ?? null,
     users: row.users ?? {},
@@ -196,6 +197,7 @@ function buildProjectRecordFromProjectIndexRow({
     description: row.description ?? "",
     theme: row.theme ?? null,
     host_id: row.host_id ?? null,
+    rootfs_image_id: row.rootfs_image_id ?? null,
     owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
     users: row.users_summary ?? {},
     state: row.state_summary ?? {},
@@ -317,6 +319,7 @@ type DirectProjectBootstrapRow = {
   description?: string | null;
   theme?: Record<string, any> | null;
   host_id?: string | null;
+  rootfs_image_id?: string | null;
   owning_bay_id?: string | null;
   users?: Record<string, any> | null;
   state?: Record<string, any> | null;
@@ -998,6 +1001,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 project_id: null,
                 owning_bay_id: null,
                 host_id: null,
+                rootfs_image_id: null,
                 title: null,
                 description: null,
                 theme: null,
@@ -1127,6 +1131,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 project_id,
                 owning_bay_id: null,
                 host_id: null,
+                rootfs_image_id: null,
                 title: null,
                 description: null,
                 theme: null,
@@ -2137,6 +2142,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
               description: null,
               theme: null,
               host_id: null,
+              rootfs_image_id: null,
               owning_bay_id: null,
               users: null,
               state: null,
@@ -2166,6 +2172,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       description: row.description ?? "",
       theme: row.theme ?? null,
       host_id: row.host_id ?? null,
+      rootfs_image_id: row.rootfs_image_id ?? null,
       owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
       users: row.users ?? {},
       state: row.state ?? {},

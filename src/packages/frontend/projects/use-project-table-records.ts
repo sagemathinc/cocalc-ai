@@ -86,7 +86,6 @@ export function useProjectTableRecords({
         theme: projectThemeFromProject(project),
         title: project.get("title") ?? "Untitled",
         description: project.get("description") ?? "",
-        rootfs_image: project.get("rootfs_image") ?? "",
         rootfs_image_id: project.get("rootfs_image_id") ?? "",
         host: (() => {
           const hostName = hostInfo?.get?.("name");

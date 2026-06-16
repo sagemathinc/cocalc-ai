@@ -4,7 +4,9 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { getNames } from "@cocalc/server/accounts/get-name";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import type {
   ProjectRootfsStateEntry,
   ProjectRootfsStateRole,
@@ -348,6 +350,11 @@ export async function replaceProjectRootfsStates({
     project_id,
     fields: ["rootfs"],
   });
+  await appendProjectOutboxEventForProject({
+    event_type: "project.summary_changed",
+    project_id,
+  });
+  await publishProjectAccountFeedEventsBestEffort({ project_id });
   return await loadProjectRootfsStateEntries(project_id);
 }
 
@@ -560,5 +567,10 @@ export async function setProjectRootfsImageWithRollback({
     project_id,
     fields: ["rootfs"],
   });
+  await appendProjectOutboxEventForProject({
+    event_type: "project.summary_changed",
+    project_id,
+  });
+  await publishProjectAccountFeedEventsBestEffort({ project_id });
   return await loadProjectRootfsStateEntries(project_id);
 }

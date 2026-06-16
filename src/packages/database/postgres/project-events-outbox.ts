@@ -26,6 +26,7 @@ export interface ProjectOutboxPayload {
   theme: ProjectTheme | null;
   manage_users_owner_only: boolean | null;
   deletion_protection: boolean | null;
+  rootfs_image_id: string | null;
   users_summary: Record<string, any>;
   state_summary: Record<string, any>;
   last_activity_by_account: Record<string, any>;
@@ -94,6 +95,7 @@ export async function loadProjectOutboxPayload(opts: {
        theme,
        manage_users_owner_only,
        deletion_protection,
+       rootfs_image_id,
        COALESCE(users, '{}'::JSONB) AS users_summary,
        COALESCE(state, '{}'::JSONB) AS state_summary,
        COALESCE(last_active, '{}'::JSONB) AS last_activity_by_account,
@@ -116,6 +118,7 @@ export async function loadProjectOutboxPayload(opts: {
       theme: ProjectTheme | null;
       manage_users_owner_only: boolean | null;
       deletion_protection: boolean | null;
+      rootfs_image_id: string | null;
       users_summary: Record<string, any> | null;
       state_summary: Record<string, any> | null;
       last_activity_by_account: Record<string, any> | null;
@@ -138,6 +141,7 @@ export async function loadProjectOutboxPayload(opts: {
     theme: row.theme ?? null,
     manage_users_owner_only: row.manage_users_owner_only ?? null,
     deletion_protection: row.deletion_protection ?? null,
+    rootfs_image_id: row.rootfs_image_id ?? null,
     users_summary: row.users_summary ?? {},
     state_summary: row.state_summary ?? {},
     last_activity_by_account: row.last_activity_by_account ?? {},

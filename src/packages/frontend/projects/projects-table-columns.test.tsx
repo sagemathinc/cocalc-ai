@@ -160,7 +160,6 @@ describe("getProjectTableColumns", () => {
         {titleColumn.render(
           null,
           record({
-            rootfs_image: "cocalc.local/rootfs/minimal:1.1",
             rootfs_image_id: "minimal-1",
           }),
         )}

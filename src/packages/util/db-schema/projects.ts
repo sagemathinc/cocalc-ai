@@ -104,7 +104,6 @@ Table({
           last_edited: null,
           last_active: null,
           last_backup: null,
-          rootfs_image: null,
           rootfs_image_id: null,
           theme: null,
         },

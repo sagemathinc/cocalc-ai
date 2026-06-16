@@ -29,6 +29,7 @@ export interface AccountProjectIndexProjectListRow {
   description: string;
   theme: Record<string, any> | null;
   host_id: string | null;
+  rootfs_image_id: string | null;
   owning_bay_id: string;
   is_hidden: boolean;
   deletion_protection: boolean;
@@ -104,11 +105,11 @@ function normalizeSort(
 function orderBySql(sort: AccountProjectIndexProjectListSort): string {
   switch (sort) {
     case "title":
-      return "LOWER(COALESCE(title, '')) ASC, sort_key DESC NULLS LAST, project_id ASC";
+      return "LOWER(COALESCE(account_project_index.title, '')) ASC, account_project_index.sort_key DESC NULLS LAST, account_project_index.project_id ASC";
     case "state":
-      return "LOWER(COALESCE(state_summary->>'state', '')) ASC, sort_key DESC NULLS LAST, project_id ASC";
+      return "LOWER(COALESCE(account_project_index.state_summary->>'state', '')) ASC, account_project_index.sort_key DESC NULLS LAST, account_project_index.project_id ASC";
     case "last_edited":
-      return "sort_key DESC NULLS LAST, updated_at DESC NULLS LAST, project_id ASC";
+      return "account_project_index.sort_key DESC NULLS LAST, account_project_index.updated_at DESC NULLS LAST, account_project_index.project_id ASC";
   }
 }
 
@@ -128,28 +129,28 @@ export async function listProjectedProjectsForAccount(opts: {
   const offset = normalizeOffset(opts.offset);
   const search = normalizeSearch(opts.search);
   const sort = normalizeSort(opts.sort);
-  const where: string[] = ["account_id = $1::UUID"];
+  const where: string[] = ["account_project_index.account_id = $1::UUID"];
   const params: any[] = [account_id];
   let i = params.length;
   if (!opts.include_hidden) {
-    where.push("COALESCE(is_hidden, FALSE) IS NOT TRUE");
+    where.push("COALESCE(account_project_index.is_hidden, FALSE) IS NOT TRUE");
   }
   if (opts.project_id != null) {
     i += 1;
-    where.push(`project_id = $${i}::UUID`);
+    where.push(`account_project_index.project_id = $${i}::UUID`);
     params.push(normalizeUuid(opts.project_id, "project id"));
   }
   if (opts.title != null) {
     i += 1;
-    where.push(`title = $${i}::TEXT`);
+    where.push(`account_project_index.title = $${i}::TEXT`);
     params.push(`${opts.title}`);
   }
   if (opts.host_id !== undefined) {
     i += 1;
     if (opts.host_id == null) {
-      where.push("host_id IS NULL");
+      where.push("account_project_index.host_id IS NULL");
     } else {
-      where.push(`host_id = $${i}::UUID`);
+      where.push(`account_project_index.host_id = $${i}::UUID`);
       params.push(normalizeUuid(opts.host_id, "host id"));
     }
   }
@@ -158,7 +159,7 @@ export async function listProjectedProjectsForAccount(opts: {
       const pattern = `%${word.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
       i += 1;
       where.push(
-        `(title ILIKE $${i} ESCAPE '\\' OR description ILIKE $${i} ESCAPE '\\' OR state_summary->>'state' ILIKE $${i} ESCAPE '\\')`,
+        `(account_project_index.title ILIKE $${i} ESCAPE '\\' OR account_project_index.description ILIKE $${i} ESCAPE '\\' OR account_project_index.rootfs_image_id ILIKE $${i} ESCAPE '\\' OR account_project_index.state_summary->>'state' ILIKE $${i} ESCAPE '\\' OR rootfs_images.label ILIKE $${i} ESCAPE '\\' OR rootfs_images.version ILIKE $${i} ESCAPE '\\' OR rootfs_images.family ILIKE $${i} ESCAPE '\\')`,
       );
       params.push(pattern);
     }
@@ -169,22 +170,24 @@ export async function listProjectedProjectsForAccount(opts: {
   params.push(offset);
   const { rows } = await getPool().query<AccountProjectIndexProjectListRow>(
     `SELECT
-       project_id,
-       COALESCE(title, '') AS title,
-       COALESCE(description, '') AS description,
-       theme,
-       host_id,
-       COALESCE(NULLIF(BTRIM(owning_bay_id), ''), 'bay-0') AS owning_bay_id,
-       COALESCE(is_hidden, FALSE) AS is_hidden,
-       COALESCE(deletion_protection, FALSE) AS deletion_protection,
-       COALESCE(state_summary, '{}'::JSONB) AS state_summary,
-       COALESCE(users_summary, '{}'::JSONB) AS users_summary,
-       last_activity_at,
-       last_edited,
-       last_backup,
-       sort_key,
-       updated_at
+       account_project_index.project_id,
+       COALESCE(account_project_index.title, '') AS title,
+       COALESCE(account_project_index.description, '') AS description,
+       account_project_index.theme,
+       account_project_index.host_id,
+       account_project_index.rootfs_image_id,
+       COALESCE(NULLIF(BTRIM(account_project_index.owning_bay_id), ''), 'bay-0') AS owning_bay_id,
+       COALESCE(account_project_index.is_hidden, FALSE) AS is_hidden,
+       COALESCE(account_project_index.deletion_protection, FALSE) AS deletion_protection,
+       COALESCE(account_project_index.state_summary, '{}'::JSONB) AS state_summary,
+       COALESCE(account_project_index.users_summary, '{}'::JSONB) AS users_summary,
+       account_project_index.last_activity_at,
+       account_project_index.last_edited,
+       account_project_index.last_backup,
+       account_project_index.sort_key,
+       account_project_index.updated_at
      FROM account_project_index
+     LEFT JOIN rootfs_images ON rootfs_images.image_id = account_project_index.rootfs_image_id
      WHERE ${where.join(" AND ")}
      ORDER BY ${orderBySql(sort)}
      LIMIT $${i - 1}
@@ -328,6 +331,7 @@ export async function rebuildAccountProjectIndex(opts: {
           project_id,
           owning_bay_id,
           host_id,
+          rootfs_image_id,
           title,
           description,
           theme,
@@ -347,6 +351,7 @@ export async function rebuildAccountProjectIndex(opts: {
           project_id,
           COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $2::TEXT) AS owning_bay_id,
           host_id,
+          rootfs_image_id,
           COALESCE(title, '') AS title,
           COALESCE(description, '') AS description,
           COALESCE(theme, '{}'::JSONB) AS theme,

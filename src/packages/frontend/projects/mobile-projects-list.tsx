@@ -10,11 +10,8 @@ import { useIntl } from "react-intl";
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon, ProjectState, TimeAgo } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import {
-  managedRootfsCatalogUrl,
-  useRootfsImages,
-} from "@cocalc/frontend/rootfs/manifest";
 import { COLORS } from "@cocalc/util/theme";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
 import { CollaboratorsAvatars } from "./collaborators-avatars";
 import {
@@ -29,6 +26,7 @@ import { useProjectTableRecords } from "./use-project-table-records";
 
 interface Props {
   visible_projects: string[];
+  rootfsImages: RootfsImageEntry[];
   selectedProjectIds: string[];
   onSelectedProjectIdsChange: (project_ids: string[]) => void;
 }
@@ -88,6 +86,7 @@ function stateTags(record: ProjectTableRecord) {
 
 export function MobileProjectsList({
   visible_projects,
+  rootfsImages,
   selectedProjectIds,
   onSelectedProjectIdsChange,
 }: Props) {
@@ -95,10 +94,6 @@ export function MobileProjectsList({
   const actions = useActions("projects");
   const projectLabel = intl.formatMessage(labels.project);
   const records = useProjectTableRecords({ visible_projects, projectLabel });
-  const { images: rootfsImages } = useRootfsImages(
-    [managedRootfsCatalogUrl()],
-    { limit: 200 },
-  );
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
   const selectedProjectIdSet = new Set(selectedProjectIds);
   const [rootfsModalProjectId, setRootfsModalProjectId] = useState<string>("");
@@ -231,7 +226,6 @@ export function MobileProjectsList({
                     style={{ display: "flex", marginTop: "4px", minWidth: 0 }}
                   >
                     <ProjectRootfsBadge
-                      rootfsImage={record.rootfs_image}
                       rootfsImageId={record.rootfs_image_id}
                       rootfsImages={rootfsImages}
                       onClick={(e) => {

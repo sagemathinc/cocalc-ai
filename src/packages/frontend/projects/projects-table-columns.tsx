@@ -79,7 +79,6 @@ export interface ProjectTableRecord {
   theme?: ProjectTheme | null;
   title: string;
   description: string;
-  rootfs_image?: string;
   rootfs_image_id?: string;
   host?: string;
   last_edited?: Date;
@@ -318,7 +317,6 @@ export function getProjectTableColumns(
                   }}
                 >
                   <ProjectRootfsBadge
-                    rootfsImage={record.rootfs_image}
                     rootfsImageId={record.rootfs_image_id}
                     rootfsImages={rootfsImages}
                     onClick={

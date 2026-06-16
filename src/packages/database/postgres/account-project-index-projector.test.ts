@@ -45,10 +45,10 @@ describe("account_project_index projector", () => {
     await getPool().query(
       `INSERT INTO projects
         (project_id, title, description, users, state, host_id, owning_bay_id,
-         created, last_edited, last_backup, last_active, deletion_protection)
+         rootfs_image_id, created, last_edited, last_backup, last_active, deletion_protection)
        VALUES
         ($1, 'Projected Project', 'from outbox',
-         $2::JSONB, $3::JSONB, $4, $5, $6, $7, $8, $9::JSONB, TRUE)`,
+         $2::JSONB, $3::JSONB, $4, $5, $6, $7, $8, $9, $10::JSONB, TRUE)`,
       [
         PROJECT_ID,
         JSON.stringify({
@@ -58,6 +58,7 @@ describe("account_project_index projector", () => {
         JSON.stringify({ state: "running" }),
         HOST_ID,
         LOCAL_BAY_ID,
+        "official-minimal",
         new Date("2026-04-03T22:50:00.000Z"),
         new Date("2026-04-03T23:10:00.000Z"),
         new Date("2026-04-03T23:10:00.000Z"),
@@ -98,6 +99,7 @@ describe("account_project_index projector", () => {
           project: expect.objectContaining({
             project_id: PROJECT_ID,
             title: "Projected Project",
+            rootfs_image_id: "official-minimal",
           }),
         },
       ],
@@ -206,7 +208,7 @@ describe("account_project_index projector", () => {
 
     const firstRows = await getPool().query(
       `SELECT account_id, project_id, owning_bay_id, host_id, title, description,
-              is_hidden, deletion_protection, last_opened_at, last_edited, last_backup
+              rootfs_image_id, is_hidden, deletion_protection, last_opened_at, last_edited, last_backup
          FROM account_project_index
         ORDER BY account_id`,
       [],
@@ -217,6 +219,7 @@ describe("account_project_index projector", () => {
         project_id: PROJECT_ID,
         owning_bay_id: LOCAL_BAY_ID,
         host_id: HOST_ID,
+        rootfs_image_id: "official-minimal",
         title: "Projected Project",
         description: "from outbox",
         is_hidden: false,

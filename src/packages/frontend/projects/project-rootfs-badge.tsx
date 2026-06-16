@@ -48,16 +48,16 @@ function shortRootfsImage(image: string): string {
   return `${value.slice(0, 28)}...${value.slice(-12)}`;
 }
 
-function rootfsLabel({
+export function projectRootfsEntryLabel({
   entry,
   image,
 }: {
   entry?: RootfsImageEntry;
-  image: string;
+  image?: string;
 }): string {
   const label = entry?.theme?.title?.trim() || entry?.label?.trim();
   const version = entry?.version?.trim();
-  const base = label || shortRootfsImage(image);
+  const base = label || shortRootfsImage(image ?? "");
   if (!version) {
     return base;
   }
@@ -95,14 +95,15 @@ export function ProjectRootfsBadge({
   onClick,
 }: ProjectRootfsBadgeProps) {
   const image = rootfsImage?.trim() ?? "";
+  const imageId = rootfsImageId?.trim() ?? "";
   const entry = useMemo(
     () =>
       findRootfsEntry({
         image,
-        imageId: rootfsImageId,
+        imageId,
         images: rootfsImages,
       }),
-    [image, rootfsImageId, rootfsImages],
+    [image, imageId, rootfsImages],
   );
   const upgradeEntry = useMemo(
     () =>
@@ -113,13 +114,17 @@ export function ProjectRootfsBadge({
     [entry, rootfsImages],
   );
 
-  if (!image && !entry) {
+  const fallbackImage = image || imageId;
+  if (!fallbackImage && !entry) {
     return null;
   }
 
-  const label = rootfsLabel({ entry, image });
+  const label = projectRootfsEntryLabel({ entry, image: fallbackImage });
   const upgradeLabel = upgradeEntry
-    ? rootfsLabel({ entry: upgradeEntry, image: upgradeEntry.image })
+    ? projectRootfsEntryLabel({
+        entry: upgradeEntry,
+        image: upgradeEntry.image,
+      })
     : undefined;
   const tooltip = (
     <div style={{ maxWidth: 420 }}>
