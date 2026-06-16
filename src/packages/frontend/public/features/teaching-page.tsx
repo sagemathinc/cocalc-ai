@@ -171,7 +171,7 @@ function CourseDashboardMock() {
                     padding: "10px 12px",
                   }}
                 >
-                  nbgrader: 26 notebooks ready
+                  nbgrader queue ready
                 </div>
               </Flex>
             </div>
@@ -398,9 +398,9 @@ export default function TeachingFeaturePage({
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Keep rosters, calendars, announcements, and institution-wide
-                communication in the LMS. Use CoCalc when assignments need a
-                real computing environment and instructor visibility into
-                student work.
+                communication in the LMS. Bring assignments into CoCalc when
+                they need a real computing environment and instructor visibility
+                into student work.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>

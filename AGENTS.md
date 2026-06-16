@@ -93,6 +93,14 @@ EOF
 - Run `pnpm -C src prettier --write <file>` on modified files as needed.
 - For frontend changes, also run `pnpm -C src lint:frontend`. Treat frontend lint failures the same way as test or typecheck failures.
 
+## Public Site and Artifact Hygiene
+
+- Treat public React routes, public metadata, and files under `src/packages/frontend/public` as user-facing publication surfaces. Do not copy internal pitch language, competitor research, agent planning notes, or compliance interpretation into them unless the user explicitly approves that exact public wording.
+- Keep scratch browser-QA screenshots, Playwright traces, generated reports, terminal transcripts, and temporary research files outside the repository, preferably under `/tmp/cocalc-public-qa-*`.
+- Commit only source, tests, and intentional docs. Do not commit generated QA artifacts or candidate screenshots unless they are approved public assets with a clear freshness/source rationale.
+- Before committing public-site work, run `git status --short`, review `git diff --name-only`, and check untracked files with `git ls-files --others --exclude-standard` so accidental scratch artifacts do not enter the repository.
+- When a public page needs evidence, prefer route-specific workflow examples and approved existing assets. Do not invent metrics, customer proof, benchmark numbers, security/privacy claims, or specific UI counts that could be mistaken for validated proof.
+
 ## Docs
 
 - Architecture/docs: `docs/`

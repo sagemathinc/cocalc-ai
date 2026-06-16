@@ -349,7 +349,7 @@ export default function CompareFeaturePage({
                 textTransform: "uppercase",
               }}
             >
-              Workspace model
+              Evaluation guide
             </Text>
             <Title level={2} style={{ margin: 0 }}>
               When is CoCalc the right fit?

@@ -88,7 +88,7 @@ function LinuxWorkspaceMock() {
     "$ sudo apt-get update",
     "$ sudo apt-get install -y graphviz",
     "$ dot -V",
-    "graphviz version 2.43.0",
+    "graphviz version reported",
   ];
   return (
     <div

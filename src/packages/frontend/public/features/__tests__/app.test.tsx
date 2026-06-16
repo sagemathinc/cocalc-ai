@@ -35,6 +35,9 @@ function headingLabels(container: HTMLElement): string[] {
     .filter(Boolean);
 }
 
+const INTERNAL_CONTEXT_LEAKAGE =
+  /Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious technical work|serious Linux|strongest|workspace model|internal planning|multi-bay|control plane|project hosts|\bstale\b|CoCalc-AI|locked-down|launchpad-style|internal platform|narrow patch|install narrowly|narrower tool|Use CoCalc when|competitor comparison|proof packet|evidence register|pitch docs|AGENTS\.md|CLAUDE\.md|GEMINI\.md|public-site cohesion audit|agent operating/i;
+
 describe("getFeaturesRouteFromPath", () => {
   it("supports the features index and detail routes", () => {
     expect(getFeaturesRouteFromPath(featurePath())).toEqual({ view: "index" });
@@ -434,6 +437,10 @@ describe("PublicFeaturesApp", () => {
       screen.queryByText("Ready to try a notebook workflow in CoCalc?"),
     ).toBeNull();
     expect(screen.queryByText("Start using Jupyter on CoCalc")).toBeNull();
+    expect(screen.getByText("data loaded")).not.toBeNull();
+    expect(screen.getByText("model summary ready")).not.toBeNull();
+    expect(screen.queryByText("42,180 rows loaded")).toBeNull();
+    expect(screen.queryByText("R^2 = 0.94")).toBeNull();
     expect(
       screen.queryByText(
         "Let the agent work with the notebook you actually have open",
@@ -554,6 +561,8 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Give each student a project")).not.toBeNull();
     expect(screen.getByText("Hand out and collect work")).not.toBeNull();
     expect(screen.getByText("Keep the environment consistent")).not.toBeNull();
+    expect(screen.getByText("nbgrader queue ready")).not.toBeNull();
+    expect(screen.queryByText("nbgrader: 26 notebooks ready")).toBeNull();
     expect(
       screen.getByText("Run the assignment loop in student projects"),
     ).not.toBeNull();
@@ -689,6 +698,8 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Build course and team environments once"),
     ).not.toBeNull();
+    expect(screen.getByText("graphviz version reported")).not.toBeNull();
+    expect(screen.queryByText("graphviz version 2.43.0")).toBeNull();
     expect(screen.queryByText("RootFS images make setup reusable")).toBeNull();
   });
 
@@ -863,8 +874,9 @@ describe("PublicFeaturesApp", () => {
 
       expect(screen.getByText(marker)).not.toBeNull();
       expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
+      expect(container.textContent ?? "").not.toMatch(INTERNAL_CONTEXT_LEAKAGE);
       expect(container.textContent ?? "").not.toMatch(
-        /Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious technical work|serious Linux|strongest|workspace model|internal planning|multi-bay|control plane|\bstale\b|CoCalc-AI|locked-down|launchpad-style|internal platform|narrow patch|install narrowly|narrower tool/i,
+        /42,180 rows loaded|R\^2 = 0\.94|26 notebooks ready|graphviz version 2\.43\.0/i,
       );
 
       const headings = Array.from(
@@ -1151,8 +1163,6 @@ describe("PublicFeaturesApp", () => {
     expect(css).toContain("@media (max-width: 900px)");
     expect(css).toContain("@media (max-width: 560px)");
 
-    expect(container.textContent ?? "").not.toMatch(
-      /serious technical work|internal planning|multi-bay|project hosts|control plane|stale files|Use CoCalc when|narrower tool/i,
-    );
+    expect(container.textContent ?? "").not.toMatch(INTERNAL_CONTEXT_LEAKAGE);
   });
 });

@@ -123,7 +123,7 @@ function NotebookMock() {
   const cells = [
     {
       input: "df = load_experiment('spectral-gap')",
-      output: "42,180 rows loaded",
+      output: "data loaded",
     },
     {
       input: "plot_gap_distribution(df)",
@@ -131,7 +131,7 @@ function NotebookMock() {
     },
     {
       input: "fit = model(df); fit.summary()",
-      output: "R^2 = 0.94",
+      output: "model summary ready",
     },
   ];
   return (

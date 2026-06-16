@@ -47,6 +47,25 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Products, pricing, compare, and support: leave policy/trust destinations as surrounding-page links only; do not reinterpret the documents or strengthen compliance language.
 - [ ] Future: add approved route-specific screenshots or short captures only when the asset itself shows the workflow better than concise copy and has a freshness owner.
 
+## Feature Evidence And Decision Support Pass
+
+- [x] Start with `/features/ai`, `/features/jupyter-notebook`, `/features/teaching`, `/features/terminal`, and `/features/linux` because these routes carry the core workflow-evidence story.
+- [x] AI: keep the concrete Codex-thread example and route-specific support CTA; do not add broader agent superiority claims or competitor positioning to the public page.
+- [x] Jupyter: keep the notebook continuity example, but remove fake numeric notebook outputs that can read like benchmark or scientific proof.
+- [x] Teaching: keep the LMS/CoCalc boundary and assignment-loop example, but remove the fake "26 notebooks ready" mock count.
+- [x] Linux: keep the install/verify workflow, but remove the fixed Graphviz version string so the mock does not age into stale evidence.
+- [x] Terminal: keep the `.term` and shared-stream examples; no further compression in this pass because each remaining section answers a distinct terminal-evaluation question.
+- [x] Add tests for proof-like mock literals and internal-context leakage so public feature pages do not accidentally expose pitch, competitor, or agent-operating notes.
+
+## Agent Workspace And Public-Site Artifact Standards
+
+- [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.
+- [x] Commit only source, tests, and intentional documentation. Do not commit raw screenshots, Playwright traces, terminal transcripts, prompt drafts, competitor research dumps, or generated QA JSON.
+- [x] Public assets under `src/packages/frontend/public` require a freshness owner and public-use rationale; otherwise keep candidate screenshots or captures in `/tmp` during the pass.
+- [x] Keep pitch docs, competitor comparison notes, internal framing, and agent process notes out of public React components, static metadata, and public route copy.
+- [x] Before committing, check `git status --short`, `git diff --name-only`, and untracked files so accidental scratch artifacts are caught.
+- [x] Tests should guard against internal-context leakage using public-page render checks, but the audit file may keep internal rationale because it is an engineering task log rather than public route copy.
+
 ## Policy Evidence Destination Pass
 
 - [x] Treat `/policies`, `/policies/trust`, `/policies/privacy`, and `/policies/dpa` as evidence destinations that need buyer orientation, not just legal text dumps.
