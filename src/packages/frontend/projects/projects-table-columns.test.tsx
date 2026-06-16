@@ -1,5 +1,6 @@
 import {
   getProjectTableColumns,
+  projectDescriptionText,
   type ProjectTableRecord,
 } from "./projects-table-columns";
 import { render, screen } from "@testing-library/react";
@@ -168,5 +169,12 @@ describe("getProjectTableColumns", () => {
 
     expect(screen.getByText("Minimal Image 1.1")).toBeTruthy();
     expect(screen.getByText("Upgrade")).toBeTruthy();
+  });
+
+  it("omits empty and placeholder project descriptions", () => {
+    expect(projectDescriptionText("")).toBe("");
+    expect(projectDescriptionText("No Description")).toBe("");
+    expect(projectDescriptionText("No description")).toBe("");
+    expect(projectDescriptionText("Useful note")).toBe("Useful note");
   });
 });

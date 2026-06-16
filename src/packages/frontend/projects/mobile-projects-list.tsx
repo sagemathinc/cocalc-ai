@@ -20,6 +20,7 @@ import {
 } from "./project-rootfs-badge";
 import { ProjectActionsMenu } from "./projects-actions-menu";
 import type { ProjectTableRecord } from "./projects-table-columns";
+import { projectDescriptionText } from "./projects-table-columns";
 import { ProjectThemeAvatar } from "./theme";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { useProjectTableRecords } from "./use-project-table-records";
@@ -153,6 +154,11 @@ export function MobileProjectsList({
           const selected = selectedProjectIdSet.has(record.project_id);
           const selectionDisabled =
             record.deleting === true || record.deletionScheduled === true;
+          const description = projectDescriptionText(record.description);
+          const showRootfs =
+            !!record.rootfs_image_id?.trim() && !rootfsImagesLoading;
+          const showMetadata =
+            record.deleteFailed !== true && (showRootfs || description);
           return (
             <div
               key={record.project_id}
@@ -211,32 +217,58 @@ export function MobileProjectsList({
                       {record.title || "Untitled"}
                     </Text>
                   </div>
-                  {record.description && !record.deleteFailed && (
-                    <Text
-                      type="secondary"
-                      ellipsis
+                  {showMetadata && (
+                    <div
                       style={{
-                        display: "block",
-                        fontSize: "12px",
+                        alignItems: "center",
+                        display: "flex",
+                        gap: 6,
                         marginTop: "2px",
+                        minWidth: 0,
+                        overflow: "hidden",
+                        whiteSpace: "nowrap",
                       }}
                     >
-                      {record.description}
-                    </Text>
+                      {showRootfs && (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            maxWidth: description ? "45%" : "100%",
+                            minWidth: 0,
+                          }}
+                        >
+                          <ProjectRootfsBadge
+                            rootfsImageId={record.rootfs_image_id}
+                            rootfsImages={rootfsImages}
+                            rootfsImagesLoading={rootfsImagesLoading}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRootfsModalProjectId(record.project_id);
+                            }}
+                          />
+                        </span>
+                      )}
+                      {showRootfs && description && (
+                        <Text type="secondary" style={{ flex: "0 0 auto" }}>
+                          ·
+                        </Text>
+                      )}
+                      {description && (
+                        <Text
+                          type="secondary"
+                          ellipsis
+                          style={{
+                            display: "block",
+                            flex: 1,
+                            fontSize: "12px",
+                            minWidth: 0,
+                          }}
+                        >
+                          {description}
+                        </Text>
+                      )}
+                    </div>
                   )}
-                  <div
-                    style={{ display: "flex", marginTop: "4px", minWidth: 0 }}
-                  >
-                    <ProjectRootfsBadge
-                      rootfsImageId={record.rootfs_image_id}
-                      rootfsImages={rootfsImages}
-                      rootfsImagesLoading={rootfsImagesLoading}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRootfsModalProjectId(record.project_id);
-                      }}
-                    />
-                  </div>
                   <Space
                     wrap
                     size={[6, 4]}
