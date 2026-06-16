@@ -25,7 +25,7 @@ export function IconBadge({
         alignItems: "center",
         background: `${accent}14`,
         border: `1px solid ${accent}33`,
-        borderRadius: 16,
+        borderRadius: 8,
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
@@ -56,7 +56,7 @@ export function StoryCard({
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 22,
+        borderRadius: 8,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 22,
@@ -86,7 +86,7 @@ export function TerminalMock({
     <div
       style={{
         background: "#0b1522",
-        borderRadius: 20,
+        borderRadius: 8,
         color: "#dbeafe",
         overflow: "hidden",
       }}
@@ -151,7 +151,7 @@ export function StartCard({
     <div
       style={{
         background: "#10213f",
-        borderRadius: 24,
+        borderRadius: 8,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
         color: "#fff",
         padding: 26,

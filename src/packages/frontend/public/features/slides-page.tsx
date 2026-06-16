@@ -3,12 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
 import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
 
@@ -29,7 +28,7 @@ function SlideDeckMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f7fbff 56%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: 8,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -45,9 +44,6 @@ function SlideDeckMock() {
               </div>
             </div>
           </Flex>
-          <Tag color="gold" style={{ marginInlineEnd: 0 }}>
-            presets
-          </Tag>
         </Flex>
 
         <Row gutter={[12, 12]}>
@@ -58,7 +54,7 @@ function SlideDeckMock() {
                   aspectRatio: "16 / 9",
                   background: "#fff",
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 18,
+                  borderRadius: 8,
                   boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
                   padding: 14,
                 }}
@@ -78,7 +74,7 @@ function SlideDeckMock() {
                     style={{
                       background: "#fff7e6",
                       border: "1px solid #ffd591",
-                      borderRadius: 14,
+                      borderRadius: 8,
                       padding: 12,
                     }}
                   >
@@ -106,16 +102,6 @@ function SlideFlow() {
     <PublicSection>
       <Flex vertical gap={18}>
         <div>
-          <Tag
-            color="blue"
-            style={{
-              background: COLORS.ANTD_BG_BLUE_L,
-              color: COLORS.BLUE_D,
-              marginBottom: 12,
-            }}
-          >
-            Presentation workflow
-          </Tag>
           <Title level={3} style={{ margin: 0 }}>
             Slides are structured whiteboards.
           </Title>
@@ -135,13 +121,13 @@ function SlideFlow() {
           style={{
             background: "#fff",
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 26,
+            borderRadius: 8,
             boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
             padding: 22,
           }}
         >
           <Row gutter={[12, 12]} align="middle">
-            {steps.map(([icon, label], index) => (
+            {steps.map(([icon, label]) => (
               <Col key={label} xs={24} lg={6}>
                 <Flex align="center" gap={12}>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -151,7 +137,7 @@ function SlideFlow() {
                       style={{
                         background: "#f7fbff",
                         border: `1px solid ${PUBLIC_COLORS.border}`,
-                        borderRadius: 16,
+                        borderRadius: 8,
                         height: "100%",
                         padding: 14,
                       }}
@@ -160,9 +146,6 @@ function SlideFlow() {
                       <Text strong>{label}</Text>
                     </Flex>
                   </div>
-                  {index < steps.length - 1 ? (
-                    <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
-                  ) : null}
                 </Flex>
               </Col>
             ))}
@@ -192,9 +175,6 @@ export default function SlidesFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag color="gold" style={{ alignSelf: "flex-start" }}>
-                Technical presentations
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
                 Present from the same canvas where technical ideas are built.
               </Title>
@@ -253,9 +233,7 @@ export default function SlidesFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3}>
-              Why use slides in CoCalc
-            </Title>
+            <Title level={3}>When slides belong in CoCalc</Title>
             <BulletList
               items={[
                 "Build presentations from slide-sized whiteboard pages.",

@@ -3,12 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
 import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
 
@@ -28,7 +27,7 @@ function WhiteboardMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 54%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: 8,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -44,16 +43,13 @@ function WhiteboardMock() {
               </div>
             </div>
           </Flex>
-          <Tag color="orange" style={{ marginInlineEnd: 0 }}>
-            JSONL document
-          </Tag>
         </Flex>
 
         <div
           style={{
             background: "#fff",
             border: `1px dashed ${PUBLIC_COLORS.border}`,
-            borderRadius: 22,
+            borderRadius: 8,
             padding: 18,
           }}
         >
@@ -66,7 +62,7 @@ function WhiteboardMock() {
                     style={{
                       background: "#fff",
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
+                      borderRadius: 8,
                       boxShadow: "0 10px 24px rgba(33, 49, 57, 0.07)",
                       padding: 12,
                     }}
@@ -84,33 +80,13 @@ function WhiteboardMock() {
                 ))}
               </Flex>
             </Col>
-            <Col xs={24} md={3}>
-              <Flex align="center" justify="center">
-                <div
-                  aria-hidden="true"
-                  style={{
-                    alignItems: "center",
-                    background: "#fff7e6",
-                    border: "1px solid #ffd591",
-                    borderRadius: 999,
-                    color: "#ad6800",
-                    display: "flex",
-                    height: 46,
-                    justifyContent: "center",
-                    width: 46,
-                  }}
-                >
-                  <Icon name="arrow-right" />
-                </div>
-              </Flex>
-            </Col>
-            <Col xs={24} md={11}>
+            <Col xs={24} md={12}>
               <div
                 style={{
                   background:
                     "linear-gradient(145deg, #f7fbff 0%, #ffffff 58%, #fff8e8 100%)",
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 20,
+                  borderRadius: 8,
                   boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
                   minHeight: 224,
                   padding: 16,
@@ -130,7 +106,7 @@ function WhiteboardMock() {
                     style={{
                       background: "#fff",
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 14,
+                      borderRadius: 8,
                       padding: 12,
                     }}
                   >
@@ -145,13 +121,6 @@ function WhiteboardMock() {
                       board.
                     </Paragraph>
                   </div>
-                  <Flex gap={8} wrap>
-                    {["page", "frame", "jsonl"].map((label) => (
-                      <Tag key={label} style={{ marginInlineEnd: 0 }}>
-                        {label}
-                      </Tag>
-                    ))}
-                  </Flex>
                 </Flex>
               </div>
             </Col>
@@ -168,16 +137,6 @@ function ExecutionGraph() {
       <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
-            <Tag
-              color="blue"
-              style={{
-                alignSelf: "flex-start",
-                background: COLORS.ANTD_BG_BLUE_L,
-                color: COLORS.BLUE_D,
-              }}
-            >
-              Computational canvas
-            </Tag>
             <Title level={3} style={{ margin: 0 }}>
               Put Jupyter cells in a directed graph.
             </Title>
@@ -203,19 +162,24 @@ function ExecutionGraph() {
             style={{
               background: "#fff",
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 26,
+              borderRadius: 8,
               boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
               padding: 22,
             }}
           >
-            <Flex align="center" justify="space-between" gap={12}>
+            <Flex align="center" gap={12} wrap>
               {["data", "clean", "fit", "plot"].map((label, index) => (
-                <Flex align="center" gap={10} key={label}>
+                <Flex
+                  align="center"
+                  gap={10}
+                  key={label}
+                  style={{ flex: "0 1 112px" }}
+                >
                   <div
                     style={{
                       background: index === 3 ? "#fff7e6" : "#f7fbff",
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
+                      borderRadius: 8,
                       padding: 14,
                     }}
                   >
@@ -261,9 +225,6 @@ export default function WhiteboardFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag color="orange" style={{ alignSelf: "flex-start" }}>
-                Collaborative technical canvas
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
                 A Miro-like whiteboard rebuilt for computational work.
               </Title>
@@ -337,9 +298,7 @@ export default function WhiteboardFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3}>
-              Why use whiteboards in CoCalc
-            </Title>
+            <Title level={3}>When a whiteboard belongs in CoCalc</Title>
             <BulletList
               items={[
                 "Explain ideas with text, math, sketches, and live code together.",

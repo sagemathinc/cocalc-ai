@@ -5,12 +5,11 @@
 
 import type { ReactNode } from "react";
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -34,7 +33,7 @@ function IconBadge({
         alignItems: "center",
         background: `${accent}14`,
         border: `1px solid ${accent}33`,
-        borderRadius: 16,
+        borderRadius: 8,
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
@@ -65,7 +64,7 @@ function StoryCard({
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 22,
+        borderRadius: 8,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 22,
@@ -90,7 +89,7 @@ function LatexEditorMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: 8,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -106,21 +105,13 @@ function LatexEditorMock() {
               </div>
             </div>
           </Flex>
-          <Flex gap={8} wrap>
-            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-              compiled
-            </Tag>
-            <Tag color="green" style={{ marginInlineEnd: 0 }}>
-              shared
-            </Tag>
-          </Flex>
         </Flex>
         <Row gutter={[12, 12]}>
           <Col xs={24} md={12}>
             <div
               style={{
                 background: "#10213f",
-                borderRadius: 18,
+                borderRadius: 8,
                 color: "#dbeafe",
                 minHeight: 280,
                 padding: 16,
@@ -153,7 +144,7 @@ shows concentration after normalization.
               style={{
                 background: "#fff",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 18,
+                borderRadius: 8,
                 minHeight: 280,
                 padding: 18,
               }}
@@ -167,7 +158,7 @@ shows concentration after normalization.
                   style={{
                     background: "#f8fafc",
                     border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: 14,
+                    borderRadius: 8,
                     minHeight: 180,
                     padding: 16,
                   }}
@@ -208,7 +199,7 @@ shows concentration after normalization.
                 style={{
                   background: "#fff",
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 14,
+                  borderRadius: 8,
                   padding: "9px 10px",
                 }}
               >
@@ -240,7 +231,7 @@ function PaperProjectDiagram() {
         background:
           "radial-gradient(circle at center, #eef5ff 0%, #ffffff 48%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: 8,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -260,7 +251,7 @@ function PaperProjectDiagram() {
             style={{
               background: index === 0 ? "#fff7e6" : "#fff",
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 18,
+              borderRadius: 8,
               minHeight: 74,
               padding: 14,
             }}
@@ -280,7 +271,7 @@ function ReviewLoopDiagram() {
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 26,
+        borderRadius: 8,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -298,7 +289,7 @@ function ReviewLoopDiagram() {
         <pre
           style={{
             background: "#10213f",
-            borderRadius: 18,
+            borderRadius: 8,
             color: "#dbeafe",
             margin: 0,
             overflowX: "auto",
@@ -313,17 +304,19 @@ Then build the PDF and triage warnings.`}</code>
         <Row gutter={[10, 10]}>
           {["structure review", "narrow patch", "PDF rebuild"].map((label) => (
             <Col key={label} xs={24} sm={8}>
-              <Tag
-                color="purple"
+              <Text
+                strong
                 style={{
-                  borderRadius: 999,
-                  marginInlineEnd: 0,
+                  background: "#f7f4ff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 8,
+                  display: "block",
                   padding: "4px 10px",
                   width: "100%",
                 }}
               >
                 {label}
-              </Tag>
+              </Text>
             </Col>
           ))}
         </Row>
@@ -345,7 +338,7 @@ function EvidenceFlowDiagram() {
       style={{
         background: "#fbfdff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 26,
+        borderRadius: 8,
         minHeight: 320,
         overflow: "hidden",
         position: "relative",
@@ -388,7 +381,7 @@ function EvidenceFlowDiagram() {
           style={{
             background: "#fff",
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 16,
+            borderRadius: 8,
             boxShadow: "0 10px 28px rgba(33, 49, 57, 0.08)",
             left: node.x,
             padding: "10px 12px",
@@ -425,17 +418,6 @@ export default function LatexEditorFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag
-                color="orange"
-                style={{
-                  alignSelf: "flex-start",
-                  background: "#fff7e6",
-                  color: "#ad6800",
-                  marginInlineEnd: 0,
-                }}
-              >
-                LaTeX inside a technical project
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
                 Write the paper where the code, figures, and review live
               </Title>
@@ -502,17 +484,6 @@ export default function LatexEditorFeaturePage({
           </Col>
           <Col xs={24} lg={13}>
             <Flex vertical gap={12}>
-              <Tag
-                color="blue"
-                style={{
-                  alignSelf: "flex-start",
-                  background: COLORS.ANTD_BG_BLUE_L,
-                  color: COLORS.BLUE_D,
-                  marginInlineEnd: 0,
-                }}
-              >
-                When the paper becomes a project
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Keep the working tree together
               </Title>
@@ -576,12 +547,6 @@ export default function LatexEditorFeaturePage({
           </Col>
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Tag
-                color="purple"
-                style={{ alignSelf: "flex-start", marginInlineEnd: 0 }}
-              >
-                Codex and review
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Use Codex as an editor and build assistant, not an author
               </Title>
@@ -653,12 +618,6 @@ export default function LatexEditorFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Tag
-                color="blue"
-                style={{ alignSelf: "flex-start", marginInlineEnd: 0 }}
-              >
-                Where CoCalc fits
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Choose the writing environment around the real task
               </Title>
@@ -682,7 +641,7 @@ export default function LatexEditorFeaturePage({
               style={{
                 background: "#fff",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 26,
+                borderRadius: 8,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
                 padding: 24,
               }}
@@ -693,21 +652,24 @@ export default function LatexEditorFeaturePage({
                   ["Local editor craft", "TeXstudio, TeXShop, VimTeX"],
                   ["Paper as technical project", "CoCalc"],
                 ].map(([task, fit]) => (
-                  <Flex align="center" gap={12} key={task} wrap>
-                    <Tag style={{ marginInlineEnd: 0, minWidth: 210 }}>
-                      {task}
-                    </Tag>
-                    <Icon
-                      name="arrow-right"
-                      style={{ color: PUBLIC_COLORS.brand }}
-                    />
-                    <Tag
-                      color={fit === "CoCalc" ? "blue" : undefined}
-                      style={{ marginInlineEnd: 0 }}
-                    >
-                      {fit}
-                    </Tag>
-                  </Flex>
+                  <div
+                    key={task}
+                    style={{
+                      background:
+                        fit === "CoCalc"
+                          ? PUBLIC_COLORS.surfaceMuted
+                          : PUBLIC_COLORS.surface,
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 8,
+                      display: "grid",
+                      gap: 10,
+                      gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                      padding: 12,
+                    }}
+                  >
+                    <Text>{task}</Text>
+                    <Text strong>{fit}</Text>
+                  </div>
                 ))}
               </Flex>
             </div>

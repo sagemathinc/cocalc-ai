@@ -63,18 +63,18 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "ai",
     aliases: ["openai-chatgpt"],
-    title: "AI Agents in Project Chat",
+    title: "AI Agents",
     tagline: "Use Codex where the technical work already lives.",
     summary:
-      "Work with Codex in project chat near files, notebooks, terminals, screenshots, patches, and review notes.",
+      "Work with Codex near files, notebooks, terminals, screenshots, patches, and review notes.",
     image: "/public/features/chatgpt-fix-code.png",
     docsUrl: "https://sagemathinc.github.io/cocalc-guides/codex-agent-chat/",
     index: true,
     sections: [
       {
-        title: "Codex in project threads",
+        title: "Codex near the work",
         paragraphs: [
-          "CoCalc-AI uses Codex through project chat threads. Human @mentions notify collaborators; they do not invoke models.",
+          "CoCalc-AI keeps Codex work in durable threads beside the files and collaborators involved in the project. Human @mentions notify collaborators; they do not invoke models.",
         ],
         bullets: [
           "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
@@ -202,7 +202,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "HTTP API",
     tagline: "Automate and integrate CoCalc from external systems.",
     summary:
-      "Use the CoCalc HTTP API for automation, integration, and provisioning without depending on the web UI.",
+      "Use documented HTTP endpoints to automate setup, provisioning, and integrations from your own systems.",
     image: "/public/features/api-screenshot.png",
     index: true,
     sections: [

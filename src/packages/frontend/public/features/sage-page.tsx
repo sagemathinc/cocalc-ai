@@ -5,12 +5,11 @@
 
 import type { ReactNode } from "react";
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -34,7 +33,7 @@ function IconBadge({
         alignItems: "center",
         background: `${accent}14`,
         border: `1px solid ${accent}33`,
-        borderRadius: 16,
+        borderRadius: 8,
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
@@ -65,7 +64,7 @@ function StoryCard({
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 22,
+        borderRadius: 8,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 22,
@@ -124,7 +123,7 @@ function SageWorkspaceMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f3fbf3 52%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: 8,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -140,9 +139,6 @@ function SageWorkspaceMock() {
               </div>
             </div>
           </Flex>
-          <Tag color="green" style={{ marginInlineEnd: 0 }}>
-            Python ecosystem
-          </Tag>
         </Flex>
 
         <Row gutter={[12, 12]}>
@@ -152,7 +148,7 @@ function SageWorkspaceMock() {
                 style={{
                   background: "#fff",
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 18,
+                  borderRadius: 8,
                   height: "100%",
                   padding: 14,
                 }}
@@ -174,7 +170,7 @@ function SageWorkspaceMock() {
         <div
           style={{
             background: "#0b1522",
-            borderRadius: 20,
+            borderRadius: 8,
             color: "#dbeafe",
             overflow: "hidden",
           }}
@@ -238,16 +234,6 @@ function TeachingComparison() {
       <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={11}>
           <Flex vertical gap={12}>
-            <Tag
-              color="blue"
-              style={{
-                alignSelf: "flex-start",
-                background: COLORS.ANTD_BG_BLUE_L,
-                color: COLORS.BLUE_D,
-              }}
-            >
-              Teaching math
-            </Tag>
             <Title level={3} style={{ margin: 0 }}>
               A free, open alternative for computational mathematics courses.
             </Title>
@@ -270,7 +256,7 @@ function TeachingComparison() {
             style={{
               background: "#fff",
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 26,
+              borderRadius: 8,
               boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
               padding: 22,
             }}
@@ -284,7 +270,7 @@ function TeachingComparison() {
                     style={{
                       background: "#f7fbff",
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
+                      borderRadius: 8,
                       height: "100%",
                       padding: 14,
                     }}
@@ -326,7 +312,7 @@ function ResearchFlow() {
       style={{
         background: "#0b1522",
         border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 26,
+        borderRadius: 8,
         color: "#dbeafe",
         minWidth: 0,
         padding: 24,
@@ -334,23 +320,13 @@ function ResearchFlow() {
     >
       <Flex vertical gap={22}>
         <div>
-          <Tag
-            style={{
-              background: "rgba(255,255,255,0.08)",
-              borderColor: "rgba(255,255,255,0.18)",
-              color: "#dbeafe",
-              marginBottom: 12,
-            }}
-          >
-            Research computation
-          </Tag>
           <Title level={3} style={{ color: "#fff", margin: 0 }}>
             SageMath can be more than an interactive calculator.
           </Title>
           <Paragraph style={{ color: "#cbd5e1", margin: "8px 0 0" }}>
-            CoCalc-AI makes serious Sage development and long-running
-            mathematics research computations practical in a project, instead of
-            forcing the work onto a laptop or a one-off server.
+            CoCalc-AI makes Sage development and long-running mathematics
+            research computations practical in a project, instead of forcing the
+            work onto a laptop or a one-off server.
           </Paragraph>
         </div>
         <Row gutter={[14, 14]}>
@@ -360,7 +336,7 @@ function ResearchFlow() {
                 style={{
                   background: "rgba(255,255,255,0.06)",
                   border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 20,
+                  borderRadius: 8,
                   height: "100%",
                   padding: 18,
                 }}
@@ -371,7 +347,7 @@ function ResearchFlow() {
                       alignItems: "center",
                       background: "rgba(255,255,255,0.1)",
                       border: "1px solid rgba(255,255,255,0.16)",
-                      borderRadius: 16,
+                      borderRadius: 8,
                       display: "inline-flex",
                       fontSize: 24,
                       height: 52,
@@ -418,9 +394,6 @@ export default function SageFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag color="green" style={{ alignSelf: "flex-start" }}>
-                SageMath and CoCalc
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
                 Use SageMath where its history and future meet.
               </Title>
@@ -483,16 +456,6 @@ export default function SageFeaturePage({
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Tag
-                color="blue"
-                style={{
-                  alignSelf: "flex-start",
-                  background: COLORS.ANTD_BG_BLUE_L,
-                  color: COLORS.BLUE_D,
-                }}
-              >
-                Development workflows
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Build, test, and develop Sage from source.
               </Title>
@@ -505,7 +468,7 @@ export default function SageFeaturePage({
               <Paragraph style={{ margin: 0 }}>
                 That was not a realistic workflow in the older CoCalc.com
                 environment. In the current container-based CoCalc-AI model, a
-                project can be a serious Linux development machine.
+                project can be a practical Linux development environment.
               </Paragraph>
               <BulletList
                 items={[
@@ -521,7 +484,7 @@ export default function SageFeaturePage({
               style={{
                 background: "#fff",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 26,
+                borderRadius: 8,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
                 padding: 22,
               }}
@@ -540,7 +503,7 @@ export default function SageFeaturePage({
                     style={{
                       background: "#f7fbff",
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
+                      borderRadius: 8,
                       padding: 14,
                     }}
                   >
@@ -560,7 +523,7 @@ export default function SageFeaturePage({
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
             <Title level={3} style={{ margin: 0 }}>
-              Why use SageMath on CoCalc
+              When SageMath belongs in CoCalc
             </Title>
             <BulletList
               items={[
@@ -586,7 +549,7 @@ export default function SageFeaturePage({
             <div
               style={{
                 background: "#10213f",
-                borderRadius: 24,
+                borderRadius: 8,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
                 color: "#fff",
                 padding: 26,

@@ -5,7 +5,7 @@
 
 import type { ReactNode } from "react";
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
@@ -34,7 +34,7 @@ function IconBadge({
         alignItems: "center",
         background: `${accent}14`,
         border: `1px solid ${accent}33`,
-        borderRadius: 16,
+        borderRadius: 8,
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
@@ -65,7 +65,7 @@ function StoryCard({
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 22,
+        borderRadius: 8,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 22,
@@ -97,7 +97,7 @@ function TerminalMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: 8,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -113,19 +113,11 @@ function TerminalMock() {
               </div>
             </div>
           </Flex>
-          <Flex gap={8} wrap>
-            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-              running
-            </Tag>
-            <Tag color="green" style={{ marginInlineEnd: 0 }}>
-              collaborative
-            </Tag>
-          </Flex>
         </Flex>
         <div
           style={{
             background: "#0b1522",
-            borderRadius: 20,
+            borderRadius: 8,
             color: "#dbeafe",
             overflow: "hidden",
           }}
@@ -193,7 +185,7 @@ function TerminalMock() {
                 style={{
                   background: "#fff",
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 14,
+                  borderRadius: 8,
                   padding: "9px 10px",
                 }}
               >
@@ -214,7 +206,7 @@ function TermFileDiagram() {
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 26,
+        borderRadius: 8,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -235,7 +227,7 @@ function TermFileDiagram() {
               style={{
                 background: "#f7fbff",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 18,
+                borderRadius: 8,
                 padding: 16,
               }}
             >
@@ -253,15 +245,7 @@ function TermFileDiagram() {
               </Flex>
             </div>
           </Col>
-          <Col xs={24} md={3}>
-            <Flex justify="center">
-              <Icon
-                name="arrow-right"
-                style={{ color: PUBLIC_COLORS.brand, fontSize: 28 }}
-              />
-            </Flex>
-          </Col>
-          <Col xs={24} md={12}>
+          <Col xs={24} md={15}>
             <Flex vertical gap={10}>
               {[
                 ["cwd", "research/runs/"],
@@ -276,7 +260,7 @@ function TermFileDiagram() {
                   style={{
                     background: "#fff8e8",
                     border: "1px solid rgba(215, 155, 43, 0.3)",
-                    borderRadius: 14,
+                    borderRadius: 8,
                     padding: "10px 12px",
                   }}
                 >
@@ -306,7 +290,7 @@ function SharedStreamDiagram() {
         background:
           "linear-gradient(145deg, #fff 0%, #f6fbff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 26,
+        borderRadius: 8,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -319,7 +303,7 @@ function SharedStreamDiagram() {
                 style={{
                   background: `${accent}10`,
                   border: `1px solid ${accent}33`,
-                  borderRadius: 18,
+                  borderRadius: 8,
                   padding: 14,
                   textAlign: "center",
                 }}
@@ -339,23 +323,18 @@ function SharedStreamDiagram() {
             </Col>
           ))}
         </Row>
-        <Flex align="center" justify="center" gap={12} wrap>
-          <Icon name="arrow-right" style={{ color: PUBLIC_COLORS.brand }} />
-          <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-            durable reconnect
-          </Tag>
-          <Tag color="green" style={{ marginInlineEnd: 0 }}>
-            smallest shared size
-          </Tag>
-          <Tag color="gold" style={{ marginInlineEnd: 0 }}>
-            side chat
-          </Tag>
+        <Flex align="center" justify="center" gap={14} wrap>
+          {["durable reconnect", "shared sizing", "side chat"].map((label) => (
+            <Text key={label} style={{ color: PUBLIC_COLORS.mutedText }}>
+              {label}
+            </Text>
+          ))}
         </Flex>
         <div
           style={{
             background: "#0b1522",
             border: "1px solid rgba(255,255,255,0.18)",
-            borderRadius: 20,
+            borderRadius: 8,
             color: "#dbeafe",
             padding: 18,
             textAlign: "center",
@@ -401,7 +380,7 @@ function AgentTerminalLoop() {
       style={{
         background:
           "linear-gradient(135deg, rgba(16,33,63,0.97), rgba(34,92,116,0.94))",
-        borderRadius: 28,
+        borderRadius: 8,
         color: "#fff",
         padding: 34,
       }}
@@ -416,7 +395,7 @@ function AgentTerminalLoop() {
               style={{
                 background: "rgba(255,255,255,0.1)",
                 border: "1px solid rgba(255,255,255,0.16)",
-                borderRadius: 20,
+                borderRadius: 8,
                 height: "100%",
                 padding: 18,
               }}
@@ -478,16 +457,6 @@ export default function TerminalFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag
-                color="blue"
-                style={{
-                  alignSelf: "flex-start",
-                  background: COLORS.ANTD_BG_BLUE_L,
-                  color: COLORS.BLUE_D,
-                }}
-              >
-                Collaborative Linux terminal
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
                 A terminal is a live project document.
               </Title>
@@ -647,7 +616,7 @@ export default function TerminalFeaturePage({
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={14}>
             <Title level={3} style={{ margin: 0 }}>
-              Terminal workflows connect to the rest of CoCalc
+              When a terminal should be shared
             </Title>
             <Paragraph style={{ margin: 0 }}>
               The terminal becomes more valuable because it sits beside Jupyter
@@ -674,7 +643,7 @@ export default function TerminalFeaturePage({
             <div
               style={{
                 background: "#10213f",
-                borderRadius: 24,
+                borderRadius: 8,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
                 color: "#fff",
                 padding: 26,

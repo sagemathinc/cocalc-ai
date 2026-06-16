@@ -3,12 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -38,7 +37,7 @@ function RWorkflowMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 54%, #f6fff4 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: 8,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -54,9 +53,6 @@ function RWorkflowMock() {
               </div>
             </div>
           </Flex>
-          <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-            real Linux
-          </Tag>
         </Flex>
 
         <Row gutter={[12, 12]}>
@@ -66,7 +62,7 @@ function RWorkflowMock() {
                 style={{
                   background: "#fff",
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 18,
+                  borderRadius: 8,
                   height: "100%",
                   padding: 14,
                 }}
@@ -103,16 +99,6 @@ function PositioningBand() {
       <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
-            <Tag
-              color="blue"
-              style={{
-                alignSelf: "flex-start",
-                background: COLORS.ANTD_BG_BLUE_L,
-                color: COLORS.BLUE_D,
-              }}
-            >
-              Positioning
-            </Tag>
             <Title level={3} style={{ margin: 0 }}>
               CoCalc is not trying to be RStudio.
             </Title>
@@ -135,7 +121,7 @@ function PositioningBand() {
             style={{
               background: "#fff",
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 26,
+              borderRadius: 8,
               boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
               padding: 22,
             }}
@@ -154,7 +140,7 @@ function PositioningBand() {
                   style={{
                     background: "#f7fbff",
                     border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: 16,
+                    borderRadius: 8,
                     padding: 14,
                   }}
                 >
@@ -189,9 +175,6 @@ export default function RStatisticalSoftwareFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag color="blue" style={{ alignSelf: "flex-start" }}>
-                R in a project workspace
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
                 Use R when statistics is part of a larger workflow.
               </Title>
@@ -201,7 +184,7 @@ export default function RStatisticalSoftwareFeaturePage({
                 shared files, and course projects.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                It is strongest when R analysis needs to live beside other
+                It is useful when R analysis needs to live beside other
                 technical work: Python, shell commands, generated reports,
                 teaching infrastructure, and collaborative review.
               </Paragraph>
@@ -250,7 +233,7 @@ export default function RStatisticalSoftwareFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3}>Why use R on CoCalc</Title>
+            <Title level={3}>When R belongs in CoCalc</Title>
             <BulletList
               items={[
                 "Use notebooks, terminals, scripts, and reproducible document workflows in one place.",

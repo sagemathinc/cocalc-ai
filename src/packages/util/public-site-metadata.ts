@@ -58,9 +58,9 @@ const PUBLIC_FEATURE_METADATA: PublicFeatureMetadata[] = [
   },
   {
     slug: "ai",
-    title: "AI Agents in Project Chat",
+    title: "AI Agents",
     summary:
-      "Work with Codex inside collaborative project threads that stay close to files, notebooks, terminals, screenshots, patches, review notes, and live notebook state.",
+      "Work with Codex near files, notebooks, terminals, screenshots, patches, review notes, and live notebook state.",
     image: "/public/features/chatgpt-fix-code.png",
   },
   {

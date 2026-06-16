@@ -5,12 +5,11 @@
 
 import type { ReactNode } from "react";
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -34,7 +33,7 @@ function IconBadge({
         alignItems: "center",
         background: `${accent}14`,
         border: `1px solid ${accent}33`,
-        borderRadius: 16,
+        borderRadius: 8,
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
@@ -65,7 +64,7 @@ function StoryCard({
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 22,
+        borderRadius: 8,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 22,
@@ -116,7 +115,7 @@ function ThreadMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f7f4ff 52%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: 8,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -132,14 +131,6 @@ function ThreadMock() {
               </div>
             </div>
           </Flex>
-          <Flex gap={8} wrap>
-            <Tag color="purple" style={{ marginInlineEnd: 0 }}>
-              OpenAI
-            </Tag>
-            <Tag color="green" style={{ marginInlineEnd: 0 }}>
-              collaborative
-            </Tag>
-          </Flex>
         </Flex>
 
         <Flex vertical gap={12}>
@@ -149,7 +140,7 @@ function ThreadMock() {
               style={{
                 background: "#fff",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 18,
+                borderRadius: 8,
                 padding: 14,
               }}
             >
@@ -182,7 +173,7 @@ function ThreadMock() {
                 style={{
                   background: "#fff",
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 14,
+                  borderRadius: 8,
                   padding: "9px 10px",
                 }}
               >
@@ -235,7 +226,7 @@ function WorkflowStrip() {
       style={{
         background: "#0b1522",
         border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 26,
+        borderRadius: 8,
         color: "#dbeafe",
         minWidth: 0,
         padding: 24,
@@ -243,16 +234,6 @@ function WorkflowStrip() {
     >
       <Flex vertical gap={22}>
         <div>
-          <Tag
-            style={{
-              background: "rgba(255,255,255,0.08)",
-              borderColor: "rgba(255,255,255,0.18)",
-              color: "#dbeafe",
-              marginBottom: 12,
-            }}
-          >
-            Codex workflow
-          </Tag>
           <Title level={3} style={{ color: "#fff", margin: 0 }}>
             Agent work should leave a readable project trail.
           </Title>
@@ -264,7 +245,7 @@ function WorkflowStrip() {
                 style={{
                   background: "rgba(255,255,255,0.06)",
                   border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 20,
+                  borderRadius: 8,
                   height: "100%",
                   padding: 18,
                 }}
@@ -276,7 +257,7 @@ function WorkflowStrip() {
                         alignItems: "center",
                         background: "rgba(255,255,255,0.1)",
                         border: "1px solid rgba(255,255,255,0.16)",
-                        borderRadius: 16,
+                        borderRadius: 8,
                         display: "inline-flex",
                         fontSize: 24,
                         height: 52,
@@ -312,7 +293,7 @@ function CredentialPanel() {
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 24,
+        borderRadius: 8,
         boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
         padding: 22,
       }}
@@ -342,7 +323,7 @@ function TerminalAgentPanel() {
     <div
       style={{
         background: "#0b1522",
-        borderRadius: 24,
+        borderRadius: 8,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
         color: "#dbeafe",
         overflow: "hidden",
@@ -413,23 +394,12 @@ export default function AIFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag
-                style={{
-                  alignSelf: "flex-start",
-                  background: "#f3e8ff",
-                  borderColor: "#d8b4fe",
-                  color: "#6d28d9",
-                }}
-              >
-                Codex in CoCalc
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
-                Codex chat where project work happens.
+                Codex where the work happens.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                Use Codex from a project chat thread, next to the files,
-                notebooks, terminals, images, and collaborators involved in the
-                work.
+                Use Codex next to the files, notebooks, terminals, images, and
+                collaborators involved in the work.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Ask it to inspect code, debug a notebook, edit documentation,
@@ -441,7 +411,7 @@ export default function AIFeaturePage({
                   {primaryLabel}
                 </Button>
                 <Button href={`${GUIDE_BASE}/codex-agent-chat/`}>
-                  Read the Codex chat guide
+                  Read the Codex guide
                 </Button>
               </Flex>
             </Flex>
@@ -485,16 +455,6 @@ export default function AIFeaturePage({
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Tag
-                color="blue"
-                style={{
-                  alignSelf: "flex-start",
-                  background: COLORS.ANTD_BG_BLUE_L,
-                  color: COLORS.BLUE_D,
-                }}
-              >
-                Project-native tools
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Let Codex work with the live project, not just a pasted prompt.
               </Title>
@@ -520,7 +480,7 @@ export default function AIFeaturePage({
                 background:
                   "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 28,
+                borderRadius: 8,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
                 padding: 20,
               }}
@@ -539,7 +499,7 @@ export default function AIFeaturePage({
                     style={{
                       background: "#fff",
                       border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
+                      borderRadius: 8,
                       padding: 14,
                     }}
                   >
@@ -562,7 +522,7 @@ export default function AIFeaturePage({
             style={{
               background: "#fff",
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 24,
+              borderRadius: 8,
               boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
               height: "100%",
               padding: 22,

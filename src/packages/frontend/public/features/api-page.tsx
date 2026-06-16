@@ -26,21 +26,21 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
                 Automate and integrate CoCalc from your own systems
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc exposes an HTTP API for automation, provisioning, and
-                integration workflows, so external systems do not have to drive
-                the web UI to manage projects or interact with platform
-                features.
+                CoCalc exposes documented HTTP endpoints for automation,
+                provisioning, and integration workflows, so external systems do
+                not have to drive the web UI to manage projects or interact with
+                platform features.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                This is useful for hosted CoCalc, launchpad-style deployments,
-                and any environment where CoCalc needs to be part of a broader
-                technical stack.
+                This is the integration API, not the CoCalc CLI. Use it when a
+                portal, service, or institution-managed workflow needs to talk
+                to CoCalc directly.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={appPath("auth/sign-up")}>
                   Create account
                 </Button>
-                <LinkButton href={appPath("docs")}>
+                <LinkButton href={appPath("docs/api/http-api")}>
                   API documentation
                 </LinkButton>
               </Flex>

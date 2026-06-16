@@ -40,6 +40,53 @@ describe("getFeaturesRouteFromPath", () => {
 });
 
 describe("PublicFeaturesApp", () => {
+  const auditedFeaturePages = [
+    {
+      marker: "Python that moves from notebook to script to paper.",
+      slug: "python",
+    },
+    {
+      marker: "Use SageMath where its history and future meet.",
+      slug: "sage",
+    },
+    {
+      marker: "Use R when statistics is part of a larger workflow.",
+      slug: "r-statistical-software",
+    },
+    {
+      marker: "Use Julia in notebooks, terminals, Pluto, and source files.",
+      slug: "julia",
+    },
+    {
+      marker: "A Linux workspace you can actually administer.",
+      slug: "linux",
+    },
+    {
+      marker: "A terminal is a live project document.",
+      slug: "terminal",
+    },
+    {
+      marker: "Write the paper where the code, figures, and review live",
+      slug: "latex-editor",
+    },
+    {
+      marker: "A Miro-like whiteboard rebuilt for computational work.",
+      slug: "whiteboard",
+    },
+    {
+      marker: "Present from the same canvas where technical ideas are built.",
+      slug: "slides",
+    },
+    {
+      marker: "Automate and integrate CoCalc from your own systems",
+      slug: "api",
+    },
+    {
+      marker: "Run Octave in notebooks, scripts, and terminals.",
+      slug: "octave",
+    },
+  ] as const;
+
   it("renders the features index", () => {
     render(
       <PublicFeaturesApp
@@ -50,20 +97,18 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Features for shared computational projects.",
+        name: "Choose the workflow your team needs",
       }),
     ).not.toBeNull();
-    expect(
-      screen.getByText(/^Start with the workflow your team needs/),
-    ).not.toBeNull();
+    expect(screen.getByText(/^Use this index to find/)).not.toBeNull();
     expect(screen.queryByText(/Launchpad features make/)).toBeNull();
     const startingPoints = screen.getByRole("region", {
       name: "CoCalc feature starting points",
     });
     expect(
-      within(startingPoints).getByRole("heading", {
-        name: "Choose the workflow you recognize.",
-      }),
+      within(startingPoints).getByText(
+        "Pick the page that matches the question in front of you.",
+      ),
     ).not.toBeNull();
     expect(
       within(startingPoints)
@@ -83,35 +128,26 @@ describe("PublicFeaturesApp", () => {
     expect(
       within(startingPoints).queryByRole("link", { name: /Compare CoCalc/i }),
     ).toBeNull();
+    expect(screen.queryByText("Feature map")).toBeNull();
     expect(
-      screen.getByAltText(
-        "CoCalc feature map with documents, compute, AI, teaching, and platform categories",
-      ),
-    ).toHaveStyle({
-      aspectRatio: "3 / 2",
-      objectFit: "contain",
-    });
+      screen.queryByAltText(/CoCalc feature map/i),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Documents")).not.toBeNull();
     expect(screen.getByText("Compute")).not.toBeNull();
     expect(screen.getByText("AI and automation")).not.toBeNull();
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);
     expect(screen.queryByText("Open page")).toBeNull();
+    expect(screen.queryByRole("link", { name: /Compare CoCalc/i })).toBeNull();
     expect(
-      screen
-        .getAllByRole("link", { name: "Compare CoCalc" })[0]
-        .getAttribute("href"),
-    ).toBe("/features/compare");
+      screen.getByRole("link", { name: /CoCalc CLI/i }).getAttribute("href"),
+    ).toBe("/docs/cli/use-cocalc-cli");
     expect(
-      screen
-        .getByRole("link", { name: "Compare product paths" })
-        .getAttribute("href"),
-    ).toBe("/products");
+      screen.queryByRole("link", { name: "Compare product paths" }),
+    ).toBeNull();
     expect(
-      screen
-        .getByRole("link", { name: "Pricing and licensing" })
-        .getAttribute("href"),
-    ).toBe("/pricing");
+      screen.queryByRole("link", { name: "Pricing and licensing" }),
+    ).toBeNull();
     expect(
       screen
         .getAllByRole("link", { name: /Jupyter Notebooks/i })[0]
@@ -149,7 +185,7 @@ describe("PublicFeaturesApp", () => {
       ),
     ).toHaveLength(0);
     expect(container.textContent ?? "").not.toMatch(
-      /Compare workspace model|FilesRuntimeHistoryPeopleAgents|The CoCalc workspace model|The shared unit of work|Durable collaborative projects|Full feature index/i,
+      /Feature map|Compare workspace model|FilesRuntimeHistoryPeopleAgents|The CoCalc workspace model|The shared unit of work|Durable collaborative projects|Full feature index/i,
     );
 
     for (const card of container.querySelectorAll(
@@ -181,13 +217,11 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "AI Agents in Project Chat",
+        name: "AI Agents",
         level: 1,
       }),
     ).not.toBeNull();
-    expect(
-      screen.getByText("Codex chat where project work happens."),
-    ).not.toBeNull();
+    expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
     expect(screen.getByText("Codex in chat")).not.toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
     const featureNav = screen.getByRole("region", {
@@ -224,8 +258,10 @@ describe("PublicFeaturesApp", () => {
       screen.getByRole("link", { name: "Compare CoCalc" }).getAttribute("href"),
     ).toBe("/features/compare");
     expect(
-      screen.getByRole("link", { name: "Feature map" }).getAttribute("href"),
-    ).toBe("/features");
+      screen
+        .getAllByRole("link", { name: "All features" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/features", "/features"]);
     expect(
       screen
         .getByRole("link", { name: "Next feature: Jupyter Notebooks" })
@@ -241,9 +277,7 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
-    expect(
-      screen.getByText("Codex chat where project work happens."),
-    ).not.toBeNull();
+    expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
     const featureNav = screen.getByRole("region", {
       name: "Feature page navigation",
     });
@@ -328,7 +362,7 @@ describe("PublicFeaturesApp", () => {
         "Write the paper where the code, figures, and review live",
       ),
     ).not.toBeNull();
-    expect(screen.getByText("When the paper becomes a project")).not.toBeNull();
+    expect(screen.getByText("Keep the working tree together")).not.toBeNull();
     expect(
       screen.getByText(
         "Use Codex as an editor and build assistant, not an author",
@@ -650,6 +684,61 @@ describe("PublicFeaturesApp", () => {
       expect(screen.queryByText(finalCta)).toBeNull();
     },
   );
+
+  it.each(auditedFeaturePages)(
+    "keeps the audited $slug feature page route-specific and free of decorative tags",
+    ({ marker, slug }) => {
+      const { container } = render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      expect(screen.getByText(marker)).not.toBeNull();
+      expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
+      expect(container.textContent ?? "").not.toMatch(
+        /Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious technical work|serious Linux|strongest|workspace model|internal planning|multi-bay|control plane|stale files|narrower tool/i,
+      );
+
+      const nextSteps = screen.getByRole("region", {
+        name: "Feature operating model next steps",
+      });
+      expect(
+        within(nextSteps)
+          .getByRole("link", { name: "Compare product paths" })
+          .getAttribute("href"),
+      ).toBe("/products");
+      expect(
+        within(nextSteps)
+          .getByRole("link", { name: "Pricing and licensing" })
+          .getAttribute("href"),
+      ).toBe("/pricing");
+      expect(
+        within(nextSteps)
+          .getByRole("link", { name: "All features" })
+          .getAttribute("href"),
+      ).toBe("/features");
+    },
+  );
+
+  it("keeps the HTTP API page distinct from the CoCalc CLI", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "api", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(/This is the integration API, not the CoCalc CLI/i),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "API documentation" })
+        .getAttribute("href"),
+    ).toBe("/docs/api/http-api");
+  });
 
   it("renders the compare feature page", () => {
     const { container } = render(

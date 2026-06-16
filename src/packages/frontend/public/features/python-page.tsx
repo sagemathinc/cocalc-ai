@@ -5,12 +5,11 @@
 
 import type { ReactNode } from "react";
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import { featureAppPath as appPath, LinkButton } from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;
@@ -30,7 +29,7 @@ function IconBadge({
         alignItems: "center",
         background: `${accent}14`,
         border: `1px solid ${accent}33`,
-        borderRadius: 16,
+        borderRadius: 8,
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
@@ -61,7 +60,7 @@ function StoryCard({
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 22,
+        borderRadius: 8,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 22,
@@ -113,7 +112,7 @@ function PythonProjectMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: 8,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -129,14 +128,6 @@ function PythonProjectMock() {
               </div>
             </div>
           </Flex>
-          <Flex gap={8} wrap>
-            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-              real Linux
-            </Tag>
-            <Tag color="green" style={{ marginInlineEnd: 0 }}>
-              install packages
-            </Tag>
-          </Flex>
         </Flex>
 
         <Row gutter={[12, 12]}>
@@ -146,7 +137,7 @@ function PythonProjectMock() {
                 style={{
                   background: "#fff",
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 18,
+                  borderRadius: 8,
                   height: "100%",
                   padding: 14,
                 }}
@@ -168,7 +159,7 @@ function PythonProjectMock() {
         <div
           style={{
             background: "#0b1522",
-            borderRadius: 20,
+            borderRadius: 8,
             color: "#dbeafe",
             overflow: "hidden",
           }}
@@ -222,7 +213,7 @@ function PythonProjectMock() {
           style={{
             background: "#fff",
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 18,
+            borderRadius: 8,
             padding: 14,
           }}
         >
@@ -257,7 +248,7 @@ function WorkflowNode({
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 18,
+        borderRadius: 8,
         boxShadow: "0 12px 34px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 18,
@@ -266,16 +257,9 @@ function WorkflowNode({
       <Flex vertical gap={12}>
         <Flex align="center" justify="space-between" gap={12}>
           <IconBadge accent={accent} icon={icon} />
-          <Tag
-            style={{
-              background: `${accent}12`,
-              borderColor: `${accent}2e`,
-              color: accent,
-              marginInlineEnd: 0,
-            }}
-          >
+          <Text strong style={{ color: accent, fontSize: 13 }}>
             {label}
-          </Tag>
+          </Text>
         </Flex>
         <div>
           <Title level={4} style={{ margin: "0 0 6px" }}>
@@ -295,7 +279,7 @@ function MiniTerminal() {
     <div
       style={{
         background: "#0b1522",
-        borderRadius: 18,
+        borderRadius: 8,
         color: "#dbeafe",
         height: "100%",
         overflow: "hidden",
@@ -349,7 +333,7 @@ function PackageRail() {
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 18,
+        borderRadius: 8,
         height: "100%",
         padding: 16,
       }}
@@ -364,20 +348,12 @@ function PackageRail() {
             </div>
           </div>
         </Flex>
-        <Flex gap={8} wrap>
+        <Flex gap={10} wrap>
           {["sudo", "apt", "uv", "pip", "conda", "venv", "RootFS"].map(
             (label) => (
-              <Tag
-                key={label}
-                style={{
-                  background: COLORS.ANTD_BG_BLUE_L,
-                  borderColor: "#91caff",
-                  color: COLORS.BLUE_D,
-                  marginInlineEnd: 0,
-                }}
-              >
+              <Text key={label} code>
                 {label}
-              </Tag>
+              </Text>
             ),
           )}
         </Flex>
@@ -392,7 +368,7 @@ function CodexPanel() {
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 18,
+        borderRadius: 8,
         height: "100%",
         padding: 16,
       }}
@@ -411,7 +387,7 @@ function CodexPanel() {
           style={{
             background: "#f7f9fc",
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 14,
+            borderRadius: 8,
             padding: 12,
           }}
         >
@@ -461,9 +437,6 @@ function PythonWorkflowMap() {
       <Flex vertical gap={22}>
         <Flex align="end" justify="space-between" wrap gap={16}>
           <div>
-            <Tag color="gold" style={{ marginBottom: 12 }}>
-              Workflow map
-            </Tag>
             <Title level={3} style={{ margin: 0 }}>
               From notebook to script to paper
             </Title>
@@ -485,30 +458,19 @@ function PythonWorkflowMap() {
             background:
               "linear-gradient(145deg, #ffffff 0%, #f5fbff 58%, #fff8e8 100%)",
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 28,
+            borderRadius: 8,
             boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
             padding: 22,
           }}
         >
           <Flex vertical gap={16}>
             <Row gutter={[14, 14]} align="stretch">
-              {top.map((node, index) => (
+              {top.map((node) => (
                 <Col key={node.title} xs={24} lg={8}>
                   <Flex align="center" gap={12} style={{ height: "100%" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <WorkflowNode {...node} />
                     </div>
-                    {index < top.length - 1 ? (
-                      <Icon
-                        name="arrow-right"
-                        style={{
-                          color: "#d29c3c",
-                          display: "block",
-                          flex: "0 0 auto",
-                          fontSize: 22,
-                        }}
-                      />
-                    ) : null}
                   </Flex>
                 </Col>
               ))}
@@ -557,7 +519,7 @@ function CompactUseCard({
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 20,
+        borderRadius: 8,
         height: "100%",
         padding: 20,
       }}
@@ -651,16 +613,6 @@ export default function PythonFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag
-                color="blue"
-                style={{
-                  alignSelf: "flex-start",
-                  background: COLORS.ANTD_BG_BLUE_L,
-                  color: COLORS.BLUE_D,
-                }}
-              >
-                Real collaborative Python
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
                 Python that moves from notebook to script to paper.
               </Title>
@@ -728,7 +680,7 @@ export default function PythonFeaturePage({
               Use Python as part of the whole project
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              CoCalc is strongest when Python is connected to the rest of the
+              CoCalc is useful when Python is connected to the rest of the
               technical work: notebooks, scripts, terminals, papers, GitHub,
               classes, long-running jobs, and AI assistance around the same
               project state.
@@ -749,7 +701,7 @@ export default function PythonFeaturePage({
             <div
               style={{
                 background: "#10213f",
-                borderRadius: 24,
+                borderRadius: 8,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
                 color: "#fff",
                 padding: 26,
