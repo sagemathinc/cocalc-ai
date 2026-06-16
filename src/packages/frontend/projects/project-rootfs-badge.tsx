@@ -26,6 +26,7 @@ interface ProjectRootfsBadgeProps {
   rootfsImage?: string;
   rootfsImageId?: string;
   rootfsImages: RootfsImageEntry[];
+  rootfsImagesLoading?: boolean;
   onClick?: (e: MouseEvent<HTMLElement>) => void;
 }
 
@@ -92,6 +93,7 @@ export function ProjectRootfsBadge({
   rootfsImage,
   rootfsImageId,
   rootfsImages,
+  rootfsImagesLoading,
   onClick,
 }: ProjectRootfsBadgeProps) {
   const image = rootfsImage?.trim() ?? "";
@@ -116,6 +118,9 @@ export function ProjectRootfsBadge({
 
   const fallbackImage = image || imageId;
   if (!fallbackImage && !entry) {
+    return null;
+  }
+  if (!entry && imageId && rootfsImagesLoading) {
     return null;
   }
 

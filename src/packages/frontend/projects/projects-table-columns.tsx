@@ -142,6 +142,7 @@ export function getProjectTableColumns(
   opts: {
     onOpenRootfs?: (record: ProjectTableRecord, e: React.MouseEvent) => void;
     rootfsImages?: RootfsImageEntry[];
+    rootfsImagesLoading?: boolean;
   } = {},
 ): TableColumnsType<ProjectTableRecord> {
   const rootfsImages = opts.rootfsImages ?? [];
@@ -319,6 +320,7 @@ export function getProjectTableColumns(
                   <ProjectRootfsBadge
                     rootfsImageId={record.rootfs_image_id}
                     rootfsImages={rootfsImages}
+                    rootfsImagesLoading={opts.rootfsImagesLoading}
                     onClick={
                       opts.onOpenRootfs
                         ? (e) => opts.onOpenRootfs?.(record, e)

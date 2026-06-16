@@ -27,6 +27,7 @@ import { useProjectTableRecords } from "./use-project-table-records";
 interface Props {
   visible_projects: string[];
   rootfsImages: RootfsImageEntry[];
+  rootfsImagesLoading?: boolean;
   selectedProjectIds: string[];
   onSelectedProjectIdsChange: (project_ids: string[]) => void;
 }
@@ -87,6 +88,7 @@ function stateTags(record: ProjectTableRecord) {
 export function MobileProjectsList({
   visible_projects,
   rootfsImages,
+  rootfsImagesLoading,
   selectedProjectIds,
   onSelectedProjectIdsChange,
 }: Props) {
@@ -228,6 +230,7 @@ export function MobileProjectsList({
                     <ProjectRootfsBadge
                       rootfsImageId={record.rootfs_image_id}
                       rootfsImages={rootfsImages}
+                      rootfsImagesLoading={rootfsImagesLoading}
                       onClick={(e) => {
                         e.stopPropagation();
                         setRootfsModalProjectId(record.project_id);

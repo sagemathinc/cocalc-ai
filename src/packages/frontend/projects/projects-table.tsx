@@ -39,6 +39,7 @@ import { useProjectTableRecords } from "./use-project-table-records";
 interface Props {
   visible_projects: string[];
   rootfsImages: RootfsImageEntry[];
+  rootfsImagesLoading?: boolean;
   height?: number;
   narrow: boolean; // if narrow, then remove columns like "Collaborators" to safe space
   filteredCollaborators: string[] | null;
@@ -53,6 +54,7 @@ const PROJECTS_TABLE_SORT_KEY = "projects-table-sort";
 export function ProjectsTable({
   visible_projects,
   rootfsImages,
+  rootfsImagesLoading,
   height = 600,
   narrow = false,
   filteredCollaborators,
@@ -172,6 +174,7 @@ export function ProjectsTable({
     intl,
     {
       rootfsImages,
+      rootfsImagesLoading,
       onOpenRootfs: (record, e) => {
         e.stopPropagation();
         setRootfsModalProjectId(record.project_id);

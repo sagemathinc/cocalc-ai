@@ -98,10 +98,8 @@ export const ProjectsPage: React.FC = () => {
   const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
   const activeTopTab = useTypedRedux("page", "active_top_tab");
-  const { images: rootfsImages } = useRootfsImages(
-    [managedRootfsCatalogUrl()],
-    { limit: 200 },
-  );
+  const { images: rootfsImages, loading: rootfsImagesLoading } =
+    useRootfsImages([managedRootfsCatalogUrl()], { limit: 200 });
   const rootfsLabelById = useMemo(() => {
     const labelMap = new globalThis.Map<string, string>();
     for (const entry of rootfsImages) {
@@ -630,6 +628,7 @@ export const ProjectsPage: React.FC = () => {
                         <MobileProjectsList
                           visible_projects={visible_projects}
                           rootfsImages={rootfsImages}
+                          rootfsImagesLoading={rootfsImagesLoading}
                           selectedProjectIds={selectedProjectIds}
                           onSelectedProjectIdsChange={setSelectedProjectIds}
                         />
@@ -637,6 +636,7 @@ export const ProjectsPage: React.FC = () => {
                         <ProjectsTable
                           visible_projects={visible_projects}
                           rootfsImages={rootfsImages}
+                          rootfsImagesLoading={rootfsImagesLoading}
                           height={tableHeight}
                           narrow={narrow}
                           filteredCollaborators={filteredCollaborators}
