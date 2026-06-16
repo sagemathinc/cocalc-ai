@@ -900,6 +900,24 @@ export default function RootFilesystemImage({
           {activeDisplayEntry?.content
             ? renderRootfsContentPanel({
                 entry: activeDisplayEntry,
+                onCopyToHome: async (action) => {
+                  if (!actions) return;
+                  const source =
+                    action.source_path?.trim() || action.path?.trim();
+                  const dest = rootfsCopyTargetPath(
+                    action,
+                    getProjectHomeDirectory(project_id),
+                  );
+                  if (!source || !dest) {
+                    message.error("Copy action is missing a source or target.");
+                    return;
+                  }
+                  await actions.copyPaths({
+                    src: source,
+                    dest,
+                    options: { force: false, errorOnExist: true },
+                  });
+                },
                 onOpenPath: (path) => {
                   void actions?.open_file({ path, foreground: true });
                 },
@@ -3170,9 +3188,11 @@ function renderRootfsContentPreview(
 
 function renderRootfsContentPanel({
   entry,
+  onCopyToHome,
   onOpenPath,
 }: {
   entry: RootfsImageEntry;
+  onCopyToHome: (action: RootfsContentAction) => Promise<void>;
   onOpenPath: (path: string) => void;
 }): React.JSX.Element | null {
   const content = entry.content;
@@ -3213,6 +3233,7 @@ function renderRootfsContentPanel({
               <RootfsContentActionRow
                 key={`${action.kind}:${action.label}:${index}`}
                 action={action}
+                onCopyToHome={onCopyToHome}
                 onOpenPath={onOpenPath}
               />
             ))}
@@ -3256,15 +3277,30 @@ function renderRootfsContentLink(
 
 function RootfsContentActionRow({
   action,
+  onCopyToHome,
   onOpenPath,
 }: {
   action: RootfsContentAction;
+  onCopyToHome: (action: RootfsContentAction) => Promise<void>;
   onOpenPath: (path: string) => void;
 }): React.JSX.Element {
+  const [copying, setCopying] = useState<boolean>(false);
   const label = action.label.trim();
   const description = action.description?.trim();
   const openPath = rootfsContentActionOpenPath(action);
-  const disabledCopy = action.kind === "copy-to-home";
+  const canCopyToHome =
+    action.kind === "copy-to-home" &&
+    !!(action.source_path?.trim() || action.path?.trim());
+
+  async function copyToHome(): Promise<void> {
+    setCopying(true);
+    try {
+      await onCopyToHome(action);
+    } finally {
+      setCopying(false);
+    }
+  }
+
   return (
     <RuntimeAction
       title={
@@ -3295,7 +3331,7 @@ function RootfsContentActionRow({
           >
             Open
           </Button>
-        ) : openPath && !disabledCopy ? (
+        ) : openPath && action.kind !== "copy-to-home" ? (
           <Button
             icon={
               <Icon name={action.kind === "browse" ? "folder-open" : "file"} />
@@ -3304,14 +3340,36 @@ function RootfsContentActionRow({
           >
             {action.kind === "browse" ? "Browse" : "Open"}
           </Button>
-        ) : disabledCopy ? (
-          <Button disabled icon={<Icon name="copy" />}>
+        ) : action.kind === "copy-to-home" ? (
+          <Button
+            disabled={!canCopyToHome}
+            icon={<Icon name="copy" />}
+            loading={copying}
+            onClick={copyToHome}
+          >
             Copy to HOME
           </Button>
         ) : null
       }
     />
   );
+}
+
+function rootfsCopyTargetPath(
+  action: RootfsContentAction,
+  projectHome: string,
+): string | undefined {
+  const source = action.source_path?.trim() || action.path?.trim();
+  const fallbackName = source
+    ?.replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean)
+    .at(-1);
+  const target = action.target_path?.trim() || fallbackName;
+  if (!target) return;
+  const relativeTarget = target.replace(/^\/+/, "");
+  if (!relativeTarget) return;
+  return `${projectHome.replace(/\/+$/, "")}/${relativeTarget}`;
 }
 
 function rootfsContentActionOpenPath(
