@@ -587,6 +587,47 @@ function hostArtifactForSmoke(
   return undefined;
 }
 
+function isStarSmokeComponent(component: SoftwareDeployComponent): boolean {
+  return component === "star";
+}
+
+async function smokeStarChecks({
+  channel,
+  deps,
+}: {
+  channel: string;
+  deps: SoftwareCommandDeps;
+}): Promise<SoftwareSmokeCheck[]> {
+  const releaseChannel = validateSoftwareReleaseChannel(channel);
+  if (!deps.runCommand) {
+    throw new Error("software smoke star requires runCommand dependency");
+  }
+  const cwd = resolve(deps.cwd ?? process.cwd());
+  const { srcRoot } = resolveRepoLayout({ cwd, deps });
+  const script = join(srcRoot, "scripts", "star", "smoke-star.sh");
+  return [
+    await runTimedSmokeCheck(
+      "star smoke script",
+      async () => {
+        const code = await deps.runCommand!(script, [], {
+          stdio: "inherit",
+          env: {
+            ...(deps.env ?? process.env),
+            SRC_ROOT: srcRoot,
+            COCALC_STAR_CHANNEL: releaseChannel,
+            COCALC_STAR_RELEASE_CHANNEL: releaseChannel,
+          },
+        });
+        if (code !== 0) {
+          throw new Error(`star smoke script failed with exit status ${code}`);
+        }
+        return `smoke-star.sh ok channel=${releaseChannel}`;
+      },
+      deps,
+    ),
+  ];
+}
+
 function selectRepresentativeHost(rows: any[], requestedHost?: string): any {
   const requested = `${requestedHost ?? ""}`.trim();
   const candidates = Array.isArray(rows) ? rows : [];
@@ -2759,13 +2800,15 @@ Supported deploy/smoke components:
         }
         const hostSmokeArtifact = hostArtifactForSmoke(component);
         const releaseSmokeTarget = releaseSmokeTargetForComponent(component);
+        const starSmoke = isStarSmokeComponent(component);
         if (
           !["static", "hub", "bay"].includes(component) &&
           !hostSmokeArtifact &&
-          !releaseSmokeTarget
+          !releaseSmokeTarget &&
+          !starSmoke
         ) {
           throw new Error(
-            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools, cli, launchpad, plus`,
+            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools, cli, launchpad, plus, star`,
           );
         }
         const startedAt = deps.now?.() ?? new Date();
@@ -2785,6 +2828,24 @@ Supported deploy/smoke components:
               component,
               channel: targetName,
               public_base_url: softwarePublicBaseUrl(deps),
+              duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+              checks,
+            },
+          );
+          return;
+        }
+        if (starSmoke) {
+          const checks = await smokeStarChecks({
+            channel: targetName,
+            deps,
+          });
+          assertSmokeChecks(checks);
+          emitSuccess(
+            { globals: command.optsWithGlobals() as any },
+            "software smoke",
+            {
+              component,
+              channel: targetName,
               duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
               checks,
             },

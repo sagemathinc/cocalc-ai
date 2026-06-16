@@ -2445,6 +2445,57 @@ test("software smoke project validates project bundle artifact", async () => {
   ]);
 });
 
+test("software smoke star runs the Star smoke script for a release channel", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-star-"));
+  const runs: CapturedRun[] = [];
+  let smokeEnv: NodeJS.ProcessEnv | undefined;
+  const deps = makeDeps({ localStore: join(dir, "store"), runs });
+  deps.runCommand = async (command, args, options) => {
+    runs.push({ command, args });
+    smokeEnv = options?.env;
+    return 0;
+  };
+  const program = createProgram(deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "smoke",
+    "star",
+    "candidate",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].command.endsWith("scripts/star/smoke-star.sh"), true);
+  assert.deepEqual(runs[0].args, []);
+  assert.equal(smokeEnv?.SRC_ROOT, "/repo/src");
+  assert.equal(smokeEnv?.COCALC_STAR_CHANNEL, "candidate");
+  assert.equal(smokeEnv?.COCALC_STAR_RELEASE_CHANNEL, "candidate");
+});
+
+test("software smoke star reports script failure", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-star-fail-"));
+  const deps = makeDeps({ localStore: join(dir, "store") });
+  deps.runCommand = async () => 9;
+  const program = createProgram(deps);
+
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "smoke",
+        "star",
+        "dev",
+      ]),
+    /star smoke script failed with exit status 9/,
+  );
+});
+
 test("software smoke rejects components that are not wired yet", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-smoke-unwired-"));
   const program = createProgram(makeDeps({ localStore: join(dir, "store") }));

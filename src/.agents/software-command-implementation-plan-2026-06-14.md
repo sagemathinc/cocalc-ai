@@ -1015,6 +1015,10 @@ Implemented:
   exists with `gh release view`, promotes the GitHub channel release with
   `promote-github-release-channel.sh --upload`, and records the promotion in R2
   deployment history.
+- Initial `smoke` slice for `star`. This validates the requested release
+  channel and runs `src/scripts/star/smoke-star.sh` with
+  `COCALC_STAR_CHANNEL`/`COCALC_STAR_RELEASE_CHANNEL` set, so the current local
+  Star smoke workflow is available through the common software command.
 - `latest` as a reserved selector that resolves to the newest local or remote
   artifact for a component.
 - Human-readable build/deploy durations and artifact sizes.
@@ -1024,7 +1028,7 @@ Implemented:
 Still not implemented:
 
 - Deeper throwaway project lifecycle `smoke` coverage for `project-host`,
-  `project`, and `tools`, plus smoke coverage for `star`.
+  `project`, and `tools`, plus disposable VM install smoke coverage for `star`.
 - Product/documentation updates for the new CLI channel model, including a
   dedicated `/products/cocalc-cli` page and channel notes on public installer
   pages.
@@ -1248,6 +1252,7 @@ separate deliberate installer change.
 Validation:
 
 - candidate channel update.
+- local Star smoke through `software smoke star candidate`.
 - GCP disposable VM smoke install.
 - manual promotion from candidate to stable after testing.
 
