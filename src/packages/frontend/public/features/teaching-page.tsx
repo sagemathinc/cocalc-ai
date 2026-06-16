@@ -500,59 +500,74 @@ export default function TeachingFeaturePage({
         </Row>
       </PublicSection>
 
-      <PublicSection>
-        <Flex vertical gap={12} style={{ maxWidth: 860 }}>
-          <Title level={3} style={{ margin: 0 }}>
-            Reduce setup and support friction
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            When everyone works in managed student projects, instructors can
-            focus on the course instead of laptop configuration, missing files,
-            or hard-to-reproduce student environments.
-          </Paragraph>
-          <BulletList
-            items={[
-              "Start students in a browser with the course software and data already available.",
-              "Open a student project to inspect the same files, notebooks, and terminal state.",
-              "Use snapshots and backups as a safety net around project work.",
-            ]}
-          />
-          <Flex wrap gap={12}>
-            <LinkButton href={`${GUIDE_BASE}/teaching/`}>
-              Teaching guide
-            </LinkButton>
-            <Button href={`${GUIDE_BASE}/rootfs-management/`}>
-              Environment guide
-            </Button>
-            <Button href={appPath("features/jupyter-notebook")}>
-              Jupyter notebooks
-            </Button>
-          </Flex>
-        </Flex>
-      </PublicSection>
-
       <div style={{ marginBottom: 44 }}>
         <PublicSection>
-          <Row gutter={[20, 20]} align="middle">
-            <Col xs={24} lg={15}>
+          <Row gutter={[24, 24]} align="middle">
+            <Col xs={24} lg={13}>
               <Title level={3} style={{ margin: 0 }}>
                 Choose the teaching path that fits
               </Title>
               <Paragraph style={{ margin: "8px 0 0" }}>
-                Start hosted for a course on CoCalc.ai, compare product paths
-                when your institution needs a different operating model, or
-                contact CoCalc to discuss larger teaching workflows.
+                Start hosted for a course on CoCalc.ai. Use the guides when you
+                are planning assignments or a reusable course environment.
+                Compare product paths or talk to CoCalc when procurement,
+                licensing, or deployment questions matter.
               </Paragraph>
-            </Col>
-            <Col xs={24} lg={9}>
+              <BulletList
+                items={[
+                  "Start students in a browser with course software and data already available.",
+                  "Use student projects when instructors or TAs need to inspect the same files, notebooks, and terminal state.",
+                  "Use snapshots and project history as a safety net around coursework.",
+                ]}
+              />
               <Flex wrap gap={12}>
-                <Button type="primary" href={primaryCtaHref}>
-                  {finalCtaLabel}
+                <LinkButton href={`${GUIDE_BASE}/teaching/`}>
+                  Teaching guide
+                </LinkButton>
+                <Button href={`${GUIDE_BASE}/rootfs-management/`}>
+                  Environment guide
                 </Button>
-                <Button href={appPath("products")}>
-                  Compare product paths
+                <Button href={appPath("features/jupyter-notebook")}>
+                  Jupyter notebooks
                 </Button>
-                <Button href={supportHref}>Ask about teaching workflows</Button>
+              </Flex>
+            </Col>
+            <Col xs={24} lg={11}>
+              <Flex
+                vertical
+                gap={14}
+                style={{
+                  background: PUBLIC_COLORS.heading,
+                  borderRadius: PANEL_RADIUS,
+                  boxShadow: `0 18px 52px ${alpha(PUBLIC_COLORS.heading, 0.12)}`,
+                  color: PUBLIC_COLORS.surface,
+                  padding: 26,
+                }}
+              >
+                <Title
+                  level={4}
+                  style={{ color: PUBLIC_COLORS.surface, margin: 0 }}
+                >
+                  Ready to plan a course?
+                </Title>
+                <Paragraph
+                  style={{ color: PUBLIC_COLORS.footerText, margin: 0 }}
+                >
+                  Open a hosted course, compare operating models, or send
+                  context about course size, grading, shared environments, and
+                  institutional requirements.
+                </Paragraph>
+                <Flex wrap gap={12}>
+                  <Button type="primary" href={primaryCtaHref}>
+                    {finalCtaLabel}
+                  </Button>
+                  <Button href={appPath("products")}>
+                    Compare product paths
+                  </Button>
+                  <Button href={supportHref}>
+                    Ask about teaching workflows
+                  </Button>
+                </Flex>
               </Flex>
             </Col>
           </Row>

@@ -620,7 +620,7 @@ function FeatureDetailNavigation({ page }: { page: FeaturePage }) {
 }
 
 function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
-  if (currentSlug === "compare") return null;
+  if (currentSlug === "compare" || currentSlug === "teaching") return null;
 
   return (
     <PublicSection ariaLabel="Feature operating model next steps">

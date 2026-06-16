@@ -83,6 +83,16 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Octave: avoid repeating notebooks/scripts/teaching across hero mock, immediate cards, middle flow section, and final CTA.
 - [x] Keep workflow value before operating-model handoff; leave the shared operating-model section intact unless it becomes redundant after page-level compression.
 
+## Teaching Lower-Page Density Pass
+
+- [x] Re-inspect `/features/teaching` lower-page sections after the feature-density pass.
+- [x] Keep the LMS boundary section because it answers the distinct buyer question "Is this replacing our LMS?"
+- [x] Keep the assignment-loop section because it shows the concrete workflow that differentiates CoCalc teaching from generic notebook hosting.
+- [x] Combine the separate setup/support-friction section and final teaching-path CTA because they both answer "what should I do next for a course?"
+- [x] Suppress the shared operating-model handoff on `/features/teaching` because the course-specific next-step block already routes visitors to hosted teaching, guides, product comparison, and support without adding a second ending.
+- [x] Preserve course management as a workflow destination beside the LMS, not a top-level product path or LMS replacement.
+- [x] Keep implementation details behind the environment guide CTA instead of expanding setup language on the public page.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

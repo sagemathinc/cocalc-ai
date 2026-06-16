@@ -570,12 +570,22 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Run the assignment loop in student projects"),
     ).not.toBeNull();
-    expect(
-      screen.getByText("Reduce setup and support friction"),
-    ).not.toBeNull();
+    expect(screen.queryByText("Reduce setup and support friction")).toBeNull();
     expect(
       screen.getByText("Choose the teaching path that fits"),
     ).not.toBeNull();
+    expect(screen.getByText("Ready to plan a course?")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Start students in a browser with course software and data already available.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "Feature operating model next steps",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
     expect(screen.queryByText("Assign, collect, grade, return")).toBeNull();
     expect(
       screen.queryByText("Grade in the same workspace students used"),
@@ -945,29 +955,34 @@ describe("PublicFeaturesApp", () => {
         expect(textLength(paragraph)).toBeLessThanOrEqual(390);
       }
 
-      const nextSteps = screen.getByRole("region", {
+      const nextSteps = screen.queryByRole("region", {
         name: "Feature operating model next steps",
       });
+      if (slug === "teaching") {
+        expect(nextSteps).toBeNull();
+        return;
+      }
+      expect(nextSteps).not.toBeNull();
       expect(
-        within(nextSteps)
+        within(nextSteps!)
           .getByRole("link", { name: "Compare operating models" })
           .getAttribute("href"),
       ).toBe("/products");
       expect(
-        within(nextSteps)
+        within(nextSteps!)
           .getByRole("link", { name: "Pricing and licensing" })
           .getAttribute("href"),
       ).toBe("/pricing");
       expect(
-        within(nextSteps)
+        within(nextSteps!)
           .getByRole("link", { name: "Browse feature workflows" })
           .getAttribute("href"),
       ).toBe("/features");
       expect(
-        within(nextSteps).queryByRole("link", { name: /Next feature:/ }),
+        within(nextSteps!).queryByRole("link", { name: /Next feature:/ }),
       ).toBeNull();
       expect(
-        within(nextSteps).queryByRole("link", { name: /Previous feature:/ }),
+        within(nextSteps!).queryByRole("link", { name: /Previous feature:/ }),
       ).toBeNull();
     },
   );
