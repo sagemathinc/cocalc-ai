@@ -420,16 +420,36 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("When the notebook depends on more than cells"),
     ).not.toBeNull();
-    expect(screen.getByText("Where to go from here")).not.toBeNull();
-    expect(screen.getByText("Bring Codex into a live notebook")).not.toBeNull();
     expect(
-      screen.getByText("Turn notebook work into a visual flow"),
+      screen.getByText("Choose the notebook path that fits"),
     ).not.toBeNull();
-    expect(screen.getByText("Teach with notebook assignments")).not.toBeNull();
-    expect(screen.getByText("Check Jupyter compatibility")).not.toBeNull();
+    expect(screen.getByText("Ready to use Jupyter in CoCalc?")).not.toBeNull();
+    expect(screen.getByText("Compatibility guide")).not.toBeNull();
+    expect(screen.getByText("Ask about Jupyter workflows")).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Compare operating models" })
+        .getAttribute("href"),
+    ).toBe("/products");
+    expect(
+      screen.queryByRole("region", {
+        name: "Feature operating model next steps",
+      }),
+    ).toBeNull();
     expect(
       screen.queryByRole("link", { name: "Compare notebook tools" }),
     ).toBeNull();
+    expect(screen.queryByText("Where to go from here")).toBeNull();
+    expect(screen.queryByText("Bring Codex into a live notebook")).toBeNull();
+    expect(
+      screen.queryByText("Turn notebook work into a visual flow"),
+    ).toBeNull();
+    expect(screen.queryByText("Teach with notebook assignments")).toBeNull();
+    expect(screen.queryByText("Check Jupyter compatibility")).toBeNull();
+    expect(screen.queryByText("A run takes hours")).toBeNull();
+    expect(screen.queryByText("A collaborator joins")).toBeNull();
+    expect(screen.queryByText("A result needs review")).toBeNull();
+    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
     expect(screen.queryByText("Durable execution")).toBeNull();
     expect(screen.queryByText("Agent-ready")).toBeNull();
     expect(screen.queryByText("When notebooks become shared work")).toBeNull();
@@ -461,7 +481,7 @@ describe("PublicFeaturesApp", () => {
     );
     expect(
       screen
-        .getByRole("link", { name: "Jupyter compatibility guide" })
+        .getByRole("link", { name: "Compatibility guide" })
         .getAttribute("href"),
     ).toBe("https://sagemathinc.github.io/cocalc-guides/cocalc-for-jupyter/");
   });
@@ -562,9 +582,9 @@ describe("PublicFeaturesApp", () => {
         "Pair CoCalc with the systems your institution already uses",
       ),
     ).toBeNull();
-    expect(screen.getByText("Give each student a project")).not.toBeNull();
-    expect(screen.getByText("Hand out and collect work")).not.toBeNull();
-    expect(screen.getByText("Keep the environment consistent")).not.toBeNull();
+    expect(screen.queryByText("Give each student a project")).toBeNull();
+    expect(screen.queryByText("Hand out and collect work")).toBeNull();
+    expect(screen.queryByText("Keep the environment consistent")).toBeNull();
     expect(screen.getByText("nbgrader queue ready")).not.toBeNull();
     expect(screen.queryByText("nbgrader: 26 notebooks ready")).toBeNull();
     expect(
@@ -958,7 +978,7 @@ describe("PublicFeaturesApp", () => {
       const nextSteps = screen.queryByRole("region", {
         name: "Feature operating model next steps",
       });
-      if (slug === "teaching") {
+      if (slug === "jupyter-notebook" || slug === "teaching") {
         expect(nextSteps).toBeNull();
         return;
       }

@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ReactNode } from "react";
-
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -22,7 +20,6 @@ const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
 const PANEL_RADIUS = 8;
-const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
 const COURSE_ACCENT = COLORS.RUN;
 
 function alpha(hexColor: string, opacity: number): string {
@@ -59,39 +56,6 @@ function IconBadge({
     >
       <Icon name={icon} />
     </span>
-  );
-}
-
-function StoryCard({
-  accent = PUBLIC_COLORS.brand,
-  children,
-  icon,
-  title,
-}: {
-  accent?: string;
-  children: ReactNode;
-  icon: IconName;
-  title: string;
-}) {
-  return (
-    <div
-      style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
-        boxShadow: PANEL_SHADOW,
-        height: "100%",
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
-          {title}
-        </Title>
-        <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
-      </Flex>
-    </div>
   );
 }
 
@@ -418,39 +382,6 @@ export default function TeachingFeaturePage({
           </Col>
         </Row>
       </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={8}>
-          <StoryCard
-            accent={COURSE_ACCENT}
-            icon="users"
-            title="Give each student a project"
-          >
-            Each student works in an isolated project for files, notebooks,
-            terminals, output, feedback, and recovery.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={8}>
-          <StoryCard
-            accent={PUBLIC_COLORS.brand}
-            icon="folder"
-            title="Hand out and collect work"
-          >
-            Distribute a folder to every student project, collect it back, grade
-            it, and return feedback without upload friction.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={8}>
-          <StoryCard
-            accent={PUBLIC_COLORS.warning}
-            icon="cube"
-            title="Keep the environment consistent"
-          >
-            Give a class the same course software stack, data, and tools without
-            asking every student to configure a laptop.
-          </StoryCard>
-        </Col>
-      </Row>
 
       <PublicSection>
         <Row gutter={[28, 28]} align="middle">

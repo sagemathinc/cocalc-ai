@@ -93,6 +93,16 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Preserve course management as a workflow destination beside the LMS, not a top-level product path or LMS replacement.
 - [x] Keep implementation details behind the environment guide CTA instead of expanding setup language on the public page.
 
+## Workflow Feature Mobile-First Pass
+
+- [x] Re-audit `/features/jupyter-notebook` and `/features/teaching` together as the two highest-traffic workflow feature pages.
+- [x] Jupyter: keep the hero notebook mock as the single primary workflow example.
+- [x] Jupyter: remove the repeated scenario panel under "When the notebook depends on more than cells" because it restates the three benefit cards: long runs, collaboration, and review/recovery.
+- [x] Jupyter: combine the four-card "Where to go from here" section with the final operating-model handoff so the page has one route-specific ending instead of a workflow card grid followed by a generic shared ending.
+- [x] Teaching: keep the course dashboard and assignment loop, but remove the three early summary cards because they repeat student projects, handout/collection, and environment consistency already carried by the hero, LMS boundary, assignment loop, and final planning block.
+- [x] Teaching: preserve course management as a workflow destination beside the LMS, not a product path or LMS replacement.
+- [x] Keep shared operating-model handoff on ordinary feature routes, but suppress it on pages that already own a route-specific final decision block.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.
