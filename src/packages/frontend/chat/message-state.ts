@@ -360,6 +360,7 @@ export function getQueuedMessageEditHelpText({
 export function shouldShowAcpResubmitToAgentButton({
   hasActions,
   hasParentMessage,
+  isTurnRunning,
   isViewersMessage,
   parentAcpState,
   readOnly,
@@ -368,13 +369,20 @@ export function shouldShowAcpResubmitToAgentButton({
 }: {
   hasActions: boolean;
   hasParentMessage: boolean;
+  isTurnRunning?: boolean;
   isViewersMessage: boolean;
   parentAcpState?: string;
   readOnly: boolean;
   renderedValue: string;
   terminalThreadErrorActive?: boolean;
 }): boolean {
-  if (!hasActions || readOnly || isViewersMessage || !hasParentMessage) {
+  if (
+    !hasActions ||
+    readOnly ||
+    isViewersMessage ||
+    !hasParentMessage ||
+    isTurnRunning
+  ) {
     return false;
   }
   if (parentAcpState !== "not-sent" && terminalThreadErrorActive !== true) {
