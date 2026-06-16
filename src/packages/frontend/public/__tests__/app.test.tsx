@@ -473,7 +473,7 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Compare product paths" }),
+      screen.getByRole("link", { name: "Compare operating models" }),
     ).toHaveAttribute("href", "/products");
     expect(
       screen.getAllByRole("link", {
@@ -531,7 +531,7 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(
       screen
-        .getAllByRole("link", { name: "Compare product paths" })
+        .getAllByRole("link", { name: "Compare operating models" })
         .every((link) => link.getAttribute("href") === "/products"),
     ).toBe(true);
     const hostedPlansLink = screen.getByRole("link", {
@@ -1099,6 +1099,10 @@ describe("PublicApp", () => {
       screen.getByRole("link", { name: "View CoCalc Rocket" }),
     ).toHaveAttribute("href", "/products/cocalc-rocket");
     expect(
+      screen.getByRole("link", { name: "Review hosted plans" }),
+    ).toHaveAttribute("href", "/pricing");
+    expect(screen.queryByRole("link", { name: "View CoCalc.ai" })).toBeNull();
+    expect(
       screen.getByText("Site licensing wraps the product path."),
     ).not.toBeNull();
     expect(
@@ -1109,6 +1113,12 @@ describe("PublicApp", () => {
     ).toHaveAttribute(
       "href",
       expect.stringContaining("context=products-site-licensing"),
+    );
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("subject=Operating+model+and+site+licensing"),
     );
   });
 
@@ -1134,8 +1144,11 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Which path fits?")).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Compare workspace model" }),
+      screen.getByRole("link", { name: "Compare CoCalc fit" }),
     ).toHaveAttribute("href", "/features/compare");
+    expect(
+      screen.queryByRole("link", { name: "Compare workspace model" }),
+    ).toBeNull();
   });
 
   it("renders the cocalc launchpad page", async () => {

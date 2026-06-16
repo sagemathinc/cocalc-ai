@@ -27,12 +27,12 @@ describe("PublicSupportApp", () => {
     expect(
       screen.getByRole("heading", { name: "Launchpad Support" }),
     ).not.toBeNull();
-    expect(screen.getByText("Choose a product path")).not.toBeNull();
+    expect(screen.getByText("Choose an operating model")).not.toBeNull();
     expect(screen.getByText("Pricing and licensing")).not.toBeNull();
     expect(screen.getByText("Talk with CoCalc")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Compare product paths" }),
+      screen.getByRole("link", { name: "Compare operating models" }),
     ).toHaveAttribute("href", "/products");
     expect(
       screen.getByRole("link", { name: "Review pricing" }),

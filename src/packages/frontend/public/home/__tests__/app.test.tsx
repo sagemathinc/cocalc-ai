@@ -117,7 +117,7 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
     expect(
-      within(hero).getByRole("link", { name: "Compare product paths" }),
+      within(hero).getByRole("link", { name: "Compare operating models" }),
     ).toHaveAttribute("href", "/products");
     expect(
       within(hero).queryByText(/keeps technical work collaborative/i),
@@ -230,7 +230,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(products).getByRole("link", {
-        name: "Compare product paths",
+        name: "Compare operating models",
       }),
     ).toHaveAttribute("href", "/products");
     expect(
@@ -377,7 +377,7 @@ describe("PublicHomeApp", () => {
       within(path).getByRole("link", { name: "Start on CoCalc.ai" }),
     ).toHaveAttribute("href", "/auth/sign-up");
     expect(
-      within(path).getByRole("link", { name: "Compare product paths" }),
+      within(path).getByRole("link", { name: "Compare operating models" }),
     ).toHaveAttribute("href", "/products");
     expect(
       within(path).getByRole("link", { name: "Talk to CoCalc" }),

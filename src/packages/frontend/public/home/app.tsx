@@ -201,7 +201,7 @@ const AUDIENCE_ROUTES = [
   {
     accent: COLORS.GRAY_D,
     body: "Compare hosted use, local evaluation, a single-VM appliance, and customer-operated deployment options.",
-    button: "Compare product paths",
+    button: "Compare operating models",
     href: "products",
     icon: "servers",
     title: "IT and platform teams",
@@ -544,7 +544,7 @@ function Hero({
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
           <Button href={appPath("products")} size="large">
-            Compare product paths
+            Compare operating models
           </Button>
         </Flex>
       </Flex>
@@ -779,7 +779,7 @@ function ProductsSection() {
         </div>
         <Flex gap={10} wrap>
           <Button href={appPath("products")} type="primary">
-            Compare product paths
+            Compare operating models
           </Button>
           <Button href={appPath("pricing")}>Pricing and licensing</Button>
         </Flex>
@@ -1046,7 +1046,7 @@ function PathSection({ authenticated }: { authenticated: boolean }) {
           >
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
-          <Button href={appPath("products")}>Compare product paths</Button>
+          <Button href={appPath("products")}>Compare operating models</Button>
           <Button href={appPath("support")}>Talk to CoCalc</Button>
         </div>
       </div>

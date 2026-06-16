@@ -134,16 +134,16 @@ function SupportIndex({
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Paragraph style={{ fontSize: "16px", margin: 0 }}>
-        Use support when you need help choosing a product path, planning
+        Use support when you need help choosing how CoCalc should run, planning
         licensing or deployment, or resolving an existing account or project
         issue.
       </Paragraph>
       <PublicGrid columns={3}>
         <SupportCard
           description="Compare hosted, local, single-VM, and private deployment options before opening a conversation."
-          title="Choose a product path"
+          title="Choose an operating model"
         >
-          <Button href={appPath("/products")}>Compare product paths</Button>
+          <Button href={appPath("/products")}>Compare operating models</Button>
         </SupportCard>
         <SupportCard
           description="Review hosted plans, site licensing, and organizational buying routes."

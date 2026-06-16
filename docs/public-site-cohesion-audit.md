@@ -3,6 +3,17 @@
 Running checklist for the public-site redesign work. Keep this file updated as
 recommendations are evaluated, completed, or deliberately deferred.
 
+## Conversion Spine Pass
+
+- [x] Re-audit homepage, `/products`, `/pricing`, `/features/compare`, and `/support` as the core public decision path before continuing deeper feature cleanup.
+- [x] Treat `/products` as the operating-model chooser: hosted CoCalc.ai, local Plus, single-VM Star, customer-operated Launchpad, and customer-operated Rocket.
+- [x] Treat `/features/compare` as the fit/comparison page, not another product chooser.
+- [x] Treat `/pricing` as hosted plans plus licensing and buying routes, not a duplicate of the product chooser.
+- [x] Rename spine CTAs so `/products` reads as "Compare operating models", `/features/compare` reads as "Compare CoCalc fit", and `/pricing` remains "Pricing and licensing".
+- [x] Move the CoCalc.ai card on `/products` forward to hosted pricing instead of looping visitors back to the homepage.
+- [x] Keep support/contact as the point for context-preserving sales, licensing, deployment, and existing account/project questions.
+- [ ] Future proof pass: decide where the public spine needs concrete trust signals such as screenshots, support expectations, deployment boundaries, security/data-ownership notes, or customer-style proof without making the pages noisy.
+
 ## Jupyter And Teaching Pass
 
 - [x] Re-inspect `/features/jupyter-notebook` and `/features/teaching` against the component-necessity standard after the broader feature-page cleanup.

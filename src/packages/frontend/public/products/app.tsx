@@ -117,7 +117,8 @@ function ProductsOverviewPage() {
     {
       bestFit:
         "Individuals and teams that want managed hosted projects without running infrastructure.",
-      href: appPath(""),
+      actionLabel: "Review hosted plans",
+      href: appPath("pricing"),
       icon: "cloud",
       runs: "Hosted service operated by CoCalc",
       title: "CoCalc.ai",
@@ -125,6 +126,7 @@ function ProductsOverviewPage() {
     {
       bestFit:
         "Individual users who want local control or a self-directed evaluation on Linux or Mac.",
+      actionLabel: "View CoCalc Plus",
       href: publicPath("products/cocalc-plus"),
       icon: "laptop",
       runs: "Local runtime operated by the user",
@@ -133,6 +135,7 @@ function ProductsOverviewPage() {
     {
       bestFit:
         "Users or small teams that want a shared CoCalc instance on one public Ubuntu VM or local Lima VM.",
+      actionLabel: "View CoCalc Star",
       href: publicPath("products/cocalc-star"),
       icon: "star",
       runs: "Single-VM appliance operated by the user or customer",
@@ -141,6 +144,7 @@ function ProductsOverviewPage() {
     {
       bestFit:
         "Pilots, labs, workshops, small teams, and departments that need a customer-operated private environment.",
+      actionLabel: "View CoCalc Launchpad",
       href: publicPath("products/cocalc-launchpad"),
       icon: "servers",
       runs: "Lightweight private deployment operated by the customer",
@@ -149,12 +153,14 @@ function ProductsOverviewPage() {
     {
       bestFit:
         "Institutions and enterprises planning a broader customer-operated private-cloud deployment.",
+      actionLabel: "View CoCalc Rocket",
       href: publicPath("products/cocalc-rocket"),
       icon: "rocket",
       runs: "Enterprise private-cloud path operated by the customer",
       title: "CoCalc Rocket",
     },
   ] satisfies {
+    actionLabel: string;
     bestFit: string;
     href: string;
     icon: IconName;
@@ -175,7 +181,7 @@ function ProductsOverviewPage() {
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("features/compare")}>
-            Compare workspace model
+            Compare CoCalc fit
           </LinkButton>
           <LinkButton href={appPath("pricing")}>
             Pricing and licensing
@@ -330,7 +336,7 @@ function ProductsOverviewPage() {
                 </Text>
                 <Text>{path.bestFit}</Text>
               </div>
-              <LinkButton href={path.href}>View {path.title}</LinkButton>
+              <LinkButton href={path.href}>{path.actionLabel}</LinkButton>
             </div>
           ))}
         </div>
@@ -351,10 +357,10 @@ function ProductsOverviewPage() {
           </LinkButton>
           <LinkButton
             href={supportContactPath({
-              body: "I want to talk with CoCalc about product paths, site licensing, or an organizational buying route. Helpful context: where you want CoCalc to run, who will operate it, expected users or projects, and procurement or support needs.",
+              body: "I want to talk with CoCalc about operating model, site licensing, or an organizational buying route. Helpful context: where you want CoCalc to run, who will operate it, expected users or projects, and procurement or support needs.",
               context: "products-site-licensing",
-              subject: "Product paths and site licensing",
-              title: "Talk with CoCalc about product paths",
+              subject: "Operating model and site licensing",
+              title: "Talk with CoCalc about operating models",
             })}
           >
             Talk with CoCalc
@@ -850,7 +856,7 @@ function CocalcPlusPage() {
             Linux workflow
           </LinkButton>
           <LinkButton href={publicPath("products")}>
-            Compare product paths
+            Compare operating models
           </LinkButton>
         </Flex>
       </PublicSection>

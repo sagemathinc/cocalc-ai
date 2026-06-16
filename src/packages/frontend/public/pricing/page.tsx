@@ -689,8 +689,8 @@ function HostedPlansFallback({
     ? `No ${intervalLabel} hosted plan prices are published here yet.`
     : "Hosted plan prices are not published here yet.";
   const description = hasPublicTiers
-    ? "The available hosted plans do not include pricing for this billing interval in this environment. Compare product paths or talk with CoCalc about hosted memberships and organizational buying."
-    : "Hosted memberships are the managed CoCalc.ai account path. Compare product paths for hosted, local, and customer-operated choices, or talk with CoCalc about memberships, site licensing, and quotes.";
+    ? "The available hosted plans do not include pricing for this billing interval in this environment. Compare operating models or talk with CoCalc about hosted memberships and organizational buying."
+    : "Hosted memberships are the managed CoCalc.ai account path. Compare operating models for hosted, local, and customer-operated choices, or talk with CoCalc about memberships, site licensing, and quotes.";
 
   return (
     <PublicSection>
@@ -700,7 +700,7 @@ function HostedPlansFallback({
           href={appPath("products")}
           icon={<DecorativeButtonIcon name="servers" />}
         >
-          Compare product paths
+          Compare operating models
         </Button>
         <Button
           href={supportPurchasePath({
@@ -767,7 +767,7 @@ export default function PricingPage({
               href={appPath("products")}
               icon={<DecorativeButtonIcon name="servers" />}
             >
-              Compare product paths
+              Compare operating models
             </Button>
             <Button
               href={supportPurchasePath({
