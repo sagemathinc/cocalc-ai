@@ -36,6 +36,17 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [ ] Future: identify route-specific screenshots or short workflow captures only after they have a named owner, current capture, and public-use approval gate.
 - [ ] Future: review the public trust/privacy/DPA pages themselves for buyer-oriented clarity; this pass only improves discoverability of already-published materials.
 
+## Policy Evidence Destination Pass
+
+- [x] Treat `/policies`, `/policies/trust`, `/policies/privacy`, and `/policies/dpa` as evidence destinations that need buyer orientation, not just legal text dumps.
+- [x] Preserve the legal and compliance document bodies unless a source-backed typo or route defect is found; add summaries and next steps around them instead of rewriting claims.
+- [x] Use existing public-safe facts only: policy titles, document descriptions, the public Trust Center, and support/contact routes.
+- [x] Fix the Trust Center URL from unresolved `trust.cocalc.ai` to the working public `trust.cocalc.com` destination.
+- [x] Add concise page summaries that explain which visitor question each policy page answers without expanding SOC 2, GDPR, privacy, retention, or data-flow claims.
+- [x] Add route continuity from policy pages back to operating models, pricing/licensing, and context-preserving support/contact so buyers know what to do after reviewing evidence.
+- [x] Keep mobile readability and long-link containment as policy-page requirements.
+- [ ] Future: perform a line-level legal/trust review of the policy document bodies themselves before changing legal substance, certification wording, retention periods, or DPA terms.
+
 ## Jupyter And Teaching Pass
 
 - [x] Re-inspect `/features/jupyter-notebook` and `/features/teaching` against the component-necessity standard after the broader feature-page cleanup.

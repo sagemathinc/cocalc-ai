@@ -632,6 +632,16 @@ describe("PublicApp", () => {
       />,
     );
 
+    expect(
+      screen.getByRole("heading", { name: "Policy and trust resources" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Continue the evaluation")).not.toBeNull();
+    expect(
+      screen.getByText("Ask about policy review").closest("a"),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=policy-evidence-review"),
+    );
     expect(screen.getByText("Terms of Service")).not.toBeNull();
     expect(screen.getByText("Privacy Policy")).not.toBeNull();
     expect(screen.getByText("Trust and Compliance")).not.toBeNull();
@@ -672,6 +682,17 @@ describe("PublicApp", () => {
 
     expect(screen.getByText("Trust and Compliance")).not.toBeNull();
     expect(screen.getByRole("navigation", { name: "Policies" })).not.toBeNull();
+    expect(
+      screen.getByText("Where should a security or compliance review start?"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open Trust Center" }),
+    ).toHaveAttribute("href", "https://trust.cocalc.com/");
+    expect(
+      Array.from(document.querySelectorAll("a")).some((anchor) =>
+        anchor.href.includes("trust.cocalc.ai"),
+      ),
+    ).toBe(false);
   });
 
   it("renders the team page", async () => {
@@ -739,6 +760,20 @@ describe("PublicApp", () => {
       screen.getByText("Launchpad · Last Updated: June 9, 2026"),
     ).not.toBeNull();
     expect(
+      screen.getByText(
+        "How does SageMath, Inc. describe privacy practices for CoCalc?",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("group", { name: "Policy next steps" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Ask about this policy").closest("a"),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=policy-privacy"),
+    );
+    expect(
       screen.getByText(/Protecting your privacy is really important to us/i),
     ).not.toBeNull();
     expect(screen.queryByText("PUBLIC CONTENT")).toBeNull();
@@ -802,6 +837,14 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("Launchpad · Last Updated: June 9, 2026"),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "What data-processing terms apply when SageMath, Inc. processes personal data on a user's behalf?",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open Trust Center" }),
+    ).toHaveAttribute("href", "https://trust.cocalc.com/");
     expect(
       screen.getByText(/The Controller \(User\) provides/i),
     ).not.toBeNull();

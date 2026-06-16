@@ -1,6 +1,12 @@
 import { Col, Row } from "antd";
 
-import { A, policyHref, PolicySection, type PublicPolicy } from "./policy";
+import {
+  A,
+  COCALC_TRUST_CENTER_URL,
+  policyHref,
+  PolicySection,
+  type PublicPolicy,
+} from "./policy";
 
 const SOC2LOGO = "/public/soc2-aicpa-logo.png";
 
@@ -33,7 +39,8 @@ const GDPR_BADGE_HTML = `
 `;
 
 export const trustPolicy: PublicPolicy = {
-  description: "Security, GDPR, SOC 2, and external trust resources.",
+  description:
+    "Published trust resources, including SOC 2, GDPR, and Trust Center references.",
   navLabel: "Trust",
   slug: "trust",
   title: "Trust and Compliance",
@@ -60,7 +67,7 @@ export const trustPolicy: PublicPolicy = {
             <p>
               <strong>
                 Please learn more about the current status in{" "}
-                <A href="https://trust.cocalc.ai/">
+                <A href={COCALC_TRUST_CENTER_URL}>
                   SageMath, Inc.'s Trust Center
                 </A>
                 .

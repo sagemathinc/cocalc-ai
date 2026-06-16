@@ -18,6 +18,8 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Paragraph, Text, Title } = Typography;
 
+export const COCALC_TRUST_CENTER_URL = "https://trust.cocalc.com/";
+
 const POLICY_DOCUMENT_CSS = `
   .cocalc-public-policy-article p,
   .cocalc-public-policy-article li {
@@ -241,10 +243,12 @@ export function preparePolicyContent(
 }
 
 export function PolicyDocument({
+  beforeContent,
   content,
   policy,
   siteName,
 }: {
+  beforeContent?: ReactNode;
   content?: ReactNode;
   policy: PublicPolicy;
   siteName: string;
@@ -266,6 +270,7 @@ export function PolicyDocument({
         <Paragraph>
           <Text type="secondary">{metadata}</Text>
         </Paragraph>
+        {beforeContent}
         {content ?? policy.content}
       </article>
     </>
