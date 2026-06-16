@@ -220,6 +220,9 @@ describe("PublicFeaturesApp", () => {
         .getAttribute("href"),
     ).toBe("/features/teaching");
     expect(
+      screen.getAllByRole("link", { name: /Courses and labs/i }),
+    ).toHaveLength(1);
+    expect(
       within(startingPoints).queryByRole("link", { name: /Compare CoCalc/i }),
     ).toBeNull();
     expect(screen.queryByText("Feature map")).toBeNull();
@@ -231,7 +234,7 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Compute and languages")).not.toBeNull();
     expect(screen.getByText("AI and integration")).not.toBeNull();
-    expect(screen.getAllByText("Courses and labs").length).toBeGreaterThan(0);
+    expect(screen.getByText("Courses and labs")).not.toBeNull();
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);
     expect(screen.queryByText(/transparent JSONL format/i)).toBeNull();
@@ -275,9 +278,9 @@ describe("PublicFeaturesApp", () => {
     ).toHaveLength(4);
     expect(
       container.querySelectorAll(".cocalc-feature-group-label"),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
     expect(container.querySelectorAll(".cocalc-feature-link-card").length).toBe(
-      15,
+      14,
     );
     expect(
       container.querySelectorAll(".cocalc-feature-link-card .ant-tag"),

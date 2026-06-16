@@ -136,6 +136,14 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Keep feature cards because each card is an actionable route choice, but reduce mobile card height so the index scans more like a directory than a wall of large panels.
 - [ ] Future: if the feature index still feels long after copy and density cleanup, evaluate whether language/tool cards should be grouped behind a disclosure or tab without hiding core workflow paths.
 
+## Feature Mobile Decision-Speed Pass
+
+- [x] Re-audit `/features` and language/tool feature pages as a connected mobile discovery path.
+- [x] Keep language/tool cards visible for now because each card is a direct destination and hiding them behind a collapsed control would reduce information scent for visitors looking for a specific language, terminal, or Linux environment.
+- [x] Do not introduce a mobile-only disclosure pattern during this pass; external UX guidance supports accordions for dense mobile content, but they add interaction cost and are strongest when the collapsed headings provide a useful mini-IA.
+- [x] Remove the duplicated bottom `Courses and labs` feature-index group because teaching is already one of the four top starting points and the single-card section made the page ending feel cramped without adding new decision value.
+- [ ] Future: if the compute/language group still feels long on mobile, evaluate a split into "Terminal and Linux" plus "Languages and math" before using disclosure.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

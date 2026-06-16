@@ -117,14 +117,6 @@ const FEATURE_GROUPS = [
     slugs: ["ai", "api", "cli"],
     title: "AI and integration",
   },
-  {
-    accent: COLORS.RUN,
-    description:
-      "Find course workflows for assignments, grading, shared environments, and student support.",
-    icon: "graduation-cap",
-    slugs: ["teaching"],
-    title: "Courses and labs",
-  },
 ] as const;
 
 const FEATURE_META = {
