@@ -127,4 +127,64 @@ describe("Jupyter markdown cell input", () => {
     expect(latestMarkdownInputProps.height).toBe("auto");
     expect(latestMarkdownInputProps.unboundedAutoGrow).toBe(true);
   });
+
+  it("does not autofocus a markdown editor merely because the cell is current", () => {
+    const { rerender } = render(
+      <CellInput
+        cell={
+          fromJS({
+            id: "cell-1",
+            cell_type: "markdown",
+            input: "# Markdown",
+            metadata: {},
+          }) as Map<string, any>
+        }
+        cm_options={
+          fromJS({
+            markdown: {},
+            options: {},
+          }) as Map<string, any>
+        }
+        id="cell-1"
+        index={0}
+        is_markdown_edit={true}
+        is_focused={false}
+        is_current={true}
+        font_size={14}
+        is_readonly={false}
+        input_is_readonly={false}
+      />,
+    );
+
+    expect(latestMarkdownInputProps.autoFocus).toBe(false);
+
+    rerender(
+      <CellInput
+        cell={
+          fromJS({
+            id: "cell-1",
+            cell_type: "markdown",
+            input: "# Markdown",
+            metadata: {},
+          }) as Map<string, any>
+        }
+        cm_options={
+          fromJS({
+            markdown: {},
+            options: {},
+          }) as Map<string, any>
+        }
+        id="cell-1"
+        index={0}
+        is_markdown_edit={true}
+        is_focused={true}
+        is_current={true}
+        font_size={14}
+        is_readonly={false}
+        input_is_readonly={false}
+      />,
+    );
+
+    expect(latestMarkdownInputProps.autoFocus).toBe(true);
+  });
 });

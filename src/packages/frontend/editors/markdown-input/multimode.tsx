@@ -214,6 +214,8 @@ export default function MultiMarkdownInput({
       style={{
         position: "relative",
         width: "100%",
+        minWidth: 0,
+        maxWidth: "100%",
         height: shellHeight,
         display: showToolbarModeSwitch ? "flex" : undefined,
         flexDirection: showToolbarModeSwitch ? "column" : undefined,
