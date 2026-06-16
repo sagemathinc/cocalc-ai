@@ -10,6 +10,7 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Jupyter: collapse four proof cards to three distinct visitor benefits: persistent runs, live collaboration, and review/recovery.
 - [x] Jupyter: remove the separate final thesis section because it repeated the project-context argument already made earlier.
 - [x] Jupyter: remove the "Ready to try a notebook workflow" CTA strip because it duplicated existing actions without adding decision value.
+- [x] Jupyter: align the "Where to go from here" intro with the card grid so section text and clickable choices read as one block.
 - [x] Teaching: keep course management positioned as a workflow destination beside the LMS, not an LMS replacement or top-level product path.
 - [x] Teaching: collapse overlapping grading, nbgrader, help, setup, and environment sections into fewer visitor questions.
 - [x] Teaching: preserve route-specific next steps for hosted use, product-path comparison, environment guidance, Jupyter, and teaching support.
@@ -67,6 +68,7 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Avoid decorative tags and repeated metadata when the section heading already carries the meaning.
 - [x] Do not make non-clickable labels visually compete with clickable cards.
 - [x] Keep cards for scannable choices or genuinely distinct concepts, not for every fact.
+- [x] Align section intros with the grid or cards they introduce; small offsets are visible when cards carry the visual weight.
 - [x] Remove arrows or progression indicators when the visitor is not meant to read a sequence.
 - [x] Prefer public buyer/user language over internal planning language.
 - [x] Preserve CoCalc Star as a bounded single-VM product path.

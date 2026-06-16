@@ -459,15 +459,17 @@ export default function JupyterNotebookFeaturePage({
 
       <PublicSection>
         <Flex vertical gap={18}>
-          <div>
-            <Title level={3} style={{ margin: 0 }}>
-              Where to go from here
-            </Title>
-            <Paragraph style={{ margin: "8px 0 0", maxWidth: 760 }}>
-              Use these routes when the notebook has become part of a broader
-              workflow.
-            </Paragraph>
-          </div>
+          <Row gutter={[16, 16]}>
+            <Col xs={24}>
+              <Title level={3} style={{ margin: 0 }}>
+                Where to go from here
+              </Title>
+              <Paragraph style={{ margin: "8px 0 0", maxWidth: 760 }}>
+                Use these routes when the notebook has become part of a broader
+                workflow.
+              </Paragraph>
+            </Col>
+          </Row>
           <Row gutter={[16, 16]}>
             <Col xs={24} md={12} xl={6}>
               <ActionCard
