@@ -14,6 +14,7 @@ import type { TableColumnsType } from "antd";
 import type { SortOrder } from "antd/es/table/interface";
 
 import type { IntlShape } from "react-intl";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
 import { Avatar, Tag, Typography } from "antd";
 
@@ -27,6 +28,7 @@ import { COLORS } from "@cocalc/util/theme";
 import type { ProjectTheme } from "@cocalc/util/db-schema/projects";
 
 import { CollaboratorsAvatars } from "./collaborators-avatars";
+import { ProjectRootfsBadge } from "./project-rootfs-badge";
 import { ProjectThemeAvatar } from "./theme";
 import { sortProjectsLastEdited } from "./util";
 
@@ -77,6 +79,8 @@ export interface ProjectTableRecord {
   theme?: ProjectTheme | null;
   title: string;
   description: string;
+  rootfs_image?: string;
+  rootfs_image_id?: string;
   host?: string;
   last_edited?: Date;
   currentRole?: "owner" | "collaborator" | "viewer";
@@ -136,7 +140,12 @@ export function getProjectTableColumns(
   narrow: boolean,
   filteredCollaborators: string[] | null,
   intl: IntlShape,
+  opts: {
+    onOpenRootfs?: (record: ProjectTableRecord, e: React.MouseEvent) => void;
+    rootfsImages?: RootfsImageEntry[];
+  } = {},
 ): TableColumnsType<ProjectTableRecord> {
+  const rootfsImages = opts.rootfsImages ?? [];
   const columns = [
     {
       title: (
@@ -299,6 +308,26 @@ export function getProjectTableColumns(
                 >
                   {record.description}
                 </Text>
+              )}
+              {!deleteFailed && (
+                <div
+                  style={{
+                    display: "flex",
+                    marginTop: record.description ? "3px" : "2px",
+                    minWidth: 0,
+                  }}
+                >
+                  <ProjectRootfsBadge
+                    rootfsImage={record.rootfs_image}
+                    rootfsImageId={record.rootfs_image_id}
+                    rootfsImages={rootfsImages}
+                    onClick={
+                      opts.onOpenRootfs
+                        ? (e) => opts.onOpenRootfs?.(record, e)
+                        : undefined
+                    }
+                  />
+                </div>
               )}
             </div>
           </div>

@@ -4,14 +4,23 @@
  */
 
 import { Button, Checkbox, Space, Tag, Typography } from "antd";
+import { useState } from "react";
 import { useIntl } from "react-intl";
 
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon, ProjectState, TimeAgo } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import {
+  managedRootfsCatalogUrl,
+  useRootfsImages,
+} from "@cocalc/frontend/rootfs/manifest";
 import { COLORS } from "@cocalc/util/theme";
 
 import { CollaboratorsAvatars } from "./collaborators-avatars";
+import {
+  ProjectRootfsBadge,
+  ProjectRootfsRuntimeModal,
+} from "./project-rootfs-badge";
 import { ProjectActionsMenu } from "./projects-actions-menu";
 import type { ProjectTableRecord } from "./projects-table-columns";
 import { ProjectThemeAvatar } from "./theme";
@@ -86,8 +95,13 @@ export function MobileProjectsList({
   const actions = useActions("projects");
   const projectLabel = intl.formatMessage(labels.project);
   const records = useProjectTableRecords({ visible_projects, projectLabel });
+  const { images: rootfsImages } = useRootfsImages(
+    [managedRootfsCatalogUrl()],
+    { limit: 200 },
+  );
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
   const selectedProjectIdSet = new Set(selectedProjectIds);
+  const [rootfsModalProjectId, setRootfsModalProjectId] = useState<string>("");
 
   function openProject(record: ProjectTableRecord, e?: React.MouseEvent) {
     if (record.deletionBlocked) return;
@@ -128,155 +142,175 @@ export function MobileProjectsList({
   }
 
   return (
-    <div
-      data-cocalc-mobile-projects-list
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "10px",
-        width: "100%",
-      }}
-    >
-      {records.map((record) => {
-        const selected = selectedProjectIdSet.has(record.project_id);
-        const selectionDisabled =
-          record.deleting === true || record.deletionScheduled === true;
-        return (
-          <div
-            key={record.project_id}
-            data-cocalc-mobile-project-card
-            onClick={(e) => openProject(record, e)}
-            onMouseDown={(e) => {
-              if (e.button === 1) {
-                openProject(record, e);
-              }
-            }}
-            style={{
-              background: "white",
-              border: `1px solid ${COLORS.GRAY_LL}`,
-              borderLeft: `5px solid ${record.color ?? "transparent"}`,
-              borderRadius: "6px",
-              cursor: record.deletionBlocked ? "not-allowed" : "pointer",
-              opacity: record.deletionBlocked ? 0.72 : undefined,
-              padding: "10px",
-              width: "100%",
-            }}
-          >
+    <>
+      <div
+        data-cocalc-mobile-projects-list
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          width: "100%",
+        }}
+      >
+        {records.map((record) => {
+          const selected = selectedProjectIdSet.has(record.project_id);
+          const selectionDisabled =
+            record.deleting === true || record.deletionScheduled === true;
+          return (
             <div
+              key={record.project_id}
+              data-cocalc-mobile-project-card
+              onClick={(e) => openProject(record, e)}
+              onMouseDown={(e) => {
+                if (e.button === 1) {
+                  openProject(record, e);
+                }
+              }}
               style={{
-                display: "grid",
-                gridTemplateColumns: "24px 44px minmax(0, 1fr) 36px",
-                gap: "8px",
-                alignItems: "start",
+                background: "white",
+                border: `1px solid ${COLORS.GRAY_LL}`,
+                borderLeft: `5px solid ${record.color ?? "transparent"}`,
+                borderRadius: "6px",
+                cursor: record.deletionBlocked ? "not-allowed" : "pointer",
+                opacity: record.deletionBlocked ? 0.72 : undefined,
+                padding: "10px",
+                width: "100%",
               }}
             >
-              <Checkbox
-                checked={selected}
-                disabled={selectionDisabled}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) =>
-                  toggleSelection(record.project_id, e.target.checked)
-                }
-                style={{ paddingTop: "10px" }}
-                aria-label={`Select ${record.title}`}
-              />
-              <ProjectThemeAvatar theme={record.theme} size={40} border />
-              <div style={{ minWidth: 0 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    minWidth: 0,
-                  }}
-                >
-                  <Text
-                    strong={record.state?.get("state") === "running"}
-                    disabled={record.deleting || record.deletionScheduled}
-                    ellipsis
-                    style={{ minWidth: 0 }}
-                  >
-                    {record.title || "Untitled"}
-                  </Text>
-                </div>
-                {record.description && !record.deleteFailed && (
-                  <Text
-                    type="secondary"
-                    ellipsis
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "24px 44px minmax(0, 1fr) 36px",
+                  gap: "8px",
+                  alignItems: "start",
+                }}
+              >
+                <Checkbox
+                  checked={selected}
+                  disabled={selectionDisabled}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) =>
+                    toggleSelection(record.project_id, e.target.checked)
+                  }
+                  style={{ paddingTop: "10px" }}
+                  aria-label={`Select ${record.title}`}
+                />
+                <ProjectThemeAvatar theme={record.theme} size={40} border />
+                <div style={{ minWidth: 0 }}>
+                  <div
                     style={{
-                      display: "block",
-                      fontSize: "12px",
-                      marginTop: "2px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      minWidth: 0,
                     }}
                   >
-                    {record.description}
-                  </Text>
-                )}
-                <Space
-                  wrap
-                  size={[6, 4]}
-                  style={{ marginTop: "6px", rowGap: "4px" }}
-                >
-                  {roleTag(record.currentRole)}
-                  {stateTags(record)}
-                  <ProjectState state={record.state} />
-                </Space>
-              </div>
-              <div onClick={(e) => e.stopPropagation()}>
-                <ProjectActionsMenu
-                  record={record}
-                  onToggleDetails={() =>
-                    actions.toggle_expanded_project(record.project_id)
-                  }
-                />
-              </div>
-            </div>
-            <div
-              style={{
-                borderTop: `1px solid ${COLORS.GRAY_LL}`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "8px",
-                marginTop: "10px",
-                paddingTop: "8px",
-              }}
-            >
-              <Space size={8} style={{ minWidth: 0 }}>
-                <Button
-                  type="text"
-                  size="small"
-                  aria-label={
-                    record.starred
-                      ? `Unstar ${record.title}`
-                      : `Star ${record.title}`
-                  }
-                  icon={
-                    <Icon
-                      name={record.starred ? "star-filled" : "star"}
+                    <Text
+                      strong={record.state?.get("state") === "running"}
+                      disabled={record.deleting || record.deletionScheduled}
+                      ellipsis
+                      style={{ minWidth: 0 }}
+                    >
+                      {record.title || "Untitled"}
+                    </Text>
+                  </div>
+                  {record.description && !record.deleteFailed && (
+                    <Text
+                      type="secondary"
+                      ellipsis
                       style={{
-                        color: record.starred ? COLORS.STAR : COLORS.GRAY,
+                        display: "block",
+                        fontSize: "12px",
+                        marginTop: "2px",
+                      }}
+                    >
+                      {record.description}
+                    </Text>
+                  )}
+                  <div
+                    style={{ display: "flex", marginTop: "4px", minWidth: 0 }}
+                  >
+                    <ProjectRootfsBadge
+                      rootfsImage={record.rootfs_image}
+                      rootfsImageId={record.rootfs_image_id}
+                      rootfsImages={rootfsImages}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRootfsModalProjectId(record.project_id);
                       }}
                     />
-                  }
-                  onClick={(e) => toggleStar(record.project_id, e)}
-                />
-                {record.last_edited && (
-                  <Text type="secondary" style={{ fontSize: "12px" }}>
-                    <TimeAgo date={record.last_edited} />
-                  </Text>
+                  </div>
+                  <Space
+                    wrap
+                    size={[6, 4]}
+                    style={{ marginTop: "6px", rowGap: "4px" }}
+                  >
+                    {roleTag(record.currentRole)}
+                    {stateTags(record)}
+                    <ProjectState state={record.state} />
+                  </Space>
+                </div>
+                <div onClick={(e) => e.stopPropagation()}>
+                  <ProjectActionsMenu
+                    record={record}
+                    onToggleDetails={() =>
+                      actions.toggle_expanded_project(record.project_id)
+                    }
+                  />
+                </div>
+              </div>
+              <div
+                style={{
+                  borderTop: `1px solid ${COLORS.GRAY_LL}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                  marginTop: "10px",
+                  paddingTop: "8px",
+                }}
+              >
+                <Space size={8} style={{ minWidth: 0 }}>
+                  <Button
+                    type="text"
+                    size="small"
+                    aria-label={
+                      record.starred
+                        ? `Unstar ${record.title}`
+                        : `Star ${record.title}`
+                    }
+                    icon={
+                      <Icon
+                        name={record.starred ? "star-filled" : "star"}
+                        style={{
+                          color: record.starred ? COLORS.STAR : COLORS.GRAY,
+                        }}
+                      />
+                    }
+                    onClick={(e) => toggleStar(record.project_id, e)}
+                  />
+                  {record.last_edited && (
+                    <Text type="secondary" style={{ fontSize: "12px" }}>
+                      <TimeAgo date={record.last_edited} />
+                    </Text>
+                  )}
+                </Space>
+                {record.collaborators.length > 0 && (
+                  <CollaboratorsAvatars
+                    collaboratorIds={record.collaborators}
+                    size={22}
+                  />
                 )}
-              </Space>
-              {record.collaborators.length > 0 && (
-                <CollaboratorsAvatars
-                  collaboratorIds={record.collaborators}
-                  size={22}
-                />
-              )}
+              </div>
             </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+      <ProjectRootfsRuntimeModal
+        onClose={() => setRootfsModalProjectId("")}
+        open={!!rootfsModalProjectId}
+        project_id={rootfsModalProjectId}
+      />
+    </>
   );
 }
