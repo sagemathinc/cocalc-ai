@@ -324,12 +324,10 @@ describe("PublicFeaturesApp", () => {
     expect(
       within(featureNav).queryByRole("link", { name: /Previous:/ }),
     ).toBeNull();
-    expect(
-      screen.getByText("Choose the operating model that fits."),
-    ).not.toBeNull();
+    expect(screen.getByText("Decide how CoCalc should run")).not.toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "Compare product paths" })
+        .getByRole("link", { name: "Compare operating models" })
         .getAttribute("href"),
     ).toBe("/products");
     expect(
@@ -338,18 +336,19 @@ describe("PublicFeaturesApp", () => {
         .getAttribute("href"),
     ).toBe("/pricing");
     expect(
-      screen.getByRole("link", { name: "Compare CoCalc" }).getAttribute("href"),
+      screen
+        .getByRole("link", { name: "Compare CoCalc fit" })
+        .getAttribute("href"),
     ).toBe("/features/compare");
     expect(
       screen
-        .getAllByRole("link", { name: "All features" })
+        .getAllByRole("link", { name: "Browse feature workflows" })
         .map((link) => link.getAttribute("href")),
     ).toEqual(["/features"]);
+    expect(screen.queryByRole("link", { name: /Next feature:/ })).toBeNull();
     expect(
-      screen
-        .getByRole("link", { name: "Next feature: Jupyter Notebooks" })
-        .getAttribute("href"),
-    ).toBe("/features/jupyter-notebook");
+      screen.queryByRole("link", { name: /Previous feature:/ }),
+    ).toBeNull();
   });
 
   it("canonicalizes feature aliases before rendering detail navigation", () => {
@@ -874,7 +873,7 @@ describe("PublicFeaturesApp", () => {
       });
       expect(
         within(nextSteps)
-          .getByRole("link", { name: "Compare product paths" })
+          .getByRole("link", { name: "Compare operating models" })
           .getAttribute("href"),
       ).toBe("/products");
       expect(
@@ -884,9 +883,15 @@ describe("PublicFeaturesApp", () => {
       ).toBe("/pricing");
       expect(
         within(nextSteps)
-          .getByRole("link", { name: "All features" })
+          .getByRole("link", { name: "Browse feature workflows" })
           .getAttribute("href"),
       ).toBe("/features");
+      expect(
+        within(nextSteps).queryByRole("link", { name: /Next feature:/ }),
+      ).toBeNull();
+      expect(
+        within(nextSteps).queryByRole("link", { name: /Previous feature:/ }),
+      ).toBeNull();
     },
   );
 
@@ -1026,7 +1031,7 @@ describe("PublicFeaturesApp", () => {
       screen
         .getAllByRole("link", { name: "Pricing and licensing" })
         .map((link) => link.getAttribute("href")),
-    ).toEqual(["/pricing", "/pricing"]);
+    ).toEqual(["/pricing"]);
     expect(
       screen
         .getByRole("link", { name: "Review pricing options" })
@@ -1046,6 +1051,12 @@ describe("PublicFeaturesApp", () => {
         .getAttribute("href"),
     ).toBe("mailto:help@example.com");
     expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "Feature operating model next steps",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
     expect(
       screen.queryByRole("link", { name: "Compare workspace model" }),
     ).toBeNull();

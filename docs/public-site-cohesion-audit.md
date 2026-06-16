@@ -14,6 +14,26 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Teaching: preserve route-specific next steps for hosted use, product-path comparison, environment guidance, Jupyter, and teaching support.
 - [x] Update focused tests for stale headings, duplicate headings, decorative metadata, CTA route discipline, and repeated section density.
 
+## Shared Feature Detail Shell Pass
+
+- [x] Re-inspect the shared feature-detail bottom pattern after the individual page cleanup.
+- [x] Keep one compact operating-model handoff because feature pages should still connect workflow fit to hosted, local, single-VM, Launchpad, and Rocket choices.
+- [x] Remove previous/next feature links because feature pages are not a linear sequence and those links compete with route-specific CTAs.
+- [x] Rename the shared handoff from "Choose the operating model that fits" to "Decide how CoCalc should run" so it reads as the next decision rather than repeated homepage language.
+- [x] Suppress the shared operating-model handoff on `/features/compare` because that page already has its own comparison and next-route section.
+- [x] Keep a single low-priority route back to the feature index as "Browse feature workflows" instead of an arbitrary previous/next trail.
+
+## Open Considerations For Future Passes
+
+- [ ] Persona journeys: verify that researchers, instructors, IT/platform teams, and executive buyers can each answer "what is this, is it for me, and what should I do next?" without reading every page.
+- [ ] Proof and confidence: decide where public pages need evidence such as screenshots, concrete workflow examples, deployment boundaries, support expectations, or customer-style proof without making pages noisy.
+- [ ] IT and procurement readiness: audit whether support, pricing, products, and product-detail pages answer security, data ownership, SSO/auth, deployment responsibility, support model, and procurement questions at the right depth.
+- [ ] Technical depth layering: keep public pages concise while making sure route-specific CTAs lead to guides, docs, modals, or support forms that preserve context for advanced evaluators.
+- [ ] Product-path boundaries: keep checking that CoCalc.ai can serve individuals and institutions, Star stays bounded to a single VM, Plus stays local/self-directed, and Launchpad/Rocket remain customer-operated paths.
+- [ ] Navigation intent: verify that every shared nav/footer/CTA label sets a truthful expectation about the destination, especially when moving between workflow pages, product paths, pricing, compare, and support.
+- [ ] Visual system consistency: continue checking that cards, icons, screenshots, spacing, and mobile stacking are used only when they reduce decision effort.
+- [ ] Conversion measurement: identify which user decisions the public site should optimize for and which pages need analytics events or clearer success criteria before launch.
+
 ## Current Feature-Page Pass
 
 - [x] Re-inspect `/features/ai`, `/features/terminal`, `/features/linux`, `/features/api`, `/features/whiteboard`, `/features/latex-editor`, and `/features/slides` against the component-necessity standard.
@@ -38,8 +58,8 @@ recommendations are evaluated, completed, or deliberately deferred.
 
 - [x] Revisit `/features/jupyter-notebook`; it is improved but still needs a fresh density and hierarchy review.
 - [x] Revisit `/features/teaching`; it is improved but still has heavy sections that should be re-evaluated against the same standard.
-- [ ] Continue checking whether each feature page explains workflow value before product operating model.
-- [ ] Continue checking that every CTA preserves page context and points to the most useful next step.
+- [x] Continue checking whether each feature page explains workflow value before product operating model.
+- [x] Continue checking that every CTA preserves page context and points to the most useful next step.
 
 ## Site-Wide Principles Learned
 

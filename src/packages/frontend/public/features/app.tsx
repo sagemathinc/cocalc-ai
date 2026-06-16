@@ -320,19 +320,6 @@ function getOrderedFeatureIndexPages(): FeaturePage[] {
     .map(({ page }) => page);
 }
 
-function getAdjacentFeaturePages(currentSlug: string): {
-  next?: FeaturePage;
-  previous?: FeaturePage;
-} {
-  const pages = getOrderedFeatureIndexPages();
-  const currentIndex = pages.findIndex((page) => page.slug === currentSlug);
-  if (currentIndex < 0) return {};
-  return {
-    next: pages[currentIndex + 1],
-    previous: pages[currentIndex - 1],
-  };
-}
-
 type FeatureIndexCard = {
   href: string;
   slug: string;
@@ -637,46 +624,52 @@ function FeatureDetailNavigation({ page }: { page: FeaturePage }) {
 }
 
 function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
-  const { next, previous } = getAdjacentFeaturePages(currentSlug);
+  if (currentSlug === "compare") return null;
 
   return (
     <PublicSection ariaLabel="Feature operating model next steps">
-      <Flex className="cocalc-feature-product-paths" vertical gap={12}>
-        <Title level={3} style={{ margin: 0 }}>
-          Choose the operating model that fits.
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          After you know which workflows matter, compare how CoCalc should run:
-          hosted CoCalc.ai, local CoCalc Plus, single-VM CoCalc Star, or a
-          customer-operated Launchpad or Rocket deployment.
-        </Paragraph>
-        <Flex wrap gap={12}>
-          <Button href={appPath("products")} type="primary">
-            Compare product paths
-          </Button>
-          <Button href={appPath("pricing")}>Pricing and licensing</Button>
-          {currentSlug !== "compare" ? (
-            <LinkButton href={featurePath("compare")}>
-              Compare CoCalc
-            </LinkButton>
-          ) : null}
-          <LinkButton href={featurePath()}>All features</LinkButton>
-        </Flex>
-        {previous || next ? (
-          <Flex wrap gap={12}>
-            {previous ? (
-              <LinkButton href={featurePath(previous.slug)}>
-                Previous feature: {previous.title}
-              </LinkButton>
-            ) : null}
-            {next ? (
-              <LinkButton href={featurePath(next.slug)}>
-                Next feature: {next.title}
-              </LinkButton>
-            ) : null}
-          </Flex>
-        ) : null}
-      </Flex>
+      <div
+        className="cocalc-feature-product-paths"
+        style={{
+          background: PUBLIC_COLORS.surface,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: 8,
+          padding: 24,
+        }}
+      >
+        <Row align="middle" gutter={[20, 20]}>
+          <Col xs={24} lg={14}>
+            <Flex vertical gap={8}>
+              <Title level={3} style={{ margin: 0 }}>
+                Decide how CoCalc should run
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                Once the workflow fit is clear, compare hosted CoCalc.ai, local
+                CoCalc Plus, single-VM CoCalc Star, and customer-operated
+                Launchpad or Rocket deployments.
+              </Paragraph>
+            </Flex>
+          </Col>
+          <Col xs={24} lg={10}>
+            <Flex vertical gap={8} align="start">
+              <Flex gap={12} wrap>
+                <Button href={appPath("products")} type="primary">
+                  Compare operating models
+                </Button>
+                <Button href={appPath("pricing")}>Pricing and licensing</Button>
+              </Flex>
+              <Flex gap={16} wrap>
+                <LinkButton href={featurePath("compare")}>
+                  Compare CoCalc fit
+                </LinkButton>
+                <LinkButton href={featurePath()}>
+                  Browse feature workflows
+                </LinkButton>
+              </Flex>
+            </Flex>
+          </Col>
+        </Row>
+      </div>
     </PublicSection>
   );
 }
