@@ -9,6 +9,7 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Jupyter: reduce the hero to one public promise and move detailed agent mechanics behind the existing modal.
 - [x] Jupyter: collapse four proof cards to three distinct visitor benefits: persistent runs, live collaboration, and review/recovery.
 - [x] Jupyter: remove the separate final thesis section because it repeated the project-context argument already made earlier.
+- [x] Jupyter: remove the "Ready to try a notebook workflow" CTA strip because it duplicated existing actions without adding decision value.
 - [x] Teaching: keep course management positioned as a workflow destination beside the LMS, not an LMS replacement or top-level product path.
 - [x] Teaching: collapse overlapping grading, nbgrader, help, setup, and environment sections into fewer visitor questions.
 - [x] Teaching: preserve route-specific next steps for hosted use, product-path comparison, environment guidance, Jupyter, and teaching support.

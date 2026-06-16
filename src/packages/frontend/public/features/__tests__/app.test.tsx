@@ -425,6 +425,10 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText("Agent-ready")).toBeNull();
     expect(screen.queryByText("When notebooks become shared work")).toBeNull();
     expect(
+      screen.queryByText("Ready to try a notebook workflow in CoCalc?"),
+    ).toBeNull();
+    expect(screen.queryByText("Start using Jupyter on CoCalc")).toBeNull();
+    expect(
       screen.queryByText(
         "Let the agent work with the notebook you actually have open",
       ),
@@ -904,6 +908,12 @@ describe("PublicFeaturesApp", () => {
           initialRoute={{ slug, view: "detail" }}
         />,
       );
+
+      if (slug === "jupyter-notebook") {
+        fireEvent.click(
+          screen.getByRole("button", { name: "See agent details" }),
+        );
+      }
 
       const hrefs = screen
         .getAllByRole("link", { name: label })

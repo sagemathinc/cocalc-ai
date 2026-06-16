@@ -296,9 +296,6 @@ export default function JupyterNotebookFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
-  const finalCtaLabel = isAuthenticated
-    ? "Open projects"
-    : "Start using Jupyter on CoCalc";
   const supportHref = featureSupportPath({
     body: "I want to discuss Jupyter notebook workflows in CoCalc. Helpful context: research, teaching, or team use case; expected collaborators; notebook size or runtime needs; and whether AI assistance, course workflows, or private deployment matters.",
     context: "jupyter-notebook",
@@ -524,24 +521,6 @@ export default function JupyterNotebookFeaturePage({
               />
             </Col>
           </Row>
-          <Flex
-            align="center"
-            gap={12}
-            justify="space-between"
-            wrap
-            style={{
-              borderTop: `1px solid ${PUBLIC_COLORS.border}`,
-              paddingTop: 4,
-            }}
-          >
-            <Text strong>Ready to try a notebook workflow in CoCalc?</Text>
-            <Flex wrap gap={12}>
-              <Button type="primary" href={primaryCtaHref}>
-                {finalCtaLabel}
-              </Button>
-              <Button href={supportHref}>Ask about Jupyter workflows</Button>
-            </Flex>
-          </Flex>
         </Flex>
       </PublicSection>
       <Modal
