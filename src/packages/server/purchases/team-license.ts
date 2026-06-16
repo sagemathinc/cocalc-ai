@@ -227,6 +227,7 @@ export async function processTeamLicenseRenewal({
   }
   const ownedClient = client == null ? await getTransactionClient() : undefined;
   const dbClient = client ?? ownedClient!;
+  let committed = false;
   try {
     const quote = await getTeamLicenseRenewalQuote({
       team_license_id,
@@ -276,28 +277,56 @@ export async function processTeamLicenseRenewal({
     );
     if (ownedClient) {
       await ownedClient.query("COMMIT");
+      committed = true;
     }
+    await sendTeamLicenseRenewedNotification({
+      account_id,
+      team_license_id,
+      next_period_end: quote.next_period_end,
+      total_price: quote.total_price,
+    });
+  } catch (err) {
+    if (ownedClient && !committed) {
+      await ownedClient.query("ROLLBACK");
+    }
+    throw err;
+  } finally {
+    ownedClient?.release();
+  }
+}
+
+async function sendTeamLicenseRenewedNotification({
+  account_id,
+  team_license_id,
+  next_period_end,
+  total_price,
+}: {
+  account_id: string;
+  team_license_id: string;
+  next_period_end: Date;
+  total_price: MoneyValue;
+}) {
+  try {
     await send({
       to_ids: [account_id],
       subject: "Team License Renewed",
       body: `
 Your CoCalc team license has been renewed through ${formatDate(
-        quote.next_period_end,
+        next_period_end,
       )}.
 
-- Amount: ${moneyToCurrency(moneyRound2Down(toDecimal(quote.total_price)))}
+- Amount: ${moneyToCurrency(moneyRound2Down(toDecimal(total_price)))}
 - Manage team license: ${await url("settings", "team-licenses")}
 
 ${await support()}
 `,
     });
   } catch (err) {
-    if (ownedClient) {
-      await ownedClient.query("ROLLBACK");
-    }
-    throw err;
-  } finally {
-    ownedClient?.release();
+    logger.warn("failed to send team license renewal notification", {
+      account_id,
+      team_license_id,
+      err,
+    });
   }
 }
 

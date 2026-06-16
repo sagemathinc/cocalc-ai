@@ -29,7 +29,10 @@ jest.mock("@cocalc/server/messages/send", () => ({
   url: (...args: any[]) => mockUrl(...args),
 }));
 
-import { createTeamLicenseRenewalPayment } from "./team-license";
+import {
+  createTeamLicenseRenewalPayment,
+  processTeamLicenseRenewal,
+} from "./team-license";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -95,6 +98,53 @@ describe("team license renewal payments", () => {
       [owner_account_id],
     );
     expect(Number(purchases.rows[0].cost)).toBe(240);
+  });
+
+  it("does not fail a committed renewal when the success notification fails", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const overview = await applyTeamLicenseSeatConfiguration({
+      owner_account_id,
+      target_seats: {
+        [teamTier]: 1,
+      },
+    });
+    mockSend.mockRejectedValueOnce(new Error("message delivery failed"));
+
+    await expect(
+      processTeamLicenseRenewal({
+        account_id: owner_account_id,
+        amount: 120,
+        paymentIntent: {
+          id: "pi_team_license_success_notification_failed",
+          metadata: { team_license_id: overview.id },
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: "Team License Renewed",
+        to_ids: [owner_account_id],
+      }),
+    );
+    const { rows } = await getPool().query(
+      `
+        SELECT current_period_start, current_period_end, payment
+          FROM team_licenses
+         WHERE id=$1
+      `,
+      [overview.id],
+    );
+    expect(rows[0].payment).toBeNull();
+    expect(new Date(rows[0].current_period_start).toISOString()).toBe(
+      new Date(overview.current_period_end).toISOString(),
+    );
+    const purchases = await getPool().query(
+      "SELECT COUNT(*)::int AS count FROM purchases WHERE account_id=$1 AND tag='team-license-renewal'",
+      [owner_account_id],
+    );
+    expect(purchases.rows[0].count).toBe(1);
   });
 
   it("creates a payment intent when the team balance setting is disabled", async () => {
