@@ -26,6 +26,8 @@ import type {
   RootfsImageEntry,
   RootfsImageManifest,
   RootfsImageSection,
+  RootfsContentManifest,
+  RootfsContentValidationWarning,
   RootfsReleaseArtifactBackend,
   RootfsReleaseArtifactFormat,
   RootfsImageTheme,
@@ -39,8 +41,10 @@ import {
   BUILTIN_ROOTFS_IMAGES,
   DEFAULT_ROOTFS_CATALOG_URL,
   isManagedRootfsImageName,
+  normalizeRootfsContentManifest,
   normalizeRootfsEntry,
   ROOTFS_IMAGE_MANIFEST_VERSION,
+  validateRootfsSlug,
 } from "@cocalc/util/rootfs-images";
 import { assertCanCreateOrUpdateRootfs } from "@cocalc/server/membership/rootfs-limits";
 import { ensureRootfsRusticRepoSchema } from "@cocalc/server/rootfs/rustic-repo-schema";
@@ -61,6 +65,7 @@ let seedCatalogSyncPromise: Promise<void> | undefined;
 type RootfsImageRow = {
   image_id: string;
   release_id: string | null;
+  slug: string | null;
   owner_id: string | null;
   runtime_image: string;
   created: Date | null;
@@ -94,6 +99,8 @@ type RootfsImageRow = {
   deprecated: boolean | null;
   deprecated_reason: string | null;
   theme: RootfsImageTheme | null;
+  content: RootfsContentManifest | null;
+  content_warnings: RootfsContentValidationWarning[] | null;
   owner_first_name: string | null;
   owner_last_name: string | null;
   release_gc_status: RootfsReleaseGcStatus | null;
@@ -168,6 +175,39 @@ function normalizeTheme(theme?: unknown): RootfsImageTheme | null {
     icon: trimString(value.icon) ?? null,
     image_blob: trimString(value.image_blob) ?? null,
   };
+}
+
+function normalizeStoredContent(
+  content?: unknown,
+): RootfsContentManifest | undefined {
+  return normalizeRootfsContentManifest(content).content;
+}
+
+function normalizeStoredContentWarnings(
+  warnings?: unknown,
+): RootfsContentValidationWarning[] | undefined {
+  if (!Array.isArray(warnings)) return undefined;
+  const normalized = warnings
+    .map((item) => {
+      if (item == null || typeof item !== "object" || Array.isArray(item)) {
+        return undefined;
+      }
+      const value = item as Record<string, unknown>;
+      const code = trimString(value.code);
+      const message = trimString(value.message);
+      if (!code || !message) return undefined;
+      return {
+        code,
+        message,
+        path: trimString(value.path),
+      };
+    })
+    .filter(Boolean) as RootfsContentValidationWarning[];
+  return normalized.length ? normalized : undefined;
+}
+
+function hasOwn(object: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function normalizeArch(value?: unknown): string {
@@ -363,6 +403,7 @@ function rowToEntry({
     {
       id: row.image_id,
       release_id: row.release_id ?? undefined,
+      slug: row.slug ?? undefined,
       label: row.label || row.runtime_image,
       image: row.runtime_image,
       created: row.created?.toISOString(),
@@ -389,6 +430,7 @@ function rowToEntry({
       section,
       warning: warningFor(section),
       theme: row.theme ?? undefined,
+      content: normalizeStoredContent(row.content),
       scan:
         row.scan_status || row.scan_tool || row.scanned_at || row.scan_summary
           ? {
@@ -421,6 +463,7 @@ function rowToAdminEntry({
       {
         id: row.image_id,
         release_id: row.release_id ?? undefined,
+        slug: row.slug ?? undefined,
         label: row.label || row.runtime_image,
         image: row.runtime_image,
         created: row.created?.toISOString(),
@@ -446,6 +489,7 @@ function rowToAdminEntry({
         owner_name: fullName(row),
         warning: "none",
         theme: row.theme ?? undefined,
+        content: normalizeStoredContent(row.content),
         scan:
           row.scan_status || row.scan_tool || row.scanned_at || row.scan_summary
             ? {
@@ -475,6 +519,7 @@ function rowToAdminEntry({
     scan_tool: row.scan_tool ?? undefined,
     scanned_at: row.scanned_at?.toISOString(),
     storage_locations: primaryStorageLocation(row),
+    content_warnings: normalizeStoredContentWarnings(row.content_warnings),
   };
 }
 
@@ -612,6 +657,7 @@ function addRootfsCatalogFilters({
     where.push(`(
       r.image_id ILIKE ${p} OR
       r.release_id ILIKE ${p} OR
+      COALESCE(r.slug, '') ILIKE ${p} OR
       r.runtime_image ILIKE ${p} OR
       r.label ILIKE ${p} OR
       COALESCE(r.family, '') ILIKE ${p} OR
@@ -620,6 +666,9 @@ function addRootfsCatalogFilters({
       COALESCE(r.description, '') ILIKE ${p} OR
       COALESCE(r.visibility, '') ILIKE ${p} OR
       COALESCE(r.owner_id::TEXT, '') ILIKE ${p} OR
+      COALESCE(r.content->>'title', '') ILIKE ${p} OR
+      COALESCE(r.content->>'subtitle', '') ILIKE ${p} OR
+      COALESCE(r.content->>'description', '') ILIKE ${p} OR
       COALESCE(a.first_name, '') ILIKE ${p} OR
       COALESCE(a.last_name, '') ILIKE ${p} OR
       COALESCE(array_to_string(r.tags, ' '), '') ILIKE ${p} OR
@@ -733,6 +782,7 @@ async function queryRootfsCatalogRows(
     `SELECT
       r.image_id,
       r.release_id,
+      r.slug,
       r.owner_id,
       r.runtime_image,
       r.created,
@@ -766,6 +816,8 @@ async function queryRootfsCatalogRows(
       r.deprecated,
       r.deprecated_reason,
       r.theme,
+      r.content,
+      r.content_warnings,
       a.first_name AS owner_first_name,
       a.last_name AS owner_last_name,
       rel.gc_status AS release_gc_status,
@@ -842,10 +894,12 @@ function shouldSyncSeedCatalogEntry(entry: RootfsImageEntry): boolean {
 
 async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
   const pool = getPool("medium");
+  const contentResult = normalizeRootfsContentManifest(entry.content);
+  const slug = validateRootfsSlug(entry.slug);
   await pool.query(
     `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
-      VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, NULL, NULL, false, NULL, NULL, NULL, false, NULL, NULL, NULL, $13, $14, $15, $16::TEXT[], $17, NULL, $18, $19, $20::JSONB, COALESCE($21::TIMESTAMP, NOW()), NOW())
+      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, slug, theme, content, content_warnings, created, updated)
+      VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, NULL, NULL, false, NULL, NULL, NULL, false, NULL, NULL, NULL, $13, $14, $15, $16::TEXT[], $17, NULL, $18, $19, $20, $21::JSONB, $22::JSONB, $23::JSONB, COALESCE($24::TIMESTAMP, NOW()), NOW())
       ON CONFLICT (image_id) DO UPDATE SET
         release_id=EXCLUDED.release_id,
         runtime_image=EXCLUDED.runtime_image,
@@ -865,7 +919,10 @@ async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
         digest=EXCLUDED.digest,
         deprecated=EXCLUDED.deprecated,
         deprecated_reason=EXCLUDED.deprecated_reason,
+        slug=COALESCE(EXCLUDED.slug, rootfs_images.slug),
         theme=EXCLUDED.theme,
+        content=EXCLUDED.content,
+        content_warnings=EXCLUDED.content_warnings,
         updated=NOW()
       WHERE rootfs_images.owner_id IS NULL OR COALESCE(rootfs_images.official, false)=true`,
     [
@@ -888,7 +945,12 @@ async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
       trimString(entry.digest) ?? null,
       entry.deprecated === true,
       trimString(entry.deprecated_reason) ?? null,
+      slug ?? null,
       entry.theme ? JSON.stringify(normalizeTheme(entry.theme)) : null,
+      contentResult.content ? JSON.stringify(contentResult.content) : null,
+      contentResult.warnings.length
+        ? JSON.stringify(contentResult.warnings)
+        : null,
       trimString(entry.created) ?? null,
     ],
   );
@@ -1298,6 +1360,18 @@ async function upsertRootfsRow({
   const hidden = admin && body.hidden === true;
   const blocked = admin && body.blocked === true;
   const blocked_reason = trimString(body.blocked_reason) ?? null;
+  const slug = validateRootfsSlug(body.slug) ?? null;
+  const contentSpecified = hasOwn(body, "content");
+  const contentResult =
+    contentSpecified && body.content != null
+      ? normalizeRootfsContentManifest(body.content)
+      : { content: undefined, warnings: [] };
+  const content = contentSpecified ? (contentResult.content ?? null) : null;
+  const content_warnings = contentSpecified
+    ? contentResult.warnings.length
+      ? contentResult.warnings
+      : null
+    : null;
   const requested_size_bytes =
     typeof size_gb === "number" && Number.isFinite(size_gb)
       ? Math.floor(size_gb * 1_000_000_000)
@@ -1313,7 +1387,7 @@ async function upsertRootfsRow({
 
   await pool.query(
     `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, slug, theme, content, content_warnings, created, updated)
      VALUES
       ($1, $2, $3::UUID, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
        CASE WHEN $14 THEN NOW() ELSE NULL END,
@@ -1322,7 +1396,7 @@ async function upsertRootfsRow({
        CASE WHEN $15 THEN $16 ELSE NULL END,
        CASE WHEN $15 THEN NOW() ELSE NULL END,
        CASE WHEN $15 THEN $3::UUID ELSE NULL END,
-       false, NULL, NULL, NULL, $17, $18, $19, $20::TEXT[], $21, $22, false, NULL, $23::JSONB, NOW(), NOW())
+       false, NULL, NULL, NULL, $17, $18, $19, $20::TEXT[], $21, $22, false, NULL, $23, $24::JSONB, $25::JSONB, $26::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
       release_id = COALESCE(EXCLUDED.release_id, rootfs_images.release_id),
       owner_id = EXCLUDED.owner_id,
@@ -1364,7 +1438,10 @@ async function upsertRootfsRow({
       tags = EXCLUDED.tags,
       digest = COALESCE(EXCLUDED.digest, rootfs_images.digest),
       content_key = COALESCE(EXCLUDED.content_key, rootfs_images.content_key),
+      slug = COALESCE(EXCLUDED.slug, rootfs_images.slug),
       theme = EXCLUDED.theme,
+      content = CASE WHEN $27 THEN EXCLUDED.content ELSE rootfs_images.content END,
+      content_warnings = CASE WHEN $27 THEN EXCLUDED.content_warnings ELSE rootfs_images.content_warnings END,
       updated = NOW()`,
     [
       image_id,
@@ -1389,7 +1466,11 @@ async function upsertRootfsRow({
       tags,
       digest ?? null,
       content_key ?? null,
+      slug,
       theme ? JSON.stringify(theme) : null,
+      content ? JSON.stringify(content) : null,
+      content_warnings ? JSON.stringify(content_warnings) : null,
+      contentSpecified,
     ],
   );
 
@@ -1503,9 +1584,15 @@ export async function saveRootfsImage({
   const prepull = admin && body.prepull === true;
   const hidden = admin && body.hidden === true;
   const blocked = admin && body.blocked === true;
+  const slug = validateRootfsSlug(body.slug);
+  const contentResult =
+    hasOwn(body, "content") && body.content != null
+      ? normalizeRootfsContentManifest(body.content)
+      : undefined;
   return normalizeRootfsEntry(
     {
       id: image_id,
+      slug,
       label,
       image,
       family: body.family,
@@ -1524,6 +1611,7 @@ export async function saveRootfsImage({
       size_gb: size_gb ?? undefined,
       tags,
       theme: theme ?? undefined,
+      content: contentResult?.content,
       section: official ? "official" : "mine",
       warning: "none",
       can_manage: true,
@@ -1576,6 +1664,8 @@ export async function publishProjectRootfsCatalogEntry({
       arch: artifact.arch,
       tags,
       theme: body.theme,
+      slug: body.slug,
+      content: body.content,
       official: body.official,
       prepull: body.prepull,
       hidden: body.hidden,
@@ -1589,10 +1679,16 @@ export async function publishProjectRootfsCatalogEntry({
     return entry;
   }
   const visibility = normalizeVisibility(body.visibility);
+  const slug = validateRootfsSlug(body.slug);
+  const contentResult =
+    hasOwn(body, "content") && body.content != null
+      ? normalizeRootfsContentManifest(body.content)
+      : undefined;
   return normalizeRootfsEntry(
     {
       id: image_id,
       release_id: release_id ?? undefined,
+      slug,
       label: body.label,
       image: artifact.image,
       family: body.family,
@@ -1609,6 +1705,7 @@ export async function publishProjectRootfsCatalogEntry({
       size_gb,
       tags,
       theme: normalizeTheme(body.theme) ?? undefined,
+      content: contentResult?.content,
       section: "mine",
       warning: "none",
       can_manage: true,
