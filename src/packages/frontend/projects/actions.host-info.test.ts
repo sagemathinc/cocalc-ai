@@ -1,7 +1,7 @@
 import { Map as ImmutableMap } from "immutable";
 
 jest.mock("@cocalc/util/async-utils", () => ({
-  once: jest.fn(),
+  ...jest.requireActual("@cocalc/util/async-utils"),
   withTimeout: jest.fn(async (_promise: Promise<any>) => {
     throw new Error("timeout");
   }),
