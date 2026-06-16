@@ -59,7 +59,7 @@ export interface MembershipChangeResult extends MembershipPricingResult {
 
 type ActiveMembershipSubscription = {
   id: number;
-  metadata: { class?: MembershipClass };
+  metadata: { class?: MembershipClass; trial?: boolean };
   cost: number;
   current_period_start: Date;
   current_period_end: Date;
@@ -254,6 +254,12 @@ function subscriptionStatusRank(status: string): number {
 }
 
 function subscriptionRefundBasis(subscription: ActiveMembershipSubscription) {
+  if (
+    subscription.metadata?.trial === true &&
+    subscription.latest_purchase_id == null
+  ) {
+    return toDecimal(0);
+  }
   const basis =
     subscription.latest_purchase_cost != null
       ? subscription.latest_purchase_cost

@@ -617,14 +617,11 @@ ${await support()}`;
           : "credit",
     });
 
-    // make metadata so we won't consider this payment intent ever again
-    // NOTE: we are mutating this on purpose so that the paymentIntent
-    // that gets returned, e.g., by getPayments is already up to date with the credit_id!
-    paymentIntent.metadata.processed = "true";
+    // Keep the credit id on the in-memory payment intent, but only mark the
+    // payment intent processed after the intended product change succeeds.
+    // createCredit is idempotent by invoice_id, so failed product processing
+    // can safely be retried without creating duplicate account credit.
     paymentIntent.metadata.credit_id = credit_id;
-    await stripe.paymentIntents.update(paymentIntent.id, {
-      metadata: paymentIntent.metadata,
-    });
 
     let reason = "add credit to your account";
     try {
@@ -695,25 +692,6 @@ ${await support()}`;
           amount,
         });
       }
-      send({
-        to_ids: [account_id],
-        subject: `You Made a ${moneyToCurrency(amount)} Payment (Credit id: ${credit_id})`,
-        body: `
-You successfully made a payment of ${moneyToCurrency(amount)}, which was used to ${reason}.
-Thank you!
-
-- Payment id: ${paymentIntent.id}
-
-- Purchase credit id: ${credit_id}
-
-- Browser all your [Payments](${await url("settings", "payments")}) and [Purchases](${await url("settings", "purchases")})
-
-- Account Balance: ${moneyToCurrency(
-          moneyRound2Down(toDecimal(await getBalance({ account_id }))),
-        )}
-
-${await support()}`,
-      });
     } catch (err) {
       // There basically should never be a case where any of the above fails.  But multiple
       // transactions happening at once, or bugs, etc. could maybe lead to a case where
@@ -737,16 +715,60 @@ support if you are concerned (see below).
 
 ${await support()}
 `;
-      send({
-        to_ids: [account_id],
-        subject: `Possible Issue Processing ${moneyToCurrency(amount)} Payment`,
-        body,
-      });
+      try {
+        await send({
+          to_ids: [account_id],
+          subject: `Possible Issue Processing ${moneyToCurrency(amount)} Payment`,
+          body,
+        });
+      } catch (messageErr) {
+        logger.debug(
+          `WARNING: unable to send payment processing issue notification for ${paymentIntent.id} -- ${messageErr}`,
+        );
+      }
       adminAlert({
         subject: "Issue Processing a User Payment",
         body: `There was an error processing payment intent id ${paymentIntent.id} for the user with account_id=${account_id}.\n\n## Message sent to user:\n\n${body}`,
       });
       throw err;
+    }
+
+    // make metadata so we won't consider this payment intent ever again
+    // NOTE: we are mutating this on purpose so that the paymentIntent
+    // that gets returned, e.g., by getPayments is already up to date with the credit_id!
+    paymentIntent.metadata.processed = "true";
+    await stripe.paymentIntents.update(paymentIntent.id, {
+      metadata: paymentIntent.metadata,
+    });
+
+    try {
+      await send({
+        to_ids: [account_id],
+        subject: `You Made a ${moneyToCurrency(amount)} Payment (Credit id: ${credit_id})`,
+        body: `
+You successfully made a payment of ${moneyToCurrency(amount)}, which was used to ${reason}.
+Thank you!
+
+- Payment id: ${paymentIntent.id}
+
+- Purchase credit id: ${credit_id}
+
+- Browser all your [Payments](${await url("settings", "payments")}) and [Purchases](${await url("settings", "purchases")})
+
+- Account Balance: ${moneyToCurrency(
+          moneyRound2Down(toDecimal(await getBalance({ account_id }))),
+        )}
+
+${await support()}`,
+      });
+    } catch (err) {
+      logger.debug(
+        `WARNING: unable to send payment success notification for ${paymentIntent.id} -- ${err}`,
+      );
+      adminAlert({
+        subject: "Issue Sending Payment Success Message",
+        body: `There was an error sending the success message for payment intent id ${paymentIntent.id} for the user with account_id=${account_id}.\n\nERROR: ${err}`,
+      });
     }
 
     return credit_id;

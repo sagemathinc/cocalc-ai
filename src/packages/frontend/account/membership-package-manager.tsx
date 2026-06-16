@@ -99,6 +99,12 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 import type { LineItem } from "@cocalc/util/stripe/types";
 
 const { Paragraph, Text, Title } = Typography;
+const TEAM_LICENSE_FINALIZATION_TIMEOUT_MS = 30_000;
+const TEAM_LICENSE_FINALIZATION_POLL_MS = 1_500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface Props {
   tiers: MembershipTierLike[];
@@ -4679,16 +4685,22 @@ function TeamPackagePurchaseModal({
   async function refreshProcessing() {
     setActionError("");
     try {
-      await processPaymentIntents();
-      const updated = await getTeamLicense();
-      await onPurchased();
-      if (teamLicenseMatchesTargets(updated, seatTargets, purchaseableTiers)) {
-        setPlace("done");
-      } else {
-        setActionError(
-          "Payment was submitted, but CoCalc could not confirm the team license update yet. Please check again shortly or contact support if the license does not update.",
-        );
+      const deadline = Date.now() + TEAM_LICENSE_FINALIZATION_TIMEOUT_MS;
+      while (Date.now() <= deadline) {
+        await processPaymentIntents({ strict: true });
+        const updated = await getTeamLicense();
+        await onPurchased();
+        if (
+          teamLicenseMatchesTargets(updated, seatTargets, purchaseableTiers)
+        ) {
+          setPlace("done");
+          return;
+        }
+        await delay(TEAM_LICENSE_FINALIZATION_POLL_MS);
       }
+      setActionError(
+        "Payment was submitted, but CoCalc could not confirm the team license update yet. Please check again shortly or contact support if the license does not update.",
+      );
     } catch (err) {
       setActionError(`${err}`);
     }

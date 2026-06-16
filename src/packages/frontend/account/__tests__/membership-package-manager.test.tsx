@@ -41,6 +41,7 @@ const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
   return true;
 });
 const sendVerificationEmail = jest.fn();
+let stripePaymentTotal = 0;
 
 let accountId = "owner-1";
 let emailAddress = "ada@example.edu";
@@ -123,7 +124,7 @@ jest.mock("@cocalc/frontend/purchases/stripe-payment", () => (props: any) => (
     {(props.lineItems ?? []).map((item: any) => (
       <div key={item.description}>{item.description}</div>
     ))}
-    <button type="button" onClick={() => props.onFinished(0)}>
+    <button type="button" onClick={() => props.onFinished(stripePaymentTotal)}>
       complete-payment
     </button>
   </div>
@@ -367,6 +368,7 @@ describe("membership package managers", () => {
     });
     purchaseTeamLicenseChange.mockResolvedValue(null);
     processPaymentIntents.mockResolvedValue({ count: 0 });
+    stripePaymentTotal = 0;
     runFreshAuthAction.mockClear();
     userSearch.mockResolvedValue([]);
     getNames.mockResolvedValue({
@@ -480,6 +482,74 @@ describe("membership package managers", () => {
       });
       expect(screen.getByText("Team license updated")).toBeTruthy();
     });
+  });
+
+  it("waits for paid team license checkout to apply seats", async () => {
+    const updatedLicense = makeTeamLicenseOverview([
+      makeTeamPackage({
+        seat_count: 16,
+        available_seat_count: 16,
+      }),
+    ]);
+    let processedPaymentChecks = 0;
+    stripePaymentTotal = 160;
+    getTeamLicenseQuote.mockResolvedValue({
+      current_period_start: new Date("2026-06-01T00:00:00Z"),
+      current_period_end: new Date("2027-06-01T00:00:00Z"),
+      target_seats: { member: 16, pro: 0 },
+      current_seats: { member: 0, pro: 0 },
+      assigned_seats: { member: 0, pro: 0 },
+      added_seats: { member: 16, pro: 0 },
+      line_items: [
+        { description: "16 Member annual team seats at $10/seat", amount: 160 },
+      ],
+      total_price: 160,
+      interval: "year",
+    });
+    processPaymentIntents.mockImplementation(async () => {
+      processedPaymentChecks += 1;
+      return { count: processedPaymentChecks };
+    });
+    getTeamLicense.mockImplementation(async () =>
+      processedPaymentChecks >= 2 ? updatedLicense : null,
+    );
+
+    render(<TeamPackageManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Set up team license")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Set up team license"));
+
+    const memberRow = await waitFor(() => {
+      const row = screen
+        .getAllByRole("row")
+        .find((row) => within(row).queryByText("Member"));
+      expect(row).toBeTruthy();
+      return row!;
+    });
+    if (memberRow == null) {
+      throw Error("Member row not found");
+    }
+    fireEvent.change(within(memberRow).getByRole("spinbutton"), {
+      target: { value: "16" },
+    });
+    fireEvent.click(screen.getByText("Continue"));
+
+    await waitFor(() => {
+      expect(screen.getByText("complete-payment")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("complete-payment"));
+
+    await waitFor(
+      () => {
+        expect(processPaymentIntents).toHaveBeenCalledWith({ strict: true });
+        expect(purchaseTeamLicenseChange).not.toHaveBeenCalled();
+        expect(screen.getByText("Team license updated")).toBeTruthy();
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("initializes team license seat counts from existing packages", async () => {
