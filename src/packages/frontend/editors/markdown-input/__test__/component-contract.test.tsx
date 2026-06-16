@@ -22,23 +22,6 @@ async function renderMarkdownInput(element: Parameters<typeof render>[0]) {
   return renderResult;
 }
 
-function setScrollableSize(
-  element: HTMLElement,
-  {
-    clientHeight,
-    scrollHeight,
-  }: { clientHeight: number; scrollHeight: number },
-) {
-  Object.defineProperty(element, "clientHeight", {
-    configurable: true,
-    value: clientHeight,
-  });
-  Object.defineProperty(element, "scrollHeight", {
-    configurable: true,
-    value: scrollHeight,
-  });
-}
-
 function createMockEditor(node?: HTMLTextAreaElement | null) {
   const handlers: HandlerMap = {};
   let currentValue = "";
@@ -652,72 +635,6 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
 
     expect(latestEditor.getScrollerElement().style.overflowY).toBe("hidden");
     expect(latestEditor.scrollIntoView).not.toHaveBeenCalled();
-  });
-
-  it("forwards vertical wheel scrolling to the notebook when unbounded markdown has no internal scroller", async () => {
-    const { container } = await renderMarkdownInput(
-      <div style={{ height: "100px", overflowY: "auto" }}>
-        <MarkdownInput
-          value={"1\n2\n3"}
-          onChange={() => {}}
-          saveDebounceMs={0}
-          autoGrow
-          unboundedAutoGrow
-        />
-      </div>,
-    );
-    const notebookScroller = container.firstElementChild as HTMLElement;
-    setScrollableSize(notebookScroller, {
-      clientHeight: 100,
-      scrollHeight: 1000,
-    });
-    notebookScroller.scrollTop = 10;
-    const event = new WheelEvent("wheel", {
-      bubbles: true,
-      cancelable: true,
-      deltaY: 40,
-    });
-
-    act(() => {
-      latestEditor.getScrollerElement().dispatchEvent(event);
-    });
-
-    expect(latestEditor.getScrollerElement().style.overflowY).toBe("hidden");
-    expect(notebookScroller.scrollTop).toBe(50);
-    expect(event.defaultPrevented).toBe(true);
-  });
-
-  it("leaves wheel scrolling inside capped markdown with an internal scroller", async () => {
-    const { container } = await renderMarkdownInput(
-      <div style={{ height: "100px", overflowY: "auto" }}>
-        <MarkdownInput
-          value={"1\n2\n3\n4\n5\n6\n7\n8"}
-          onChange={() => {}}
-          saveDebounceMs={0}
-          autoGrow
-          autoGrowMaxHeight={80}
-        />
-      </div>,
-    );
-    const notebookScroller = container.firstElementChild as HTMLElement;
-    setScrollableSize(notebookScroller, {
-      clientHeight: 100,
-      scrollHeight: 1000,
-    });
-    notebookScroller.scrollTop = 10;
-    const event = new WheelEvent("wheel", {
-      bubbles: true,
-      cancelable: true,
-      deltaY: 40,
-    });
-
-    act(() => {
-      latestEditor.getScrollerElement().dispatchEvent(event);
-    });
-
-    expect(latestEditor.getScrollerElement().style.overflowY).toBe("auto");
-    expect(notebookScroller.scrollTop).toBe(10);
-    expect(event.defaultPrevented).toBe(false);
   });
 
   it("keeps cursor reveal for capped auto-grow markdown with an internal scroller", async () => {

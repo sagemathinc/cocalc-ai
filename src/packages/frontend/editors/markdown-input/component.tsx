@@ -69,60 +69,9 @@ const MIN_INPUT_HEIGHT = IS_MOBILE ? 44 : 38;
 const MODE_SWITCH_OVERLAY_HEIGHT = 22;
 const INSTRUCTIONS_HEIGHT = 24;
 const AUTO_GROW_SHRINK_DELAY_MS = 120;
-const VERTICAL_SCROLL_OVERFLOW_VALUES = new Set(["auto", "scroll", "overlay"]);
 
 const MENTION_CSS =
   "color:#7289da; background:rgba(114,137,218,.1); border-radius: 3px; padding: 0 2px;";
-
-function findVerticalScrollParent(node: HTMLElement): HTMLElement | undefined {
-  let parent = node.parentElement;
-  while (parent != null) {
-    const { overflowY } = window.getComputedStyle(parent);
-    if (
-      VERTICAL_SCROLL_OVERFLOW_VALUES.has(overflowY) &&
-      parent.scrollHeight > parent.clientHeight
-    ) {
-      return parent;
-    }
-    parent = parent.parentElement;
-  }
-}
-
-function normalizeWheelDeltaY(event: WheelEvent, target: HTMLElement): number {
-  switch (event.deltaMode) {
-    case 1:
-      return event.deltaY * 16;
-    case 2:
-      return event.deltaY * target.clientHeight;
-    default:
-      return event.deltaY;
-  }
-}
-
-function forwardHiddenScrollerWheel(
-  scroller: HTMLElement,
-  event: WheelEvent,
-): void {
-  if (
-    scroller.style.overflowY !== "hidden" ||
-    Math.abs(event.deltaY) <= Math.abs(event.deltaX)
-  ) {
-    return;
-  }
-  const target = findVerticalScrollParent(scroller);
-  if (target == null) return;
-  const deltaY = normalizeWheelDeltaY(event, target);
-  if (deltaY === 0) return;
-  const maxScrollTop = Math.max(0, target.scrollHeight - target.clientHeight);
-  const nextScrollTop = Math.max(
-    0,
-    Math.min(maxScrollTop, target.scrollTop + deltaY),
-  );
-  if (nextScrollTop === target.scrollTop) return;
-  target.scrollTop = nextScrollTop;
-  event.preventDefault();
-  event.stopPropagation();
-}
 
 interface Props {
   project_id?: string; // must be set if enableUpload or enableMentions is set  (todo: enforce via typescript)
@@ -655,7 +604,6 @@ export function MarkdownInput(props: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    let scrollerWheelCleanup: (() => void) | undefined;
 
     // initialize the codemirror editor
     const node = textarea_ref.current;
@@ -859,19 +807,6 @@ export function MarkdownInput(props: Props) {
         s += `;min-height:${h};max-height:${h};overflow:auto;`;
       }
       e.setAttribute("style", s);
-      const scroller = cm.current.getScrollerElement?.() as HTMLElement | null;
-      const onScrollerWheel = (event: WheelEvent) => {
-        if (scroller != null) {
-          forwardHiddenScrollerWheel(scroller, event);
-        }
-      };
-      scroller?.addEventListener("wheel", onScrollerWheel, {
-        capture: true,
-        passive: false,
-      });
-      scrollerWheelCleanup = () => {
-        scroller?.removeEventListener("wheel", onScrollerWheel, true);
-      };
       syncCodeMirrorLayout();
 
       if (enableMentions) {
@@ -998,7 +933,6 @@ export function MarkdownInput(props: Props) {
       if (cm.current == null) return;
       cm.current.off("change", saveValue);
       cm.current.off("paste", handle_paste_event as any);
-      scrollerWheelCleanup?.();
       if (onBlur) {
         cm.current.off("blur", onBlur as any);
       }
