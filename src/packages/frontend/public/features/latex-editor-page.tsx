@@ -456,6 +456,9 @@ export default function LatexEditorFeaturePage({
                 >
                   Ask about LaTeX workflows
                 </Button>
+                <Button href={appPath("products")}>
+                  Compare operating models
+                </Button>
               </Flex>
             </Flex>
           </Col>

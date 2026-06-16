@@ -11,6 +11,7 @@ import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
   LinkButton,
 } from "./page-components";
 
@@ -251,7 +252,6 @@ function TeachingComparison() {
 }
 
 export default function SageFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -264,6 +264,12 @@ export default function SageFeaturePage({
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
     : "Start using SageMath on CoCalc";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss SageMath workflows in CoCalc. Helpful context: course, research, or notebook use case; LaTeX/SageTeX needs; expected collaborators; and whether hosted or customer-operated CoCalc matters.",
+    context: "sage",
+    subject: "CoCalc SageMath workflows",
+    title: "Ask CoCalc about SageMath workflows",
+  });
 
   return (
     <Flex vertical gap={22}>
@@ -392,9 +398,10 @@ export default function SageFeaturePage({
               <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
                 SageTeX documentation
               </LinkButton>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button href={appPath("products")}>
+                Compare operating models
+              </Button>
+              <Button href={supportHref}>Ask about SageMath workflows</Button>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>

@@ -8,13 +8,12 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { BulletList, featureAppPath as appPath } from "./page-components";
 import {
-  IconBadge,
-  StartCard,
-  StoryCard,
-  TerminalMock,
-} from "./feature-visuals";
+  BulletList,
+  featureAppPath as appPath,
+  featureSupportPath,
+} from "./page-components";
+import { IconBadge, StartCard, TerminalMock } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -152,7 +151,6 @@ function JuliaProjectFit() {
 }
 
 export default function JuliaFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -163,6 +161,12 @@ export default function JuliaFeaturePage({
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
   const finalLabel = isAuthenticated ? "Open projects" : "Start using Julia";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss Julia workflows in CoCalc. Helpful context: notebooks, Pluto, source files, package environments, teaching or research use case, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
+    context: "julia",
+    subject: "CoCalc Julia workflows",
+    title: "Ask CoCalc about Julia workflows",
+  });
 
   return (
     <Flex vertical gap={22}>
@@ -202,27 +206,6 @@ export default function JuliaFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#9558b2" icon="jupyter" title="Jupyter notebooks">
-            Use Julia kernels in CoCalc notebooks with collaboration, project
-            files, TimeTravel, and course workflows around them.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#278c83" icon="terminal" title="Normal Julia">
-            Use terminals for package environments, <code>julia --project</code>
-            , scripts, tests, and command-line workflows.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#ad6800" icon="layout" title="Pluto available">
-            Launch Pluto from a project when reactive Julia notebooks are a
-            better fit than classic Jupyter.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <JuliaProjectFit />
 
       <PublicSection>
@@ -242,9 +225,10 @@ export default function JuliaFeaturePage({
                 Linux environment
               </Button>
               <Button href={appPath("features/teaching")}>Teaching</Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button href={appPath("products")}>
+                Compare operating models
+              </Button>
+              <Button href={supportHref}>Ask about Julia workflows</Button>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>

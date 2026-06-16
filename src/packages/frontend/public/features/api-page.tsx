@@ -6,6 +6,7 @@
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   FeatureImage,
@@ -100,19 +101,49 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
       </Row>
 
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Programmatic control instead of UI automation
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          The point of the API is not only convenience. It is to provide a
-          documented route for integrations so deployments do not have to script
-          the browser to perform administrative or operational work.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          This is especially important for CoCalc Launchpad deployments and
-          product integrations where CoCalc is only one component in a larger
-          system.
-        </Paragraph>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={13}>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                Programmatic control instead of UI automation
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                The API gives integrations a documented route for project and
+                platform work instead of browser scripting. It is most relevant
+                when CoCalc is part of a portal, managed deployment, or
+                organization-operated workflow.
+              </Paragraph>
+              <Flex wrap gap={12}>
+                <Button type="primary" href={appPath("docs/api/http-api")}>
+                  API documentation
+                </Button>
+                <Button href={supportHref}>Ask about API integration</Button>
+                <Button href={appPath("products")}>
+                  Compare operating models
+                </Button>
+              </Flex>
+            </Flex>
+          </Col>
+          <Col xs={24} lg={11}>
+            <div
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: 8,
+                padding: 24,
+              }}
+            >
+              <Title level={4} style={{ margin: "0 0 10px" }}>
+                Ready to plan an integration?
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                Start with the HTTP API docs, then talk with CoCalc if your
+                integration depends on provisioning, product path, deployment
+                boundary, or support expectations.
+              </Paragraph>
+            </div>
+          </Col>
+        </Row>
       </PublicSection>
     </Flex>
   );

@@ -11,6 +11,7 @@ import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
   LinkButton,
 } from "./page-components";
 import { IconBadge, StartCard, TerminalMock } from "./feature-visuals";
@@ -151,7 +152,6 @@ function RProjectFitBand() {
 }
 
 export default function RStatisticalSoftwareFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -162,6 +162,12 @@ export default function RStatisticalSoftwareFeaturePage({
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
   const finalLabel = isAuthenticated ? "Open projects" : "Start using R";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss R workflows in CoCalc. Helpful context: statistics, reporting, teaching, or research use case; packages or command-line needs; expected collaborators; and whether hosted or customer-operated CoCalc matters.",
+    context: "r-statistical-software",
+    subject: "CoCalc R workflows",
+    title: "Ask CoCalc about R workflows",
+  });
 
   return (
     <Flex vertical gap={22}>
@@ -218,9 +224,10 @@ export default function RStatisticalSoftwareFeaturePage({
             <Flex wrap gap={12}>
               <Button href={appPath("features/python")}>Python</Button>
               <Button href={appPath("features/teaching")}>Teaching</Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button href={appPath("products")}>
+                Compare operating models
+              </Button>
+              <Button href={supportHref}>Ask about R workflows</Button>
             </Flex>
             <LinkButton href={appPath("features/linux")}>
               Linux environment

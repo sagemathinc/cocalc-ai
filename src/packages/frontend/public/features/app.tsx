@@ -625,9 +625,18 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
       "ai",
       "compare",
       "jupyter-notebook",
+      "api",
+      "julia",
+      "latex-editor",
       "linux",
+      "octave",
+      "python",
+      "r-statistical-software",
+      "sage",
+      "slides",
       "teaching",
       "terminal",
+      "whiteboard",
     ].includes(currentSlug)
   ) {
     return null;

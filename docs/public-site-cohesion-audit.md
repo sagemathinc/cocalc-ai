@@ -114,6 +114,19 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Linux: remove the hero-adjacent summary cards because install/verify and reusable-environment sections carry those points with more specific evidence.
 - [x] Linux: treat install/verify as the primary workflow example, make the final Linux CTA own the next step, and suppress the shared operating-model handoff.
 
+## Remaining Workflow Route-Owned Ending Pass
+
+- [x] Re-audit `/features/python`, `/features/latex-editor`, `/features/whiteboard`, `/features/slides`, `/features/api`, `/features/sage`, `/features/r-statistical-software`, `/features/julia`, and `/features/octave` against the route-owned ending standard.
+- [x] Treat the shared "Decide how CoCalc should run" section as redundant on these pages once a route-specific ending already provides workflow next steps, support context, and product comparison.
+- [x] Python: keep the notebook-to-script-to-paper workflow and use-case section, but make the final CTA route-owned with Python support context and product comparison.
+- [x] LaTeX: keep the task-fit comparison as the route-owned ending and add product comparison there instead of following it with a generic shared handoff.
+- [x] Whiteboard: remove the hero-adjacent story cards because the hero mock and executable-canvas section already carry editable text, math, and code; keep the final whiteboard next steps.
+- [x] Slides: remove the hero-adjacent story cards because the hero mock and slide-flow section already carry slide sizing, math/code material, and collaboration; keep the final slide next steps.
+- [x] API: replace the generic shared handoff with an API-owned integration ending that points to API docs, contextual support, and operating-model comparison.
+- [x] Sage, R, Julia, and Octave: keep the language-specific workflow fit sections, but replace generic or mailto support routes with contextual support and product comparison in each final ending.
+- [x] Julia: remove the hero-adjacent story cards because the hero mock already shows Jupyter, terminal, source-file, and Pluto options.
+- [ ] Future: if a language page still feels long after route-owned endings, evaluate whether the language-specific fit section can move into a disclosure without hiding the primary workflow example.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

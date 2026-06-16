@@ -8,7 +8,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { BulletList, featureAppPath as appPath } from "./page-components";
+import {
+  BulletList,
+  featureAppPath as appPath,
+  featureSupportPath,
+} from "./page-components";
 import { IconBadge, StartCard, TerminalMock } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
@@ -144,7 +148,6 @@ function OctaveFlow() {
 }
 
 export default function OctaveFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -155,6 +158,12 @@ export default function OctaveFeaturePage({
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
   const finalLabel = isAuthenticated ? "Open projects" : "Start using Octave";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss Octave workflows in CoCalc. Helpful context: notebooks, scripts, teaching or research use case, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
+    context: "octave",
+    subject: "CoCalc Octave workflows",
+    title: "Ask CoCalc about Octave workflows",
+  });
 
   return (
     <Flex vertical gap={22}>
@@ -214,9 +223,10 @@ export default function OctaveFeaturePage({
                 Linux environment
               </Button>
               <Button href={appPath("features/teaching")}>Teaching</Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button href={appPath("products")}>
+                Compare operating models
+              </Button>
+              <Button href={supportHref}>Ask about Octave workflows</Button>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>

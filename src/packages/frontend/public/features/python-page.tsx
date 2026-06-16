@@ -10,7 +10,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { featureAppPath as appPath, LinkButton } from "./page-components";
+import {
+  featureAppPath as appPath,
+  featureSupportPath,
+  LinkButton,
+} from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -558,7 +562,6 @@ function PythonUseCases() {
   );
 }
 export default function PythonFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -571,6 +574,12 @@ export default function PythonFeaturePage({
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
     : "Start using Python on CoCalc";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss Python workflows in CoCalc. Helpful context: notebooks, scripts, package environments, reports, teaching or research use case, expected collaborators, and whether hosted or customer-operated CoCalc matters.",
+    context: "python",
+    subject: "CoCalc Python workflows",
+    title: "Ask CoCalc about Python workflows",
+  });
 
   return (
     <Flex vertical gap={18}>
@@ -634,9 +643,10 @@ export default function PythonFeaturePage({
               <Button href={appPath("features/terminal")}>
                 Linux terminal
               </Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button href={appPath("products")}>
+                Compare operating models
+              </Button>
+              <Button href={supportHref}>Ask about Python workflows</Button>
             </Flex>
           </Col>
           <Col xs={24} lg={10}>
@@ -650,7 +660,7 @@ export default function PythonFeaturePage({
               }}
             >
               <Title level={4} style={{ color: "#fff", margin: "0 0 10px" }}>
-                Start using CoCalc
+                Start using Python
               </Title>
               <Paragraph style={{ color: "rgba(255,255,255,0.78)" }}>
                 Open a project, start with a notebook or script, and keep the

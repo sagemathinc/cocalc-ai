@@ -13,7 +13,7 @@ import {
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
-import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
+import { IconBadge, StartCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -259,35 +259,6 @@ export default function WhiteboardFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#d4380d"
-            icon="markdown"
-            title="Explain with editable text"
-          >
-            Write structured explanations on the canvas instead of flattening
-            notes into pasted screenshots.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#2f6fda" icon="tex" title="Put math on the board">
-            KaTeX support keeps formulas readable and editable while the
-            surrounding explanation changes.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#389e0d"
-            icon="jupyter"
-            title="Run cells when the diagram needs code"
-          >
-            Put Jupyter cells on the board and connect them in a graph when the
-            idea is a computation rather than a static sketch.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <ExecutionGraph />
 
       <PublicSection>
@@ -306,6 +277,9 @@ export default function WhiteboardFeaturePage({
             <Flex wrap gap={12}>
               <Button href={appPath("features/slides")}>Slides</Button>
               <Button href={appPath("features/teaching")}>Teaching</Button>
+              <Button href={appPath("products")}>
+                Compare operating models
+              </Button>
               <Button
                 href={featureSupportPath({
                   body: "I want to discuss CoCalc whiteboards. Helpful context: teaching, research, support, or presentation use case; need for Jupyter cells or math; and expected collaborators.",

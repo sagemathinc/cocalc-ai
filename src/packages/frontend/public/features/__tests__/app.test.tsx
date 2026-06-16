@@ -95,6 +95,31 @@ describe("PublicFeaturesApp", () => {
       label: "Ask about slides",
       slug: "slides",
     },
+    {
+      context: "feature-python",
+      label: "Ask about Python workflows",
+      slug: "python",
+    },
+    {
+      context: "feature-sage",
+      label: "Ask about SageMath workflows",
+      slug: "sage",
+    },
+    {
+      context: "feature-r-statistical-software",
+      label: "Ask about R workflows",
+      slug: "r-statistical-software",
+    },
+    {
+      context: "feature-julia",
+      label: "Ask about Julia workflows",
+      slug: "julia",
+    },
+    {
+      context: "feature-octave",
+      label: "Ask about Octave workflows",
+      slug: "octave",
+    },
   ] as const;
 
   const auditedFeaturePages = [
@@ -839,10 +864,10 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Put Jupyter cells in a directed graph."),
     ).not.toBeNull();
-    expect(screen.getByText("Explain with editable text")).not.toBeNull();
+    expect(screen.queryByText("Explain with editable text")).toBeNull();
     expect(
-      screen.getByText("Run cells when the diagram needs code"),
-    ).not.toBeNull();
+      screen.queryByText("Run cells when the diagram needs code"),
+    ).toBeNull();
     expect(screen.queryByText("Transparent format")).toBeNull();
   });
 
@@ -937,6 +962,22 @@ describe("PublicFeaturesApp", () => {
       },
       {
         removedHeadings: [
+          "Explain with editable text",
+          "Put math on the board",
+          "Run cells when the diagram needs code",
+        ],
+        slug: "whiteboard",
+      },
+      {
+        removedHeadings: [
+          "Slide-sized pages",
+          "Use math and live examples",
+          "Edit with coauthors and instructors",
+        ],
+        slug: "slides",
+      },
+      {
+        removedHeadings: [
           "Open mathematics",
           "Notebook first",
           "SageTeX included",
@@ -947,6 +988,14 @@ describe("PublicFeaturesApp", () => {
       {
         removedHeadings: ["R notebooks", "R in the shell", "Reports"],
         slug: "r-statistical-software",
+      },
+      {
+        removedHeadings: [
+          "Jupyter notebooks",
+          "Normal Julia",
+          "Pluto available",
+        ],
+        slug: "julia",
       },
       {
         removedHeadings: ["Notebooks", ".m files", "Teaching"],
@@ -1032,40 +1081,16 @@ describe("PublicFeaturesApp", () => {
       const nextSteps = screen.queryByRole("region", {
         name: "Feature operating model next steps",
       });
-      if (
-        ["ai", "jupyter-notebook", "linux", "teaching", "terminal"].includes(
-          slug,
-        )
-      ) {
-        expect(nextSteps).toBeNull();
-        expect(
-          screen
-            .getAllByRole("link")
-            .some((link) => link.getAttribute("href") === "/products"),
-        ).toBe(true);
-        return;
-      }
-      expect(nextSteps).not.toBeNull();
       expect(
-        within(nextSteps!)
-          .getByRole("link", { name: "Compare operating models" })
-          .getAttribute("href"),
-      ).toBe("/products");
+        screen
+          .getAllByRole("link")
+          .some((link) => link.getAttribute("href") === "/products"),
+      ).toBe(true);
+      expect(nextSteps).toBeNull();
+      expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
+      expect(screen.queryByRole("link", { name: /Next feature:/ })).toBeNull();
       expect(
-        within(nextSteps!)
-          .getByRole("link", { name: "Pricing and licensing" })
-          .getAttribute("href"),
-      ).toBe("/pricing");
-      expect(
-        within(nextSteps!)
-          .getByRole("link", { name: "Browse feature workflows" })
-          .getAttribute("href"),
-      ).toBe("/features");
-      expect(
-        within(nextSteps!).queryByRole("link", { name: /Next feature:/ }),
-      ).toBeNull();
-      expect(
-        within(nextSteps!).queryByRole("link", { name: /Previous feature:/ }),
+        screen.queryByRole("link", { name: /Previous feature:/ }),
       ).toBeNull();
     },
   );
@@ -1156,14 +1181,27 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "API documentation" })
-        .getAttribute("href"),
-    ).toBe("/docs/api/http-api");
+        .getAllByRole("link", { name: "API documentation" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/docs/api/http-api", "/docs/api/http-api"]);
+    expect(
+      screen
+        .getAllByRole("link", { name: "Compare operating models" })
+        .map((link) => link.getAttribute("href")),
+    ).toContain("/products");
     expect(
       screen
         .getAllByRole("link", { name: "Ask about API integration" })
         .map((link) => link.getAttribute("href")),
-    ).toEqual([expect.stringContaining("/support/new?")]);
+    ).toEqual([
+      expect.stringContaining("/support/new?"),
+      expect.stringContaining("/support/new?"),
+    ]);
+    expect(
+      screen
+        .getAllByRole("link", { name: "Ask about API integration" })[0]
+        .getAttribute("href"),
+    ).toContain("context=feature-api");
   });
 
   it("renders the compare feature page", () => {

@@ -13,7 +13,7 @@ import {
   featureAppPath as appPath,
   featureSupportPath,
 } from "./page-components";
-import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
+import { IconBadge, StartCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -132,7 +132,7 @@ function SlideFlow() {
         >
           <Row gutter={[12, 12]} align="middle">
             {steps.map(([icon, label]) => (
-              <Col key={label} xs={24} lg={6}>
+              <Col key={label} xs={24} sm={12} lg={6}>
                 <Flex align="center" gap={12}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Flex
@@ -210,35 +210,6 @@ export default function SlidesFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#d46b08" icon="slides" title="Slide-sized pages">
-            Use presentation-sized canvases and presets instead of trying to
-            force a huge whiteboard into a linear talk.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#2f6fda"
-            icon="tex"
-            title="Use math and live examples"
-          >
-            Combine equations, markdown, diagrams, and executable examples in
-            the same presentation workflow.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#389e0d"
-            icon="users"
-            title="Edit with coauthors and instructors"
-          >
-            Coauthors and teaching assistants can edit the same deck in the same
-            project where supporting material lives.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <SlideFlow />
 
       <PublicSection>
@@ -256,6 +227,9 @@ export default function SlidesFeaturePage({
             <Flex wrap gap={12}>
               <Button href={appPath("features/whiteboard")}>Whiteboard</Button>
               <Button href={appPath("features/teaching")}>Teaching</Button>
+              <Button href={appPath("products")}>
+                Compare operating models
+              </Button>
               <Button
                 href={featureSupportPath({
                   body: "I want to discuss CoCalc slides. Helpful context: lecture, research talk, demo, or course workflow; expected collaborators; and whether slides need math, diagrams, or notebook-backed material.",
