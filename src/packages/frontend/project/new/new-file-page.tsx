@@ -114,8 +114,8 @@ export default function NewFilePage(props: Props) {
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
   const filename0 = useTypedRedux({ project_id }, "default_filename");
-  function makeDefaultFilename(ext?: string): string {
-    return default_filename(ext, project_id);
+  function makeDefaultFilename(): string {
+    return default_filename(undefined, project_id);
   }
   const fallbackFilename = useMemo(
     () => (filename0 ? filename0 : default_filename(undefined, project_id)),
@@ -228,7 +228,7 @@ export default function NewFilePage(props: Props) {
     }
     const filename_ext = filename_extension(filename);
     const name =
-      filename_ext && ext && filename_ext != ext
+      filename_ext && ext
         ? filename.slice(0, filename.length - filename_ext.length - 1)
         : filename;
     try {
@@ -238,14 +238,14 @@ export default function NewFilePage(props: Props) {
         ext,
         current_path: effective_current_path,
       });
-      resetToGeneratedFilename(ext ?? filename_extension(filename));
+      resetToGeneratedFilename();
     } finally {
       setCreatingFile("");
     }
   }
 
-  function resetToGeneratedFilename(ext?: string) {
-    const next = makeDefaultFilename(ext);
+  function resetToGeneratedFilename() {
+    const next = makeDefaultFilename();
     getActions().set_next_default_filename(next);
     setFilename(next);
     setFilenameChanged(false);

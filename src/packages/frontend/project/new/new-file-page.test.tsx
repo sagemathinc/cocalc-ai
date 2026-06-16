@@ -80,7 +80,7 @@ jest.mock("antd", () => {
 });
 
 jest.mock("@cocalc/frontend/account", () => ({
-  default_filename: () => "default.txt",
+  default_filename: (ext?: string) => (ext ? `default.${ext}` : "default.txt"),
 }));
 
 jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
@@ -217,7 +217,7 @@ jest.mock("./launcher-preferences", () => ({
   LAUNCHER_SETTINGS_KEY: "launcher-settings",
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY: "launcher-defaults",
   getAccountLauncherPrefs: () => ({}),
-  getEffectiveLauncher: () => ({ quickCreate: [] }),
+  getEffectiveLauncher: () => ({ quickCreate: ["md"] }),
   getSiteLauncherDefaults: () => ({}),
   updateAccountLauncherPrefs: () => ({}),
 }));
@@ -352,5 +352,23 @@ describe("NewFilePage folder creation", () => {
     rerender(<NewFilePage project_id="project-1" isVisible={true} />);
 
     expect(screen.getByDisplayValue("fresh.md")).toBeInTheDocument();
+  });
+
+  it("does not keep appending extensions after quick create", async () => {
+    render(<NewFilePage project_id="project-1" isVisible={true} />);
+    const input = screen.getByDisplayValue("draft.md");
+
+    fireEvent.change(input, { target: { value: "my-notes.md" } });
+    fireEvent.click(screen.getByRole("button", { name: "md" }));
+
+    await waitFor(() =>
+      expect(mockCreateFile).toHaveBeenCalledWith({
+        name: "my-notes",
+        ext: "md",
+        current_path: "/work",
+      }),
+    );
+    expect(screen.getByDisplayValue("default.txt")).toBeInTheDocument();
+    expect(mockSetNextDefaultFilename).toHaveBeenLastCalledWith("default.txt");
   });
 });
