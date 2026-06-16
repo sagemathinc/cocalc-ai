@@ -1023,10 +1023,7 @@ async function buildFromFile({
 function buildSummary(
   manifest: SoftwareArtifactManifest & { local_dir: string },
 ) {
-  const totalSizeBytes = manifest.files.reduce(
-    (total, file) => total + file.size_bytes,
-    0,
-  );
+  const totalSizeBytes = artifactFileTotalSize(manifest.files);
   return {
     component: manifest.component,
     tag: manifest.tag,
@@ -1044,6 +1041,21 @@ function buildSummary(
           `${file.name} ${humanSize(file.size_bytes)} (${file.size_bytes} bytes) sha256:${file.sha256}`,
       )
       .join("\n"),
+  };
+}
+
+function artifactFileTotalSize(files: Array<{ size_bytes: number }>): number {
+  return files.reduce((total, file) => total + file.size_bytes, 0);
+}
+
+function artifactSizeSummary(files: Array<{ size_bytes: number }>): {
+  size: string;
+  size_bytes: number;
+} {
+  const sizeBytes = artifactFileTotalSize(files);
+  return {
+    size: humanSize(sizeBytes),
+    size_bytes: sizeBytes,
   };
 }
 
@@ -2108,6 +2120,7 @@ Supported deploy/smoke components:
             artifact_id: artifact.artifact_id,
             duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
             source: artifact.source,
+            ...artifactSizeSummary(artifact.files),
             remote_manifest: artifact.remote_manifest,
             files: artifact.files.map((file) => file.url),
             ...(artifact.bundle_url ? { bundle_url: artifact.bundle_url } : {}),

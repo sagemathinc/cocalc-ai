@@ -1449,18 +1449,27 @@ test("software deploy cli promotes an immutable artifact to a release channel", 
     "--artifact-name",
     "cocalc-cli-20260614T235912Z-e882d124-cli-channel-x86_64-linux",
   ]);
-  await program.parseAsync([
-    "node",
-    "test",
-    "--quiet",
-    "software",
-    "deploy",
-    "cli",
-    "cli-channel",
-    "candidate",
-    "--env-file",
-    join(dir, "missing.env"),
-  ]);
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "deploy",
+      "cli",
+      "cli-channel",
+      "candidate",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
 
   const manifest = JSON.parse(
     r2.objects
@@ -1499,6 +1508,9 @@ test("software deploy cli promotes an immutable artifact to a release channel", 
   assert.deepEqual(record.details.channel_manifests, [
     "https://software.example.test/software/cocalc/candidate-linux-amd64.json",
   ]);
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.data.size_bytes, 10);
+  assert.equal(payload.data.size, "10 bytes");
 });
 
 test("software deploy plus stable also updates the legacy latest manifest", async () => {
