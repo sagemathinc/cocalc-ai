@@ -733,7 +733,6 @@ Table({
       "status",
       "side_effect_key",
       "assignment_id",
-      "membership_grant_id",
       "consumed_at",
       "updated",
     ],

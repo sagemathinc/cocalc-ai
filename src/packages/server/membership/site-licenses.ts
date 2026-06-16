@@ -519,6 +519,9 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
   await db.query(
     "CREATE INDEX IF NOT EXISTS site_license_external_claim_consumptions_status_idx ON site_license_external_claim_consumptions (status)",
   );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_ext_claim_cons_membership_grant_ix ON site_license_external_claim_consumptions (membership_grant_id)",
+  );
 }
 
 function normalizeMetadata(
