@@ -167,6 +167,7 @@ type SoftwareInfoComponent = SoftwareBuildComponent | SoftwareDeployComponent;
 type SoftwareComponentInfo = {
   component: SoftwareInfoComponent;
   title: string;
+  description: string;
   status: "build-and-deploy" | "build-only" | "deploy-only";
   artifact_component?: SoftwareBuildComponent;
   target_kind?: "rocket-bay" | "project-host-fleet" | "release-channel";
@@ -258,6 +259,16 @@ function softwareInfoOverview() {
 function softwareComponentInfo(
   component: SoftwareInfoComponent,
 ): SoftwareComponentInfo {
+  const info = rawSoftwareComponentInfo(component);
+  return {
+    ...info,
+    description: softwareComponentDescription(component),
+  };
+}
+
+function rawSoftwareComponentInfo(
+  component: SoftwareInfoComponent,
+): Omit<SoftwareComponentInfo, "description"> {
   if (
     component === "bay-conat-router" ||
     component === "bay-conat-persist" ||
@@ -583,6 +594,49 @@ function softwareComponentInfo(
   }
 }
 
+function softwareComponentDescription(
+  component: SoftwareInfoComponent,
+): string {
+  switch (component) {
+    case "static":
+      return "Static is the browser-facing frontend payload for a bay: compiled app bundles, public assets, webapp assets, and setup scripts. Deploying it updates what browsers download without changing project-host software or the hub runtime.";
+    case "hub":
+      return "Hub is the control-plane runtime for a bay: account/project routing, APIs, orchestration, and backend logic that runs in hub workers. Use this for hub-only code changes when the frontend and project-host software do not need to move.";
+    case "bay":
+      return "Bay is the broad runtime artifact for a Rocket-managed bay, including hub runtime content, bay services, scaffold-compatible files, and operational helpers. It is the escape hatch for coordinated bay-side runtime changes, but has a wider blast radius than hub or service-specific deploys.";
+    case "bay-conat-router":
+      return "This component targets the bay-side Conat router service that routes control-plane Conat traffic for the bay. It deploys from a full bay artifact but restarts only the router service instead of rolling the whole bay runtime.";
+    case "bay-conat-persist":
+      return "This component targets the bay-side Conat persist service that stores durable Conat state for the bay. It deploys from a full bay artifact but keeps the operation scoped to the persist service.";
+    case "bay-frontdoor":
+      return "Frontdoor is the bay-side sticky-session and request routing service in front of hub workers. Use this component for frontdoor code or unit changes without intentionally restarting unrelated bay services.";
+    case "bay-cloudflared":
+      return "Cloudflared is the bay tunnel helper that connects the bay to Cloudflare-managed ingress. This deploy path is intentionally separate so tunnel-related changes do not imply a hub worker rollout.";
+    case "bay-scaffold":
+      return "The bay scaffold is the systemd units, scripts, and environment templates that define how bay services run. Deploy this when operational wiring changes but application runtime code does not need a full rollout.";
+    case "host-conat-router":
+      return "This component targets the project-host-local Conat router managed component, not the bay router. It uses a project-host artifact and reconciles the managed component across online project hosts.";
+    case "host-conat-persist":
+      return "This component targets the project-host-local Conat persist managed component, not the bay persist service. It uses a project-host artifact and reconciles only that managed component across online hosts.";
+    case "project-host":
+      return "Project-host is the host agent/runtime that supervises projects, host services, RootFS operations, and host-side deployment state. Deploy it when project-host control logic changes.";
+    case "project":
+      return "Project is the runtime bundle that runs inside user projects and provides project daemons and project-level services. Deploy it when project behavior changes independently of the host agent.";
+    case "tools":
+      return "Tools is the full project tools bundle distributed to project hosts for both supported Linux CPU architectures. It contains host/project helper binaries and must support amd64 and arm64 project hosts.";
+    case "tools-minimal":
+      return "Tools-minimal is the small cross-platform tools payload consumed by CoCalc Plus installers. It is build/push-only as a standalone artifact and is promoted together with Plus.";
+    case "cli":
+      return "CLI is the standalone `cocalc` command-line binary released through dev, candidate, and stable channels. It is not deployed to a bay; promotion updates public installer channel manifests.";
+    case "launchpad":
+      return "Launchpad is the standalone local hub/runtime launcher released through the same channel model as the CLI. It is installed by users from public channel manifests rather than deployed to a site profile.";
+    case "plus":
+      return "Plus is the local desktop-style CoCalc product released through public channels and coordinated with tools-minimal. Promote Plus and tools-minimal together so installers see a compatible pair.";
+    case "star":
+      return "Star is the self-hosted CoCalc distribution published through immutable GitHub release assets and channel releases. The software command wraps build, promotion, history, rollback, and local smoke checks without moving Star distribution to R2.";
+  }
+}
+
 function projectHostArtifactInfo({
   component,
   title,
@@ -595,7 +649,7 @@ function projectHostArtifactInfo({
   purpose: string;
   upgradeArtifact: "project-host" | "project" | "tools";
   notes: string[];
-}): SoftwareComponentInfo {
+}): Omit<SoftwareComponentInfo, "description"> {
   return {
     component,
     title,
@@ -640,7 +694,7 @@ function projectHostArtifactInfo({
 
 function releaseComponentInfo(
   component: "cli" | "launchpad" | "plus",
-): SoftwareComponentInfo {
+): Omit<SoftwareComponentInfo, "description"> {
   const product = releaseProductForArtifactComponent(component);
   const baseUrl = `https://software.cocalc.ai/software/${product}`;
   return {
@@ -759,7 +813,7 @@ function formatSoftwareComponentInfo(info: SoftwareComponentInfo): string {
   const lines = [
     `# cocalc software info ${info.component}`,
     "",
-    `${info.title}`,
+    `${info.title} - ${info.description}`,
     "",
     info.purpose,
     "",

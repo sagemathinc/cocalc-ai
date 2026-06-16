@@ -434,7 +434,8 @@ export async function touchLro({
       WHERE op_id=$1
         AND owner_type=$2
         AND owner_id=$3
+        AND status <> ALL($4::text[])
     `,
-    [op_id, owner_type, owner_id],
+    [op_id, owner_type, owner_id, TERMINAL_STATUSES],
   );
 }
