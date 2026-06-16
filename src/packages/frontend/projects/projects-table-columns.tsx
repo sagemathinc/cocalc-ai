@@ -14,6 +14,7 @@ import type { TableColumnsType } from "antd";
 import type { SortOrder } from "antd/es/table/interface";
 
 import type { IntlShape } from "react-intl";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
 import { Avatar, Tag, Typography } from "antd";
 
@@ -27,6 +28,7 @@ import { COLORS } from "@cocalc/util/theme";
 import type { ProjectTheme } from "@cocalc/util/db-schema/projects";
 
 import { CollaboratorsAvatars } from "./collaborators-avatars";
+import { ProjectRootfsBadge } from "./project-rootfs-badge";
 import { ProjectThemeAvatar } from "./theme";
 import { sortProjectsLastEdited } from "./util";
 
@@ -77,6 +79,7 @@ export interface ProjectTableRecord {
   theme?: ProjectTheme | null;
   title: string;
   description: string;
+  rootfs_image_id?: string;
   host?: string;
   last_edited?: Date;
   currentRole?: "owner" | "collaborator" | "viewer";
@@ -112,6 +115,11 @@ function projectRoleTag(role: ProjectTableRecord["currentRole"]) {
   }
 }
 
+export function projectDescriptionText(description?: string): string {
+  const text = `${description ?? ""}`.trim();
+  return text && text.toLowerCase() !== "no description" ? text : "";
+}
+
 /**
  * Get table column definitions
  *
@@ -136,7 +144,13 @@ export function getProjectTableColumns(
   narrow: boolean,
   filteredCollaborators: string[] | null,
   intl: IntlShape,
+  opts: {
+    onOpenRootfs?: (record: ProjectTableRecord, e: React.MouseEvent) => void;
+    rootfsImages?: RootfsImageEntry[];
+    rootfsImagesLoading?: boolean;
+  } = {},
 ): TableColumnsType<ProjectTableRecord> {
+  const rootfsImages = opts.rootfsImages ?? [];
   const columns = [
     {
       title: (
@@ -219,6 +233,10 @@ export function getProjectTableColumns(
         const deletionScheduled = record.deletionScheduled === true;
         const deleteFailed =
           record.deleteFailed === true && deletionScheduled !== true;
+        const description = projectDescriptionText(record.description);
+        const showRootfs =
+          !!record.rootfs_image_id?.trim() && !opts.rootfsImagesLoading;
+        const showMetadata = !deleteFailed && (showRootfs || description);
         return (
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {/* Avatar or placeholder */}
@@ -286,19 +304,58 @@ export function getProjectTableColumns(
                     : "Select this row and choose Leave or Delete to retry."}
                 </Text>
               )}
-              {record.description && !deleteFailed && (
-                <Text
-                  type="secondary"
+              {showMetadata && (
+                <div
                   style={{
-                    fontSize: "13px",
-                    display: "block",
+                    alignItems: "center",
+                    display: "flex",
+                    gap: 6,
+                    marginTop: "2px",
+                    minWidth: 0,
                     overflow: "hidden",
-                    textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {record.description}
-                </Text>
+                  {showRootfs && (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        maxWidth: description ? "45%" : "100%",
+                        minWidth: 0,
+                      }}
+                    >
+                      <ProjectRootfsBadge
+                        rootfsImageId={record.rootfs_image_id}
+                        rootfsImages={rootfsImages}
+                        rootfsImagesLoading={opts.rootfsImagesLoading}
+                        onClick={
+                          opts.onOpenRootfs
+                            ? (e) => opts.onOpenRootfs?.(record, e)
+                            : undefined
+                        }
+                      />
+                    </span>
+                  )}
+                  {showRootfs && description && (
+                    <Text type="secondary" style={{ flex: "0 0 auto" }}>
+                      ·
+                    </Text>
+                  )}
+                  {description && (
+                    <Text
+                      type="secondary"
+                      ellipsis
+                      style={{
+                        display: "block",
+                        flex: 1,
+                        fontSize: "13px",
+                        minWidth: 0,
+                      }}
+                    >
+                      {description}
+                    </Text>
+                  )}
+                </div>
               )}
             </div>
           </div>

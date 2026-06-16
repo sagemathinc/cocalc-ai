@@ -24,7 +24,9 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
+import { ProjectRootfsRuntimeModal } from "./project-rootfs-badge";
 import { ProjectActionsMenu } from "./projects-actions-menu";
 import {
   getProjectTableColumns,
@@ -36,6 +38,8 @@ import { useProjectTableRecords } from "./use-project-table-records";
 
 interface Props {
   visible_projects: string[];
+  rootfsImages: RootfsImageEntry[];
+  rootfsImagesLoading?: boolean;
   height?: number;
   narrow: boolean; // if narrow, then remove columns like "Collaborators" to safe space
   filteredCollaborators: string[] | null;
@@ -49,6 +53,8 @@ const PROJECTS_TABLE_SORT_KEY = "projects-table-sort";
 
 export function ProjectsTable({
   visible_projects,
+  rootfsImages,
+  rootfsImagesLoading,
   height = 600,
   narrow = false,
   filteredCollaborators,
@@ -67,6 +73,7 @@ export function ProjectsTable({
     columnKey: "last_edited",
     order: "descend",
   }); // Default to last_edited descending
+  const [rootfsModalProjectId, setRootfsModalProjectId] = useState<string>("");
 
   // Load sort state from local storage on mount
   useEffect(() => {
@@ -165,6 +172,14 @@ export function ProjectsTable({
     narrow,
     filteredCollaborators,
     intl,
+    {
+      rootfsImages,
+      rootfsImagesLoading,
+      onOpenRootfs: (record, e) => {
+        e.stopPropagation();
+        setRootfsModalProjectId(record.project_id);
+      },
+    },
   ).map((column) => {
     if (!freezeOrder) {
       return column;
@@ -206,34 +221,41 @@ export function ProjectsTable({
   }
 
   return (
-    <Table<ProjectTableRecord>
-      key={freezeOrder ? "frozen-order" : "sortable-order"}
-      virtual
-      size="small"
-      columns={columns}
-      dataSource={tableData}
-      rowKey="project_id"
-      rowSelection={{
-        selectedRowKeys: selectedProjectIds,
-        columnWidth: 36,
-        preserveSelectedRowKeys: false,
-        onChange: (keys) =>
-          onSelectedProjectIdsChange(keys.map((key) => `${key}`)),
-        getCheckboxProps: (record) => ({
-          disabled: record.deleting || record.deletionScheduled,
-        }),
-      }}
-      pagination={false}
-      scroll={{ y: height }}
-      onChange={handleTableChange}
-      // this makes the table toggle between ascend/descend only, skipping the "not sorted" state
-      sortDirections={["ascend", "descend", "ascend"]}
-      onRow={(record) => ({
-        style: {
-          opacity: record.deletionBlocked ? 0.72 : undefined,
-          outlineLeft: `4px solid ${record.color ?? "transparent"}`,
-        },
-      })}
-    />
+    <>
+      <Table<ProjectTableRecord>
+        key={freezeOrder ? "frozen-order" : "sortable-order"}
+        virtual
+        size="small"
+        columns={columns}
+        dataSource={tableData}
+        rowKey="project_id"
+        rowSelection={{
+          selectedRowKeys: selectedProjectIds,
+          columnWidth: 36,
+          preserveSelectedRowKeys: false,
+          onChange: (keys) =>
+            onSelectedProjectIdsChange(keys.map((key) => `${key}`)),
+          getCheckboxProps: (record) => ({
+            disabled: record.deleting || record.deletionScheduled,
+          }),
+        }}
+        pagination={false}
+        scroll={{ y: height }}
+        onChange={handleTableChange}
+        // this makes the table toggle between ascend/descend only, skipping the "not sorted" state
+        sortDirections={["ascend", "descend", "ascend"]}
+        onRow={(record) => ({
+          style: {
+            opacity: record.deletionBlocked ? 0.72 : undefined,
+            outlineLeft: `4px solid ${record.color ?? "transparent"}`,
+          },
+        })}
+      />
+      <ProjectRootfsRuntimeModal
+        onClose={() => setRootfsModalProjectId("")}
+        open={!!rootfsModalProjectId}
+        project_id={rootfsModalProjectId}
+      />
+    </>
   );
 }

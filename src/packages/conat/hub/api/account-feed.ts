@@ -48,6 +48,7 @@ export interface AccountFeedProjectRow {
   description: string;
   theme?: ProjectTheme | null;
   host_id: string | null;
+  rootfs_image_id?: string | null;
   owning_bay_id: string;
   manage_users_owner_only?: boolean | null;
   deletion_protection?: boolean | null;

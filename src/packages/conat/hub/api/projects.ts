@@ -599,6 +599,7 @@ export interface AccountProjectListWindowRow {
   description: string;
   theme: Record<string, any> | null;
   host_id: string | null;
+  rootfs_image_id: string | null;
   owning_bay_id: string;
   is_hidden: boolean;
   deletion_protection: boolean;

@@ -25,6 +25,7 @@ describe("project account list window API", () => {
         description: "projected row",
         theme: null,
         host_id: null,
+        rootfs_image_id: "official-minimal",
         owning_bay_id: "bay-0",
         is_hidden: false,
         deletion_protection: false,

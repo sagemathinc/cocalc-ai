@@ -12,6 +12,7 @@ Table({
     pg_indexes: [
       "project_id",
       "host_id",
+      "rootfs_image_id",
       "owning_bay_id",
       "is_hidden",
       "updated_at",
@@ -26,6 +27,7 @@ Table({
           project_id: null,
           owning_bay_id: null,
           host_id: null,
+          rootfs_image_id: null,
           title: "",
           description: "",
           theme: null,
@@ -59,6 +61,10 @@ Table({
     host_id: {
       type: "uuid",
       desc: "Current assigned host for the project, if any.",
+    },
+    rootfs_image_id: {
+      type: "string",
+      desc: "Projected managed RootFS image identifier for list views.",
     },
     title: {
       type: "string",
