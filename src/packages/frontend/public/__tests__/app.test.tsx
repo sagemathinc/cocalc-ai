@@ -166,6 +166,7 @@ describe("section route parsers", () => {
     expect(isPublicTarget("/features/jupyter-notebook")).toBe(true);
     expect(isPublicTarget("/guides")).toBe(true);
     expect(isPublicTarget("/docs/projects/project-secrets")).toBe(true);
+    expect(isPublicTarget("/rootfs/minimal-jupyter")).toBe(true);
     expect(isPublicTarget("/invites/abc")).toBe(true);
   });
 

@@ -24,6 +24,7 @@ const PublicNewsApp = lazy(() => import("./news/app"));
 const PublicPoliciesApp = lazy(() => import("./policies/app"));
 const PublicPricingApp = lazy(() => import("./pricing/app"));
 const PublicProductsApp = lazy(() => import("./products/app"));
+const PublicRootfsApp = lazy(() => import("./rootfs/app"));
 const PublicSupportApp = lazy(() => import("./support/app"));
 const { Paragraph } = Typography;
 
@@ -127,6 +128,12 @@ function PublicRouteBody({
   if (initialRoute.section === "products") {
     return (
       <PublicProductsApp config={config} initialRoute={initialRoute.route} />
+    );
+  }
+
+  if (initialRoute.section === "rootfs") {
+    return (
+      <PublicRootfsApp config={config} initialRoute={initialRoute.route} />
     );
   }
 
