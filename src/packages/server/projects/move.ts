@@ -60,6 +60,15 @@ const MOVE_START_DEST_TIMEOUT_MS = Math.max(
   Number(process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS) || 2 * 60 * 60 * 1000,
 );
 const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
+const RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 5000),
+);
+const RESTORE_BACKUP_NOT_FOUND_RETRIES = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRIES) || 3,
+);
 const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
 const MOVE_SENTINEL_DIR = ".cocalc/move-sentinels";
 const MOVE_SENTINEL_VERIFY_TIMEOUT_MS = Math.max(
@@ -728,7 +737,28 @@ function isRetryableTransientMoveError(err: unknown): boolean {
     text.includes("unexpected end of data") ||
     text.includes("missing raw payload") ||
     text.includes("disconnected") ||
+    isRestoreBackupNotFoundDuringDestinationStart(err) ||
     (err as any)?.code === 408
+  );
+}
+
+function isRestoreBackupNotFoundDuringDestinationStart(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    text.includes("destination start failed:") &&
+    text.includes("backup ") &&
+    text.includes(" not found for project ")
+  );
+}
+
+function lroFailureReason(summary: LroSummary): string {
+  const progressSummary = summary.progress_summary ?? {};
+  return (
+    `${summary.error ?? ""}`.trim() ||
+    `${progressSummary?.detail?.error ?? ""}`.trim() ||
+    `${progressSummary?.error ?? ""}`.trim() ||
+    `${progressSummary?.message ?? ""}`.trim() ||
+    summary.status
   );
 }
 
@@ -749,27 +779,49 @@ async function retryOnceOnTransientMoveError<T>({
   progress: (update: MoveProjectProgressUpdate) => void;
   run: () => Promise<T>;
 }): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    if (!isRetryableTransientMoveError(err)) {
-      throw err;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (err) {
+      if (!isRetryableTransientMoveError(err)) {
+        throw err;
+      }
+      const restoreBackupNotFound =
+        operation === "start-dest" &&
+        isRestoreBackupNotFoundDuringDestinationStart(err);
+      const maxRetries = restoreBackupNotFound
+        ? RESTORE_BACKUP_NOT_FOUND_RETRIES
+        : 1;
+      if (attempt >= maxRetries) {
+        throw err;
+      }
+      const retryDelayMs = restoreBackupNotFound
+        ? RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS
+        : TRANSIENT_MOVE_RPC_RETRY_DELAY_MS;
+      const message = restoreBackupNotFound
+        ? "backup is not visible on destination yet; retrying start"
+        : "transient error; retrying once";
+      log.warn("moveProjectToHost transient operation failure; retrying", {
+        operation,
+        attempt: attempt + 1,
+        maxRetries,
+        retryDelayMs,
+        err,
+        detail,
+      });
+      progress({
+        step: progress_step ?? operation,
+        message,
+        detail: {
+          ...(detail ?? {}),
+          attempt: attempt + 1,
+          max_retries: maxRetries,
+          retry_delay_ms: retryDelayMs,
+          error: `${err}`,
+        },
+      });
+      await delay(retryDelayMs);
     }
-    log.warn("moveProjectToHost transient operation failure; retrying once", {
-      operation,
-      err,
-      detail,
-    });
-    progress({
-      step: progress_step ?? operation,
-      message: "transient error; retrying once",
-      detail: {
-        ...(detail ?? {}),
-        error: `${err}`,
-      },
-    });
-    await delay(TRANSIENT_MOVE_RPC_RETRY_DELAY_MS);
-    return await run();
   }
 }
 
@@ -1882,7 +1934,7 @@ export async function moveProjectToHost(
               } as LroSummary;
             }
             if (summary && summary.status !== "succeeded") {
-              const reason = summary.error ?? summary.status;
+              const reason = lroFailureReason(summary);
               throw new Error(`destination start failed: ${reason}`);
             }
             return { startOp, summary };
@@ -2157,3 +2209,10 @@ export async function moveProjectToHost(
     throw err;
   }
 }
+
+export const __test__ = {
+  isRestoreBackupNotFoundDuringDestinationStart,
+  isRetryableTransientMoveError,
+  lroFailureReason,
+  retryOnceOnTransientMoveError,
+};

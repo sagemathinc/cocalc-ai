@@ -773,6 +773,63 @@ describe("moveProjectToHost", () => {
     );
   });
 
+  it("extracts destination start failure details from progress summaries", async () => {
+    const { __test__ } = await import("./move");
+    expect(
+      __test__.lroFailureReason({
+        status: "failed",
+        error: null,
+        progress_summary: {
+          phase: "failed",
+          message: "project start failed",
+          detail: {
+            error: `backup backup-for-backup-op-final not found for project ${PROJECT_ID}`,
+          },
+        },
+      } as any),
+    ).toBe(
+      `backup backup-for-backup-op-final not found for project ${PROJECT_ID}`,
+    );
+  });
+
+  it("retries destination start when the restore backup is not visible yet", async () => {
+    process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS = "1";
+    try {
+      const { __test__ } = await import("./move");
+      const progress = jest.fn();
+      let attempts = 0;
+      await expect(
+        __test__.retryOnceOnTransientMoveError({
+          operation: "start-dest",
+          progress,
+          run: async () => {
+            attempts += 1;
+            if (attempts === 1) {
+              throw new Error(
+                `destination start failed: backup backup-for-backup-op-final not found for project ${PROJECT_ID}`,
+              );
+            }
+            return "started";
+          },
+        }),
+      ).resolves.toBe("started");
+      expect(attempts).toBe(2);
+      expect(progress).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "start-dest",
+          message: "backup is not visible on destination yet; retrying start",
+          detail: expect.objectContaining({
+            attempt: 1,
+            max_retries: 3,
+            retry_delay_ms: 1,
+          }),
+        }),
+      );
+    } finally {
+      delete process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS;
+    }
+  });
+
   it("reverts backup-repo assignment and placement if destination-region backup cutover fails", async () => {
     const consts = await import("@cocalc/util/consts");
     (consts.parseR2Region as jest.Mock).mockImplementation((value: string) => {

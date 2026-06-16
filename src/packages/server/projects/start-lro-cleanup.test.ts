@@ -148,6 +148,50 @@ describe("supersedeOlderProjectStartLros", () => {
     });
   });
 
+  it("marks stale start lros with failed progress as failed instead of orphan-canceled", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM long_running_operations")) {
+        return {
+          rows: [
+            {
+              op_id: "failed-op-1",
+              scope_type: "project",
+              scope_id: "proj-1",
+              error: null,
+              progress_summary: {
+                phase: "failed",
+                message: "project start failed",
+                detail: {
+                  error: "backup backup-1 not found for project proj-1",
+                },
+              },
+              created_at: "2026-05-06T12:00:00.000Z",
+            },
+          ],
+        };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-05-06T12:00:00Z" } }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { cancelStaleProjectStartLros } = await import("./start-lro-cleanup");
+    const canceled = await cancelStaleProjectStartLros({
+      project_id: "proj-1",
+      nowMs: Date.UTC(2026, 4, 6, 12, 5, 0),
+    });
+
+    expect(canceled).toBe(1);
+    expect(updateLroMock).toHaveBeenCalledWith({
+      op_id: "failed-op-1",
+      status: "failed",
+      error: "backup backup-1 not found for project proj-1",
+    });
+  });
+
   it("keeps the newest recent starting op during the grace window when no active operation exists", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("FROM long_running_operations")) {
