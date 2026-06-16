@@ -218,13 +218,21 @@ export default function SlidesFeaturePage({
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#2f6fda" icon="tex" title="Math and code">
+          <StoryCard
+            accent="#2f6fda"
+            icon="tex"
+            title="Use math and live examples"
+          >
             Combine equations, markdown, diagrams, and executable examples in
             the same presentation workflow.
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#389e0d" icon="users" title="Collaborative talks">
+          <StoryCard
+            accent="#389e0d"
+            icon="users"
+            title="Edit with coauthors and instructors"
+          >
             Coauthors and teaching assistants can edit the same deck in the same
             project where supporting material lives.
           </StoryCard>

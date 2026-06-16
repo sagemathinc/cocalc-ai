@@ -130,7 +130,7 @@ describe("PublicFeaturesApp", () => {
       slug: "latex-editor",
     },
     {
-      marker: "A Miro-like whiteboard rebuilt for computational work.",
+      marker: "A technical whiteboard for math, code, and collaboration.",
       slug: "whiteboard",
     },
     {
@@ -469,6 +469,7 @@ describe("PublicFeaturesApp", () => {
       ),
     ).not.toBeNull();
     expect(screen.getByText("Keep the working tree together")).not.toBeNull();
+    expect(screen.getByText("Recover draft history")).not.toBeNull();
     expect(
       screen.getByText(
         "Use Codex as an editor and build assistant, not an author",
@@ -644,8 +645,9 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Learn and use Linux without risking your own machine"),
     ).not.toBeNull();
     expect(
-      screen.getByText("RootFS images make setup reusable"),
+      screen.getByText("Build course and team environments once"),
     ).not.toBeNull();
+    expect(screen.queryByText("RootFS images make setup reusable")).toBeNull();
   });
 
   it("uses projects as the linux CTA for authenticated users", () => {
@@ -713,13 +715,17 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByText(
-        "A Miro-like whiteboard rebuilt for computational work.",
+        "A technical whiteboard for math, code, and collaboration.",
       ),
     ).not.toBeNull();
     expect(
       screen.getByText("Put Jupyter cells in a directed graph."),
     ).not.toBeNull();
-    expect(screen.getByText("Transparent format")).not.toBeNull();
+    expect(screen.getByText("Explain with editable text")).not.toBeNull();
+    expect(
+      screen.getByText("Run cells when the diagram needs code"),
+    ).not.toBeNull();
+    expect(screen.queryByText("Transparent format")).toBeNull();
   });
 
   it.each([
@@ -861,14 +867,62 @@ describe("PublicFeaturesApp", () => {
         />,
       );
 
-      const href = screen
-        .getByRole("link", { name: label })
-        .getAttribute("href");
-      expect(href).toContain("/support/new?");
-      expect(href).toContain(`context=${context}`);
-      expect(href).not.toContain("mailto:");
+      const hrefs = screen
+        .getAllByRole("link", { name: label })
+        .map((link) => link.getAttribute("href"));
+      expect(hrefs.length).toBeGreaterThan(0);
+      for (const href of hrefs) {
+        expect(href).toContain("/support/new?");
+        expect(href).toContain(`context=${context}`);
+        expect(href).not.toContain("mailto:");
+      }
     },
   );
+
+  it("keeps the remaining audited feature pages from drifting back to metadata headings", () => {
+    const routes = [
+      "ai",
+      "terminal",
+      "linux",
+      "whiteboard",
+      "latex-editor",
+      "slides",
+    ] as const;
+    const disallowedHeadings = [
+      "Rich prompts",
+      "Collaborative by default",
+      "Actually collaborative",
+      "Agent-aware",
+      "Use sudo",
+      "Share the environment",
+      "Recover and reuse",
+      "Markdown native",
+      "Math first",
+      "Executable cells",
+      "Realtime by default",
+      "Transparent format",
+      "Source and PDF",
+      "Coauthor live",
+      "Codex nearby",
+      "The terminal gives Codex a concrete loop",
+      "RootFS images make setup reusable",
+      "Choose CoCalc when the paper is part of a larger computation",
+    ];
+
+    for (const slug of routes) {
+      const { unmount } = render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      for (const name of disallowedHeadings) {
+        expect(screen.queryByRole("heading", { name })).toBeNull();
+      }
+      unmount();
+    }
+  });
 
   it("keeps the HTTP API page distinct from the CoCalc CLI", () => {
     render(
@@ -886,6 +940,11 @@ describe("PublicFeaturesApp", () => {
         .getByRole("link", { name: "API documentation" })
         .getAttribute("href"),
     ).toBe("/docs/api/http-api");
+    expect(
+      screen
+        .getAllByRole("link", { name: "Ask about API integration" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([expect.stringContaining("/support/new?")]);
   });
 
   it("renders the compare feature page", () => {

@@ -219,12 +219,10 @@ function PaperProjectDiagram() {
   const items = [
     ["tex", "paper.tex", "#ad6800"],
     ["file-pdf", "PDF build", "#d4380d"],
+    ["file", "bibliography", PUBLIC_COLORS.brand],
     ["database", "figures", PUBLIC_COLORS.brand],
     ["jupyter", "notebooks", "#f37726"],
     ["terminal", "scripts", PUBLIC_COLORS.brand],
-    ["robot", "Codex", "#7c3aed"],
-    ["history", "TimeTravel", "#7c3aed"],
-    ["users", "coauthors", "#389e0d"],
   ] as const;
   return (
     <div
@@ -424,7 +422,7 @@ export default function LatexEditorFeaturePage({
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
                 CoCalc gives you the expected online LaTeX workflow: source, PDF
                 preview, builds, collaboration, and history. Its real advantage
-                appears when the paper is more than `paper.tex`.
+                appears when the paper is more than <code>paper.tex</code>.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Keep the draft, bibliography, figures, notebooks, terminal
@@ -452,25 +450,37 @@ export default function LatexEditorFeaturePage({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12} xl={6}>
-          <StoryCard accent="#ad6800" icon="tex" title="Source and PDF">
+          <StoryCard
+            accent="#ad6800"
+            icon="tex"
+            title="Edit source and preview PDF"
+          >
             Edit LaTeX with synchronized preview, automatic builds, and
             build-output feedback close to the source.
           </StoryCard>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <StoryCard accent="#389e0d" icon="users" title="Coauthor live">
+          <StoryCard accent="#389e0d" icon="users" title="Write with coauthors">
             Collaborators can edit the same files, discuss the draft, inspect
             the PDF, and work with the same project state.
           </StoryCard>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <StoryCard accent="#7c3aed" icon="history" title="TimeTravel">
+          <StoryCard
+            accent="#7c3aed"
+            icon="history"
+            title="Recover draft history"
+          >
             Fine-grained history helps recover paragraphs, inspect revisions,
             and understand how a technical document changed.
           </StoryCard>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <StoryCard accent="#d4380d" icon="robot" title="Codex nearby">
+          <StoryCard
+            accent="#d4380d"
+            icon="robot"
+            title="Use Codex for focused edits"
+          >
             Ask Codex to review structure, patch a paragraph, inspect build
             warnings, or connect notebook output to the paper.
           </StoryCard>
@@ -566,54 +576,6 @@ export default function LatexEditorFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Flex vertical gap={12}>
-              <IconBadge accent="#7c3aed" icon="history" />
-              <Title level={3} style={{ margin: 0 }}>
-                TimeTravel and backups make drafts less fragile
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Technical documents change slowly over weeks or months, often
-                with several people involved. CoCalc records edit history so you
-                can recover deleted text, inspect changes, and understand how a
-                draft evolved.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                Project backups and snapshots add another recovery layer around
-                the files and generated outputs.
-              </Paragraph>
-              <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
-                Learn about TimeTravel
-              </LinkButton>
-            </Flex>
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Flex vertical gap={12}>
-              <IconBadge accent="#389e0d" icon="users" />
-              <Title level={3} style={{ margin: 0 }}>
-                Collaboration includes the surrounding files
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Coauthoring is not just editing the same `.tex` buffer. The PDF,
-                figures, bibliography, terminal logs, notebooks, and chat all
-                live in the same shared workspace.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                That is useful for research groups, student feedback, and papers
-                where the final document depends on a larger technical process.
-              </Paragraph>
-              <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
-                LaTeX documentation
-              </LinkButton>
-            </Flex>
-          </PublicSection>
-        </Col>
-      </Row>
-
       <PublicSection>
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={12}>
@@ -634,6 +596,21 @@ export default function LatexEditorFeaturePage({
               <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
                 Read the comparison guide
               </LinkButton>
+              <Flex wrap gap={12}>
+                <Button type="primary" href={primaryCtaHref}>
+                  {finalCtaLabel}
+                </Button>
+                <Button
+                  href={featureSupportPath({
+                    body: "I want to discuss LaTeX workflows in CoCalc. Helpful context: paper, course, or research-group use case; need for computation-backed figures or tables; collaborators; and current writing tools.",
+                    context: "latex-editor",
+                    subject: "CoCalc LaTeX workflows",
+                    title: "Ask CoCalc about LaTeX workflows",
+                  })}
+                >
+                  Ask about LaTeX workflows
+                </Button>
+              </Flex>
             </Flex>
           </Col>
           <Col xs={24} lg={12}>
@@ -676,40 +653,6 @@ export default function LatexEditorFeaturePage({
           </Col>
         </Row>
       </PublicSection>
-
-      <div style={{ marginBottom: 44 }}>
-        <PublicSection>
-          <Row gutter={[20, 20]} align="middle">
-            <Col xs={24} lg={15}>
-              <Title level={3} style={{ margin: 0 }}>
-                Choose CoCalc when the paper is part of a larger computation
-              </Title>
-              <Paragraph style={{ margin: "8px 0 0" }}>
-                If your LaTeX project needs notebooks, data, figures, terminal
-                commands, collaboration, TimeTravel, or Codex nearby, CoCalc
-                keeps those pieces in one durable workspace.
-              </Paragraph>
-            </Col>
-            <Col xs={24} lg={9}>
-              <Flex wrap gap={12} justify="end">
-                <Button type="primary" href={primaryCtaHref}>
-                  {finalCtaLabel}
-                </Button>
-                <Button
-                  href={featureSupportPath({
-                    body: "I want to discuss LaTeX workflows in CoCalc. Helpful context: paper, course, or research-group use case; need for computation-backed figures or tables; collaborators; and current writing tools.",
-                    context: "latex-editor",
-                    subject: "CoCalc LaTeX workflows",
-                    title: "Ask CoCalc about LaTeX workflows",
-                  })}
-                >
-                  Ask about LaTeX workflows
-                </Button>
-              </Flex>
-            </Col>
-          </Row>
-        </PublicSection>
-      </div>
     </Flex>
   );
 }

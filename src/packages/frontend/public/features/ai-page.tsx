@@ -430,7 +430,11 @@ export default function AIFeaturePage({
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#2f6fda" icon="markdown" title="Rich prompts">
+          <StoryCard
+            accent="#2f6fda"
+            icon="markdown"
+            title="Give Codex useful context"
+          >
             The chat editor handles Markdown, code blocks, images, quotes, and
             longer instructions, so the request can carry the context an agent
             actually needs.
@@ -440,7 +444,7 @@ export default function AIFeaturePage({
           <StoryCard
             accent="#278c83"
             icon="users"
-            title="Collaborative by default"
+            title="Review agent work together"
           >
             A Codex thread can be reviewed by teammates in the project. The
             discussion, patch, screenshots, and follow-up questions stay

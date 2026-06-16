@@ -229,13 +229,13 @@ export default function WhiteboardFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                A Miro-like whiteboard rebuilt for computational work.
+                A technical whiteboard for math, code, and collaboration.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
                 CoCalc whiteboards cover the essential collaborative canvas
-                workflow, but are shaped around technical material: rich
-                markdown, KaTeX math, Jupyter cells, pages, frames, drawings,
-                and a simple transparent JSONL document format.
+                workflow, but are shaped around technical material: editable
+                explanations, KaTeX math, Jupyter cells, pages, frames, and
+                drawings.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 They are useful for teaching, office hours, research sketches,
@@ -261,19 +261,27 @@ export default function WhiteboardFeaturePage({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#d4380d" icon="markdown" title="Markdown native">
-            Whiteboard content is based around rich markdown and Slate editing,
-            so explanations stay editable, structured, and readable.
+          <StoryCard
+            accent="#d4380d"
+            icon="markdown"
+            title="Explain with editable text"
+          >
+            Write structured explanations on the canvas instead of flattening
+            notes into pasted screenshots.
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#2f6fda" icon="tex" title="Math first">
-            KaTeX support makes formulas first-class board content, not blurry
-            images copied from another tool.
+          <StoryCard accent="#2f6fda" icon="tex" title="Put math on the board">
+            KaTeX support keeps formulas readable and editable while the
+            surrounding explanation changes.
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#389e0d" icon="jupyter" title="Executable cells">
+          <StoryCard
+            accent="#389e0d"
+            icon="jupyter"
+            title="Run cells when the diagram needs code"
+          >
             Put Jupyter cells on the board and connect them in a graph when the
             idea is a computation rather than a static sketch.
           </StoryCard>
@@ -281,22 +289,6 @@ export default function WhiteboardFeaturePage({
       </Row>
 
       <ExecutionGraph />
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <StoryCard accent="#7c3aed" icon="users" title="Realtime by default">
-            Collaborators can work on the same board, use side chat, and keep
-            the explanation in the same project as the notebooks and files it
-            references.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={12}>
-          <StoryCard accent="#278c83" icon="file" title="Transparent format">
-            The whiteboard is stored as a simple JSONL document, which keeps the
-            format inspectable and friendly to project tooling.
-          </StoryCard>
-        </Col>
-      </Row>
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
@@ -307,6 +299,7 @@ export default function WhiteboardFeaturePage({
                 "Explain ideas with text, math, sketches, and live code together.",
                 "Use an infinite canvas with multiple pages for large technical topics.",
                 "Keep board work close to notebooks, terminals, files, and chat.",
+                "Collaborate on the same board instead of sharing exported screenshots.",
                 "Turn a whiteboard into slides when the same material becomes a presentation.",
               ]}
             />

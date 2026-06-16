@@ -17,6 +17,13 @@ import {
 const { Paragraph, Title } = Typography;
 
 export default function ApiFeaturePage({}: { helpEmail?: string }) {
+  const supportHref = featureSupportPath({
+    body: "I want to discuss CoCalc API integration. Helpful context: external system, provisioning or automation needs, product path under evaluation, and any support or deployment constraints.",
+    context: "api",
+    subject: "CoCalc API integration",
+    title: "Ask CoCalc about API integration",
+  });
+
   return (
     <Flex vertical gap={18}>
       <PublicSection>
@@ -38,11 +45,12 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
                 to CoCalc directly.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("auth/sign-up")}>
-                  Create account
-                </Button>
-                <LinkButton href={appPath("docs/api/http-api")}>
+                <Button type="primary" href={appPath("docs/api/http-api")}>
                   API documentation
+                </Button>
+                <Button href={supportHref}>Ask about API integration</Button>
+                <LinkButton href={appPath("auth/sign-up")}>
+                  Create account
                 </LinkButton>
               </Flex>
             </Flex>
@@ -101,21 +109,10 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
           browser to perform administrative or operational work.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          This is especially important for launchpad deployments and product
-          integrations where CoCalc is only one component in a larger system.
+          This is especially important for CoCalc Launchpad deployments and
+          product integrations where CoCalc is only one component in a larger
+          system.
         </Paragraph>
-        <Flex wrap gap={12}>
-          <Button
-            href={featureSupportPath({
-              body: "I want to discuss CoCalc API integration. Helpful context: external system, provisioning or automation needs, product path under evaluation, and any support or deployment constraints.",
-              context: "api",
-              subject: "CoCalc API integration",
-              title: "Ask CoCalc about API integration",
-            })}
-          >
-            Ask about API integration
-          </Button>
-        </Flex>
       </PublicSection>
     </Flex>
   );

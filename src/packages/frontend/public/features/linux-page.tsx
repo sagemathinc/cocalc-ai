@@ -278,71 +278,6 @@ function SoftwareLayersDiagram() {
   );
 }
 
-function RootFsFlow() {
-  const steps = [
-    ["Build", "Install packages, data, tools, and project conventions."],
-    ["Snapshot", "Capture the root filesystem as a reusable image."],
-    ["Share", "Use the same environment for a course, team, or template."],
-    ["Upgrade", "Publish new versions instead of rebuilding by hand."],
-  ];
-  return (
-    <div
-      style={{
-        background:
-          "linear-gradient(135deg, rgba(16,33,63,0.97), rgba(34,92,116,0.94))",
-        borderRadius: 8,
-        color: "#fff",
-        padding: 34,
-      }}
-    >
-      <Title level={3} style={{ color: "#fff", margin: "0 0 18px" }}>
-        RootFS images make setup reusable
-      </Title>
-      <Row gutter={[14, 14]}>
-        {steps.map(([title, body], index) => (
-          <Col key={title} xs={24} md={6}>
-            <div
-              style={{
-                background: "rgba(255,255,255,0.1)",
-                border: "1px solid rgba(255,255,255,0.16)",
-                borderRadius: 8,
-                height: "100%",
-                padding: 18,
-              }}
-            >
-              <Flex vertical gap={12}>
-                <span
-                  style={{
-                    alignItems: "center",
-                    background: COLORS.ANTD_YELL_M,
-                    borderRadius: 999,
-                    color: "#10213f",
-                    display: "inline-flex",
-                    fontWeight: 800,
-                    height: 28,
-                    justifyContent: "center",
-                    width: 28,
-                  }}
-                >
-                  {index + 1}
-                </span>
-                <Text strong style={{ color: "#fff", fontSize: 16 }}>
-                  {title}
-                </Text>
-                <Paragraph
-                  style={{ color: "rgba(255,255,255,0.76)", margin: 0 }}
-                >
-                  {body}
-                </Paragraph>
-              </Flex>
-            </div>
-          </Col>
-        ))}
-      </Row>
-    </div>
-  );
-}
-
 export default function LinuxFeaturePage({
   isAuthenticated,
 }: {
@@ -398,7 +333,11 @@ export default function LinuxFeaturePage({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#096dd9" icon="linux" title="Use sudo">
+          <StoryCard
+            accent="#096dd9"
+            icon="linux"
+            title="Install system packages"
+          >
             Install system packages, update configuration, and work with the
             root filesystem of the project environment when the task requires
             it.
@@ -408,16 +347,20 @@ export default function LinuxFeaturePage({
           <StoryCard
             accent="#278c83"
             icon="users"
-            title="Share the environment"
+            title="Give everyone the same setup"
           >
             Collaborators see the same files, packages, terminals, notebooks,
             services, and setup decisions inside the project.
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#ad6800" icon="history" title="Recover and reuse">
-            Snapshots, backups, and RootFS images make experimentation and
-            teaching setup much less fragile.
+          <StoryCard
+            accent="#ad6800"
+            icon="history"
+            title="Save known-good environments"
+          >
+            Snapshots, backups, and reusable environment images make
+            experimentation and teaching setup much less fragile.
           </StoryCard>
         </Col>
       </Row>
@@ -508,52 +451,27 @@ PY`}</code>
         </Row>
       </PublicSection>
 
-      <RootFsFlow />
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Build course and team environments once
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              RootFS images let an instructor, team lead, or site admin turn a
-              configured Linux environment into something reusable. Install the
-              right packages, include data or tools, publish a version, then use
-              it as the base for many projects.
-            </Paragraph>
-            <BulletList
-              items={[
-                "Give every student the same packages and data from the start.",
-                "Use a known-good template across a research group.",
-                "Publish upgraded images instead of repeating manual setup.",
-              ]}
-            />
-            <Button href={`${GUIDE_BASE}/rootfs-management/`}>
-              RootFS guide
-            </Button>
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Linux is shared project infrastructure
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              The shell, notebooks, LaTeX builds, local services, app previews,
-              SSH workflows, project secrets, snapshots, and backups all live
-              around the same Linux environment.
-            </Paragraph>
-            <BulletList
-              items={[
-                "Run databases and local services beside notebooks.",
-                "Use terminals and SSH workflows from the browser.",
-                "Let Codex inspect files and terminal context while it helps.",
-              ]}
-            />
-          </PublicSection>
-        </Col>
-      </Row>
+      <PublicSection>
+        <Title level={3} style={{ margin: 0 }}>
+          Build course and team environments once
+        </Title>
+        <Paragraph style={{ margin: 0, maxWidth: 820 }}>
+          Reusable environment images let an instructor, team lead, or site
+          admin turn a configured Linux environment into a base for many
+          projects. Install the right packages, include data or tools, and
+          publish upgraded versions instead of repeating setup by hand.
+        </Paragraph>
+        <BulletList
+          items={[
+            "Give every student the same packages and data from the start.",
+            "Use a known-good template across a research group.",
+            "Publish upgraded images instead of repeating manual setup.",
+          ]}
+        />
+        <Button href={`${GUIDE_BASE}/rootfs-management/`}>
+          Environment image guide
+        </Button>
+      </PublicSection>
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">

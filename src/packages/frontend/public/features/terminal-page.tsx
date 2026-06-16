@@ -10,7 +10,6 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -353,90 +352,6 @@ function SharedStreamDiagram() {
   );
 }
 
-function AgentTerminalLoop() {
-  const steps = [
-    {
-      body: "List sessions, inspect state, and read the relevant terminal history.",
-      icon: "history",
-      title: "Read",
-    },
-    {
-      body: "Use the terminal output together with project files, notebooks, and chat.",
-      icon: "robot",
-      title: "Reason",
-    },
-    {
-      body: "Write carefully to a live terminal when that is the best interface.",
-      icon: "terminal",
-      title: "Write",
-    },
-    {
-      body: "Continue after browser refreshes, disconnects, or handoffs.",
-      icon: "users",
-      title: "Continue",
-    },
-  ] satisfies { body: string; icon: IconName; title: string }[];
-  return (
-    <div
-      style={{
-        background:
-          "linear-gradient(135deg, rgba(16,33,63,0.97), rgba(34,92,116,0.94))",
-        borderRadius: 8,
-        color: "#fff",
-        padding: 34,
-      }}
-    >
-      <Title level={3} style={{ color: "#fff", margin: "0 0 18px" }}>
-        The terminal gives Codex a concrete loop
-      </Title>
-      <Row gutter={[14, 14]}>
-        {steps.map((step, index) => (
-          <Col key={step.title} xs={24} md={6}>
-            <div
-              style={{
-                background: "rgba(255,255,255,0.1)",
-                border: "1px solid rgba(255,255,255,0.16)",
-                borderRadius: 8,
-                height: "100%",
-                padding: 18,
-              }}
-            >
-              <Flex vertical gap={12}>
-                <Flex align="center" gap={10}>
-                  <span
-                    style={{
-                      alignItems: "center",
-                      background: COLORS.ANTD_YELL_M,
-                      borderRadius: 999,
-                      color: "#10213f",
-                      display: "inline-flex",
-                      fontWeight: 800,
-                      height: 28,
-                      justifyContent: "center",
-                      width: 28,
-                    }}
-                  >
-                    {index + 1}
-                  </span>
-                  <Icon name={step.icon} />
-                </Flex>
-                <Text strong style={{ color: "#fff", fontSize: 16 }}>
-                  {step.title}
-                </Text>
-                <Paragraph
-                  style={{ color: "rgba(255,255,255,0.76)", margin: 0 }}
-                >
-                  {step.body}
-                </Paragraph>
-              </Flex>
-            </div>
-          </Col>
-        ))}
-      </Row>
-    </div>
-  );
-}
-
 export default function TerminalFeaturePage({
   isAuthenticated,
 }: {
@@ -488,7 +403,11 @@ export default function TerminalFeaturePage({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#096dd9" icon="terminal" title="A real shell">
+          <StoryCard
+            accent="#096dd9"
+            icon="terminal"
+            title="Run project commands"
+          >
             Run packages, scripts, compilers, SSH, Git, Python, Sage, R, Julia,
             and command-line tools inside the project environment.
           </StoryCard>
@@ -497,14 +416,18 @@ export default function TerminalFeaturePage({
           <StoryCard
             accent="#278c83"
             icon="users"
-            title="Actually collaborative"
+            title="Share one live stream"
           >
             Multiple browsers and collaborators can attach to the same terminal
             stream instead of passing screenshots around.
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#ad6800" icon="robot" title="Agent-aware">
+          <StoryCard
+            accent="#ad6800"
+            icon="robot"
+            title="Give agents terminal state"
+          >
             Codex can inspect terminal sessions and use the CoCalc CLI to work
             with live terminal state when the task calls for it.
           </StoryCard>
@@ -567,8 +490,6 @@ export default function TerminalFeaturePage({
           </Col>
         </Row>
       </PublicSection>
-
-      <AgentTerminalLoop />
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
