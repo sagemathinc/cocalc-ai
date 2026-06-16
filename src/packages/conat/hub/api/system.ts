@@ -127,6 +127,7 @@ export const system = {
   getFrontendSourceFingerprint: authFirst,
   getRootfsCatalog: authFirst,
   getRootfsCatalogPage: authFirst,
+  getRootfsCatalogEntries: authFirst,
   getRootfsCatalogAdmin: authFirstRequireAccount,
   getRootfsCatalogAdminPage: authFirstRequireAccount,
   getRootfsRusticReposAdmin: authFirstRequireAccount,
@@ -2361,6 +2362,11 @@ export interface System {
       account_id?: string;
     },
   ) => Promise<RootfsImageCatalogPage>;
+
+  getRootfsCatalogEntries: (opts?: {
+    account_id?: string;
+    image_ids?: string[];
+  }) => Promise<RootfsImageManifest>;
 
   getRootfsCatalogAdmin: (opts?: {
     account_id?: string;

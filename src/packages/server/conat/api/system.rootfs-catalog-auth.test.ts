@@ -13,6 +13,7 @@ let assertCanCreateOrUpdateRootfsMock: jest.Mock;
 let createLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
+let listVisibleRootfsImagesByIdMock: jest.Mock;
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -34,6 +35,8 @@ jest.mock("@cocalc/server/rootfs/catalog", () => ({
   __esModule: true,
   listRootfsImagesAdmin: jest.fn(),
   listVisibleRootfsImages: jest.fn(),
+  listVisibleRootfsImagesById: (...args: any[]) =>
+    listVisibleRootfsImagesByIdMock(...args),
   requestRootfsImageDeletion: (...args: any[]) =>
     requestRootfsImageDeletionMock(...args),
   saveRootfsImage: (...args: any[]) => saveRootfsImageMock(...args),
@@ -119,6 +122,10 @@ describe("RootFS catalog dangerous-session auth", () => {
     }));
     publishLroSummaryMock = jest.fn(async () => {});
     publishLroEventMock = jest.fn(async () => {});
+    listVisibleRootfsImagesByIdMock = jest.fn(async () => ({
+      version: 1,
+      images: [],
+    }));
   });
 
   it("requires fresh auth, not 2FA, for ordinary owner catalog saves", async () => {
@@ -259,6 +266,20 @@ describe("RootFS catalog dangerous-session auth", () => {
         }),
       }),
     );
+  });
+
+  it("resolves visible RootFS catalog entries by id", async () => {
+    const { getRootfsCatalogEntries } = await import("./system");
+    const result = await getRootfsCatalogEntries({
+      account_id: ACCOUNT_ID,
+      image_ids: ["image-1", "image-2"],
+    });
+
+    expect(result).toEqual({ version: 1, images: [] });
+    expect(listVisibleRootfsImagesByIdMock).toHaveBeenCalledWith(ACCOUNT_ID, [
+      "image-1",
+      "image-2",
+    ]);
   });
 
   it("allows admins to list RootFS rustic repos without fresh auth", async () => {

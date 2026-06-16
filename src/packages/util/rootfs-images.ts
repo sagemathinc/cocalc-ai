@@ -203,6 +203,7 @@ export type RootfsCatalogPageRequest = {
     owner_id?: string;
     family?: string;
     channel?: string;
+    image_ids?: string[];
   };
 };
 
