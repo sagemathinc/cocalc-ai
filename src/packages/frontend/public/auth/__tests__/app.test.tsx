@@ -172,6 +172,12 @@ describe("getPublicAuthRedirectTargetFromSearch", () => {
     expect(
       getPublicAuthRedirectTargetFromSearch("?target=%2F%2Fevil.test"),
     ).toBeUndefined();
+    expect(
+      getPublicAuthRedirectTargetFromSearch("?target=%2F"),
+    ).toBeUndefined();
+    expect(
+      getPublicAuthRedirectTargetFromSearch("?target=%2F%3Ffrom%3Dhome"),
+    ).toBeUndefined();
   });
 
   it("unwraps nested auth shell redirect targets", () => {
@@ -186,6 +192,9 @@ describe("getPublicAuthRedirectTargetFromSearch", () => {
 describe("PublicAuthApp", () => {
   it("uses projects as the default post-auth redirect target", () => {
     expect(resolveAuthRedirectPath()).toBe("/projects");
+    expect(resolveAuthRedirectPath("")).toBe("/projects");
+    expect(resolveAuthRedirectPath("/")).toBe("/projects");
+    expect(resolveAuthRedirectPath(() => "/")).toBe("/projects");
     expect(resolveAuthRedirectPath("/projects/project-id")).toBe(
       "/projects/project-id",
     );

@@ -218,7 +218,7 @@ describe("SSHPanel", () => {
     expect(screen.getByText("scp project-1:~/remote-file ./")).toBeTruthy();
     expect(
       screen.getByText(
-        "apt-get update; apt-get install -y openssh-sftp-server",
+        /apt-get update; apt-get install -y openssh-sftp-server && mkdir -p \/usr\/libexec && ln -sf \/usr\/lib\/openssh\/sftp-server \/usr\/libexec\/sftp-server/,
       ),
     ).toBeTruthy();
 

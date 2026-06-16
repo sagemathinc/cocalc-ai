@@ -104,6 +104,9 @@ export function getPublicAuthRedirectTargetFromSearch(
       return undefined;
     }
     const relative = appRelativePath(url.pathname);
+    if (relative === "/") {
+      return undefined;
+    }
     if (/^\/(auth|sso)(\/|$)/.test(relative)) {
       return depth < 3
         ? getPublicAuthRedirectTargetFromSearch(url.search, depth + 1)

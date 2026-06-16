@@ -265,10 +265,10 @@ export function SSHPanel({
                         image, for example{" "}
                         <Text code>
                           apt-get update; apt-get install -y openssh-sftp-server
+                          && mkdir -p /usr/libexec && ln -sf
+                          /usr/lib/openssh/sftp-server /usr/libexec/sftp-server
                         </Text>
-                        , then restart the {projectLabelLower}. The restart is
-                        required so the project startup symlink setup runs
-                        again.
+                        .
                       </>
                     }
                   />
