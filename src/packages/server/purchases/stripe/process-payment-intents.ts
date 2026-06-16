@@ -81,6 +81,58 @@ export function assertInvoiceAccountBinding({
   }
 }
 
+function invoiceIdFromValue(value): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  return value?.id;
+}
+
+function paymentIntentInvoiceId(paymentIntent): string | undefined {
+  const invoiceId =
+    invoiceIdFromValue(paymentIntent.invoice) ??
+    `${paymentIntent.metadata?.invoice_id ?? ""}`.trim();
+  return invoiceId || undefined;
+}
+
+async function attachInvoicePaymentLink(paymentIntent): Promise<void> {
+  if (paymentIntentInvoiceId(paymentIntent) || !paymentIntent.id) {
+    return;
+  }
+  const stripe = await getConn();
+  const { data } = await stripe.invoicePayments.list({
+    payment: {
+      type: "payment_intent",
+      payment_intent: paymentIntent.id,
+    },
+    limit: 10,
+  });
+  const invoiceId = invoiceIdFromValue(
+    (
+      data.find(({ status, is_default }) => status === "paid" && is_default) ??
+      data.find(({ status }) => status === "paid") ??
+      data[0]
+    )?.invoice,
+  );
+  if (!invoiceId) {
+    return;
+  }
+  paymentIntent.invoice = invoiceId;
+  paymentIntent.metadata = {
+    ...(paymentIntent.metadata ?? {}),
+    invoice_id: invoiceId,
+  };
+  try {
+    await stripe.paymentIntents.update(paymentIntent.id, {
+      metadata: paymentIntent.metadata,
+    });
+  } catch (err) {
+    logger.debug(
+      `WARNING: unable to persist invoice_id metadata on payment intent ${paymentIntent.id} -- ${err}`,
+    );
+  }
+}
+
 function getMembershipPackageProductFromMetadata(
   metadata?: Record<string, string>,
 ): MembershipPackageProduct {
@@ -193,6 +245,7 @@ export default async function processPaymentIntents({
       continue;
     }
     seen.add(paymentIntent.id);
+    await attachInvoicePaymentLink(paymentIntent);
     if (needsToBeRecorded(paymentIntent)) {
       try {
         await recordPaymentIntent({
@@ -252,7 +305,7 @@ export default async function processPaymentIntents({
       paymentIntent.metadata?.processed != "true"
     ) {
       throw Error(
-        `payment intent ${paymentIntent.id} is not ready to process (status=${paymentIntent.status})`,
+        `payment intent ${paymentIntent.id} is not ready to process (${paymentIntentNotReadyReason(paymentIntent)})`,
       );
     }
   }
@@ -368,8 +421,31 @@ export function isReadyToProcess(paymentIntent) {
     paymentIntent.metadata["processed"] != "true" &&
     paymentIntent.metadata["purpose"] &&
     paymentIntent.metadata["deleted"] != "true" &&
-    paymentIntent.invoice
+    paymentIntentInvoiceId(paymentIntent)
   );
+}
+
+function paymentIntentNotReadyReason(paymentIntent): string {
+  const reasons: string[] = [];
+  if (
+    paymentIntent.status != "succeeded" &&
+    paymentIntent.status != "canceled"
+  ) {
+    reasons.push(`status=${paymentIntent.status}`);
+  }
+  if (paymentIntent.metadata?.processed == "true") {
+    reasons.push("already processed");
+  }
+  if (!paymentIntent.metadata?.purpose) {
+    reasons.push("missing purpose metadata");
+  }
+  if (paymentIntent.metadata?.deleted == "true") {
+    reasons.push("deleted");
+  }
+  if (!paymentIntentInvoiceId(paymentIntent)) {
+    reasons.push("missing invoice link");
+  }
+  return reasons.join(", ") || "unknown reason";
 }
 
 // Is this a payment intent coming from a stripe checkout session that we haven't
@@ -413,8 +489,9 @@ export const processPaymentIntent = reuseInFlight(
     const stripe = await getConn();
     let invoice;
     const getInvoice = async () => {
-      if (invoice == null && paymentIntent.invoice) {
-        invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+      const invoiceId = paymentIntentInvoiceId(paymentIntent);
+      if (invoice == null && invoiceId) {
+        invoice = await stripe.invoices.retrieve(invoiceId);
       }
       return invoice;
     };
