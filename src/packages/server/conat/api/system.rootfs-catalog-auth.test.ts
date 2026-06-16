@@ -8,6 +8,11 @@ let saveRootfsImageMock: jest.Mock;
 let requestRootfsImageDeletionMock: jest.Mock;
 let runPendingRootfsReleaseGcMock: jest.Mock;
 let listRootfsRusticReposAdminMock: jest.Mock;
+let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
+let assertCanCreateOrUpdateRootfsMock: jest.Mock;
+let createLroMock: jest.Mock;
+let publishLroSummaryMock: jest.Mock;
+let publishLroEventMock: jest.Mock;
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -42,6 +47,40 @@ jest.mock("@cocalc/server/rootfs/releases", () => ({
     runPendingRootfsReleaseGcMock(...args),
 }));
 
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
+  __esModule: true,
+  assertProjectCollaboratorAccessAllowRemote: (...args: any[]) =>
+    assertProjectCollaboratorAccessAllowRemoteMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/rootfs-limits", () => ({
+  __esModule: true,
+  assertCanCreateOrUpdateRootfs: (...args: any[]) =>
+    assertCanCreateOrUpdateRootfsMock(...args),
+  assertCanSelectProjectRootfsImage: jest.fn(),
+}));
+
+jest.mock("@cocalc/server/lro/lro-db", () => ({
+  __esModule: true,
+  createLro: (...args: any[]) => createLroMock(...args),
+}));
+
+jest.mock("@cocalc/server/lro/stream", () => ({
+  __esModule: true,
+  publishLroEvent: (...args: any[]) => publishLroEventMock(...args),
+  publishLroSummary: (...args: any[]) => publishLroSummaryMock(...args),
+}));
+
+jest.mock("@cocalc/conat/lro/names", () => ({
+  __esModule: true,
+  lroStreamName: jest.fn((op_id: string) => `stream:${op_id}`),
+}));
+
+jest.mock("@cocalc/conat/persist/util", () => ({
+  __esModule: true,
+  SERVICE: "persist-service",
+}));
+
 describe("RootFS catalog dangerous-session auth", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const OTHER_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
@@ -68,6 +107,18 @@ describe("RootFS catalog dangerous-session auth", () => {
       repos: [],
       legacy: { artifact_count: 0, artifact_bytes: 0 },
     }));
+    assertProjectCollaboratorAccessAllowRemoteMock = jest.fn(async () => {});
+    assertCanCreateOrUpdateRootfsMock = jest.fn(async () => {});
+    createLroMock = jest.fn(async (opts) => ({
+      op_id: "op-rootfs-publish-1",
+      scope_type: opts.scope_type,
+      scope_id: opts.scope_id,
+      service: "persist-service",
+      stream_name: "stream:op-rootfs-publish-1",
+      ...opts,
+    }));
+    publishLroSummaryMock = jest.fn(async () => {});
+    publishLroEventMock = jest.fn(async () => {});
   });
 
   it("requires fresh auth, not 2FA, for ordinary owner catalog saves", async () => {
@@ -177,6 +228,37 @@ describe("RootFS catalog dangerous-session auth", () => {
       session_hash: undefined,
       require_second_factor: false,
     });
+  });
+
+  it("queues project switch preference in the RootFS publish LRO input", async () => {
+    const { publishProjectRootfsImage } = await import("./system");
+    const op = await publishProjectRootfsImage({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      project_id: "project-1",
+      label: "Published RootFS",
+      switch_project: true,
+    });
+
+    expect(op).toMatchObject({
+      op_id: "op-rootfs-publish-1",
+      scope_type: "project",
+      scope_id: "project-1",
+      service: "persist-service",
+      stream_name: "stream:op-rootfs-publish-1",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "project-rootfs-publish",
+        scope_type: "project",
+        scope_id: "project-1",
+        input: expect.objectContaining({
+          project_id: "project-1",
+          label: "Published RootFS",
+          switch_project: true,
+        }),
+      }),
+    );
   });
 
   it("allows admins to list RootFS rustic repos without fresh auth", async () => {
