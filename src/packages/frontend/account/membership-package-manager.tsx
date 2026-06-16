@@ -489,9 +489,14 @@ function accountIdentityText(
 
 function getAssignmentEmail(
   assignment: MembershipPackageAssignment,
+  names?: AccountNames,
 ): string | undefined {
   const email = `${assignment.email_address ?? ""}`.trim();
-  return email || undefined;
+  if (email) return email;
+  if (!assignment.account_id) return;
+  return (
+    `${names?.[assignment.account_id]?.email_address ?? ""}`.trim() || undefined
+  );
 }
 
 function getRequestAccountDisplay({
@@ -522,7 +527,7 @@ function assignmentSearchText({
 }): string {
   return [
     getAccountDisplayName(assignment, names),
-    getAssignmentEmail(assignment),
+    getAssignmentEmail(assignment, names),
     assignment.account_id,
   ]
     .filter(Boolean)
@@ -606,7 +611,7 @@ function revokeSeatConfirmationTitle({
   return `Revoke the ${pool.pool_name} seat for ${getAccountDisplayName(
     assignment,
     names,
-  )} (${getAssignmentEmail(assignment) ?? "email not recorded"})?`;
+  )} (${getAssignmentEmail(assignment, names) ?? "email not recorded"})?`;
 }
 
 async function revokeSeatOrThrow({
@@ -2768,6 +2773,117 @@ function SiteLicenseDashboard({
   );
 }
 
+function SeatAssignmentsTable({
+  accountNames,
+  canManage,
+  emptyText,
+  onRevokeSeat,
+  revokeConfirmationTitle,
+  revokeDescription,
+  revokingSeat,
+  revokeKeyPrefix,
+  scrollY,
+  setRevokingSeat,
+  shownAssignments,
+  tableWidth = canManage ? 690 : 570,
+}: {
+  accountNames: AccountNames;
+  canManage: boolean;
+  emptyText: string;
+  onRevokeSeat?: (assignment: MembershipPackageAssignment) => Promise<void>;
+  revokeConfirmationTitle?: (assignment: MembershipPackageAssignment) => string;
+  revokeDescription?: string;
+  revokingSeat: string;
+  revokeKeyPrefix: string;
+  scrollY?: string | number;
+  setRevokingSeat: (value: string) => void;
+  shownAssignments: MembershipPackageAssignment[];
+  tableWidth?: number;
+}) {
+  return (
+    <Table<MembershipPackageAssignment>
+      dataSource={shownAssignments}
+      locale={{ emptyText }}
+      pagination={false}
+      rowKey={(assignment) => assignment.id}
+      scroll={{ x: tableWidth, ...(scrollY == null ? {} : { y: scrollY }) }}
+      size="small"
+      tableLayout="fixed"
+    >
+      <Table.Column<MembershipPackageAssignment>
+        title="User"
+        width={220}
+        render={(_, assignment) => {
+          const name = getAccountDisplayName(assignment, accountNames);
+          return (
+            <Tooltip title={name}>
+              <Text ellipsis style={{ display: "block", maxWidth: 200 }}>
+                {name}
+              </Text>
+            </Tooltip>
+          );
+        }}
+      />
+      <Table.Column<MembershipPackageAssignment>
+        title="Email"
+        width={240}
+        render={(_, assignment) => {
+          const email = getAssignmentEmail(assignment, accountNames);
+          if (!email) {
+            return <Text type="secondary">-</Text>;
+          }
+          return (
+            <Tooltip title={email}>
+              <Text ellipsis style={{ display: "block", maxWidth: 220 }}>
+                {email}
+              </Text>
+            </Tooltip>
+          );
+        }}
+      />
+      <Table.Column<MembershipPackageAssignment>
+        title="Seat given on"
+        width={140}
+        render={(_, assignment) => formatSeatGivenOn(assignment.assigned_at)}
+      />
+      {canManage ? (
+        <Table.Column<MembershipPackageAssignment>
+          align="right"
+          title=""
+          width={90}
+          render={(_, assignment) => {
+            const key = `${revokeKeyPrefix}-${assignment.id}`;
+            return (
+              <Popconfirm
+                title={revokeConfirmationTitle?.(assignment)}
+                description={revokeDescription}
+                okButtonProps={{
+                  danger: true,
+                  loading: revokingSeat === key,
+                }}
+                okText="Revoke seat"
+                onConfirm={async () => {
+                  if (!onRevokeSeat) return;
+                  setRevokingSeat(key);
+                  try {
+                    await onRevokeSeat(assignment);
+                  } finally {
+                    setRevokingSeat("");
+                  }
+                }}
+              >
+                <Button danger size="small" loading={revokingSeat === key}>
+                  Revoke
+                </Button>
+              </Popconfirm>
+            );
+          }}
+        />
+      ) : null}
+    </Table>
+  );
+}
+
 function PoolUsersDrawer({
   accountNames,
   canManageLicense,
@@ -2808,6 +2924,12 @@ function PoolUsersDrawer({
     );
   }, [accountNames, activeAssignments, search]);
   const tableWidth = canManageLicense ? 690 : 570;
+  const emptyText =
+    activeAssignments.length === 0
+      ? "No active users."
+      : search.trim()
+        ? "No users match this search."
+        : "No active users.";
 
   return (
     <Drawer
@@ -2831,102 +2953,26 @@ function PoolUsersDrawer({
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-          <Table<MembershipPackageAssignment>
-            dataSource={filteredAssignments}
-            locale={{
-              emptyText:
-                activeAssignments.length === 0
-                  ? "No active users."
-                  : search.trim()
-                    ? "No users match this search."
-                    : "No active users.",
-            }}
-            pagination={false}
-            rowKey={(assignment) => assignment.id}
-            scroll={{ x: tableWidth, y: "calc(100vh - 240px)" }}
-            size="small"
-            tableLayout="fixed"
-          >
-            <Table.Column<MembershipPackageAssignment>
-              title="User"
-              width={220}
-              render={(_, assignment) => {
-                const name = getAccountDisplayName(assignment, accountNames);
-                return (
-                  <Tooltip title={name}>
-                    <Text ellipsis style={{ display: "block", maxWidth: 200 }}>
-                      {name}
-                    </Text>
-                  </Tooltip>
-                );
-              }}
-            />
-            <Table.Column<MembershipPackageAssignment>
-              title="Email"
-              width={240}
-              render={(_, assignment) => {
-                const email = getAssignmentEmail(assignment);
-                if (!email) {
-                  return <Text type="secondary">-</Text>;
-                }
-                return (
-                  <Tooltip title={email}>
-                    <Text ellipsis style={{ display: "block", maxWidth: 220 }}>
-                      {email}
-                    </Text>
-                  </Tooltip>
-                );
-              }}
-            />
-            <Table.Column<MembershipPackageAssignment>
-              title="Seat given on"
-              width={140}
-              render={(_, assignment) =>
-                formatSeatGivenOn(assignment.assigned_at)
-              }
-            />
-            {canManageLicense ? (
-              <Table.Column<MembershipPackageAssignment>
-                align="right"
-                title=""
-                width={90}
-                render={(_, assignment) => {
-                  const key = `${pool.id}-${assignment.id}`;
-                  return (
-                    <Popconfirm
-                      title={revokeSeatConfirmationTitle({
-                        assignment,
-                        names: accountNames,
-                        pool,
-                      })}
-                      description="This removes the active seat from this pool."
-                      okButtonProps={{
-                        danger: true,
-                        loading: revokingSeat === key,
-                      }}
-                      okText="Revoke seat"
-                      onConfirm={async () => {
-                        setRevokingSeat(key);
-                        try {
-                          await onRevokeSeat(pool, assignment);
-                        } finally {
-                          setRevokingSeat("");
-                        }
-                      }}
-                    >
-                      <Button
-                        danger
-                        size="small"
-                        loading={revokingSeat === key}
-                      >
-                        Revoke
-                      </Button>
-                    </Popconfirm>
-                  );
-                }}
-              />
-            ) : null}
-          </Table>
+          <SeatAssignmentsTable
+            accountNames={accountNames}
+            canManage={canManageLicense}
+            emptyText={emptyText}
+            onRevokeSeat={(assignment) => onRevokeSeat(pool, assignment)}
+            revokeConfirmationTitle={(assignment) =>
+              revokeSeatConfirmationTitle({
+                assignment,
+                names: accountNames,
+                pool,
+              })
+            }
+            revokeDescription="This removes the active seat from this pool."
+            revokingSeat={revokingSeat}
+            revokeKeyPrefix={pool.id}
+            scrollY="calc(100vh - 240px)"
+            setRevokingSeat={setRevokingSeat}
+            shownAssignments={filteredAssignments}
+            tableWidth={tableWidth}
+          />
         </Space>
       ) : null}
     </Drawer>
@@ -3364,6 +3410,7 @@ function TeamLicenseSeatCard({
   const availableCount =
     membershipPackage?.available_seat_count ??
     Math.max(0, line.seat_count - assignedCount);
+  const canManageSeats = membershipPackage != null;
 
   return (
     <Card
@@ -3371,78 +3418,29 @@ function TeamLicenseSeatCard({
       title={`${tierLabel} - ${assignedCount} of ${line.seat_count} seats assigned`}
     >
       <Space vertical size="middle" style={{ width: "100%" }}>
-        {activeAssignments.length === 0 ? (
-          <Text type="secondary">No seats assigned yet.</Text>
-        ) : (
-          <Space vertical size="small" style={{ width: "100%" }}>
-            {activeAssignments.map((assignment) => {
-              const displayName = getAccountDisplayName(
-                assignment,
-                accountNames,
-              );
-              const secondary = getAccountSecondaryLabel(
-                assignment,
-                accountNames,
-              );
-              const revocationKey =
-                assignment.account_id ?? assignment.email_address ?? "";
-              return (
-                <div
-                  key={assignment.id}
-                  style={{
-                    alignItems: "flex-start",
-                    display: "flex",
-                    gap: 12,
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <Space vertical size={0}>
-                    <Text>{displayName}</Text>
-                    <Space wrap>
-                      {secondary ? (
-                        <Text type="secondary">{secondary}</Text>
-                      ) : null}
-                      {assignment.assigned_at ? (
-                        <Text type="secondary">
-                          Assigned <TimeAgo date={assignment.assigned_at} />
-                        </Text>
-                      ) : null}
-                    </Space>
-                  </Space>
-                  <Popconfirm
-                    title={`Revoke the ${tierLabel} seat for ${assignmentConfirmationName(
-                      assignment,
-                      accountNames,
-                    )}?`}
-                    okText="Revoke seat"
-                    okButtonProps={{ danger: true }}
-                    onConfirm={async () => {
-                      if (!membershipPackage) return;
-                      setRevokingAccountId(revocationKey);
-                      try {
-                        await onRevokeSeat(membershipPackage, assignment);
-                      } finally {
-                        setRevokingAccountId("");
-                      }
-                    }}
-                  >
-                    <Button
-                      danger
-                      size="small"
-                      loading={revokingAccountId === revocationKey}
-                      disabled={!membershipPackage}
-                    >
-                      Revoke
-                    </Button>
-                  </Popconfirm>
-                </div>
-              );
-            })}
-          </Space>
-        )}
+        <SeatAssignmentsTable
+          accountNames={accountNames}
+          canManage={canManageSeats}
+          emptyText="No seats assigned yet."
+          onRevokeSeat={async (assignment) => {
+            if (!membershipPackage) return;
+            await onRevokeSeat(membershipPackage, assignment);
+          }}
+          revokeConfirmationTitle={(assignment) =>
+            `Revoke the ${tierLabel} seat for ${assignmentConfirmationName(
+              assignment,
+              accountNames,
+            )}?`
+          }
+          revokeDescription="This removes the active seat from this team license."
+          revokingSeat={revokingAccountId}
+          revokeKeyPrefix={line.id}
+          setRevokingSeat={setRevokingAccountId}
+          shownAssignments={activeAssignments}
+          tableWidth={canManageSeats ? 690 : 570}
+        />
         <div>
           <Button
-            type="primary"
             onClick={() => membershipPackage && onAssignSeat(membershipPackage)}
             disabled={!membershipPackage || availableCount <= 0}
           >
