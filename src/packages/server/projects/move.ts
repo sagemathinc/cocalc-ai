@@ -1115,6 +1115,8 @@ async function waitForExternalChildLroCompletion({
       client,
       timeout_ms,
       onProgress,
+      getSummary: async () => await getLro(op_id),
+      poll_ms: CHILD_LRO_POLL_INTERVAL_MS,
     });
   }
   let cancelPoll: ReturnType<typeof setInterval> | undefined;

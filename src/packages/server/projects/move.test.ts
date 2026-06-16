@@ -1865,6 +1865,90 @@ describe("moveProjectToHost", () => {
     expect(startProjectLroMock).toHaveBeenCalledTimes(2);
   });
 
+  it("fails promptly when destination start child is canceled in db polling", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [{ host_id: DEST_HOST_ID, project_state: "opened" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    startProjectLroMock = jest.fn(async () => ({
+      op_id: "start-op-canceled",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+    }));
+    lroSummaryByOpId.set("start-op-canceled", {
+      op_id: "start-op-canceled",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "canceled",
+      error: "orphaned project start operation",
+    });
+    waitForLroCompletionMock = jest.fn(async ({ op_id, getSummary }: any) => {
+      if (op_id === "55555555-5555-4555-8555-555555555555") {
+        return {
+          status: "succeeded",
+          result: {
+            id: "backup-1",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      if (op_id === "start-op-canceled") {
+        expect(typeof getSummary).toBe("function");
+        return await getSummary();
+      }
+      throw new Error(`unexpected op_id ${op_id}`);
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+      }),
+    ).rejects.toThrow(
+      /destination start failed: orphaned project start operation/,
+    );
+  });
+
   it("bubbles child backup and destination-start progress into the parent move progress", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (
