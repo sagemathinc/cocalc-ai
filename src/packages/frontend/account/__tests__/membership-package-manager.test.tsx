@@ -389,6 +389,12 @@ describe("membership package managers", () => {
   });
 
   it("renders a purchased team license without loading site-license dashboards", async () => {
+    getNames.mockResolvedValue({
+      "user-1": {
+        first_name: "Grace",
+        last_name: "Hopper",
+      },
+    });
     getTeamLicense.mockResolvedValue(
       makeTeamLicenseOverview([
         makeTeamPackage({
@@ -399,6 +405,7 @@ describe("membership package managers", () => {
               id: "assignment-1",
               package_id: "team-1",
               account_id: "user-1",
+              account_email_address: "grace@example.edu",
               assigned_at: new Date("2026-05-01T00:00:00Z"),
             },
           ],
@@ -410,6 +417,7 @@ describe("membership package managers", () => {
     await waitFor(() => {
       expect(screen.getByText("Member - 1 of 5 seats assigned")).toBeTruthy();
       expect(screen.getByText("Grace Hopper")).toBeTruthy();
+      expect(screen.getByText("grace@example.edu")).toBeTruthy();
     });
     expect(container.textContent).toContain(
       "Renews on June 1, 2027, $50.00/year.",

@@ -94,6 +94,7 @@ interface RawMembershipPackageAssignment {
   package_id: string;
   account_id?: string | null;
   email_address?: string | null;
+  account_email_address?: string | null;
   assigned_by_account_id?: string | null;
   assigned_at?: Date | string;
   revoked_at?: Date | string | null;
@@ -253,6 +254,7 @@ function normalizeAssignmentRecord(
     ...row,
     account_id: row.account_id ?? undefined,
     email_address: row.email_address ?? undefined,
+    account_email_address: row.account_email_address ?? undefined,
     assigned_at: asDate(row.assigned_at),
     revoked_at: asDate(row.revoked_at),
     metadata,
@@ -1771,6 +1773,7 @@ export async function listMembershipPackageAssignments({
         a.package_id,
         a.account_id,
         a.email_address,
+        accounts.email_address AS account_email_address,
         a.assigned_by_account_id,
         a.assigned_at,
         a.revoked_at,
@@ -1779,6 +1782,8 @@ export async function listMembershipPackageAssignments({
         g.source AS grant_source,
         g.purchase_id AS grant_purchase_id
       FROM membership_package_assignments a
+      LEFT JOIN accounts
+        ON accounts.account_id = a.account_id
       LEFT JOIN membership_grants g
         ON g.package_id = a.package_id
        AND g.account_id = a.account_id

@@ -265,6 +265,7 @@ export interface MembershipPackageAssignment {
   package_id: string;
   account_id?: string | null;
   email_address?: string | null;
+  account_email_address?: string | null;
   assigned_by_account_id?: string | null;
   assigned_at?: Date;
   revoked_at?: Date | null;

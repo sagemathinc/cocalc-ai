@@ -211,6 +211,8 @@ describe("membership packages", () => {
     await createTestAccount(first_account_id);
     await createTestAccount(second_account_id);
     await createTestAccount(third_account_id);
+    await markVerifiedEmail(first_account_id, "first-team-seat@example.com");
+    await markVerifiedEmail(second_account_id, "second-team-seat@example.com");
 
     const package_id = await createTestMembershipPackage({
       owner_account_id,
@@ -266,6 +268,16 @@ describe("membership packages", () => {
     expect(details).toHaveLength(1);
     expect(details[0].active_assignment_count).toBe(2);
     expect(details[0].available_seat_count).toBe(0);
+    expect(
+      details[0].assignments.find(
+        (assignment) => assignment.account_id === first_account_id,
+      )?.account_email_address,
+    ).toBe("first-team-seat@example.com");
+    expect(
+      details[0].assignments.find(
+        (assignment) => assignment.account_id === second_account_id,
+      )?.account_email_address,
+    ).toBe("second-team-seat@example.com");
 
     await expect(
       revokeMembershipPackageSeat({

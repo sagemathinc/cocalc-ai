@@ -449,6 +449,7 @@ function getAccountSecondaryLabel(
   const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
   const email =
     `${assignment.email_address ?? ""}`.trim() ||
+    `${assignment.account_email_address ?? ""}`.trim() ||
     `${name?.email_address ?? ""}`.trim();
   if (email) return email;
   if (!fullName) return;
@@ -493,6 +494,8 @@ function getAssignmentEmail(
 ): string | undefined {
   const email = `${assignment.email_address ?? ""}`.trim();
   if (email) return email;
+  const accountEmail = `${assignment.account_email_address ?? ""}`.trim();
+  if (accountEmail) return accountEmail;
   if (!assignment.account_id) return;
   return (
     `${names?.[assignment.account_id]?.email_address ?? ""}`.trim() || undefined
