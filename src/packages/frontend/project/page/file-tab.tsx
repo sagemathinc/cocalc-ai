@@ -44,6 +44,7 @@ import {
   LogFlyout,
   NewFlyout,
   ProjectInfoFlyout,
+  RootfsFlyout,
   SearchFlyout,
   ServersFlyout,
   SettingsFlyout,
@@ -60,6 +61,7 @@ export type FixedTab =
   | "docs"
   | "files"
   | "new"
+  | "rootfs"
   | "log"
   | "search"
   | "servers"
@@ -148,6 +150,13 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     }),
     icon: "plus-circle",
     flyout: NewFlyout,
+    noAnonymous: false,
+  },
+  rootfs: {
+    label: "Rootfs",
+    flyoutTitle: "Rootfs",
+    icon: "docker",
+    flyout: RootfsFlyout,
     noAnonymous: false,
   },
   search: {

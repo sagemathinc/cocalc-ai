@@ -9,6 +9,7 @@ const DEFAULT_ORDER: readonly FixedTab[] = [
   "workspaces",
   "agents",
   "files",
+  "rootfs",
   "new",
   "search",
   "docs",
