@@ -1561,6 +1561,72 @@ describe("moveProjectToHost", () => {
     expect(createBackupLroMock).toHaveBeenCalledTimes(2);
   });
 
+  it("falls back to db polling when child lro stream init hangs", async () => {
+    process.env.COCALC_MOVE_CHILD_LRO_STREAM_OPEN_TIMEOUT_MS = "1";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    getLroStreamMock = jest.fn(() => new Promise(() => {}));
+
+    try {
+      const { moveProjectToHost } = await import("./move");
+      await expect(
+        moveProjectToHost({
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+          allow_offline: true,
+          start_dest: false,
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      delete process.env.COCALC_MOVE_CHILD_LRO_STREAM_OPEN_TIMEOUT_MS;
+    }
+
+    expect(getLroMock).toHaveBeenCalledWith(
+      "55555555-5555-4555-8555-555555555555",
+    );
+    expect(savePlacementMock).toHaveBeenCalledWith(PROJECT_ID, {
+      host_id: DEST_HOST_ID,
+    });
+  });
+
   it("cancels the final backup child when the parent move is canceled", async () => {
     process.env.COCALC_MOVE_CHILD_LRO_POLL_INTERVAL_MS = "1";
     queryMock = jest.fn(async (sql: string) => {

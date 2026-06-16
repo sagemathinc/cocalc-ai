@@ -86,6 +86,10 @@ const CHILD_LRO_POLL_INTERVAL_MS = Math.max(
   250,
   Number(process.env.COCALC_MOVE_CHILD_LRO_POLL_INTERVAL_MS) || 1000,
 );
+const CHILD_LRO_STREAM_OPEN_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_CHILD_LRO_STREAM_OPEN_TIMEOUT_MS) || 5000,
+);
 const TERMINAL_LRO_STATUSES = new Set([
   "succeeded",
   "failed",
@@ -820,22 +824,11 @@ async function waitForChildLroCompletion({
   shouldCancel?: () => Promise<boolean>;
   cancelStage?: string;
 }): Promise<LroSummary> {
-  let stream: Awaited<ReturnType<typeof getLroStream>> | undefined;
-  try {
-    stream = await getLroStream({
-      op_id,
-      scope_type,
-      scope_id,
-      client: conat(),
-    });
-  } catch (err) {
-    log.warn("move child lro stream init failed; using db polling", {
-      op_id,
-      scope_type,
-      scope_id,
-      err,
-    });
-  }
+  const stream = await openChildLroStreamWithTimeout({
+    op_id,
+    scope_type,
+    scope_id,
+  });
 
   let done = false;
   let lastIndex = 0;
@@ -954,6 +947,72 @@ async function waitForChildLroCompletion({
       timeoutId.unref?.();
     }
   });
+}
+
+async function openChildLroStreamWithTimeout({
+  op_id,
+  scope_type,
+  scope_id,
+}: {
+  op_id: string;
+  scope_type: "project" | "account" | "host" | "hub";
+  scope_id?: string;
+}): Promise<Awaited<ReturnType<typeof getLroStream>> | undefined> {
+  let timedOut = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const streamPromise = getLroStream({
+    op_id,
+    scope_type,
+    scope_id,
+    client: conat(),
+  })
+    .then((stream) => {
+      if (timedOut) {
+        stream.close();
+        return undefined;
+      }
+      return stream;
+    })
+    .catch((err) => {
+      if (timedOut) {
+        log.warn("move child lro stream late init failed after fallback", {
+          op_id,
+          scope_type,
+          scope_id,
+          err,
+        });
+        return undefined;
+      }
+      throw err;
+    });
+  const timeoutPromise = new Promise<undefined>((resolve) => {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      log.warn("move child lro stream init timed out; using db polling", {
+        op_id,
+        scope_type,
+        scope_id,
+        timeout_ms: CHILD_LRO_STREAM_OPEN_TIMEOUT_MS,
+      });
+      resolve(undefined);
+    }, CHILD_LRO_STREAM_OPEN_TIMEOUT_MS);
+    timeoutId.unref?.();
+  });
+  try {
+    return await Promise.race([streamPromise, timeoutPromise]);
+  } catch (err) {
+    log.warn("move child lro stream init failed; using db polling", {
+      op_id,
+      scope_type,
+      scope_id,
+      err,
+    });
+    return undefined;
+  } finally {
+    if (!timedOut && timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 async function cancelChildLro({
