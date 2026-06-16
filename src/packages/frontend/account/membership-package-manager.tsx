@@ -10,7 +10,6 @@ import {
   Checkbox,
   Collapse,
   DatePicker,
-  Descriptions,
   Divider,
   Drawer,
   Input,
@@ -72,6 +71,7 @@ import {
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
 import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { UseTeamLicenseBalance } from "./balance-toward-subs";
 import type {
   ClaimableMembershipPackage,
   MembershipClass,
@@ -118,6 +118,11 @@ interface Props {
   tiers: MembershipTierLike[];
   onChanged?: () => void;
   user_account_id?: string;
+}
+
+interface TeamSeatAssignmentTarget {
+  membershipPackage: MembershipPackageDetails;
+  seatLabel: string;
 }
 
 interface PackageUserSearchResult {
@@ -235,24 +240,10 @@ function getProvisionPoolTheme(
   };
 }
 
-function toTime(value?: Date | null): number {
-  return value instanceof Date ? value.valueOf() : 0;
-}
-
 function isActiveAssignment(
   assignment?: MembershipPackageAssignment | null,
 ): boolean {
   return !!assignment && !assignment.revoked_at;
-}
-
-function sortPackagesByRecent(
-  packages: MembershipPackageDetails[],
-): MembershipPackageDetails[] {
-  return [...packages].sort(
-    (left, right) =>
-      toTime(right.updated) - toTime(left.updated) ||
-      toTime(right.created) - toTime(left.created),
-  );
 }
 
 function getPackageKindLabel(kind: MembershipPackageKind): string {
@@ -1299,12 +1290,11 @@ export function TeamPackageManager({
   const [teamLicense, setTeamLicense] = useState<TeamLicenseOverview | null>(
     null,
   );
-  const [refreshToken, setRefreshToken] = useState<number>(0);
   const [purchaseTarget, setPurchaseTarget] = useState<
     MembershipPackageDetails | null | undefined
   >(undefined);
   const [assignmentTarget, setAssignmentTarget] =
-    useState<MembershipPackageDetails | null>(null);
+    useState<TeamSeatAssignmentTarget | null>(null);
   const [accountNames, setAccountNames] = useState<AccountNames>({});
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
@@ -1332,10 +1322,10 @@ export function TeamPackageManager({
       return;
     }
     void refreshPackages();
-  }, [ownerAccountId, refreshToken, user_account_id]);
+  }, [ownerAccountId, user_account_id]);
 
-  const membershipPackages = useMemo(
-    () => sortPackagesByRecent(teamLicense?.packages ?? []),
+  const teamSeatLines = useMemo(
+    () => (teamLicense?.seat_lines ?? []).filter((line) => line.seat_count > 0),
     [teamLicense],
   );
 
@@ -1343,15 +1333,15 @@ export function TeamPackageManager({
     return Array.from(
       new Set(
         [
-          ...membershipPackages.flatMap((membershipPackage) =>
-            membershipPackage.assignments
+          ...teamSeatLines.flatMap((line) =>
+            (line.package?.assignments ?? [])
               .filter(isActiveAssignment)
               .map((assignment) => assignment.account_id),
           ),
         ].filter((value): value is string => !!value),
       ),
     );
-  }, [membershipPackages]);
+  }, [teamSeatLines]);
 
   useEffect(() => {
     let canceled = false;
@@ -1378,14 +1368,6 @@ export function TeamPackageManager({
     };
   }, [assignedAccountIds]);
 
-  const teamPackages = useMemo(
-    () =>
-      membershipPackages.filter(
-        (membershipPackage) => membershipPackage.kind === "team",
-      ),
-    [membershipPackages],
-  );
-
   const handleChanged = async () => {
     await refreshPackages();
     onChanged?.();
@@ -1402,7 +1384,7 @@ export function TeamPackageManager({
       )}
       {loading ? (
         <Loading />
-      ) : teamPackages.length === 0 ? (
+      ) : teamLicense == null ? (
         <Space vertical>
           <Text>
             Create a team license to give membership seats to other CoCalc
@@ -1416,43 +1398,72 @@ export function TeamPackageManager({
           </Button>
         </Space>
       ) : (
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          <Space wrap>
-            <Button type="primary" onClick={() => setPurchaseTarget(null)}>
-              <Icon name="shopping-cart" /> Buy team seats
-            </Button>
-            <Button onClick={() => setRefreshToken((value) => value + 1)}>
-              <Icon name="refresh" /> Refresh
-            </Button>
+        <Space vertical size="middle" style={{ width: "100%" }}>
+          {teamLicense.status === "past_due" ? (
+            <Alert
+              showIcon
+              type="warning"
+              title="Team license renewal is past due"
+              description={`The existing seats are still active, but this license was paid through ${formatTeamLicenseRenewalDate(
+                teamLicense.current_period_end,
+              )}.`}
+            />
+          ) : null}
+          <Space vertical>
+            <Text>
+              Renews on{" "}
+              {formatTeamLicenseRenewalDate(teamLicense.current_period_end)},{" "}
+              {currency(teamLicenseAnnualTotal(teamLicense))}/year.
+            </Text>
+            <UseTeamLicenseBalance />
           </Space>
-          <PackageGroup
-            title="Team packages"
-            emptyTitle="No team packages yet"
-            emptyDescription="Buy team seats here, then assign them to the accounts that should receive membership access."
-            membershipPackages={teamPackages}
-            tiers={tiers}
-            accountNames={accountNames}
-            onAddSeats={(membershipPackage) =>
-              setPurchaseTarget(membershipPackage)
-            }
-            onAssignSeat={(membershipPackage) =>
-              setAssignmentTarget(membershipPackage)
-            }
-            onRevokeSeat={async (membershipPackage, assignment) => {
-              setError("");
-              try {
-                await runFreshAuthAction(async () => {
-                  await revokeSeatOrThrow({
-                    package_id: membershipPackage.id,
-                    assignment,
-                  });
-                  await handleChanged();
-                });
-              } catch (err) {
-                setError(`${err}`);
-              }
-            }}
-          />
+          <div>
+            <Button onClick={() => setPurchaseTarget(null)}>
+              <Icon name="shopping-cart" /> Add seats
+            </Button>
+          </div>
+          {teamSeatLines.length === 0 ? (
+            <Alert
+              showIcon
+              type="info"
+              title="No team seats configured yet"
+              description="Add seats to start assigning memberships."
+            />
+          ) : (
+            <Space vertical size="middle" style={{ width: "100%" }}>
+              {teamSeatLines.map((line) => {
+                const tierLabel = teamLicenseSeatLineLabel(line, tiers);
+                return (
+                  <TeamLicenseSeatCard
+                    key={line.id}
+                    accountNames={accountNames}
+                    line={line}
+                    onAssignSeat={(membershipPackage) =>
+                      setAssignmentTarget({
+                        membershipPackage,
+                        seatLabel: tierLabel,
+                      })
+                    }
+                    onRevokeSeat={async (membershipPackage, assignment) => {
+                      setError("");
+                      try {
+                        await runFreshAuthAction(async () => {
+                          await revokeSeatOrThrow({
+                            package_id: membershipPackage.id,
+                            assignment,
+                          });
+                          await handleChanged();
+                        });
+                      } catch (err) {
+                        setError(`${err}`);
+                      }
+                    }}
+                    tierLabel={tierLabel}
+                  />
+                );
+              })}
+            </Space>
+          )}
         </Space>
       )}
       <TeamPackagePurchaseModal
@@ -1464,7 +1475,8 @@ export function TeamPackageManager({
       />
       <AssignMembershipSeatModal
         open={assignmentTarget != null}
-        membershipPackage={assignmentTarget}
+        membershipPackage={assignmentTarget?.membershipPackage ?? null}
+        seatLabel={assignmentTarget?.seatLabel}
         onClose={() => setAssignmentTarget(null)}
         onAssigned={async () => {
           setAssignmentTarget(null);
@@ -3327,78 +3339,16 @@ function SiteLicenseManagersEditor({
   );
 }
 
-function PackageGroup({
-  title,
-  emptyTitle,
-  emptyDescription,
-  membershipPackages,
-  tiers,
-  accountNames,
-  onAddSeats,
-  onAssignSeat,
-  onRevokeSeat,
-}: {
-  title: string;
-  emptyTitle: string;
-  emptyDescription: string;
-  membershipPackages: MembershipPackageDetails[];
-  tiers: MembershipTierLike[];
-  accountNames: AccountNames;
-  onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
-  onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
-  onRevokeSeat: (
-    membershipPackage: MembershipPackageDetails,
-    assignment: MembershipPackageAssignment,
-  ) => Promise<void>;
-}) {
-  if (membershipPackages.length === 0) {
-    return (
-      <Alert
-        type="info"
-        showIcon
-        title={emptyTitle}
-        description={emptyDescription}
-      />
-    );
-  }
-  return (
-    <div>
-      <Title level={5} style={{ marginTop: 0 }}>
-        {title}
-      </Title>
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        {membershipPackages.map((membershipPackage) => (
-          <MembershipPackageCard
-            key={membershipPackage.id}
-            membershipPackage={membershipPackage}
-            tierLabel={
-              tiers.find(
-                (tier) => tier.id === membershipPackage.membership_class,
-              )?.label ?? capitalize(membershipPackage.membership_class)
-            }
-            accountNames={accountNames}
-            onAddSeats={onAddSeats}
-            onAssignSeat={onAssignSeat}
-            onRevokeSeat={onRevokeSeat}
-          />
-        ))}
-      </Space>
-    </div>
-  );
-}
-
-function MembershipPackageCard({
-  membershipPackage,
+function TeamLicenseSeatCard({
+  line,
   tierLabel,
   accountNames,
-  onAddSeats,
   onAssignSeat,
   onRevokeSeat,
 }: {
-  membershipPackage: MembershipPackageDetails;
+  line: TeamLicenseOverview["seat_lines"][number];
   tierLabel: string;
   accountNames: AccountNames;
-  onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
     membershipPackage: MembershipPackageDetails,
@@ -3406,136 +3356,138 @@ function MembershipPackageCard({
   ) => Promise<void>;
 }) {
   const [revokingAccountId, setRevokingAccountId] = useState<string>("");
+  const membershipPackage = line.package;
   const activeAssignments =
-    membershipPackage.assignments.filter(isActiveAssignment);
-  const domains = getPackageDomains(membershipPackage);
-  const interval =
-    `${membershipPackage.metadata?.interval ?? ""}` === "year"
-      ? "yearly"
-      : `${membershipPackage.metadata?.interval ?? ""}` === "month"
-        ? "monthly"
-        : undefined;
+    membershipPackage?.assignments.filter(isActiveAssignment) ?? [];
+  const assignedCount =
+    membershipPackage?.active_assignment_count ?? activeAssignments.length;
+  const availableCount =
+    membershipPackage?.available_seat_count ??
+    Math.max(0, line.seat_count - assignedCount);
 
   return (
     <Card
       size="small"
-      title={
-        <Space wrap>
-          <span>{getPackageKindLabel(membershipPackage.kind)}</span>
-          <Tag color="blue">{tierLabel}</Tag>
-          {interval ? <Tag>{interval}</Tag> : null}
-        </Space>
-      }
-      extra={
-        <Space wrap>
+      title={`${tierLabel} - ${assignedCount} of ${line.seat_count} seats assigned`}
+    >
+      <Space vertical size="middle" style={{ width: "100%" }}>
+        {activeAssignments.length === 0 ? (
+          <Text type="secondary">No seats assigned yet.</Text>
+        ) : (
+          <Space vertical size="small" style={{ width: "100%" }}>
+            {activeAssignments.map((assignment) => {
+              const displayName = getAccountDisplayName(
+                assignment,
+                accountNames,
+              );
+              const secondary = getAccountSecondaryLabel(
+                assignment,
+                accountNames,
+              );
+              const revocationKey =
+                assignment.account_id ?? assignment.email_address ?? "";
+              return (
+                <div
+                  key={assignment.id}
+                  style={{
+                    alignItems: "flex-start",
+                    display: "flex",
+                    gap: 12,
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Space vertical size={0}>
+                    <Text>{displayName}</Text>
+                    <Space wrap>
+                      {secondary ? (
+                        <Text type="secondary">{secondary}</Text>
+                      ) : null}
+                      {assignment.assigned_at ? (
+                        <Text type="secondary">
+                          Assigned <TimeAgo date={assignment.assigned_at} />
+                        </Text>
+                      ) : null}
+                    </Space>
+                  </Space>
+                  <Popconfirm
+                    title={`Revoke the ${tierLabel} seat for ${assignmentConfirmationName(
+                      assignment,
+                      accountNames,
+                    )}?`}
+                    okText="Revoke seat"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={async () => {
+                      if (!membershipPackage) return;
+                      setRevokingAccountId(revocationKey);
+                      try {
+                        await onRevokeSeat(membershipPackage, assignment);
+                      } finally {
+                        setRevokingAccountId("");
+                      }
+                    }}
+                  >
+                    <Button
+                      danger
+                      size="small"
+                      loading={revokingAccountId === revocationKey}
+                      disabled={!membershipPackage}
+                    >
+                      Revoke
+                    </Button>
+                  </Popconfirm>
+                </div>
+              );
+            })}
+          </Space>
+        )}
+        <div>
           <Button
             type="primary"
-            onClick={() => onAssignSeat(membershipPackage)}
-            disabled={membershipPackage.available_seat_count <= 0}
+            onClick={() => membershipPackage && onAssignSeat(membershipPackage)}
+            disabled={!membershipPackage || availableCount <= 0}
           >
             Assign seat
           </Button>
-          {membershipPackage.kind === "team" && onAddSeats ? (
-            <Button onClick={() => onAddSeats(membershipPackage)}>
-              Add seats
-            </Button>
-          ) : null}
-        </Space>
-      }
-    >
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Tag>{`${membershipPackage.seat_count} purchased`}</Tag>
-        <Tag color="green">{`${membershipPackage.active_assignment_count} assigned`}</Tag>
-        <Tag color="gold">{`${membershipPackage.available_seat_count} available`}</Tag>
+        </div>
       </Space>
-      <Descriptions size="small" column={1}>
-        {membershipPackage.starts_at ? (
-          <Descriptions.Item label="Starts">
-            <TimeAgo date={membershipPackage.starts_at} />
-          </Descriptions.Item>
-        ) : null}
-        {membershipPackage.expires_at ? (
-          <Descriptions.Item label="Expires">
-            <TimeAgo date={membershipPackage.expires_at} />
-          </Descriptions.Item>
-        ) : null}
-        {membershipPackage.kind === "team" &&
-        typeof membershipPackage.metadata?.seat_price === "number" ? (
-          <Descriptions.Item label="Seat price">
-            {currency(Number(membershipPackage.metadata?.seat_price))}
-          </Descriptions.Item>
-        ) : null}
-        {domains.length > 0 ? (
-          <Descriptions.Item label="Allowed domains">
-            <Space wrap>
-              {domains.map((domain) => (
-                <Tag key={domain}>{domain}</Tag>
-              ))}
-            </Space>
-          </Descriptions.Item>
-        ) : null}
-      </Descriptions>
-      <Divider style={{ margin: "12px 0" }} />
-      <Text strong>Assigned seats</Text>
-      {activeAssignments.length === 0 ? (
-        <div style={{ marginTop: 6 }}>
-          <Text type="secondary">No seats assigned yet.</Text>
-        </div>
-      ) : (
-        <div style={{ marginTop: 6 }}>
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            {activeAssignments.map((assignment) => (
-              <div
-                key={assignment.id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  alignItems: "flex-start",
-                }}
-              >
-                <Space orientation="vertical" size={0}>
-                  <Text>{getAccountDisplayName(assignment, accountNames)}</Text>
-                  <Space wrap>
-                    {getAccountSecondaryLabel(assignment, accountNames) ? (
-                      <Text type="secondary">
-                        {getAccountSecondaryLabel(assignment, accountNames)}
-                      </Text>
-                    ) : null}
-                    {assignment.assigned_at ? (
-                      <Text type="secondary">
-                        Assigned <TimeAgo date={assignment.assigned_at} />
-                      </Text>
-                    ) : null}
-                  </Space>
-                </Space>
-                <Button
-                  danger
-                  size="small"
-                  loading={
-                    revokingAccountId ===
-                    (assignment.account_id ?? assignment.email_address ?? "")
-                  }
-                  onClick={async () => {
-                    setRevokingAccountId(
-                      assignment.account_id ?? assignment.email_address ?? "",
-                    );
-                    try {
-                      await onRevokeSeat(membershipPackage, assignment);
-                    } finally {
-                      setRevokingAccountId("");
-                    }
-                  }}
-                >
-                  Revoke
-                </Button>
-              </div>
-            ))}
-          </Space>
-        </div>
-      )}
     </Card>
   );
+}
+
+function teamLicenseSeatLineLabel(
+  line: TeamLicenseOverview["seat_lines"][number],
+  tiers: MembershipTierLike[],
+): string {
+  return (
+    tiers.find((tier) => tier.id === line.membership_class)?.label ??
+    capitalize(line.membership_class)
+  );
+}
+
+function teamLicenseAnnualTotal(teamLicense: TeamLicenseOverview): number {
+  return moneyRound2Up(
+    teamLicense.seat_lines.reduce(
+      (sum, line) =>
+        sum.add(toDecimal(line.annual_price_per_seat).mul(line.seat_count)),
+      toDecimal(0),
+    ),
+  ).toNumber();
+}
+
+function assignmentConfirmationName(
+  assignment: MembershipPackageAssignment,
+  names: AccountNames,
+): string {
+  const displayName = getAccountDisplayName(assignment, names);
+  const secondary = getAccountSecondaryLabel(assignment, names);
+  if (
+    !secondary ||
+    secondary === displayName ||
+    secondary === "Reserved by email"
+  ) {
+    return displayName;
+  }
+  return `${displayName} (${secondary})`;
 }
 
 function ProvisionSiteLicenseModal({
@@ -4926,11 +4878,13 @@ function formatTeamLicenseRenewalDate(value?: Date | string): string {
 function AssignMembershipSeatModal({
   open,
   membershipPackage,
+  seatLabel,
   onClose,
   onAssigned,
 }: {
   open: boolean;
   membershipPackage: MembershipPackageDetails | null;
+  seatLabel?: string;
   onClose: () => void;
   onAssigned: () => Promise<void>;
 }) {
@@ -4941,6 +4895,11 @@ function AssignMembershipSeatModal({
   const [selectedTarget, setSelectedTarget] = useState<string>("");
   const [assigning, setAssigning] = useState<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const seatName =
+    seatLabel ??
+    (membershipPackage
+      ? getPackageKindLabel(membershipPackage.kind).toLowerCase()
+      : "membership");
   const activeAccountIds = useMemo(
     () =>
       new Set(
@@ -5056,16 +5015,14 @@ function AssignMembershipSeatModal({
       okText="Assign seat"
       okButtonProps={{ disabled: !selectedTarget, loading: assigning }}
       destroyOnHidden
-      title={`Assign ${membershipPackage ? getPackageKindLabel(membershipPackage.kind).toLowerCase() : "package"} seat`}
+      title={`Assign ${seatName} seat`}
     >
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         {membershipPackage ? (
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
             Search related existing accounts or enter an email address to
-            reserve a seat from the{" "}
-            {getPackageKindLabel(membershipPackage.kind).toLowerCase()}.
-            Reserved email seats appear as claimable memberships once that user
-            verifies the address on their account.
+            reserve a {seatName} seat. Reserved email seats appear as claimable
+            memberships once that user verifies the address on their account.
           </Paragraph>
         ) : null}
         {searchError ? (

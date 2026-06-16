@@ -16,11 +16,13 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
+import getBalance from "@cocalc/server/purchases/get-balance";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import createPaymentIntent from "./stripe/create-payment-intent";
 import send, { support, url } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { getUser } from "./statements/email-statement";
+import { useBalanceTowardTeamLicenses } from "./subscription-renewal-notice";
 import {
   applyTeamLicenseSeatConfiguration,
   getTeamLicenseOverviewForOwner,
@@ -135,6 +137,19 @@ export async function createTeamLicenseRenewalPayment({
   }
   let paymentIntentId = "";
   try {
+    if (
+      (await useBalanceTowardTeamLicenses(owner_account_id)) &&
+      toDecimal(await getBalance({ account_id: owner_account_id })).gte(
+        toDecimal(quote.total_price),
+      )
+    ) {
+      await processTeamLicenseRenewal({
+        account_id: owner_account_id,
+        amount: quote.total_price,
+        paymentIntent: { metadata: { team_license_id } },
+      });
+      return;
+    }
     const { payment_intent, hosted_invoice_url } = await createPaymentIntent({
       account_id: owner_account_id,
       purpose: TEAM_LICENSE_RENEWAL,

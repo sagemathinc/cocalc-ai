@@ -36,6 +36,7 @@ const assignMembershipPackageSeat = jest.fn();
 const revokeMembershipPackageSeat = jest.fn();
 const userSearch = jest.fn();
 const getNames = jest.fn();
+const setOtherSettings = jest.fn();
 const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
   await action();
   return true;
@@ -77,6 +78,11 @@ function expectTextNotVisible(text: string): void {
 }
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: {
+    getActions: () => ({
+      set_other_settings: setOtherSettings,
+    }),
+  },
   useTypedRedux: (_store: string, key: string) => {
     switch (key) {
       case "account_id":
@@ -87,6 +93,8 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
         return emailAddressVerified();
       case "is_admin":
         return isAdmin;
+      case "other_settings":
+        return { get: () => undefined };
       default:
         return accountId;
     }
@@ -372,11 +380,15 @@ describe("membership package managers", () => {
     runFreshAuthAction.mockClear();
     userSearch.mockResolvedValue([]);
     getNames.mockResolvedValue({
-      "user-1": { first_name: "Grace", last_name: "Hopper" },
+      "user-1": {
+        email_address: "grace@example.edu",
+        first_name: "Grace",
+        last_name: "Hopper",
+      },
     });
   });
 
-  it("renders team packages without loading site-license dashboards", async () => {
+  it("renders a purchased team license without loading site-license dashboards", async () => {
     getTeamLicense.mockResolvedValue(
       makeTeamLicenseOverview([
         makeTeamPackage({
@@ -393,13 +405,55 @@ describe("membership package managers", () => {
         }),
       ]),
     );
-    render(<TeamPackageManager tiers={TIERS} />);
+    const { container } = render(<TeamPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Team packages")).toBeTruthy();
+      expect(screen.getByText("Member - 1 of 5 seats assigned")).toBeTruthy();
       expect(screen.getByText("Grace Hopper")).toBeTruthy();
     });
+    expect(container.textContent).toContain(
+      "Renews on June 1, 2027, $50.00/year.",
+    );
+    expect(container.textContent).toContain("Use account balance for renewals");
+    expect(screen.queryByText("Team packages")).toBeNull();
     expect(listSiteLicenseOverviews).not.toHaveBeenCalled();
+  });
+
+  it("confirms before revoking a team seat", async () => {
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          active_assignment_count: 1,
+          available_seat_count: 4,
+          assignments: [
+            {
+              id: "assignment-1",
+              package_id: "team-1",
+              account_id: "user-1",
+              assigned_at: new Date("2026-05-01T00:00:00Z"),
+            },
+          ],
+        }),
+      ]),
+    );
+    revokeMembershipPackageSeat.mockResolvedValue({ revoked: true });
+
+    render(<TeamPackageManager tiers={TIERS} />);
+
+    await screen.findByText("Grace Hopper");
+    fireEvent.click(screen.getByText("Revoke"));
+
+    await screen.findByText(
+      "Revoke the Member seat for Grace Hopper (grace@example.edu)?",
+    );
+    fireEvent.click(screen.getByText("Revoke seat"));
+
+    await waitFor(() => {
+      expect(revokeMembershipPackageSeat).toHaveBeenCalledWith({
+        package_id: "team-1",
+        target_account_id: "user-1",
+      });
+    });
   });
 
   it("purchases a new team package", async () => {
