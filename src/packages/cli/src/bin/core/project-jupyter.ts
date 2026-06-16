@@ -1317,6 +1317,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     const store = await openJupyterLiveRunStore({
       client,
       project_id: project.project_id,
+      path: normalizedPath,
     });
     const startedAt = Date.now();
     let selectedRunId = `${runId ?? ""}`.trim() || null;

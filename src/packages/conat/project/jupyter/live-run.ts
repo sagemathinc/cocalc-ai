@@ -1,14 +1,10 @@
 import { projectSubject } from "@cocalc/conat/names";
 import type { DKV, DKVOptions } from "@cocalc/conat/sync/dkv";
 import { JUPYTER_SYNCDB_EXTENSIONS } from "@cocalc/util/jupyter/names";
+import { sha1 } from "@cocalc/util/misc";
 
 export const JUPYTER_LIVE_RUN_SERVICE = "jupyter-live-run";
-export const JUPYTER_LIVE_RUN_STORE = "jupyter-live-run-v1";
-
-const liveRunStoreCache = new Map<
-  string,
-  Promise<DKV<JupyterLiveRunSnapshot>>
->();
+export const JUPYTER_LIVE_RUN_STORE_PREFIX = "jupyter-live-run-v2";
 
 type LiveRunStoreClient = {
   dkv?: <T>(opts: DKVOptions) => Promise<DKV<T>>;
@@ -78,69 +74,32 @@ export function jupyterLiveRunKey(opts: {
   return `${canonicalJupyterLiveRunPath(opts.path)}\n${opts.run_id}`;
 }
 
+export function jupyterLiveRunStoreName(path: string): string {
+  return `${JUPYTER_LIVE_RUN_STORE_PREFIX}-${sha1(canonicalJupyterLiveRunPath(path))}`;
+}
+
 export async function openJupyterLiveRunStore(opts: {
   client: LiveRunStoreClient;
   project_id: string;
+  path: string;
 }): Promise<DKV<JupyterLiveRunSnapshot>> {
-  const cacheKey = opts.project_id;
-  let store = liveRunStoreCache.get(cacheKey);
-  if (store != null) {
-    try {
-      const existing = await store;
-      if (!(existing as any)?.isClosed?.()) {
-        return existing;
-      }
-    } catch {
-      // recreate below
-    }
-    liveRunStoreCache.delete(cacheKey);
-    store = undefined;
+  const openFrontend = opts.client.dkv;
+  const openCore = opts.client.sync?.dkv;
+  if (openFrontend == null && openCore == null) {
+    throw Error("client does not support dkv()");
   }
-  if (store == null) {
-    const openFrontend = opts.client.dkv;
-    const openCore = opts.client.sync?.dkv;
-    if (openFrontend == null && openCore == null) {
-      throw Error("client does not support dkv()");
-    }
-    store = (async () => {
-      const opened =
-        (await openFrontend?.<JupyterLiveRunSnapshot>({
-          project_id: opts.project_id,
-          name: JUPYTER_LIVE_RUN_STORE,
-          ephemeral: true,
-        })) ??
-        (await openCore!<JupyterLiveRunSnapshot>({
-          project_id: opts.project_id,
-          name: JUPYTER_LIVE_RUN_STORE,
-          ephemeral: true,
-        }));
-      const close = opened.close?.bind(opened);
-      if (close != null) {
-        opened.close = () => {
-          liveRunStoreCache.delete(cacheKey);
-          close();
-        };
-      }
-      return opened;
-    })();
-    liveRunStoreCache.set(cacheKey, store);
-  }
-  return await store;
-}
-
-export async function closeAllLiveRunStoresForTests(): Promise<void> {
-  if (!process.env.COCALC_TEST_MODE) {
-    return;
-  }
-  const stores = Array.from(liveRunStoreCache.values());
-  liveRunStoreCache.clear();
-  await Promise.all(
-    stores.map(async (store) => {
-      try {
-        (await store)?.close?.();
-      } catch {
-        // best-effort test cleanup only
-      }
-    }),
+  const canonicalPath = canonicalJupyterLiveRunPath(opts.path);
+  const dkvOptions = {
+    project_id: opts.project_id,
+    name: jupyterLiveRunStoreName(canonicalPath),
+    desc: {
+      service: JUPYTER_LIVE_RUN_SERVICE,
+      path: canonicalPath,
+    },
+    ephemeral: true,
+  };
+  return (
+    (await openFrontend?.<JupyterLiveRunSnapshot>(dkvOptions)) ??
+    (await openCore!<JupyterLiveRunSnapshot>(dkvOptions))
   );
 }
