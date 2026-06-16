@@ -438,6 +438,7 @@ test("software info prints component docs for humans", async () => {
 
   const output = logs.join("\n");
   assert.match(output, /# cocalc software info plus/);
+  assert.match(output, /CoCalc Plus - .*tools-minimal/);
   assert.match(output, /tools-minimal/);
   assert.match(output, /--tools-minimal/);
   assert.match(output, /cocalc-plus/);
@@ -470,6 +471,7 @@ test("software info emits agent-oriented json", async () => {
   assert.equal(payload.data.audience, "agent");
   assert.equal(payload.data.component.component, "plus");
   assert.equal(payload.data.component.target_kind, "release-channel");
+  assert.match(payload.data.component.description, /tools-minimal/);
   assert.deepEqual(payload.data.component.related_components, [
     "tools-minimal",
   ]);

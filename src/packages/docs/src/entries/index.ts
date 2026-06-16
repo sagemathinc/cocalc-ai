@@ -46,6 +46,7 @@ const DOCS_ENTRY_IDS = [
   "admin.site-settings",
   "admin.users",
   "admin.cocalc-cli",
+  "admin.cocalc-software",
   "admin.bay-ops",
   "admin.rootfs",
   "admin.project-backup-shards",
