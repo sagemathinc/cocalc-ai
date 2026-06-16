@@ -53,6 +53,7 @@ import {
 } from "@cocalc/frontend/rootfs/manifest";
 import {
   latestRootfsVersionEntries,
+  latestRootfsUpgradeEntry,
   rootfsThemeImageUrl,
   sectionLabel,
   sectionTagColor,
@@ -347,18 +348,10 @@ export default function RootFilesystemImage({
       .sort((a, b) => compareRootfsVersionEntries(a, b));
   }, [currentDisplayEntry, selectableRootfsImages]);
   const suggestedUpgradeEntry = useMemo(() => {
-    if (!currentDisplayEntry) return undefined;
-    const explicitUpgrade = relatedVersionEntries.find(
-      (entry) => entry.supersedes_image_id === currentDisplayEntry.id,
-    );
-    if (explicitUpgrade) return explicitUpgrade;
-    if (!currentDisplayEntry.version) return undefined;
-    const newerVersions = relatedVersionEntries.filter(
-      (entry) =>
-        !!entry.version &&
-        compareRootfsVersions(entry.version, currentDisplayEntry.version!) > 0,
-    );
-    return newerVersions[0];
+    return latestRootfsUpgradeEntry({
+      current: currentDisplayEntry,
+      images: relatedVersionEntries,
+    });
   }, [currentDisplayEntry, relatedVersionEntries]);
   const filteredPickerRootfsImages = useMemo(() => {
     const query = rootfsSearch.trim().toLowerCase();
