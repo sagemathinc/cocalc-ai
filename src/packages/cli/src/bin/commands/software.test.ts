@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -253,6 +254,13 @@ const r2Env = {
   COCALC_R2_BUCKET: "bucket",
   COCALC_R2_PUBLIC_BASE_URL: "https://software.example.test",
 };
+
+function arrayBufferForBuffer(buffer: Buffer): ArrayBuffer {
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
+}
 
 function createProgram(deps: SoftwareCommandDeps): Command {
   const program = new Command();
@@ -2053,6 +2061,97 @@ test("software smoke hub also runs Rocket host route health", async () => {
   ]);
 });
 
+test("software smoke cli validates public release channel artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-cli-channel-"));
+  const artifactId = "20260615T000000Z-abcdef12-cli";
+  const artifact = Buffer.from("#!/usr/bin/env bash\n");
+  const artifactSha256 = createHash("sha256").update(artifact).digest("hex");
+  const os = process.platform === "darwin" ? "darwin" : "linux";
+  const arch = process.arch === "arm64" ? "arm64" : "amd64";
+  const machine = process.arch === "arm64" ? "aarch64" : "x86_64";
+  const manifestUrl = `https://software.example.test/software/cocalc/candidate-${os}-${arch}.json`;
+  const artifactUrl = `https://software.example.test/software/artifacts/cli/20260615T000000Z-abcdef12-cli/files/cocalc-cli-20260615T000000Z-abcdef12-cli-${machine}-${os}`;
+  const versionRun: CapturedOutputRun = {
+    command: "",
+    args: [],
+    stdout: `${artifactId} (published 2026-06-15T00:00:00.000Z, git abcdef12)\n`,
+    stderr: "",
+  };
+  const outputRuns: CapturedOutputRun[] = [versionRun];
+  const fetched: string[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      outputRuns,
+      env: {
+        COCALC_SOFTWARE_PUBLIC_BASE_URL: "https://software.example.test",
+      },
+      fetch: async (input) => {
+        const url = `${input}`;
+        fetched.push(url);
+        if (url === manifestUrl) {
+          return {
+            ok: true,
+            status: 200,
+            arrayBuffer: async () =>
+              arrayBufferForBuffer(
+                Buffer.from(
+                  JSON.stringify({
+                    schema: "cocalc-software-release-channel-v1",
+                    product: "cocalc",
+                    component: "cli",
+                    channel: "candidate",
+                    artifact_id: artifactId,
+                    tag: "cli",
+                    created_at: "2026-06-15T00:00:00.000Z",
+                    published_at: "2026-06-15T00:00:00.000Z",
+                    git: {
+                      commit: "abcdef123456",
+                      short: "abcdef12",
+                      dirty: false,
+                    },
+                    os,
+                    arch,
+                    filename: `cocalc-cli-20260615T000000Z-abcdef12-cli-${machine}-${os}`,
+                    size_bytes: artifact.length,
+                    sha256: artifactSha256,
+                    url: artifactUrl,
+                    version: artifactId,
+                  }),
+                ),
+              ),
+          } as Response;
+        }
+        if (url === artifactUrl) {
+          return {
+            ok: true,
+            status: 200,
+            arrayBuffer: async () => arrayBufferForBuffer(artifact),
+          } as Response;
+        }
+        return {
+          ok: false,
+          status: 404,
+          arrayBuffer: async () => new ArrayBuffer(0),
+        } as Response;
+      },
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "smoke",
+    "cli",
+    "candidate",
+  ]);
+
+  assert.deepEqual(fetched, [manifestUrl, artifactUrl]);
+  assert.equal(versionRun.args[0], "--version");
+});
+
 test("software smoke project-host validates representative host status", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-smoke-project-host-"));
   const hostListRun: CapturedOutputRun = {
@@ -2218,7 +2317,7 @@ test("software smoke rejects components that are not wired yet", async () => {
         "cli",
         "staging",
       ]),
-    /software smoke cli is not implemented yet/,
+    /unsupported software release channel 'staging'/,
   );
 });
 

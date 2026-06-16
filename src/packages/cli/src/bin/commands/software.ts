@@ -1,6 +1,15 @@
+import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readdir, rm, mkdtemp } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readdir,
+  rm,
+  mkdtemp,
+  writeFile,
+} from "node:fs/promises";
 import { hostname } from "node:os";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -737,6 +746,352 @@ async function smokeHostSoftwareChecks({
     ),
   );
   return checks;
+}
+
+function releaseSmokeTargetForComponent(component: SoftwareDeployComponent):
+  | {
+      artifactComponent: "cli" | "launchpad" | "plus";
+      binaryName: "cocalc" | "cocalc-launchpad" | "cocalc-plus";
+    }
+  | undefined {
+  if (component === "cli") {
+    return { artifactComponent: "cli", binaryName: "cocalc" };
+  }
+  if (component === "launchpad") {
+    return { artifactComponent: "launchpad", binaryName: "cocalc-launchpad" };
+  }
+  if (component === "plus") {
+    return { artifactComponent: "plus", binaryName: "cocalc-plus" };
+  }
+  return undefined;
+}
+
+function softwarePublicBaseUrl(deps: SoftwareCommandDeps): string {
+  const env = deps.env ?? process.env;
+  return `${
+    env.COCALC_SOFTWARE_PUBLIC_BASE_URL ||
+    env.COCALC_R2_PUBLIC_BASE_URL ||
+    "https://software.cocalc.ai"
+  }`.replace(/\/+$/, "");
+}
+
+function currentReleasePlatform(): {
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+} {
+  const os = process.platform;
+  if (os !== "linux" && os !== "darwin") {
+    throw new Error(`unsupported release smoke OS: ${os}`);
+  }
+  const arch =
+    process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : "";
+  if (arch !== "amd64" && arch !== "arm64") {
+    throw new Error(`unsupported release smoke architecture: ${process.arch}`);
+  }
+  return { os, arch };
+}
+
+function sha256Buffer(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+async function fetchSmokeBuffer({
+  url,
+  timeoutMs,
+  deps,
+}: {
+  url: string;
+  timeoutMs: number;
+  deps: SoftwareCommandDeps;
+}): Promise<Buffer> {
+  const smokeFetch = deps.fetch ?? globalThis.fetch;
+  if (!smokeFetch) {
+    throw new Error("software smoke requires fetch support");
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await smokeFetch(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`GET ${url} returned HTTP ${response.status}`);
+    }
+    return Buffer.from(await response.arrayBuffer());
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchSmokeJson({
+  url,
+  timeoutMs,
+  deps,
+}: {
+  url: string;
+  timeoutMs: number;
+  deps: SoftwareCommandDeps;
+}): Promise<any> {
+  const body = await fetchSmokeBuffer({ url, timeoutMs, deps });
+  try {
+    return JSON.parse(body.toString("utf8"));
+  } catch {
+    throw new Error(`GET ${url} returned invalid JSON`);
+  }
+}
+
+function validateReleaseChannelManifest({
+  manifest,
+  component,
+  channel,
+  platform,
+}: {
+  manifest: any;
+  component: "cli" | "launchpad" | "plus";
+  channel: string;
+  platform: { os: "linux" | "darwin"; arch: "amd64" | "arm64" };
+}): void {
+  if (manifest?.schema !== "cocalc-software-release-channel-v1") {
+    throw new Error("invalid release channel manifest schema");
+  }
+  if (manifest.component !== component) {
+    throw new Error(
+      `release channel manifest component mismatch: ${manifest.component}`,
+    );
+  }
+  if (manifest.channel !== channel) {
+    throw new Error(
+      `release channel manifest channel mismatch: ${manifest.channel}`,
+    );
+  }
+  if (manifest.os !== platform.os || manifest.arch !== platform.arch) {
+    throw new Error(
+      `release channel manifest platform mismatch: ${manifest.os}/${manifest.arch}`,
+    );
+  }
+  if (!manifest.url || !manifest.sha256 || !manifest.artifact_id) {
+    throw new Error(
+      "release channel manifest missing url, sha256, or artifact_id",
+    );
+  }
+}
+
+async function materializeReleaseExecutable({
+  component,
+  binaryName,
+  artifactPath,
+  artifactUrl,
+  workDir,
+  deps,
+}: {
+  component: "cli" | "launchpad" | "plus";
+  binaryName: string;
+  artifactPath: string;
+  artifactUrl: string;
+  workDir: string;
+  deps: SoftwareCommandDeps;
+}): Promise<string> {
+  if (component === "launchpad" || artifactUrl.endsWith(".tar.xz")) {
+    const extractDir = join(workDir, "extract");
+    await mkdir(extractDir, { recursive: true });
+    const runCommandOutput = deps.runCommandOutput ?? defaultRunCommandOutput;
+    const result = await runCommandOutput("tar", [
+      "-C",
+      extractDir,
+      "-Jxf",
+      artifactPath,
+    ]);
+    if (result.code !== 0) {
+      throw new Error(
+        `tar extraction failed with exit status ${result.code}: ${
+          result.stderr.trim() || result.stdout.trim() || "no output"
+        }`,
+      );
+    }
+    const executable = await findExecutableByName(extractDir, binaryName);
+    if (!executable) {
+      throw new Error(`artifact did not contain executable ${binaryName}`);
+    }
+    return executable;
+  }
+  const executablePath = join(workDir, binaryName);
+  if (artifactUrl.endsWith(".xz")) {
+    const result = spawnSync("xz", ["-dc", artifactPath], {
+      encoding: "buffer",
+      maxBuffer: 1024 * 1024 * 512,
+    });
+    if (result.status !== 0) {
+      throw new Error(
+        `xz decompression failed with exit status ${result.status}: ${
+          result.stderr?.toString("utf8").trim() || "no output"
+        }`,
+      );
+    }
+    await writeFile(executablePath, result.stdout);
+  } else {
+    await copyFile(artifactPath, executablePath);
+  }
+  await chmod(executablePath, 0o755);
+  return executablePath;
+}
+
+async function findExecutableByName(
+  dir: string,
+  name: string,
+): Promise<string | undefined> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = await findExecutableByName(path, name);
+      if (found) return found;
+      continue;
+    }
+    if (entry.isFile() && entry.name === name) {
+      await chmod(path, 0o755);
+      return path;
+    }
+  }
+  return undefined;
+}
+
+async function smokeReleaseChannelChecks({
+  component,
+  channel,
+  timeoutMs,
+  deps,
+}: {
+  component: SoftwareDeployComponent;
+  channel: string;
+  timeoutMs: number;
+  deps: SoftwareCommandDeps;
+}): Promise<SoftwareSmokeCheck[]> {
+  const target = releaseSmokeTargetForComponent(component);
+  if (!target) return [];
+  const releaseChannel = validateSoftwareReleaseChannel(channel);
+  const platform = currentReleasePlatform();
+  const baseUrl = softwarePublicBaseUrl(deps);
+  const product = releaseProductForArtifactComponent(target.artifactComponent);
+  const manifestUrl = `${baseUrl}/software/${product}/${releaseChannel}-${platform.os}-${platform.arch}.json`;
+  let manifest: any;
+  let artifactPath = "";
+  let workDir = "";
+  const checks: SoftwareSmokeCheck[] = [];
+
+  checks.push(
+    await runTimedSmokeCheck(
+      "release channel manifest",
+      async () => {
+        manifest = await fetchSmokeJson({ url: manifestUrl, timeoutMs, deps });
+        validateReleaseChannelManifest({
+          manifest,
+          component: target.artifactComponent,
+          channel: releaseChannel,
+          platform,
+        });
+        return `${manifest.artifact_id} ${manifest.url}`;
+      },
+      deps,
+    ),
+  );
+  if (!manifest) return checks;
+
+  checks.push(
+    await runTimedSmokeCheck(
+      "download artifact",
+      async () => {
+        workDir = await mkdtemp(join(tmpdir(), "cocalc-software-smoke-"));
+        artifactPath = join(workDir, manifest.filename || "artifact");
+        const body = await fetchSmokeBuffer({
+          url: manifest.url,
+          timeoutMs,
+          deps,
+        });
+        const sha256 = sha256Buffer(body);
+        if (sha256 !== manifest.sha256) {
+          throw new Error(
+            `artifact sha256 mismatch: expected ${manifest.sha256}, got ${sha256}`,
+          );
+        }
+        await writeFile(artifactPath, body);
+        return `${humanSize(body.length)} sha256:${sha256}`;
+      },
+      deps,
+    ),
+  );
+  if (!artifactPath || !workDir) return checks;
+
+  checks.push(
+    await runTimedSmokeCheck(
+      "run version",
+      async () => {
+        try {
+          const executable = await materializeReleaseExecutable({
+            component: target.artifactComponent,
+            binaryName: target.binaryName,
+            artifactPath,
+            artifactUrl: manifest.url,
+            workDir,
+            deps,
+          });
+          const runCommandOutput =
+            deps.runCommandOutput ?? defaultRunCommandOutput;
+          const result = await runCommandOutput(executable, ["--version"], {
+            env: {
+              ...(deps.env ?? process.env),
+              ...releaseSmokeVersionEnv({
+                component: target.artifactComponent,
+                manifest,
+              }),
+            },
+          });
+          if (result.code !== 0) {
+            throw new Error(
+              `${target.binaryName} --version failed with exit status ${result.code}: ${
+                result.stderr.trim() || result.stdout.trim() || "no output"
+              }`,
+            );
+          }
+          const output = result.stdout.trim();
+          if (!output.includes(manifest.artifact_id)) {
+            throw new Error(
+              `${target.binaryName} --version did not include artifact id ${manifest.artifact_id}: ${output}`,
+            );
+          }
+          return output;
+        } finally {
+          if (workDir) {
+            await rm(workDir, { recursive: true, force: true });
+          }
+        }
+      },
+      deps,
+    ),
+  );
+  return checks;
+}
+
+function releaseSmokeVersionEnv({
+  component,
+  manifest,
+}: {
+  component: "cli" | "launchpad" | "plus";
+  manifest: any;
+}): Record<string, string> {
+  const prefix =
+    component === "cli"
+      ? "COCALC_CLI"
+      : component === "launchpad"
+        ? "COCALC_LAUNCHPAD"
+        : "COCALC_PLUS";
+  return {
+    [`${prefix}_VERSION`]: `${manifest.version ?? manifest.artifact_id}`,
+    [`${prefix}_ARTIFACT_ID`]: `${manifest.artifact_id}`,
+    [`${prefix}_PUBLISHED_AT`]: `${manifest.published_at ?? ""}`,
+    [`${prefix}_GIT_COMMIT`]: `${manifest.git?.commit ?? ""}`,
+    [`${prefix}_GIT_SHORT`]: `${manifest.git?.short ?? ""}`,
+  };
 }
 
 function deploymentStatusForDisplay(
@@ -2279,16 +2634,39 @@ Supported deploy/smoke components:
           throw new Error("software smoke requires <profile-or-channel>");
         }
         const hostSmokeArtifact = hostArtifactForSmoke(component);
+        const releaseSmokeTarget = releaseSmokeTargetForComponent(component);
         if (
           !["static", "hub", "bay"].includes(component) &&
-          !hostSmokeArtifact
+          !hostSmokeArtifact &&
+          !releaseSmokeTarget
         ) {
           throw new Error(
-            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools`,
+            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools, cli, launchpad, plus`,
           );
         }
         const startedAt = deps.now?.() ?? new Date();
         const timeoutMs = parseTimeoutMs(opts.timeout);
+        if (releaseSmokeTarget) {
+          const checks = await smokeReleaseChannelChecks({
+            component,
+            channel: targetName,
+            timeoutMs,
+            deps,
+          });
+          assertSmokeChecks(checks);
+          emitSuccess(
+            { globals: command.optsWithGlobals() as any },
+            "software smoke",
+            {
+              component,
+              channel: targetName,
+              public_base_url: softwarePublicBaseUrl(deps),
+              duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+              checks,
+            },
+          );
+          return;
+        }
         const target = resolveDeploySite({
           profile: targetName,
           opts,

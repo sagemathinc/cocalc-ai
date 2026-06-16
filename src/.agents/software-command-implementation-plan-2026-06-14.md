@@ -1006,6 +1006,10 @@ Implemented:
   `tools`. These select a running host, validate `host deploy status` observed
   artifact/component state, and run a routed `host rootfs` RPC against that
   host.
+- Release-channel `smoke` slice for `cli`, `launchpad`, and `plus`. These
+  fetch the public channel manifest for the current OS/architecture, download
+  the referenced artifact, verify sha256, materialize the temporary executable,
+  and run `--version` with release metadata injected.
 - `latest` as a reserved selector that resolves to the newest local or remote
   artifact for a component.
 - Human-readable build/deploy durations and artifact sizes.
@@ -1015,8 +1019,7 @@ Implemented:
 Still not implemented:
 
 - Deeper throwaway project lifecycle `smoke` coverage for `project-host`,
-  `project`, and `tools`, plus smoke coverage for `cli`, `launchpad`, `plus`,
-  and `star`.
+  `project`, and `tools`, plus smoke coverage for `star`.
 - `deploy`/promote for `star`.
 - Product/documentation updates for the new CLI channel model, including a
   dedicated `/products/cocalc-cli` page and channel notes on public installer
