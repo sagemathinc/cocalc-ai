@@ -383,13 +383,16 @@ test("software help lists supported components", () => {
   );
   assert.ok(software);
   const build = software.commands.find((command) => command.name() === "build");
+  const info = software.commands.find((command) => command.name() === "info");
   const list = software.commands.find((command) => command.name() === "list");
   const deploy = software.commands.find(
     (command) => command.name() === "deploy",
   );
   assert.ok(build);
+  assert.ok(info);
   assert.ok(list);
   assert.ok(deploy);
+  assert.match(info.helpInformation(), /tools-minimal/);
   assert.match(build.helpInformation(), /static\|hub\|bay\|project-host/);
   assert.match(list.helpInformation(), /cli\|launchpad\|plus\|star/);
   assert.match(deploy.helpInformation(), /bay-conat-router/);
@@ -398,6 +401,79 @@ test("software help lists supported components", () => {
     /site profile \(see cocalc auth list\) or release\s+channel \(dev, candidate or stable\)/,
   );
   assert.doesNotMatch(deploy.helpInformation(), /hub-conat-router/);
+});
+
+test("software info prints an overview for humans", async () => {
+  const program = createProgram(makeDeps({ localStore: "/tmp/software-info" }));
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync(["node", "test", "software", "info"]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const output = logs.join("\n");
+  assert.match(output, /# cocalc software info/);
+  assert.match(output, /Build\/list\/push components:/);
+  assert.match(output, /tools-minimal/);
+  assert.match(output, /rollback/);
+});
+
+test("software info prints component docs for humans", async () => {
+  const program = createProgram(makeDeps({ localStore: "/tmp/software-info" }));
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync(["node", "test", "software", "info", "plus"]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const output = logs.join("\n");
+  assert.match(output, /# cocalc software info plus/);
+  assert.match(output, /tools-minimal/);
+  assert.match(output, /--tools-minimal/);
+  assert.match(output, /cocalc-plus/);
+});
+
+test("software info emits agent-oriented json", async () => {
+  const program = createProgram(makeDeps({ localStore: "/tmp/software-info" }));
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "info",
+      "plus",
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.command, "software info");
+  assert.equal(payload.data.schema, "cocalc-software-info-v1");
+  assert.equal(payload.data.audience, "agent");
+  assert.equal(payload.data.component.component, "plus");
+  assert.equal(payload.data.component.target_kind, "release-channel");
+  assert.deepEqual(payload.data.component.related_components, [
+    "tools-minimal",
+  ]);
+  assert.match(payload.data.component.agent_notes.join("\n"), /tools-minimal/);
 });
 
 test("software build records an existing file with a generated tag", async () => {
