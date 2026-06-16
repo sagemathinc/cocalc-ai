@@ -182,7 +182,7 @@ describe("PublicFeaturesApp", () => {
   ] as const;
 
   it("renders the features index", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={{ site_name: "Launchpad" }}
         initialRoute={{ view: "index" }}
@@ -194,7 +194,10 @@ describe("PublicFeaturesApp", () => {
         name: "Choose the workflow your team needs",
       }),
     ).not.toBeNull();
-    expect(screen.getByText(/^Use this index to find/)).not.toBeNull();
+    expect(screen.getByText(/^Use this index to choose/)).not.toBeNull();
+    expect(
+      screen.queryByText(/Start with Codex in CoCalc/i),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/Launchpad features make/)).toBeNull();
     const startingPoints = screen.getByRole("region", {
       name: "CoCalc feature starting points",
@@ -207,6 +210,15 @@ describe("PublicFeaturesApp", () => {
         .map((link) => link.getAttribute("href"))
         .includes("/features/terminal"),
     ).toBe(true);
+    expect(
+      Array.from(within(startingPoints).getAllByRole("link")).map((link) =>
+        link.getAttribute("href"),
+      ),
+    ).toEqual([
+      "/features/ai",
+      "/features/jupyter-notebook",
+      "/features/terminal",
+    ]);
     expect(
       within(startingPoints)
         .getByRole("link", { name: /AI agents in CoCalc/i })
@@ -232,6 +244,16 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Runtime and hosted compute")).not.toBeNull();
     expect(screen.getByText("Languages and math")).not.toBeNull();
     expect(screen.getByText("Teaching and workshops")).not.toBeNull();
+    const indexText = container.textContent ?? "";
+    expect(indexText.indexOf("AI workflows and integration")).toBeLessThan(
+      indexText.indexOf("Notebook, writing, and visual work"),
+    );
+    expect(indexText.indexOf("Teaching and workshops")).toBeGreaterThan(
+      indexText.indexOf("Notebook, writing, and visual work"),
+    );
+    expect(indexText.indexOf("Teaching and workshops")).toBeLessThan(
+      indexText.indexOf("Runtime and hosted compute"),
+    );
     expect(screen.queryByText("AI and integration")).toBeNull();
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);

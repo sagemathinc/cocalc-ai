@@ -161,6 +161,19 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Rename the public runtime group to `Runtime and hosted compute` and the project-host card to `Dedicated compute hosts` so `Project Host` remains a linked technical detail rather than a general-market product label.
 - [ ] Future: if the language/math group still feels long on mobile, evaluate a compact two-column mobile card treatment or a language-specific disclosure only after confirming it does not hide high-intent language routes.
 
+## Feature First-Click Discovery Pass
+
+- [x] Audit `/features` plus `/features/ai`, `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`, and `/features/teaching` as one first-click workflow journey.
+- [x] Reduce top-of-page repetition between the starter panel and grouped directory without demoting AI from the first visible decision.
+- [x] Verify that each first-click destination reinforces the route promise from the feature index and keeps its own next-step ending.
+- [x] Keep teaching visible for courses, labs, and workshops, but secondary to the AI-native technical workspace and not framed as a product path.
+- [x] Keep project-host language bounded to dedicated hosted compute and technical docs rather than a standalone public product.
+- [x] Update focused tests for first-click route discipline, AI-first hierarchy, teaching hierarchy, and compute-host framing before rebuilding the preview.
+- [x] Finding: the starter panel and first AI group both used "start" language; keep the starter panel as the first decision and make the AI group read like a directory category.
+- [x] Finding: the feature-index hero listed too many artifact types for a page that should route visitors quickly; shift the copy toward workflow questions and route-owned next steps.
+- [x] Finding: teaching should not be a top starter, but placing it after every runtime and language route makes it feel like a footer orphan; move it after the core workflow group while keeping the styling secondary.
+- [x] Browser QA: validate `/features` plus the five first-click routes on desktop, tablet, and mobile for expected route text, section order, and horizontal overflow.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

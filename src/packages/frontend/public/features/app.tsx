@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 
 import { Button, Col, Empty, Flex, Row, Typography } from "antd";
 
@@ -88,7 +88,7 @@ const FEATURE_GROUPS = [
   {
     accent: COLORS.AI_ASSISTANT_FONT,
     description:
-      "Start with Codex in CoCalc, then use API or CLI routes when project workflows need automation.",
+      "Use Codex inside CoCalc projects, or use API and CLI routes when workflows need automation around CoCalc.",
     icon: "robot",
     slugs: ["ai", "api", "cli"],
     title: "AI workflows and integration",
@@ -677,11 +677,10 @@ function FeaturesIndex() {
                 maxWidth: 600,
               }}
             >
-              Use this index to find the part of CoCalc that matches the work in
-              front of you: AI-assisted project work, notebooks, documents,
-              runtime environments, language stacks, teaching workflows, or
-              platform integration. Each page explains when it fits and what to
-              do next.
+              Use this index to choose the route that matches the decision in
+              front of you: AI-assisted work, notebooks, runtime environments,
+              language stacks, teaching workflows, or platform integration. Each
+              page gives a workflow example and a route-specific next step.
             </Paragraph>
           </div>
         </Flex>
@@ -770,9 +769,13 @@ function FeaturesIndex() {
       </section>
 
       {FEATURE_GROUPS.map((group) => (
-        <FeatureGroupSection group={group} key={group.title} pages={pages} />
+        <Fragment key={group.title}>
+          <FeatureGroupSection group={group} pages={pages} />
+          {group.title === "Notebook, writing, and visual work" ? (
+            <TeachingWorkflowCallout />
+          ) : null}
+        </Fragment>
       ))}
-      <TeachingWorkflowCallout />
     </>
   );
 }

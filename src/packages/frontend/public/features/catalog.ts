@@ -74,7 +74,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
       {
         title: "Codex near the work",
         paragraphs: [
-          "CoCalc-AI keeps Codex work in durable threads beside the files and collaborators involved in the project. Human @mentions notify collaborators; they do not invoke models.",
+          "CoCalc keeps Codex work in durable threads beside the files and collaborators involved in the project. Human @mentions notify collaborators; they do not invoke models.",
         ],
         bullets: [
           "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
