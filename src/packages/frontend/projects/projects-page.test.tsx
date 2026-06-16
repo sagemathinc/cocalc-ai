@@ -42,12 +42,22 @@ jest.mock("antd", () => {
   };
 });
 
-jest.mock("react-intl", () => ({
-  useIntl: () => ({
-    formatMessage: (message: any) =>
-      message?.defaultMessage ?? message?.id ?? "",
-  }),
-}));
+jest.mock("react-intl", () => {
+  const formatMessage = (message: any, values?: Record<string, any>) => {
+    let text = message?.defaultMessage ?? message?.id ?? "";
+    for (const [key, value] of Object.entries(values ?? {})) {
+      text = text.replaceAll(`{${key}}`, String(value));
+    }
+    return text;
+  };
+  return {
+    createIntl: () => ({ formatMessage }),
+    createIntlCache: () => ({}),
+    defineMessage: (message: any) => message,
+    defineMessages: (messages: any) => messages,
+    useIntl: () => ({ formatMessage }),
+  };
+});
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const React = require("react");
@@ -168,6 +178,11 @@ jest.mock("@cocalc/frontend/app/verify-email-banner", () => ({
   ),
 }));
 
+jest.mock("@cocalc/frontend/rootfs/manifest", () => ({
+  managedRootfsCatalogUrl: () => "/rootfs/catalog.json",
+  useRootfsImages: () => ({ images: [], loading: false }),
+}));
+
 jest.mock("./filename-search", () => ({
   FilenameSearch: () => <input aria-label="Filename search" />,
 }));
@@ -177,6 +192,11 @@ jest.mock("./project-delete-queue", () => ({
   useProjectDeleteQueue: () => ({
     scheduledDeleteProjectIds: mockScheduledDeleteProjectIds,
   }),
+}));
+
+jest.mock("./project-rootfs-badge", () => ({
+  projectRootfsEntryLabel: ({ entry, image }: any) =>
+    entry?.label ?? entry?.id ?? image ?? "",
 }));
 
 beforeEach(() => {
