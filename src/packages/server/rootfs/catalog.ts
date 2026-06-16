@@ -661,6 +661,16 @@ function addRootfsCatalogFilters({
   if (filters.channel) {
     where.push(`r.channel = ${addValue(filters.channel)}`);
   }
+  const imageIds = Array.from(
+    new Set(
+      (filters.image_ids ?? [])
+        .map((id) => `${id ?? ""}`.trim())
+        .filter(Boolean),
+    ),
+  );
+  if (imageIds.length > 0) {
+    where.push(`r.image_id = ANY(${addValue(imageIds)}::TEXT[])`);
+  }
 }
 
 async function queryRootfsCatalogRows(
@@ -1010,6 +1020,43 @@ export async function listVisibleRootfsImagesPage(
       nextOffset < result.total
         ? encodeRootfsCatalogCursor(nextOffset)
         : undefined,
+  };
+}
+
+export async function listVisibleRootfsImagesById(
+  account_id: string | undefined,
+  image_ids: string[],
+): Promise<RootfsImageManifest> {
+  const ids = Array.from(
+    new Set(image_ids.map((id) => `${id ?? ""}`.trim()).filter(Boolean)),
+  );
+  if (ids.length === 0) {
+    return {
+      version: ROOTFS_IMAGE_MANIFEST_VERSION,
+      generated_at: new Date().toISOString(),
+      source: DEFAULT_ROOTFS_CATALOG_URL,
+      images: [],
+    };
+  }
+  await ensureBuiltinRootfsImages();
+  await syncOfficialRootfsCatalogFromSeed();
+  const [collaboratorIds, admin] = await Promise.all([
+    collaboratorIdsFor(account_id),
+    account_id ? isAdmin(account_id) : Promise.resolve(false),
+  ]);
+  const result = await queryRootfsCatalogRows({
+    all: true,
+    filters: { image_ids: ids },
+    visibleFor: { account_id, collaboratorIds },
+  });
+  const images = result.rows
+    .map((row) => rowToEntry({ row, account_id, collaboratorIds, admin }))
+    .filter((entry): entry is RootfsImageEntry => !!entry);
+  return {
+    version: ROOTFS_IMAGE_MANIFEST_VERSION,
+    generated_at: new Date().toISOString(),
+    source: DEFAULT_ROOTFS_CATALOG_URL,
+    images,
   };
 }
 
