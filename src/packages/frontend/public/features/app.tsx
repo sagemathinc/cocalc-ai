@@ -94,20 +94,28 @@ const FEATURE_GROUPS = [
     title: "Notebook, writing, and visual work",
   },
   {
+    accent: COLORS.RUN,
+    description:
+      "Find course workflows for assignments, grading, shared environments, and student support.",
+    icon: "graduation-cap",
+    slugs: ["teaching"],
+    title: "Courses and labs",
+  },
+  {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     description:
-      "Find the language, terminal, or Linux environment that supports the work.",
+      "Find shell, Linux, and dedicated-host pages for code that needs a real runtime.",
     icon: "terminal",
-    slugs: [
-      "terminal",
-      "linux",
-      "python",
-      "r-statistical-software",
-      "julia",
-      "sage",
-      "octave",
-    ],
-    title: "Compute and languages",
+    slugs: ["terminal", "linux", "project-hosts"],
+    title: "Runtime and project hosts",
+  },
+  {
+    accent: COLORS.RUN,
+    description:
+      "Find language and math software pages for notebooks, scripts, teaching, and research.",
+    icon: "python",
+    slugs: ["python", "r-statistical-software", "julia", "sage", "octave"],
+    title: "Languages and math",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
@@ -136,6 +144,7 @@ const FEATURE_META = {
   },
   octave: { accent: COLORS.FG_RED, icon: "octave" },
   python: { accent: COLORS.BLUE_D, icon: "python" },
+  "project-hosts": { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "server" },
   "r-statistical-software": {
     accent: COLORS.BLUE_DD,
     icon: "r",
@@ -157,6 +166,13 @@ const TECHNICAL_SURFACE_CARDS = {
     summary:
       "Use the CoCalc CLI for technical automation, browser scripting, and operational workflows that need a command-line surface.",
     title: "CoCalc CLI",
+  },
+  "project-hosts": {
+    href: appPath("docs/hosts/project-hosts"),
+    slug: "project-hosts",
+    summary:
+      "Run projects on dedicated or cloud-backed compute when a group needs isolated capacity.",
+    title: "Dedicated project hosts",
   },
 } satisfies Record<
   string,

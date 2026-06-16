@@ -138,11 +138,18 @@ recommendations are evaluated, completed, or deliberately deferred.
 
 ## Feature Mobile Decision-Speed Pass
 
+- [x] Active: restore `Courses and labs` as a visible lower workflow group without returning it to the cramped footer-adjacent position.
+- [x] Active: finish the `Compute and languages` split into clearer visible groups and verify the split improves scan speed without adding visual clutter.
+- [x] Active: decide whether `Dedicated project hosts` belongs as a compute/runtime discovery card and keep the wording bounded to the source-supported customer-facing surface.
+- [x] Active: rerun focused tests, browser QA, rebuild `blaec.cocalc.ai`, and commit only after the feature-index IA decision is settled.
 - [x] Re-audit `/features` and language/tool feature pages as a connected mobile discovery path.
 - [x] Keep language/tool cards visible for now because each card is a direct destination and hiding them behind a collapsed control would reduce information scent for visitors looking for a specific language, terminal, or Linux environment.
 - [x] Do not introduce a mobile-only disclosure pattern during this pass; external UX guidance supports accordions for dense mobile content, but they add interaction cost and are strongest when the collapsed headings provide a useful mini-IA.
-- [x] Remove the duplicated bottom `Courses and labs` feature-index group because teaching is already one of the four top starting points and the single-card section made the page ending feel cramped without adding new decision value.
-- [ ] Future: if the compute/language group still feels long on mobile, evaluate a split into "Terminal and Linux" plus "Languages and math" before using disclosure.
+- [x] Keep `Courses and labs` first-class on the feature index, but avoid leaving it as a footer-adjacent orphan section; it should appear as a visible workflow group before the runtime/language/AI sections and also remain a top starting point.
+- [x] Split the long `Compute and languages` section into `Runtime and project hosts` and `Languages and math` because the original group mixed environment/capacity decisions with language-stack decisions.
+- [x] Keep the split visible rather than using a disclosure so mobile visitors can still scan directly to Python, R, Julia, SageMath, Octave, Terminal, or Linux without opening an extra control.
+- [x] Add a conservative `Dedicated project hosts` route to the runtime group because source and docs support customer-facing dedicated hosted capacity; do not frame self-hosted project hosts as a general public feature while the code keeps self-host providers admin/alpha-gated.
+- [ ] Future: if the language/math group still feels long on mobile, evaluate a compact two-column mobile card treatment or a language-specific disclosure only after confirming it does not hide high-intent language routes.
 
 ## Agent Workspace And Public-Site Artifact Standards
 

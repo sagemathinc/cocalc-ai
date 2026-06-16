@@ -221,7 +221,7 @@ describe("PublicFeaturesApp", () => {
     ).toBe("/features/teaching");
     expect(
       screen.getAllByRole("link", { name: /Courses and labs/i }),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(
       within(startingPoints).queryByRole("link", { name: /Compare CoCalc/i }),
     ).toBeNull();
@@ -232,9 +232,10 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Notebook, writing, and visual work"),
     ).not.toBeNull();
-    expect(screen.getByText("Compute and languages")).not.toBeNull();
+    expect(screen.getByText("Runtime and project hosts")).not.toBeNull();
+    expect(screen.getByText("Languages and math")).not.toBeNull();
     expect(screen.getByText("AI and integration")).not.toBeNull();
-    expect(screen.getByText("Courses and labs")).not.toBeNull();
+    expect(screen.getAllByText("Courses and labs")).toHaveLength(2);
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);
     expect(screen.queryByText(/transparent JSONL format/i)).toBeNull();
@@ -243,12 +244,18 @@ describe("PublicFeaturesApp", () => {
     ).toBeNull();
     expect(screen.queryByText(/^Documents$/)).toBeNull();
     expect(screen.queryByText(/^Compute$/)).toBeNull();
+    expect(screen.queryByText(/^Compute and languages$/)).toBeNull();
     expect(screen.queryByText(/^AI and automation$/)).toBeNull();
     expect(screen.queryByText("Open page")).toBeNull();
     expect(screen.queryByRole("link", { name: /Compare CoCalc/i })).toBeNull();
     expect(
       screen.getByRole("link", { name: /CoCalc CLI/i }).getAttribute("href"),
     ).toBe("/docs/cli/use-cocalc-cli");
+    expect(
+      screen
+        .getByRole("link", { name: /Dedicated project hosts/i })
+        .getAttribute("href"),
+    ).toBe("/docs/hosts/project-hosts");
     expect(
       screen.queryByRole("link", { name: "Compare product paths" }),
     ).toBeNull();
@@ -278,9 +285,9 @@ describe("PublicFeaturesApp", () => {
     ).toHaveLength(4);
     expect(
       container.querySelectorAll(".cocalc-feature-group-label"),
-    ).toHaveLength(3);
+    ).toHaveLength(5);
     expect(container.querySelectorAll(".cocalc-feature-link-card").length).toBe(
-      14,
+      16,
     );
     expect(
       container.querySelectorAll(".cocalc-feature-link-card .ant-tag"),
