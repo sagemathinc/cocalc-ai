@@ -1,6 +1,15 @@
+import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readdir,
+  rm,
+  mkdtemp,
+  writeFile,
+} from "node:fs/promises";
 import { hostname } from "node:os";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -36,10 +45,12 @@ import {
   loadDefaultSoftwareR2Client,
   manifestRemoteEntry,
   publishHostCompatibilityArtifact,
+  publishReleaseChannelArtifact,
   readDeploymentIndex,
   readRemoteIndex,
   resolveSoftwareRemoteConfig,
   uploadSoftwareArtifact,
+  validateSoftwareReleaseChannel,
   writeDeploymentRecord,
   type SoftwareRemoteIndexEntry,
   type SoftwareR2Client,
@@ -135,6 +146,8 @@ const BUILD_COMPONENTS_HELP = SOFTWARE_BUILD_COMPONENTS.join("|");
 const DEPLOY_COMPONENTS_HELP = SOFTWARE_DEPLOY_COMPONENTS.join("|");
 const BUILD_COMPONENT_ARGUMENT = `software component (${BUILD_COMPONENTS_HELP})`;
 const DEPLOY_COMPONENT_ARGUMENT = `software component (${DEPLOY_COMPONENTS_HELP})`;
+const PROFILE_OR_CHANNEL_ARGUMENT =
+  "site profile (see cocalc auth list) or release channel (dev, candidate or stable)";
 const KNOWN_ROCKET_REMOTES: Record<string, string> = {
   "https://staging.cocalc.ai": "ubuntu@10.206.0.27",
   "https://cocalc.ai": "ubuntu@10.206.0.38",
@@ -259,12 +272,27 @@ function rocketBuildInfo(component: SoftwareBuildComponent):
   return undefined;
 }
 
-function packageBuildInfo(component: SoftwareBuildComponent):
+function seaPlatformSuffix(): { machine: string; os: string } {
+  const os = process.platform;
+  const machine =
+    process.arch === "x64"
+      ? "x86_64"
+      : process.arch === "arm64" && os === "linux"
+        ? "aarch64"
+        : process.arch;
+  return { machine, os };
+}
+
+function packageBuildInfo(
+  component: SoftwareBuildComponent,
+  artifactId: string,
+):
   | {
       packageFilter: string;
       script: string;
       artifactName: string;
       artifactPath: (srcRoot: string) => string;
+      env?: NodeJS.ProcessEnv;
       artifactFiles?: (srcRoot: string) => Array<{
         source: string;
         name: string;
@@ -314,7 +342,56 @@ function packageBuildInfo(component: SoftwareBuildComponent):
         }),
     };
   }
+  if (component === "cli") {
+    const { machine, os } = seaPlatformSuffix();
+    const artifactName = `cocalc-cli-${artifactId}-${machine}-${os}`;
+    return {
+      packageFilter: "@cocalc/cli",
+      script: "sea",
+      artifactName,
+      env: { COCALC_SOFTWARE_ARTIFACT_ID: artifactId },
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "cli", "build", "sea", artifactName),
+    };
+  }
+  if (component === "launchpad") {
+    const { machine, os } = seaPlatformSuffix();
+    const artifactName = `cocalc-launchpad-${artifactId}-${machine}-${os}.tar.xz`;
+    return {
+      packageFilter: "@cocalc/launchpad",
+      script: "sea",
+      artifactName,
+      env: { COCALC_SOFTWARE_ARTIFACT_ID: artifactId },
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "launchpad", "build", "sea", artifactName),
+    };
+  }
+  if (component === "plus") {
+    const { machine, os } = seaPlatformSuffix();
+    const artifactName = `cocalc-plus-${artifactId}-${machine}-${os}`;
+    return {
+      packageFilter: "@cocalc/plus",
+      script: "sea",
+      artifactName,
+      env: { COCALC_SOFTWARE_ARTIFACT_ID: artifactId },
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "plus", "build", "sea", artifactName),
+    };
+  }
   return undefined;
+}
+
+async function listStarReleaseFiles(
+  outputDir: string,
+): Promise<Array<{ source: string; name: string }>> {
+  const entries = await readdir(outputDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => ({
+      name: entry.name,
+      source: join(outputDir, entry.name),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function parseLimit(raw: string | undefined): number {
@@ -671,6 +748,352 @@ async function smokeHostSoftwareChecks({
   return checks;
 }
 
+function releaseSmokeTargetForComponent(component: SoftwareDeployComponent):
+  | {
+      artifactComponent: "cli" | "launchpad" | "plus";
+      binaryName: "cocalc" | "cocalc-launchpad" | "cocalc-plus";
+    }
+  | undefined {
+  if (component === "cli") {
+    return { artifactComponent: "cli", binaryName: "cocalc" };
+  }
+  if (component === "launchpad") {
+    return { artifactComponent: "launchpad", binaryName: "cocalc-launchpad" };
+  }
+  if (component === "plus") {
+    return { artifactComponent: "plus", binaryName: "cocalc-plus" };
+  }
+  return undefined;
+}
+
+function softwarePublicBaseUrl(deps: SoftwareCommandDeps): string {
+  const env = deps.env ?? process.env;
+  return `${
+    env.COCALC_SOFTWARE_PUBLIC_BASE_URL ||
+    env.COCALC_R2_PUBLIC_BASE_URL ||
+    "https://software.cocalc.ai"
+  }`.replace(/\/+$/, "");
+}
+
+function currentReleasePlatform(): {
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+} {
+  const os = process.platform;
+  if (os !== "linux" && os !== "darwin") {
+    throw new Error(`unsupported release smoke OS: ${os}`);
+  }
+  const arch =
+    process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : "";
+  if (arch !== "amd64" && arch !== "arm64") {
+    throw new Error(`unsupported release smoke architecture: ${process.arch}`);
+  }
+  return { os, arch };
+}
+
+function sha256Buffer(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+async function fetchSmokeBuffer({
+  url,
+  timeoutMs,
+  deps,
+}: {
+  url: string;
+  timeoutMs: number;
+  deps: SoftwareCommandDeps;
+}): Promise<Buffer> {
+  const smokeFetch = deps.fetch ?? globalThis.fetch;
+  if (!smokeFetch) {
+    throw new Error("software smoke requires fetch support");
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await smokeFetch(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`GET ${url} returned HTTP ${response.status}`);
+    }
+    return Buffer.from(await response.arrayBuffer());
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchSmokeJson({
+  url,
+  timeoutMs,
+  deps,
+}: {
+  url: string;
+  timeoutMs: number;
+  deps: SoftwareCommandDeps;
+}): Promise<any> {
+  const body = await fetchSmokeBuffer({ url, timeoutMs, deps });
+  try {
+    return JSON.parse(body.toString("utf8"));
+  } catch {
+    throw new Error(`GET ${url} returned invalid JSON`);
+  }
+}
+
+function validateReleaseChannelManifest({
+  manifest,
+  component,
+  channel,
+  platform,
+}: {
+  manifest: any;
+  component: "cli" | "launchpad" | "plus";
+  channel: string;
+  platform: { os: "linux" | "darwin"; arch: "amd64" | "arm64" };
+}): void {
+  if (manifest?.schema !== "cocalc-software-release-channel-v1") {
+    throw new Error("invalid release channel manifest schema");
+  }
+  if (manifest.component !== component) {
+    throw new Error(
+      `release channel manifest component mismatch: ${manifest.component}`,
+    );
+  }
+  if (manifest.channel !== channel) {
+    throw new Error(
+      `release channel manifest channel mismatch: ${manifest.channel}`,
+    );
+  }
+  if (manifest.os !== platform.os || manifest.arch !== platform.arch) {
+    throw new Error(
+      `release channel manifest platform mismatch: ${manifest.os}/${manifest.arch}`,
+    );
+  }
+  if (!manifest.url || !manifest.sha256 || !manifest.artifact_id) {
+    throw new Error(
+      "release channel manifest missing url, sha256, or artifact_id",
+    );
+  }
+}
+
+async function materializeReleaseExecutable({
+  component,
+  binaryName,
+  artifactPath,
+  artifactUrl,
+  workDir,
+  deps,
+}: {
+  component: "cli" | "launchpad" | "plus";
+  binaryName: string;
+  artifactPath: string;
+  artifactUrl: string;
+  workDir: string;
+  deps: SoftwareCommandDeps;
+}): Promise<string> {
+  if (component === "launchpad" || artifactUrl.endsWith(".tar.xz")) {
+    const extractDir = join(workDir, "extract");
+    await mkdir(extractDir, { recursive: true });
+    const runCommandOutput = deps.runCommandOutput ?? defaultRunCommandOutput;
+    const result = await runCommandOutput("tar", [
+      "-C",
+      extractDir,
+      "-Jxf",
+      artifactPath,
+    ]);
+    if (result.code !== 0) {
+      throw new Error(
+        `tar extraction failed with exit status ${result.code}: ${
+          result.stderr.trim() || result.stdout.trim() || "no output"
+        }`,
+      );
+    }
+    const executable = await findExecutableByName(extractDir, binaryName);
+    if (!executable) {
+      throw new Error(`artifact did not contain executable ${binaryName}`);
+    }
+    return executable;
+  }
+  const executablePath = join(workDir, binaryName);
+  if (artifactUrl.endsWith(".xz")) {
+    const result = spawnSync("xz", ["-dc", artifactPath], {
+      encoding: "buffer",
+      maxBuffer: 1024 * 1024 * 512,
+    });
+    if (result.status !== 0) {
+      throw new Error(
+        `xz decompression failed with exit status ${result.status}: ${
+          result.stderr?.toString("utf8").trim() || "no output"
+        }`,
+      );
+    }
+    await writeFile(executablePath, result.stdout);
+  } else {
+    await copyFile(artifactPath, executablePath);
+  }
+  await chmod(executablePath, 0o755);
+  return executablePath;
+}
+
+async function findExecutableByName(
+  dir: string,
+  name: string,
+): Promise<string | undefined> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = await findExecutableByName(path, name);
+      if (found) return found;
+      continue;
+    }
+    if (entry.isFile() && entry.name === name) {
+      await chmod(path, 0o755);
+      return path;
+    }
+  }
+  return undefined;
+}
+
+async function smokeReleaseChannelChecks({
+  component,
+  channel,
+  timeoutMs,
+  deps,
+}: {
+  component: SoftwareDeployComponent;
+  channel: string;
+  timeoutMs: number;
+  deps: SoftwareCommandDeps;
+}): Promise<SoftwareSmokeCheck[]> {
+  const target = releaseSmokeTargetForComponent(component);
+  if (!target) return [];
+  const releaseChannel = validateSoftwareReleaseChannel(channel);
+  const platform = currentReleasePlatform();
+  const baseUrl = softwarePublicBaseUrl(deps);
+  const product = releaseProductForArtifactComponent(target.artifactComponent);
+  const manifestUrl = `${baseUrl}/software/${product}/${releaseChannel}-${platform.os}-${platform.arch}.json`;
+  let manifest: any;
+  let artifactPath = "";
+  let workDir = "";
+  const checks: SoftwareSmokeCheck[] = [];
+
+  checks.push(
+    await runTimedSmokeCheck(
+      "release channel manifest",
+      async () => {
+        manifest = await fetchSmokeJson({ url: manifestUrl, timeoutMs, deps });
+        validateReleaseChannelManifest({
+          manifest,
+          component: target.artifactComponent,
+          channel: releaseChannel,
+          platform,
+        });
+        return `${manifest.artifact_id} ${manifest.url}`;
+      },
+      deps,
+    ),
+  );
+  if (!manifest) return checks;
+
+  checks.push(
+    await runTimedSmokeCheck(
+      "download artifact",
+      async () => {
+        workDir = await mkdtemp(join(tmpdir(), "cocalc-software-smoke-"));
+        artifactPath = join(workDir, manifest.filename || "artifact");
+        const body = await fetchSmokeBuffer({
+          url: manifest.url,
+          timeoutMs,
+          deps,
+        });
+        const sha256 = sha256Buffer(body);
+        if (sha256 !== manifest.sha256) {
+          throw new Error(
+            `artifact sha256 mismatch: expected ${manifest.sha256}, got ${sha256}`,
+          );
+        }
+        await writeFile(artifactPath, body);
+        return `${humanSize(body.length)} sha256:${sha256}`;
+      },
+      deps,
+    ),
+  );
+  if (!artifactPath || !workDir) return checks;
+
+  checks.push(
+    await runTimedSmokeCheck(
+      "run version",
+      async () => {
+        try {
+          const executable = await materializeReleaseExecutable({
+            component: target.artifactComponent,
+            binaryName: target.binaryName,
+            artifactPath,
+            artifactUrl: manifest.url,
+            workDir,
+            deps,
+          });
+          const runCommandOutput =
+            deps.runCommandOutput ?? defaultRunCommandOutput;
+          const result = await runCommandOutput(executable, ["--version"], {
+            env: {
+              ...(deps.env ?? process.env),
+              ...releaseSmokeVersionEnv({
+                component: target.artifactComponent,
+                manifest,
+              }),
+            },
+          });
+          if (result.code !== 0) {
+            throw new Error(
+              `${target.binaryName} --version failed with exit status ${result.code}: ${
+                result.stderr.trim() || result.stdout.trim() || "no output"
+              }`,
+            );
+          }
+          const output = result.stdout.trim();
+          if (!output.includes(manifest.artifact_id)) {
+            throw new Error(
+              `${target.binaryName} --version did not include artifact id ${manifest.artifact_id}: ${output}`,
+            );
+          }
+          return output;
+        } finally {
+          if (workDir) {
+            await rm(workDir, { recursive: true, force: true });
+          }
+        }
+      },
+      deps,
+    ),
+  );
+  return checks;
+}
+
+function releaseSmokeVersionEnv({
+  component,
+  manifest,
+}: {
+  component: "cli" | "launchpad" | "plus";
+  manifest: any;
+}): Record<string, string> {
+  const prefix =
+    component === "cli"
+      ? "COCALC_CLI"
+      : component === "launchpad"
+        ? "COCALC_LAUNCHPAD"
+        : "COCALC_PLUS";
+  return {
+    [`${prefix}_VERSION`]: `${manifest.version ?? manifest.artifact_id}`,
+    [`${prefix}_ARTIFACT_ID`]: `${manifest.artifact_id}`,
+    [`${prefix}_PUBLISHED_AT`]: `${manifest.published_at ?? ""}`,
+    [`${prefix}_GIT_COMMIT`]: `${manifest.git?.commit ?? ""}`,
+    [`${prefix}_GIT_SHORT`]: `${manifest.git?.short ?? ""}`,
+  };
+}
+
 function deploymentStatusForDisplay(
   status: SoftwareDeploymentIndexEntry["status"],
 ): string {
@@ -812,8 +1235,19 @@ async function buildFromFile({
   }
   if (!sourceFile) {
     const info = rocketBuildInfo(component);
-    const packageInfo = packageBuildInfo(component);
-    if (!info && !packageInfo) {
+    const packageInfo = packageBuildInfo(component, artifactId);
+    const starInfo =
+      component === "star"
+        ? {
+            script: join(
+              srcRoot,
+              "scripts",
+              "star",
+              "build-github-release-assets.sh",
+            ),
+          }
+        : undefined;
+    if (!info && !packageInfo && !starInfo) {
       throw new Error(
         `software build ${component} is not wired yet; use --from-file <path> to create a local artifact manifest from an existing file`,
       );
@@ -821,6 +1255,8 @@ async function buildFromFile({
     if (!deps.runCommand) {
       throw new Error("software build requires runCommand dependency");
     }
+    let command = "pnpm";
+    let commandEnv = deps.env;
     let args: string[];
     if (packageInfo) {
       args = [
@@ -831,6 +1267,16 @@ async function buildFromFile({
         "run",
         packageInfo.script,
       ];
+      commandEnv = { ...deps.env, ...packageInfo.env };
+    } else if (starInfo) {
+      buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
+      const outputDir = join(buildTempDir, "star-github-release");
+      command = starInfo.script;
+      args = [outputDir];
+      commandEnv = {
+        ...deps.env,
+        STAR_RELEASE_ID: artifactId,
+      };
     } else {
       const rocketInfo = info!;
       buildTempDir = await mkdtemp(join(tmpdir(), "cocalc-software-build-"));
@@ -847,9 +1293,9 @@ async function buildFromFile({
         bundle,
       ];
     }
-    const code = await deps.runCommand("pnpm", args, {
+    const code = await deps.runCommand(command, args, {
       stdio: "inherit",
-      env: deps.env,
+      env: commandEnv,
     });
     if (code !== 0) {
       throw new Error(
@@ -862,12 +1308,15 @@ async function buildFromFile({
       sourceFiles = packageInfo.artifactFiles?.(srcRoot) ?? [
         { source: sourceFile, name: artifactName },
       ];
+    } else if (starInfo) {
+      const outputDir = args[0];
+      sourceFiles = await listStarReleaseFiles(outputDir);
     } else {
       sourceFile = args.at(-1);
       artifactName = info!.artifactName;
       sourceFiles = [{ source: sourceFile!, name: artifactName }];
     }
-    commandText = ["pnpm", ...args].join(" ");
+    commandText = [command, ...args].join(" ");
   }
   const dir = artifactDir({ localStore, component, artifactId });
   const filesDir = join(dir, "files");
@@ -929,10 +1378,7 @@ async function buildFromFile({
 function buildSummary(
   manifest: SoftwareArtifactManifest & { local_dir: string },
 ) {
-  const totalSizeBytes = manifest.files.reduce(
-    (total, file) => total + file.size_bytes,
-    0,
-  );
+  const totalSizeBytes = artifactFileTotalSize(manifest.files);
   return {
     component: manifest.component,
     tag: manifest.tag,
@@ -950,6 +1396,21 @@ function buildSummary(
           `${file.name} ${humanSize(file.size_bytes)} (${file.size_bytes} bytes) sha256:${file.sha256}`,
       )
       .join("\n"),
+  };
+}
+
+function artifactFileTotalSize(files: Array<{ size_bytes: number }>): number {
+  return files.reduce((total, file) => total + file.size_bytes, 0);
+}
+
+function artifactSizeSummary(files: Array<{ size_bytes: number }>): {
+  size: string;
+  size_bytes: number;
+} {
+  const sizeBytes = artifactFileTotalSize(files);
+  return {
+    size: humanSize(sizeBytes),
+    size_bytes: sizeBytes,
   };
 }
 
@@ -1391,17 +1852,155 @@ async function resolveDeployArtifact({
   );
 }
 
-function hostDeployArtifactForComponent(
-  component: SoftwareDeployComponent,
-): SoftwareBuildComponent | undefined {
+function hostDeployTargetForComponent(component: SoftwareDeployComponent):
+  | {
+      artifactComponent: SoftwareBuildComponent;
+      upgradeArtifact: "project-host" | "project" | "tools";
+      managedComponent?: "conat-router" | "conat-persist";
+    }
+  | undefined {
   if (
     component === "project-host" ||
     component === "project" ||
     component === "tools"
   ) {
-    return component;
+    return {
+      artifactComponent: component,
+      upgradeArtifact: component,
+    };
+  }
+  if (component === "host-conat-router") {
+    return {
+      artifactComponent: "project-host",
+      upgradeArtifact: "project-host",
+      managedComponent: "conat-router",
+    };
+  }
+  if (component === "host-conat-persist") {
+    return {
+      artifactComponent: "project-host",
+      upgradeArtifact: "project-host",
+      managedComponent: "conat-persist",
+    };
   }
   return undefined;
+}
+
+function releaseDeployTargetForComponent(component: SoftwareDeployComponent):
+  | {
+      artifactComponent: "cli" | "launchpad" | "plus";
+    }
+  | undefined {
+  if (
+    component === "cli" ||
+    component === "launchpad" ||
+    component === "plus"
+  ) {
+    return { artifactComponent: component };
+  }
+  return undefined;
+}
+
+function releaseProductForArtifactComponent(
+  component: "cli" | "launchpad" | "plus",
+): "cocalc" | "cocalc-launchpad" | "cocalc-plus" {
+  return component === "cli"
+    ? "cocalc"
+    : component === "launchpad"
+      ? "cocalc-launchpad"
+      : "cocalc-plus";
+}
+
+function releaseChannelEnvForArtifactComponent(
+  component: "cli" | "launchpad" | "plus",
+): "COCALC_CLI_CHANNEL" | "COCALC_LAUNCHPAD_CHANNEL" | "COCALC_PLUS_CHANNEL" {
+  return component === "cli"
+    ? "COCALC_CLI_CHANNEL"
+    : component === "launchpad"
+      ? "COCALC_LAUNCHPAD_CHANNEL"
+      : "COCALC_PLUS_CHANNEL";
+}
+
+function releaseInstallInfo({
+  component,
+  channel,
+  publicBaseUrl,
+}: {
+  component: "cli" | "launchpad" | "plus";
+  channel: string;
+  publicBaseUrl: string;
+}): {
+  install_url: string;
+  install_channel_env: string;
+  install_command: string;
+  available_channels: string[];
+} {
+  const product = releaseProductForArtifactComponent(component);
+  const envName = releaseChannelEnvForArtifactComponent(component);
+  const installUrl = `${publicBaseUrl}/software/${product}/install.sh`;
+  return {
+    install_url: installUrl,
+    install_channel_env: `${envName}=${channel}`,
+    install_command: `curl -fsSL ${installUrl} | ${envName}=${channel} bash`,
+    available_channels: ["dev", "candidate", "stable"],
+  };
+}
+
+function starDeployTargetForComponent(component: SoftwareDeployComponent):
+  | {
+      artifactComponent: "star";
+    }
+  | undefined {
+  return component === "star" ? { artifactComponent: "star" } : undefined;
+}
+
+function starGithubRepo(deps: SoftwareCommandDeps): string {
+  return (
+    `${deps.env?.COCALC_STAR_GITHUB_REPO ?? process.env.COCALC_STAR_GITHUB_REPO ?? ""}`.trim() ||
+    "sagemathinc/cocalc-ai"
+  );
+}
+
+function starChannelTag({
+  channel,
+  deps,
+}: {
+  channel: string;
+  deps: SoftwareCommandDeps;
+}): string {
+  return (
+    `${deps.env?.COCALC_STAR_CHANNEL_TAG ?? process.env.COCALC_STAR_CHANNEL_TAG ?? ""}`.trim() ||
+    `cocalc-star-${channel}`
+  );
+}
+
+function starInstallInfo({
+  repo,
+  channelTag,
+}: {
+  repo: string;
+  channelTag: string;
+}): {
+  github_repo: string;
+  channel_tag: string;
+  install_url: string;
+  install_command: string;
+  lima_install_url: string;
+  lima_install_command: string;
+  available_channels: string[];
+} {
+  const baseUrl = `https://github.com/${repo}/releases/download/${channelTag}`;
+  const installUrl = `${baseUrl}/install-cocalc-star.sh`;
+  const limaInstallUrl = `${baseUrl}/install-cocalc-star-local-lima.sh`;
+  return {
+    github_repo: repo,
+    channel_tag: channelTag,
+    install_url: installUrl,
+    install_command: `curl -fsSL ${installUrl} | bash`,
+    lima_install_url: limaInstallUrl,
+    lima_install_command: `curl -fsSL ${limaInstallUrl} | bash`,
+    available_channels: ["dev", "candidate", "stable"],
+  };
 }
 
 function deploymentId({
@@ -1453,7 +2052,9 @@ function deploymentRecordBase({
     deployed_by: deployedBy({ target, deps }),
     target: {
       kind,
-      profile: profileOrChannel,
+      ...(kind === "release-channel"
+        ? { channel: profileOrChannel }
+        : { profile: profileOrChannel }),
       api: target.api,
       remote: target.remote,
     },
@@ -1710,7 +2311,7 @@ Supported deploy/smoke components:
     .description("deploy or promote a software artifact")
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
     .argument("<tag-or-id>", "artifact tag or id")
-    .argument("<profile-or-channel>", "site profile or release channel")
+    .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
     .option("--local-store <path>", "local artifact store")
     .option("--config <path>", "rocket config path")
     .option("--remote <ssh-target>", "bay SSH target")
@@ -1735,15 +2336,24 @@ Supported deploy/smoke components:
         }
         const startedAt = deps.now?.() ?? new Date();
         const rocketTarget = rocketDeployTargetForComponent(component);
-        const hostArtifactComponent = hostDeployArtifactForComponent(component);
+        const hostTarget = hostDeployTargetForComponent(component);
+        const releaseTarget = releaseDeployTargetForComponent(component);
+        const starTarget = starDeployTargetForComponent(component);
+        const releaseChannel =
+          releaseTarget || starTarget
+            ? validateSoftwareReleaseChannel(deployTarget)
+            : undefined;
         const artifactComponent =
-          rocketTarget?.artifactComponent ?? hostArtifactComponent;
+          rocketTarget?.artifactComponent ??
+          hostTarget?.artifactComponent ??
+          releaseTarget?.artifactComponent ??
+          starTarget?.artifactComponent;
         if (!artifactComponent) {
           throw new Error(
-            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, project-host, project, tools`,
+            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, bay-conat-router, bay-conat-persist, bay-frontdoor, bay-cloudflared, bay-scaffold, host-conat-router, host-conat-persist, project-host, project, tools, cli, launchpad, plus, star`,
           );
         }
-        if (!deps.runCommand) {
+        if (!releaseTarget && !deps.runCommand) {
           throw new Error("software deploy requires runCommand dependency");
         }
         const artifact = await resolveDeployArtifact({
@@ -1752,21 +2362,36 @@ Supported deploy/smoke components:
           opts,
           deps,
         });
-        const target = resolveDeploySite({
-          profile: deployTarget,
-          opts,
-          deps,
-        });
+        const target =
+          releaseTarget || starTarget
+            ? {
+                profileName: releaseChannel!,
+                api: undefined,
+                remote: undefined,
+                account_id: undefined,
+                email_address: undefined,
+              }
+            : resolveDeploySite({
+                profile: deployTarget,
+                opts,
+                deps,
+              });
         const config = await resolveSoftwareRemoteConfig({
           env: deps.env ?? process.env,
           envFile: opts.envFile,
         });
         const client = softwareR2Client(deps);
         const cli = currentCliInvocation();
-        let args: string[];
+        let commandArgsList: string[][] = [];
         let rocketScope: string | undefined;
         let hostBaseUrl: string | undefined;
         let hostCompatUrl: string | undefined;
+        let hostManagedComponent: string | undefined;
+        let releaseProduct: string | undefined;
+        let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
+        let releaseChannelManifestUrls: string[] | undefined;
+        let starInstall: ReturnType<typeof starInstallInfo> | undefined;
+        let starPromoteScript: string | undefined;
         let targetKind: SoftwareDeploymentRecord["target"]["kind"];
         if (rocketTarget) {
           const remoteFile = remoteBundleFile(artifact.remote_entry);
@@ -1774,24 +2399,26 @@ Supported deploy/smoke components:
           artifact.bundle_sha256 = remoteFile.sha256;
           rocketScope = rocketTarget.scope;
           targetKind = "rocket-bay";
-          args = [
-            ...cli.args,
-            "rocket",
-            "deploy",
-            deployTarget,
-            "--scope",
-            rocketScope,
-            "--bundle-url",
-            artifact.bundle_url,
-            "--bundle-sha256",
-            artifact.bundle_sha256,
-            ...(opts.config ? ["--config", opts.config] : []),
-            ...(target.remote ? ["--remote", target.remote] : []),
-            ...(target.api ? ["--api", target.api] : []),
-            ...(rocketTarget.extraArgs ?? []),
-            "--yes",
+          commandArgsList = [
+            [
+              ...cli.args,
+              "rocket",
+              "deploy",
+              deployTarget,
+              "--scope",
+              rocketScope,
+              "--bundle-url",
+              artifact.bundle_url,
+              "--bundle-sha256",
+              artifact.bundle_sha256,
+              ...(opts.config ? ["--config", opts.config] : []),
+              ...(target.remote ? ["--remote", target.remote] : []),
+              ...(target.api ? ["--api", target.api] : []),
+              ...(rocketTarget.extraArgs ?? []),
+              "--yes",
+            ],
           ];
-        } else {
+        } else if (hostTarget) {
           const compat = await publishHostCompatibilityArtifact({
             client,
             config,
@@ -1799,22 +2426,90 @@ Supported deploy/smoke components:
           });
           hostBaseUrl = compat.base_url;
           hostCompatUrl = compat.urls.join("\n");
+          hostManagedComponent = hostTarget.managedComponent;
           targetKind = "project-host-fleet";
-          args = [
-            ...cli.args,
-            "--profile",
-            deployTarget,
-            "host",
-            "upgrade",
-            "--all-online",
-            "--artifact",
-            component,
-            "--artifact-version",
-            artifact.artifact_id,
-            "--base-url",
-            hostBaseUrl,
-            "--wait",
+          commandArgsList = [
+            [
+              ...cli.args,
+              "--profile",
+              deployTarget,
+              "host",
+              "upgrade",
+              "--all-online",
+              "--artifact",
+              hostTarget.upgradeArtifact,
+              "--artifact-version",
+              artifact.artifact_id,
+              "--base-url",
+              hostBaseUrl,
+              "--wait",
+            ],
           ];
+          if (hostManagedComponent) {
+            const reason = `software-deploy-${component}`;
+            commandArgsList.push(
+              [
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "deploy",
+                "set",
+                "--global",
+                "--component",
+                hostManagedComponent,
+                "--desired-version",
+                artifact.artifact_id,
+                "--policy",
+                "restart_now",
+                "--reason",
+                reason,
+              ],
+              [
+                ...cli.args,
+                "--profile",
+                deployTarget,
+                "host",
+                "deploy",
+                "reconcile",
+                "--all-online",
+                "--component",
+                hostManagedComponent,
+                "--reason",
+                reason,
+                "--wait",
+              ],
+            );
+          }
+        } else if (releaseTarget) {
+          releaseProduct = releaseProductForArtifactComponent(
+            releaseTarget.artifactComponent,
+          );
+          releaseInstall = releaseInstallInfo({
+            component: releaseTarget.artifactComponent,
+            channel: releaseChannel!,
+            publicBaseUrl: config.publicBaseUrl,
+          });
+          targetKind = "release-channel";
+        } else if (starTarget) {
+          const cwd = resolve(deps.cwd ?? process.cwd());
+          const { srcRoot } = resolveRepoLayout({ cwd, deps });
+          const repo = starGithubRepo(deps);
+          const channelTag = starChannelTag({
+            channel: releaseChannel!,
+            deps,
+          });
+          releaseProduct = "cocalc-star";
+          starPromoteScript = join(
+            srcRoot,
+            "scripts",
+            "star",
+            "promote-github-release-channel.sh",
+          );
+          starInstall = starInstallInfo({ repo, channelTag });
+          targetKind = "release-channel";
+        } else {
+          throw new Error(`software deploy ${component} is not wired yet`);
         }
         const record = deploymentRecordBase({
           component,
@@ -1844,6 +2539,13 @@ Supported deploy/smoke components:
             ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
             ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
             ...(hostCompatUrl ? { host_compat_url: hostCompatUrl } : {}),
+            ...(hostManagedComponent
+              ? { host_managed_component: hostManagedComponent }
+              : {}),
+            ...(releaseProduct ? { release_product: releaseProduct } : {}),
+            ...(releaseChannel ? { release_channel: releaseChannel } : {}),
+            ...(releaseInstall ?? {}),
+            ...(starInstall ?? {}),
           },
           deps,
         });
@@ -1853,14 +2555,81 @@ Supported deploy/smoke components:
           config,
           deps,
           run: async () => {
-            const code = await deps.runCommand!(cli.command, args, {
-              stdio: "inherit",
-              env: deps.env ?? process.env,
-            });
-            if (code !== 0) {
-              throw new Error(
-                `software deploy ${component} failed with exit status ${code}`,
+            if (releaseTarget) {
+              const published = await publishReleaseChannelArtifact({
+                client,
+                config,
+                entry: artifact.remote_entry,
+                channel: releaseChannel!,
+                now: deps.now?.() ?? new Date(),
+              });
+              releaseProduct = published.product;
+              releaseChannelManifestUrls = published.manifests.map(
+                (manifest) => manifest.url,
               );
+              record.details = {
+                ...(record.details ?? {}),
+                release_product: published.product,
+                release_channel: published.channel,
+                channel_manifests: releaseChannelManifestUrls,
+                ...(published.channel === "stable"
+                  ? { latest_alias: "updated" }
+                  : {}),
+                ...(releaseInstall ?? {}),
+              };
+              return;
+            }
+            if (starTarget) {
+              const repo = starInstall!.github_repo;
+              const viewCode = await deps.runCommand!(
+                "gh",
+                ["release", "view", artifact.artifact_id, "--repo", repo],
+                {
+                  stdio: "inherit",
+                  env: deps.env ?? process.env,
+                },
+              );
+              if (viewCode !== 0) {
+                throw new Error(
+                  `immutable Star GitHub release ${artifact.artifact_id} was not found in ${repo}; upload the release assets before promoting ${releaseChannel}`,
+                );
+              }
+              const promoteCode = await deps.runCommand!(
+                starPromoteScript!,
+                ["--upload", artifact.artifact_id, releaseChannel!],
+                {
+                  stdio: "inherit",
+                  env: {
+                    ...(deps.env ?? process.env),
+                    COCALC_STAR_GITHUB_REPO: repo,
+                    COCALC_STAR_GIT_REVISION: artifact.remote_entry.git.commit,
+                  },
+                },
+              );
+              if (promoteCode !== 0) {
+                throw new Error(
+                  `software deploy star failed with exit status ${promoteCode}`,
+                );
+              }
+              record.details = {
+                ...(record.details ?? {}),
+                release_product: releaseProduct,
+                release_channel: releaseChannel,
+                github_release: artifact.artifact_id,
+                ...(starInstall ?? {}),
+              };
+              return;
+            }
+            for (const args of commandArgsList) {
+              const code = await deps.runCommand!(cli.command, args, {
+                stdio: "inherit",
+                env: deps.env ?? process.env,
+              });
+              if (code !== 0) {
+                throw new Error(
+                  `software deploy ${component} failed with exit status ${code}`,
+                );
+              }
             }
           },
         });
@@ -1878,6 +2647,7 @@ Supported deploy/smoke components:
             artifact_id: artifact.artifact_id,
             duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
             source: artifact.source,
+            ...artifactSizeSummary(artifact.files),
             remote_manifest: artifact.remote_manifest,
             files: artifact.files.map((file) => file.url),
             ...(artifact.bundle_url ? { bundle_url: artifact.bundle_url } : {}),
@@ -1890,7 +2660,24 @@ Supported deploy/smoke components:
               : {}),
             ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
             ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
-            profile: deployTarget,
+            ...(hostManagedComponent
+              ? { host_managed_component: hostManagedComponent }
+              : {}),
+            ...(releaseProduct ? { release_product: releaseProduct } : {}),
+            ...(releaseChannel ? { channel: releaseChannel } : {}),
+            ...(releaseInstall ?? {}),
+            ...(starInstall ?? {}),
+            ...(starTarget ? { github_release: artifact.artifact_id } : {}),
+            ...(releaseChannelManifestUrls
+              ? { channel_manifests: releaseChannelManifestUrls }
+              : {}),
+            ...(releaseChannel === "stable" ? { latest_alias: "updated" } : {}),
+            ...(releaseTarget?.artifactComponent === "plus"
+              ? {
+                  note: "Plus installer still resolves tools-minimal from its own channel manifest.",
+                }
+              : {}),
+            ...(releaseTarget ? {} : { profile: deployTarget }),
             deployment_id: finalRecord.deployment_id,
             deployment_record: `${config.publicBaseUrl}/${recordKey}`,
           },
@@ -1902,7 +2689,7 @@ Supported deploy/smoke components:
     .command("history")
     .description("show deployment history for a component and profile/channel")
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
-    .argument("<profile-or-channel>", "site profile or release channel")
+    .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
     .option(
       "--env-file <path>",
       "R2 credential env file",
@@ -1953,7 +2740,7 @@ Supported deploy/smoke components:
     .command("smoke")
     .description("run a software smoke test")
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
-    .argument("<profile-or-channel>", "site profile or release channel")
+    .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
     .option("--api <url>", "site API URL")
     .option("--remote <ssh-target>", "bay SSH target")
     .option("--host <host>", "representative project host id or name")
@@ -1971,16 +2758,39 @@ Supported deploy/smoke components:
           throw new Error("software smoke requires <profile-or-channel>");
         }
         const hostSmokeArtifact = hostArtifactForSmoke(component);
+        const releaseSmokeTarget = releaseSmokeTargetForComponent(component);
         if (
           !["static", "hub", "bay"].includes(component) &&
-          !hostSmokeArtifact
+          !hostSmokeArtifact &&
+          !releaseSmokeTarget
         ) {
           throw new Error(
-            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools`,
+            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools, cli, launchpad, plus`,
           );
         }
         const startedAt = deps.now?.() ?? new Date();
         const timeoutMs = parseTimeoutMs(opts.timeout);
+        if (releaseSmokeTarget) {
+          const checks = await smokeReleaseChannelChecks({
+            component,
+            channel: targetName,
+            timeoutMs,
+            deps,
+          });
+          assertSmokeChecks(checks);
+          emitSuccess(
+            { globals: command.optsWithGlobals() as any },
+            "software smoke",
+            {
+              component,
+              channel: targetName,
+              public_base_url: softwarePublicBaseUrl(deps),
+              duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+              checks,
+            },
+          );
+          return;
+        }
         const target = resolveDeploySite({
           profile: targetName,
           opts,

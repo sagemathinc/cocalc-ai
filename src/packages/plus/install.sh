@@ -83,9 +83,16 @@ echo "Downloading CoCalc Plus manifest..."
 download "$PLUS_MANIFEST_URL" "$tmpdir/plus.json"
 PLUS_URL="$(get_json_field "$tmpdir/plus.json" "url")"
 PLUS_SHA="$(get_json_field "$tmpdir/plus.json" "sha256")"
+PLUS_ARTIFACT_ID="$(get_json_field "$tmpdir/plus.json" "artifact_id")"
 PLUS_VERSION="$(get_json_field "$tmpdir/plus.json" "version")"
+PLUS_PUBLISHED_AT="$(get_json_field "$tmpdir/plus.json" "published_at")"
+PLUS_GIT_COMMIT="$(get_json_field "$tmpdir/plus.json" "commit")"
+PLUS_GIT_SHORT="$(get_json_field "$tmpdir/plus.json" "short")"
+if [[ -z "$PLUS_VERSION" && -n "$PLUS_ARTIFACT_ID" ]]; then
+  PLUS_VERSION="$PLUS_ARTIFACT_ID"
+fi
 if [[ -z "$PLUS_VERSION" && -n "$PLUS_URL" ]]; then
-  PLUS_VERSION="$(echo "$PLUS_URL" | sed -n 's#.*/cocalc-plus/\([0-9][^/]*\)/.*#\1#p')"
+  PLUS_VERSION="$(echo "$PLUS_URL" | sed -n 's#.*/software/artifacts/plus/\([^/]*\)/.*#\1#p; s#.*/cocalc-plus/\([^/]*\)/.*#\1#p')"
 fi
 
 if [[ -z "$PLUS_URL" || -z "$PLUS_SHA" ]]; then
@@ -129,6 +136,10 @@ cat > "$WRAPPER" <<EOF
 export COCALC_BIN_PATH="$TOOLS_DIR/current/bin"
 export COCALC_PLUS_HOME="$INSTALL_ROOT"
 ${PLUS_VERSION:+export COCALC_PLUS_VERSION="$PLUS_VERSION"}
+${PLUS_ARTIFACT_ID:+export COCALC_PLUS_ARTIFACT_ID="$PLUS_ARTIFACT_ID"}
+${PLUS_PUBLISHED_AT:+export COCALC_PLUS_PUBLISHED_AT="$PLUS_PUBLISHED_AT"}
+${PLUS_GIT_COMMIT:+export COCALC_PLUS_GIT_COMMIT="$PLUS_GIT_COMMIT"}
+${PLUS_GIT_SHORT:+export COCALC_PLUS_GIT_SHORT="$PLUS_GIT_SHORT"}
 exec "$BIN_DIR/cocalc-plus" "\$@"
 EOF
 chmod +x "$WRAPPER"
@@ -137,6 +148,10 @@ if [[ -n "$PLUS_VERSION" ]]; then
   cat > "$INSTALL_ROOT/version.json" <<EOF
 {
   "version": "$PLUS_VERSION",
+  "artifact_id": "$PLUS_ARTIFACT_ID",
+  "published_at": "$PLUS_PUBLISHED_AT",
+  "git_commit": "$PLUS_GIT_COMMIT",
+  "git_short": "$PLUS_GIT_SHORT",
   "os": "$OS",
   "arch": "$ARCH",
   "updatedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"

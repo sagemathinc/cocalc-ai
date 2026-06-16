@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -41,6 +42,18 @@ const testAuthConfig = {
   },
 };
 
+function testSeaSuffix(): { machine: string; os: string } {
+  return {
+    machine:
+      process.arch === "x64"
+        ? "x86_64"
+        : process.arch === "arm64" && process.platform === "linux"
+          ? "aarch64"
+          : process.arch,
+    os: process.platform,
+  };
+}
+
 function makeDeps({
   localStore,
   runs,
@@ -74,9 +87,13 @@ function makeDeps({
       status_porcelain: "",
     }),
     repoRoot: () => repoRoot,
-    runCommand: async (command, args) => {
+    runCommand: async (command, args, options) => {
       runs?.push({ command, args });
       let bundle = command === "pnpm" ? args.at(-1) : undefined;
+      const artifactId =
+        options?.env?.COCALC_SOFTWARE_ARTIFACT_ID ??
+        env?.COCALC_SOFTWARE_ARTIFACT_ID;
+      const { machine, os } = testSeaSuffix();
       if (command === "pnpm" && args.includes("@cocalc/project-host")) {
         bundle = join(
           repoRoot,
@@ -117,6 +134,62 @@ function makeDeps({
           mkdirSync(join(toolsBundle, ".."), { recursive: true });
           writeFileSync(toolsBundle, `built tools bundle ${arch}`);
         }
+      } else if (
+        command === "pnpm" &&
+        args.includes("@cocalc/cli") &&
+        artifactId
+      ) {
+        bundle = join(
+          repoRoot,
+          "src",
+          "packages",
+          "cli",
+          "build",
+          "sea",
+          `cocalc-cli-${artifactId}-${machine}-${os}`,
+        );
+      } else if (
+        command === "pnpm" &&
+        args.includes("@cocalc/launchpad") &&
+        artifactId
+      ) {
+        bundle = join(
+          repoRoot,
+          "src",
+          "packages",
+          "launchpad",
+          "build",
+          "sea",
+          `cocalc-launchpad-${artifactId}-${machine}-${os}.tar.xz`,
+        );
+      } else if (
+        command === "pnpm" &&
+        args.includes("@cocalc/plus") &&
+        artifactId
+      ) {
+        bundle = join(
+          repoRoot,
+          "src",
+          "packages",
+          "plus",
+          "build",
+          "sea",
+          `cocalc-plus-${artifactId}-${machine}-${os}`,
+        );
+      } else if (command.endsWith("build-github-release-assets.sh")) {
+        const outDir = args[0];
+        mkdirSync(outDir, { recursive: true });
+        for (const name of [
+          "install-cocalc-star.sh",
+          "install-cocalc-star-local-lima.sh",
+          "cocalc-star-runtime-linux-x64.tar.gz",
+          "cocalc-star-runtime-linux-arm64.tar.gz",
+          "SHA256SUMS",
+          "release-notes.md",
+        ]) {
+          writeFileSync(join(outDir, name), `star ${name}`);
+        }
+        return 0;
       }
       if (bundle) {
         mkdirSync(join(bundle, ".."), { recursive: true });
@@ -182,6 +255,13 @@ const r2Env = {
   COCALC_R2_PUBLIC_BASE_URL: "https://software.example.test",
 };
 
+function arrayBufferForBuffer(buffer: Buffer): ArrayBuffer {
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
+}
+
 function createProgram(deps: SoftwareCommandDeps): Command {
   const program = new Command();
   program.exitOverride();
@@ -209,6 +289,10 @@ test("software help lists supported components", () => {
   assert.match(build.helpInformation(), /static\|hub\|bay\|project-host/);
   assert.match(list.helpInformation(), /cli\|launchpad\|plus\|star/);
   assert.match(deploy.helpInformation(), /bay-conat-router/);
+  assert.match(
+    deploy.helpInformation(),
+    /site profile \(see cocalc auth list\) or release channel\s+\(dev, candidate or stable\)/,
+  );
   assert.doesNotMatch(deploy.helpInformation(), /hub-conat-router/);
 });
 
@@ -495,6 +579,127 @@ test("software build tools runs the package tools builder", async () => {
           `tools-linux-${arch}.tar.xz`,
         ),
       ),
+      true,
+    );
+  }
+});
+
+test("software build cli uses the software artifact id as the SEA version", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-cli-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+  const artifactId = "20260614T235912Z-e882d124-cli-test";
+  const { machine, os } = testSeaSuffix();
+  const artifactName = `cocalc-cli-${artifactId}-${machine}-${os}`;
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "cli",
+    "cli-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/cli"), true);
+  assert.equal(runs[0].args.includes("sea"), true);
+  assert.equal(
+    existsSync(join(localStore, "cli", artifactId, "files", artifactName)),
+    true,
+  );
+});
+
+test("software build launchpad uses the software artifact id as the SEA version", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-launchpad-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+  const artifactId = "20260614T235912Z-e882d124-launchpad-test";
+  const { machine, os } = testSeaSuffix();
+  const artifactName = `cocalc-launchpad-${artifactId}-${machine}-${os}.tar.xz`;
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "launchpad",
+    "launchpad-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/launchpad"), true);
+  assert.equal(
+    existsSync(
+      join(localStore, "launchpad", artifactId, "files", artifactName),
+    ),
+    true,
+  );
+});
+
+test("software build plus uses the software artifact id as the SEA version", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-plus-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+  const artifactId = "20260614T235912Z-e882d124-plus-test";
+  const { machine, os } = testSeaSuffix();
+  const artifactName = `cocalc-plus-${artifactId}-${machine}-${os}`;
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "plus",
+    "plus-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/plus"), true);
+  assert.equal(
+    existsSync(join(localStore, "plus", artifactId, "files", artifactName)),
+    true,
+  );
+});
+
+test("software build star records GitHub release assets", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-star-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+  const artifactId = "20260614T235912Z-e882d124-star-test";
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "star",
+    "star-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(
+    runs[0].command.endsWith("build-github-release-assets.sh"),
+    true,
+  );
+  for (const name of [
+    "install-cocalc-star.sh",
+    "install-cocalc-star-local-lima.sh",
+    "cocalc-star-runtime-linux-x64.tar.gz",
+    "cocalc-star-runtime-linux-arm64.tar.gz",
+    "SHA256SUMS",
+    "release-notes.md",
+  ]) {
+    assert.equal(
+      existsSync(join(localStore, "star", artifactId, "files", name)),
       true,
     );
   }
@@ -1229,6 +1434,310 @@ test("software deploy records failed history when subprocess fails", async () =>
   assert.match(history.deployments[0].error, /exit status 7/);
 });
 
+test("software deploy cli promotes an immutable artifact to a release channel", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-cli-channel-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "cocalc-cli-bin");
+  writeFileSync(source, "cli binary");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "cli",
+    "cli-channel",
+    "--from-file",
+    source,
+    "--artifact-name",
+    "cocalc-cli-20260614T235912Z-e882d124-cli-channel-x86_64-linux",
+  ]);
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "deploy",
+      "cli",
+      "cli-channel",
+      "candidate",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const manifest = JSON.parse(
+    r2.objects
+      .get("software/cocalc/candidate-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  assert.equal(manifest.schema, "cocalc-software-release-channel-v1");
+  assert.equal(manifest.product, "cocalc");
+  assert.equal(manifest.component, "cli");
+  assert.equal(manifest.channel, "candidate");
+  assert.equal(manifest.artifact_id, "20260614T235912Z-e882d124-cli-channel");
+  assert.equal(manifest.version, manifest.artifact_id);
+  assert.match(
+    manifest.url,
+    /software\/artifacts\/cli\/.*\/files\/cocalc-cli-/,
+  );
+  assert.equal(
+    r2.objects.has("software/cocalc/latest-linux-amd64.json"),
+    false,
+  );
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/candidate/cli/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].target.kind, "release-channel");
+  assert.equal(history.deployments[0].target.channel, "candidate");
+  const record = JSON.parse(
+    r2.objects
+      .get(
+        `software/deployments/candidate/cli/${history.deployments[0].deployment_id}.json`,
+      )!
+      .toString("utf8"),
+  );
+  assert.deepEqual(record.details.channel_manifests, [
+    "https://software.example.test/software/cocalc/candidate-linux-amd64.json",
+  ]);
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.data.size_bytes, 10);
+  assert.equal(payload.data.size, "10 bytes");
+  assert.equal(
+    payload.data.install_url,
+    "https://software.example.test/software/cocalc/install.sh",
+  );
+  assert.equal(
+    payload.data.install_channel_env,
+    "COCALC_CLI_CHANNEL=candidate",
+  );
+  assert.equal(
+    payload.data.install_command,
+    "curl -fsSL https://software.example.test/software/cocalc/install.sh | COCALC_CLI_CHANNEL=candidate bash",
+  );
+  assert.deepEqual(payload.data.available_channels, [
+    "dev",
+    "candidate",
+    "stable",
+  ]);
+});
+
+test("software deploy plus stable also updates the legacy latest manifest", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-plus-channel-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "cocalc-plus-bin");
+  writeFileSync(source, "plus binary");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "plus",
+    "plus-stable",
+    "--from-file",
+    source,
+    "--artifact-name",
+    "cocalc-plus-20260614T235912Z-e882d124-plus-stable-x86_64-linux",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "plus",
+    "plus-stable",
+    "stable",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const stable = JSON.parse(
+    r2.objects
+      .get("software/cocalc-plus/stable-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  const latest = JSON.parse(
+    r2.objects
+      .get("software/cocalc-plus/latest-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  assert.equal(stable.artifact_id, "20260614T235912Z-e882d124-plus-stable");
+  assert.equal(latest.artifact_id, stable.artifact_id);
+  assert.equal(latest.channel, "latest");
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/stable/plus/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].target.kind, "release-channel");
+  assert.equal(history.deployments[0].target.channel, "stable");
+});
+
+test("software deploy star promotes an immutable GitHub release channel", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-star-channel-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client, cwd: dir }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "star",
+    "star-channel",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "star",
+    "star-channel",
+    "candidate",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = "20260614T235912Z-e882d124-star-channel";
+  assert.equal(runs.length, 3);
+  assert.equal(
+    runs[0].command.endsWith("build-github-release-assets.sh"),
+    true,
+  );
+  assert.deepEqual(runs[1], {
+    command: "gh",
+    args: ["release", "view", artifactId, "--repo", "sagemathinc/cocalc-ai"],
+  });
+  assert.equal(
+    runs[2].command.endsWith("promote-github-release-channel.sh"),
+    true,
+  );
+  assert.deepEqual(runs[2].args, ["--upload", artifactId, "candidate"]);
+
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/candidate/star/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].target.kind, "release-channel");
+  assert.equal(history.deployments[0].target.channel, "candidate");
+  const record = JSON.parse(
+    r2.objects
+      .get(
+        `software/deployments/candidate/star/${history.deployments[0].deployment_id}.json`,
+      )!
+      .toString("utf8"),
+  );
+  assert.equal(record.details.release_product, "cocalc-star");
+  assert.equal(record.details.github_release, artifactId);
+  assert.equal(record.details.github_repo, "sagemathinc/cocalc-ai");
+  assert.equal(record.details.channel_tag, "cocalc-star-candidate");
+  assert.equal(
+    record.details.install_url,
+    "https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-candidate/install-cocalc-star.sh",
+  );
+});
+
+test("software deploy star fails before promotion when immutable release is missing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-star-missing-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const deps = makeDeps({
+    localStore,
+    runs,
+    env: r2Env,
+    r2Client: r2.client,
+    cwd: dir,
+  });
+  deps.runCommand = async (command, args, options) => {
+    runs.push({ command, args });
+    if (command.endsWith("build-github-release-assets.sh")) {
+      const outDir = args[0];
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(join(outDir, "install-cocalc-star.sh"), "star install");
+      writeFileSync(join(outDir, "SHA256SUMS"), "star sums");
+      writeFileSync(join(outDir, "release-notes.md"), "star notes");
+      return 0;
+    }
+    if (command === "gh" && args.includes("view")) {
+      return 1;
+    }
+    return options?.env ? 0 : 0;
+  };
+  const program = createProgram(deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "star",
+    "missing-release",
+  ]);
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "deploy",
+        "star",
+        "missing-release",
+        "stable",
+        "--env-file",
+        join(dir, "missing.env"),
+      ]),
+    /immutable Star GitHub release .* was not found/,
+  );
+
+  assert.equal(
+    runs.some((run) =>
+      run.command.endsWith("promote-github-release-channel.sh"),
+    ),
+    false,
+  );
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/stable/star/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "failed");
+  assert.match(history.deployments[0].error, /immutable Star GitHub release/);
+});
+
 test("software deploy bay uses the full bay Rocket scope", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-bay-"));
   const localStore = join(dir, "store");
@@ -1537,6 +2046,99 @@ test("software deploy bay-scaffold uses bay artifact and scaffold-only Rocket fl
   ]);
 });
 
+test("software deploy host-conat-router installs project-host artifact and reconciles one component", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-host-router-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "project-host.tar.xz");
+  writeFileSync(source, "project host bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project-host",
+    "host-router-deploy",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "host-conat-router",
+    "host-router-deploy",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = JSON.parse(
+    r2.objects.get("software/indexes/project-host.json")!.toString("utf8"),
+  ).artifacts[0].artifact_id;
+
+  assert.equal(runs.length, 3);
+  assert.deepEqual(runs[0].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "upgrade",
+    "--all-online",
+    "--artifact",
+    "project-host",
+    "--artifact-version",
+    artifactId,
+    "--base-url",
+    "https://software.example.test/software",
+    "--wait",
+  ]);
+  assert.deepEqual(runs[1].args.slice(-14), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--component",
+    "conat-router",
+    "--desired-version",
+    artifactId,
+    "--policy",
+    "restart_now",
+    "--reason",
+    "software-deploy-host-conat-router",
+  ]);
+  assert.deepEqual(runs[2].args.slice(-11), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "reconcile",
+    "--all-online",
+    "--component",
+    "conat-router",
+    "--reason",
+    "software-deploy-host-conat-router",
+    "--wait",
+  ]);
+
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/host-conat-router/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].artifact_component, "project-host");
+  assert.equal(history.deployments[0].target.kind, "project-host-fleet");
+});
+
 test("software smoke static runs HTTP checks against the profile API", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-smoke-static-"));
   const urls: string[] = [];
@@ -1599,6 +2201,97 @@ test("software smoke hub also runs Rocket host route health", async () => {
     "--api",
     "https://cocalc.ai",
   ]);
+});
+
+test("software smoke cli validates public release channel artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-cli-channel-"));
+  const artifactId = "20260615T000000Z-abcdef12-cli";
+  const artifact = Buffer.from("#!/usr/bin/env bash\n");
+  const artifactSha256 = createHash("sha256").update(artifact).digest("hex");
+  const os = process.platform === "darwin" ? "darwin" : "linux";
+  const arch = process.arch === "arm64" ? "arm64" : "amd64";
+  const machine = process.arch === "arm64" ? "aarch64" : "x86_64";
+  const manifestUrl = `https://software.example.test/software/cocalc/candidate-${os}-${arch}.json`;
+  const artifactUrl = `https://software.example.test/software/artifacts/cli/20260615T000000Z-abcdef12-cli/files/cocalc-cli-20260615T000000Z-abcdef12-cli-${machine}-${os}`;
+  const versionRun: CapturedOutputRun = {
+    command: "",
+    args: [],
+    stdout: `${artifactId} (published 2026-06-15T00:00:00.000Z, git abcdef12)\n`,
+    stderr: "",
+  };
+  const outputRuns: CapturedOutputRun[] = [versionRun];
+  const fetched: string[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      outputRuns,
+      env: {
+        COCALC_SOFTWARE_PUBLIC_BASE_URL: "https://software.example.test",
+      },
+      fetch: async (input) => {
+        const url = `${input}`;
+        fetched.push(url);
+        if (url === manifestUrl) {
+          return {
+            ok: true,
+            status: 200,
+            arrayBuffer: async () =>
+              arrayBufferForBuffer(
+                Buffer.from(
+                  JSON.stringify({
+                    schema: "cocalc-software-release-channel-v1",
+                    product: "cocalc",
+                    component: "cli",
+                    channel: "candidate",
+                    artifact_id: artifactId,
+                    tag: "cli",
+                    created_at: "2026-06-15T00:00:00.000Z",
+                    published_at: "2026-06-15T00:00:00.000Z",
+                    git: {
+                      commit: "abcdef123456",
+                      short: "abcdef12",
+                      dirty: false,
+                    },
+                    os,
+                    arch,
+                    filename: `cocalc-cli-20260615T000000Z-abcdef12-cli-${machine}-${os}`,
+                    size_bytes: artifact.length,
+                    sha256: artifactSha256,
+                    url: artifactUrl,
+                    version: artifactId,
+                  }),
+                ),
+              ),
+          } as Response;
+        }
+        if (url === artifactUrl) {
+          return {
+            ok: true,
+            status: 200,
+            arrayBuffer: async () => arrayBufferForBuffer(artifact),
+          } as Response;
+        }
+        return {
+          ok: false,
+          status: 404,
+          arrayBuffer: async () => new ArrayBuffer(0),
+        } as Response;
+      },
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "smoke",
+    "cli",
+    "candidate",
+  ]);
+
+  assert.deepEqual(fetched, [manifestUrl, artifactUrl]);
+  assert.equal(versionRun.args[0], "--version");
 });
 
 test("software smoke project-host validates representative host status", async () => {
@@ -1766,7 +2459,7 @@ test("software smoke rejects components that are not wired yet", async () => {
         "cli",
         "staging",
       ]),
-    /software smoke cli is not implemented yet/,
+    /unsupported software release channel 'staging'/,
   );
 });
 

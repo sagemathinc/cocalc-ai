@@ -3125,10 +3125,11 @@ Status shows two views:
     );
 
   deploy
-    .command("reconcile <host>")
+    .command("reconcile [host]")
     .description(
       "apply desired runtime component state when the required artifact is already installed on the host",
     )
+    .option("--all-online", "reconcile all online hosts")
     .option(
       "--component <component>",
       "limit reconcile to one or more components (repeatable or comma-separated)",
@@ -3150,55 +3151,121 @@ does not yet have the required runtime artifact version installed.
     )
     .action(
       async (
-        hostIdentifier: string,
-        opts: { component?: string[]; reason?: string; wait?: boolean },
+        hostIdentifier: string | undefined,
+        opts: {
+          allOnline?: boolean;
+          component?: string[];
+          reason?: string;
+          wait?: boolean;
+        },
         command: Command,
       ) => {
         await withContext(command, "host deploy reconcile", async (ctx) => {
-          const host = await resolveHost(ctx, hostIdentifier);
+          if (hostIdentifier && opts.allOnline) {
+            throw new Error("use either <host> or --all-online, not both");
+          }
+          if (!hostIdentifier && !opts.allOnline) {
+            throw new Error("specify <host> or use --all-online");
+          }
           const components = opts.component?.length
             ? parseManagedComponentKindsOption(opts.component)
             : undefined;
-          const op = await ctx.hub.hosts.reconcileHostRuntimeDeployments({
-            id: host.id,
-            components,
-            reason: `${opts.reason ?? ""}`.trim() || undefined,
-          });
-          if (!opts.wait) {
+          const hosts = opts.allOnline
+            ? (
+                (await listHosts(ctx, {
+                  include_deleted: false,
+                  catalog: false,
+                  admin_view: true,
+                })) as HostRow[]
+              ).filter(isHostOnlineForUpgrade)
+            : [await resolveHost(ctx, hostIdentifier)];
+          if (hosts.length === 0) {
             return {
-              host_id: host.id,
-              op_id: op.op_id,
-              status: "queued",
+              status: "skipped",
+              reason: "no online hosts matched",
               requested_components: components ?? [],
+              hosts: [],
             };
           }
-          const summary = await waitForLro(ctx, op.op_id, {
-            timeoutMs: ctx.timeoutMs,
-            pollMs: ctx.pollMs,
-            onUpdate: createHostLroProgressReporter(ctx, {
-              host_id: host.id,
-              name: host.name,
-              op_id: op.op_id,
+          const queued = await Promise.all(
+            hosts.map(async (host) => {
+              const op = await ctx.hub.hosts.reconcileHostRuntimeDeployments({
+                id: host.id,
+                components,
+                reason: `${opts.reason ?? ""}`.trim() || undefined,
+              });
+              return {
+                host_id: host.id,
+                name: host.name,
+                op_id: op.op_id,
+                status: "queued",
+              };
             }),
-          });
-          if (summary.timedOut) {
+          );
+          if (!opts.wait) {
+            if (queued.length === 1) {
+              return {
+                host_id: queued[0].host_id,
+                op_id: queued[0].op_id,
+                status: queued[0].status,
+                requested_components: components ?? [],
+              };
+            }
+            return {
+              status: "queued",
+              count: queued.length,
+              requested_components: components ?? [],
+              hosts: queued,
+            };
+          }
+          const waited = await Promise.all(
+            queued.map(async (entry) => {
+              const summary = await waitForLro(ctx, entry.op_id, {
+                timeoutMs: ctx.timeoutMs,
+                pollMs: ctx.pollMs,
+                onUpdate: createHostLroProgressReporter(ctx, entry),
+              });
+              return {
+                ...entry,
+                status: summary.status,
+                timed_out: !!summary.timedOut,
+                error: summary.error ?? undefined,
+                result:
+                  summary.result && typeof summary.result === "object"
+                    ? summary.result
+                    : undefined,
+              };
+            }),
+          );
+          const failures = waited.filter(
+            (entry) => entry.timed_out || entry.status !== "succeeded",
+          );
+          if (failures.length > 0) {
             throw new Error(
-              `${host.name ?? host.id}: timed out (op=${op.op_id}, last_status=${summary.status})`,
+              failures
+                .map((entry) => {
+                  if (entry.timed_out) {
+                    return `${entry.name ?? entry.host_id}: timed out (op=${entry.op_id}, last_status=${entry.status})`;
+                  }
+                  return `${entry.name ?? entry.host_id}: status=${entry.status} error=${entry.error ?? "unknown"}`;
+                })
+                .join("; "),
             );
           }
-          if (summary.status !== "succeeded") {
-            throw new Error(
-              `${host.name ?? host.id}: status=${summary.status} error=${summary.error ?? "unknown"}`,
-            );
+          if (waited.length === 1) {
+            return {
+              host_id: waited[0].host_id,
+              op_id: waited[0].op_id,
+              status: waited[0].status,
+              requested_components: components ?? [],
+              ...(waited[0].result ?? {}),
+            };
           }
           return {
-            host_id: host.id,
-            op_id: op.op_id,
-            status: summary.status,
+            status: "succeeded",
+            count: waited.length,
             requested_components: components ?? [],
-            ...(summary.result && typeof summary.result === "object"
-              ? summary.result
-              : {}),
+            hosts: waited,
           };
         });
       },

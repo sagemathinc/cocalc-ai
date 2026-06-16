@@ -927,9 +927,9 @@ cocalc software deploy star <tag-or-id> dev
 Initial backend:
 
 - Resolve local/remote Star artifact manifest.
-- Ensure immutable GitHub release assets exist.
+- Ensure immutable GitHub release assets exist before mutating the channel.
 - Run/wrap `promote-github-release-channel.sh --upload <release-id> <channel>`.
-- Record channel promotion in the local software deploy log.
+- Record channel promotion in durable R2 deployment history.
 
 ## Smoke Semantics
 
@@ -966,8 +966,11 @@ Smoke tests should have explicit cleanup and should write reports under:
 Implemented:
 
 - `build`, `list`, and `push` for immutable local/R2 artifacts.
-- `build` for `static`, `hub`, `bay`, `project-host`, `project`, and
-  `tools`.
+- `build` for `static`, `hub`, `bay`, `project-host`, `project`, `tools`,
+  `cli`, `launchpad`, `plus`, and `star`.
+- `cli`, `launchpad`, and `plus` builds use the immutable software artifact id
+  as the SEA version instead of treating `package.json` semver as the deploy
+  identity. Star builds pass the same artifact id as `STAR_RELEASE_ID`.
 - `deploy` for `static`, `hub`, and `bay` through the Rocket deploy path.
 - `deploy` for `project-host`, `project`, and `tools` through
   `host upgrade --all-online --artifact-version ...`.
@@ -976,10 +979,21 @@ Implemented:
   flags. These resolve a `bay` artifact and stage the full bay runtime, but
   restart only the requested bay service or install/daemon-reload only the
   scaffold instead of rolling hub workers.
+- `deploy` for `host-conat-router` and `host-conat-persist` through the
+  project-host software artifact path. These install the selected
+  `project-host` artifact on online hosts, set only the requested host managed
+  component desired version, and reconcile only that component.
 - Compatibility publishing for `project-host`, `project`, and `tools` so
   existing host upgrade/install code can consume immutable software artifacts
   from old-shape URLs such as
   `software/project-host/<artifact-id>/bundle-linux.tar.xz`.
+- `deploy`/promote for `cli`, `launchpad`, and `plus` release channels. These
+  publish installer-facing channel manifests under
+  `software/cocalc*/<channel>-<os>-<arch>.json`, with `stable` also updating
+  legacy `latest-<os>-<arch>.json` aliases for existing installer defaults.
+- CLI/Launchpad/Plus installers now prefer channel-manifest `artifact_id`
+  identity over package semver and persist release metadata such as
+  `published_at` and git hash for local inspection/version output.
 - R2 deployment history for implemented deploy paths, with a started record
   written before the target is mutated and a sealed `succeeded` or `failed`
   record written after completion. Unsealed `started` records display as
@@ -992,6 +1006,15 @@ Implemented:
   `tools`. These select a running host, validate `host deploy status` observed
   artifact/component state, and run a routed `host rootfs` RPC against that
   host.
+- Release-channel `smoke` slice for `cli`, `launchpad`, and `plus`. These
+  fetch the public channel manifest for the current OS/architecture, download
+  the referenced artifact, verify sha256, materialize the temporary executable,
+  and run `--version` with release metadata injected.
+- `deploy`/promote for `star` release channels. This resolves the Star
+  artifact from the software store, verifies the immutable GitHub release
+  exists with `gh release view`, promotes the GitHub channel release with
+  `promote-github-release-channel.sh --upload`, and records the promotion in R2
+  deployment history.
 - `latest` as a reserved selector that resolves to the newest local or remote
   artifact for a component.
 - Human-readable build/deploy durations and artifact sizes.
@@ -1001,11 +1024,13 @@ Implemented:
 Still not implemented:
 
 - Deeper throwaway project lifecycle `smoke` coverage for `project-host`,
-  `project`, and `tools`, plus smoke coverage for `cli`, `launchpad`, `plus`,
-  and `star`.
-- `deploy`/promote for `cli`, `launchpad`, `plus`, and `star`.
-- Host-side component-only deploys for `host-conat-router` and
-  `host-conat-persist`.
+  `project`, and `tools`, plus smoke coverage for `star`.
+- Product/documentation updates for the new CLI channel model, including a
+  dedicated `/products/cocalc-cli` page and channel notes on public installer
+  pages.
+- Coordinated Plus/tools-minimal channel promotion. Today `plus` channel
+  promotion updates the Plus binary manifest only; the installer still resolves
+  `tools-minimal` from its own channel manifest.
 - Rollback wrappers.
 
 ### Phase 0: Documentation And Test Fixtures
@@ -1184,12 +1209,16 @@ Wrap existing SEA build/publish scripts.
 
 Short-term:
 
-- use package scripts for build
-- use common manifest/index for local/remote visibility
-- add `stable`, `candidate`, and optional `dev` channel manifests
-- keep existing `latest-<os>-<arch>.json` as stable compatibility aliases
+- use package scripts for build. Done.
+- use common manifest/index for local/remote visibility. Done.
+- add `stable`, `candidate`, and optional `dev` channel manifests. Done for
+  CLI/Launchpad/Plus.
+- keep existing `latest-<os>-<arch>.json` as stable compatibility aliases.
+  Done for CLI/Launchpad/Plus.
 - use existing publish script behavior only as a compatibility layer while the
-  common software store is being introduced
+  common software store is being introduced. Mostly superseded by common
+  channel manifest promotion; package-local publish scripts still exist for
+  manual/legacy publishing.
 
 Long-term:
 

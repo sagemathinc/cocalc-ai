@@ -16,6 +16,22 @@ const embeddedBundleHash = "${ASSET_HASH}";
 const name = "${NAME}";
 const mainScript = "${MAIN}";
 
+function releaseVersionDisplay() {
+  const artifactId = process.env.COCALC_LAUNCHPAD_ARTIFACT_ID || "";
+  const releaseVersion = process.env.COCALC_LAUNCHPAD_VERSION || "";
+  const publishedAt = process.env.COCALC_LAUNCHPAD_PUBLISHED_AT || "";
+  const git =
+    process.env.COCALC_LAUNCHPAD_GIT_SHORT ||
+    process.env.COCALC_LAUNCHPAD_GIT_COMMIT ||
+    "";
+  const base = artifactId || releaseVersion || version;
+  const details = [
+    publishedAt ? `published ${publishedAt}` : "",
+    git ? `git ${git}` : "",
+  ].filter(Boolean);
+  return details.length ? `${base} (${details.join(", ")})` : base;
+}
+
 function installWarningFilter() {
   const originalEmitWarning = process.emitWarning.bind(process);
   process.emitWarning = (warning, ...args) => {
@@ -241,11 +257,11 @@ if (path.basename(process.argv[1]) == "node") {
 
   process.argv = [process.execPath, ...process.argv.slice(2)];
 } else if (process.argv[2] == "-v" || process.argv[2] == "--version") {
-  console.log(version);
+  console.log(releaseVersionDisplay());
   process.exit(0);
 } else {
   const destDir = extractAssetsSync();
-  console.log("CoCalc Launchpad (v" + version + ")");
+  console.log("CoCalc Launchpad (v" + releaseVersionDisplay() + ")");
 
   const script = path.join(destDir, mainScript);
 

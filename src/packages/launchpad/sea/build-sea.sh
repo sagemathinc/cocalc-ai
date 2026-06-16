@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 export NAME="cocalc-launchpad"
 export MAIN="bundle/index.js"
-export VERSION="$npm_package_version"
+export VERSION="${COCALC_SOFTWARE_ARTIFACT_ID:-${npm_package_version:-$(node -p "require('../package.json').version")}}"
 
 # shellcheck source=../../project-host/sea/node-bin.sh
 source ../../project-host/sea/node-bin.sh
