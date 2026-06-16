@@ -1546,6 +1546,51 @@ function releaseDeployTargetForComponent(component: SoftwareDeployComponent):
   return undefined;
 }
 
+function releaseProductForArtifactComponent(
+  component: "cli" | "launchpad" | "plus",
+): "cocalc" | "cocalc-launchpad" | "cocalc-plus" {
+  return component === "cli"
+    ? "cocalc"
+    : component === "launchpad"
+      ? "cocalc-launchpad"
+      : "cocalc-plus";
+}
+
+function releaseChannelEnvForArtifactComponent(
+  component: "cli" | "launchpad" | "plus",
+): "COCALC_CLI_CHANNEL" | "COCALC_LAUNCHPAD_CHANNEL" | "COCALC_PLUS_CHANNEL" {
+  return component === "cli"
+    ? "COCALC_CLI_CHANNEL"
+    : component === "launchpad"
+      ? "COCALC_LAUNCHPAD_CHANNEL"
+      : "COCALC_PLUS_CHANNEL";
+}
+
+function releaseInstallInfo({
+  component,
+  channel,
+  publicBaseUrl,
+}: {
+  component: "cli" | "launchpad" | "plus";
+  channel: string;
+  publicBaseUrl: string;
+}): {
+  install_url: string;
+  install_channel_env: string;
+  install_command: string;
+  available_channels: string[];
+} {
+  const product = releaseProductForArtifactComponent(component);
+  const envName = releaseChannelEnvForArtifactComponent(component);
+  const installUrl = `${publicBaseUrl}/software/${product}/install.sh`;
+  return {
+    install_url: installUrl,
+    install_channel_env: `${envName}=${channel}`,
+    install_command: `curl -fsSL ${installUrl} | ${envName}=${channel} bash`,
+    available_channels: ["dev", "candidate", "stable"],
+  };
+}
+
 function deploymentId({
   startedAt,
   artifactId,
@@ -1927,6 +1972,7 @@ Supported deploy/smoke components:
         let hostCompatUrl: string | undefined;
         let hostManagedComponent: string | undefined;
         let releaseProduct: string | undefined;
+        let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
         let releaseChannelManifestUrls: string[] | undefined;
         let targetKind: SoftwareDeploymentRecord["target"]["kind"];
         if (rocketTarget) {
@@ -2018,12 +2064,14 @@ Supported deploy/smoke components:
             );
           }
         } else if (releaseTarget) {
-          releaseProduct =
-            releaseTarget.artifactComponent === "cli"
-              ? "cocalc"
-              : releaseTarget.artifactComponent === "launchpad"
-                ? "cocalc-launchpad"
-                : "cocalc-plus";
+          releaseProduct = releaseProductForArtifactComponent(
+            releaseTarget.artifactComponent,
+          );
+          releaseInstall = releaseInstallInfo({
+            component: releaseTarget.artifactComponent,
+            channel: releaseChannel!,
+            publicBaseUrl: config.publicBaseUrl,
+          });
           targetKind = "release-channel";
         } else {
           throw new Error(`software deploy ${component} is not wired yet`);
@@ -2061,6 +2109,7 @@ Supported deploy/smoke components:
               : {}),
             ...(releaseProduct ? { release_product: releaseProduct } : {}),
             ...(releaseChannel ? { release_channel: releaseChannel } : {}),
+            ...(releaseInstall ?? {}),
           },
           deps,
         });
@@ -2090,6 +2139,7 @@ Supported deploy/smoke components:
                 ...(published.channel === "stable"
                   ? { latest_alias: "updated" }
                   : {}),
+                ...(releaseInstall ?? {}),
               };
               return;
             }
@@ -2138,6 +2188,7 @@ Supported deploy/smoke components:
               : {}),
             ...(releaseProduct ? { release_product: releaseProduct } : {}),
             ...(releaseChannel ? { channel: releaseChannel } : {}),
+            ...(releaseInstall ?? {}),
             ...(releaseChannelManifestUrls
               ? { channel_manifests: releaseChannelManifestUrls }
               : {}),

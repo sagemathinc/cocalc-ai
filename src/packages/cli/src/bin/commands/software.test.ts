@@ -1511,6 +1511,23 @@ test("software deploy cli promotes an immutable artifact to a release channel", 
   const payload = JSON.parse(logs.at(-1) ?? "{}");
   assert.equal(payload.data.size_bytes, 10);
   assert.equal(payload.data.size, "10 bytes");
+  assert.equal(
+    payload.data.install_url,
+    "https://software.example.test/software/cocalc/install.sh",
+  );
+  assert.equal(
+    payload.data.install_channel_env,
+    "COCALC_CLI_CHANNEL=candidate",
+  );
+  assert.equal(
+    payload.data.install_command,
+    "curl -fsSL https://software.example.test/software/cocalc/install.sh | COCALC_CLI_CHANNEL=candidate bash",
+  );
+  assert.deepEqual(payload.data.available_channels, [
+    "dev",
+    "candidate",
+    "stable",
+  ]);
 });
 
 test("software deploy plus stable also updates the legacy latest manifest", async () => {
