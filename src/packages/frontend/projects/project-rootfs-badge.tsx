@@ -180,6 +180,24 @@ export function ProjectRootfsRuntimeModal({
   open,
   project_id,
 }: ProjectRootfsRuntimeModalProps) {
+  if (!open || !project_id) {
+    return null;
+  }
+
+  return (
+    <ProjectRootfsRuntimeModalContent
+      onClose={onClose}
+      open={open}
+      project_id={project_id}
+    />
+  );
+}
+
+function ProjectRootfsRuntimeModalContent({
+  onClose,
+  open,
+  project_id,
+}: ProjectRootfsRuntimeModalProps) {
   const actions = useActions({ project_id });
   const project = useTypedRedux("projects", "project_map")?.get(project_id);
   const context = useMemo(
@@ -191,10 +209,6 @@ export function ProjectRootfsRuntimeModal({
     }),
     [actions, project, project_id],
   );
-
-  if (!open) {
-    return null;
-  }
 
   return (
     <ProjectContext.Provider value={context}>
