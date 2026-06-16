@@ -119,9 +119,14 @@ jest.mock("@cocalc/frontend/purchases/payments", () => () => (
 ));
 
 jest.mock("@cocalc/frontend/purchases/stripe-payment", () => (props: any) => (
-  <button type="button" onClick={() => props.onFinished(0)}>
-    complete-payment
-  </button>
+  <div>
+    {(props.lineItems ?? []).map((item: any) => (
+      <div key={item.description}>{item.description}</div>
+    ))}
+    <button type="button" onClick={() => props.onFinished(0)}>
+      complete-payment
+    </button>
+  </div>
 ));
 
 jest.mock("@cocalc/frontend/purchases/api", () => ({
@@ -403,7 +408,9 @@ describe("membership package managers", () => {
       current_seats: { member: 0, pro: 0 },
       assigned_seats: { member: 0, pro: 0 },
       added_seats: { member: 16, pro: 0 },
-      line_items: [{ description: "16 Member team seats", amount: 160 }],
+      line_items: [
+        { description: "16 Member annual team seats at $10/seat", amount: 160 },
+      ],
       total_price: 160,
       interval: "year",
     });
@@ -452,6 +459,14 @@ describe("membership package managers", () => {
 
     await waitFor(() => {
       expect(screen.getByText("complete-payment")).toBeTruthy();
+      expect(
+        screen.getByText(
+          "These seats will become available now and renew on June 1, 2027.",
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.getByText("16 Member annual team seats at $10/seat"),
+      ).toBeTruthy();
     });
 
     fireEvent.click(screen.getByText("complete-payment"));

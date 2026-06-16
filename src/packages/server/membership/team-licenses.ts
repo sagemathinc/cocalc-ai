@@ -9,7 +9,12 @@ import {
   assertAccountWriteOnHomeBay,
   withAccountRehomeWriteFence,
 } from "@cocalc/server/accounts/rehome-fence";
-import { moneyRound2Up, toDecimal, type MoneyValue } from "@cocalc/util/money";
+import {
+  moneyRound2Up,
+  moneyToCurrency,
+  toDecimal,
+  type MoneyValue,
+} from "@cocalc/util/money";
 import { uuid } from "@cocalc/util/misc";
 import dayjs from "dayjs";
 import type {
@@ -142,6 +147,23 @@ function getProrationFactor({
   if (totalMs <= 0) return 0;
   const remainingMs = Math.max(0, periodEnd.valueOf() - now.valueOf());
   return Math.min(1, remainingMs / totalMs);
+}
+
+function teamSeatLineDescription({
+  seatCount,
+  tier,
+  annualPrice,
+  prorated = false,
+}: {
+  seatCount: number;
+  tier: MembershipTierRecord;
+  annualPrice: MoneyValue;
+  prorated?: boolean;
+}): string {
+  const price = toDecimal(annualPrice);
+  return `${seatCount} ${getTierLabel(tier)} annual team seat${
+    seatCount === 1 ? "" : "s"
+  } at ${moneyToCurrency(annualPrice, price.isInteger() ? 0 : 2)}/seat${prorated ? ", prorated" : ""}`;
 }
 
 export async function getTeamLicenseRecordForOwner({
@@ -296,9 +318,12 @@ export async function resolveTeamLicenseQuote({
       toDecimal(annualPrice).mul(added).mul(prorationFactor),
     ).toNumber();
     lineItems.push({
-      description: `${added} ${getTierLabel(tier)} team seat${
-        added === 1 ? "" : "s"
-      }`,
+      description: teamSeatLineDescription({
+        seatCount: added,
+        tier,
+        annualPrice,
+        prorated: prorationFactor < 0.999,
+      }),
       amount,
     });
   }
@@ -574,9 +599,11 @@ export async function getTeamLicenseRenewalQuote({
       const tier = tiers[line.membership_class];
       const annualPrice = getMembershipPrice(tier, TEAM_LICENSE_INTERVAL);
       return {
-        description: `${line.seat_count} ${getTierLabel(tier)} team seat${
-          line.seat_count === 1 ? "" : "s"
-        }`,
+        description: teamSeatLineDescription({
+          seatCount: line.seat_count,
+          tier,
+          annualPrice,
+        }),
         amount: moneyRound2Up(
           toDecimal(annualPrice).mul(line.seat_count),
         ).toNumber(),

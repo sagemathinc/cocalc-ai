@@ -4777,16 +4777,19 @@ function TeamPackagePurchaseModal({
         <Alert
           showIcon={false}
           type="info"
-          title="These seats start now and renew with your team license."
+          title={`These seats will become available now and renew on ${formatTeamLicenseRenewalDate(
+            quote?.current_period_end,
+          )}.`}
         />
         <Button disabled={disabled} onClick={() => setPlace("choose")}>
           Change selection
         </Button>
         <StripePayment
           disabled={disabled}
-          description="Team license seats"
+          description="Team license"
           lineItems={lineItems}
           purpose={TEAM_LICENSE_CHANGE}
+          title={null}
           metadata={{
             team_license_target_seats: JSON.stringify(seatTargets),
           }}
@@ -4874,6 +4877,15 @@ function teamLicenseMatchesTargets(
       teamLicense.seat_lines.find((line) => line.membership_class === tier.id)
         ?.seat_count ?? 0;
     return actual >= target;
+  });
+}
+
+function formatTeamLicenseRenewalDate(value?: Date | string): string {
+  return new Date(value ?? Date.now()).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
   });
 }
 

@@ -48,6 +48,24 @@ describe("team licenses", () => {
     await createTestAccount(owner_account_id);
     await createTestAccount(member_account_id);
 
+    const quote = await resolveTeamLicenseQuote({
+      owner_account_id,
+      target_seats: {
+        [standardTier]: 2,
+        [proTier]: 1,
+      },
+    });
+    expect(quote.line_items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          description: `2 ${standardTier} annual team seats at $120/seat`,
+        }),
+        expect.objectContaining({
+          description: `1 ${proTier} annual team seat at $300/seat`,
+        }),
+      ]),
+    );
+
     const overview = await applyTeamLicenseSeatConfiguration({
       owner_account_id,
       target_seats: {
