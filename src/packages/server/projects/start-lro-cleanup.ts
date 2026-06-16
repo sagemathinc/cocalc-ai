@@ -17,6 +17,10 @@ const log = getLogger("server:projects:start-lro-cleanup");
 
 const ACTIVE_START_STATUSES = ["queued", "running"] as const;
 const ORPHANED_START_LRO_GRACE_MS = 30_000;
+const ORPHANED_RESTORE_START_LRO_GRACE_MS = Math.max(
+  ORPHANED_START_LRO_GRACE_MS,
+  10 * 60_000,
+);
 const RECENT_STARTING_STATE_MS = 5 * 60_000;
 
 type ProjectStartLroRow = {
@@ -24,6 +28,7 @@ type ProjectStartLroRow = {
   scope_type: "project";
   scope_id: string;
   error?: string | null;
+  input?: any;
   progress_summary?: any;
   created_at?: Date | string | null;
 };
@@ -109,6 +114,14 @@ function parseProjectState(rawState: any): { state?: string; timeMs?: number } {
   };
 }
 
+function orphanGraceMs(row: ProjectStartLroRow): number {
+  const input = row.input ?? {};
+  return typeof input?.restore_backup_id === "string" &&
+    input.restore_backup_id.trim()
+    ? ORPHANED_RESTORE_START_LRO_GRACE_MS
+    : ORPHANED_START_LRO_GRACE_MS;
+}
+
 export async function cancelStaleProjectStartLros({
   project_id,
   keep_op_id,
@@ -123,7 +136,7 @@ export async function cancelStaleProjectStartLros({
   try {
     const result = await getPool().query<ProjectStartLroRow>(
       `
-        SELECT op_id, scope_type, scope_id, error, progress_summary, created_at
+        SELECT op_id, scope_type, scope_id, error, input, progress_summary, created_at
         FROM long_running_operations
         WHERE kind='project-start'
           AND scope_type='project'
@@ -230,7 +243,7 @@ export async function cancelStaleProjectStartLros({
       createdAtMs != null && Number.isFinite(createdAtMs)
         ? nowMs - createdAtMs
         : undefined;
-    if (ageMs == null || ageMs < ORPHANED_START_LRO_GRACE_MS) {
+    if (ageMs == null || ageMs < orphanGraceMs(row)) {
       continue;
     }
     if (recentStartingState && opId === newestOpId) {
