@@ -183,6 +183,7 @@ import {
 import {
   listRootfsImagesAdmin,
   listRootfsImagesAdminPage,
+  listVisibleRootfsImagesById,
   listVisibleRootfsImages,
   listVisibleRootfsImagesPage,
   requestRootfsImageDeletion as requestRootfsImageDeletion0,
@@ -4460,6 +4461,18 @@ export async function getRootfsCatalogPage(
   } = {},
 ): Promise<RootfsImageCatalogPage> {
   return await listVisibleRootfsImagesPage(opts.account_id, opts);
+}
+
+export async function getRootfsCatalogEntries(
+  opts: {
+    account_id?: string;
+    image_ids?: string[];
+  } = {},
+) {
+  return await listVisibleRootfsImagesById(
+    opts.account_id,
+    opts.image_ids ?? [],
+  );
 }
 
 export async function getRootfsCatalogAdmin(

@@ -203,6 +203,7 @@ export type RootfsCatalogPageRequest = {
     owner_id?: string;
     family?: string;
     channel?: string;
+    image_ids?: string[];
   };
 };
 
@@ -276,6 +277,7 @@ export type PublishProjectRootfsBody = {
   prepull?: boolean;
   hidden?: boolean;
   source_mode?: RootfsPublishSourceMode;
+  switch_project?: boolean;
   browser_id?: string | null;
   session_hash?: string | null;
 };

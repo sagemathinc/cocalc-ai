@@ -145,6 +145,8 @@ export default function RootFilesystemImage({
   const [publishCopyMode, setPublishCopyMode] = useState<"project" | "base">(
     "project",
   );
+  const [switchPublishedProject, setSwitchPublishedProject] =
+    useState<boolean>(true);
   const [publishAdvanced, setPublishAdvanced] = useState<boolean>(false);
   const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
   const [publishSourceEntry, setPublishSourceEntry] =
@@ -376,6 +378,7 @@ export default function RootFilesystemImage({
         publishCopyMode,
         publishDraft,
         publishSourceEntry,
+        switchPublishedProject,
       }),
     [
       project_id,
@@ -383,6 +386,7 @@ export default function RootFilesystemImage({
       publishCopyMode,
       publishDraft,
       publishSourceEntry,
+      switchPublishedProject,
     ],
   );
   const publishTagOptions = useMemo(
@@ -652,6 +656,7 @@ export default function RootFilesystemImage({
               official: isAdmin ? publishDraft.official : undefined,
               prepull: isAdmin ? publishDraft.prepull : undefined,
               hidden: isAdmin ? publishDraft.hidden : undefined,
+              switch_project: switchPublishedProject,
             });
             actions?.trackRootfsPublishOp?.(op);
           } else {
@@ -778,6 +783,7 @@ export default function RootFilesystemImage({
       publishCopyMode,
       publishDraft,
       publishSourceEntry,
+      switchPublishedProject,
     });
     try {
       const sent = await submitNavigatorPromptToCurrentThread({
@@ -1551,6 +1557,9 @@ export default function RootFilesystemImage({
           }
           cancelText="Cancel"
           okButtonProps={{ loading: publishing }}
+          styles={{
+            body: { maxHeight: "calc(100vh - 230px)", overflowY: "auto" },
+          }}
           title={
             publishMode === "manage"
               ? "Manage RootFS Catalog Entry"
@@ -1719,12 +1728,25 @@ export default function RootFilesystemImage({
             )}
 
             {publishMode === "copy" && publishCopyMode === "project" ? (
-              <Alert
-                type="info"
-                showIcon
-                title="Publishing continues in the background"
-                description="After you click Publish RootFS, this dialog closes and progress appears in RootFS publish operations on the Runtime Image screen. You can close and reopen project settings later to see current and past publish operations."
-              />
+              <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Checkbox
+                  checked={switchPublishedProject}
+                  onChange={(e) => setSwitchPublishedProject(e.target.checked)}
+                >
+                  Switch this project to the newly published image when
+                  publishing finishes
+                </Checkbox>
+                <Alert
+                  type="info"
+                  showIcon
+                  title="Publishing continues in the background"
+                  description={
+                    switchPublishedProject
+                      ? "After you click Publish RootFS, this dialog closes and progress appears in RootFS publish operations on the Runtime Image screen. When the publish operation succeeds, the project is switched to the new image as part of the same background operation."
+                      : "After you click Publish RootFS, this dialog closes and progress appears in RootFS publish operations on the Runtime Image screen. The project keeps its current runtime image when publishing finishes."
+                  }
+                />
+              </Space>
             ) : null}
 
             <RuntimePanel
@@ -2082,7 +2104,13 @@ export default function RootFilesystemImage({
                         cliTitle="RootFS CLI"
                         cliCommands={[publishAssistCommand]}
                         onSendAgent={sendPublishAssistToAgent}
-                        agentDescription="Agent support depends on the current workspace Codex session. Restart-sensitive actions such as changing the project image still need more care than publishing."
+                        agentDescription={
+                          switchPublishedProject &&
+                          publishMode === "copy" &&
+                          publishCopyMode === "project"
+                            ? "Agent support depends on the current workspace Codex session. This publish request also switches the project to the new image when the background operation succeeds."
+                            : "Agent support depends on the current workspace Codex session."
+                        }
                       />
                     </Space>
                   ),
@@ -2094,7 +2122,9 @@ export default function RootFilesystemImage({
               {publishMode === "manage"
                 ? "This updates the selected catalog entry in place."
                 : publishCopyMode === "project"
-                  ? "Publishing creates a new immutable managed RootFS reference. The current project keeps its existing live upperdir and is not automatically switched to that new image."
+                  ? switchPublishedProject
+                    ? "Publishing creates a new immutable managed RootFS reference and switches this project to that image after the publish operation succeeds."
+                    : "Publishing creates a new immutable managed RootFS reference. This project keeps its current runtime image."
                   : "This saves catalog metadata for the current image string without creating a new managed RootFS artifact."}
             </Paragraph>
           </Space>
@@ -2128,9 +2158,12 @@ export function RootFilesystemImageModal({
   return (
     <Modal
       destroyOnHidden
-      footer={null}
+      footer={<Button onClick={onClose}>Close</Button>}
       onCancel={onClose}
       open={open}
+      styles={{
+        body: { maxHeight: "calc(100vh - 210px)", overflowY: "auto" },
+      }}
       title={
         <>
           <Icon name="docker" style={{ marginRight: 10 }} />
@@ -3237,6 +3270,7 @@ function buildRootfsPublishAssistCommand(opts: {
   publishCopyMode: "project" | "base";
   publishDraft: PublishDraft;
   publishSourceEntry?: RootfsImageEntry;
+  switchPublishedProject: boolean;
 }): string {
   const {
     projectId,
@@ -3244,6 +3278,7 @@ function buildRootfsPublishAssistCommand(opts: {
     publishCopyMode,
     publishDraft,
     publishSourceEntry,
+    switchPublishedProject,
   } = opts;
   const parts: string[] =
     publishMode === "copy" && publishCopyMode === "project"
@@ -3289,6 +3324,13 @@ function buildRootfsPublishAssistCommand(opts: {
   if (publishDraft.official) parts.push("--official");
   if (publishDraft.prepull) parts.push("--prepull");
   if (publishDraft.hidden) parts.push("--hidden");
+  if (
+    publishMode === "copy" &&
+    publishCopyMode === "project" &&
+    switchPublishedProject
+  ) {
+    parts.push("--switch-project");
+  }
   return parts.join(" ");
 }
 
@@ -3299,6 +3341,7 @@ function buildRootfsPublishAgentPrompt(opts: {
   publishCopyMode: "project" | "base";
   publishDraft: PublishDraft;
   publishSourceEntry?: RootfsImageEntry;
+  switchPublishedProject: boolean;
 }): string {
   const {
     projectId,
@@ -3307,6 +3350,7 @@ function buildRootfsPublishAgentPrompt(opts: {
     publishCopyMode,
     publishDraft,
     publishSourceEntry,
+    switchPublishedProject,
   } = opts;
   const lines = [
     publishMode === "copy" && publishCopyMode === "project"
@@ -3321,7 +3365,9 @@ function buildRootfsPublishAgentPrompt(opts: {
     "```",
     "",
     publishMode === "copy" && publishCopyMode === "project"
-      ? "Important: this publishes the current visible / software environment. It does not publish /root or /tmp, and it does not automatically switch the project to the new image."
+      ? switchPublishedProject
+        ? "Important: this publishes the current visible / software environment, then switches the project to the new image when publishing succeeds. It does not publish /root or /tmp."
+        : "Important: this publishes the current visible / software environment. It does not publish /root or /tmp, and it does not switch the project to the new image."
       : publishMode === "manage"
         ? `Important: update the existing catalog entry${publishSourceEntry?.label ? ` (${publishSourceEntry.label})` : ""} instead of creating another copy.`
         : "Important: this only saves catalog metadata for the current base image. It does not create a new managed RootFS artifact from the live project state.",
@@ -3339,6 +3385,13 @@ function buildRootfsPublishAgentPrompt(opts: {
     `- official: ${publishDraft.official ? "yes" : "no"}`,
     `- prepull: ${publishDraft.prepull ? "yes" : "no"}`,
     `- hidden: ${publishDraft.hidden ? "yes" : "no"}`,
+    ...(publishMode === "copy" && publishCopyMode === "project"
+      ? [
+          `- switch_project_after_publish: ${
+            switchPublishedProject ? "yes" : "no"
+          }`,
+        ]
+      : []),
     "",
     "After the action completes, report the resulting image name, image_id/release_id if available, and whether the action succeeded cleanly.",
   ];

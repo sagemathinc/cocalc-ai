@@ -98,8 +98,21 @@ export const ProjectsPage: React.FC = () => {
   const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
   const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const projectRootfsImageIds = useMemo(() => {
+    const ids = new globalThis.Set<string>();
+    project_map?.forEach((project) => {
+      const id = `${project?.get?.("rootfs_image_id") ?? ""}`.trim();
+      if (id) {
+        ids.add(id);
+      }
+    });
+    return Array.from(ids).sort();
+  }, [project_map]);
   const { images: rootfsImages, loading: rootfsImagesLoading } =
-    useRootfsImages([managedRootfsCatalogUrl()], { limit: 200 });
+    useRootfsImages([managedRootfsCatalogUrl()], {
+      imageIds: projectRootfsImageIds,
+      limit: 200,
+    });
   const rootfsLabelById = useMemo(() => {
     const labelMap = new globalThis.Map<string, string>();
     for (const entry of rootfsImages) {

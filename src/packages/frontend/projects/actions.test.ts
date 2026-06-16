@@ -255,6 +255,57 @@ describe("ProjectsActions project metadata updates", () => {
     expect(redux._set_state).toHaveBeenCalledTimes(1);
   });
 
+  it("reapplies metadata when projection repair briefly restores stale values", async () => {
+    jest.useFakeTimers();
+    let projectMap = baseProjectMap;
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? projectMap : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+
+    const { actions, redux } = makeActions();
+    const warn = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    redux._set_state.mockImplementation((state) => {
+      const nextProjectMap = state?.projects?.project_map;
+      if (nextProjectMap != null) {
+        projectMap = nextProjectMap;
+      }
+    });
+    actions.projects_query_set = jest.fn(async () => undefined);
+    actions.projectedProjectMetadataMatches = jest.fn(async () => false);
+    actions.repairProjectProjection = jest.fn(async () => {
+      projectMap = baseProjectMap;
+    });
+
+    try {
+      const save = actions.set_project_description(
+        project_id,
+        "New description",
+      );
+      await jest.advanceTimersByTimeAsync(11_000);
+      await expect(save).resolves.toBeUndefined();
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+      warn.mockRestore();
+    }
+
+    expect(actions.projects_query_set).toHaveBeenCalledWith({
+      project_id,
+      description: "New description",
+    });
+    expect(projectMap.getIn([project_id, "description"])).toBe(
+      "New description",
+    );
+  });
+
   it("setProjectTheme bypasses synced table writes that require project-host routing", async () => {
     const { actions, async_log, redux } = makeActions();
     actions.projects_table_set = jest.fn(async () => {

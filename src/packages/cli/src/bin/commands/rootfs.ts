@@ -1218,6 +1218,10 @@ export function registerRootfsCommand(
     .option("--official", "mark as official (admin only)")
     .option("--prepull", "mark for automatic prepull on new hosts (admin only)")
     .option("--hidden", "hide from normal catalog views")
+    .option(
+      "--switch-project",
+      "switch the project to the newly published image when publishing succeeds",
+    )
     .option("--wait", "wait for the publish LRO to finish")
     .action(
       async (
@@ -1235,6 +1239,7 @@ export function registerRootfsCommand(
           official?: boolean;
           prepull?: boolean;
           hidden?: boolean;
+          switchProject?: boolean;
           wait?: boolean;
         },
         command: Command,
@@ -1255,6 +1260,7 @@ export function registerRootfsCommand(
             official: opts.official ? true : undefined,
             prepull: opts.prepull ? true : undefined,
             hidden: opts.hidden ? true : undefined,
+            switch_project: opts.switchProject ? true : undefined,
           });
           if (!opts.wait) {
             return {
