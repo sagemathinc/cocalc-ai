@@ -36,6 +36,7 @@ describe("purchases.maintenance capability gating", () => {
       } as any),
     ).toEqual([
       "maintain subscriptions",
+      "maintain team licenses",
       "maintain statements",
       "processing any outstanding payment intents",
       "maintain automatic payments",
