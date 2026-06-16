@@ -65,6 +65,16 @@ const { Paragraph, Text } = Typography;
 const { Panel: CollapsePanel } = Collapse;
 const BYTES_PER_GB = 1000 * 1000 * 1000;
 const SECONDS_PER_CPU_HOUR = 3600;
+const REMOVED_PROJECT_DEFAULT_KEYS = [
+  "cores",
+  "cpu_shares",
+  "mintime",
+  "network",
+  "member_host",
+  "always_running",
+  "ephemeral_state",
+  "ephemeral_disk",
+] as const;
 const MEMBERSHIP_TIER_EXPORT_TYPE = "cocalc.membership_tiers";
 const MEMBERSHIP_TIER_EXPORT_VERSION = 1;
 const TEMPLATE_KEYS = [
@@ -253,6 +263,14 @@ function normalizedRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function cleanProjectDefaults(value: unknown): Record<string, unknown> {
+  const projectDefaults = { ...normalizedRecord(value) };
+  for (const key of REMOVED_PROJECT_DEFAULT_KEYS) {
+    delete projectDefaults[key];
+  }
+  return projectDefaults;
+}
+
 function normalizeExpectedUsageEstimate(value: unknown): ExpectedUsageEstimate {
   const record = normalizedRecord(value);
   const estimate: ExpectedUsageEstimate = {};
@@ -331,6 +349,7 @@ function setOrDeleteBoolean(
 }
 
 function tierToFormValues(tier: Partial<Tier>) {
+  const projectDefaults = cleanProjectDefaults(tier.project_defaults);
   return {
     ...tier,
     pricing_model: normalizePricingModel(tier.pricing_model),
@@ -338,18 +357,16 @@ function tierToFormValues(tier: Partial<Tier>) {
       tier.course_allowed_domains,
     ),
     store_highlights_text: storeHighlightsToText(tier.store_highlights),
-    project_defaults: tier.project_defaults ?? {},
+    project_defaults: projectDefaults,
     ai_limits: tier.ai_limits ?? {},
     features: tier.features ?? {},
     usage_limits: tier.usage_limits ?? {},
-    project_default_memory_mb: normalizedOptionalNumber(
-      tier.project_defaults?.memory,
-    ),
+    project_default_memory_mb: normalizedOptionalNumber(projectDefaults.memory),
     project_default_memory_request_mb: normalizedOptionalNumber(
-      tier.project_defaults?.memory_request,
+      projectDefaults.memory_request,
     ),
     project_default_disk_quota_mb: normalizedOptionalNumber(
-      tier.project_defaults?.disk_quota,
+      projectDefaults.disk_quota,
     ),
     feature_create_hosts:
       typeof tier.features?.create_hosts === "boolean"
@@ -432,10 +449,9 @@ function tierToFormValues(tier: Partial<Tier>) {
 }
 
 function buildMembershipTierPayload(values): Tier {
-  const project_defaults = (parseJsonField(
-    values.project_defaults,
-    "project_defaults",
-  ) ?? {}) as Record<string, unknown>;
+  const project_defaults = cleanProjectDefaults(
+    parseJsonField(values.project_defaults, "project_defaults"),
+  );
   const ai_limits = (parseJsonField(values.ai_limits, "ai_limits") ??
     {}) as Record<string, unknown>;
   const features = (parseJsonField(values.features, "features") ??
@@ -3066,7 +3082,8 @@ export function MembershipTiers() {
               <>
                 <Paragraph style={sectionIntroStyle}>
                   The typed controls above merge into these objects on save.
-                  Keep compatibility-only fields here only during migrations.
+                  Removed legacy project-default fields are stripped on save and
+                  export.
                 </Paragraph>
                 <Row gutter={16}>
                   <Col {...wideFieldCol}>

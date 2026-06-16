@@ -46,25 +46,21 @@ describe("membership tier field metadata", () => {
     });
   });
 
-  it("classifies eliminated legacy quota fields away from primary editor cards", () => {
-    expect(
-      membershipTierFieldsByStatus("compatibility-only").map((f) => f.id),
-    ).toEqual(
-      expect.arrayContaining([
-        "project_defaults.cores",
-        "project_defaults.cpu_shares",
-        "project_defaults.mintime",
-        "project_defaults.network",
-        "project_defaults.member_host",
-        "project_defaults.always_running",
-      ]),
-    );
-    expect(membershipTierFieldsByStatus("deprecated").map((f) => f.id)).toEqual(
-      expect.arrayContaining([
-        "project_defaults.ephemeral_state",
-        "project_defaults.ephemeral_disk",
-      ]),
-    );
+  it("does not register eliminated legacy project quota fields", () => {
+    for (const id of [
+      "project_defaults.cores",
+      "project_defaults.cpu_shares",
+      "project_defaults.mintime",
+      "project_defaults.network",
+      "project_defaults.member_host",
+      "project_defaults.always_running",
+      "project_defaults.ephemeral_state",
+      "project_defaults.ephemeral_disk",
+    ]) {
+      expect(getMembershipTierField(id)).toBeUndefined();
+    }
+    expect(membershipTierFieldsByStatus("compatibility-only")).toEqual([]);
+    expect(membershipTierFieldsByStatus("deprecated")).toEqual([]);
   });
 
   it("converts stored accounting units to editor display units", () => {

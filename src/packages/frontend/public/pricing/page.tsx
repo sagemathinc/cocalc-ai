@@ -111,6 +111,14 @@ function formatBytesValue(value: unknown): ReactNode {
   return numberValue == null ? EMPTY_COMPARISON_VALUE : humanSize(numberValue);
 }
 
+function formatCpuPriority(value: unknown): ReactNode {
+  const priority = asNumber(value);
+  if (priority == null || priority <= 1) return "Low";
+  if (priority <= 2) return "Medium";
+  if (priority < 8) return "High";
+  return "Highest";
+}
+
 function formatBooleanValue(value: unknown): ReactNode {
   return value === true ? (
     <Text aria-label="Yes">✓</Text>
@@ -121,40 +129,42 @@ function formatBooleanValue(value: unknown): ReactNode {
   );
 }
 
-function positiveComparisonValues(values: readonly unknown[]): number[] {
-  return Array.from(
-    new Set(
-      values
-        .map(asNumber)
-        .filter((value): value is number => value != null && value > 0),
-    ),
-  ).sort((a, b) => a - b);
-}
-
-function formatComparativeNumberValue({
-  standardValue,
-  value,
-  values,
-}: {
-  standardValue?: unknown;
-  value: unknown;
-  values: readonly unknown[];
-}): ReactNode {
-  const numberValue = asNumber(value);
-  if (numberValue == null || numberValue <= 0) return "None";
-
-  const positiveValues = positiveComparisonValues([...values, numberValue]);
-  const standardNumber = asNumber(standardValue);
-  const effectiveStandard =
-    standardNumber != null && standardNumber > 0
-      ? standardNumber
-      : positiveValues[Math.floor((positiveValues.length - 1) / 2)];
-
-  if (effectiveStandard == null) return "None";
-  if (numberValue === effectiveStandard) return "Standard";
-  if (numberValue > effectiveStandard) return "Expanded";
-  return numberValue === positiveValues[0] ? "Minimal" : "Light";
-}
+// Hidden on June 15, 2026: restore with the Included AI usage row if public
+// pricing should compare included AI qualitatively again.
+// function positiveComparisonValues(values: readonly unknown[]): number[] {
+//   return Array.from(
+//     new Set(
+//       values
+//         .map(asNumber)
+//         .filter((value): value is number => value != null && value > 0),
+//     ),
+//   ).sort((a, b) => a - b);
+// }
+//
+// function formatComparativeNumberValue({
+//   standardValue,
+//   value,
+//   values,
+// }: {
+//   standardValue?: unknown;
+//   value: unknown;
+//   values: readonly unknown[];
+// }): ReactNode {
+//   const numberValue = asNumber(value);
+//   if (numberValue == null || numberValue <= 0) return "None";
+//
+//   const positiveValues = positiveComparisonValues([...values, numberValue]);
+//   const standardNumber = asNumber(standardValue);
+//   const effectiveStandard =
+//     standardNumber != null && standardNumber > 0
+//       ? standardNumber
+//       : positiveValues[Math.floor((positiveValues.length - 1) / 2)];
+//
+//   if (effectiveStandard == null) return "None";
+//   if (numberValue === effectiveStandard) return "Standard";
+//   if (numberValue > effectiveStandard) return "Expanded";
+//   return numberValue === positiveValues[0] ? "Minimal" : "Light";
+// }
 
 function hasPositiveUsageLimit(
   tier: PublicMembershipTier,
@@ -168,26 +178,29 @@ function hasPositiveUsageLimit(
   });
 }
 
-function getAiUsageComparisonValue(
-  tier: PublicMembershipTier,
-): number | undefined {
-  const aiLimits = asRecord(tier.ai_limits);
-  return (
-    asNumber(aiLimits.units_7d ?? aiLimits.limit_7d) ??
-    asNumber(aiLimits.units_5h ?? aiLimits.limit_5h)
-  );
-}
-
-function getStandardTierComparisonValue(
-  tiers: readonly PublicMembershipTier[],
-  value: (tier: PublicMembershipTier) => number | undefined,
-): number | undefined {
-  const standardTier = tiers.find(
-    (tier) =>
-      tier.id === "standard" || (tier.label ?? "").toLowerCase() === "standard",
-  );
-  return standardTier == null ? undefined : value(standardTier);
-}
+// Hidden on June 15, 2026: restore with the Included AI usage row if public
+// pricing should compare included AI qualitatively again.
+// function getAiUsageComparisonValue(
+//   tier: PublicMembershipTier,
+// ): number | undefined {
+//   const aiLimits = asRecord(tier.ai_limits);
+//   return (
+//     asNumber(aiLimits.units_7d ?? aiLimits.limit_7d) ??
+//     asNumber(aiLimits.units_5h ?? aiLimits.limit_5h)
+//   );
+// }
+//
+// function getStandardTierComparisonValue(
+//   tiers: readonly PublicMembershipTier[],
+//   value: (tier: PublicMembershipTier) => number | undefined,
+// ): number | undefined {
+//   const standardTier = tiers.find(
+//     (tier) =>
+//       tier.id === "standard" ||
+//       (tier.label ?? "").toLowerCase() === "standard",
+//   );
+//   return standardTier == null ? undefined : value(standardTier);
+// }
 
 function projectDefaults(tier: PublicMembershipTier): Record<string, unknown> {
   return asRecord(tier.project_defaults);
@@ -206,6 +219,11 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
     title: "Project Limits",
     rows: [
       {
+        label: "CPU priority",
+        value: ({ tier }) =>
+          formatCpuPriority(usageLimits(tier).shared_compute_priority),
+      },
+      {
         label: "RAM",
         value: ({ tier }) => formatMbValue(projectDefaults(tier).memory),
       },
@@ -213,13 +231,15 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
         label: "Disk",
         value: ({ tier }) => formatMbValue(projectDefaults(tier).disk_quota),
       },
-      {
-        label: "Collaborators",
-        value: ({ tier }) =>
-          formatNumberValue(
-            usageLimits(tier).project_max_collaborators_and_pending_invites,
-          ),
-      },
+      // Hidden on June 15, 2026: collaborators are not expected to be a
+      // meaningful public differentiator while limits are intentionally loose.
+      // {
+      //   label: "Collaborators",
+      //   value: ({ tier }) =>
+      //     formatNumberValue(
+      //       usageLimits(tier).project_max_collaborators_and_pending_invites,
+      //     ),
+      // },
     ],
   },
   {
@@ -243,18 +263,20 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
           );
         },
       },
-      {
-        label: "Included AI usage",
-        value: ({ tier, tiers }) =>
-          formatComparativeNumberValue({
-            value: getAiUsageComparisonValue(tier),
-            values: tiers.map(getAiUsageComparisonValue),
-            standardValue: getStandardTierComparisonValue(
-              tiers,
-              getAiUsageComparisonValue,
-            ),
-          }),
-      },
+      // Hidden on June 15, 2026: included AI is not part of the public
+      // comparison until the product language is finalized.
+      // {
+      //   label: "Included AI usage",
+      //   value: ({ tier, tiers }) =>
+      //     formatComparativeNumberValue({
+      //       value: getAiUsageComparisonValue(tier),
+      //       values: tiers.map(getAiUsageComparisonValue),
+      //       standardValue: getStandardTierComparisonValue(
+      //         tiers,
+      //         getAiUsageComparisonValue,
+      //       ),
+      //     }),
+      // },
     ],
   },
   {
@@ -276,13 +298,16 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
             ),
           ),
       },
-      {
-        label: "Launchpad license",
-        value: ({ tier }) =>
-          formatBooleanValue(
-            tierFeatures(tier).launchpad_license === true || tier.id === "pro",
-          ),
-      },
+      // Hidden on June 15, 2026: Launchpad licensing is not developed enough
+      // for the public membership comparison yet.
+      // {
+      //   label: "Launchpad license",
+      //   value: ({ tier }) =>
+      //     formatBooleanValue(
+      //       tierFeatures(tier).launchpad_license === true ||
+      //         tier.id === "pro",
+      //     ),
+      // },
     ],
   },
 ];
