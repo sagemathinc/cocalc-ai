@@ -16,6 +16,7 @@ import {
 import {
   arePublicPoliciesVisible,
   getExternalPoliciesUrl,
+  getPublicMarketingConfig,
   publicPoliciesUseBuiltin,
   publicPoliciesUseCustom,
 } from "@cocalc/frontend/public/config";
@@ -335,13 +336,14 @@ export default function PublicPoliciesApp({
   config?: PublicConfig;
   initialRoute: PublicPoliciesRoute;
 }) {
-  const siteName = getSiteName(config);
+  const marketingConfig = getPublicMarketingConfig(config);
+  const siteName = getSiteName(marketingConfig);
   const title = titleForRoute(initialRoute, siteName);
   const builtinPolicy =
     initialRoute.view === "policies-detail" &&
-    arePublicPoliciesVisible(config) &&
-    !getExternalPoliciesUrl(config) &&
-    publicPoliciesUseBuiltin(config)
+    arePublicPoliciesVisible(marketingConfig) &&
+    !getExternalPoliciesUrl(marketingConfig) &&
+    publicPoliciesUseBuiltin(marketingConfig)
       ? getBuiltinPolicy(initialRoute.policySlug)
       : undefined;
   const preparedPolicy =
@@ -356,7 +358,7 @@ export default function PublicPoliciesApp({
   return (
     <PublicSectionShell
       active="policies"
-      config={config}
+      config={marketingConfig}
       sider={
         builtinPolicy != null && preparedPolicy != null ? (
           <PolicySideNav
@@ -372,20 +374,21 @@ export default function PublicPoliciesApp({
     >
       {initialRoute.view === "policies-imprint" ? (
         <PoliciesDetailPage
-          config={config}
-          markdown={config?.imprint}
+          config={marketingConfig}
+          markdown={marketingConfig?.imprint}
           title="Imprint"
         />
       ) : initialRoute.view === "policies-custom" ? (
         <PoliciesDetailPage
-          config={config}
-          markdown={config?.policies}
+          config={marketingConfig}
+          markdown={marketingConfig?.policies}
           title="Policies"
         />
       ) : initialRoute.view === "policies-detail" ? (
-        !arePublicPoliciesVisible(config) || getExternalPoliciesUrl(config) ? (
-          <PolicyGateCard config={config} />
-        ) : !publicPoliciesUseBuiltin(config) ? (
+        !arePublicPoliciesVisible(marketingConfig) ||
+        getExternalPoliciesUrl(marketingConfig) ? (
+          <PolicyGateCard config={marketingConfig} />
+        ) : !publicPoliciesUseBuiltin(marketingConfig) ? (
           <EmptySection label="This policy page was not found." />
         ) : (
           <BuiltinPolicyPageShell
@@ -395,7 +398,7 @@ export default function PublicPoliciesApp({
           />
         )
       ) : (
-        <PoliciesHome config={config ?? {}} />
+        <PoliciesHome config={marketingConfig ?? {}} />
       )}
     </PublicSectionShell>
   );

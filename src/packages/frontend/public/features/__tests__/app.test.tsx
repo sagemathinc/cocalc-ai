@@ -1076,6 +1076,29 @@ describe("PublicFeaturesApp", () => {
     );
   });
 
+  it("adds compare-page trust resources only when built-in policies are public", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          policy_pages: "sagemathinc",
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "compare", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen
+        .getByRole("link", { name: "Review trust resources" })
+        .getAttribute("href"),
+    ).toBe("/policies/trust");
+    expect(screen.getByText("Checking buyer confidence")).not.toBeNull();
+    expect(
+      screen.getByText(/Security, SOC 2, GDPR, and public trust resources/),
+    ).not.toBeNull();
+  });
+
   it("keeps the compare page scannable and route-focused", () => {
     const { container } = render(
       <PublicFeaturesApp

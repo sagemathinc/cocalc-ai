@@ -82,7 +82,15 @@ export function getPublicMarketingConfig(
   config?: PublicConfig,
 ): PublicConfig | undefined {
   if (!usesDefaultLaunchpadPublicBrand(config)) return config;
-  return { ...config, site_name: SITE_NAME };
+  return {
+    ...config,
+    policy_pages:
+      config?.policy_pages === "custom" ||
+      config?.policy_pages === "sagemathinc"
+        ? config.policy_pages
+        : "sagemathinc",
+    site_name: SITE_NAME,
+  };
 }
 
 export function getPublicMarketingSiteName(config?: PublicConfig): string {
@@ -102,7 +110,10 @@ export function usesDefaultCoCalcBranding(config?: PublicConfig): boolean {
 
 export function getPublicPolicyPages(config?: PublicConfig): PublicPolicyPages {
   const value = config?.policy_pages?.trim();
-  return value === "custom" || value === "sagemathinc" ? value : "none";
+  if (value === "custom" || value === "sagemathinc" || value === "none") {
+    return value;
+  }
+  return getSiteName(config) === SITE_NAME ? "sagemathinc" : "none";
 }
 
 export function getExternalPoliciesUrl(

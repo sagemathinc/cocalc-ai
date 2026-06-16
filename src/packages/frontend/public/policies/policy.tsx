@@ -24,6 +24,11 @@ const POLICY_DOCUMENT_CSS = `
     line-height: 1.75;
   }
 
+  .cocalc-public-policy-article a {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
   .cocalc-public-policy-article table {
     border-collapse: collapse;
     display: block;

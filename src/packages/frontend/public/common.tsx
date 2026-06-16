@@ -12,6 +12,7 @@ import {
   getPublicMarketingConfig,
   getPublicMarketingSiteName,
   getSiteName,
+  publicPoliciesUseBuiltin,
   type PublicConfig,
 } from "@cocalc/frontend/public/config";
 import {
@@ -39,6 +40,15 @@ export async function fetchJson<T>(path: string): Promise<T> {
 
 export function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
+}
+
+export function builtinPolicyPath(
+  config: PublicConfig | undefined,
+  slug: string,
+): string | undefined {
+  return publicPoliciesUseBuiltin(config)
+    ? appPath(`policies/${slug}`)
+    : undefined;
 }
 
 export function MarkdownSection({ value }: { value: string }) {

@@ -10,6 +10,7 @@ import { Alert, Button, Divider, Input, Radio, Space, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { builtinPolicyPath, type PublicConfig } from "../common";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { COLORS, HELP_EMAIL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -17,7 +18,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 type SupportView = "index" | "new" | "tickets";
 type TicketType = "problem" | "question" | "task" | "purchase" | "chat";
 
-interface SupportConfig {
+interface SupportConfig extends PublicConfig {
   help_email?: string;
   site_name?: string;
   support_video_call?: string;
@@ -462,6 +463,8 @@ export default function SupportNew({
   const [successUrl, setSuccessUrl] = useState("");
   const feedbackRef = useRef<HTMLDivElement | null>(null);
   const formLocked = !!successUrl;
+  const privacyHref = builtinPolicyPath(config, "privacy");
+  const trustHref = builtinPolicyPath(config, "trust");
 
   const hasRequired = !initial.required || !body.includes(initial.required);
   const canSubmit =
@@ -596,6 +599,17 @@ export default function SupportNew({
               </Button>
               <Button href={mailtoHref}>Email CoCalc</Button>
             </Space>
+            {trustHref || privacyHref ? (
+              <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+                For security and privacy context, review{" "}
+                {trustHref ? <a href={trustHref}>trust resources</a> : null}
+                {trustHref && privacyHref ? " and " : null}
+                {privacyHref ? (
+                  <a href={privacyHref}>the privacy policy</a>
+                ) : null}
+                .
+              </Paragraph>
+            ) : null}
           </Space>
         </PublicSection>
       </Space>
@@ -645,6 +659,16 @@ export default function SupportNew({
                       CoCalc documentation
                     </a>
                   </li>
+                  {trustHref ? (
+                    <li>
+                      <a href={trustHref}>Trust resources</a>
+                    </li>
+                  ) : null}
+                  {privacyHref ? (
+                    <li>
+                      <a href={privacyHref}>Privacy policy</a>
+                    </li>
+                  ) : null}
                   <li>
                     <a href="https://github.com/sagemathinc/cocalc-ai/issues">
                       Bug reports

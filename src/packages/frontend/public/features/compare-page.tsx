@@ -10,6 +10,7 @@ import { Button, Flex, Typography } from "antd";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
+import { builtinPolicyPath, type PublicConfig } from "../common";
 import { LinkButton, featureAppPath } from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;
@@ -312,10 +313,27 @@ const HERO_ACTION_STYLE = {
 } satisfies CSSProperties;
 
 export default function CompareFeaturePage({
+  config,
   helpEmail,
 }: {
+  config?: PublicConfig;
   helpEmail?: string;
 }) {
+  const trustHref = builtinPolicyPath(config, "trust");
+  const nextRoutes = [
+    ...NEXT_ROUTES,
+    ...(trustHref
+      ? [
+          {
+            body: "Security, SOC 2, GDPR, and public trust resources.",
+            href: trustHref,
+            label: "Review trust resources",
+            title: "Checking buyer confidence",
+          },
+        ]
+      : []),
+  ];
+
   return (
     <Flex vertical gap={30}>
       <style>{COMPARE_PAGE_CSS}</style>
@@ -408,7 +426,7 @@ export default function CompareFeaturePage({
         title="Where to go next."
       >
         <div className="cocalc-compare-route-panel">
-          {NEXT_ROUTES.map((route) => (
+          {nextRoutes.map((route) => (
             <RouteRow key={route.href} {...route} />
           ))}
         </div>

@@ -7,9 +7,11 @@ import { type ReactNode, useEffect } from "react";
 
 import { Button, Flex, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import { getPublicMarketingConfig } from "@cocalc/frontend/public/config";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import {
   appPath,
+  builtinPolicyPath,
   LinkButton,
   type PublicConfig,
   PublicSectionShell,
@@ -87,7 +89,9 @@ function titleForRoute(route: PublicProductsRoute): string {
   }
 }
 
-function ProductsOverviewPage() {
+function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
+  const privacyHref = builtinPolicyPath(config, "privacy");
+  const trustHref = builtinPolicyPath(config, "trust");
   const routeFamilies = [
     {
       detail: "CoCalc operates the hosted service for you.",
@@ -368,6 +372,16 @@ function ProductsOverviewPage() {
             Talk with CoCalc
           </LinkButton>
         </Flex>
+        {trustHref || privacyHref ? (
+          <Flex aria-label="Product trust resources" gap={14} role="group" wrap>
+            {trustHref ? (
+              <LinkButton href={trustHref}>Review trust resources</LinkButton>
+            ) : null}
+            {privacyHref ? (
+              <LinkButton href={privacyHref}>Review privacy policy</LinkButton>
+            ) : null}
+          </Flex>
+        ) : null}
       </PublicSection>
     </Flex>
   );
@@ -874,13 +888,18 @@ export default function PublicProductsApp({
   initialRoute: PublicProductsRoute;
 }) {
   const title = titleForRoute(initialRoute);
+  const marketingConfig = getPublicMarketingConfig(config);
 
   useEffect(() => {
     document.title = title;
   }, [title]);
 
   return (
-    <PublicSectionShell active="products" config={config} title={title}>
+    <PublicSectionShell
+      active="products"
+      config={marketingConfig}
+      title={title}
+    >
       {initialRoute.view === "products-cocalc-plus" ? (
         <CocalcPlusPage />
       ) : initialRoute.view === "products-cocalc-rocket" ? (
@@ -890,7 +909,7 @@ export default function PublicProductsApp({
       ) : initialRoute.view === "products-cocalc-launchpad" ? (
         <CocalcLaunchpadPage />
       ) : (
-        <ProductsOverviewPage />
+        <ProductsOverviewPage config={marketingConfig} />
       )}
     </PublicSectionShell>
   );

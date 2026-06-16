@@ -421,7 +421,11 @@ describe("PublicApp", () => {
     }) as typeof fetch;
     await renderPublicApp(
       <PublicApp
-        config={{ is_authenticated: true, site_name: "Launchpad" }}
+        config={{
+          is_authenticated: true,
+          policy_pages: "sagemathinc",
+          site_name: "Launchpad",
+        }}
         initialRoute={pricingRoute}
       />,
     );
@@ -471,6 +475,12 @@ describe("PublicApp", () => {
         name: "Buying paths for groups and deployments",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Review trust resources" }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      screen.getByRole("link", { name: "Review privacy policy" }),
+    ).toHaveAttribute("href", "/policies/privacy");
     expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "Compare operating models" }),
@@ -631,6 +641,39 @@ describe("PublicApp", () => {
     ).not.toBeNull();
   });
 
+  it("shows built-in policy pages by default for CoCalc public branding", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={policiesRoute({ view: "policies" })}
+      />,
+    );
+
+    expect(screen.getByText("Terms of Service")).not.toBeNull();
+    expect(screen.getByText("Privacy Policy")).not.toBeNull();
+    expect(screen.getByText("Trust and Compliance")).not.toBeNull();
+  });
+
+  it("shows built-in policy pages for the default Launchpad public marketing config", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{
+          cocalc_product: "launchpad",
+          is_launchpad: true,
+          policy_pages: "none",
+          site_name: "CoCalc Launchpad",
+        }}
+        initialRoute={policiesRoute({
+          policySlug: "trust",
+          view: "policies-detail",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Trust and Compliance")).not.toBeNull();
+    expect(screen.getByRole("navigation", { name: "Policies" })).not.toBeNull();
+  });
+
   it("renders the team page", async () => {
     await renderPublicApp(
       <PublicApp
@@ -687,6 +730,11 @@ describe("PublicApp", () => {
     expect(
       await screen.findByRole("heading", { name: "Privacy Policy" }),
     ).not.toBeNull();
+    expect(
+      Array.from(document.querySelectorAll("style")).some((style) =>
+        style.textContent?.includes("overflow-wrap: anywhere"),
+      ),
+    ).toBe(true);
     expect(
       screen.getByText("Launchpad · Last Updated: June 9, 2026"),
     ).not.toBeNull();
@@ -1135,6 +1183,28 @@ describe("PublicApp", () => {
     );
   });
 
+  it("surfaces product-path trust resources only when built-in policies are public", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
+        initialRoute={productsRoute({ view: "products" })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("group", { name: "Product trust resources" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Review trust resources" }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      screen.getByRole("link", { name: "Review privacy policy" }),
+    ).toHaveAttribute("href", "/policies/privacy");
+    expect(
+      screen.queryByText(/setup-time|restore-time|customer proof/i),
+    ).toBeNull();
+  });
+
   it("uses CoCalc marketing branding on public product pages for default Launchpad installs", async () => {
     await renderPublicApp(
       <PublicApp
@@ -1159,6 +1229,12 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("link", { name: "Compare CoCalc fit" }),
     ).toHaveAttribute("href", "/features/compare");
+    expect(
+      screen.getByRole("link", { name: "Review trust resources" }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      screen.getByRole("link", { name: "Review privacy policy" }),
+    ).toHaveAttribute("href", "/policies/privacy");
     expect(
       screen.queryByRole("link", { name: "Compare workspace model" }),
     ).toBeNull();

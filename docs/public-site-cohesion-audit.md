@@ -22,6 +22,20 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Support: make purchase/contact context collect the product path, who will operate it, expected users, procurement timeline, security/data-ownership expectations, and support constraints.
 - [ ] Future evidence pass: add real screenshots, workflow examples, security/data-ownership documentation links, or customer-style proof only when the evidence exists and answers a visitor decision better than concise copy.
 
+## Evidence Readiness Pass
+
+- [x] Use existing public policy routes as lightweight evidence only where visitors are already making trust-sensitive decisions: operating model, pricing/licensing, comparison, and support.
+- [x] Keep the homepage free of extra trust links for now because it should make the broad promise and route visitors into the decision spine rather than becoming an evidence index.
+- [x] Products: add trust/privacy review routes near site licensing because that is where procurement, support, data-location, and operator-boundary questions naturally surface.
+- [x] Pricing: add trust/privacy review routes to organizational buying paths, not to every hosted plan card, so self-service pricing stays scannable.
+- [x] Compare: add a trust/privacy route as a next step for evaluators who have accepted CoCalc fit and now need buyer confidence.
+- [x] Support: expose trust/privacy resources before contact so buyers can gather known policy context without opening a ticket first.
+- [x] Support form: include trust/privacy resources in the helpful-links block so security and data-ownership questions have an existing public evidence route.
+- [x] Policy evidence pages: keep long legal/documentation links contained on mobile by wrapping policy-document anchors instead of editing policy text.
+- [x] Do not add screenshots, metrics, customer proof, setup-time claims, restore-time claims, or stronger data-flow claims during this pass because the pitch evidence register keeps those gated until validated assets exist.
+- [ ] Future: identify route-specific screenshots or short workflow captures only after they have a named owner, current capture, and public-use approval gate.
+- [ ] Future: review the public trust/privacy/DPA pages themselves for buyer-oriented clarity; this pass only improves discoverability of already-published materials.
+
 ## Jupyter And Teaching Pass
 
 - [x] Re-inspect `/features/jupyter-notebook` and `/features/teaching` against the component-necessity standard after the broader feature-page cleanup.

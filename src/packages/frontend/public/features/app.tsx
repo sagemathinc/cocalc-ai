@@ -8,7 +8,10 @@ import { useEffect } from "react";
 import { Button, Col, Empty, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
-import { getPublicMarketingConfig } from "@cocalc/frontend/public/config";
+import {
+  getPublicMarketingConfig,
+  type PublicConfig,
+} from "@cocalc/frontend/public/config";
 import {
   PublicPage,
   PublicSection,
@@ -45,14 +48,7 @@ import WhiteboardFeaturePage from "./whiteboard-page";
 
 const { Paragraph, Text, Title } = Typography;
 
-interface FeaturesConfig {
-  cocalc_product?: string;
-  help_email?: string;
-  is_launchpad?: boolean;
-  is_authenticated?: boolean;
-  logo_square?: string;
-  site_name?: string;
-}
+interface FeaturesConfig extends PublicConfig {}
 
 interface PublicFeaturesAppProps {
   config?: FeaturesConfig;
@@ -675,11 +671,13 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
 }
 
 function FeatureDetailContent({
+  config,
   helpEmail,
   isAuthenticated,
   page,
   slug,
 }: {
+  config?: FeaturesConfig;
   helpEmail?: string;
   isAuthenticated?: boolean;
   page: FeaturePage;
@@ -789,6 +787,9 @@ function FeatureDetailContent({
       />
     );
   }
+  if (slug === "compare") {
+    return <CompareFeaturePage config={config} helpEmail={helpEmail} />;
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }
@@ -867,10 +868,12 @@ function FeatureDetailContent({
 }
 
 function FeatureDetail({
+  config,
   helpEmail,
   isAuthenticated,
   slug,
 }: {
+  config?: FeaturesConfig;
   helpEmail?: string;
   isAuthenticated?: boolean;
   slug: string;
@@ -893,6 +896,7 @@ function FeatureDetail({
     <>
       <FeatureDetailNavigation page={page} />
       <FeatureDetailContent
+        config={config}
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
         page={page}
@@ -931,6 +935,7 @@ export default function PublicFeaturesApp({
     >
       {initialRoute.view === "detail" && initialRoute.slug ? (
         <FeatureDetail
+          config={marketingConfig}
           helpEmail={config?.help_email}
           isAuthenticated={!!config?.is_authenticated}
           slug={initialRoute.slug}

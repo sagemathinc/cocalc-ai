@@ -38,6 +38,7 @@ describe("SupportNew", () => {
       <SupportNew
         config={{
           help_email: "help@example.com",
+          policy_pages: "sagemathinc",
           site_name: "Launchpad",
           support_video_call: "https://example.com/call",
           zendesk: true,
@@ -51,9 +52,41 @@ describe("SupportNew", () => {
       screen.getByText("Something is not working the way I think it should."),
     ).not.toBeNull();
     expect(screen.getByText("Helpful links")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Trust resources" }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      screen.getByRole("link", { name: "Privacy policy" }),
+    ).toHaveAttribute("href", "/policies/privacy");
     expect(screen.getByText("Relevant files")).not.toBeNull();
     expect(await screen.findByText("Recent files picker")).not.toBeNull();
     expect(screen.getByText("Enter a valid email address")).not.toBeNull();
+  });
+
+  it("keeps trust context on the email-only contact fallback", () => {
+    render(
+      <SupportNew
+        config={{
+          help_email: "help@example.com",
+          policy_pages: "sagemathinc",
+          site_name: "Launchpad",
+          zendesk: false,
+        }}
+        onNavigate={jest.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "This site is not accepting support tickets directly here. Use the support page or email CoCalc, and include the context below if it applies to your request.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "trust resources" }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      screen.getByRole("link", { name: "the privacy policy" }),
+    ).toHaveAttribute("href", "/policies/privacy");
   });
 
   it("prefills the email field for signed-in users", async () => {

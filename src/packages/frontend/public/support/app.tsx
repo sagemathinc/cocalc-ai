@@ -14,6 +14,7 @@ import {
   getPublicMarketingSiteName,
   type PublicConfig,
 } from "@cocalc/frontend/public/config";
+import { builtinPolicyPath } from "../common";
 import {
   PublicGrid,
   PublicPage,
@@ -104,6 +105,8 @@ function SupportIndex({
 }) {
   const helpEmail = config.help_email?.trim() || HELP_EMAIL;
   const hasZendesk = !!config.zendesk;
+  const privacyHref = builtinPolicyPath(config, "privacy");
+  const trustHref = builtinPolicyPath(config, "trust");
 
   if (!config.on_cocalc_com && config.support) {
     return (
@@ -138,6 +141,16 @@ function SupportIndex({
         licensing or deployment, clarifying support, security, or data-location
         expectations, or resolving an existing account or project issue.
       </Paragraph>
+      {trustHref || privacyHref ? (
+        <Flex aria-label="Support trust resources" gap={12} role="group" wrap>
+          {trustHref ? (
+            <Button href={trustHref}>Review trust resources</Button>
+          ) : null}
+          {privacyHref ? (
+            <Button href={privacyHref}>Review privacy policy</Button>
+          ) : null}
+        </Flex>
+      ) : null}
       <PublicGrid columns={3}>
         <SupportCard
           description="Compare hosted, local, single-VM, and private deployment options before opening a conversation."

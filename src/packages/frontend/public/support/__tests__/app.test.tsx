@@ -19,7 +19,11 @@ describe("PublicSupportApp", () => {
   it("renders the support index with ticket actions when zendesk is enabled", () => {
     render(
       <PublicSupportApp
-        config={{ site_name: "Launchpad", zendesk: true }}
+        config={{
+          policy_pages: "sagemathinc",
+          site_name: "Launchpad",
+          zendesk: true,
+        }}
         initialRoute={{ view: "index" }}
       />,
     );
@@ -43,6 +47,19 @@ describe("PublicSupportApp", () => {
     expect(
       screen.getByRole("link", { name: "Review pricing" }),
     ).toHaveAttribute("href", "/pricing");
+    const trustResources = screen.getByRole("group", {
+      name: "Support trust resources",
+    });
+    expect(
+      within(trustResources).getByRole("link", {
+        name: "Review trust resources",
+      }),
+    ).toHaveAttribute("href", "/policies/trust");
+    expect(
+      within(trustResources).getByRole("link", {
+        name: "Review privacy policy",
+      }),
+    ).toHaveAttribute("href", "/policies/privacy");
     expect(
       screen.getByRole("button", { name: "Start support request" }),
     ).not.toBeNull();

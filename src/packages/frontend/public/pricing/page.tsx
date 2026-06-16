@@ -27,6 +27,7 @@ import {
 import type { MembershipTierWithPresentation } from "@cocalc/frontend/account/membership-tier-benefits";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { builtinPolicyPath, type PublicConfig } from "../common";
 import {
   PublicGrid,
   PublicSection,
@@ -719,8 +720,10 @@ function HostedPlansFallback({
 }
 
 export default function PricingPage({
+  config,
   isAuthenticated = false,
 }: {
+  config?: PublicConfig;
   isAuthenticated?: boolean;
 }) {
   const [billingInterval, setBillingInterval] =
@@ -748,6 +751,8 @@ export default function PricingPage({
   const visibleTiers = publicTiers.filter((tier) =>
     hasPriceForInterval(tier, billingInterval),
   );
+  const privacyHref = builtinPolicyPath(config, "privacy");
+  const trustHref = builtinPolicyPath(config, "trust");
 
   return (
     <>
@@ -826,6 +831,16 @@ export default function PricingPage({
           decisions: where CoCalc runs, and what purchasing or support wrapper
           the group needs.
         </Paragraph>
+        {trustHref || privacyHref ? (
+          <Flex aria-label="Pricing trust resources" gap={12} role="group" wrap>
+            {trustHref ? (
+              <Button href={trustHref}>Review trust resources</Button>
+            ) : null}
+            {privacyHref ? (
+              <Button href={privacyHref}>Review privacy policy</Button>
+            ) : null}
+          </Flex>
+        ) : null}
         <PublicGrid columns={2}>
           <PublicSection>
             <Space orientation="vertical" size="middle">
