@@ -14,6 +14,7 @@ import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
   LinkButton,
 } from "./page-components";
 
@@ -437,7 +438,6 @@ function AgentTerminalLoop() {
 }
 
 export default function TerminalFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -560,7 +560,7 @@ export default function TerminalFeaturePage({
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Shared terminals have real operational details: output pause,
-                shared sizing, side chat, and controls for stale viewers when
+                shared sizing, side chat, and controls for inactive viewers when
                 another browser is holding the session too small.
               </Paragraph>
             </Flex>
@@ -634,9 +634,16 @@ export default function TerminalFeaturePage({
               <Button href={`${GUIDE_BASE}/software-install/`}>
                 Software install guide
               </Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button
+                href={featureSupportPath({
+                  body: "I want to discuss CoCalc terminal workflows. Helpful context: who will use shared terminals, expected software or service needs, and whether this is for research, teaching, or an organizational deployment.",
+                  context: "terminal",
+                  subject: "CoCalc terminal workflows",
+                  title: "Ask CoCalc about terminal workflows",
+                })}
+              >
+                Ask about terminal workflows
+              </Button>
             </Flex>
           </Col>
           <Col xs={24} lg={10}>

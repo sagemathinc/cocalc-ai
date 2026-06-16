@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
-import { Button, Col, Flex, Row, Typography } from "antd";
+import { Button, Col, Flex, Modal, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
@@ -14,6 +14,7 @@ import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
   LinkButton,
 } from "./page-components";
 
@@ -78,6 +79,41 @@ function StoryCard({
           {title}
         </Title>
         <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
+      </Flex>
+    </div>
+  );
+}
+
+function ActionCard({
+  accent = PUBLIC_COLORS.brand,
+  action,
+  body,
+  icon,
+  title,
+}: {
+  accent?: string;
+  action: ReactNode;
+  body: ReactNode;
+  icon: IconName;
+  title: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: PANEL_RADIUS,
+        height: "100%",
+        padding: 20,
+      }}
+    >
+      <Flex vertical gap={12} style={{ height: "100%" }}>
+        <IconBadge accent={accent} icon={icon} />
+        <Title level={4} style={{ margin: 0 }}>
+          {title}
+        </Title>
+        <Paragraph style={{ flex: 1, margin: 0 }}>{body}</Paragraph>
+        <div>{action}</div>
       </Flex>
     </div>
   );
@@ -273,137 +309,13 @@ cocalc project jupyter exec --path analysis.ipynb --stdin`}</code>
   );
 }
 
-function ProjectOrbit() {
-  const items = [
-    ["jupyter", "Notebook"],
-    ["database", "Data"],
-    ["terminal", "Terminal"],
-    ["tex", "Paper"],
-    ["history", "TimeTravel"],
-    ["robot", "Codex"],
-  ] as const;
-  return (
-    <div
-      style={{
-        background:
-          "radial-gradient(circle at center, #eef5ff 0%, #ffffff 46%, #fff8e8 100%)",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
-        boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-        padding: 24,
-      }}
-    >
-      <div
-        style={{
-          display: "grid",
-          gap: 14,
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-        }}
-      >
-        {items.map(([icon, label], index) => (
-          <Flex
-            align="center"
-            gap={10}
-            key={label}
-            style={{
-              background: index === 0 ? COLORS.ANTD_BG_BLUE_L : "#fff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              minHeight: 80,
-              padding: 14,
-            }}
-          >
-            <IconBadge
-              accent={index === 0 ? "#f37726" : PUBLIC_COLORS.brand}
-              icon={icon}
-            />
-            <Text strong>{label}</Text>
-          </Flex>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WhiteboardDiagram() {
-  const nodes = [
-    { icon: "database" as const, label: "data", x: "8%", y: "18%" },
-    { icon: "jupyter" as const, label: "clean", x: "37%", y: "10%" },
-    { icon: "jupyter" as const, label: "model", x: "62%", y: "38%" },
-    { icon: "slides" as const, label: "explain", x: "28%", y: "65%" },
-    { icon: "tex" as const, label: "paper", x: "70%", y: "70%" },
-  ];
-  return (
-    <div
-      style={{
-        background: "#fbfdff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
-        minHeight: 320,
-        overflow: "hidden",
-        position: "relative",
-      }}
-    >
-      <svg
-        aria-hidden="true"
-        height="100%"
-        preserveAspectRatio="none"
-        style={{ inset: 0, position: "absolute", width: "100%" }}
-        viewBox="0 0 100 100"
-      >
-        <path
-          d="M20 28 C33 18, 38 25, 47 22 C56 24, 60 35, 66 47"
-          fill="none"
-          stroke="#8bb8ff"
-          strokeDasharray="4 4"
-          strokeWidth="1.5"
-        />
-        <path
-          d="M48 26 C40 42, 37 55, 38 69"
-          fill="none"
-          stroke="#8bb8ff"
-          strokeDasharray="4 4"
-          strokeWidth="1.5"
-        />
-        <path
-          d="M69 51 C78 58, 80 67, 78 76"
-          fill="none"
-          stroke="#8bb8ff"
-          strokeDasharray="4 4"
-          strokeWidth="1.5"
-        />
-      </svg>
-      {nodes.map((node) => (
-        <Flex
-          align="center"
-          gap={8}
-          key={node.label}
-          style={{
-            background: "#fff",
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            boxShadow: "0 10px 28px rgba(33, 49, 57, 0.08)",
-            left: node.x,
-            padding: "10px 12px",
-            position: "absolute",
-            top: node.y,
-          }}
-        >
-          <Icon name={node.icon} style={{ color: PUBLIC_COLORS.brand }} />
-          <Text strong>{node.label}</Text>
-        </Flex>
-      ))}
-    </div>
-  );
-}
-
 export default function JupyterNotebookFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
   isAuthenticated?: boolean;
 }) {
+  const [showAgentDetails, setShowAgentDetails] = useState(false);
   const primaryCtaHref = isAuthenticated
     ? appPath("projects")
     : appPath("auth/sign-up");
@@ -411,6 +323,12 @@ export default function JupyterNotebookFeaturePage({
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
     : "Start using Jupyter on CoCalc";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss Jupyter notebook workflows in CoCalc. Helpful context: research, teaching, or team use case; expected collaborators; notebook size or runtime needs; and whether AI assistance, course workflows, or private deployment matters.",
+    context: "jupyter-notebook",
+    subject: "CoCalc Jupyter notebook workflows",
+    title: "Ask CoCalc about Jupyter notebook workflows",
+  });
 
   return (
     <Flex vertical gap={18}>
@@ -494,25 +412,23 @@ export default function JupyterNotebookFeaturePage({
 
       <PublicSection>
         <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={11}>
-            <ProjectOrbit />
-          </Col>
           <Col xs={24} lg={13}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                Keep the notebook next to the data, shell, paper, and agent
+                When a notebook needs the project around it
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Many notebooks do not live alone. They depend on data files,
-                packages, scripts, figures, papers, discussions, and sometimes a
+                Many notebooks depend on more than cells: data files, packages,
+                scripts, papers, terminals, collaborators, and sometimes
                 long-running computation.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                CoCalc wraps the notebook in a full project, so the same place
-                contains the filesystem, terminals, Linux environment,
-                TimeTravel history, collaborators, and Codex chat needed to make
-                progress.
-              </Paragraph>
+              <BulletList
+                items={[
+                  "Continue long-running cells after a browser disconnect.",
+                  "Keep outputs, files, discussion, and history with the notebook.",
+                  "Move naturally between notebooks, terminals, Linux tools, and papers.",
+                ]}
+              />
               <Flex wrap gap={12}>
                 <Button href={appPath("features/terminal")}>
                   Terminal workflows
@@ -526,65 +442,40 @@ export default function JupyterNotebookFeaturePage({
               </Flex>
             </Flex>
           </Col>
-        </Row>
-      </PublicSection>
-
-      <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                The browser is a view, not the fragile runtime
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                In many notebook systems, a browser refresh can feel dangerous
-                when a cell is running or output is streaming. CoCalc&apos;s
-                model keeps notebook execution and output capture on the
-                backend, independent of the visible browser tab.
-              </Paragraph>
-              <BulletList
-                items={[
-                  "Long-running cells can continue while you disconnect.",
-                  "Output is captured and synchronized when you return.",
-                  "Large notebooks render efficiently by focusing work on visible content.",
-                  "Standard Jupyter widgets and visualization libraries remain part of the workflow.",
-                ]}
-              />
-            </Flex>
-          </Col>
-          <Col xs={24} lg={12}>
+          <Col xs={24} lg={11}>
             <div
               style={{
                 background: "#fff",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
                 borderRadius: PANEL_RADIUS,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-                padding: 24,
+                padding: 22,
               }}
             >
-              <Flex vertical gap={14}>
+              <Flex vertical gap={12}>
                 {[
-                  ["Browser closes", "Execution continues"],
-                  ["Project restarts", "Output is recoverable"],
-                  ["Collaborator joins", "State synchronizes"],
+                  ["The browser closes", "Execution can continue."],
+                  ["A collaborator joins", "They see the current notebook."],
+                  ["A result changes", "History keeps the review trail."],
                 ].map(([left, right]) => (
                   <div
                     key={left}
                     style={{
-                      alignItems: "center",
                       background: PUBLIC_COLORS.surfaceMuted,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
                       borderRadius: PANEL_RADIUS,
-                      display: "grid",
-                      gap: 12,
-                      gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
                       padding: 14,
                     }}
                   >
                     <Text strong>{left}</Text>
-                    <Text style={{ color: PUBLIC_COLORS.mutedText }}>
+                    <Paragraph
+                      style={{
+                        color: PUBLIC_COLORS.mutedText,
+                        margin: "4px 0 0",
+                      }}
+                    >
                       {right}
-                    </Text>
+                    </Paragraph>
                   </div>
                 ))}
               </Flex>
@@ -593,163 +484,73 @@ export default function JupyterNotebookFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Flex vertical gap={12}>
-              <IconBadge accent="#7c3aed" icon="history" />
-              <Title level={3} style={{ margin: 0 }}>
-                TimeTravel is notebook memory
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                CoCalc records notebook changes as you type, with authorship
-                attached. That gives notebooks a practical recovery and review
-                story even when the work is exploratory.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                For notebooks, this is designed to keep long-term edit history
-                without turning every intermediate output update into noise.
-              </Paragraph>
-              <LinkButton href={`${GUIDE_BASE}/jupyter-notebooks/`}>
-                Learn about TimeTravel
-              </LinkButton>
-            </Flex>
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Flex vertical gap={12}>
-              <IconBadge accent="#389e0d" icon="users" />
-              <Title level={3} style={{ margin: 0 }}>
-                Collaboration includes markdown, widgets, and discussion
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Notebooks are realtime collaborative documents. Multiple people
-                can edit code and rich markdown, see current output, and discuss
-                the work in nearby chat.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                WYSIWYG markdown editing makes explanatory cells feel like
-                writing, while the notebook still follows standard Jupyter
-                conventions.
-              </Paragraph>
-              <LinkButton href={`${GUIDE_BASE}/jupyter-notebooks/`}>
-                Jupyter documentation
-              </LinkButton>
-            </Flex>
-          </PublicSection>
-        </Col>
-      </Row>
-
       <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={12}>
-            <LiveStateDiagram />
-          </Col>
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Let the agent work with the notebook you actually have open
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Saving an `.ipynb` file is not the same as understanding the
-                live session. CoCalc gives Codex project-scoped notebook
-                commands, so it can inspect current cells, start focused runs,
-                and reason from actual output.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                That changes the practical workflow: ask Codex to debug a cell,
-                summarize a result, update a downstream table, or write the next
-                analysis step while still keeping the work reviewable.
-              </Paragraph>
-              <div>
-                <Button href={appPath("features/ai")}>AI workflows</Button>
-              </div>
-            </Flex>
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Put notebook cells on a whiteboard when the idea is a graph
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Some computational work is not naturally a single vertical list.
-                CoCalc whiteboards can include Jupyter cells in a directed graph
-                and run them in order, alongside diagrams, notes, and teaching
-                sketches.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                This is useful for pipelines, dependency diagrams, lecture
-                explanations, and explorations where the structure matters as
-                much as the individual cells.
-              </Paragraph>
-              <div>
-                <Button href={appPath("features/whiteboard")}>
-                  Whiteboard workflows
-                </Button>
-              </div>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={12}>
-            <WhiteboardDiagram />
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
+        <Flex vertical gap={18}>
+          <div>
             <Title level={3} style={{ margin: 0 }}>
-              Teaching workflows are built around notebooks
+              Choose the nearby workflow when the notebook grows
             </Title>
-            <BulletList
-              items={[
-                "Distribute notebooks to student projects and collect work back.",
-                "Use nbgrader workflows for autograding and manual review.",
-                "Keep TAs, instructors, students, assignments, and environments in one system.",
-              ]}
-            />
-            <Paragraph style={{ margin: 0 }}>
-              Notebook infrastructure matters most when there are many users and
-              many copies of the same assignment. CoCalc&apos;s course tools are
-              designed for that setting.
+            <Paragraph style={{ margin: "8px 0 0", maxWidth: 760 }}>
+              When a notebook pulls in agents, whiteboards, teaching workflows,
+              or compatibility questions, use the related pages to evaluate that
+              specific path.
             </Paragraph>
-            <div>
-              <Button href={appPath("features/teaching")}>
-                Teaching workflows
-              </Button>
-            </div>
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Compatible with the Jupyter ecosystem
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              CoCalc&apos;s notebook UI stays close to standard Jupyter
-              conventions and the `.ipynb` format. You can also run standard
-              JupyterLab or Jupyter Classic servers from a CoCalc project when
-              you need that extension stack.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              Use CoCalc notebooks when collaboration, history, agents, and
-              project workflow matter most; drop into classic Jupyter interfaces
-              when compatibility is the priority.
-            </Paragraph>
-            <Flex wrap gap={12}>
-              <LinkButton href={`${GUIDE_BASE}/cocalc-for-jupyter/`}>
-                Jupyter comparison guide
-              </LinkButton>
-            </Flex>
-          </PublicSection>
-        </Col>
-      </Row>
+          </div>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} md={12} xl={6}>
+              <ActionCard
+                accent="#d46b08"
+                action={
+                  <Button onClick={() => setShowAgentDetails(true)}>
+                    See agent details
+                  </Button>
+                }
+                body="Let Codex inspect live notebook state while people keep output, discussion, and review context visible."
+                icon="robot"
+                title="AI-assisted notebooks"
+              />
+            </Col>
+            <Col xs={24} md={12} xl={6}>
+              <ActionCard
+                accent="#389e0d"
+                action={
+                  <Button href={appPath("features/whiteboard")}>
+                    Whiteboard workflows
+                  </Button>
+                }
+                body="Use a canvas when notebook cells, diagrams, and explanations need a graph instead of a single vertical list."
+                icon="layout"
+                title="Visual notebook flows"
+              />
+            </Col>
+            <Col xs={24} md={12} xl={6}>
+              <ActionCard
+                accent="#7c3aed"
+                action={
+                  <Button href={appPath("features/teaching")}>
+                    Teaching workflows
+                  </Button>
+                }
+                body="Distribute, collect, grade, and support notebook assignments without treating CoCalc as a general LMS."
+                icon="users"
+                title="Notebook courses"
+              />
+            </Col>
+            <Col xs={24} md={12} xl={6}>
+              <ActionCard
+                action={
+                  <LinkButton href={`${GUIDE_BASE}/cocalc-for-jupyter/`}>
+                    Jupyter compatibility guide
+                  </LinkButton>
+                }
+                body="Use CoCalc notebooks for collaboration and recovery, and open standard Jupyter interfaces when extensions require them."
+                icon="jupyter"
+                title="Jupyter compatibility"
+              />
+            </Col>
+          </Row>
+        </Flex>
+      </PublicSection>
 
       <div style={{ marginBottom: 44 }}>
         <PublicSection>
@@ -759,10 +560,10 @@ export default function JupyterNotebookFeaturePage({
                 When notebooks become shared work
               </Title>
               <Paragraph style={{ margin: "8px 0 0" }}>
-                Quick notebook tools are excellent for quick notebook tasks.
-                CoCalc is for the moment when the notebook needs collaborators,
-                an environment, a filesystem, terminals, history, agents,
-                courses, or a long-running computation around it.
+                Lightweight notebook tools are good for one-off analysis. CoCalc
+                is for the moment when the notebook needs collaborators, a
+                filesystem, terminals, history, agents, course workflows, or a
+                long-running computation around it.
               </Paragraph>
             </Col>
             <Col xs={24} lg={9}>
@@ -770,14 +571,35 @@ export default function JupyterNotebookFeaturePage({
                 <Button type="primary" href={primaryCtaHref}>
                   {finalCtaLabel}
                 </Button>
-                {helpEmail ? (
-                  <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-                ) : null}
+                <Button href={supportHref}>Ask about Jupyter workflows</Button>
               </Flex>
             </Col>
           </Row>
         </PublicSection>
       </div>
+      <Modal
+        footer={null}
+        onCancel={() => setShowAgentDetails(false)}
+        open={showAgentDetails}
+        title="How Codex works with live notebooks"
+        width={760}
+      >
+        <Flex vertical gap={18}>
+          <Paragraph style={{ fontSize: 16, margin: 0 }}>
+            Saving an `.ipynb` file is not the same as understanding the live
+            session. CoCalc gives Codex project-scoped notebook commands, so it
+            can inspect cells, start focused runs, and reason from actual
+            output.
+          </Paragraph>
+          <LiveStateDiagram />
+          <Flex wrap gap={12}>
+            <Button type="primary" href={appPath("features/ai")}>
+              AI workflows
+            </Button>
+            <Button href={supportHref}>Ask about Jupyter workflows</Button>
+          </Flex>
+        </Flex>
+      </Modal>
     </Flex>
   );
 }

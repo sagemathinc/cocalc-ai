@@ -324,9 +324,9 @@ function ResearchFlow() {
             SageMath can be more than an interactive calculator.
           </Title>
           <Paragraph style={{ color: "#cbd5e1", margin: "8px 0 0" }}>
-            CoCalc-AI makes Sage development and long-running mathematics
-            research computations practical in a project, instead of forcing the
-            work onto a laptop or a one-off server.
+            CoCalc makes Sage development and long-running mathematics research
+            computations practical in a project, instead of forcing the work
+            onto a laptop or a one-off server.
           </Paragraph>
         </div>
         <Row gutter={[14, 14]}>
@@ -460,15 +460,14 @@ export default function SageFeaturePage({
                 Build, test, and develop Sage from source.
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                CoCalc-AI projects are fast enough and flexible enough for Sage
-                development itself: clone the Sage source, install build
-                dependencies, compile, run tests, and use terminals or Codex to
-                manage the messy details.
+                CoCalc projects can support Sage development itself: clone the
+                Sage source, install build dependencies, compile, run tests, and
+                use terminals or Codex to manage the messy details.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                That was not a realistic workflow in the older CoCalc.com
-                environment. In the current container-based CoCalc-AI model, a
-                project can be a practical Linux development environment.
+                Current CoCalc projects can be practical Linux development
+                environments for work that needs source builds, test runs, and
+                supporting notes in one place.
               </Paragraph>
               <BulletList
                 items={[

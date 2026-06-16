@@ -8,7 +8,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { BulletList, featureAppPath as appPath } from "./page-components";
+import {
+  BulletList,
+  featureAppPath as appPath,
+  featureSupportPath,
+} from "./page-components";
 import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
@@ -157,7 +161,6 @@ function SlideFlow() {
 }
 
 export default function SlidesFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -245,9 +248,16 @@ export default function SlidesFeaturePage({
             <Flex wrap gap={12}>
               <Button href={appPath("features/whiteboard")}>Whiteboard</Button>
               <Button href={appPath("features/teaching")}>Teaching</Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button
+                href={featureSupportPath({
+                  body: "I want to discuss CoCalc slides. Helpful context: lecture, research talk, demo, or course workflow; expected collaborators; and whether slides need math, diagrams, or notebook-backed material.",
+                  context: "slides",
+                  subject: "CoCalc slides",
+                  title: "Ask CoCalc about slides",
+                })}
+              >
+                Ask about slides
+              </Button>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>

@@ -13,6 +13,7 @@ import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
   LinkButton,
 } from "./page-components";
 
@@ -282,7 +283,7 @@ function ReviewLoopDiagram() {
           <div>
             <Text strong>Review the paper, then build it</Text>
             <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              A good agent loop is narrow, testable, and reviewable.
+              A good agent loop is focused, testable, and reviewable.
             </div>
           </div>
         </Flex>
@@ -302,7 +303,7 @@ Do not rewrite yet.
 Then build the PDF and triage warnings.`}</code>
         </pre>
         <Row gutter={[10, 10]}>
-          {["structure review", "narrow patch", "PDF rebuild"].map((label) => (
+          {["structure review", "focused patch", "PDF rebuild"].map((label) => (
             <Col key={label} xs={24} sm={8}>
               <Text
                 strong
@@ -398,7 +399,6 @@ function EvidenceFlowDiagram() {
 }
 
 export default function LatexEditorFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -551,7 +551,7 @@ export default function LatexEditorFeaturePage({
                 Use Codex as an editor and build assistant, not an author
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                For technical writing, the useful workflow is often narrow:
+                For technical writing, the useful workflow is often focused:
                 review the structure, identify missing definitions, patch a
                 specific paragraph, rebuild the PDF, and explain the remaining
                 warnings.
@@ -695,9 +695,16 @@ export default function LatexEditorFeaturePage({
                 <Button type="primary" href={primaryCtaHref}>
                   {finalCtaLabel}
                 </Button>
-                {helpEmail ? (
-                  <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-                ) : null}
+                <Button
+                  href={featureSupportPath({
+                    body: "I want to discuss LaTeX workflows in CoCalc. Helpful context: paper, course, or research-group use case; need for computation-backed figures or tables; collaborators; and current writing tools.",
+                    context: "latex-editor",
+                    subject: "CoCalc LaTeX workflows",
+                    title: "Ask CoCalc about LaTeX workflows",
+                  })}
+                >
+                  Ask about LaTeX workflows
+                </Button>
               </Flex>
             </Col>
           </Row>

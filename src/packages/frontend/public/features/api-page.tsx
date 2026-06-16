@@ -10,12 +10,13 @@ import {
   BulletList,
   FeatureImage,
   featureAppPath as appPath,
+  featureSupportPath,
   LinkButton,
 } from "./page-components";
 
 const { Paragraph, Title } = Typography;
 
-export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
+export default function ApiFeaturePage({}: { helpEmail?: string }) {
   return (
     <Flex vertical gap={18}>
       <PublicSection>
@@ -77,9 +78,9 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
               Works with hosted and self-hosted deployments
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              The same HTTP API is useful whether you use CoCalc as a hosted
-              service, a launchpad-style deployment, or one part of a larger
-              internal platform.
+              The same HTTP API is useful whether you use hosted CoCalc.ai,
+              CoCalc Launchpad, or CoCalc Rocket as part of a larger
+              organization-managed workflow.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               It gives administrators and developers a stable way to automate
@@ -104,10 +105,16 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
           integrations where CoCalc is only one component in a larger system.
         </Paragraph>
         <Flex wrap gap={12}>
-          <Button href={appPath("support")}>Support</Button>
-          {helpEmail ? (
-            <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-          ) : null}
+          <Button
+            href={featureSupportPath({
+              body: "I want to discuss CoCalc API integration. Helpful context: external system, provisioning or automation needs, product path under evaluation, and any support or deployment constraints.",
+              context: "api",
+              subject: "CoCalc API integration",
+              title: "Ask CoCalc about API integration",
+            })}
+          >
+            Ask about API integration
+          </Button>
         </Flex>
       </PublicSection>
     </Flex>

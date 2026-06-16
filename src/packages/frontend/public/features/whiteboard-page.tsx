@@ -8,7 +8,11 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { BulletList, featureAppPath as appPath } from "./page-components";
+import {
+  BulletList,
+  featureAppPath as appPath,
+  featureSupportPath,
+} from "./page-components";
 import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
@@ -205,7 +209,6 @@ function ExecutionGraph() {
 }
 
 export default function WhiteboardFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -310,9 +313,16 @@ export default function WhiteboardFeaturePage({
             <Flex wrap gap={12}>
               <Button href={appPath("features/slides")}>Slides</Button>
               <Button href={appPath("features/teaching")}>Teaching</Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button
+                href={featureSupportPath({
+                  body: "I want to discuss CoCalc whiteboards. Helpful context: teaching, research, support, or presentation use case; need for Jupyter cells or math; and expected collaborators.",
+                  context: "whiteboard",
+                  subject: "CoCalc whiteboards",
+                  title: "Ask CoCalc about whiteboards",
+                })}
+              >
+                Ask about whiteboards
+              </Button>
             </Flex>
           </Col>
           <Col xs={24} lg={11}>

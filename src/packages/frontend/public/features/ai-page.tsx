@@ -13,6 +13,7 @@ import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
   LinkButton,
 } from "./page-components";
 
@@ -91,7 +92,7 @@ function ThreadMock() {
     },
     {
       accent: "#7c3aed",
-      body: "I found the stale path handling, updated the file, and I am running the package test now.",
+      body: "I found the outdated path handling, updated the file, and I am running the package test now.",
       icon: "robot",
       label: "codex",
     },
@@ -377,7 +378,6 @@ function TerminalAgentPanel() {
 }
 
 export default function AIFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -566,9 +566,16 @@ export default function AIFeaturePage({
                 <Button href={appPath("features/linux")}>
                   Linux environment
                 </Button>
-                {helpEmail ? (
-                  <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-                ) : null}
+                <Button
+                  href={featureSupportPath({
+                    body: "I want to discuss AI agent workflows in CoCalc. Helpful context: the kind of project, who will review agent work, notebook or terminal needs, and any deployment or policy constraints.",
+                    context: "ai",
+                    subject: "CoCalc AI workflows",
+                    title: "Ask CoCalc about AI workflows",
+                  })}
+                >
+                  Ask about AI workflows
+                </Button>
               </Flex>
               <LinkButton href={`${GUIDE_BASE}/agent-sandbox-cloud/`}>
                 Read the agent sandbox guide

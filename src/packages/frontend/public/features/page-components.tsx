@@ -15,6 +15,27 @@ export function featureAppPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
+export function featureSupportPath({
+  body,
+  context,
+  subject,
+  title,
+}: {
+  body: string;
+  context: string;
+  subject: string;
+  title: string;
+}): string {
+  const params = new URLSearchParams({
+    body,
+    context: `feature-${context}`,
+    subject,
+    title,
+    type: "support",
+  });
+  return `${featureAppPath("support/new")}?${params.toString()}`;
+}
+
 export function FeatureImage({
   alt,
   aspectRatio = "16 / 9",

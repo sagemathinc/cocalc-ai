@@ -14,6 +14,7 @@ import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
   LinkButton,
 } from "./page-components";
 
@@ -343,7 +344,6 @@ function RootFsFlow() {
 }
 
 export default function LinuxFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -367,15 +367,15 @@ export default function LinuxFeaturePage({
                 A Linux workspace you can actually administer.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                CoCalc-AI projects are Ubuntu environments where you can use
-                terminals, notebooks, editors, services, and <code>sudo</code>
+                CoCalc projects are Ubuntu environments where you can use
+                terminals, notebooks, editors, services, and <code>sudo</code>{" "}
                 in the browser. Install software, edit configuration, run
-                servers, and keep the whole environment with the project.
+                servers, and keep the environment with the project.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                This is a major shift from older locked-down hosted notebooks:
-                students and collaborators can work in a real Linux system
-                without needing to own or risk a local machine.
+                This helps students and collaborators work in a real Linux
+                system without turning a personal laptop into the course or
+                project experiment.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -494,8 +494,9 @@ PY`}</code>
               </Title>
               <Paragraph style={{ margin: 0 }}>
                 The useful workflow is not “make the error disappear.” It is
-                diagnose, install narrowly, verify directly, and leave a short
-                note or setup script that the next collaborator can understand.
+                diagnose, install only what is needed, verify directly, and
+                leave a short note or setup script that the next collaborator
+                can understand.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Codex is especially good at this kind of Linux work: it can read
@@ -573,9 +574,16 @@ PY`}</code>
               <Button href={appPath("features/jupyter-notebook")}>
                 Jupyter notebooks
               </Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button
+                href={featureSupportPath({
+                  body: "I want to discuss CoCalc Linux environments. Helpful context: software stack, teaching or research use case, expected users, and whether a hosted or customer-operated product path is being evaluated.",
+                  context: "linux",
+                  subject: "CoCalc Linux environments",
+                  title: "Ask CoCalc about Linux environments",
+                })}
+              >
+                Ask about Linux environments
+              </Button>
             </Flex>
           </Col>
           <Col xs={24} lg={10}>

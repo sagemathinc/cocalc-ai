@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import PublicFeaturesApp from "../app";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
@@ -40,6 +40,49 @@ describe("getFeaturesRouteFromPath", () => {
 });
 
 describe("PublicFeaturesApp", () => {
+  const contextualSupportLinks = [
+    {
+      context: "feature-ai",
+      label: "Ask about AI workflows",
+      slug: "ai",
+    },
+    {
+      context: "feature-jupyter-notebook",
+      label: "Ask about Jupyter workflows",
+      slug: "jupyter-notebook",
+    },
+    {
+      context: "feature-terminal",
+      label: "Ask about terminal workflows",
+      slug: "terminal",
+    },
+    {
+      context: "feature-linux",
+      label: "Ask about Linux environments",
+      slug: "linux",
+    },
+    {
+      context: "feature-api",
+      label: "Ask about API integration",
+      slug: "api",
+    },
+    {
+      context: "feature-whiteboard",
+      label: "Ask about whiteboards",
+      slug: "whiteboard",
+    },
+    {
+      context: "feature-latex-editor",
+      label: "Ask about LaTeX workflows",
+      slug: "latex-editor",
+    },
+    {
+      context: "feature-slides",
+      label: "Ask about slides",
+      slug: "slides",
+    },
+  ] as const;
+
   const auditedFeaturePages = [
     {
       marker: "Codex where the work happens.",
@@ -181,6 +224,9 @@ describe("PublicFeaturesApp", () => {
     expect(
       container.querySelectorAll(".cocalc-feature-starter-card"),
     ).toHaveLength(4);
+    expect(
+      container.querySelectorAll(".cocalc-feature-group-label"),
+    ).toHaveLength(4);
     expect(container.querySelectorAll(".cocalc-feature-link-card").length).toBe(
       15,
     );
@@ -205,6 +251,15 @@ describe("PublicFeaturesApp", () => {
     )) {
       expect(textLength(card)).toBeLessThanOrEqual(260);
     }
+    for (const groupLabel of container.querySelectorAll(
+      ".cocalc-feature-group-label",
+    )) {
+      expect(groupLabel.closest("a")).toBeNull();
+      expect(groupLabel.getAttribute("style") ?? "").not.toContain(
+        "box-shadow",
+      );
+    }
+    expect(screen.getByText("Documents").closest("a")).toBeNull();
     const css = Array.from(container.querySelectorAll("style"))
       .map((style) => style.textContent ?? "")
       .join("\n");
@@ -336,14 +391,22 @@ describe("PublicFeaturesApp", () => {
 
     expect(screen.getByText("Durable execution")).not.toBeNull();
     expect(
-      screen.getByText(
-        "Let the agent work with the notebook you actually have open",
-      ),
+      screen.getByText("When a notebook needs the project around it"),
     ).not.toBeNull();
     expect(
-      screen.getByText(
-        "Put notebook cells on a whiteboard when the idea is a graph",
+      screen.getByText("Choose the nearby workflow when the notebook grows"),
+    ).not.toBeNull();
+    expect(screen.getByText("AI-assisted notebooks")).not.toBeNull();
+    expect(
+      screen.queryByText(
+        "Let the agent work with the notebook you actually have open",
       ),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "See agent details" }));
+    expect(
+      screen.getByRole("dialog", {
+        name: "How Codex works with live notebooks",
+      }),
     ).not.toBeNull();
     expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
     expect(container.textContent ?? "").not.toMatch(
@@ -351,7 +414,7 @@ describe("PublicFeaturesApp", () => {
     );
     expect(
       screen
-        .getByRole("link", { name: "Jupyter comparison guide" })
+        .getByRole("link", { name: "Jupyter compatibility guide" })
         .getAttribute("href"),
     ).toBe("https://sagemathinc.github.io/cocalc-guides/cocalc-for-jupyter/");
   });
@@ -726,8 +789,19 @@ describe("PublicFeaturesApp", () => {
       expect(screen.getByText(marker)).not.toBeNull();
       expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
       expect(container.textContent ?? "").not.toMatch(
-        /Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious technical work|serious Linux|strongest|workspace model|internal planning|multi-bay|control plane|stale files|narrower tool/i,
+        /Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious technical work|serious Linux|strongest|workspace model|internal planning|multi-bay|control plane|\bstale\b|CoCalc-AI|locked-down|launchpad-style|internal platform|narrow patch|install narrowly|narrower tool/i,
       );
+
+      const headings = Array.from(
+        container.querySelectorAll("main h2, main h3, main h4"),
+      )
+        .map((heading) => heading.textContent?.replace(/\s+/g, " ").trim())
+        .filter((heading): heading is string => !!heading);
+      expect(new Set(headings).size).toBe(headings.length);
+
+      for (const paragraph of container.querySelectorAll("main p")) {
+        expect(textLength(paragraph)).toBeLessThanOrEqual(390);
+      }
 
       const nextSteps = screen.getByRole("region", {
         name: "Feature operating model next steps",
@@ -747,6 +821,25 @@ describe("PublicFeaturesApp", () => {
           .getByRole("link", { name: "All features" })
           .getAttribute("href"),
       ).toBe("/features");
+    },
+  );
+
+  it.each(contextualSupportLinks)(
+    "keeps $slug support CTA contextual and route-specific",
+    ({ context, label, slug }) => {
+      render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      const href = screen
+        .getByRole("link", { name: label })
+        .getAttribute("href");
+      expect(href).toContain("/support/new?");
+      expect(href).toContain(`context=${context}`);
+      expect(href).not.toContain("mailto:");
     },
   );
 

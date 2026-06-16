@@ -433,27 +433,24 @@ function FeatureGroupSection({
       <Row gutter={[18, 18]}>
         <Col lg={6} xs={24}>
           <div
+            className="cocalc-feature-group-label"
             style={{
-              background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 100%)`,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: FEATURE_PANEL_RADIUS,
-              boxShadow: FEATURE_PANEL_SHADOW,
-              padding: 24,
+              borderLeft: `3px solid ${group.accent}`,
+              padding: "4px 4px 4px 18px",
             }}
           >
-            <Flex vertical gap={16}>
+            <Flex vertical gap={12}>
               <div
                 style={{
                   alignItems: "center",
-                  background: `${group.accent}14`,
-                  border: `1px solid ${group.accent}33`,
+                  background: `${group.accent}10`,
                   borderRadius: FEATURE_PANEL_RADIUS,
                   color: group.accent,
                   display: "flex",
-                  fontSize: 26,
-                  height: 52,
+                  fontSize: 22,
+                  height: 44,
                   justifyContent: "center",
-                  width: 52,
+                  width: 44,
                 }}
               >
                 <Icon name={group.icon} />
