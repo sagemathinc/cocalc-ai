@@ -308,7 +308,8 @@ export type RootfsCatalogSaveBody = {
   size_gb?: number;
   tags?: string[];
   theme?: RootfsImageTheme;
-  content?: RootfsContentManifest | null;
+  content?: unknown | null;
+  content_warnings?: RootfsContentValidationWarning[];
   official?: boolean;
   prepull?: boolean;
   hidden?: boolean;
@@ -330,7 +331,8 @@ export type PublishProjectRootfsBody = {
   visibility?: RootfsImageVisibility;
   tags?: string[];
   theme?: RootfsImageTheme;
-  content?: RootfsContentManifest | null;
+  content?: unknown | null;
+  content_warnings?: RootfsContentValidationWarning[];
   official?: boolean;
   prepull?: boolean;
   hidden?: boolean;
@@ -351,6 +353,8 @@ export type PublishProjectRootfsArtifact = {
   source_image: string;
   artifact_kind?: RootfsReleaseArtifactKind;
   inspect_data?: Record<string, any>;
+  rootfs_content?: unknown;
+  rootfs_content_warnings?: RootfsContentValidationWarning[];
   upload_result?: RootfsUploadedArtifactResult;
   phase_timings_ms?: RootfsPhaseTimings;
 };

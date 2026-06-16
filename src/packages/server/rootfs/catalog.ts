@@ -1361,15 +1361,26 @@ async function upsertRootfsRow({
   const blocked = admin && body.blocked === true;
   const blocked_reason = trimString(body.blocked_reason) ?? null;
   const slug = validateRootfsSlug(body.slug) ?? null;
-  const contentSpecified = hasOwn(body, "content");
+  const contentSpecified =
+    hasOwn(body, "content") && body.content !== undefined;
+  const extraContentWarnings =
+    normalizeStoredContentWarnings(body.content_warnings) ?? [];
+  const contentMetadataSpecified =
+    contentSpecified || extraContentWarnings.length > 0;
   const contentResult =
     contentSpecified && body.content != null
       ? normalizeRootfsContentManifest(body.content)
       : { content: undefined, warnings: [] };
-  const content = contentSpecified ? (contentResult.content ?? null) : null;
-  const content_warnings = contentSpecified
-    ? contentResult.warnings.length
-      ? contentResult.warnings
+  const content = contentMetadataSpecified
+    ? (contentResult.content ?? null)
+    : null;
+  const mergedContentWarnings = [
+    ...extraContentWarnings,
+    ...contentResult.warnings,
+  ];
+  const content_warnings = contentMetadataSpecified
+    ? mergedContentWarnings.length
+      ? mergedContentWarnings
       : null
     : null;
   const requested_size_bytes =
@@ -1470,7 +1481,7 @@ async function upsertRootfsRow({
       theme ? JSON.stringify(theme) : null,
       content ? JSON.stringify(content) : null,
       content_warnings ? JSON.stringify(content_warnings) : null,
-      contentSpecified,
+      contentMetadataSpecified,
     ],
   );
 
@@ -1644,6 +1655,15 @@ export async function publishProjectRootfsCatalogEntry({
     artifact.size_bytes != null
       ? Number((artifact.size_bytes / 1_000_000_000).toFixed(3))
       : undefined;
+  const hasExplicitContent = hasOwn(body, "content");
+  const content =
+    hasExplicitContent || artifact.rootfs_content === undefined
+      ? body.content
+      : artifact.rootfs_content;
+  const content_warnings = [
+    ...(normalizeStoredContentWarnings(body.content_warnings) ?? []),
+    ...(normalizeStoredContentWarnings(artifact.rootfs_content_warnings) ?? []),
+  ];
   await assertCanCreateOrUpdateRootfs({
     account_id,
     image: artifact.image,
@@ -1665,7 +1685,8 @@ export async function publishProjectRootfsCatalogEntry({
       tags,
       theme: body.theme,
       slug: body.slug,
-      content: body.content,
+      content,
+      content_warnings,
       official: body.official,
       prepull: body.prepull,
       hidden: body.hidden,
@@ -1681,9 +1702,7 @@ export async function publishProjectRootfsCatalogEntry({
   const visibility = normalizeVisibility(body.visibility);
   const slug = validateRootfsSlug(body.slug);
   const contentResult =
-    hasOwn(body, "content") && body.content != null
-      ? normalizeRootfsContentManifest(body.content)
-      : undefined;
+    content != null ? normalizeRootfsContentManifest(content) : undefined;
   return normalizeRootfsEntry(
     {
       id: image_id,

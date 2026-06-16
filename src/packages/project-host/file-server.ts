@@ -71,7 +71,9 @@ import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import {
   managedRootfsImageName,
   isManagedRootfsImageName,
+  ROOTFS_CONTENT_MAX_JSON_BYTES,
   type RootfsImageArch,
+  type RootfsContentValidationWarning,
   type RootfsPhaseTimings,
   type PublishProjectRootfsArtifact,
   type RootfsArtifactTransferTarget,
@@ -1949,6 +1951,82 @@ function createPhaseTimingRecorder() {
   };
 }
 
+async function readRootfsContentManifestFromMergedRootfs(
+  root: string,
+): Promise<{
+  content?: unknown;
+  warnings?: RootfsContentValidationWarning[];
+}> {
+  const manifestPath = join(root, ".cocalc", "rootfs-content.json");
+  let manifestStat;
+  try {
+    manifestStat = await stat(manifestPath);
+  } catch (err) {
+    const code = (err as any)?.code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return {};
+    }
+    return {
+      warnings: [
+        {
+          code: "manifest-read-failed",
+          message: `Unable to inspect RootFS content manifest: ${err}`,
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+  if (!manifestStat.isFile()) {
+    return {
+      warnings: [
+        {
+          code: "manifest-not-file",
+          message: "RootFS content manifest path is not a regular file",
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+  if (manifestStat.size > ROOTFS_CONTENT_MAX_JSON_BYTES) {
+    return {
+      warnings: [
+        {
+          code: "content-too-large",
+          message: `Content manifest must be at most ${ROOTFS_CONTENT_MAX_JSON_BYTES} bytes`,
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+  let raw: string;
+  try {
+    raw = await readFile(manifestPath, "utf8");
+  } catch (err) {
+    return {
+      warnings: [
+        {
+          code: "manifest-read-failed",
+          message: `Unable to read RootFS content manifest: ${err}`,
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+  try {
+    return { content: JSON.parse(raw) };
+  } catch (err) {
+    return {
+      warnings: [
+        {
+          code: "invalid-json",
+          message: `RootFS content manifest is invalid JSON: ${err}`,
+          path: "/.cocalc/rootfs-content.json",
+        },
+      ],
+    };
+  }
+}
+
 async function publishRootfsImage({
   project_id,
   snapshot,
@@ -2027,6 +2105,10 @@ async function publishRootfsImage({
       workdir: workdirPath!,
       merged,
     });
+    const rootfsContent = await timings.measure(
+      "read_rootfs_content_manifest",
+      async () => await readRootfsContentManifestFromMergedRootfs(merged),
+    );
 
     publishRootfsProgress({
       lro,
@@ -2219,6 +2301,8 @@ async function publishRootfsImage({
       source_image: sourceImage,
       artifact_kind: "full",
       inspect_data: publishedInspectData,
+      rootfs_content: rootfsContent.content,
+      rootfs_content_warnings: rootfsContent.warnings,
       upload_result: uploadResult,
       phase_timings_ms: timings.phase_timings_ms,
     };
