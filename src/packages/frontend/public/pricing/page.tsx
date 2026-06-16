@@ -776,7 +776,7 @@ export default function PricingPage({
             </Button>
             <Button
               href={supportPurchasePath({
-                body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, data-location or security reviews, and support coordination needs.",
+                body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, data-location, privacy, or security questions, and support coordination needs.",
                 context: "pricing-site-license",
                 subject: "Site licensing",
                 title: "Ask CoCalc about site licensing",
@@ -832,9 +832,9 @@ export default function PricingPage({
           the group needs.
         </Paragraph>
         {trustHref || privacyHref ? (
-          <Flex aria-label="Pricing trust resources" gap={12} role="group" wrap>
+          <Flex aria-label="Pricing trust materials" gap={12} role="group" wrap>
             {trustHref ? (
-              <Button href={trustHref}>Review trust resources</Button>
+              <Button href={trustHref}>Review trust materials</Button>
             ) : null}
             {privacyHref ? (
               <Button href={privacyHref}>Review privacy policy</Button>
@@ -874,12 +874,12 @@ export default function PricingPage({
               <Paragraph style={{ margin: 0 }}>
                 Use site licensing when an organization needs one agreement
                 around procurement, governance, support expectations, rollout,
-                data-location or security review, or deployment rights across
-                CoCalc.ai, Star, Launchpad, or Rocket.
+                data-location, privacy, or security questions, or deployment
+                rights across CoCalc.ai, Star, Launchpad, or Rocket.
               </Paragraph>
               <Button
                 href={supportPurchasePath({
-                  body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, data-location or security reviews, and support coordination needs.",
+                  body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, data-location, privacy, or security questions, and support coordination needs.",
                   context: "pricing-site-license",
                   subject: "Site licensing",
                   title: "Ask CoCalc about site licensing",
@@ -926,7 +926,7 @@ export default function PricingPage({
               </Paragraph>
               <Button
                 href={supportPurchasePath({
-                  body: "I want to request a quote, site license, or customized invoice for CoCalc. Helpful context: product path, expected users or projects, billing timeline, procurement process, and any deployment, security, data-location, or support constraints.",
+                  body: "I want to request a quote, site license, or customized invoice for CoCalc. Helpful context: product path, expected users or projects, billing timeline, procurement process, and any deployment, privacy, security, data-location, or support constraints.",
                   context: "pricing-quote",
                   subject: "Quote, site license, or customized invoice",
                   title: "Request a CoCalc quote",

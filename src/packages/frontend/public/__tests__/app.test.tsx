@@ -476,7 +476,7 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Review trust resources" }),
+      screen.getByRole("link", { name: "Review trust materials" }),
     ).toHaveAttribute("href", "/policies/trust");
     expect(
       screen.getByRole("link", { name: "Review privacy policy" }),
@@ -498,7 +498,7 @@ describe("PublicApp", () => {
       "context=pricing-site-license",
     );
     expect(siteLicenseLink.getAttribute("href")).toContain(
-      "data-location+or+security+reviews",
+      "data-location%2C+privacy%2C+or+security+questions",
     );
     expect(
       screen.getByRole("heading", { name: "Site licensing" }),
@@ -1222,11 +1222,13 @@ describe("PublicApp", () => {
       screen.getByRole("link", { name: "Talk with CoCalc" }),
     ).toHaveAttribute(
       "href",
-      expect.stringContaining("data-location+or+security+reviews"),
+      expect.stringContaining(
+        "data-location%2C+privacy%2C+or+security+questions",
+      ),
     );
   });
 
-  it("surfaces product-path trust resources only when built-in policies are public", async () => {
+  it("surfaces product-path trust materials only when built-in policies are public", async () => {
     await renderPublicApp(
       <PublicApp
         config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
@@ -1235,10 +1237,10 @@ describe("PublicApp", () => {
     );
 
     expect(
-      screen.getByRole("group", { name: "Product trust resources" }),
+      screen.getByRole("group", { name: "Product trust materials" }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Review trust resources" }),
+      screen.getByRole("link", { name: "Review trust materials" }),
     ).toHaveAttribute("href", "/policies/trust");
     expect(
       screen.getByRole("link", { name: "Review privacy policy" }),
@@ -1273,7 +1275,7 @@ describe("PublicApp", () => {
       screen.getByRole("link", { name: "Compare CoCalc fit" }),
     ).toHaveAttribute("href", "/features/compare");
     expect(
-      screen.getByRole("link", { name: "Review trust resources" }),
+      screen.getByRole("link", { name: "Review trust materials" }),
     ).toHaveAttribute("href", "/policies/trust");
     expect(
       screen.getByRole("link", { name: "Review privacy policy" }),
@@ -1328,7 +1330,9 @@ describe("PublicApp", () => {
       screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
     ).toHaveAttribute(
       "href",
-      expect.stringContaining("data-location+constraints"),
+      expect.stringContaining(
+        "data-location%2C+privacy%2C+or+security+questions",
+      ),
     );
     expect(
       screen.getByRole("link", { name: "Compare with Rocket" }),
@@ -1409,7 +1413,9 @@ describe("PublicApp", () => {
       })[0],
     ).toHaveAttribute(
       "href",
-      expect.stringContaining("data-ownership+expectations"),
+      expect.stringContaining(
+        "security%2C+privacy%2C+or+data-ownership+questions",
+      ),
     );
     expectNoProductDetailStalePhrasing();
   });

@@ -325,10 +325,10 @@ export default function CompareFeaturePage({
     ...(trustHref
       ? [
           {
-            body: "Security, SOC 2, GDPR, and public trust resources.",
+            body: "Published trust materials for evaluators who need security, privacy, or procurement context.",
             href: trustHref,
-            label: "Review trust resources",
-            title: "Checking buyer confidence",
+            label: "Review trust materials",
+            title: "Trust and privacy review",
           },
         ]
       : []),

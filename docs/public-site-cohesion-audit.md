@@ -47,6 +47,16 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Keep mobile readability and long-link containment as policy-page requirements.
 - [ ] Future: perform a line-level legal/trust review of the policy document bodies themselves before changing legal substance, certification wording, retention periods, or DPA terms.
 
+## Policy-Adjacent Entry Point Pass
+
+- [x] Keep legal, privacy, DPA, Trust Center, SOC 2, GDPR, retention, and certification language in Andrey's review lane; do not continue changing policy document bodies during general site passes.
+- [x] Audit only the surrounding public pages that point visitors toward published trust/privacy materials: products, pricing, compare, support, footer/nav, sign-in, and sign-up.
+- [x] Leave sign-in/sign-up Terms and Privacy acceptance links alone because they serve a legal acceptance function, not a buyer-confidence narrative function.
+- [x] Leave the footer and top-nav `Policies` label alone for now because it is a neutral legal-resource destination and does not overstate trust or compliance.
+- [x] Reframe surrounding-page links from broad "trust resources" language toward "trust materials" and make support the path for organization-specific security, privacy, data-location, or procurement questions.
+- [x] Avoid adding compliance interpretation, stronger security claims, or route-specific summaries that Andrey should own.
+- [ ] Future: after Andrey reviews the policy materials, re-check whether public-page trust labels should point to more specific reviewed destinations such as Trust Center, DPA, FERPA, or privacy.
+
 ## Jupyter And Teaching Pass
 
 - [x] Re-inspect `/features/jupyter-notebook` and `/features/teaching` against the component-necessity standard after the broader feature-page cleanup.

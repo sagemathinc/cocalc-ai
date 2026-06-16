@@ -237,7 +237,7 @@ function PurchaseFields({
               </li>
               <li>Timeline, procurement requirements, or invoice needs.</li>
               <li>
-                Any deployment, governance, security, data-location,
+                Any deployment, governance, privacy, security, data-location,
                 data-ownership, or support constraints.
               </li>
             </ul>
@@ -601,8 +601,8 @@ export default function SupportNew({
             </Space>
             {trustHref || privacyHref ? (
               <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
-                For security and privacy context, review{" "}
-                {trustHref ? <a href={trustHref}>trust resources</a> : null}
+                For published security and privacy context, review{" "}
+                {trustHref ? <a href={trustHref}>trust materials</a> : null}
                 {trustHref && privacyHref ? " and " : null}
                 {privacyHref ? (
                   <a href={privacyHref}>the privacy policy</a>
@@ -661,7 +661,7 @@ export default function SupportNew({
                   </li>
                   {trustHref ? (
                     <li>
-                      <a href={trustHref}>Trust resources</a>
+                      <a href={trustHref}>Trust materials</a>
                     </li>
                   ) : null}
                   {privacyHref ? (

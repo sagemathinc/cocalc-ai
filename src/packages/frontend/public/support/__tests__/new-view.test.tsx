@@ -53,7 +53,7 @@ describe("SupportNew", () => {
     ).not.toBeNull();
     expect(screen.getByText("Helpful links")).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Trust resources" }),
+      screen.getByRole("link", { name: "Trust materials" }),
     ).toHaveAttribute("href", "/policies/trust");
     expect(
       screen.getByRole("link", { name: "Privacy policy" }),
@@ -82,7 +82,7 @@ describe("SupportNew", () => {
       ),
     ).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "trust resources" }),
+      screen.getByRole("link", { name: "trust materials" }),
     ).toHaveAttribute("href", "/policies/trust");
     expect(
       screen.getByRole("link", { name: "the privacy policy" }),

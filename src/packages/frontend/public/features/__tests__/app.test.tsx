@@ -1076,7 +1076,7 @@ describe("PublicFeaturesApp", () => {
     );
   });
 
-  it("adds compare-page trust resources only when built-in policies are public", () => {
+  it("adds compare-page trust materials only when built-in policies are public", () => {
     render(
       <PublicFeaturesApp
         config={{
@@ -1090,13 +1090,16 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen
-        .getByRole("link", { name: "Review trust resources" })
+        .getByRole("link", { name: "Review trust materials" })
         .getAttribute("href"),
     ).toBe("/policies/trust");
-    expect(screen.getByText("Checking buyer confidence")).not.toBeNull();
+    expect(screen.getByText("Trust and privacy review")).not.toBeNull();
     expect(
-      screen.getByText(/Security, SOC 2, GDPR, and public trust resources/),
+      screen.getByText(
+        /Published trust materials for evaluators who need security, privacy, or procurement context/,
+      ),
     ).not.toBeNull();
+    expect(screen.queryByText(/Security, SOC 2, GDPR/)).toBeNull();
   });
 
   it("keeps the compare page scannable and route-focused", () => {

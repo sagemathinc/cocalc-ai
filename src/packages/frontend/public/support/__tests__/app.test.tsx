@@ -36,7 +36,9 @@ describe("PublicSupportApp", () => {
     expect(screen.getByText("Talk with CoCalc")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
     expect(
-      screen.getByText(/support, security, or data-location expectations/),
+      screen.getByText(
+        /support, privacy, security, or data-location questions/,
+      ),
     ).not.toBeNull();
     expect(
       screen.getByText(/deployment boundaries, site licensing/),
@@ -48,11 +50,11 @@ describe("PublicSupportApp", () => {
       screen.getByRole("link", { name: "Review pricing" }),
     ).toHaveAttribute("href", "/pricing");
     const trustResources = screen.getByRole("group", {
-      name: "Support trust resources",
+      name: "Support trust materials",
     });
     expect(
       within(trustResources).getByRole("link", {
-        name: "Review trust resources",
+        name: "Review trust materials",
       }),
     ).toHaveAttribute("href", "/policies/trust");
     expect(

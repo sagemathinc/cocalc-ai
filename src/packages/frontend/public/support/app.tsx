@@ -138,13 +138,14 @@ function SupportIndex({
     <div style={{ display: "grid", gap: 16 }}>
       <Paragraph style={{ fontSize: "16px", margin: 0 }}>
         Use support when you need help choosing how CoCalc should run, planning
-        licensing or deployment, clarifying support, security, or data-location
-        expectations, or resolving an existing account or project issue.
+        licensing or deployment, clarifying support, privacy, security, or
+        data-location questions, or resolving an existing account or project
+        issue.
       </Paragraph>
       {trustHref || privacyHref ? (
-        <Flex aria-label="Support trust resources" gap={12} role="group" wrap>
+        <Flex aria-label="Support trust materials" gap={12} role="group" wrap>
           {trustHref ? (
-            <Button href={trustHref}>Review trust resources</Button>
+            <Button href={trustHref}>Review trust materials</Button>
           ) : null}
           {privacyHref ? (
             <Button href={privacyHref}>Review privacy policy</Button>

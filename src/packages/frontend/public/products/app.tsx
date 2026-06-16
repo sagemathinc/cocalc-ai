@@ -53,14 +53,14 @@ function supportContactPath({
 function supportProductPath(product: "Launchpad" | "Rocket"): string {
   if (product === "Launchpad") {
     return supportContactPath({
-      body: "I want to talk with CoCalc about CoCalc Launchpad. Helpful context: expected users or projects, pilot/lab/workshop/department scope, operating environment, timeline, support expectations, and whether pricing, site licensing, or data-location constraints are part of the decision.",
+      body: "I want to talk with CoCalc about CoCalc Launchpad. Helpful context: expected users or projects, pilot/lab/workshop/department scope, operating environment, timeline, support expectations, and whether pricing, site licensing, data-location, privacy, or security questions are part of the decision.",
       context: "product-cocalc-launchpad",
       subject: "CoCalc Launchpad",
       title: "Talk with CoCalc about Launchpad",
     });
   }
   return supportContactPath({
-    body: "I want to talk with CoCalc about CoCalc Rocket. Helpful context: organization type, expected users or projects, private-cloud requirements, governance, security or data-ownership expectations, procurement needs, timeline, and support or deployment-planning questions.",
+    body: "I want to talk with CoCalc about CoCalc Rocket. Helpful context: organization type, expected users or projects, private-cloud requirements, governance, security, privacy, or data-ownership questions, procurement needs, timeline, and support or deployment-planning questions.",
     context: "product-cocalc-rocket",
     subject: "CoCalc Rocket",
     title: "Talk with CoCalc about Rocket",
@@ -352,10 +352,10 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
         </Title>
         <Paragraph style={{ margin: 0 }}>
           Use site licensing for procurement, governance, support expectations,
-          rollout, data-location or security reviews, and broader deployment
-          rights across the product family. It does not change who operates
-          CoCalc by itself; it gives the hosted, local, appliance, or private
-          path a commercial and support wrapper.
+          rollout, data-location, privacy, or security questions, and broader
+          deployment rights across the product family. It does not change who
+          operates CoCalc by itself; it gives the hosted, local, appliance, or
+          private path a commercial and support wrapper.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("pricing")}>
@@ -363,7 +363,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
           </LinkButton>
           <LinkButton
             href={supportContactPath({
-              body: "I want to talk with CoCalc about operating model, site licensing, or an organizational buying route. Helpful context: where you want CoCalc to run, who will operate it, expected users or projects, procurement needs, data-location or security reviews, and support expectations.",
+              body: "I want to talk with CoCalc about operating model, site licensing, or an organizational buying route. Helpful context: where you want CoCalc to run, who will operate it, expected users or projects, procurement needs, data-location, privacy, or security questions, and support expectations.",
               context: "products-site-licensing",
               subject: "Operating model and site licensing",
               title: "Talk with CoCalc about operating models",
@@ -373,9 +373,9 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
           </LinkButton>
         </Flex>
         {trustHref || privacyHref ? (
-          <Flex aria-label="Product trust resources" gap={14} role="group" wrap>
+          <Flex aria-label="Product trust materials" gap={14} role="group" wrap>
             {trustHref ? (
-              <LinkButton href={trustHref}>Review trust resources</LinkButton>
+              <LinkButton href={trustHref}>Review trust materials</LinkButton>
             ) : null}
             {privacyHref ? (
               <LinkButton href={privacyHref}>Review privacy policy</LinkButton>
