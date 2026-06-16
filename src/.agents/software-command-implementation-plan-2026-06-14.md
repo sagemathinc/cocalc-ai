@@ -1023,6 +1023,10 @@ Implemented:
   channel and runs `src/scripts/star/smoke-star.sh` with
   `COCALC_STAR_CHANNEL`/`COCALC_STAR_RELEASE_CHANNEL` set, so the current local
   Star smoke workflow is available through the common software command.
+- `software rollback <component> <profile-or-channel> <artifact-id>` wrappers.
+  Rollback validates that the target artifact has a successful deployment in
+  durable R2 history, recovers coordinated Plus/tools-minimal metadata when
+  present, and delegates to the normal deploy path.
 - `latest` as a reserved selector that resolves to the newest local or remote
   artifact for a component.
 - Human-readable build/deploy durations and artifact sizes.
@@ -1036,7 +1040,6 @@ Still not implemented:
 - Product/documentation updates for the new CLI channel model, including a
   dedicated `/products/cocalc-cli` page and channel notes on public installer
   pages.
-- Rollback wrappers.
 
 ### Phase 0: Documentation And Test Fixtures
 

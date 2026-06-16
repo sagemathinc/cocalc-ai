@@ -297,6 +297,85 @@ function createProgram(deps: SoftwareCommandDeps): Command {
   return program;
 }
 
+function deploymentHistoryObjects({
+  component,
+  profileOrChannel,
+  artifactId,
+  tag = "rollback-target",
+  status = "succeeded",
+  details,
+}: {
+  component: string;
+  profileOrChannel: string;
+  artifactId: string;
+  tag?: string;
+  status?: "started" | "succeeded" | "failed";
+  details?: Record<string, unknown>;
+}): Map<string, Buffer> {
+  const deploymentId = `20260615T000000Z-${artifactId}`;
+  const recordKey = `software/deployments/${profileOrChannel}/${component}/${deploymentId}.json`;
+  const record = {
+    schema: "cocalc-software-deployment-v1",
+    deployment_id: deploymentId,
+    component,
+    artifact_component: component === "bay-conat-router" ? "bay" : component,
+    profile_or_channel: profileOrChannel,
+    started_at: "2026-06-15T00:00:00.000Z",
+    updated_at: "2026-06-15T00:00:01.000Z",
+    finished_at: status === "started" ? undefined : "2026-06-15T00:00:01.000Z",
+    artifact_id: artifactId,
+    tag,
+    git: { commit: "abcdef123456", short: "abcdef12", dirty: false },
+    deployed_by: { user: "operator" },
+    target: {
+      kind:
+        component === "cli" || component === "plus"
+          ? "release-channel"
+          : "rocket-bay",
+      ...(component === "cli" || component === "plus"
+        ? { channel: profileOrChannel }
+        : { profile: profileOrChannel }),
+    },
+    status,
+    duration_ms: status === "started" ? undefined : 1000,
+    details,
+  };
+  const entry = {
+    deployment_id: deploymentId,
+    component,
+    artifact_component: record.artifact_component,
+    profile_or_channel: profileOrChannel,
+    started_at: record.started_at,
+    updated_at: record.updated_at,
+    finished_at: record.finished_at,
+    artifact_id: artifactId,
+    tag,
+    git: record.git,
+    deployed_by: record.deployed_by,
+    target: record.target,
+    status,
+    duration_ms: record.duration_ms,
+    record_key: recordKey,
+    record_url: `https://software.example.test/${recordKey}`,
+  };
+  return new Map([
+    [recordKey, Buffer.from(JSON.stringify(record), "utf8")],
+    [
+      `software/deployments/${profileOrChannel}/${component}/index.json`,
+      Buffer.from(
+        JSON.stringify({
+          schema: "cocalc-software-deployment-index-v1",
+          component,
+          profile_or_channel: profileOrChannel,
+          generated_at: "2026-06-15T00:00:02.000Z",
+          deployments: [entry],
+        }),
+        "utf8",
+      ),
+    ],
+  ]);
+}
+
 test("software help lists supported components", () => {
   const program = createProgram(makeDeps({ localStore: "/tmp/software-help" }));
   const software = program.commands.find(
@@ -1197,6 +1276,149 @@ test("software history shows unknown for unsealed started deployments", async ()
   }
   const payload = JSON.parse(logs.at(-1) ?? "{}");
   assert.equal(payload.data.deployments[0].status, "unknown");
+});
+
+test("software rollback redeploys a successful historical artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-rollback-static-"));
+  const artifactId = "20260614T235912Z-e882d124-old-static";
+  const r2 = makeR2Client(
+    deploymentHistoryObjects({
+      component: "static",
+      profileOrChannel: "staging",
+      artifactId,
+      tag: "old-static",
+    }),
+  );
+  const runs: CapturedRun[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "rollback",
+    "static",
+    "staging",
+    artifactId,
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  assert.equal(runs.length, 1);
+  const softwareIndex = runs[0].args.indexOf("software");
+  assert.notEqual(softwareIndex, -1);
+  assert.deepEqual(runs[0].args.slice(softwareIndex), [
+    "software",
+    "deploy",
+    "static",
+    artifactId,
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+  assert.equal(runs[0].args.includes("--quiet"), true);
+});
+
+test("software rollback plus reuses historical tools-minimal artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-rollback-plus-"));
+  const artifactId = "20260614T235912Z-e882d124-old-plus";
+  const toolsArtifactId = "20260614T235912Z-e882d124-old-tools-minimal";
+  const r2 = makeR2Client(
+    deploymentHistoryObjects({
+      component: "plus",
+      profileOrChannel: "candidate",
+      artifactId,
+      tag: "old-plus",
+      details: {
+        tools_minimal: {
+          artifact_id: toolsArtifactId,
+        },
+      },
+    }),
+  );
+  const runs: CapturedRun[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "rollback",
+    "plus",
+    "candidate",
+    artifactId,
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const softwareIndex = runs[0].args.indexOf("software");
+  assert.deepEqual(runs[0].args.slice(softwareIndex), [
+    "software",
+    "deploy",
+    "plus",
+    artifactId,
+    "candidate",
+    "--env-file",
+    join(dir, "missing.env"),
+    "--tools-minimal",
+    toolsArtifactId,
+  ]);
+});
+
+test("software rollback rejects artifacts without successful history", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-rollback-no-success-"));
+  const artifactId = "20260614T235912Z-e882d124-failed-static";
+  const r2 = makeR2Client(
+    deploymentHistoryObjects({
+      component: "static",
+      profileOrChannel: "staging",
+      artifactId,
+      status: "failed",
+    }),
+  );
+  const runs: CapturedRun[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "rollback",
+        "static",
+        "staging",
+        artifactId,
+        "--env-file",
+        join(dir, "missing.env"),
+      ]),
+    /has no succeeded deployment/,
+  );
+  assert.equal(runs.length, 0);
 });
 
 test("software deploy latest chooses the newest remote artifact", async () => {

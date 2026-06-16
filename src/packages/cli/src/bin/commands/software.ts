@@ -129,6 +129,8 @@ type HistoryOptions = {
   limit?: string;
 };
 
+type RollbackOptions = DeployOptions;
+
 type SmokeOptions = {
   api?: string;
   remote?: string;
@@ -1209,6 +1211,103 @@ function deploymentHistoryRow(
     error: entry.error,
     record: entry.record_url,
   };
+}
+
+async function readDeploymentRecordByKey({
+  client,
+  config,
+  key,
+}: {
+  client: SoftwareR2Client;
+  config: Awaited<ReturnType<typeof resolveSoftwareRemoteConfig>>;
+  key: string;
+}): Promise<SoftwareDeploymentRecord> {
+  const body = await client.getR2ObjectBuffer({
+    auth: config.auth,
+    key,
+  });
+  if (!body) {
+    throw new Error(`software deployment record is missing: ${key}`);
+  }
+  const record = JSON.parse(body.toString("utf8"));
+  if (record?.schema !== "cocalc-software-deployment-v1") {
+    throw new Error(`invalid software deployment record: ${key}`);
+  }
+  return record;
+}
+
+function successfulRollbackTarget({
+  index,
+  artifactId,
+}: {
+  index: Awaited<ReturnType<typeof readDeploymentIndex>>;
+  artifactId: string;
+}): SoftwareDeploymentIndexEntry {
+  const matches = index.deployments.filter(
+    (entry) => entry.artifact_id === artifactId,
+  );
+  const succeeded = matches.find((entry) => entry.status === "succeeded");
+  if (succeeded) {
+    return succeeded;
+  }
+  if (matches.length) {
+    throw new Error(
+      `software rollback target ${artifactId} exists in history but has no succeeded deployment`,
+    );
+  }
+  throw new Error(
+    `software rollback target ${artifactId} was not found in deployment history for ${index.component}/${index.profile_or_channel}`,
+  );
+}
+
+function toolsMinimalArtifactIdFromRecord(
+  record: SoftwareDeploymentRecord,
+): string | undefined {
+  const details = record.details as any;
+  const value = `${details?.tools_minimal?.artifact_id ?? ""}`.trim();
+  return value || undefined;
+}
+
+function rollbackDeployArgs({
+  cliArgs,
+  component,
+  artifactId,
+  profileOrChannel,
+  opts,
+  record,
+}: {
+  cliArgs: string[];
+  component: SoftwareDeployComponent;
+  artifactId: string;
+  profileOrChannel: string;
+  opts: RollbackOptions;
+  record: SoftwareDeploymentRecord;
+}): string[] {
+  const args = [
+    ...cliArgs,
+    "--quiet",
+    "software",
+    "deploy",
+    component,
+    artifactId,
+    profileOrChannel,
+  ];
+  if (opts.localStore) args.push("--local-store", opts.localStore);
+  if (opts.config) args.push("--config", opts.config);
+  if (opts.remote) args.push("--remote", opts.remote);
+  if (opts.api) args.push("--api", opts.api);
+  if (opts.envFile) args.push("--env-file", opts.envFile);
+  if (component === "plus") {
+    const toolsMinimal =
+      opts.toolsMinimal || toolsMinimalArtifactIdFromRecord(record);
+    if (!toolsMinimal) {
+      throw new Error(
+        `software rollback plus requires historical tools-minimal artifact metadata or --tools-minimal <tag-or-id>`,
+      );
+    }
+    args.push("--tools-minimal", toolsMinimal);
+  }
+  return args;
 }
 
 function elapsedMsSince(
@@ -2876,6 +2975,102 @@ Supported deploy/smoke components:
           return;
         }
         printArrayTable(rows);
+      },
+    );
+
+  software
+    .command("rollback")
+    .description(
+      "redeploy a previously successful artifact from deployment history",
+    )
+    .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
+    .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
+    .argument("<artifact-id>", "previously deployed artifact id")
+    .option("--local-store <path>", "local artifact store")
+    .option("--config <path>", "rocket config path")
+    .option("--remote <ssh-target>", "bay SSH target")
+    .option("--api <url>", "site API URL")
+    .option(
+      "--env-file <path>",
+      "R2 credential env file",
+      "/run/secrets/cocalc/rocket-software-env.sh",
+    )
+    .option(
+      "--tools-minimal <tag-or-id>",
+      "tools-minimal artifact selector for plus rollback; defaults to historical deployment metadata",
+    )
+    .action(
+      async (
+        componentArg: string,
+        profileOrChannel: string,
+        artifactId: string,
+        opts: RollbackOptions,
+        command: Command,
+      ) => {
+        const component = parseSoftwareDeployComponent(componentArg);
+        const target = `${profileOrChannel ?? ""}`.trim();
+        const rollbackArtifactId = `${artifactId ?? ""}`.trim();
+        if (!target) {
+          throw new Error("software rollback requires <profile-or-channel>");
+        }
+        if (!rollbackArtifactId) {
+          throw new Error("software rollback requires <artifact-id>");
+        }
+        if (!deps.runCommand) {
+          throw new Error("software rollback requires runCommand dependency");
+        }
+        const startedAt = deps.now?.() ?? new Date();
+        const config = await resolveSoftwareRemoteConfig({
+          env: deps.env ?? process.env,
+          envFile: opts.envFile,
+        });
+        const client = softwareR2Client(deps);
+        const index = await readDeploymentIndex({
+          client,
+          auth: config.auth,
+          component,
+          profileOrChannel: target,
+        });
+        const entry = successfulRollbackTarget({
+          index,
+          artifactId: rollbackArtifactId,
+        });
+        const record = await readDeploymentRecordByKey({
+          client,
+          config,
+          key: entry.record_key,
+        });
+        const cli = currentCliInvocation();
+        const args = rollbackDeployArgs({
+          cliArgs: cli.args,
+          component,
+          artifactId: rollbackArtifactId,
+          profileOrChannel: target,
+          opts,
+          record,
+        });
+        const code = await deps.runCommand(cli.command, args, {
+          stdio: "inherit",
+          env: deps.env ?? process.env,
+        });
+        if (code !== 0) {
+          throw new Error(
+            `software rollback ${component} failed with exit status ${code}`,
+          );
+        }
+        emitSuccess(
+          { globals: command.optsWithGlobals() as any },
+          "software rollback",
+          {
+            component,
+            profile_or_channel: target,
+            artifact_id: rollbackArtifactId,
+            tag: entry.tag,
+            deployment_id: entry.deployment_id,
+            duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+            redeploy_command: [cli.command, ...args].join(" "),
+          },
+        );
       },
     );
 
