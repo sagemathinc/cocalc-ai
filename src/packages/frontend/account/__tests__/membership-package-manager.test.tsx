@@ -498,12 +498,10 @@ describe("membership package managers", () => {
     });
     expect(within(memberRow).getByRole("spinbutton")).toHaveValue("5");
 
-    fireEvent.click(within(memberRow).getByText("+"));
+    fireEvent.change(within(memberRow).getByRole("spinbutton"), {
+      target: { value: "6" },
+    });
     expect(within(memberRow).getByRole("spinbutton")).toHaveValue("6");
-
-    fireEvent.click(within(memberRow).getByText("-"));
-    expect(within(memberRow).getByRole("spinbutton")).toHaveValue("5");
-    expect(within(memberRow).getByText("-").closest("button")).toBeDisabled();
 
     fireEvent.change(within(memberRow).getByRole("spinbutton"), {
       target: { value: "3" },

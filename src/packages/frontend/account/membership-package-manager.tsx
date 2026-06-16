@@ -4712,44 +4712,31 @@ function TeamPackagePurchaseModal({
                 render: (_, { tier }) => tier.label ?? capitalize(tier.id),
               },
               {
-                title: "Assigned",
-                render: (_, { assigned }) => `${assigned} used`,
-              },
-              {
                 title: "Seats",
                 render: (_, { tier, initial, target }) => (
-                  <Space>
-                    <Button
-                      disabled={target <= initial}
-                      onClick={() => setTargetSeatCount(tier.id, target - 1)}
-                    >
-                      -
-                    </Button>
-                    <InputNumber
-                      min={initial}
-                      precision={0}
-                      style={{ width: 80 }}
-                      value={target}
-                      onChange={(value) =>
-                        setTargetSeatCount(
-                          tier.id,
-                          typeof value === "number" ? value : initial,
-                        )
-                      }
-                      onBlur={(event) =>
-                        setTargetSeatCount(
-                          tier.id,
-                          Number(event.currentTarget.value),
-                        )
-                      }
-                    />
-                    <Button
-                      onClick={() => setTargetSeatCount(tier.id, target + 1)}
-                    >
-                      +
-                    </Button>
-                  </Space>
+                  <InputNumber
+                    min={initial}
+                    precision={0}
+                    style={{ width: 80 }}
+                    value={target}
+                    onChange={(value) =>
+                      setTargetSeatCount(
+                        tier.id,
+                        typeof value === "number" ? value : initial,
+                      )
+                    }
+                    onBlur={(event) =>
+                      setTargetSeatCount(
+                        tier.id,
+                        Number(event.currentTarget.value),
+                      )
+                    }
+                  />
                 ),
+              },
+              {
+                title: "Assigned",
+                render: (_, { assigned }) => `${assigned} used`,
               },
             ]}
             dataSource={purchaseableTiers.map((tier) => ({
