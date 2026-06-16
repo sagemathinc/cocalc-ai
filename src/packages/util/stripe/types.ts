@@ -7,8 +7,10 @@ export interface LineItem {
 }
 
 export interface PaymentIntentSecret {
-  clientSecret: string;
+  clientSecret?: string;
   customerSessionClientSecret?: string;
+  payment_intent?: string;
+  hosted_invoice_url?: string;
 }
 
 export interface CheckoutSessionSecret {

@@ -56,6 +56,8 @@ import { AddressButton, StripeAddressElement } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
 const PAYMENT_UPDATE_DEBOUNCE = 2000;
+const PAYMENT_INTENT_PROCESSING_TIMEOUT_MS = 30_000;
+const PAYMENT_INTENT_PROCESSING_POLL_MS = 1_500;
 
 function hasUsableBillingDetails(customer: any): boolean {
   const address = customer?.address ?? {};
@@ -65,6 +67,29 @@ function hasUsableBillingDetails(customer: any): boolean {
     !!`${address.city ?? ""}`.trim() &&
     !!`${address.country ?? ""}`.trim() &&
     !!`${address.postal_code ?? ""}`.trim()
+  );
+}
+
+async function processCreatedPaymentIntent(payment_intent?: string) {
+  if (!payment_intent) {
+    throw Error("payment intent was not returned by checkout");
+  }
+  const deadline = Date.now() + PAYMENT_INTENT_PROCESSING_TIMEOUT_MS;
+  let lastError: unknown;
+  while (Date.now() <= deadline) {
+    try {
+      await processPaymentIntents({
+        payment_intent_id: payment_intent,
+        strict: true,
+      });
+      return;
+    } catch (err) {
+      lastError = err;
+      await delay(PAYMENT_INTENT_PROCESSING_POLL_MS);
+    }
+  }
+  throw Error(
+    `Your payment appears to have gone through, but CoCalc has not yet recorded it. Please close this dialog and check the payment status panel. ${lastError}`,
   );
 }
 
@@ -201,12 +226,15 @@ function StripePaymentInner({
                       setLoading(true);
                       onSubmittingChange?.(true);
                       await runFreshAuthAction(async () => {
-                        await createPaymentIntent({
+                        const paymentIntent = await createPaymentIntent({
                           description,
                           lineItems: safeLineItems,
                           purpose,
                           metadata,
                         });
+                        await processCreatedPaymentIntent(
+                          paymentIntent.payment_intent,
+                        );
                         await onFinished?.(
                           stripeToMoney(totalStripe).toNumber(),
                         );

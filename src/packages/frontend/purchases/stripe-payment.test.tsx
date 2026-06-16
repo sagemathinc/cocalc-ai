@@ -16,6 +16,7 @@ import {
   getCustomerSession,
   getPaymentMethods,
   getStripeCustomer,
+  processPaymentIntents,
   setStripeCustomer,
 } from "./api";
 
@@ -178,6 +179,8 @@ describe("StripePayment", () => {
     jest.mocked(getCustomerSession).mockReset();
     jest.mocked(getCustomerSession).mockResolvedValue({});
     jest.mocked(getPaymentMethods).mockReset();
+    jest.mocked(processPaymentIntents).mockReset();
+    jest.mocked(processPaymentIntents).mockResolvedValue({ count: 1 } as any);
     jest.mocked(getStripeCustomer).mockReset();
     jest.mocked(getStripeCustomer).mockResolvedValue({
       address: {},
@@ -265,6 +268,42 @@ describe("StripePayment", () => {
       .closest("button") as HTMLButtonElement | null;
     expect(button?.disabled).toBe(true);
     expect(screen.getByText("loading")).toBeTruthy();
+  });
+
+  it("processes the returned one-click payment intent before finishing", async () => {
+    mockStripeEnabled = true;
+    const onFinished = jest.fn();
+    jest.mocked(createPaymentIntent).mockResolvedValueOnce({
+      payment_intent: "pi_123",
+    } as any);
+    jest.mocked(getPaymentMethods).mockResolvedValue({ data: [{}] } as any);
+    render(
+      <StripePayment
+        description="Membership change"
+        lineItems={[{ description: "Pro membership, annual", amount: 1440 }]}
+        purpose="membership-change"
+        onFinished={onFinished}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Buy Now With 1-Click")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("Buy Now With 1-Click"));
+
+    await waitFor(() => {
+      expect(createPaymentIntent).toHaveBeenCalledWith({
+        description: "Membership change",
+        lineItems: [{ description: "Pro membership, annual", amount: 1440 }],
+        purpose: "membership-change",
+        metadata: undefined,
+      });
+      expect(processPaymentIntents).toHaveBeenCalledWith({
+        payment_intent_id: "pi_123",
+        strict: true,
+      });
+      expect(onFinished).toHaveBeenCalledWith(1440);
+    });
   });
 
   it("adds a payment method without requiring fresh auth", async () => {
