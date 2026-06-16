@@ -67,7 +67,14 @@ import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
-import purchaseMembershipPackage0 from "@cocalc/server/purchases/membership-package";
+import purchaseMembershipPackage0, {
+  purchaseMembershipPackages as purchaseMembershipPackages0,
+} from "@cocalc/server/purchases/membership-package";
+import {
+  getTeamLicenseOverviewForOwner,
+  resolveTeamLicenseQuote,
+} from "@cocalc/server/membership/team-licenses";
+import { purchaseTeamLicenseChange as purchaseTeamLicenseChange0 } from "@cocalc/server/purchases/team-license";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
@@ -440,6 +447,130 @@ export async function purchaseMembershipPackage({
   return await purchaseMembershipPackage0({
     account_id,
     product,
+  });
+}
+
+export async function purchaseMembershipPackages({
+  account_id,
+  browser_id,
+  session_hash,
+  products,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  products?: MembershipPackageProduct[];
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "purchase memberships",
+  );
+  await maybeRequireFreshAuthForBrowserPurchaseAction({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  if (!Array.isArray(products) || products.length === 0) {
+    throw Error("at least one membership package product is required");
+  }
+  for (const product of products) {
+    if (product?.type !== "membership-package") {
+      throw Error("product type must be 'membership-package'");
+    }
+    if (product.package_id) {
+      const pkg = await getMembershipPackage({
+        package_id: product.package_id,
+      });
+      if (!pkg) {
+        throw Error("membership package not found");
+      }
+      if (pkg.owner_account_id !== account_id && !(await isAdmin(account_id))) {
+        throw Error("must own membership package");
+      }
+    }
+  }
+  return await purchaseMembershipPackages0({
+    account_id,
+    products,
+  });
+}
+
+export async function getTeamLicense({ account_id }: { account_id?: string }) {
+  const owner = requireAccount(account_id);
+  const home_bay_id = await resolveTargetAccountHomeBay({
+    account_id: owner,
+    user_account_id: owner,
+  });
+  if (home_bay_id !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).getTeamLicense({ account_id: owner });
+  }
+  return await getTeamLicenseOverviewForOwner({ owner_account_id: owner });
+}
+
+export async function getTeamLicenseQuote({
+  account_id,
+  target_seats,
+}: {
+  account_id?: string;
+  target_seats?: Record<string, number>;
+}) {
+  const owner = requireAccount(account_id);
+  const home_bay_id = await resolveTargetAccountHomeBay({
+    account_id: owner,
+    user_account_id: owner,
+  });
+  if (home_bay_id !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).getTeamLicenseQuote({ account_id: owner, target_seats });
+  }
+  return await resolveTeamLicenseQuote({
+    owner_account_id: owner,
+    target_seats,
+  });
+}
+
+export async function purchaseTeamLicenseChange({
+  account_id,
+  browser_id,
+  session_hash,
+  target_seats,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  target_seats?: Record<string, number>;
+}) {
+  const owner = requireAccount(account_id);
+  await assertAccountTrustedForProductAccess(owner, "purchase memberships");
+  await maybeRequireFreshAuthForBrowserPurchaseAction({
+    account_id: owner,
+    browser_id,
+    session_hash,
+  });
+  const home_bay_id = await resolveTargetAccountHomeBay({
+    account_id: owner,
+    user_account_id: owner,
+  });
+  if (home_bay_id !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).purchaseTeamLicenseChange({
+      account_id: owner,
+      target_seats,
+    });
+  }
+  return await purchaseTeamLicenseChange0({
+    account_id: owner,
+    target_seats: target_seats ?? {},
   });
 }
 

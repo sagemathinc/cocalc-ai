@@ -6,6 +6,7 @@
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
+import { moneyRound2Up, toDecimal, type MoneyValue } from "@cocalc/util/money";
 import {
   assertAccountNotRehoming,
   assertAccountWriteOnHomeBay,
@@ -164,6 +165,63 @@ export default async function purchaseMembershipPackage({
     );
     await client.query("COMMIT");
     return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function purchaseMembershipPackages({
+  account_id,
+  products,
+  amount,
+}: {
+  account_id: string;
+  products: MembershipPackageProduct[];
+  amount?: MoneyValue;
+}): Promise<{ package_id: string; purchase_id: number }[]> {
+  logger.debug("purchaseMembershipPackages", {
+    account_id,
+    products,
+    amount,
+  });
+  if (products.length === 0) {
+    throw Error("at least one membership package product is required");
+  }
+  const quotes = await Promise.all(
+    products.map((product) => resolveMembershipPackageQuote(product)),
+  );
+  const total = moneyRound2Up(
+    quotes.reduce(
+      (sum, quote) => sum.add(toDecimal(quote.total_price)),
+      toDecimal(0),
+    ),
+  );
+  const client = await getTransactionClient();
+  try {
+    await assertPurchaseAllowed({
+      account_id,
+      service: "membership",
+      cost: total,
+      client,
+      amount,
+    });
+    const results: { package_id: string; purchase_id: number }[] = [];
+    for (const product of products) {
+      results.push(
+        await createMembershipPackagePurchase(
+          {
+            account_id,
+            product,
+          },
+          client,
+        ),
+      );
+    }
+    await client.query("COMMIT");
+    return results;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

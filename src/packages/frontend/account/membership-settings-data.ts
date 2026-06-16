@@ -146,7 +146,9 @@ export function useMembershipSettingsData(): {
   }, [tiers]);
 
   const candidateRows = useMemo(() => {
-    const candidates = details?.candidates ?? [];
+    const candidates = (details?.candidates ?? []).filter(
+      shouldDisplayMembershipCandidate,
+    );
     const rows: MembershipCandidateRow[] = candidates.map((candidate) => {
       const selected =
         details?.selected.class === candidate.class &&
@@ -213,6 +215,16 @@ export function sortMembershipCandidateRows(
     if (stateOrder !== 0) return stateOrder;
     return membershipSourceOrder(a) - membershipSourceOrder(b);
   });
+}
+
+export function shouldDisplayMembershipCandidate(
+  candidate: MembershipCandidate,
+): boolean {
+  return !(
+    candidate.source === "subscription" &&
+    candidate.subscription_status === "canceled" &&
+    startsInFuture(candidate.starts)
+  );
 }
 
 function membershipName(

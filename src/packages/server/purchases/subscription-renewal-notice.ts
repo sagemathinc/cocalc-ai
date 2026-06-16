@@ -7,6 +7,8 @@ import getPool from "@cocalc/database/pool";
 import {
   USE_BALANCE_TOWARD_SUBSCRIPTIONS,
   USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT,
+  USE_BALANCE_TOWARD_TEAM_LICENSES,
+  USE_BALANCE_TOWARD_TEAM_LICENSES_DEFAULT,
 } from "@cocalc/util/db-schema/accounts";
 import { toDecimal } from "@cocalc/util/money";
 import type { MoneyValue } from "@cocalc/util/money";
@@ -35,10 +37,36 @@ export function formatPaymentActionDate(currentPeriodEnd: Date): string {
 export async function useBalanceTowardSubscriptions(
   account_id: string,
 ): Promise<boolean> {
+  return await useBalanceTowardRenewalSetting({
+    account_id,
+    defaultValue: USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT,
+    settingKey: USE_BALANCE_TOWARD_SUBSCRIPTIONS,
+  });
+}
+
+export async function useBalanceTowardTeamLicenses(
+  account_id: string,
+): Promise<boolean> {
+  return await useBalanceTowardRenewalSetting({
+    account_id,
+    defaultValue: USE_BALANCE_TOWARD_TEAM_LICENSES_DEFAULT,
+    settingKey: USE_BALANCE_TOWARD_TEAM_LICENSES,
+  });
+}
+
+async function useBalanceTowardRenewalSetting({
+  account_id,
+  defaultValue,
+  settingKey,
+}: {
+  account_id: string;
+  defaultValue: boolean;
+  settingKey: string;
+}): Promise<boolean> {
   const pool = getPool("long");
   const { rows } = await pool.query(
-    `SELECT other_settings#>>'{${USE_BALANCE_TOWARD_SUBSCRIPTIONS}}' as use_balance FROM accounts WHERE account_id=$1`,
-    [account_id],
+    "SELECT other_settings->>$2 as use_balance FROM accounts WHERE account_id=$1",
+    [account_id, settingKey],
   );
   switch (rows[0]?.use_balance) {
     case "true":
@@ -46,7 +74,7 @@ export async function useBalanceTowardSubscriptions(
     case "false":
       return false;
     default:
-      return USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT;
+      return defaultValue;
   }
 }
 

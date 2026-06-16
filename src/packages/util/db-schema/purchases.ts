@@ -40,6 +40,12 @@ export const MEMBERSHIP_CHANGE = "membership-change";
 // purchase or expand a membership package directly in-app
 export const MEMBERSHIP_PACKAGE_PURCHASE = "membership-package-purchase";
 
+// create or expand a team license directly in-app
+export const TEAM_LICENSE_CHANGE = "team-license-change";
+
+// renew a team license
+export const TEAM_LICENSE_RENEWAL = "team-license-renewal";
+
 // metered dedicated-host compute usage
 export const DEDICATED_HOST_USAGE = "dedicated-host-usage";
 
@@ -87,6 +93,20 @@ export interface MembershipPackagePurchase {
   interval?: "month" | "year";
   expanded_existing_package?: boolean;
   metadata?: Record<string, unknown> | null;
+}
+
+export interface TeamLicenseChangePurchase {
+  type: "team-license-change";
+  target_seats: Record<string, number>;
+  line_items?: LineItem[];
+  interval?: "year";
+}
+
+export interface TeamLicenseRenewalPurchase {
+  type: "team-license-renewal";
+  team_license_id: string;
+  line_items?: LineItem[];
+  interval?: "year";
 }
 
 export interface StudentPayPurchase {
@@ -137,6 +157,8 @@ export type Description =
   | DedicatedHostPurchase
   | Membership
   | MembershipPackagePurchase
+  | TeamLicenseChangePurchase
+  | TeamLicenseRenewalPurchase
   | StudentPayPurchase;
 
 // max number of purchases a user can get in one query.

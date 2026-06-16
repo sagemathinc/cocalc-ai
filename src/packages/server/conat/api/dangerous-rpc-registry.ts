@@ -602,6 +602,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "browser purchase action",
   },
+  "purchases.purchaseMembershipPackages": {
+    decision: "fresh-auth-required",
+    reason: "browser purchase action",
+  },
+  "purchases.purchaseTeamLicenseChange": {
+    decision: "fresh-auth-required",
+    reason: "browser purchase action",
+  },
   "purchases.requestSiteLicensePool": {
     decision: "fresh-auth-not-required",
     reason:

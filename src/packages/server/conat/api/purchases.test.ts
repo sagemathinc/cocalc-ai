@@ -43,6 +43,7 @@ const updateSiteLicenseMock = jest.fn();
 const setSiteLicenseManagerMock = jest.fn();
 const removeSiteLicenseManagerMock = jest.fn();
 const purchaseMembershipPackageMock = jest.fn();
+const purchaseMembershipPackagesMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
 const getClusterAccountByIdDirectMock = jest.fn();
 const interBayGetMembershipDetailsMock = jest.fn();
@@ -188,6 +189,8 @@ jest.mock("@cocalc/server/ai/usage-status", () => ({
 jest.mock("@cocalc/server/purchases/membership-package", () => ({
   __esModule: true,
   default: (...args: any[]) => purchaseMembershipPackageMock(...args),
+  purchaseMembershipPackages: (...args: any[]) =>
+    purchaseMembershipPackagesMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -1746,6 +1749,63 @@ describe("purchases membership packages", () => {
         expires_at: undefined,
         metadata: undefined,
       },
+    });
+  });
+
+  it("checks browser-session fresh auth before purchasing membership package bundles", async () => {
+    getBrowserAuthSessionHashMock.mockReturnValue("session-1");
+    purchaseMembershipPackagesMock.mockResolvedValue([
+      {
+        package_id: "package-1",
+        purchase_id: 17,
+      },
+    ]);
+
+    const { purchaseMembershipPackages } = await import("./purchases");
+    await purchaseMembershipPackages({
+      account_id: "owner-1",
+      browser_id: "browser-1",
+      products: [
+        {
+          type: "membership-package",
+          kind: "team",
+          membership_class: "standard",
+          seat_count: 2,
+          interval: "year",
+        },
+        {
+          type: "membership-package",
+          kind: "team",
+          membership_class: "pro",
+          seat_count: 1,
+          interval: "year",
+        },
+      ],
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      allow_actor_impersonation: true,
+      session_hash: "session-1",
+    });
+    expect(purchaseMembershipPackagesMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      products: [
+        {
+          type: "membership-package",
+          kind: "team",
+          membership_class: "standard",
+          seat_count: 2,
+          interval: "year",
+        },
+        {
+          type: "membership-package",
+          kind: "team",
+          membership_class: "pro",
+          seat_count: 1,
+          interval: "year",
+        },
+      ],
     });
   });
 

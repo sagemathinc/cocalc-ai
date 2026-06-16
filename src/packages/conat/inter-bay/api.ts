@@ -37,6 +37,8 @@ import type {
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
+  TeamLicenseOverview,
+  TeamLicenseQuote,
 } from "@cocalc/conat/hub/api/purchases";
 import type {
   AcpAdmissionDenialReport,
@@ -1026,6 +1028,20 @@ export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
 
+export interface AccountLocalGetTeamLicenseRequest {
+  account_id: string;
+}
+
+export interface AccountLocalGetTeamLicenseQuoteRequest {
+  account_id: string;
+  target_seats?: Record<string, number>;
+}
+
+export interface AccountLocalPurchaseTeamLicenseChangeRequest {
+  account_id: string;
+  target_seats?: Record<string, number>;
+}
+
 export interface AccountLocalAdminProvisionSiteLicenseRequest {
   actor_account_id: string;
   owner_account_id?: string;
@@ -1839,6 +1855,9 @@ export type AccountLocalMethod =
   | "clear-account-entitlement-override"
   | "get-dedicated-host-policy-snapshot"
   | "get-membership-packages"
+  | "get-team-license"
+  | "get-team-license-quote"
+  | "purchase-team-license-change"
   | "update-membership-package"
   | "get-claimable-membership-packages"
   | "get-claimable-membership-packages-for-account"
@@ -2851,6 +2870,15 @@ export interface InterBayAccountLocalApi {
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
+  getTeamLicense: (
+    opts: AccountLocalGetTeamLicenseRequest,
+  ) => Promise<TeamLicenseOverview | null>;
+  getTeamLicenseQuote: (
+    opts: AccountLocalGetTeamLicenseQuoteRequest,
+  ) => Promise<TeamLicenseQuote>;
+  purchaseTeamLicenseChange: (
+    opts: AccountLocalPurchaseTeamLicenseChangeRequest,
+  ) => Promise<TeamLicenseOverview>;
   adminProvisionSiteLicense: (
     opts: AccountLocalAdminProvisionSiteLicenseRequest,
   ) => Promise<SiteLicenseOverview>;
@@ -4877,6 +4905,33 @@ export function createInterBayAccountLocalClient({
       method: "get-membership-packages",
     }),
   });
+  const getTeamLicenseClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getTeamLicense">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-team-license",
+    }),
+  });
+  const getTeamLicenseQuoteClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getTeamLicenseQuote">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-team-license-quote",
+    }),
+  });
+  const purchaseTeamLicenseChangeClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "purchaseTeamLicenseChange">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "purchase-team-license-change",
+    }),
+  });
   const adminProvisionSiteLicenseClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "adminProvisionSiteLicense">
   >({
@@ -5257,6 +5312,12 @@ export function createInterBayAccountLocalClient({
       ),
     getMembershipPackages: async (opts) =>
       await getMembershipPackagesClient.getMembershipPackages(opts),
+    getTeamLicense: async (opts) =>
+      await getTeamLicenseClient.getTeamLicense(opts),
+    getTeamLicenseQuote: async (opts) =>
+      await getTeamLicenseQuoteClient.getTeamLicenseQuote(opts),
+    purchaseTeamLicenseChange: async (opts) =>
+      await purchaseTeamLicenseChangeClient.purchaseTeamLicenseChange(opts),
     adminProvisionSiteLicense: async (opts) =>
       await adminProvisionSiteLicenseClient.adminProvisionSiteLicense(opts),
     listSiteLicenseOverviews: async (opts) =>
@@ -5868,6 +5929,43 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getMembershipPackages: async (opts) =>
           await impl.getMembershipPackages(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getTeamLicense">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-team-license",
+      }),
+      impl: {
+        getTeamLicense: async (opts) => await impl.getTeamLicense(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getTeamLicenseQuote">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-team-license-quote",
+      }),
+      impl: {
+        getTeamLicenseQuote: async (opts) =>
+          await impl.getTeamLicenseQuote(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "purchaseTeamLicenseChange">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "purchase-team-license-change",
+      }),
+      impl: {
+        purchaseTeamLicenseChange: async (opts) =>
+          await impl.purchaseTeamLicenseChange(opts),
       },
     }),
     createServiceHandler<

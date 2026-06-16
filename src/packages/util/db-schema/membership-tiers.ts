@@ -34,6 +34,7 @@ Table({
           store_description: null,
           store_highlights: null,
           site_license_pool_description: null,
+          team_visible: null,
           course_store_visible: null,
           course_allowed_domains: null,
           priority: null,
@@ -63,6 +64,7 @@ Table({
           store_description: null,
           store_highlights: null,
           site_license_pool_description: null,
+          team_visible: null,
           course_store_visible: null,
           course_allowed_domains: null,
           priority: null,
@@ -115,6 +117,10 @@ Table({
     site_license_pool_description: {
       type: "string",
       desc: "Default description copied into site-license pools using this tier.",
+    },
+    team_visible: {
+      type: "boolean",
+      desc: "Whether this tier can be selected for team licenses.",
     },
     course_store_visible: {
       type: "boolean",

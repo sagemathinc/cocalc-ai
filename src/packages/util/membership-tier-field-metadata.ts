@@ -159,6 +159,17 @@ export const MEMBERSHIP_TIER_FIELDS = [
     public: true,
   }),
   field({
+    id: "team_visible",
+    path: ["team_visible"],
+    card: "product",
+    label: "Team license visible",
+    help: "Show this tier as a team-license seat option.",
+    input: "boolean",
+    valueType: "boolean",
+    risks: ["storefront"],
+    public: true,
+  }),
+  field({
     id: "priority",
     path: ["priority"],
     card: "product",

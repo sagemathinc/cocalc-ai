@@ -10,6 +10,8 @@ import {
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
   MEMBERSHIP_PACKAGE_PURCHASE,
+  TEAM_LICENSE_CHANGE,
+  TEAM_LICENSE_RENEWAL,
 } from "@cocalc/util/db-schema/purchases";
 import {
   processSubscriptionRenewal,
@@ -30,7 +32,14 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import getPool from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
-import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
+import purchaseMembershipPackage, {
+  purchaseMembershipPackages,
+} from "@cocalc/server/purchases/membership-package";
+import {
+  processTeamLicenseRenewal,
+  processTeamLicenseRenewalFailure,
+  purchaseTeamLicenseChange,
+} from "@cocalc/server/purchases/team-license";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
@@ -72,6 +81,58 @@ export function assertInvoiceAccountBinding({
   }
 }
 
+function invoiceIdFromValue(value): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  return value?.id;
+}
+
+function paymentIntentInvoiceId(paymentIntent): string | undefined {
+  const invoiceId =
+    invoiceIdFromValue(paymentIntent.invoice) ??
+    `${paymentIntent.metadata?.invoice_id ?? ""}`.trim();
+  return invoiceId || undefined;
+}
+
+async function attachInvoicePaymentLink(paymentIntent): Promise<void> {
+  if (paymentIntentInvoiceId(paymentIntent) || !paymentIntent.id) {
+    return;
+  }
+  const stripe = await getConn();
+  const { data } = await stripe.invoicePayments.list({
+    payment: {
+      type: "payment_intent",
+      payment_intent: paymentIntent.id,
+    },
+    limit: 10,
+  });
+  const invoiceId = invoiceIdFromValue(
+    (
+      data.find(({ status, is_default }) => status === "paid" && is_default) ??
+      data.find(({ status }) => status === "paid") ??
+      data[0]
+    )?.invoice,
+  );
+  if (!invoiceId) {
+    return;
+  }
+  paymentIntent.invoice = invoiceId;
+  paymentIntent.metadata = {
+    ...(paymentIntent.metadata ?? {}),
+    invoice_id: invoiceId,
+  };
+  try {
+    await stripe.paymentIntents.update(paymentIntent.id, {
+      metadata: paymentIntent.metadata,
+    });
+  } catch (err) {
+    logger.debug(
+      `WARNING: unable to persist invoice_id metadata on payment intent ${paymentIntent.id} -- ${err}`,
+    );
+  }
+}
+
 function getMembershipPackageProductFromMetadata(
   metadata?: Record<string, string>,
 ): MembershipPackageProduct {
@@ -84,6 +145,44 @@ function getMembershipPackageProductFromMetadata(
     throw Error("invalid membership package purchase metadata");
   }
   return product;
+}
+
+function getMembershipPackageProductsFromMetadata(
+  metadata?: Record<string, string>,
+): MembershipPackageProduct[] {
+  const value = `${metadata?.membership_package_products ?? ""}`.trim();
+  if (!value) {
+    return [getMembershipPackageProductFromMetadata(metadata)];
+  }
+  const products = JSON.parse(value);
+  if (!Array.isArray(products) || products.length === 0) {
+    throw Error("invalid membership package purchase metadata");
+  }
+  for (const product of products) {
+    if (product?.type !== "membership-package") {
+      throw Error("invalid membership package purchase metadata");
+    }
+  }
+  return products;
+}
+
+function getTeamLicenseTargetSeatsFromMetadata(
+  metadata?: Record<string, string>,
+): Record<string, number> {
+  const value = `${metadata?.team_license_target_seats ?? ""}`.trim();
+  if (!value) {
+    throw Error("team license change metadata is missing");
+  }
+  const parsed = JSON.parse(value);
+  if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw Error("invalid team license change metadata");
+  }
+  return Object.fromEntries(
+    Object.entries(parsed).map(([key, value]) => [
+      key,
+      Math.max(0, Math.floor(Number(value) || 0)),
+    ]),
+  );
 }
 
 export default async function processPaymentIntents({
@@ -146,6 +245,7 @@ export default async function processPaymentIntents({
       continue;
     }
     seen.add(paymentIntent.id);
+    await attachInvoicePaymentLink(paymentIntent);
     if (needsToBeRecorded(paymentIntent)) {
       try {
         await recordPaymentIntent({
@@ -205,7 +305,7 @@ export default async function processPaymentIntents({
       paymentIntent.metadata?.processed != "true"
     ) {
       throw Error(
-        `payment intent ${paymentIntent.id} is not ready to process (status=${paymentIntent.status})`,
+        `payment intent ${paymentIntent.id} is not ready to process (${paymentIntentNotReadyReason(paymentIntent)})`,
       );
     }
   }
@@ -321,8 +421,31 @@ export function isReadyToProcess(paymentIntent) {
     paymentIntent.metadata["processed"] != "true" &&
     paymentIntent.metadata["purpose"] &&
     paymentIntent.metadata["deleted"] != "true" &&
-    paymentIntent.invoice
+    paymentIntentInvoiceId(paymentIntent)
   );
+}
+
+function paymentIntentNotReadyReason(paymentIntent): string {
+  const reasons: string[] = [];
+  if (
+    paymentIntent.status != "succeeded" &&
+    paymentIntent.status != "canceled"
+  ) {
+    reasons.push(`status=${paymentIntent.status}`);
+  }
+  if (paymentIntent.metadata?.processed == "true") {
+    reasons.push("already processed");
+  }
+  if (!paymentIntent.metadata?.purpose) {
+    reasons.push("missing purpose metadata");
+  }
+  if (paymentIntent.metadata?.deleted == "true") {
+    reasons.push("deleted");
+  }
+  if (!paymentIntentInvoiceId(paymentIntent)) {
+    reasons.push("missing invoice link");
+  }
+  return reasons.join(", ") || "unknown reason";
 }
 
 // Is this a payment intent coming from a stripe checkout session that we haven't
@@ -366,8 +489,9 @@ export const processPaymentIntent = reuseInFlight(
     const stripe = await getConn();
     let invoice;
     const getInvoice = async () => {
-      if (invoice == null && paymentIntent.invoice) {
-        invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+      const invoiceId = paymentIntentInvoiceId(paymentIntent);
+      if (invoice == null && invoiceId) {
+        invoice = await stripe.invoices.retrieve(invoiceId);
       }
       return invoice;
     };
@@ -476,6 +600,14 @@ customer.  So we don't know what to do with this.  Please manually investigate.
           paymentIntent.metadata.purpose == MEMBERSHIP_PACKAGE_PURCHASE
         ) {
           result = "the membership package purchase was not completed";
+        } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_CHANGE) {
+          result = "the team license change was not completed";
+        } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_RENEWAL) {
+          result = "the team license renewal was not completed";
+          await processTeamLicenseRenewalFailure({
+            account_id,
+            paymentIntent,
+          });
         } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
           const statement_id = parseInt(
             paymentIntent.metadata.purpose.split("-")[1],
@@ -562,14 +694,11 @@ ${await support()}`;
           : "credit",
     });
 
-    // make metadata so we won't consider this payment intent ever again
-    // NOTE: we are mutating this on purpose so that the paymentIntent
-    // that gets returned, e.g., by getPayments is already up to date with the credit_id!
-    paymentIntent.metadata.processed = "true";
+    // Keep the credit id on the in-memory payment intent, but only mark the
+    // payment intent processed after the intended product change succeeds.
+    // createCredit is idempotent by invoice_id, so failed product processing
+    // can safely be retried without creating duplicate account credit.
     paymentIntent.metadata.credit_id = credit_id;
-    await stripe.paymentIntents.update(paymentIntent.id, {
-      metadata: paymentIntent.metadata,
-    });
 
     let reason = "add credit to your account";
     try {
@@ -594,18 +723,40 @@ ${await support()}`;
       } else if (
         paymentIntent.metadata.purpose == MEMBERSHIP_PACKAGE_PURCHASE
       ) {
-        const product = getMembershipPackageProductFromMetadata(
+        const products = getMembershipPackageProductsFromMetadata(
           paymentIntent.metadata,
         );
-        reason =
-          product.package_id != null
-            ? `expand membership package ${product.package_id}`
-            : `purchase a ${product.kind} membership package`;
-        await purchaseMembershipPackage({
+        if (products.length === 1) {
+          const product = products[0];
+          reason =
+            product.package_id != null
+              ? `expand membership package ${product.package_id}`
+              : `purchase a ${product.kind} membership package`;
+          await purchaseMembershipPackage({
+            account_id,
+            product,
+            amount,
+          });
+        } else {
+          reason = `purchase ${products.length} membership package changes`;
+          await purchaseMembershipPackages({
+            account_id,
+            products,
+            amount,
+          });
+        }
+      } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_CHANGE) {
+        reason = "change your team license";
+        await purchaseTeamLicenseChange({
           account_id,
-          product,
+          target_seats: getTeamLicenseTargetSeatsFromMetadata(
+            paymentIntent.metadata,
+          ),
           amount,
         });
+      } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_RENEWAL) {
+        reason = `renew team license ${paymentIntent.metadata.team_license_id}`;
+        await processTeamLicenseRenewal({ account_id, paymentIntent, amount });
       } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
         const statement_id = parseInt(
           paymentIntent.metadata.purpose.split("-")[1],
@@ -618,25 +769,6 @@ ${await support()}`;
           amount,
         });
       }
-      send({
-        to_ids: [account_id],
-        subject: `You Made a ${moneyToCurrency(amount)} Payment (Credit id: ${credit_id})`,
-        body: `
-You successfully made a payment of ${moneyToCurrency(amount)}, which was used to ${reason}.
-Thank you!
-
-- Payment id: ${paymentIntent.id}
-
-- Purchase credit id: ${credit_id}
-
-- Browser all your [Payments](${await url("settings", "payments")}) and [Purchases](${await url("settings", "purchases")})
-
-- Account Balance: ${moneyToCurrency(
-          moneyRound2Down(toDecimal(await getBalance({ account_id }))),
-        )}
-
-${await support()}`,
-      });
     } catch (err) {
       // There basically should never be a case where any of the above fails.  But multiple
       // transactions happening at once, or bugs, etc. could maybe lead to a case where
@@ -660,16 +792,60 @@ support if you are concerned (see below).
 
 ${await support()}
 `;
-      send({
-        to_ids: [account_id],
-        subject: `Possible Issue Processing ${moneyToCurrency(amount)} Payment`,
-        body,
-      });
+      try {
+        await send({
+          to_ids: [account_id],
+          subject: `Possible Issue Processing ${moneyToCurrency(amount)} Payment`,
+          body,
+        });
+      } catch (messageErr) {
+        logger.debug(
+          `WARNING: unable to send payment processing issue notification for ${paymentIntent.id} -- ${messageErr}`,
+        );
+      }
       adminAlert({
         subject: "Issue Processing a User Payment",
         body: `There was an error processing payment intent id ${paymentIntent.id} for the user with account_id=${account_id}.\n\n## Message sent to user:\n\n${body}`,
       });
       throw err;
+    }
+
+    // make metadata so we won't consider this payment intent ever again
+    // NOTE: we are mutating this on purpose so that the paymentIntent
+    // that gets returned, e.g., by getPayments is already up to date with the credit_id!
+    paymentIntent.metadata.processed = "true";
+    await stripe.paymentIntents.update(paymentIntent.id, {
+      metadata: paymentIntent.metadata,
+    });
+
+    try {
+      await send({
+        to_ids: [account_id],
+        subject: `You Made a ${moneyToCurrency(amount)} Payment (Credit id: ${credit_id})`,
+        body: `
+You successfully made a payment of ${moneyToCurrency(amount)}, which was used to ${reason}.
+Thank you!
+
+- Payment id: ${paymentIntent.id}
+
+- Purchase credit id: ${credit_id}
+
+- Browser all your [Payments](${await url("settings", "payments")}) and [Purchases](${await url("settings", "purchases")})
+
+- Account Balance: ${moneyToCurrency(
+          moneyRound2Down(toDecimal(await getBalance({ account_id }))),
+        )}
+
+${await support()}`,
+      });
+    } catch (err) {
+      logger.debug(
+        `WARNING: unable to send payment success notification for ${paymentIntent.id} -- ${err}`,
+      );
+      adminAlert({
+        subject: "Issue Sending Payment Success Message",
+        body: `There was an error sending the success message for payment intent id ${paymentIntent.id} for the user with account_id=${account_id}.\n\nERROR: ${err}`,
+      });
     }
 
     return credit_id;
