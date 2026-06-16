@@ -2324,10 +2324,6 @@ Supported deploy/smoke components:
       "R2 credential env file",
       "/run/secrets/cocalc/rocket-software-env.sh",
     )
-    .option(
-      "--tools-minimal <tag-or-id>",
-      "tools-minimal artifact selector to promote with plus; defaults to the plus selector",
-    )
     .action(
       async (
         componentArg: string,
@@ -2389,6 +2385,10 @@ Supported deploy/smoke components:
       "--env-file <path>",
       "R2 credential env file",
       "/run/secrets/cocalc/rocket-software-env.sh",
+    )
+    .option(
+      "--tools-minimal <tag-or-id>",
+      "tools-minimal artifact selector to promote with plus; defaults to the plus selector",
     )
     .action(
       async (

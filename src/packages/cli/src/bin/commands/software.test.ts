@@ -316,7 +316,7 @@ test("software help lists supported components", () => {
   assert.match(deploy.helpInformation(), /bay-conat-router/);
   assert.match(
     deploy.helpInformation(),
-    /site profile \(see cocalc auth list\) or release channel\s+\(dev, candidate or stable\)/,
+    /site profile \(see cocalc auth list\) or release\s+channel \(dev, candidate or stable\)/,
   );
   assert.doesNotMatch(deploy.helpInformation(), /hub-conat-router/);
 });
