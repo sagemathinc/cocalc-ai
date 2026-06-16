@@ -325,17 +325,17 @@ export default function JupyterNotebookFeaturePage({
                 Jupyter notebooks
               </Text>
               <Title level={2} style={{ margin: 0 }}>
-                Notebooks that keep running, collaborating, and remembering
+                Jupyter notebooks for work that needs to keep going
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc keeps standard Jupyter notebooks in a project where
-                execution, files, collaborators, history, and assistance stay
-                together.
+                Run standard notebooks in CoCalc when analysis depends on data
+                files, packages, collaborators, review history, or a course
+                workflow.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Use it when notebooks need to outlive the first experiment:
-                research computations, teaching material, shared analysis, or
-                reports that depend on surrounding files and tools.
+                For research groups, classes, and technical teams, the notebook
+                stays connected to the surrounding files and execution state
+                instead of living as an isolated browser session.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -354,31 +354,27 @@ export default function JupyterNotebookFeaturePage({
       </PublicSection>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} md={12} xl={6}>
-          <StoryCard icon="stopwatch" title="Durable execution">
-            Start a cell, close your browser, and come back later. The backend
-            owns execution and captures output instead of treating the browser
-            tab as the source of truth.
+        <Col xs={24} md={8}>
+          <StoryCard icon="stopwatch" title="Keep runs alive">
+            Start a long cell, disconnect, and return to the captured output.
+            The browser tab is not the source of truth for execution.
           </StoryCard>
         </Col>
-        <Col xs={24} md={12} xl={6}>
-          <StoryCard accent="#389e0d" icon="users" title="Realtime teamwork">
-            Multiple people can edit, discuss, and inspect the same notebook
-            session. Collaboration is part of the document, not a screen-share
-            workaround.
+        <Col xs={24} md={8}>
+          <StoryCard accent="#389e0d" icon="users" title="Work together live">
+            Multiple people can edit, discuss, and inspect the same notebook.
+            Collaboration stays in the document instead of becoming a
+            screen-share workaround.
           </StoryCard>
         </Col>
-        <Col xs={24} md={12} xl={6}>
-          <StoryCard accent="#7c3aed" icon="history" title="TimeTravel">
-            Notebook edits are recorded at high resolution with authorship, so
-            you can recover, review, and understand how work evolved.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          <StoryCard accent="#d46b08" icon="robot" title="Agent-ready">
-            Codex can use CoCalc&apos;s notebook API to inspect cells, run code,
-            and reason from live output instead of only reading an `.ipynb` file
-            on disk.
+        <Col xs={24} md={8}>
+          <StoryCard
+            accent="#7c3aed"
+            icon="history"
+            title="Review and recover changes"
+          >
+            Notebook edits are recorded with authorship, so teams can recover
+            work, review results, and understand how an analysis evolved.
           </StoryCard>
         </Col>
       </Row>
@@ -388,18 +384,19 @@ export default function JupyterNotebookFeaturePage({
           <Col xs={24} lg={13}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                When a notebook needs the project around it
+                When the notebook depends on more than cells
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Many notebooks depend on more than cells: data files, packages,
-                scripts, papers, terminals, collaborators, and sometimes
-                long-running computation.
+                Notebooks are often the visible part of a larger analysis.
+                CoCalc keeps the surrounding work close enough that a reader,
+                collaborator, or instructor can understand what produced a
+                result.
               </Paragraph>
               <BulletList
                 items={[
-                  "Continue long-running cells after a browser disconnect.",
-                  "Keep outputs, files, discussion, and history with the notebook.",
-                  "Move naturally between notebooks, terminals, Linux tools, and papers.",
+                  "Use terminal and Linux tools without moving the notebook elsewhere.",
+                  "Keep data files, scripts, figures, and paper drafts near the computation.",
+                  "Bring collaborators or instructors into the same working state.",
                 ]}
               />
               <Flex wrap gap={12}>
@@ -427,9 +424,15 @@ export default function JupyterNotebookFeaturePage({
             >
               <Flex vertical gap={12}>
                 {[
-                  ["The browser closes", "Execution can continue."],
-                  ["A collaborator joins", "They see the current notebook."],
-                  ["A result changes", "History keeps the review trail."],
+                  [
+                    "A run takes hours",
+                    "Close the browser and return to the backend session.",
+                  ],
+                  [
+                    "A collaborator joins",
+                    "They see the current notebook and surrounding files.",
+                  ],
+                  ["A result needs review", "TimeTravel keeps the edit trail."],
                 ].map(([left, right]) => (
                   <div
                     key={left}
@@ -461,12 +464,11 @@ export default function JupyterNotebookFeaturePage({
         <Flex vertical gap={18}>
           <div>
             <Title level={3} style={{ margin: 0 }}>
-              Choose the next workflow when the notebook grows
+              Where to go from here
             </Title>
             <Paragraph style={{ margin: "8px 0 0", maxWidth: 760 }}>
-              When a notebook pulls in agents, whiteboards, teaching workflows,
-              or compatibility questions, use the related pages to evaluate that
-              specific path.
+              Use these routes when the notebook has become part of a broader
+              workflow.
             </Paragraph>
           </div>
           <Row gutter={[16, 16]}>
@@ -480,7 +482,7 @@ export default function JupyterNotebookFeaturePage({
                 }
                 body="Ask Codex to inspect cells, run focused checks, and summarize output while people keep the review context visible."
                 icon="robot"
-                title="Debug a live notebook with Codex"
+                title="Bring Codex into a live notebook"
               />
             </Col>
             <Col xs={24} md={12} xl={6}>
@@ -506,7 +508,7 @@ export default function JupyterNotebookFeaturePage({
                 }
                 body="Distribute, collect, grade, and support notebook assignments while keeping computation in student projects."
                 icon="users"
-                title="Run notebook-based courses"
+                title="Teach with notebook assignments"
               />
             </Col>
             <Col xs={24} md={12} xl={6}>
@@ -518,38 +520,30 @@ export default function JupyterNotebookFeaturePage({
                 }
                 body="Keep `.ipynb`, JupyterLab, widgets, and standard notebook workflows available beside CoCalc collaboration."
                 icon="jupyter"
-                title="Stay compatible with Jupyter"
+                title="Check Jupyter compatibility"
               />
             </Col>
           </Row>
+          <Flex
+            align="center"
+            gap={12}
+            justify="space-between"
+            wrap
+            style={{
+              borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+              paddingTop: 4,
+            }}
+          >
+            <Text strong>Ready to try a notebook workflow in CoCalc?</Text>
+            <Flex wrap gap={12}>
+              <Button type="primary" href={primaryCtaHref}>
+                {finalCtaLabel}
+              </Button>
+              <Button href={supportHref}>Ask about Jupyter workflows</Button>
+            </Flex>
+          </Flex>
         </Flex>
       </PublicSection>
-
-      <div style={{ marginBottom: 44 }}>
-        <PublicSection>
-          <Row gutter={[20, 20]} align="middle">
-            <Col xs={24} lg={15}>
-              <Title level={3} style={{ margin: 0 }}>
-                When notebooks become shared work
-              </Title>
-              <Paragraph style={{ margin: "8px 0 0" }}>
-                Lightweight notebook tools are good for one-off analysis. CoCalc
-                is for the moment when the notebook needs collaborators, a
-                filesystem, terminals, history, agents, course workflows, or a
-                long-running computation around it.
-              </Paragraph>
-            </Col>
-            <Col xs={24} lg={9}>
-              <Flex wrap gap={12} justify="end">
-                <Button type="primary" href={primaryCtaHref}>
-                  {finalCtaLabel}
-                </Button>
-                <Button href={supportHref}>Ask about Jupyter workflows</Button>
-              </Flex>
-            </Col>
-          </Row>
-        </PublicSection>
-      </div>
       <Modal
         footer={null}
         onCancel={() => setShowAgentDetails(false)}

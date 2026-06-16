@@ -3,6 +3,17 @@
 Running checklist for the public-site redesign work. Keep this file updated as
 recommendations are evaluated, completed, or deliberately deferred.
 
+## Jupyter And Teaching Pass
+
+- [x] Re-inspect `/features/jupyter-notebook` and `/features/teaching` against the component-necessity standard after the broader feature-page cleanup.
+- [x] Jupyter: reduce the hero to one public promise and move detailed agent mechanics behind the existing modal.
+- [x] Jupyter: collapse four proof cards to three distinct visitor benefits: persistent runs, live collaboration, and review/recovery.
+- [x] Jupyter: remove the separate final thesis section because it repeated the project-context argument already made earlier.
+- [x] Teaching: keep course management positioned as a workflow destination beside the LMS, not an LMS replacement or top-level product path.
+- [x] Teaching: collapse overlapping grading, nbgrader, help, setup, and environment sections into fewer visitor questions.
+- [x] Teaching: preserve route-specific next steps for hosted use, product-path comparison, environment guidance, Jupyter, and teaching support.
+- [x] Update focused tests for stale headings, duplicate headings, decorative metadata, CTA route discipline, and repeated section density.
+
 ## Current Feature-Page Pass
 
 - [x] Re-inspect `/features/ai`, `/features/terminal`, `/features/linux`, `/features/api`, `/features/whiteboard`, `/features/latex-editor`, and `/features/slides` against the component-necessity standard.
@@ -25,8 +36,8 @@ recommendations are evaluated, completed, or deliberately deferred.
 
 ## Carry-Forward Reviews
 
-- [ ] Revisit `/features/jupyter-notebook`; it is improved but still needs a fresh density and hierarchy review.
-- [ ] Revisit `/features/teaching`; it is improved but still has heavy sections that should be re-evaluated against the same standard.
+- [x] Revisit `/features/jupyter-notebook`; it is improved but still needs a fresh density and hierarchy review.
+- [x] Revisit `/features/teaching`; it is improved but still has heavy sections that should be re-evaluated against the same standard.
 - [ ] Continue checking whether each feature page explains workflow value before product operating model.
 - [ ] Continue checking that every CTA preserves page context and points to the most useful next step.
 

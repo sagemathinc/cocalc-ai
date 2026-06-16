@@ -29,6 +29,12 @@ function getDirectChildren(element: HTMLElement): HTMLElement[] {
   return Array.from(element.children) as HTMLElement[];
 }
 
+function headingLabels(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll("h2, h3, h4"))
+    .map((heading) => (heading.textContent ?? "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
 describe("getFeaturesRouteFromPath", () => {
   it("supports the features index and detail routes", () => {
     expect(getFeaturesRouteFromPath(featurePath())).toEqual({ view: "index" });
@@ -94,7 +100,7 @@ describe("PublicFeaturesApp", () => {
       slug: "ai",
     },
     {
-      marker: "Notebooks that keep running, collaborating, and remembering",
+      marker: "Jupyter notebooks for work that needs to keep going",
       slug: "jupyter-notebook",
     },
     {
@@ -397,22 +403,28 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
-    expect(screen.getByText("Durable execution")).not.toBeNull();
     expect(
-      screen.getByText("When a notebook needs the project around it"),
+      screen.getByText("Jupyter notebooks for work that needs to keep going"),
     ).not.toBeNull();
+    expect(screen.getByText("Keep runs alive")).not.toBeNull();
+    expect(screen.getByText("Work together live")).not.toBeNull();
+    expect(screen.getByText("Review and recover changes")).not.toBeNull();
     expect(
-      screen.getByText("Choose the next workflow when the notebook grows"),
+      screen.getByText("When the notebook depends on more than cells"),
     ).not.toBeNull();
-    expect(screen.getByText("Debug a live notebook with Codex")).not.toBeNull();
+    expect(screen.getByText("Where to go from here")).not.toBeNull();
+    expect(screen.getByText("Bring Codex into a live notebook")).not.toBeNull();
     expect(
       screen.getByText("Turn notebook work into a visual flow"),
     ).not.toBeNull();
-    expect(screen.getByText("Run notebook-based courses")).not.toBeNull();
-    expect(screen.getByText("Stay compatible with Jupyter")).not.toBeNull();
+    expect(screen.getByText("Teach with notebook assignments")).not.toBeNull();
+    expect(screen.getByText("Check Jupyter compatibility")).not.toBeNull();
     expect(
       screen.queryByRole("link", { name: "Compare notebook tools" }),
     ).toBeNull();
+    expect(screen.queryByText("Durable execution")).toBeNull();
+    expect(screen.queryByText("Agent-ready")).toBeNull();
+    expect(screen.queryByText("When notebooks become shared work")).toBeNull();
     expect(
       screen.queryByText(
         "Let the agent work with the notebook you actually have open",
@@ -426,7 +438,10 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
     expect(container.textContent ?? "").not.toMatch(
-      /stale files|Positioning guide/i,
+      /stale files|Positioning guide|Choose the next workflow when the notebook grows/i,
+    );
+    expect(new Set(headingLabels(container)).size).toBe(
+      headingLabels(container).length,
     );
     expect(
       screen
@@ -510,11 +525,11 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Technical course workspace")).not.toBeNull();
     expect(
-      screen.getByText(/CoCalc complements the campus LMS/i),
+      screen.getByText(/CoCalc works beside the campus LMS/i),
     ).not.toBeNull();
     expect(
       screen.getByText(
-        "Use the LMS for administration. Use CoCalc for the work.",
+        "Keep administration in the LMS. Run coursework in CoCalc.",
       ),
     ).not.toBeNull();
     expect(screen.getByText("Keep in your LMS")).not.toBeNull();
@@ -527,14 +542,29 @@ describe("PublicFeaturesApp", () => {
         "Pair CoCalc with the systems your institution already uses",
       ),
     ).toBeNull();
-    expect(screen.getByText("Assign, collect, grade, return")).not.toBeNull();
+    expect(screen.getByText("Give each student a project")).not.toBeNull();
+    expect(screen.getByText("Hand out and collect work")).not.toBeNull();
+    expect(screen.getByText("Keep the environment consistent")).not.toBeNull();
     expect(
-      screen.getByText("Grade in the same workspace students used"),
+      screen.getByText("Run the assignment loop in student projects"),
     ).not.toBeNull();
-    expect(screen.getByText("Reduce local setup friction")).not.toBeNull();
     expect(
-      screen.getByText("Share a reusable course environment"),
+      screen.getByText("Reduce setup and support friction"),
     ).not.toBeNull();
+    expect(
+      screen.getByText("Choose the teaching path that fits"),
+    ).not.toBeNull();
+    expect(screen.queryByText("Assign, collect, grade, return")).toBeNull();
+    expect(
+      screen.queryByText("Grade in the same workspace students used"),
+    ).toBeNull();
+    expect(
+      screen.queryByText("Notebook teaching works with nbgrader"),
+    ).toBeNull();
+    expect(screen.queryByText("Reduce local setup friction")).toBeNull();
+    expect(
+      screen.queryByText("Share a reusable course environment"),
+    ).toBeNull();
     expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
     expect(
       screen.getByRole("link", { name: "Environment guide" }),
@@ -569,6 +599,9 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.queryByText("Teach in the same environment where students work"),
     ).toBeNull();
+    expect(new Set(headingLabels(container)).size).toBe(
+      headingLabels(container).length,
+    );
   });
 
   it("uses projects as the teaching CTA for authenticated users", () => {

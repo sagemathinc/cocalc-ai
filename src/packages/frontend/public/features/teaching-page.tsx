@@ -393,14 +393,14 @@ export default function TeachingFeaturePage({
                 Teach where students compute, write, and collaborate
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc complements the campus LMS by keeping notebooks,
-                terminals, code, data, LaTeX, assignments, grading, history, and
-                help inside student projects.
+                CoCalc works beside the campus LMS as the place where students
+                use notebooks, code, terminals, files, feedback, and recovery.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Use your LMS for rosters, calendars, announcements, and
-                institution-wide communication. Use CoCalc for the project
-                workspace where technical course work happens.
+                Keep rosters, calendars, announcements, and institution-wide
+                communication in the LMS. Use CoCalc when assignments need a
+                real computing environment and instructor visibility into
+                student work.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -420,41 +420,31 @@ export default function TeachingFeaturePage({
       </PublicSection>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} md={12} xl={6}>
+        <Col xs={24} md={8}>
           <StoryCard
             accent={COURSE_ACCENT}
             icon="users"
-            title="Student projects"
+            title="Give each student a project"
           >
-            Each student works in an isolated project with files, notebooks,
-            terminals, outputs, collaborators, and history.
+            Each student works in an isolated project for files, notebooks,
+            terminals, output, feedback, and recovery.
           </StoryCard>
         </Col>
-        <Col xs={24} md={12} xl={6}>
+        <Col xs={24} md={8}>
           <StoryCard
             accent={PUBLIC_COLORS.brand}
             icon="folder"
-            title="Assign and collect"
+            title="Hand out and collect work"
           >
             Distribute a folder to every student project, collect it back, grade
             it, and return feedback without upload friction.
           </StoryCard>
         </Col>
-        <Col xs={24} md={12} xl={6}>
-          <StoryCard
-            accent={COLORS.AI_ASSISTANT_FONT}
-            icon="history"
-            title="Review history"
-          >
-            See how students got to a result, recover accidental damage, and
-            make recovery easier.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={12} xl={6}>
+        <Col xs={24} md={8}>
           <StoryCard
             accent={PUBLIC_COLORS.warning}
             icon="cube"
-            title="Shared environment"
+            title="Keep the environment consistent"
           >
             Give a class the same course software stack, data, and tools without
             asking every student to configure a laptop.
@@ -467,12 +457,12 @@ export default function TeachingFeaturePage({
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                Use the LMS for administration. Use CoCalc for the work.
+                Keep administration in the LMS. Run coursework in CoCalc.
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                The cleanest course setup keeps institutional coordination in
-                the LMS and moves technical coursework into projects where
-                students actually compute, write, and ask for help.
+                The boundary should be obvious to instructors, students, and
+                academic IT: the LMS coordinates the course, while CoCalc hosts
+                the technical assignments and student working state.
               </Paragraph>
             </Flex>
           </Col>
@@ -487,20 +477,19 @@ export default function TeachingFeaturePage({
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                Assign, collect, grade, return
+                Run the assignment loop in student projects
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Students do not need to package files and submit them through a
-                separate upload form. The instructor assigns course materials to
-                student projects and collects the work back into the course
-                project.
+                Instructor projects distribute materials, student projects hold
+                the work, and collection brings submissions back without a
+                separate upload cycle.
               </Paragraph>
               <BulletList
                 items={[
                   "Hand out notebooks, scripts, data, LaTeX, and folders.",
-                  "Collect student work without depending on manual uploads.",
-                  "Return graded files and feedback to each student project.",
-                  "Use peer grading when students should review each other.",
+                  "Collect and return work with feedback in the same project structure.",
+                  "Use nbgrader, manual review, or peer grading when that fits the course.",
+                  "Use project history when instructors or TAs need to understand how work evolved.",
                 ]}
               />
             </Flex>
@@ -512,135 +501,34 @@ export default function TeachingFeaturePage({
       </PublicSection>
 
       <PublicSection>
-        <Flex vertical gap={18}>
-          <div>
-            <Title level={3} style={{ margin: "0 0 8px" }}>
-              Grade in the same workspace students used
-            </Title>
-            <Paragraph style={{ margin: 0, maxWidth: 760 }}>
-              Course files, notebook output, comments, and project history stay
-              close enough for instructors and TAs to review work without
-              reconstructing each student environment.
-            </Paragraph>
-          </div>
-          <Row gutter={[16, 16]}>
-            {[
-              [
-                "Manual review",
-                "Open collected work, leave comments, edit feedback, and return graded files.",
-                "edit",
-                PUBLIC_COLORS.brand,
-              ],
-              [
-                "nbgrader",
-                "Use notebook grading workflows with output limits, timeouts, and hidden-test policy.",
-                "jupyter",
-                COLORS.RUN,
-              ],
-              [
-                "Peer grading",
-                "Redistribute collected work when students should review each other with instructor guidelines.",
-                "users",
-                COLORS.AI_ASSISTANT_FONT,
-              ],
-              [
-                "Project history",
-                "Use TimeTravel and activity to understand how work evolved.",
-                "history",
-                PUBLIC_COLORS.warning,
-              ],
-            ].map(([title, description, icon, accent]) => (
-              <Col key={title} xs={24} md={12} xl={6}>
-                <StoryCard
-                  accent={accent as string}
-                  icon={icon as IconName}
-                  title={title}
-                >
-                  {description}
-                </StoryCard>
-              </Col>
-            ))}
-          </Row>
+        <Flex vertical gap={12} style={{ maxWidth: 860 }}>
+          <Title level={3} style={{ margin: 0 }}>
+            Reduce setup and support friction
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            When everyone works in managed student projects, instructors can
+            focus on the course instead of laptop configuration, missing files,
+            or hard-to-reproduce student environments.
+          </Paragraph>
+          <BulletList
+            items={[
+              "Start students in a browser with the course software and data already available.",
+              "Open a student project to inspect the same files, notebooks, and terminal state.",
+              "Use snapshots and backups as a safety net around project work.",
+            ]}
+          />
+          <Flex wrap gap={12}>
+            <LinkButton href={`${GUIDE_BASE}/teaching/`}>
+              Teaching guide
+            </LinkButton>
+            <Button href={`${GUIDE_BASE}/rootfs-management/`}>
+              Environment guide
+            </Button>
+            <Button href={appPath("features/jupyter-notebook")}>
+              Jupyter notebooks
+            </Button>
+          </Flex>
         </Flex>
-      </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Flex vertical gap={12}>
-              <IconBadge accent={PUBLIC_COLORS.brand} icon="jupyter" />
-              <Title level={3} style={{ margin: 0 }}>
-                Notebook teaching works with nbgrader
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                CoCalc supports notebook-based grading workflows, including
-                automatic checks, hidden-test policy, output limits, and
-                timeouts.
-              </Paragraph>
-              <LinkButton href={`${GUIDE_BASE}/teaching/`}>
-                nbgrader documentation
-              </LinkButton>
-            </Flex>
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Flex vertical gap={12}>
-              <IconBadge accent={COURSE_ACCENT} icon="terminal" />
-              <Title level={3} style={{ margin: 0 }}>
-                Help students in context
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Instructors and TAs can open a student project, inspect the same
-                files, notebooks, terminals, and history, and use side chat to
-                answer questions close to the work.
-              </Paragraph>
-              <Button href={appPath("features/terminal")}>
-                Terminal workflows
-              </Button>
-            </Flex>
-          </PublicSection>
-        </Col>
-      </Row>
-
-      <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Reduce local setup friction
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                For browser-based courses, instructors can give students a
-                shared workspace without asking every student to assemble the
-                same software stack locally.
-              </Paragraph>
-              <LinkButton href={`${GUIDE_BASE}/teaching/`}>
-                Teaching guide
-              </LinkButton>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Share a reusable course environment
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                A shared course environment can give every student the same
-                libraries, tools, and data. Instructors can also use snapshots
-                and backups as a safety net around project work.
-              </Paragraph>
-              <Flex wrap gap={12}>
-                <Button href={`${GUIDE_BASE}/rootfs-management/`}>
-                  Environment guide
-                </Button>
-                <Button href={appPath("features/jupyter-notebook")}>
-                  Jupyter notebooks
-                </Button>
-              </Flex>
-            </Flex>
-          </Col>
-        </Row>
       </PublicSection>
 
       <div style={{ marginBottom: 44 }}>
@@ -648,16 +536,16 @@ export default function TeachingFeaturePage({
           <Row gutter={[20, 20]} align="middle">
             <Col xs={24} lg={15}>
               <Title level={3} style={{ margin: 0 }}>
-                For courses that need a shared workspace
+                Choose the teaching path that fits
               </Title>
               <Paragraph style={{ margin: "8px 0 0" }}>
-                If students need notebooks, terminals, data, LaTeX, shared
-                environments, realtime help, grading, and recoverable history,
-                CoCalc keeps those pieces in one teaching workspace.
+                Start hosted for a course on CoCalc.ai, compare product paths
+                when your institution needs a different operating model, or
+                contact CoCalc to discuss larger teaching workflows.
               </Paragraph>
             </Col>
             <Col xs={24} lg={9}>
-              <Flex wrap gap={12} justify="end">
+              <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
                   {finalCtaLabel}
                 </Button>
