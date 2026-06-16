@@ -99,11 +99,19 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 import type { LineItem } from "@cocalc/util/stripe/types";
 
 const { Paragraph, Text, Title } = Typography;
-const TEAM_LICENSE_FINALIZATION_TIMEOUT_MS = 30_000;
-const TEAM_LICENSE_FINALIZATION_POLL_MS = 1_500;
+const TEAM_LICENSE_FINALIZATION_TIMEOUT_MS = 75_000;
+const TEAM_LICENSE_FINALIZATION_POLL_MS = 6_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayFromError(err: unknown, fallbackMs: number): number {
+  const match = `${err}`.match(/try again in (\d+) seconds/i);
+  if (match?.[1]) {
+    return (Number(match[1]) + 1) * 1000;
+  }
+  return fallbackMs;
 }
 
 interface Props {
@@ -4687,7 +4695,21 @@ function TeamPackagePurchaseModal({
     try {
       const deadline = Date.now() + TEAM_LICENSE_FINALIZATION_TIMEOUT_MS;
       while (Date.now() <= deadline) {
-        await processPaymentIntents({ strict: true });
+        try {
+          await processPaymentIntents({ strict: true });
+        } catch (err) {
+          const remainingMs = deadline - Date.now();
+          if (remainingMs <= 0) {
+            throw err;
+          }
+          await delay(
+            Math.min(
+              retryDelayFromError(err, TEAM_LICENSE_FINALIZATION_POLL_MS),
+              remainingMs,
+            ),
+          );
+          continue;
+        }
         const updated = await getTeamLicense();
         await onPurchased();
         if (

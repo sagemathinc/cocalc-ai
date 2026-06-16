@@ -484,14 +484,13 @@ describe("membership package managers", () => {
     });
   });
 
-  it("waits for paid team license checkout to apply seats", async () => {
+  it("processes paid team license checkout before finishing", async () => {
     const updatedLicense = makeTeamLicenseOverview([
       makeTeamPackage({
         seat_count: 16,
         available_seat_count: 16,
       }),
     ]);
-    let processedPaymentChecks = 0;
     stripePaymentTotal = 160;
     getTeamLicenseQuote.mockResolvedValue({
       current_period_start: new Date("2026-06-01T00:00:00Z"),
@@ -507,12 +506,11 @@ describe("membership package managers", () => {
       interval: "year",
     });
     processPaymentIntents.mockImplementation(async () => {
-      processedPaymentChecks += 1;
-      return { count: processedPaymentChecks };
+      return { count: 1 };
     });
-    getTeamLicense.mockImplementation(async () =>
-      processedPaymentChecks >= 2 ? updatedLicense : null,
-    );
+    getTeamLicense
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(updatedLicense);
 
     render(<TeamPackageManager tiers={TIERS} />);
 

@@ -56,8 +56,8 @@ import { AddressButton, StripeAddressElement } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
 
 const PAYMENT_UPDATE_DEBOUNCE = 2000;
-const PAYMENT_INTENT_PROCESSING_TIMEOUT_MS = 30_000;
-const PAYMENT_INTENT_PROCESSING_POLL_MS = 1_500;
+const PAYMENT_INTENT_PROCESSING_TIMEOUT_MS = 75_000;
+const PAYMENT_INTENT_PROCESSING_POLL_MS = 6_000;
 
 function hasUsableBillingDetails(customer: any): boolean {
   const address = customer?.address ?? {};
@@ -68,6 +68,14 @@ function hasUsableBillingDetails(customer: any): boolean {
     !!`${address.country ?? ""}`.trim() &&
     !!`${address.postal_code ?? ""}`.trim()
   );
+}
+
+function retryDelayFromError(err: unknown, fallbackMs: number): number {
+  const match = `${err}`.match(/try again in (\d+) seconds/i);
+  if (match?.[1]) {
+    return (Number(match[1]) + 1) * 1000;
+  }
+  return fallbackMs;
 }
 
 async function processCreatedPaymentIntent(payment_intent?: string) {
@@ -85,7 +93,16 @@ async function processCreatedPaymentIntent(payment_intent?: string) {
       return;
     } catch (err) {
       lastError = err;
-      await delay(PAYMENT_INTENT_PROCESSING_POLL_MS);
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        break;
+      }
+      await delay(
+        Math.min(
+          retryDelayFromError(err, PAYMENT_INTENT_PROCESSING_POLL_MS),
+          remainingMs,
+        ),
+      );
     }
   }
   throw Error(
