@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { MembershipCandidate } from "@cocalc/conat/hub/api/purchases";
+
 import {
+  shouldDisplayMembershipCandidate,
   sortMembershipCandidateRows,
   type MembershipCandidateRow,
 } from "../membership-settings-data";
@@ -26,6 +29,18 @@ function row(
   };
 }
 
+function candidate(
+  overrides: Partial<MembershipCandidate>,
+): MembershipCandidate {
+  return {
+    class: "standard",
+    entitlements: {} as MembershipCandidate["entitlements"],
+    priority: 10,
+    source: "subscription",
+    ...overrides,
+  } as MembershipCandidate;
+}
+
 describe("membership-settings-data", () => {
   it("sorts membership rows by descending tier priority first", () => {
     const rows = [
@@ -39,5 +54,27 @@ describe("membership-settings-data", () => {
       "personal-standard",
       "admin-basic",
     ]);
+  });
+
+  it("hides canceled personal memberships that have not started", () => {
+    expect(
+      shouldDisplayMembershipCandidate(
+        candidate({
+          starts: new Date("2999-06-20T12:00:00Z"),
+          subscription_status: "canceled",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps paid-through canceled personal memberships visible", () => {
+    expect(
+      shouldDisplayMembershipCandidate(
+        candidate({
+          expires: new Date("2999-06-20T12:00:00Z"),
+          subscription_status: "canceled",
+        }),
+      ),
+    ).toBe(true);
   });
 });
