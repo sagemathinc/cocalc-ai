@@ -52,9 +52,16 @@ import {
   buildOfflineMoveConfirmationDialog,
   parseOfflineMoveConfirmationError,
 } from "./offline-move-confirmation";
+import { recommendProjectHosts } from "@cocalc/frontend/hosts/project-host-recommendations";
+import { selectHostForProjectStart } from "@cocalc/frontend/hosts/select-host-for-project-start";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { isTerminal } from "@cocalc/frontend/lro/utils";
 import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
+import {
+  DEFAULT_R2_REGION,
+  mapCountryRegionToR2Region,
+  type R2Region,
+} from "@cocalc/util/consts";
 import {
   DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
   type ProjectViewerReadPolicy,
@@ -88,6 +95,16 @@ type ProjectListWindowDirtyReason =
   | "feed-upsert"
   | "feed-remove"
   | "history-gap";
+
+function preferredProjectRegionFromCustomize(): R2Region {
+  const customize = redux.getStore("customize");
+  return (
+    mapCountryRegionToR2Region(
+      customize?.get?.("country"),
+      customize?.get?.("cloudflare_region_code"),
+    ) ?? DEFAULT_R2_REGION
+  );
+}
 
 function isProjectionConvergenceError(err: unknown, name: string): boolean {
   const message = err instanceof Error ? err.message : `${err}`;
@@ -3637,6 +3654,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
           alert_message({ type: "error", message, timeout: 20 });
           return false;
         }
+      } else {
+        const hostAssigned = await this.assignStartHostIfNeeded({
+          project_id,
+          autostart: opts.autostart === true,
+        });
+        if (!hostAssigned) {
+          return false;
+        }
       }
 
       if (lifecycleState === "archived") {
@@ -3737,6 +3762,58 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return true;
     },
   );
+
+  private async assignStartHostIfNeeded({
+    project_id,
+    autostart,
+  }: {
+    project_id: string;
+    autostart: boolean;
+  }): Promise<boolean> {
+    if (store.getIn(["project_map", project_id, "host_id"])) {
+      return true;
+    }
+    const projectRegion = preferredProjectRegionFromCustomize();
+    let hosts;
+    try {
+      hosts = await webapp_client.conat_client.hub.hosts.listHosts({
+        catalog: true,
+      });
+    } catch (err) {
+      const message = `Unable to load project hosts -- ${err}`;
+      redux.getProjectActions(project_id)?.setState({ control_error: message });
+      alert_message({ type: "error", message, timeout: 20 });
+      return false;
+    }
+    const recommendations = recommendProjectHosts({
+      hosts,
+      projectRegion,
+    });
+    const sameRegion = recommendations.projectRegionCandidates[0];
+    if (sameRegion) {
+      await this.assign_project_to_host(project_id, sameRegion.host.id);
+      return true;
+    }
+    if (recommendations.remoteCandidates.length === 0) {
+      const message =
+        "No available project hosts can run this project. Start or provision a project host, then try again.";
+      redux.getProjectActions(project_id)?.setState({ control_error: message });
+      alert_message({ type: "warning", message, timeout: 20 });
+      return false;
+    }
+    if (autostart) {
+      const message =
+        "This project is not assigned to a host, and no available host exists in your nearest region. Click Start to choose a host in another region.";
+      redux.getProjectActions(project_id)?.setState({ control_error: message });
+      return false;
+    }
+    const selected = await selectHostForProjectStart({ projectRegion });
+    if (!selected?.host_id) {
+      return false;
+    }
+    await this.assign_project_to_host(project_id, selected.host_id);
+    return true;
+  }
 
   private waitForProjectStartOp = async ({
     op,
