@@ -14,7 +14,7 @@ describe("buildMembershipTierPresentation", () => {
     expect(presentation.summaryBenefits).toEqual(
       expect.arrayContaining([
         "Shared public project-host pool access, tier 2.",
-        "Up to 1000 simultaneous sponsored running projects.",
+        "Up to 32 simultaneous sponsored running projects.",
       ]),
     );
     expect(presentation.benefits).toContain(
@@ -22,21 +22,21 @@ describe("buildMembershipTierPresentation", () => {
     );
     expect(presentation.summaryLimits).toEqual(
       expect.arrayContaining([
-        "Shared compute priority: 4",
+        "Shared compute priority: 8",
         "Project RAM: 16 GB",
-        "Per-project disk quota: 10 GB",
+        "Per-project disk quota: 64 GB",
       ]),
     );
     expect(presentation.limits).toEqual(
       expect.arrayContaining([
-        "Shared compute priority: 4",
+        "Shared compute priority: 8",
         "Project RAM: 16 GB",
         "RootFS: 250 images, 250 GB total, 30 GB per image",
       ]),
     );
-    expect(presentation.billing).toContain("$160.00 per month");
+    expect(presentation.billing).toContain("$200.00 per month");
     expect(presentation.billing).toContain(
-      "$1,440.00 per year (about 25% less than monthly)",
+      "$1,800.00 per year (about 25% less than monthly)",
     );
   });
 
