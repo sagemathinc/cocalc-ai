@@ -687,10 +687,10 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "Open Trust Center" }),
-    ).toHaveAttribute("href", "https://trust.cocalc.com/");
+    ).toHaveAttribute("href", "https://trust.cocalc.ai/");
     expect(
       Array.from(document.querySelectorAll("a")).some((anchor) =>
-        anchor.href.includes("trust.cocalc.ai"),
+        anchor.href.includes("trust.cocalc.com"),
       ),
     ).toBe(false);
   });
@@ -844,7 +844,7 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "Open Trust Center" }),
-    ).toHaveAttribute("href", "https://trust.cocalc.com/");
+    ).toHaveAttribute("href", "https://trust.cocalc.ai/");
     expect(
       screen.getByText(/The Controller \(User\) provides/i),
     ).not.toBeNull();

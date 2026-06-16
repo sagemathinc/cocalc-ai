@@ -36,12 +36,23 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [ ] Future: identify route-specific screenshots or short workflow captures only after they have a named owner, current capture, and public-use approval gate.
 - [ ] Future: review the public trust/privacy/DPA pages themselves for buyer-oriented clarity; this pass only improves discoverability of already-published materials.
 
+## Non-Compliance Evidence And Decision Support Pass
+
+- [x] Keep legal, privacy, DPA, retention, SOC 2, GDPR, certification, and policy-document substance out of this general public-site pass; those materials remain in Andrey's review lane.
+- [x] Treat workflow evidence as route-specific decision support, not as a generic proof wall. The useful question is what a visitor can evaluate on the page: notebook continuity, course handout/collection, agent reviewability, operating-model boundary, or support next step.
+- [x] Do not add setup-time, restore-time, deployment-speed, customer-proof, or security/privacy-strength claims because the pitch evidence register still gates those until there are named owners, repeatable captures, and public-use approval.
+- [x] Homepage: keep concrete workflow assets but make the feature-index CTA describe the destination as workflow browsing instead of a generic feature list.
+- [x] AI: reduce decorative mini-labels in the chat illustration and make the top evidence cards answer concrete evaluator questions: where the agent starts, what context it can use, and how people review the result.
+- [x] Jupyter and teaching: leave the current route-specific examples in place during this pass because they already answer distinct workflow questions without adding unsupported proof.
+- [x] Products, pricing, compare, and support: leave policy/trust destinations as surrounding-page links only; do not reinterpret the documents or strengthen compliance language.
+- [ ] Future: add approved route-specific screenshots or short captures only when the asset itself shows the workflow better than concise copy and has a freshness owner.
+
 ## Policy Evidence Destination Pass
 
 - [x] Treat `/policies`, `/policies/trust`, `/policies/privacy`, and `/policies/dpa` as evidence destinations that need buyer orientation, not just legal text dumps.
 - [x] Preserve the legal and compliance document bodies unless a source-backed typo or route defect is found; add summaries and next steps around them instead of rewriting claims.
 - [x] Use existing public-safe facts only: policy titles, document descriptions, the public Trust Center, and support/contact routes.
-- [x] Fix the Trust Center URL from unresolved `trust.cocalc.ai` to the working public `trust.cocalc.com` destination.
+- [x] Keep the public Trust Center URL on `trust.cocalc.ai`; the domain is intentional and will be made live.
 - [x] Add concise page summaries that explain which visitor question each policy page answers without expanding SOC 2, GDPR, privacy, retention, or data-flow claims.
 - [x] Add route continuity from policy pages back to operating models, pricing/licensing, and context-preserving support/contact so buyers know what to do after reviewing evidence.
 - [x] Keep mobile readability and long-link containment as policy-page requirements.
@@ -127,3 +138,14 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Prefer public buyer/user language over internal planning language.
 - [x] Preserve CoCalc Star as a bounded single-VM product path.
 - [x] Preserve teaching/course management as a workflow destination, not a top-level product or LMS replacement.
+
+## Testing Principles Learned
+
+- [x] Keep Jest/Testing Library tests focused on visitor-visible behavior: headings, CTA labels, destination routes, duplicated labels, stale phrases, and whether a page exposes the expected next action.
+- [x] Use browser smoke tests for what component tests cannot see: desktop/tablet/mobile wrapping, screenshot containment, viewport overflow, and whether the rebuilt preview actually serves the intended public route.
+- [x] Prefer route-specific CTA contract tests over broad link-count tests; the failure we want to catch is a card pointing to a generic or misleading destination.
+- [x] Add duplicate-heading and duplicate-card-label checks when a page has repeated cards or repeated section patterns.
+- [x] Add source or DOM checks for decorative metadata when a page has already been simplified; tags/chips should not return without a distinct information function.
+- [x] Consider Playwright screenshot baselines only for stable hero, card-grid, and CTA sections. Use them sparingly because visual snapshots can become noisy when copy and responsive breakpoints are still actively changing.
+- [x] Consider axe/Playwright accessibility scans for public routes as a separate smoke layer; they can catch contrast, labels, and duplicate-id issues but should not be treated as complete design QA.
+- [x] Consider Lighthouse CI assertions later for first-load public polish, especially performance and accessibility budgets, once the route set and assets are stable.

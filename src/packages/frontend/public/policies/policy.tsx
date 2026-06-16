@@ -18,7 +18,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Paragraph, Text, Title } = Typography;
 
-export const COCALC_TRUST_CENTER_URL = "https://trust.cocalc.com/";
+export const COCALC_TRUST_CENTER_URL = "https://trust.cocalc.ai/";
 
 const POLICY_DOCUMENT_CSS = `
   .cocalc-public-policy-article p,

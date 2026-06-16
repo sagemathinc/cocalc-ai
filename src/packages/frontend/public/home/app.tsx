@@ -630,7 +630,9 @@ function WorkflowsSection() {
   return (
     <section aria-label="Core workflows" style={{ padding: "28px 0" }}>
       <SectionIntro
-        action={<Button href={appPath("features")}>All features</Button>}
+        action={
+          <Button href={appPath("features")}>Browse feature workflows</Button>
+        }
         body="Open notebooks, writing, terminals, agents, courses, and visual collaboration without moving work into a separate product."
         eyebrow="Core workflows"
         title="Work where the project already lives."

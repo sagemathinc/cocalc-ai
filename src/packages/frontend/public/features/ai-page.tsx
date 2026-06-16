@@ -159,31 +159,6 @@ function ThreadMock() {
             </div>
           ))}
         </Flex>
-
-        <Row gutter={[10, 10]}>
-          {[
-            ["markdown", "rich prompts"],
-            ["image", "images"],
-            ["terminal", "terminal"],
-            ["file", "files"],
-          ].map(([icon, label]) => (
-            <Col key={label} xs={12} sm={6}>
-              <Flex
-                align="center"
-                gap={8}
-                style={{
-                  background: "#fff",
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 8,
-                  padding: "9px 10px",
-                }}
-              >
-                <Icon name={icon as IconName} />
-                <Text strong>{label}</Text>
-              </Flex>
-            </Col>
-          ))}
-        </Row>
       </Flex>
     </div>
   );
@@ -424,31 +399,34 @@ export default function AIFeaturePage({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#7c3aed" icon="robot" title="Codex in chat">
-            Start a thread for human discussion or Codex assistance, with the
-            same project files nearby for review.
+          <StoryCard
+            accent="#7c3aed"
+            icon="robot"
+            title="Start from the project"
+          >
+            Ask from a thread that sits beside the files, notebooks, terminal
+            output, and discussion already under review.
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
           <StoryCard
             accent="#2f6fda"
             icon="markdown"
-            title="Give Codex useful context"
+            title="Give inspectable context"
           >
             The chat editor handles Markdown, code blocks, images, quotes, and
-            longer instructions, so the request can carry the context an agent
-            actually needs.
+            longer instructions, so the request can include the materials a
+            teammate would inspect too.
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
           <StoryCard
             accent="#278c83"
             icon="users"
-            title="Review agent work together"
+            title="Review before relying on it"
           >
-            A Codex thread can be reviewed by teammates in the project. The
-            discussion, patch, screenshots, and follow-up questions stay
-            together.
+            Teammates can inspect the patch, command output, screenshots, and
+            discussion before building on the result.
           </StoryCard>
         </Col>
       </Row>

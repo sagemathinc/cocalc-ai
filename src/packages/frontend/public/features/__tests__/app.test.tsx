@@ -306,7 +306,13 @@ describe("PublicFeaturesApp", () => {
       }),
     ).not.toBeNull();
     expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
-    expect(screen.getByText("Codex in chat")).not.toBeNull();
+    expect(screen.getByText("Start from the project")).not.toBeNull();
+    expect(screen.getByText("Give inspectable context")).not.toBeNull();
+    expect(screen.getByText("Review before relying on it")).not.toBeNull();
+    expect(screen.queryByText("Codex in chat")).toBeNull();
+    expect(screen.queryByText("Give Codex useful context")).toBeNull();
+    expect(screen.queryByText("Review agent work together")).toBeNull();
+    expect(screen.queryByText("rich prompts")).toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
     const featureNav = screen.getByRole("region", {
       name: "Feature page navigation",

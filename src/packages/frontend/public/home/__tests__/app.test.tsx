@@ -179,7 +179,9 @@ describe("PublicHomeApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      within(workflows).getByRole("link", { name: "All features" }),
+      within(workflows).getByRole("link", {
+        name: "Browse feature workflows",
+      }),
     ).toHaveAttribute("href", "/features");
     expect(
       within(workflows)
