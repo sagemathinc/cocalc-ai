@@ -127,7 +127,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "GNU Octave",
     tagline: "Run Octave online in notebooks, scripts, and terminals.",
     summary:
-      "Use GNU Octave for MATLAB-style numerical work with notebooks, .m files, terminals, plots, and teaching.",
+      "Use GNU Octave for numerical work with notebooks, .m files, terminals, plots, and teaching.",
     image: "/public/features/cocalc-octave-jupyter-20200511.png",
     index: true,
   },

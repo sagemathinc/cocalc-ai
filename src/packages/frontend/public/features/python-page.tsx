@@ -199,7 +199,7 @@ function PythonProjectMock() {
             <Text style={{ color: "#bfdbfe" }}>
               $ uv venv && uv pip install numpy matplotlib
             </Text>
-            <Text style={{ color: "#86efac" }}>installed 12 packages</Text>
+            <Text style={{ color: "#86efac" }}>installed packages</Text>
             <Text style={{ color: "#bfdbfe" }}>$ python model.py</Text>
             <Text style={{ color: "#86efac" }}>
               wrote figures/model-fit.pdf
@@ -319,9 +319,9 @@ function MiniTerminal() {
         }}
       >
         <Text style={{ color: "#bfdbfe" }}>$ uv pip install pandas pytest</Text>
-        <Text style={{ color: "#86efac" }}>resolved 18 packages</Text>
+        <Text style={{ color: "#86efac" }}>resolved packages</Text>
         <Text style={{ color: "#bfdbfe" }}>$ pytest && python model.py</Text>
-        <Text style={{ color: "#86efac" }}>3 passed, wrote figure.pdf</Text>
+        <Text style={{ color: "#86efac" }}>tests passed, wrote figure.pdf</Text>
       </Flex>
     </div>
   );

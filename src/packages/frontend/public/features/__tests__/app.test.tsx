@@ -111,7 +111,7 @@ describe("PublicFeaturesApp", () => {
       slug: "python",
     },
     {
-      marker: "Use SageMath where its history and future meet.",
+      marker: "Use SageMath inside collaborative mathematics projects.",
       slug: "sage",
     },
     {
@@ -784,8 +784,8 @@ describe("PublicFeaturesApp", () => {
   it.each([
     {
       slug: "sage",
-      title: "Use SageMath where its history and future meet.",
-      section: "Build, test, and develop Sage from source.",
+      title: "Use SageMath inside collaborative mathematics projects.",
+      section: "Use Sage with the surrounding project.",
     },
     {
       slug: "julia",
@@ -795,12 +795,12 @@ describe("PublicFeaturesApp", () => {
     {
       slug: "r-statistical-software",
       title: "Use R when statistics is part of a larger workflow.",
-      section: "CoCalc is not trying to be RStudio.",
+      section: "Use R when the project around the analysis matters.",
     },
     {
       slug: "octave",
       title: "Run Octave in notebooks, scripts, and terminals.",
-      section: "A browser-based path for MATLAB-style teaching and scripts.",
+      section: "A browser-based path for Octave teaching and scripts.",
     },
     {
       slug: "slides",
@@ -876,7 +876,7 @@ describe("PublicFeaturesApp", () => {
       expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
       expect(container.textContent ?? "").not.toMatch(INTERNAL_CONTEXT_LEAKAGE);
       expect(container.textContent ?? "").not.toMatch(
-        /42,180 rows loaded|R\^2 = 0\.94|26 notebooks ready|graphviz version 2\.43\.0/i,
+        /42,180 rows loaded|R\^2 = 0\.94|26 notebooks ready|graphviz version 2\.43\.0|0 errors|2 warnings|installed 12 packages|resolved 18 packages|3 passed|14 iterations|\bOverleaf\b|\bRStudio\b|\bPosit\b|\bMathematica\b|\bMaple\b|MATLAB-style|every MATLAB workflow|spot instances|stable programmatic interface|stable way to automate|stable route/i,
       );
 
       const headings = Array.from(

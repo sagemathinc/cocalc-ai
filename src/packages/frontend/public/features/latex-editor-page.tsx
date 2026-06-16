@@ -135,7 +135,7 @@ shows concentration after normalization.
                     padding: "9px 10px",
                   }}
                 >
-                  Build: 0 errors, 2 warnings
+                  Build log ready
                 </div>
               </Flex>
             </div>
@@ -191,7 +191,7 @@ shows concentration after normalization.
             ["users", "Coauthors"],
             ["history", "TimeTravel"],
             ["robot", "Codex"],
-            ["jupyter", "Evidence"],
+            ["jupyter", "Notebook output"],
           ].map(([icon, label]) => (
             <Col key={label} xs={12} sm={6}>
               <Flex
@@ -584,17 +584,17 @@ export default function LatexEditorFeaturePage({
                 Choose the writing environment around the real task
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Overleaf is a natural choice when the main task is hosted
-                collaborative paper editing. Local TeX editors are excellent
-                when keyboard-driven local craft is the priority.
+                Dedicated hosted LaTeX editors are a natural choice when the
+                main task is collaborative paper editing. Local TeX editors are
+                excellent when keyboard-driven local craft is the priority.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                CoCalc becomes more interesting when the paper depends on
-                computation, project files, command-line tools, collaborators,
-                history, and agent help.
+                CoCalc is useful when the paper depends on computation, project
+                files, command-line tools, collaborators, history, and agent
+                help.
               </Paragraph>
               <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
-                Read the comparison guide
+                Read the LaTeX guide
               </LinkButton>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -625,8 +625,8 @@ export default function LatexEditorFeaturePage({
             >
               <Flex vertical gap={12}>
                 {[
-                  ["Hosted paper collaboration", "Overleaf"],
-                  ["Local editor craft", "TeXstudio, TeXShop, VimTeX"],
+                  ["Hosted paper collaboration", "Dedicated LaTeX editor"],
+                  ["Local editor craft", "Local TeX editor"],
                   ["Paper as technical project", "CoCalc"],
                 ].map(([task, fit]) => (
                   <div

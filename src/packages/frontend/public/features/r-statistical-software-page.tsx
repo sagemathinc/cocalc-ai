@@ -93,21 +93,20 @@ function RWorkflowMock() {
   );
 }
 
-function PositioningBand() {
+function RProjectFitBand() {
   return (
     <PublicSection>
       <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
             <Title level={3} style={{ margin: 0 }}>
-              CoCalc is not trying to be RStudio.
+              Use R when the project around the analysis matters.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              RStudio and the Posit ecosystem are the dominant dedicated R
-              environment, and many R users should use them. CoCalc is useful
-              when R is part of a broader collaborative project: notebooks,
-              terminals, Python, LaTeX, teaching, Linux setup, files, and Codex
-              context all live together.
+              Dedicated R environments are often the right tool when the work is
+              mainly R editing. CoCalc is useful when R is part of a broader
+              collaborative project: notebooks, terminals, Python, LaTeX,
+              teaching, Linux setup, files, and Codex context all live together.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               That makes CoCalc a good fit for courses, mixed-language
@@ -228,7 +227,7 @@ export default function RStatisticalSoftwareFeaturePage({
         </Col>
       </Row>
 
-      <PositioningBand />
+      <RProjectFitBand />
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">

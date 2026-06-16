@@ -77,7 +77,7 @@ function OctaveProjectMock() {
           title="octave"
           rows={[
             "$ octave solver.m",
-            "converged in 14 iterations",
+            "solver completed",
             "$ open figure.png",
             "opened output in the project",
           ]}
@@ -94,18 +94,17 @@ function OctaveFlow() {
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
             <Title level={3} style={{ margin: 0 }}>
-              A browser-based path for MATLAB-style teaching and scripts.
+              A browser-based path for Octave teaching and scripts.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              GNU Octave is useful when you want a free MATLAB-style numerical
-              environment for assignments, examples, and lightweight research
-              workflows. CoCalc gives it the surrounding project workspace:
-              files, terminals, notebooks, history, chat, and course tools.
+              GNU Octave is useful when you want an open numerical environment
+              for assignments, examples, and lightweight research workflows.
+              CoCalc gives it the surrounding project workspace: files,
+              terminals, notebooks, history, chat, and course tools.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              It is not a replacement for every MATLAB workflow. It is a
-              practical way to run Octave online when setup consistency and
-              collaboration matter.
+              It is a practical way to run Octave online when setup consistency
+              and collaboration matter.
             </Paragraph>
           </Flex>
         </Col>
@@ -179,8 +178,8 @@ export default function OctaveFeaturePage({
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 That makes Octave useful for numerical courses and lightweight
-                MATLAB-style work without asking every student or collaborator
-                to maintain a local install.
+                numerical work without asking every student or collaborator to
+                maintain a local install.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>

@@ -75,7 +75,7 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
                 "Provision and manage projects programmatically.",
                 "Integrate CoCalc into existing portals, admin tools, or learning platforms.",
                 "Automate workflows around users, support, or project lifecycle events.",
-                "Build external services that need a stable programmatic interface to CoCalc.",
+                "Build external services that need a documented programmatic interface to CoCalc.",
               ]}
             />
           </PublicSection>
@@ -91,9 +91,9 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
               organization-managed workflow.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              It gives administrators and developers a stable way to automate
-              routine work without depending on browser automation or fragile UI
-              scripts.
+              It gives administrators and developers a documented way to
+              automate routine work without depending on browser automation or
+              fragile UI scripts.
             </Paragraph>
           </PublicSection>
         </Col>
@@ -105,8 +105,8 @@ export default function ApiFeaturePage({}: { helpEmail?: string }) {
         </Title>
         <Paragraph style={{ margin: 0 }}>
           The point of the API is not only convenience. It is to provide a
-          stable route for integrations so deployments do not have to script the
-          browser to perform administrative or operational work.
+          documented route for integrations so deployments do not have to script
+          the browser to perform administrative or operational work.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
           This is especially important for CoCalc Launchpad deployments and

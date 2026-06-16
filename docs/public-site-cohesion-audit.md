@@ -57,6 +57,20 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Terminal: keep the `.term` and shared-stream examples; no further compression in this pass because each remaining section answers a distinct terminal-evaluation question.
 - [x] Add tests for proof-like mock literals and internal-context leakage so public feature pages do not accidentally expose pitch, competitor, or agent-operating notes.
 
+## Next-Tier Feature Evidence Pass
+
+- [x] Re-inspect `/features/whiteboard`, `/features/latex-editor`, `/features/slides`, `/features/api`, `/features/python`, `/features/sage`, `/features/r-statistical-software`, `/features/julia`, and `/features/octave` for route-specific examples, useful next steps, decorative metadata, and unsupported proof.
+- [x] Whiteboard: keep the executable-canvas example and route-specific whiteboard support CTA; no public copy changes needed in this pass.
+- [x] Slides: keep the slide-deck mock and whiteboard/Jupyter/teaching routes; no public copy changes needed in this pass.
+- [x] API: keep the page focused on documented HTTP API integration, but avoid broad "stable" language that could sound stronger than the docs themselves.
+- [x] LaTeX: remove mock build counts and replace direct competitor-positioning language with neutral task-fit language so public copy does not read like internal comparison notes.
+- [x] Python: remove fake package-count and test-count outputs from terminal mocks so the example stays illustrative instead of proof-like.
+- [x] Sage: remove build/test/development language that reads like internal implementation proof and keep the page focused on SageMath use in courses, notebooks, LaTeX, and research projects.
+- [x] R: replace direct competitor-positioning language with neutral dedicated-tool language while preserving the distinction that CoCalc is strongest when R is part of a broader project workflow.
+- [x] Julia: keep the project/context page structure and route-specific next steps; no public copy changes needed in this pass.
+- [x] Octave: remove the fake convergence count from the mock terminal output.
+- [x] Extend tests so the next-tier feature pages reject mock evidence counts, direct competitor-positioning terms, and public copy that reads like internal comparison framing.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

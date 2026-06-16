@@ -235,14 +235,13 @@ function TeachingComparison() {
         <Col xs={24} lg={11}>
           <Flex vertical gap={12}>
             <Title level={3} style={{ margin: 0 }}>
-              A free, open alternative for computational mathematics courses.
+              An open computational mathematics environment for courses.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              For many undergraduate math courses, SageMath fills the same broad
-              role as Mathematica, Maple, or MATLAB: symbolic computation,
-              calculus, linear algebra, data work, and 2D or 3D plotting. The
-              difference is that SageMath is free, open source, and built as a
-              large Python library.
+              For many undergraduate math courses, SageMath supports symbolic
+              computation, calculus, linear algebra, data work, and 2D or 3D
+              plotting. SageMath is free, open source, and built as a large
+              Python library.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               In CoCalc, students can use Sage without local installation, and
@@ -291,12 +290,12 @@ function TeachingComparison() {
 function ResearchFlow() {
   const steps = [
     {
-      body: "Run Sage computations on a dedicated project host, including spot instances when cost matters.",
+      body: "Run Sage computations in a project with files, terminals, notes, and optional project-host resources when the work needs more than a short interactive session.",
       icon: "server",
-      title: "Dedicated compute",
+      title: "Project compute",
     },
     {
-      body: "Use terminals, scheduled automation, Codex, and restart-aware scripts to keep long jobs productive.",
+      body: "Use terminals, scripts, Codex, and notes to keep longer computations inspectable.",
       icon: "sync-alt",
       title: "Keep jobs moving",
     },
@@ -324,9 +323,8 @@ function ResearchFlow() {
             SageMath can be more than an interactive calculator.
           </Title>
           <Paragraph style={{ color: "#cbd5e1", margin: "8px 0 0" }}>
-            CoCalc makes Sage development and long-running mathematics research
-            computations practical in a project, instead of forcing the work
-            onto a laptop or a one-off server.
+            CoCalc keeps longer Sage work inside a project, with files, terminal
+            output, notes, and reusable results near the computation.
           </Paragraph>
         </div>
         <Row gutter={[14, 14]}>
@@ -395,21 +393,18 @@ export default function SageFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Use SageMath where its history and future meet.
+                Use SageMath inside collaborative mathematics projects.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                SageMath was started in 2004 by William Stein, a mathematician
-                and college professor who later became the lead developer and
-                CEO behind CoCalc. CoCalc is not just another place that happens
-                to run Sage; it grew out of the same mathematical computing
-                community.
+                CoCalc has long-standing roots in the SageMath community. It
+                gives SageMath a collaborative project environment for
+                notebooks, terminals, LaTeX documents, teaching workflows, and
+                supporting files.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Today, SageMath is a broad community project and a major open
-                source Python-based system for computational mathematics, while
-                CoCalc provides the collaborative projects, notebooks,
-                terminals, LaTeX, teaching tools, and compute infrastructure
-                around it.
+                Use SageMath for computational mathematics while keeping the
+                surrounding work close enough for students, collaborators, and
+                reviewers to follow.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -457,23 +452,23 @@ export default function SageFeaturePage({
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                Build, test, and develop Sage from source.
+                Use Sage with the surrounding project.
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                CoCalc projects can support Sage development itself: clone the
-                Sage source, install build dependencies, compile, run tests, and
-                use terminals or Codex to manage the messy details.
+                Some Sage workflows need more than an interactive worksheet:
+                source files, terminal commands, generated figures, logs, and
+                notes.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Current CoCalc projects can be practical Linux development
-                environments for work that needs source builds, test runs, and
-                supporting notes in one place.
+                A CoCalc project keeps those materials beside notebooks and
+                LaTeX documents so a collaborator or instructor can inspect how
+                the result was produced.
               </Paragraph>
               <BulletList
                 items={[
-                  "Use sudo and normal Linux package managers for build dependencies.",
-                  "Keep source, build logs, test output, and notes in the same project.",
-                  "Collaborate with another developer or ask Codex to inspect failures.",
+                  "Keep Sage notebooks, source files, logs, and notes in the same project.",
+                  "Use terminals for package tools, scripts, and generated outputs.",
+                  "Let collaborators or Codex inspect errors with the surrounding context.",
                 ]}
               />
             </Flex>
@@ -490,10 +485,10 @@ export default function SageFeaturePage({
             >
               <Flex vertical gap={14}>
                 {[
-                  ["github", "Clone Sage source"],
-                  ["terminal", "Build in a project terminal"],
-                  ["bug", "Run targeted tests"],
-                  ["robot", "Use Codex for build failures"],
+                  ["file", "Keep source files"],
+                  ["terminal", "Run project commands"],
+                  ["bug", "Inspect errors"],
+                  ["robot", "Use Codex with context"],
                 ].map(([icon, label]) => (
                   <Flex
                     align="center"
@@ -526,10 +521,10 @@ export default function SageFeaturePage({
             </Title>
             <BulletList
               items={[
-                "Credible SageMath support from the team and history behind CoCalc.",
+                "Use SageMath in collaborative projects built around notebooks, terminals, LaTeX, and course workflows.",
                 "A free, open source Python-based alternative for computational math courses.",
                 "Integrated SageTeX support in the collaborative LaTeX editor.",
-                "A real Linux project environment for Sage development and research computations.",
+                "A Linux project environment for Sage notebooks, source files, scripts, and research computations.",
               ]}
             />
             <Flex wrap gap={12}>

@@ -89,7 +89,7 @@ function JuliaProjectMock() {
   );
 }
 
-function JuliaPositioning() {
+function JuliaProjectFit() {
   return (
     <PublicSection>
       <Row gutter={[24, 24]} align="middle">
@@ -223,7 +223,7 @@ export default function JuliaFeaturePage({
         </Col>
       </Row>
 
-      <JuliaPositioning />
+      <JuliaProjectFit />
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
