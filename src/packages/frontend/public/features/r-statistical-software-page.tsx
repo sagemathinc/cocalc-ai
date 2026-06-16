@@ -13,12 +13,7 @@ import {
   featureAppPath as appPath,
   LinkButton,
 } from "./page-components";
-import {
-  IconBadge,
-  StartCard,
-  StoryCard,
-  TerminalMock,
-} from "./feature-visuals";
+import { IconBadge, StartCard, TerminalMock } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -100,7 +95,7 @@ function RProjectFitBand() {
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
             <Title level={3} style={{ margin: 0 }}>
-              Use R when the project around the analysis matters.
+              Keep R close to the rest of the analysis.
             </Title>
             <Paragraph style={{ margin: 0 }}>
               Dedicated R environments are often the right tool when the work is
@@ -205,27 +200,6 @@ export default function RStatisticalSoftwareFeaturePage({
           </Col>
         </Row>
       </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#386cb0" icon="jupyter" title="R notebooks">
-            Use R in collaborative Jupyter notebooks when interactive analysis
-            and teaching benefit from shared browser notebooks.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#278c83" icon="terminal" title="R in the shell">
-            Run <code>R</code>, <code>Rscript</code>, package installs, command
-            pipelines, and reproducible jobs in a real Linux terminal.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#ad6800" icon="markdown" title="Reports">
-            Keep Rmd, Qmd, Knitr, LaTeX, generated figures, and supporting data
-            together in the project.
-          </StoryCard>
-        </Col>
-      </Row>
 
       <RProjectFitBand />
 

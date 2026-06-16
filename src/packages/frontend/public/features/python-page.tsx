@@ -44,39 +44,6 @@ function IconBadge({
   );
 }
 
-function StoryCard({
-  accent = PUBLIC_COLORS.brand,
-  children,
-  icon,
-  title,
-}: {
-  accent?: string;
-  children: ReactNode;
-  icon: IconName;
-  title: string;
-}) {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
-        height: "100%",
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
-          {title}
-        </Title>
-        <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
-      </Flex>
-    </div>
-  );
-}
-
 function PythonProjectMock() {
   const panels = [
     {
@@ -342,20 +309,18 @@ function PackageRail() {
         <Flex align="center" gap={12}>
           <IconBadge accent="#278c83" icon="linux" />
           <div>
-            <Text strong>Real Python on real Linux</Text>
+            <Text strong>Reusable Python environment</Text>
             <div style={{ color: PUBLIC_COLORS.mutedText }}>
               use normal project tools
             </div>
           </div>
         </Flex>
         <Flex gap={10} wrap>
-          {["sudo", "apt", "uv", "pip", "conda", "venv", "RootFS"].map(
-            (label) => (
-              <Text key={label} code>
-                {label}
-              </Text>
-            ),
-          )}
+          {["sudo", "apt", "uv", "pip", "conda", "venv"].map((label) => (
+            <Text key={label} code>
+              {label}
+            </Text>
+          ))}
         </Flex>
       </Flex>
     </div>
@@ -562,7 +527,7 @@ function PythonUseCases() {
               accent="#389e0d"
               icon="graduation-cap"
               title="Teaching and teams"
-              body="RootFS images, shared notebooks, side chat, TimeTravel, and snapshots help everyone use the same Python stack."
+              body="Reusable project environments, shared notebooks, side chat, TimeTravel, and snapshots help everyone use the same Python stack."
             />
           </Col>
           <Col xs={24} lg={8}>
@@ -645,29 +610,6 @@ export default function PythonFeaturePage({
           </Col>
         </Row>
       </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#2f6fda" icon="jupyter" title="Notebooks">
-            Explore interactively in Jupyter with durable backend execution,
-            collaboration, TimeTravel, widgets, and agent access to the live
-            notebook state.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#278c83" icon="python" title="Scripts and modules">
-            Edit <code>.py</code> files, factor notebook code into modules, run
-            tests, and keep the source files next to the data and notebooks that
-            use them.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#ad6800" icon="terminal" title="Terminals">
-            Use a real shell for package installs, virtual environments,
-            command-line tools, Git, long-running jobs, and Python REPL work.
-          </StoryCard>
-        </Col>
-      </Row>
 
       <PythonWorkflowMap />
 

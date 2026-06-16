@@ -500,12 +500,16 @@ describe("PublicFeaturesApp", () => {
       ),
     ).not.toBeNull();
     expect(screen.getByText("Keep the working tree together")).not.toBeNull();
-    expect(screen.getByText("Recover draft history")).not.toBeNull();
     expect(
-      screen.getByText(
+      screen.getByText("Use computation as part of the writing process"),
+    ).not.toBeNull();
+    expect(screen.queryByText("Recover draft history")).toBeNull();
+    expect(
+      screen.queryByText(
         "Use Codex as an editor and build assistant, not an author",
       ),
-    ).not.toBeNull();
+    ).toBeNull();
+    expect(screen.queryByText("structure review")).toBeNull();
   });
 
   it("uses projects as the latex CTA for authenticated users", () => {
@@ -735,7 +739,11 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Python that moves from notebook to script to paper."),
     ).not.toBeNull();
     expect(screen.getByText("From notebook to script to paper")).not.toBeNull();
-    expect(screen.getByText("Real Python on real Linux")).not.toBeNull();
+    expect(screen.getByText("Reusable Python environment")).not.toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Scripts and modules" }),
+    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Terminals" })).toBeNull();
   });
 
   it("uses projects as the python CTA for authenticated users", () => {
@@ -795,12 +803,12 @@ describe("PublicFeaturesApp", () => {
     {
       slug: "r-statistical-software",
       title: "Use R when statistics is part of a larger workflow.",
-      section: "Use R when the project around the analysis matters.",
+      section: "Keep R close to the rest of the analysis.",
     },
     {
       slug: "octave",
       title: "Run Octave in notebooks, scripts, and terminals.",
-      section: "A browser-based path for Octave teaching and scripts.",
+      section: "Teach and run Octave without local setup drift.",
     },
     {
       slug: "slides",
@@ -829,6 +837,53 @@ describe("PublicFeaturesApp", () => {
       expect(screen.getByText(section)).not.toBeNull();
     },
   );
+
+  it("keeps compressed workflow pages from restoring duplicate card rows", () => {
+    const pages = [
+      {
+        removedHeadings: ["Scripts and modules", "Terminals"],
+        slug: "python",
+      },
+      {
+        removedHeadings: [
+          "Recover draft history",
+          "Use Codex as an editor and build assistant, not an author",
+        ],
+        slug: "latex-editor",
+      },
+      {
+        removedHeadings: [
+          "Open mathematics",
+          "Notebook first",
+          "SageTeX included",
+          "SageMath can be more than an interactive calculator.",
+        ],
+        slug: "sage",
+      },
+      {
+        removedHeadings: ["R notebooks", "R in the shell", "Reports"],
+        slug: "r-statistical-software",
+      },
+      {
+        removedHeadings: ["Notebooks", ".m files", "Teaching"],
+        slug: "octave",
+      },
+    ] as const;
+
+    for (const { removedHeadings, slug } of pages) {
+      const { unmount } = render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      for (const name of removedHeadings) {
+        expect(screen.queryByRole("heading", { name })).toBeNull();
+      }
+      unmount();
+    }
+  });
 
   it.each([
     { finalCta: "Start using SageMath on CoCalc", slug: "sage" },
@@ -876,7 +931,7 @@ describe("PublicFeaturesApp", () => {
       expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
       expect(container.textContent ?? "").not.toMatch(INTERNAL_CONTEXT_LEAKAGE);
       expect(container.textContent ?? "").not.toMatch(
-        /42,180 rows loaded|R\^2 = 0\.94|26 notebooks ready|graphviz version 2\.43\.0|0 errors|2 warnings|installed 12 packages|resolved 18 packages|3 passed|14 iterations|\bOverleaf\b|\bRStudio\b|\bPosit\b|\bMathematica\b|\bMaple\b|MATLAB-style|every MATLAB workflow|spot instances|stable programmatic interface|stable way to automate|stable route/i,
+        /42,180 rows loaded|R\^2 = 0\.94|26 notebooks ready|graphviz version 2\.43\.0|0 errors|2 warnings|installed 12 packages|resolved 18 packages|3 passed|14 iterations|\bRootFS\b|\bOverleaf\b|\bRStudio\b|\bPosit\b|\bMathematica\b|\bMaple\b|MATLAB-style|every MATLAB workflow|spot instances|stable programmatic interface|stable way to automate|stable route/i,
       );
 
       const headings = Array.from(

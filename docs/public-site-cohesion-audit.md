@@ -71,6 +71,18 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Octave: remove the fake convergence count from the mock terminal output.
 - [x] Extend tests so the next-tier feature pages reject mock evidence counts, direct competitor-positioning terms, and public copy that reads like internal comparison framing.
 
+## Feature Visual Hierarchy And Density Pass
+
+- [x] Re-inspect `/features/python`, `/features/latex-editor`, `/features/sage`, `/features/r-statistical-software`, and `/features/octave` after the evidence cleanup for card overuse, repeated section purpose, mobile length, and CTA rhythm.
+- [x] Python: remove the repeated hero-adjacent cards if they only restate the notebook/script/terminal workflow already shown in the hero mock and workflow map.
+- [x] Python: remove remaining implementation-heavy "RootFS" wording from the public page and replace it with visitor-facing shared-environment language.
+- [x] LaTeX: remove the separate Codex review/build section if the same idea can live as a concise writing-workflow bullet and AI route CTA.
+- [x] LaTeX: avoid a card-heavy mid-page rhythm where hero mock, paper project diagram, evidence diagram, Codex diagram, and comparison matrix all compete for attention.
+- [x] Sage: compress repeated mathematics/project/course/research sections so the page does not read as a sequence of similar card grids.
+- [x] R: avoid repeating "R is useful when the surrounding project matters" across hero, middle fit section, and final CTA.
+- [x] Octave: avoid repeating notebooks/scripts/teaching across hero mock, immediate cards, middle flow section, and final CTA.
+- [x] Keep workflow value before operating-model handoff; leave the shared operating-model section intact unless it becomes redundant after page-level compression.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.
@@ -160,6 +172,7 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Revisit `/features/teaching`; it is improved but still has heavy sections that should be re-evaluated against the same standard.
 - [x] Continue checking whether each feature page explains workflow value before product operating model.
 - [x] Continue checking that every CTA preserves page context and points to the most useful next step.
+- [ ] Teaching follow-up: the lower page still feels overloaded; re-check whether the last two teaching sections answer distinct visitor questions or should be combined into one clearer next-step block.
 
 ## Site-Wide Principles Learned
 

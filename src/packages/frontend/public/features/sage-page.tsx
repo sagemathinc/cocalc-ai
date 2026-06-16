@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ReactNode } from "react";
-
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -45,41 +43,6 @@ function IconBadge({
     >
       <Icon name={icon} />
     </span>
-  );
-}
-
-function StoryCard({
-  accent = PUBLIC_COLORS.brand,
-  children,
-  icon,
-  title,
-}: {
-  accent?: string;
-  children: ReactNode;
-  icon: IconName;
-  title: string;
-}) {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
-        height: "100%",
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
-          {title}
-        </Title>
-        <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-          {children}
-        </Paragraph>
-      </Flex>
-    </div>
   );
 }
 
@@ -287,90 +250,6 @@ function TeachingComparison() {
   );
 }
 
-function ResearchFlow() {
-  const steps = [
-    {
-      body: "Run Sage computations in a project with files, terminals, notes, and optional project-host resources when the work needs more than a short interactive session.",
-      icon: "server",
-      title: "Project compute",
-    },
-    {
-      body: "Use terminals, scripts, Codex, and notes to keep longer computations inspectable.",
-      icon: "sync-alt",
-      title: "Keep jobs moving",
-    },
-    {
-      body: "Install a database or write structured outputs so partial results survive crashes and restarts.",
-      icon: "database",
-      title: "Track results",
-    },
-  ] satisfies { body: string; icon: IconName; title: string }[];
-
-  return (
-    <section
-      style={{
-        background: "#0b1522",
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 8,
-        color: "#dbeafe",
-        minWidth: 0,
-        padding: 24,
-      }}
-    >
-      <Flex vertical gap={22}>
-        <div>
-          <Title level={3} style={{ color: "#fff", margin: 0 }}>
-            SageMath can be more than an interactive calculator.
-          </Title>
-          <Paragraph style={{ color: "#cbd5e1", margin: "8px 0 0" }}>
-            CoCalc keeps longer Sage work inside a project, with files, terminal
-            output, notes, and reusable results near the computation.
-          </Paragraph>
-        </div>
-        <Row gutter={[14, 14]}>
-          {steps.map((step) => (
-            <Col key={step.title} xs={24} lg={8}>
-              <div
-                style={{
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 8,
-                  height: "100%",
-                  padding: 18,
-                }}
-              >
-                <Flex vertical gap={12}>
-                  <span
-                    style={{
-                      alignItems: "center",
-                      background: "rgba(255,255,255,0.1)",
-                      border: "1px solid rgba(255,255,255,0.16)",
-                      borderRadius: 8,
-                      display: "inline-flex",
-                      fontSize: 24,
-                      height: 52,
-                      justifyContent: "center",
-                      width: 52,
-                    }}
-                  >
-                    <Icon name={step.icon} />
-                  </span>
-                  <Title level={4} style={{ color: "#fff", margin: 0 }}>
-                    {step.title}
-                  </Title>
-                  <Paragraph style={{ color: "#cbd5e1", margin: 0 }}>
-                    {step.body}
-                  </Paragraph>
-                </Flex>
-              </div>
-            </Col>
-          ))}
-        </Row>
-      </Flex>
-    </section>
-  );
-}
-
 export default function SageFeaturePage({
   helpEmail,
   isAuthenticated,
@@ -423,28 +302,6 @@ export default function SageFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#389e0d" icon="sagemath" title="Open mathematics">
-            Sage combines algebra, number theory, calculus, plotting,
-            combinatorics, numerical work, and much more through a Python-first
-            interface.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#2f6fda" icon="jupyter" title="Notebook first">
-            Use Sage in Jupyter notebooks with durable execution, collaboration,
-            widgets, TimeTravel, and the rest of the CoCalc project close by.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#ad6800" icon="tex" title="SageTeX included">
-            Put Sage computations directly into LaTeX documents, so examples,
-            tables, and figures can be regenerated instead of pasted by hand.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <TeachingComparison />
 
       <PublicSection>
@@ -468,6 +325,7 @@ export default function SageFeaturePage({
                 items={[
                   "Keep Sage notebooks, source files, logs, and notes in the same project.",
                   "Use terminals for package tools, scripts, and generated outputs.",
+                  "Keep longer computations, terminal output, notes, and reusable results close to the computation.",
                   "Let collaborators or Codex inspect errors with the surrounding context.",
                 ]}
               />
@@ -510,9 +368,6 @@ export default function SageFeaturePage({
           </Col>
         </Row>
       </PublicSection>
-
-      <ResearchFlow />
-
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
@@ -522,7 +377,7 @@ export default function SageFeaturePage({
             <BulletList
               items={[
                 "Use SageMath in collaborative projects built around notebooks, terminals, LaTeX, and course workflows.",
-                "A free, open source Python-based alternative for computational math courses.",
+                "A free, open source Python-based environment for computational math courses.",
                 "Integrated SageTeX support in the collaborative LaTeX editor.",
                 "A Linux project environment for Sage notebooks, source files, scripts, and research computations.",
               ]}
@@ -534,6 +389,9 @@ export default function SageFeaturePage({
               <Button href={appPath("features/terminal")}>
                 Terminal workflows
               </Button>
+              <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
+                SageTeX documentation
+              </LinkButton>
               {helpEmail ? (
                 <Button href={`mailto:${helpEmail}`}>Contact support</Button>
               ) : null}
@@ -567,9 +425,6 @@ export default function SageFeaturePage({
             </div>
           </Col>
         </Row>
-        <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
-          SageTeX documentation
-        </LinkButton>
       </PublicSection>
     </Flex>
   );

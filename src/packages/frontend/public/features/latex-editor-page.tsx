@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ReactNode } from "react";
-
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -46,39 +44,6 @@ function IconBadge({
     >
       <Icon name={icon} />
     </span>
-  );
-}
-
-function StoryCard({
-  accent = PUBLIC_COLORS.brand,
-  children,
-  icon,
-  title,
-}: {
-  accent?: string;
-  children: ReactNode;
-  icon: IconName;
-  title: string;
-}) {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
-        height: "100%",
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
-          {title}
-        </Title>
-        <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
-      </Flex>
-    </div>
   );
 }
 
@@ -264,66 +229,6 @@ function PaperProjectDiagram() {
   );
 }
 
-function ReviewLoopDiagram() {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-        padding: 24,
-      }}
-    >
-      <Flex vertical gap={16}>
-        <Flex align="center" gap={12}>
-          <IconBadge accent="#7c3aed" icon="robot" />
-          <div>
-            <Text strong>Review the paper, then build it</Text>
-            <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              A good agent loop is focused, testable, and reviewable.
-            </div>
-          </div>
-        </Flex>
-        <pre
-          style={{
-            background: "#10213f",
-            borderRadius: 8,
-            color: "#dbeafe",
-            margin: 0,
-            overflowX: "auto",
-            padding: 18,
-          }}
-        >
-          <code>{`Read paper.tex and find narrative breaks.
-Do not rewrite yet.
-
-Then build the PDF and triage warnings.`}</code>
-        </pre>
-        <Row gutter={[10, 10]}>
-          {["structure review", "focused patch", "PDF rebuild"].map((label) => (
-            <Col key={label} xs={24} sm={8}>
-              <Text
-                strong
-                style={{
-                  background: "#f7f4ff",
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 8,
-                  display: "block",
-                  padding: "4px 10px",
-                  width: "100%",
-                }}
-              >
-                {label}
-              </Text>
-            </Col>
-          ))}
-        </Row>
-      </Flex>
-    </div>
-  );
-}
-
 function EvidenceFlowDiagram() {
   const nodes = [
     { icon: "jupyter" as const, label: "notebook", x: "7%", y: "22%" },
@@ -448,45 +353,6 @@ export default function LatexEditorFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={12} xl={6}>
-          <StoryCard
-            accent="#ad6800"
-            icon="tex"
-            title="Edit source and preview PDF"
-          >
-            Edit LaTeX with synchronized preview, automatic builds, and
-            build-output feedback close to the source.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          <StoryCard accent="#389e0d" icon="users" title="Write with coauthors">
-            Collaborators can edit the same files, discuss the draft, inspect
-            the PDF, and work with the same project state.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          <StoryCard
-            accent="#7c3aed"
-            icon="history"
-            title="Recover draft history"
-          >
-            Fine-grained history helps recover paragraphs, inspect revisions,
-            and understand how a technical document changed.
-          </StoryCard>
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          <StoryCard
-            accent="#d4380d"
-            icon="robot"
-            title="Use Codex for focused edits"
-          >
-            Ask Codex to review structure, patch a paragraph, inspect build
-            warnings, or connect notebook output to the paper.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <PublicSection>
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
@@ -539,39 +405,19 @@ export default function LatexEditorFeaturePage({
                   "Use Jupyter, Python, Sage, R, or shell scripts beside the paper.",
                   "Keep generated tables and figures in the same project.",
                   "Let collaborators inspect both the claim and the computation behind it.",
-                  "Use project history and Git review to keep changes reviewable.",
+                  "Use project history, Git review, and focused Codex assistance to keep changes reviewable.",
                 ]}
               />
+              <Button
+                href={appPath("features/ai")}
+                style={{ width: "fit-content" }}
+              >
+                AI assistance
+              </Button>
             </Flex>
           </Col>
           <Col xs={24} lg={12}>
             <EvidenceFlowDiagram />
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={12}>
-            <ReviewLoopDiagram />
-          </Col>
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Use Codex as an editor and build assistant, not an author
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                For technical writing, the useful workflow is often focused:
-                review the structure, identify missing definitions, patch a
-                specific paragraph, rebuild the PDF, and explain the remaining
-                warnings.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                This keeps the author in control while making the mechanical
-                parts of polishing a paper much less tedious.
-              </Paragraph>
-              <Button href={appPath("features/ai")}>AI assistance</Button>
-            </Flex>
           </Col>
         </Row>
       </PublicSection>

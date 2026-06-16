@@ -9,12 +9,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
-import {
-  IconBadge,
-  StartCard,
-  StoryCard,
-  TerminalMock,
-} from "./feature-visuals";
+import { IconBadge, StartCard, TerminalMock } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -94,7 +89,7 @@ function OctaveFlow() {
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
             <Title level={3} style={{ margin: 0 }}>
-              A browser-based path for Octave teaching and scripts.
+              Teach and run Octave without local setup drift.
             </Title>
             <Paragraph style={{ margin: 0 }}>
               GNU Octave is useful when you want an open numerical environment
@@ -199,27 +194,6 @@ export default function OctaveFeaturePage({
           </Col>
         </Row>
       </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#d4380d" icon="jupyter" title="Notebooks">
-            Use Octave interactively when examples, plots, and explanations
-            benefit from a notebook format.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#ad6800" icon="file" title=".m files">
-            Keep scripts, functions, data, generated figures, and notes in the
-            same shared project.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#278c83" icon="graduation-cap" title="Teaching">
-            Give students a known Octave environment with course files,
-            assignment distribution, collection, and project history.
-          </StoryCard>
-        </Col>
-      </Row>
 
       <OctaveFlow />
 
