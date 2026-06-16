@@ -88,15 +88,15 @@ const FEATURE_GROUPS = [
   {
     accent: COLORS.BLUE_D,
     description:
-      "Notebooks, papers, whiteboards, slides, and technical writing in one collaborative project.",
+      "Find the page for notebooks, papers, boards, slides, and other technical artifacts.",
     icon: "jupyter",
     slugs: ["jupyter-notebook", "latex-editor", "whiteboard", "slides"],
-    title: "Documents",
+    title: "Notebook, writing, and visual work",
   },
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     description:
-      "A real Linux environment with terminals, language stacks, graphical apps, and installable software.",
+      "Find the language, terminal, or Linux environment that supports the work.",
     icon: "terminal",
     slugs: [
       "terminal",
@@ -107,23 +107,23 @@ const FEATURE_GROUPS = [
       "sage",
       "octave",
     ],
-    title: "Compute",
+    title: "Compute and languages",
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
     description:
-      "Agent assistance and programmable surfaces for project-centered work.",
+      "Find agent, API, and command-line integration paths around CoCalc projects.",
     icon: "robot",
     slugs: ["ai", "api", "cli"],
-    title: "AI and automation",
+    title: "AI and integration",
   },
   {
     accent: COLORS.RUN,
     description:
-      "Course workflows, grading, shared environments, and collaborative help for technical classes.",
+      "Find course workflows for assignments, grading, shared environments, and student support.",
     icon: "graduation-cap",
     slugs: ["teaching"],
-    title: "Teaching",
+    title: "Courses and labs",
   },
 ] as const;
 
@@ -194,7 +194,7 @@ const FEATURE_STARTERS = [
     body: "Assignments, grading, shared environments, and student support.",
     icon: "graduation-cap",
     slug: "teaching",
-    title: "Courses",
+    title: "Courses and labs",
   },
 ] satisfies {
   body: string;
@@ -279,6 +279,11 @@ const FEATURE_INDEX_CSS = `
 
     .cocalc-feature-index-start-grid {
       grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .cocalc-feature-link-card {
+      min-height: 0 !important;
+      padding: 14px !important;
     }
   }
 `;

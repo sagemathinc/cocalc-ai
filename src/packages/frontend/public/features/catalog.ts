@@ -29,7 +29,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     tagline:
       "Collaborative notebooks with shared kernels and full edit history.",
     summary:
-      "Run collaborative Jupyter notebooks with shared output, history, recovery, terminals, course workflows, and AI context nearby.",
+      "Use collaborative Jupyter notebooks when output, files, terminals, history, and review need to stay together.",
     image: "/public/features/cocalc-jupyter2-20170508.png",
     index: true,
     sections: [
@@ -99,7 +99,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "Whiteboard",
     tagline: "A collaborative technical canvas for math, code, and sketches.",
     summary:
-      "Use a collaborative canvas with markdown, KaTeX, Jupyter cells, pages, and a transparent JSONL format.",
+      "Use an editable canvas for technical explanations that need math, diagrams, Jupyter cells, pages, and collaboration.",
     image: "/public/features/whiteboard-sage.png",
     index: true,
   },
@@ -118,7 +118,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     tagline:
       "Use SageMath in the collaborative environment with deep roots in Sage.",
     summary:
-      "Use SageMath for teaching, notebooks, SageTeX, source development, and long-running math computations.",
+      "Use SageMath for computational mathematics in notebooks, courses, SageTeX documents, and research projects.",
     image: "/public/features/sagemath-jupyter.png",
     index: true,
   },
@@ -136,7 +136,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "Python",
     tagline: "A broad scientific Python stack ready in the browser.",
     summary:
-      "Use Python for computing, data science, and machine learning with packages and collaboration nearby.",
+      "Move Python work from notebooks to scripts, packages, reports, and shared course or research projects.",
     image: "/public/features/frame-editor-python.png",
     index: true,
   },
@@ -183,7 +183,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     tagline:
       "Run technical courses and labs with shared infrastructure and grading tools.",
     summary:
-      "Organize assignments, distribute files, collect work, and grade notebooks or project files for courses and labs.",
+      "Manage assignments, shared environments, collection, grading, and student help for technical courses and labs.",
     image: "/public/features/cocalc-course-assignments-2019.png",
     index: true,
     sections: [

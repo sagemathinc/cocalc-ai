@@ -127,6 +127,15 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Julia: remove the hero-adjacent story cards because the hero mock already shows Jupyter, terminal, source-file, and Pluto options.
 - [ ] Future: if a language page still feels long after route-owned endings, evaluate whether the language-specific fit section can move into a disclosure without hiding the primary workflow example.
 
+## Feature Discovery Index Pass
+
+- [x] Re-audit `/features` as the workflow discovery layer after route-owned endings were added to the detail pages.
+- [x] Keep the index focused on workflow discovery instead of adding product/pricing/support CTAs; product decisions now belong on detail-page endings and `/products`.
+- [x] Replace taxonomy-first group labels such as "Documents" and "Compute" with visitor decision labels that better describe what a person is trying to find.
+- [x] Remove implementation-only or overly broad index summaries such as "transparent JSONL format" and generic "data science and machine learning" language.
+- [x] Keep feature cards because each card is an actionable route choice, but reduce mobile card height so the index scans more like a directory than a wall of large panels.
+- [ ] Future: if the feature index still feels long after copy and density cleanup, evaluate whether language/tool cards should be grouped behind a disclosure or tab without hiding core workflow paths.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

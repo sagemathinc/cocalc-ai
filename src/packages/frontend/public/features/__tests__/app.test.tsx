@@ -216,7 +216,7 @@ describe("PublicFeaturesApp", () => {
     ).toBe("/features/ai");
     expect(
       within(startingPoints)
-        .getByRole("link", { name: /Courses/i })
+        .getByRole("link", { name: /Courses and labs/i })
         .getAttribute("href"),
     ).toBe("/features/teaching");
     expect(
@@ -226,11 +226,21 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.queryByAltText(/CoCalc feature map/i),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Documents")).not.toBeNull();
-    expect(screen.getByText("Compute")).not.toBeNull();
-    expect(screen.getByText("AI and automation")).not.toBeNull();
+    expect(
+      screen.getByText("Notebook, writing, and visual work"),
+    ).not.toBeNull();
+    expect(screen.getByText("Compute and languages")).not.toBeNull();
+    expect(screen.getByText("AI and integration")).not.toBeNull();
+    expect(screen.getAllByText("Courses and labs").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/transparent JSONL format/i)).toBeNull();
+    expect(
+      screen.queryByText(/data science, and machine learning/i),
+    ).toBeNull();
+    expect(screen.queryByText(/^Documents$/)).toBeNull();
+    expect(screen.queryByText(/^Compute$/)).toBeNull();
+    expect(screen.queryByText(/^AI and automation$/)).toBeNull();
     expect(screen.queryByText("Open page")).toBeNull();
     expect(screen.queryByRole("link", { name: /Compare CoCalc/i })).toBeNull();
     expect(
@@ -298,7 +308,7 @@ describe("PublicFeaturesApp", () => {
         "box-shadow",
       );
     }
-    expect(screen.getByText("Documents").closest("a")).toBeNull();
+    expect(screen.queryByText(/^Documents$/)).toBeNull();
     const css = Array.from(container.querySelectorAll("style"))
       .map((style) => style.textContent ?? "")
       .join("\n");
