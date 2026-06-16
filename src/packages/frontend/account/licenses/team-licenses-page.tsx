@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Space, Typography } from "antd";
+import { Alert, Space } from "antd";
 import { lazy, Suspense } from "react";
 import { defineMessage } from "react-intl";
 
@@ -20,11 +20,15 @@ export const TEAM_LICENSES_SETTINGS_PAGE = {
   component: TeamLicensesPage,
   description: defineMessage({
     id: "account.settings.overview.team_licenses",
-    defaultMessage: "Buy team seats and assign memberships to people.",
+    defaultMessage: "Create a team license and assign seats to people.",
   }),
   icon: "users",
   key: "team-licenses",
   label: labels.team,
+  title: defineMessage({
+    id: "account.settings.team_licenses.title",
+    defaultMessage: "Team License",
+  }),
 } satisfies SettingsPageDefinition;
 
 function TeamLicensesPage() {
@@ -32,14 +36,6 @@ function TeamLicensesPage() {
 
   return (
     <Space orientation="vertical" size="large" style={{ width: "100%" }}>
-      <Typography.Paragraph
-        type="secondary"
-        style={{ marginBottom: 0, maxWidth: 760 }}
-      >
-        Buy team seats and assign them to the CoCalc accounts that should
-        receive membership access.
-      </Typography.Paragraph>
-
       {error ? (
         <Alert
           type="error"

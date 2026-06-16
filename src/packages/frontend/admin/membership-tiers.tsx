@@ -143,6 +143,7 @@ interface Tier {
   store_description?: string;
   store_highlights?: readonly string[];
   site_license_pool_description?: string;
+  team_visible?: boolean;
   course_store_visible?: boolean;
   course_allowed_domains?: string[];
   priority?: number;
@@ -605,6 +606,7 @@ function buildMembershipTierPayload(values): Tier {
       site_license_pool_description: normalizedOptionalString(
         values.site_license_pool_description,
       ),
+      team_visible: values.team_visible,
       course_allowed_domains: normalizeMembershipTierCourseAllowedDomains(
         values.course_allowed_domains,
       ),
@@ -617,6 +619,7 @@ function buildMembershipTierPayload(values): Tier {
       "store_description",
       "store_highlights",
       "site_license_pool_description",
+      "team_visible",
       "course_store_visible",
       "course_allowed_domains",
       "priority",
@@ -675,6 +678,11 @@ function parseMembershipTierImportJson(value: unknown): Tier[] {
   });
 }
 
+function prioritySortValue(tier: Tier): number {
+  const priority = Number(tier.priority);
+  return Number.isFinite(priority) ? priority : Number.NEGATIVE_INFINITY;
+}
+
 function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [editing, set_editing] = React.useState<Tier | null>(null);
@@ -700,6 +708,7 @@ function useMembershipTiers() {
             store_description: null,
             store_highlights: null,
             site_license_pool_description: null,
+            team_visible: null,
             course_store_visible: null,
             course_allowed_domains: null,
             priority: null,
@@ -805,6 +814,7 @@ function useMembershipTiers() {
       id: trimmedId,
       label: trimmedLabel,
       store_visible: false,
+      team_visible: false,
       course_store_visible: false,
       course_allowed_domains: [],
       disabled: false,
@@ -1514,6 +1524,15 @@ export function MembershipTiers() {
                       <Checkbox>
                         Show in public pricing and purchase UI
                       </Checkbox>
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="team_visible"
+                      label="Team license"
+                      valuePropName="checked"
+                    >
+                      <Checkbox>Available for team licenses</Checkbox>
                     </Form.Item>
                   </Col>
                   <Col {...fieldCol}>
@@ -3531,7 +3550,7 @@ export function MembershipTiers() {
         v.key = v.id;
         return v;
       }),
-      "id",
+      [(tier) => -prioritySortValue(tier), "id"],
     );
     const rowSelection = {
       selectedRowKeys: sel_rows,
@@ -3555,9 +3574,14 @@ export function MembershipTiers() {
           }
         >
           <Table.Column<Tier>
+            title="Priority"
+            dataIndex="priority"
+            defaultSortOrder={"descend"}
+            sorter={(a, b) => prioritySortValue(a) - prioritySortValue(b)}
+          />
+          <Table.Column<Tier>
             title="Tier ID"
             dataIndex="id"
-            defaultSortOrder={"ascend"}
             sorter={(a, b) => a.id.localeCompare(b.id)}
           />
           <Table.Column<Tier> title="Label" dataIndex="label" />
@@ -3586,7 +3610,6 @@ export function MembershipTiers() {
               )
             }
           />
-          <Table.Column<Tier> title="Priority" dataIndex="priority" />
           <Table.Column<Tier>
             title="Monthly"
             dataIndex="price_monthly"

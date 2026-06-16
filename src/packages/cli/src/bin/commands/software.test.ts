@@ -54,11 +54,15 @@ function testSeaSuffix(): { machine: string; os: string } {
   };
 }
 
+function makeRepoRoot(prefix = "software-repo-"): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
 function makeDeps({
   localStore,
   runs,
-  cwd = "/repo",
-  repoRoot = "/repo",
+  cwd,
+  repoRoot,
   env,
   r2Client,
   loadAuthConfig,
@@ -75,8 +79,10 @@ function makeDeps({
   loadAuthConfig?: SoftwareCommandDeps["loadAuthConfig"];
   fetch?: SoftwareCommandDeps["fetch"];
 }): SoftwareCommandDeps {
+  const resolvedRepoRoot = repoRoot ?? makeRepoRoot();
+  const resolvedCwd = cwd ?? resolvedRepoRoot;
   return {
-    cwd,
+    cwd: resolvedCwd,
     env: { COCALC_SOFTWARE_LOCAL_STORE: localStore, ...env },
     now: () => new Date("2026-06-14T23:59:12.345Z"),
     gitMetadata: () => ({
@@ -86,7 +92,7 @@ function makeDeps({
       dirty: false,
       status_porcelain: "",
     }),
-    repoRoot: () => repoRoot,
+    repoRoot: () => resolvedRepoRoot,
     runCommand: async (command, args, options) => {
       runs?.push({ command, args });
       let bundle = command === "pnpm" ? args.at(-1) : undefined;
@@ -96,7 +102,7 @@ function makeDeps({
       const { machine, os } = testSeaSuffix();
       if (command === "pnpm" && args.includes("@cocalc/project-host")) {
         bundle = join(
-          repoRoot,
+          resolvedRepoRoot,
           "src",
           "packages",
           "project-host",
@@ -109,7 +115,7 @@ function makeDeps({
         args.includes("build:bundle")
       ) {
         bundle = join(
-          repoRoot,
+          resolvedRepoRoot,
           "src",
           "packages",
           "project",
@@ -124,7 +130,7 @@ function makeDeps({
         bundle = undefined;
         for (const arch of ["amd64", "arm64"]) {
           const toolsBundle = join(
-            repoRoot,
+            resolvedRepoRoot,
             "src",
             "packages",
             "project",
@@ -146,7 +152,7 @@ function makeDeps({
           ["darwin", "arm64"],
         ] as const) {
           const toolsBundle = join(
-            repoRoot,
+            resolvedRepoRoot,
             "src",
             "packages",
             "project",
@@ -165,7 +171,7 @@ function makeDeps({
         artifactId
       ) {
         bundle = join(
-          repoRoot,
+          resolvedRepoRoot,
           "src",
           "packages",
           "cli",
@@ -179,7 +185,7 @@ function makeDeps({
         artifactId
       ) {
         bundle = join(
-          repoRoot,
+          resolvedRepoRoot,
           "src",
           "packages",
           "launchpad",
@@ -193,7 +199,7 @@ function makeDeps({
         artifactId
       ) {
         bundle = join(
-          repoRoot,
+          resolvedRepoRoot,
           "src",
           "packages",
           "plus",
@@ -438,6 +444,7 @@ test("software info prints component docs for humans", async () => {
 
   const output = logs.join("\n");
   assert.match(output, /# cocalc software info plus/);
+  assert.match(output, /CoCalc Plus - .*tools-minimal/);
   assert.match(output, /tools-minimal/);
   assert.match(output, /--tools-minimal/);
   assert.match(output, /cocalc-plus/);
@@ -470,6 +477,7 @@ test("software info emits agent-oriented json", async () => {
   assert.equal(payload.data.audience, "agent");
   assert.equal(payload.data.component.component, "plus");
   assert.equal(payload.data.component.target_kind, "release-channel");
+  assert.match(payload.data.component.description, /tools-minimal/);
   assert.deepEqual(payload.data.component.related_components, [
     "tools-minimal",
   ]);
@@ -511,8 +519,9 @@ test("software build records an existing file with a generated tag", async () =>
 test("software build hub runs the Rocket bay hub builder", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-hub-build-"));
   const localStore = join(dir, "store");
+  const repoRoot = makeRepoRoot("software-hub-repo-");
   const runs: CapturedRun[] = [];
-  const program = createProgram(makeDeps({ localStore, runs }));
+  const program = createProgram(makeDeps({ localStore, repoRoot, runs }));
 
   await program.parseAsync([
     "node",
@@ -528,7 +537,7 @@ test("software build hub runs the Rocket bay hub builder", async () => {
   assert.equal(runs[0].command, "pnpm");
   assert.deepEqual(runs[0].args.slice(0, 4), [
     "-C",
-    "/repo/src/packages",
+    join(repoRoot, "src", "packages"),
     "--filter",
     "@cocalc/rocket",
   ]);
@@ -552,13 +561,14 @@ test("software build hub runs the Rocket bay hub builder", async () => {
 test("software build resolves the cocalc-ai repo root from subdirectories", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-subdir-build-"));
   const localStore = join(dir, "store");
+  const repoRoot = makeRepoRoot("software-subdir-repo-");
   const runs: CapturedRun[] = [];
   const program = createProgram(
     makeDeps({
       localStore,
       runs,
-      cwd: "/repo/src/packages/cli",
-      repoRoot: "/repo",
+      cwd: join(repoRoot, "src", "packages", "cli"),
+      repoRoot,
     }),
   );
 
@@ -575,7 +585,7 @@ test("software build resolves the cocalc-ai repo root from subdirectories", asyn
   assert.equal(runs.length, 1);
   assert.deepEqual(runs[0].args.slice(0, 4), [
     "-C",
-    "/repo/src/packages",
+    join(repoRoot, "src", "packages"),
     "--filter",
     "@cocalc/rocket",
   ]);
@@ -590,8 +600,8 @@ test("software build resolves the cocalc-ai repo root from subdirectories", asyn
       "utf8",
     ),
   );
-  assert.equal(manifest.source.repo_root, "/repo");
-  assert.equal(manifest.source.src_root, "/repo/src");
+  assert.equal(manifest.source.repo_root, repoRoot);
+  assert.equal(manifest.source.src_root, join(repoRoot, "src"));
 });
 
 test("software build bay runs the full Rocket bay runtime builder", async () => {
@@ -2898,9 +2908,10 @@ test("software smoke project validates project bundle artifact", async () => {
 
 test("software smoke star runs the Star smoke script for a release channel", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-smoke-star-"));
+  const repoRoot = makeRepoRoot("software-smoke-star-repo-");
   const runs: CapturedRun[] = [];
   let smokeEnv: NodeJS.ProcessEnv | undefined;
-  const deps = makeDeps({ localStore: join(dir, "store"), runs });
+  const deps = makeDeps({ localStore: join(dir, "store"), repoRoot, runs });
   deps.runCommand = async (command, args, options) => {
     runs.push({ command, args });
     smokeEnv = options?.env;
@@ -2921,7 +2932,7 @@ test("software smoke star runs the Star smoke script for a release channel", asy
   assert.equal(runs.length, 1);
   assert.equal(runs[0].command.endsWith("scripts/star/smoke-star.sh"), true);
   assert.deepEqual(runs[0].args, []);
-  assert.equal(smokeEnv?.SRC_ROOT, "/repo/src");
+  assert.equal(smokeEnv?.SRC_ROOT, join(repoRoot, "src"));
   assert.equal(smokeEnv?.COCALC_STAR_CHANNEL, "candidate");
   assert.equal(smokeEnv?.COCALC_STAR_RELEASE_CHANNEL, "candidate");
 });

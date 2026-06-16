@@ -214,6 +214,10 @@ describe("purchases Stripe fresh-auth routes", () => {
   });
 
   it("creates an admin payment intent after dangerous auth", async () => {
+    mockCreatePaymentIntent.mockResolvedValueOnce({
+      payment_intent: "pi_admin",
+      hosted_invoice_url: "https://stripe.example/invoice",
+    });
     mockGetParams.mockReturnValue({
       user_account_id: "user-1",
       purpose: "admin-payment",
@@ -227,7 +231,11 @@ describe("purchases Stripe fresh-auth routes", () => {
       await import("./purchases/stripe/create-payment-intent");
     await handler(req, res);
 
-    expect(res._getJSONData()).toEqual({ success: true });
+    expect(res._getJSONData()).toEqual({
+      success: true,
+      payment_intent: "pi_admin",
+      hosted_invoice_url: "https://stripe.example/invoice",
+    });
     expect(mockRequireFreshAuth).not.toHaveBeenCalled();
     expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
       account_id: "acct-1",

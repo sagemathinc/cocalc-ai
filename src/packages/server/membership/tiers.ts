@@ -31,6 +31,7 @@ export interface MembershipTierRecord extends MembershipTierPricing {
   store_description?: string;
   store_highlights?: readonly string[];
   site_license_pool_description?: string;
+  team_visible?: boolean;
   course_store_visible?: boolean;
   priority?: number;
   disabled?: boolean;
@@ -58,7 +59,7 @@ export interface MembershipChangeResult extends MembershipPricingResult {
 
 type ActiveMembershipSubscription = {
   id: number;
-  metadata: { class?: MembershipClass };
+  metadata: { class?: MembershipClass; trial?: boolean };
   cost: number;
   current_period_start: Date;
   current_period_end: Date;
@@ -82,7 +83,7 @@ export async function getMembershipTiers({
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, store_description, store_highlights,
             site_license_pool_description,
-            course_store_visible, course_allowed_domains, priority,
+            team_visible, course_store_visible, course_allowed_domains, priority,
             price_monthly, price_yearly, trial_days, course_price, course_duration_days,
             course_grace_days,
             project_defaults, ai_limits, features, usage_limits, disabled
@@ -135,7 +136,7 @@ export async function getMembershipTierById({
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, store_description, store_highlights,
             site_license_pool_description,
-            course_store_visible, course_allowed_domains, priority,
+            team_visible, course_store_visible, course_allowed_domains, priority,
             price_monthly, price_yearly, trial_days, course_price, course_duration_days,
             course_grace_days,
             project_defaults, ai_limits, features, usage_limits, disabled
@@ -253,6 +254,12 @@ function subscriptionStatusRank(status: string): number {
 }
 
 function subscriptionRefundBasis(subscription: ActiveMembershipSubscription) {
+  if (
+    subscription.metadata?.trial === true &&
+    subscription.latest_purchase_id == null
+  ) {
+    return toDecimal(0);
+  }
   const basis =
     subscription.latest_purchase_cost != null
       ? subscription.latest_purchase_cost

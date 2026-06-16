@@ -313,6 +313,53 @@ describe("membership change pricing", () => {
     expect(pricing.charge).toBe(1440);
   });
 
+  it("does not fall back to subscription cost for unpaid trial credit", async () => {
+    const account_id = uuid();
+    const trialTier = `trial-unpaid-${uuid().slice(0, 8)}` as any;
+    const proTier = `trial-upgrade-${uuid().slice(0, 8)}` as any;
+    await createTestAccount(account_id);
+    await createTestMembershipTier({
+      id: trialTier,
+      price_monthly: 24,
+      price_yearly: 216,
+      priority: 20,
+    });
+    await createTestMembershipTier({
+      id: proTier,
+      price_monthly: 160,
+      price_yearly: 1440,
+      priority: 30,
+    });
+
+    const start = new Date(Date.now() - 60 * 1000);
+    const end = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        class: trialTier,
+        cost: 216,
+        interval: "year",
+        start,
+        end,
+      },
+    );
+    await getPool().query(
+      "UPDATE subscriptions SET latest_purchase_id=NULL, metadata=metadata || $2::jsonb WHERE id=$1",
+      [subscription_id, JSON.stringify({ trial: true })],
+    );
+
+    const quote = await computeMembershipChange({
+      account_id,
+      targetClass: proTier,
+      interval: "year",
+      client: getPool() as any,
+    });
+
+    expect(quote.change).toBe("upgrade");
+    expect(quote.refund).toBe(0);
+    expect(quote.charge).toBe(1440);
+  });
+
   it("bases prorated upgrade credit on the actual paid amount", async () => {
     const account_id = uuid();
     const standardTier = `custom-standard-${uuid().slice(0, 8)}` as any;

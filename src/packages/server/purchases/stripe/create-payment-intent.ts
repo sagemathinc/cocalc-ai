@@ -210,6 +210,7 @@ ${await support()}
     );
   }
 
+  metadata = { ...metadata, invoice_id: invoice.id };
   await recordPaymentIntent({ purpose, account_id, paymentIntentId, metadata });
 
   await stripe.paymentIntents.update(paymentIntentId, {

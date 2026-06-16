@@ -200,6 +200,10 @@ export interface MembershipResolution {
   site_license_id?: string;
   site_license_name?: string;
   organization_name?: string;
+  team_license_id?: string;
+  team_license_status?: TeamLicenseStatus;
+  team_license_period_end?: Date | string;
+  team_license_warning?: TeamLicenseWarning;
   expires?: Date;
 }
 
@@ -223,6 +227,10 @@ export interface MembershipCandidate {
   site_license_id?: string;
   site_license_name?: string;
   organization_name?: string;
+  team_license_id?: string;
+  team_license_status?: TeamLicenseStatus;
+  team_license_period_end?: Date | string;
+  team_license_warning?: TeamLicenseWarning;
   expires?: Date;
 }
 
@@ -257,6 +265,7 @@ export interface MembershipPackageAssignment {
   package_id: string;
   account_id?: string | null;
   email_address?: string | null;
+  account_email_address?: string | null;
   assigned_by_account_id?: string | null;
   assigned_at?: Date;
   revoked_at?: Date | null;
@@ -313,6 +322,67 @@ export interface MembershipPackageDetails extends MembershipPackageRecord {
   active_assignment_count: number;
   available_seat_count: number;
   assignments: MembershipPackageAssignment[];
+}
+
+export type TeamLicenseStatus = "active" | "past_due" | "canceled";
+
+export interface TeamLicenseWarning {
+  type: "past_due";
+  team_license_id: string;
+  expired_at: Date | string;
+  message: string;
+}
+
+export interface TeamLicenseRecord {
+  id: string;
+  owner_account_id: string;
+  status: TeamLicenseStatus;
+  current_period_start: Date | string;
+  current_period_end: Date | string;
+  latest_purchase_id?: number | null;
+  payment?: Record<string, unknown> | null;
+  last_renewal_attempt_at?: Date | string | null;
+  last_renewal_notice_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date | string;
+  updated?: Date | string;
+}
+
+export interface TeamLicenseSeatLine {
+  id: string;
+  team_license_id: string;
+  owner_account_id: string;
+  membership_class: MembershipClass;
+  package_id?: string | null;
+  seat_count: number;
+  annual_price_per_seat: number;
+  metadata?: Record<string, unknown> | null;
+  created?: Date | string;
+  updated?: Date | string;
+  package?: MembershipPackageDetails;
+}
+
+export interface TeamLicenseOverview extends TeamLicenseRecord {
+  seat_lines: TeamLicenseSeatLine[];
+  packages: MembershipPackageDetails[];
+}
+
+export interface TeamLicenseQuoteLineItem {
+  description: string;
+  amount: number;
+}
+
+export interface TeamLicenseQuote {
+  team_license_id?: string;
+  current_period_start: Date | string;
+  current_period_end: Date | string;
+  target_seats: Record<string, number>;
+  current_seats: Record<string, number>;
+  assigned_seats: Record<string, number>;
+  added_seats: Record<string, number>;
+  line_items: TeamLicenseQuoteLineItem[];
+  total_price: number;
+  interval: "year";
 }
 
 export type SiteLicenseManagerRole = "manager" | "viewer";
@@ -979,6 +1049,36 @@ export interface Purchases {
     expires_at?: Date | string;
     metadata?: Record<string, unknown> | null;
   }) => Promise<{ package_id: string; purchase_id: number }>;
+  purchaseMembershipPackages: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    products?: {
+      type: "membership-package";
+      package_id?: string;
+      kind: MembershipPackageKind;
+      membership_class: MembershipClass;
+      seat_count: number;
+      interval?: "month" | "year";
+      course_project_id?: string;
+      starts_at?: Date | string;
+      expires_at?: Date | string;
+      metadata?: Record<string, unknown> | null;
+    }[];
+  }) => Promise<{ package_id: string; purchase_id: number }[]>;
+  getTeamLicense: (opts?: {
+    account_id?: string;
+  }) => Promise<TeamLicenseOverview | null>;
+  getTeamLicenseQuote: (opts?: {
+    account_id?: string;
+    target_seats?: Record<string, number>;
+  }) => Promise<TeamLicenseQuote>;
+  purchaseTeamLicenseChange: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    target_seats?: Record<string, number>;
+  }) => Promise<TeamLicenseOverview>;
   updateMembershipPackage: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1168,6 +1268,10 @@ export const purchases = {
   getMembershipDetails: authFirst,
   getMembershipPackageQuote: authFirst,
   purchaseMembershipPackage: authFirst,
+  purchaseMembershipPackages: authFirst,
+  getTeamLicense: authFirst,
+  getTeamLicenseQuote: authFirst,
+  purchaseTeamLicenseChange: authFirst,
   updateMembershipPackage: authFirst,
   getMembershipPackages: authFirst,
   assignMembershipPackageSeat: authFirst,

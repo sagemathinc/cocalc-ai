@@ -730,6 +730,7 @@ type TierTemplateFields = {
   store_description?: string;
   store_highlights?: readonly string[];
   site_license_pool_description?: string;
+  team_visible?: boolean;
   course_store_visible?: boolean;
   course_allowed_domains?: readonly string[] | null;
   course_price?: number;
@@ -785,6 +786,7 @@ export function applyMembershipTierTemplateFallbacks<
     site_license_pool_description:
       tier.site_license_pool_description ??
       templateFields.site_license_pool_description,
+    team_visible: tier.team_visible ?? templateFields.team_visible,
     course_store_visible:
       tier.course_store_visible ?? template.course_store_visible,
     course_allowed_domains:

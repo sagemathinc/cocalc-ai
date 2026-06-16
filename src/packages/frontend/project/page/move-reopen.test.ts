@@ -38,7 +38,7 @@ describe("reopenProjectAfterMove", () => {
     });
   });
 
-  it("dismisses the completed move before closing and reopening the project", async () => {
+  it("dismisses the completed move while closing and reopening the project", async () => {
     await reopenProjectAfterMove({
       project_id: "83aefe84-6bcc-49fd-b4c7-67a1831efcf7",
       op_id: "move-op-1",
@@ -56,5 +56,37 @@ describe("reopenProjectAfterMove", () => {
       restore_session: true,
       change_history: true,
     });
+  });
+
+  it("still reopens the project when dismissing the completed move fails", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    (
+      webapp_client.conat_client.hub.lro.dismiss as jest.Mock
+    ).mockRejectedValueOnce(new Error("timeout"));
+
+    await reopenProjectAfterMove({
+      project_id: "83aefe84-6bcc-49fd-b4c7-67a1831efcf7",
+      op_id: "move-op-1",
+    });
+    await Promise.resolve();
+
+    expect(webapp_client.conat_client.hub.lro.dismiss).toHaveBeenCalledWith({
+      op_id: "move-op-1",
+    });
+    expect(pageActions.close_project_tab).toHaveBeenCalledWith(
+      "83aefe84-6bcc-49fd-b4c7-67a1831efcf7",
+    );
+    expect(projectsActions.open_project).toHaveBeenCalledWith({
+      project_id: "83aefe84-6bcc-49fd-b4c7-67a1831efcf7",
+      switch_to: true,
+      restore_session: true,
+      change_history: true,
+    });
+    expect(warn).toHaveBeenCalledWith(
+      "failed to dismiss completed project move operation",
+      expect.any(Error),
+    );
+
+    warn.mockRestore();
   });
 });

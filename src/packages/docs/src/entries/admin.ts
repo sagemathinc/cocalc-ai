@@ -16,6 +16,7 @@ import {
   ADMIN_REGISTRATION_TOKENS_BODY,
   ADMIN_ROOTFS_BODY,
   ADMIN_SIGNUP_EMERGENCY_CONTROLS_BODY,
+  ADMIN_SOFTWARE_COMMAND_BODY,
   ADMIN_SITE_SETTINGS_BODY,
   ADMIN_SSO_BODY,
   ADMIN_USERS_BODY,
@@ -139,6 +140,27 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
     summary:
       "Use cocalc-cli for admin inspection, fresh auth, bay listing, account location, and rehome smoke tests.",
     title: "Admin cocalc-cli cookbook",
+    visibility: "admin",
+  },
+  {
+    audiences: ["agents", "teams"],
+    body: ADMIN_SOFTWARE_COMMAND_BODY.trim(),
+    category: "Admin",
+    id: "admin.cocalc-software",
+    image: docsIcon(
+      "/public/docs/cocalc-cli-862b8d4e.webp",
+      "A terminal managing CoCalc software artifacts and deployments",
+    ),
+    lastReviewed: "2026-06-16",
+    noActionReason:
+      "Command-line runbook; run the shown cocalc software commands in an authenticated source checkout.",
+    searchKeywords:
+      "software deploy build push history rollback smoke artifacts release channels R2 bay project-host cli launchpad plus star",
+    slug: "admin/cocalc-software",
+    status: "ready",
+    summary:
+      "Build, publish, deploy, smoke, inspect, and roll back CoCalc software components from a source checkout.",
+    title: "Manage software releases with cocalc software",
     visibility: "admin",
   },
   {

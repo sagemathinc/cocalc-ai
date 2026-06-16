@@ -22,6 +22,9 @@ export const ADMIN_SEARCH_LIMIT = 2500;
 export const USE_BALANCE_TOWARD_SUBSCRIPTIONS =
   "use_balance_toward_subscriptions";
 export const USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT = true;
+export const USE_BALANCE_TOWARD_TEAM_LICENSES =
+  "use_balance_toward_team_licenses";
+export const USE_BALANCE_TOWARD_TEAM_LICENSES_DEFAULT = true;
 
 // AutoBalance: Every parameter is in dollars.
 export interface AutoBalance {

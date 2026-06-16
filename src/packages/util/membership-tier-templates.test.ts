@@ -35,6 +35,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       }),
     );
     expect(tier.course_store_visible).toBe(false);
+    expect(tier.team_visible).toBeUndefined();
     expect(aiLimits.units_5h).toBe(0);
     expect(aiLimits.units_7d).toBe(0);
     expect(
@@ -150,6 +151,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(basic.store_highlights).toContain("More shared resources");
     expect(basic.site_license_pool_description).toMatch(/Light CoCalc access/);
     expect(basic.store_visible).toBe(false);
+    expect(basic.team_visible).toBeUndefined();
     expect(basic.course_store_visible).toBe(false);
     expect(basic.price_monthly).toBe(8);
     expect(basic.price_yearly).toBe(72);
@@ -174,6 +176,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     );
     expect(standard.site_license_pool_description).toMatch(/Everyday CoCalc/);
     expect(standard.store_visible).toBe(false);
+    expect(standard.team_visible).toBeUndefined();
     expect(standard.course_store_visible).toBe(false);
     expect(standard.price_monthly).toBe(24);
     expect(standard.price_yearly).toBe(216);

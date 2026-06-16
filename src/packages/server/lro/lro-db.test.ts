@@ -119,6 +119,36 @@ describe("claimLroOps", () => {
   });
 });
 
+describe("touchLro", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    connectQueryMock = jest.fn(async () => ({ rows: [] }));
+    queryMock = jest.fn(async () => ({ rows: [] }));
+  });
+
+  it("does not refresh terminal LROs", async () => {
+    const { touchLro } = await import("./lro-db");
+
+    await touchLro({
+      op_id: "11111111-1111-1111-1111-111111111111",
+      owner_type: "hub",
+      owner_id: "22222222-2222-4222-8222-222222222222",
+    });
+
+    const touchCall = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("UPDATE long_running_operations"),
+    );
+    expect(touchCall).toBeDefined();
+    expect(touchCall?.[0]).toContain("status <> ALL($4::text[])");
+    expect(touchCall?.[1]).toEqual([
+      "11111111-1111-1111-1111-111111111111",
+      "hub",
+      "22222222-2222-4222-8222-222222222222",
+      ["succeeded", "failed", "canceled", "expired"],
+    ]);
+  });
+});
+
 describe("ensureLroSchema", () => {
   beforeEach(() => {
     jest.resetModules();

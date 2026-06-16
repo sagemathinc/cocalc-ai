@@ -206,6 +206,7 @@ describe("createPaymentIntent", () => {
       description: "Basic membership, annual",
       metadata: expect.objectContaining({
         account_id: "acct-1",
+        invoice_id: "in_123",
         membership_class: "basic",
         purpose: "membership-change",
         total_excluding_tax_usd: "7200",

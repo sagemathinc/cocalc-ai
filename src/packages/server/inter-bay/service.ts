@@ -151,6 +151,11 @@ import {
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import {
+  getTeamLicenseOverviewForOwner,
+  resolveTeamLicenseQuote,
+} from "@cocalc/server/membership/team-licenses";
+import { purchaseTeamLicenseChange } from "@cocalc/server/purchases/team-license";
+import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
   archiveSiteLicensePool,
@@ -846,6 +851,20 @@ async function startAccountLocalService(): Promise<void> {
     getMembershipPackages: async ({ owner_account_id }) =>
       await listMembershipPackageDetailsForOwner({
         owner_account_id,
+      }),
+    getTeamLicense: async ({ account_id }) =>
+      await getTeamLicenseOverviewForOwner({
+        owner_account_id: account_id,
+      }),
+    getTeamLicenseQuote: async ({ account_id, target_seats }) =>
+      await resolveTeamLicenseQuote({
+        owner_account_id: account_id,
+        target_seats,
+      }),
+    purchaseTeamLicenseChange: async ({ account_id, target_seats }) =>
+      await purchaseTeamLicenseChange({
+        account_id,
+        target_seats: target_seats ?? {},
       }),
     adminProvisionSiteLicense: async (opts) =>
       isSeedSiteLicenseBay()
