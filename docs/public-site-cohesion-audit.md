@@ -138,6 +138,9 @@ recommendations are evaluated, completed, or deliberately deferred.
 
 ## Feature Mobile Decision-Speed Pass
 
+- [x] Active: rework `/features` so AI is visually first-class again, teaching is discoverable as a course/workshop workflow rather than equal product focus, and language/math discovery is shorter on mobile without hiding high-intent routes.
+- [x] Active: validate that `Dedicated project hosts` stays framed as dedicated hosted capacity, not a standalone general-market project-host product or public self-hosting promise.
+- [x] Active: rerun focused tests, browser QA, rebuild `blaec.cocalc.ai`, and commit after the corrected feature-index hierarchy is validated.
 - [x] Active: restore `Courses and labs` as a visible lower workflow group without returning it to the cramped footer-adjacent position.
 - [x] Active: finish the `Compute and languages` split into clearer visible groups and verify the split improves scan speed without adding visual clutter.
 - [x] Active: decide whether `Dedicated project hosts` belongs as a compute/runtime discovery card and keep the wording bounded to the source-supported customer-facing surface.
@@ -149,6 +152,13 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Split the long `Compute and languages` section into `Runtime and project hosts` and `Languages and math` because the original group mixed environment/capacity decisions with language-stack decisions.
 - [x] Keep the split visible rather than using a disclosure so mobile visitors can still scan directly to Python, R, Julia, SageMath, Octave, Terminal, or Linux without opening an extra control.
 - [x] Add a conservative `Dedicated project hosts` route to the runtime group because source and docs support customer-facing dedicated hosted capacity; do not frame self-hosted project hosts as a general public feature while the code keeps self-host providers admin/alpha-gated.
+- [x] Revise the previous course-group restore: teaching should remain easy to find for instructors, courses, and professional-development workshops, but the feature index should not make course management look like the central business focus.
+- [x] Revise the previous group order: AI should not sit behind notebook, teaching, runtime, and language sections on a page for an AI-native technical workspace.
+- [x] Prefer a compact visible language/math treatment over a collapsed disclosure unless browser QA shows the compact treatment harms readability; external UX guidance supports preserving strong information scent for high-intent links.
+- [x] Put AI first in the feature-index starter panel and first grouped section; this matches the pitch hierarchy for an AI-native technical workspace without turning the page into generic AI IDE messaging.
+- [x] Replace the equal-weight course starter/group treatment with a secondary `Teaching and workshops` callout so teaching remains discoverable for instructors and training use without becoming the main commercial signal.
+- [x] Keep language/math routes visible but render them as compact linked rows rather than full cards, reducing mobile scroll while preserving direct information scent for Python, R, Julia, SageMath, and Octave.
+- [x] Rename the public runtime group to `Runtime and hosted compute` and the project-host card to `Dedicated compute hosts` so `Project Host` remains a linked technical detail rather than a general-market product label.
 - [ ] Future: if the language/math group still feels long on mobile, evaluate a compact two-column mobile card treatment or a language-specific disclosure only after confirming it does not hide high-intent language routes.
 
 ## Agent Workspace And Public-Site Artifact Standards

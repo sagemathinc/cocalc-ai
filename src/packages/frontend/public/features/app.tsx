@@ -86,44 +86,40 @@ const FEATURE_INDEX_PRIORITY = [
 
 const FEATURE_GROUPS = [
   {
+    accent: COLORS.AI_ASSISTANT_FONT,
+    description:
+      "Start with Codex in CoCalc, then use API or CLI routes when project workflows need automation.",
+    icon: "robot",
+    slugs: ["ai", "api", "cli"],
+    title: "AI workflows and integration",
+    variant: "cards",
+  },
+  {
     accent: COLORS.BLUE_D,
     description:
       "Find the page for notebooks, papers, boards, slides, and other technical artifacts.",
     icon: "jupyter",
     slugs: ["jupyter-notebook", "latex-editor", "whiteboard", "slides"],
     title: "Notebook, writing, and visual work",
-  },
-  {
-    accent: COLORS.RUN,
-    description:
-      "Find course workflows for assignments, grading, shared environments, and student support.",
-    icon: "graduation-cap",
-    slugs: ["teaching"],
-    title: "Courses and labs",
+    variant: "cards",
   },
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     description:
-      "Find shell, Linux, and dedicated-host pages for code that needs a real runtime.",
+      "Find shell, Linux, and dedicated hosted capacity for work that needs a real runtime.",
     icon: "terminal",
     slugs: ["terminal", "linux", "project-hosts"],
-    title: "Runtime and project hosts",
+    title: "Runtime and hosted compute",
+    variant: "cards",
   },
   {
     accent: COLORS.RUN,
     description:
-      "Find language and math software pages for notebooks, scripts, teaching, and research.",
+      "Jump directly to the language or math environment you need for notebooks, scripts, courses, or research.",
     icon: "python",
     slugs: ["python", "r-statistical-software", "julia", "sage", "octave"],
     title: "Languages and math",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    description:
-      "Find agent, API, and command-line integration paths around CoCalc projects.",
-    icon: "robot",
-    slugs: ["ai", "api", "cli"],
-    title: "AI and integration",
+    variant: "list",
   },
 ] as const;
 
@@ -171,8 +167,8 @@ const TECHNICAL_SURFACE_CARDS = {
     href: appPath("docs/hosts/project-hosts"),
     slug: "project-hosts",
     summary:
-      "Run projects on dedicated or cloud-backed compute when a group needs isolated capacity.",
-    title: "Dedicated project hosts",
+      "Use dedicated hosted compute for projects that need isolated or larger capacity.",
+    title: "Dedicated compute hosts",
   },
 } satisfies Record<
   string,
@@ -181,31 +177,27 @@ const TECHNICAL_SURFACE_CARDS = {
 
 const FEATURE_STARTERS = [
   {
-    body: "Notebook-first computation with files, output, and review history nearby.",
+    body: "Work with Codex near the notebooks, files, terminals, and review history your team already uses.",
+    featured: true,
+    icon: "robot",
+    slug: "ai",
+    title: "AI agents in CoCalc",
+  },
+  {
+    body: "Keep computation, output, review, and collaboration in one notebook workflow.",
     icon: "jupyter",
     slug: "jupyter-notebook",
     title: "Notebooks",
   },
   {
-    body: "A browser Linux shell for scripts, packages, services, and debugging.",
+    body: "Use a Linux shell and project compute for packages, services, and debugging.",
     icon: "terminal",
     slug: "terminal",
     title: "Terminals",
   },
-  {
-    body: "Codex agent work in the same project context your team uses.",
-    icon: "robot",
-    slug: "ai",
-    title: "AI agents",
-  },
-  {
-    body: "Assignments, grading, shared environments, and student support.",
-    icon: "graduation-cap",
-    slug: "teaching",
-    title: "Courses and labs",
-  },
 ] satisfies {
   body: string;
+  featured?: boolean;
   icon: IconName;
   slug: string;
   title: string;
@@ -251,12 +243,14 @@ const FEATURE_INDEX_CSS = `
   }
 
   .cocalc-feature-link-card,
+  .cocalc-feature-list-link,
   .cocalc-feature-starter-card {
     cursor: pointer;
     transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
   }
 
   .cocalc-feature-link-card:hover,
+  .cocalc-feature-list-link:hover,
   .cocalc-feature-starter-card:hover {
     border-color: ${PUBLIC_COLORS.linkHover} !important;
     box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.1)} !important;
@@ -264,9 +258,20 @@ const FEATURE_INDEX_CSS = `
   }
 
   .cocalc-feature-link-card:focus-visible,
+  .cocalc-feature-list-link:focus-visible,
   .cocalc-feature-starter-card:focus-visible {
     outline: 2px solid ${PUBLIC_COLORS.linkHover};
     outline-offset: 3px;
+  }
+
+  .cocalc-feature-starter-card-featured {
+    grid-column: 1 / -1;
+  }
+
+  .cocalc-feature-link-list {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   }
 
   @media (max-width: 920px) {
@@ -292,6 +297,10 @@ const FEATURE_INDEX_CSS = `
     .cocalc-feature-link-card {
       min-height: 0 !important;
       padding: 14px !important;
+    }
+
+    .cocalc-feature-link-list {
+      grid-template-columns: minmax(0, 1fr) !important;
     }
   }
 `;
@@ -385,6 +394,53 @@ function FeatureLinkCard({ card }: { card: FeatureIndexCard }) {
   );
 }
 
+function FeatureListLink({ card }: { card: FeatureIndexCard }) {
+  const meta = featureMeta(card.slug);
+  return (
+    <a
+      className="cocalc-feature-list-link"
+      href={card.href}
+      style={{
+        alignItems: "start",
+        background: PUBLIC_COLORS.surface,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: FEATURE_PANEL_RADIUS,
+        boxShadow: FEATURE_PANEL_SHADOW,
+        color: "inherit",
+        display: "grid",
+        gap: 12,
+        gridTemplateColumns: "40px minmax(0, 1fr)",
+        minHeight: 96,
+        padding: 14,
+        textDecoration: "none",
+      }}
+    >
+      <span
+        style={{
+          alignItems: "center",
+          background: `${meta.accent}14`,
+          border: `1px solid ${meta.accent}33`,
+          borderRadius: FEATURE_PANEL_RADIUS,
+          color: meta.accent,
+          display: "flex",
+          fontSize: 19,
+          height: 40,
+          justifyContent: "center",
+          width: 40,
+        }}
+      >
+        <Icon name={meta.icon} />
+      </span>
+      <span>
+        <Text strong style={{ display: "block", marginBottom: 4 }}>
+          {card.title}
+        </Text>
+        <Text type="secondary">{card.summary}</Text>
+      </span>
+    </a>
+  );
+}
+
 function getFeatureIndexCard(
   slug: string,
   pages: FeaturePage[],
@@ -415,6 +471,7 @@ function FeatureGroupSection({
     .map((slug) => getFeatureIndexCard(slug, pages))
     .filter((card) => card != null);
   if (!groupCards.length) return null;
+  const useList = group.variant === "list";
 
   return (
     <section>
@@ -460,17 +517,118 @@ function FeatureGroupSection({
           </div>
         </Col>
         <Col lg={18} xs={24}>
+          {useList ? (
+            <div className="cocalc-feature-link-list">
+              {groupCards.map((card) => (
+                <FeatureListLink key={card.slug} card={card} />
+              ))}
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gap: 16,
+                gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+              }}
+            >
+              {groupCards.map((card) => (
+                <FeatureLinkCard key={card.slug} card={card} />
+              ))}
+            </div>
+          )}
+        </Col>
+      </Row>
+    </section>
+  );
+}
+
+function TeachingWorkflowCallout() {
+  const meta = featureMeta("teaching");
+  return (
+    <section aria-label="Teaching and course workflows">
+      <Row align="middle" gutter={[18, 18]}>
+        <Col lg={6} xs={24}>
           <div
             style={{
-              display: "grid",
-              gap: 16,
-              gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+              borderLeft: `3px solid ${meta.accent}`,
+              padding: "4px 4px 4px 18px",
             }}
           >
-            {groupCards.map((card) => (
-              <FeatureLinkCard key={card.slug} card={card} />
-            ))}
+            <Flex vertical gap={12}>
+              <div
+                style={{
+                  alignItems: "center",
+                  background: `${meta.accent}10`,
+                  borderRadius: FEATURE_PANEL_RADIUS,
+                  color: meta.accent,
+                  display: "flex",
+                  fontSize: 22,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <Icon name={meta.icon} />
+              </div>
+              <div>
+                <Title level={2} style={{ margin: "0 0 8px" }}>
+                  Teaching and workshops
+                </Title>
+                <Paragraph
+                  style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}
+                >
+                  A route for instructors and workshop teams who need the same
+                  technical tools in a guided setting.
+                </Paragraph>
+              </div>
+            </Flex>
           </div>
+        </Col>
+        <Col lg={18} xs={24}>
+          <a
+            className="cocalc-feature-link-card"
+            href={featurePath("teaching")}
+            style={{
+              background: PUBLIC_COLORS.surface,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: FEATURE_PANEL_RADIUS,
+              boxShadow: FEATURE_PANEL_SHADOW,
+              color: "inherit",
+              display: "block",
+              padding: 18,
+              textDecoration: "none",
+            }}
+          >
+            <Flex align="start" gap={14}>
+              <span
+                style={{
+                  alignItems: "center",
+                  background: `${meta.accent}14`,
+                  border: `1px solid ${meta.accent}33`,
+                  borderRadius: FEATURE_PANEL_RADIUS,
+                  color: meta.accent,
+                  display: "flex",
+                  flex: "0 0 auto",
+                  fontSize: 22,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <Icon name={meta.icon} />
+              </span>
+              <span>
+                <Title level={4} style={{ margin: "0 0 8px" }}>
+                  Technical courses and labs
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  Use CoCalc for assignments, shared environments, grading, and
+                  live help when students or workshop participants learn with
+                  the same technical tools they will keep using.
+                </Paragraph>
+              </span>
+            </Flex>
+          </a>
         </Col>
       </Row>
     </section>
@@ -520,7 +678,8 @@ function FeaturesIndex() {
               }}
             >
               Use this index to find the part of CoCalc that matches the work in
-              front of you: computation, documents, AI assistance, teaching, or
+              front of you: AI-assisted project work, notebooks, documents,
+              runtime environments, language stacks, teaching workflows, or
               platform integration. Each page explains when it fits and what to
               do next.
             </Paragraph>
@@ -552,7 +711,7 @@ function FeaturesIndex() {
                 Start with
               </Text>
               <Title level={3} style={{ margin: "8px 0 0" }}>
-                Pick the page that matches the question in front of you.
+                Begin with AI, notebooks, or runtime.
               </Title>
             </div>
             <div className="cocalc-feature-index-start-grid">
@@ -560,7 +719,11 @@ function FeaturesIndex() {
                 const meta = featureMeta(starter.slug);
                 return (
                   <a
-                    className="cocalc-feature-starter-card"
+                    className={`cocalc-feature-starter-card${
+                      starter.featured
+                        ? " cocalc-feature-starter-card-featured"
+                        : ""
+                    }`}
                     href={featurePath(starter.slug)}
                     key={starter.slug}
                     style={{
@@ -609,6 +772,7 @@ function FeaturesIndex() {
       {FEATURE_GROUPS.map((group) => (
         <FeatureGroupSection group={group} key={group.title} pages={pages} />
       ))}
+      <TeachingWorkflowCallout />
     </>
   );
 }

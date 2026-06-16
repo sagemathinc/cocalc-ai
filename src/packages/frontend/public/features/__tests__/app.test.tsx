@@ -200,28 +200,24 @@ describe("PublicFeaturesApp", () => {
       name: "CoCalc feature starting points",
     });
     expect(
-      within(startingPoints).getByText(
-        "Pick the page that matches the question in front of you.",
-      ),
+      within(startingPoints).getByText("Begin with AI, notebooks, or runtime."),
     ).not.toBeNull();
     expect(
-      within(startingPoints)
-        .getByRole("link", { name: /Terminals/i })
-        .getAttribute("href"),
-    ).toBe("/features/terminal");
+      Array.from(within(startingPoints).getAllByRole("link"))
+        .map((link) => link.getAttribute("href"))
+        .includes("/features/terminal"),
+    ).toBe(true);
     expect(
       within(startingPoints)
-        .getByRole("link", { name: /AI agents/i })
+        .getByRole("link", { name: /AI agents in CoCalc/i })
         .getAttribute("href"),
     ).toBe("/features/ai");
     expect(
-      within(startingPoints)
-        .getByRole("link", { name: /Courses and labs/i })
-        .getAttribute("href"),
-    ).toBe("/features/teaching");
+      within(startingPoints).queryByRole("link", { name: /Courses and labs/i }),
+    ).toBeNull();
     expect(
       screen.getAllByRole("link", { name: /Courses and labs/i }),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       within(startingPoints).queryByRole("link", { name: /Compare CoCalc/i }),
     ).toBeNull();
@@ -232,10 +228,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Notebook, writing, and visual work"),
     ).not.toBeNull();
-    expect(screen.getByText("Runtime and project hosts")).not.toBeNull();
+    expect(screen.getByText("AI workflows and integration")).not.toBeNull();
+    expect(screen.getByText("Runtime and hosted compute")).not.toBeNull();
     expect(screen.getByText("Languages and math")).not.toBeNull();
-    expect(screen.getByText("AI and integration")).not.toBeNull();
-    expect(screen.getAllByText("Courses and labs")).toHaveLength(2);
+    expect(screen.getByText("Teaching and workshops")).not.toBeNull();
+    expect(screen.queryByText("AI and integration")).toBeNull();
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);
     expect(screen.queryByText(/transparent JSONL format/i)).toBeNull();
@@ -245,6 +242,7 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText(/^Documents$/)).toBeNull();
     expect(screen.queryByText(/^Compute$/)).toBeNull();
     expect(screen.queryByText(/^Compute and languages$/)).toBeNull();
+    expect(screen.queryByText(/^Runtime and project hosts$/)).toBeNull();
     expect(screen.queryByText(/^AI and automation$/)).toBeNull();
     expect(screen.queryByText("Open page")).toBeNull();
     expect(screen.queryByRole("link", { name: /Compare CoCalc/i })).toBeNull();
@@ -253,7 +251,7 @@ describe("PublicFeaturesApp", () => {
     ).toBe("/docs/cli/use-cocalc-cli");
     expect(
       screen
-        .getByRole("link", { name: /Dedicated project hosts/i })
+        .getByRole("link", { name: /Dedicated compute hosts/i })
         .getAttribute("href"),
     ).toBe("/docs/hosts/project-hosts");
     expect(
@@ -282,12 +280,18 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(
       container.querySelectorAll(".cocalc-feature-starter-card"),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
+    expect(
+      container.querySelectorAll(".cocalc-feature-starter-card-featured"),
+    ).toHaveLength(1);
     expect(
       container.querySelectorAll(".cocalc-feature-group-label"),
-    ).toHaveLength(5);
+    ).toHaveLength(4);
     expect(container.querySelectorAll(".cocalc-feature-link-card").length).toBe(
-      16,
+      11,
+    );
+    expect(container.querySelectorAll(".cocalc-feature-list-link").length).toBe(
+      5,
     );
     expect(
       container.querySelectorAll(".cocalc-feature-link-card .ant-tag"),
