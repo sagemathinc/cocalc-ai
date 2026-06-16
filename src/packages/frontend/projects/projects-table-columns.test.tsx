@@ -1,5 +1,6 @@
 import {
   getProjectTableColumns,
+  projectDescriptionText,
   type ProjectTableRecord,
 } from "./projects-table-columns";
 import { render, screen } from "@testing-library/react";
@@ -11,6 +12,7 @@ jest.mock("@cocalc/frontend/feature", () => ({
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }) => <span data-testid={`icon-${name}`} />,
   TimeAgo: () => <span>time ago</span>,
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/components/time-elapsed", () => ({
@@ -119,5 +121,60 @@ describe("getProjectTableColumns", () => {
 
     expect(screen.getByText("Deletion failed - retry delete")).toBeTruthy();
     expect(screen.getByText("Error: project not found")).toBeTruthy();
+  });
+
+  it("shows project rootfs image labels and upgrade availability", () => {
+    const columns = getProjectTableColumns(
+      jest.fn(),
+      () => null,
+      jest.fn(),
+      { columnKey: "last_edited", order: "descend" },
+      [],
+      false,
+      null,
+      intl,
+      {
+        rootfsImages: [
+          {
+            id: "minimal-1",
+            image: "cocalc.local/rootfs/minimal:1.1",
+            label: "Minimal Image",
+            family: "minimal",
+            version: "1.1",
+          },
+          {
+            id: "minimal-2",
+            image: "cocalc.local/rootfs/minimal:1.2",
+            label: "Minimal Image",
+            family: "minimal",
+            version: "1.2",
+            supersedes_image_id: "minimal-1",
+          },
+        ] as any,
+      },
+    );
+
+    const titleColumn = columns.find((column) => column.key === "title") as any;
+
+    render(
+      <>
+        {titleColumn.render(
+          null,
+          record({
+            rootfs_image_id: "minimal-1",
+          }),
+        )}
+      </>,
+    );
+
+    expect(screen.getByText("Minimal Image 1.1")).toBeTruthy();
+    expect(screen.getByText("Upgrade")).toBeTruthy();
+  });
+
+  it("omits empty and placeholder project descriptions", () => {
+    expect(projectDescriptionText("")).toBe("");
+    expect(projectDescriptionText("No Description")).toBe("");
+    expect(projectDescriptionText("No description")).toBe("");
+    expect(projectDescriptionText("Useful note")).toBe("Useful note");
   });
 });

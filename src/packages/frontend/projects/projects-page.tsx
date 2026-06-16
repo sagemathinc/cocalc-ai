@@ -50,6 +50,11 @@ import {
   retainScheduledProjectDeletes,
   useProjectDeleteQueue,
 } from "./project-delete-queue";
+import {
+  managedRootfsCatalogUrl,
+  useRootfsImages,
+} from "@cocalc/frontend/rootfs/manifest";
+import { projectRootfsEntryLabel } from "./project-rootfs-badge";
 
 const LOADING_STYLE: CSS = {
   fontSize: "40px",
@@ -93,6 +98,17 @@ export const ProjectsPage: React.FC = () => {
   const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
   const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const { images: rootfsImages, loading: rootfsImagesLoading } =
+    useRootfsImages([managedRootfsCatalogUrl()], { limit: 200 });
+  const rootfsLabelById = useMemo(() => {
+    const labelMap = new globalThis.Map<string, string>();
+    for (const entry of rootfsImages) {
+      if (entry.id) {
+        labelMap.set(entry.id, projectRootfsEntryLabel({ entry }));
+      }
+    }
+    return labelMap;
+  }, [rootfsImages]);
 
   const all_projects: string[] = useMemo(
     () => project_map?.keySeq().toJS() ?? [],
@@ -169,6 +185,7 @@ export const ProjectsPage: React.FC = () => {
       search,
       hidden,
       "last_edited" /* "user_last_active" was confusing */,
+      rootfsLabelById,
     );
   }, [
     project_map,
@@ -178,6 +195,7 @@ export const ProjectsPage: React.FC = () => {
     filter,
     selected_hashtags,
     search,
+    rootfsLabelById,
   ]);
 
   const activeHashtags = selected_hashtags?.get(filter);
@@ -609,12 +627,16 @@ export const ProjectsPage: React.FC = () => {
                       {mobileProjectsList ? (
                         <MobileProjectsList
                           visible_projects={visible_projects}
+                          rootfsImages={rootfsImages}
+                          rootfsImagesLoading={rootfsImagesLoading}
                           selectedProjectIds={selectedProjectIds}
                           onSelectedProjectIdsChange={setSelectedProjectIds}
                         />
                       ) : (
                         <ProjectsTable
                           visible_projects={visible_projects}
+                          rootfsImages={rootfsImages}
+                          rootfsImagesLoading={rootfsImagesLoading}
                           height={tableHeight}
                           narrow={narrow}
                           filteredCollaborators={filteredCollaborators}

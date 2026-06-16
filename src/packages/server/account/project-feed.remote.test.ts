@@ -49,6 +49,7 @@ describe("server/account/project-feed remote home-bay apply", () => {
         description: "available from another bay",
         theme: null,
         host_id: HOST_ID,
+        rootfs_image_id: "official-minimal",
         owning_bay_id: "bay-0",
         deletion_protection: true,
         users: {
@@ -69,7 +70,7 @@ describe("server/account/project-feed remote home-bay apply", () => {
     await expect(
       getPool().query(
         `SELECT project_id, owning_bay_id, host_id, title, description,
-                is_hidden, deletion_protection, last_edited, last_backup
+                rootfs_image_id, is_hidden, deletion_protection, last_edited, last_backup
            FROM account_project_index
           WHERE account_id = $1`,
         [ACCOUNT_ID],
@@ -80,6 +81,7 @@ describe("server/account/project-feed remote home-bay apply", () => {
           project_id: PROJECT_ID,
           owning_bay_id: "bay-0",
           host_id: HOST_ID,
+          rootfs_image_id: "official-minimal",
           title: "Shared Project",
           description: "available from another bay",
           is_hidden: false,
