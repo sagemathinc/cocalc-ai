@@ -5,7 +5,7 @@
 
 import type { ReactNode } from "react";
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
@@ -125,14 +125,6 @@ function CourseDashboardMock() {
               </div>
             </div>
           </Flex>
-          <Flex gap={8} wrap>
-            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-              student projects
-            </Tag>
-            <Tag color="green" style={{ marginInlineEnd: 0 }}>
-              shared materials
-            </Tag>
-          </Flex>
         </Flex>
         <Row gutter={[12, 12]}>
           <Col xs={24} md={11}>
@@ -150,10 +142,10 @@ function CourseDashboardMock() {
                   Assignments
                 </Text>
                 {[
-                  ["Lab 4: PDEs", "Assign", "blue"],
-                  ["HW 3: Dynamics", "Collect", "green"],
-                  ["Project proposal", "Grade", "purple"],
-                ].map(([name, status, color]) => (
+                  ["Lab 4: PDEs", "Assign"],
+                  ["HW 3: Dynamics", "Collect"],
+                  ["Project proposal", "Grade"],
+                ].map(([name, status]) => (
                   <Flex
                     align="center"
                     justify="space-between"
@@ -165,9 +157,9 @@ function CourseDashboardMock() {
                     }}
                   >
                     <Text style={{ color: PUBLIC_COLORS.surface }}>{name}</Text>
-                    <Tag color={color} style={{ marginInlineEnd: 0 }}>
+                    <Text strong style={{ color: PUBLIC_COLORS.footerText }}>
                       {status}
-                    </Tag>
+                    </Text>
                   </Flex>
                 ))}
                 <div
@@ -238,11 +230,10 @@ function CourseDashboardMock() {
                     </div>
                   ))}
                 </div>
-                <Flex gap={8} wrap>
-                  <Tag style={{ marginInlineEnd: 0 }}>side chat</Tag>
-                  <Tag style={{ marginInlineEnd: 0 }}>TimeTravel</Tag>
-                  <Tag style={{ marginInlineEnd: 0 }}>snapshots</Tag>
-                </Flex>
+                <Text style={{ color: PUBLIC_COLORS.mutedText }}>
+                  Help, history, and snapshots stay close to each student
+                  project.
+                </Text>
               </Flex>
             </div>
           </Col>
@@ -308,7 +299,7 @@ function WorkflowDiagram() {
   );
 }
 
-function PositioningDiagram() {
+function CourseFitDiagram() {
   const rows = [
     ["LMS", "rosters, calendars, announcements, institutional shell"],
     ["Notebook hub", "kernels, notebooks, autograding, compute"],
@@ -329,18 +320,26 @@ function PositioningDiagram() {
     >
       <Flex vertical gap={12}>
         {rows.map(([label, description], index) => (
-          <Flex align="center" gap={12} key={label} wrap>
-            <Tag
-              color={index === 2 ? "blue" : undefined}
-              style={{ marginInlineEnd: 0, minWidth: 118 }}
-            >
-              {label}
-            </Tag>
-            <Icon name="arrow-right" style={{ color: PUBLIC_COLORS.brand }} />
+          <div
+            key={label}
+            style={{
+              background:
+                index === 2
+                  ? alpha(PUBLIC_COLORS.brand, 0.08)
+                  : PUBLIC_COLORS.surfaceMuted,
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: PANEL_RADIUS,
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns: "120px minmax(0, 1fr)",
+              padding: "12px 14px",
+            }}
+          >
+            <Text strong>{label}</Text>
             <Text style={{ color: PUBLIC_COLORS.mutedText }}>
               {description}
             </Text>
-          </Flex>
+          </div>
         ))}
       </Flex>
     </div>
@@ -370,12 +369,18 @@ export default function TeachingFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag
-                color="green"
-                style={{ alignSelf: "flex-start", marginInlineEnd: 0 }}
+              <Text
+                strong
+                style={{
+                  alignSelf: "flex-start",
+                  color: COURSE_ACCENT,
+                  fontSize: 12,
+                  letterSpacing: 0,
+                  textTransform: "uppercase",
+                }}
               >
                 Technical course workspace
-              </Tag>
+              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Teach where students compute, write, and collaborate
               </Title>
@@ -452,16 +457,10 @@ export default function TeachingFeaturePage({
       <PublicSection>
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={12}>
-            <PositioningDiagram />
+            <CourseFitDiagram />
           </Col>
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Tag
-                color="blue"
-                style={{ alignSelf: "flex-start", marginInlineEnd: 0 }}
-              >
-                Where CoCalc fits
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Pair CoCalc with the systems your institution already uses
               </Title>
@@ -512,10 +511,7 @@ export default function TeachingFeaturePage({
       <PublicSection>
         <Flex vertical gap={18}>
           <div>
-            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-              Review and grading
-            </Tag>
-            <Title level={3} style={{ margin: "10px 0 8px" }}>
+            <Title level={3} style={{ margin: "0 0 8px" }}>
               Grade in the same workspace students used
             </Title>
             <Paragraph style={{ margin: 0, maxWidth: 760 }}>
@@ -608,12 +604,6 @@ export default function TeachingFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Tag
-                color="green"
-                style={{ alignSelf: "flex-start", marginInlineEnd: 0 }}
-              >
-                Student onboarding
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Reduce local setup friction
               </Title>

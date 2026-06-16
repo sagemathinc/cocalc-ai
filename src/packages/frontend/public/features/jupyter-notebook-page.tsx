@@ -5,7 +5,7 @@
 
 import type { ReactNode } from "react";
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
@@ -20,6 +20,7 @@ import {
 const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
+const PANEL_RADIUS = 8;
 
 function IconBadge({
   accent = PUBLIC_COLORS.brand,
@@ -34,7 +35,7 @@ function IconBadge({
         alignItems: "center",
         background: `${accent}14`,
         border: `1px solid ${accent}33`,
-        borderRadius: 16,
+        borderRadius: PANEL_RADIUS,
         color: accent,
         display: "inline-flex",
         flex: "0 0 auto",
@@ -65,7 +66,7 @@ function StoryCard({
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 22,
+        borderRadius: PANEL_RADIUS,
         boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
         height: "100%",
         padding: 22,
@@ -104,7 +105,7 @@ function NotebookMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: PANEL_RADIUS,
         boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
         padding: 20,
       }}
@@ -120,19 +121,11 @@ function NotebookMock() {
               </div>
             </div>
           </Flex>
-          <Flex gap={8} wrap>
-            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-              running
-            </Tag>
-            <Tag color="green" style={{ marginInlineEnd: 0 }}>
-              shared
-            </Tag>
-          </Flex>
         </Flex>
         <div
           style={{
             background: "#0b1f47",
-            borderRadius: 20,
+            borderRadius: PANEL_RADIUS,
             color: "#dbeafe",
             overflow: "hidden",
           }}
@@ -169,7 +162,7 @@ function NotebookMock() {
                 style={{
                   background: "rgba(255,255,255,0.08)",
                   border: "1px solid rgba(255,255,255,0.14)",
-                  borderRadius: 14,
+                  borderRadius: PANEL_RADIUS,
                   padding: 12,
                 }}
               >
@@ -178,7 +171,7 @@ function NotebookMock() {
                 <div
                   style={{
                     background: "rgba(255,255,255,0.1)",
-                    borderRadius: 10,
+                    borderRadius: PANEL_RADIUS,
                     color: "#bbf7d0",
                     marginTop: 10,
                     padding: "8px 10px",
@@ -204,7 +197,7 @@ function NotebookMock() {
                 style={{
                   background: "#fff",
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 14,
+                  borderRadius: PANEL_RADIUS,
                   padding: "9px 10px",
                 }}
               >
@@ -225,7 +218,7 @@ function LiveStateDiagram() {
       style={{
         background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 26,
+        borderRadius: PANEL_RADIUS,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -234,7 +227,7 @@ function LiveStateDiagram() {
         <Flex align="center" gap={12}>
           <IconBadge accent="#7c3aed" icon="robot" />
           <div>
-            <Text strong>Codex uses notebook state, not stale files</Text>
+            <Text strong>Codex sees the current notebook state</Text>
             <div style={{ color: PUBLIC_COLORS.mutedText }}>
               Cells, outputs, errors, and runs stay visible to the agent.
             </div>
@@ -243,7 +236,7 @@ function LiveStateDiagram() {
         <pre
           style={{
             background: "#10213f",
-            borderRadius: 18,
+            borderRadius: PANEL_RADIUS,
             color: "#dbeafe",
             margin: 0,
             overflowX: "auto",
@@ -258,17 +251,19 @@ cocalc project jupyter exec --path analysis.ipynb --stdin`}</code>
           {["inspect cells", "run focused code", "summarize output"].map(
             (label) => (
               <Col key={label} xs={24} sm={8}>
-                <Tag
-                  color="purple"
+                <div
                   style={{
-                    borderRadius: 999,
-                    marginInlineEnd: 0,
-                    padding: "4px 10px",
+                    background: `${COLORS.AI_ASSISTANT_FONT}12`,
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: PANEL_RADIUS,
+                    padding: "8px 10px",
                     width: "100%",
                   }}
                 >
-                  {label}
-                </Tag>
+                  <Text strong style={{ color: COLORS.AI_ASSISTANT_FONT }}>
+                    {label}
+                  </Text>
+                </div>
               </Col>
             ),
           )}
@@ -293,7 +288,7 @@ function ProjectOrbit() {
         background:
           "radial-gradient(circle at center, #eef5ff 0%, #ffffff 46%, #fff8e8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
+        borderRadius: PANEL_RADIUS,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
         padding: 24,
       }}
@@ -313,7 +308,7 @@ function ProjectOrbit() {
             style={{
               background: index === 0 ? COLORS.ANTD_BG_BLUE_L : "#fff",
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 18,
+              borderRadius: PANEL_RADIUS,
               minHeight: 80,
               padding: 14,
             }}
@@ -343,7 +338,7 @@ function WhiteboardDiagram() {
       style={{
         background: "#fbfdff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 26,
+        borderRadius: PANEL_RADIUS,
         minHeight: 320,
         overflow: "hidden",
         position: "relative",
@@ -386,7 +381,7 @@ function WhiteboardDiagram() {
           style={{
             background: "#fff",
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 16,
+            borderRadius: PANEL_RADIUS,
             boxShadow: "0 10px 28px rgba(33, 49, 57, 0.08)",
             left: node.x,
             padding: "10px 12px",
@@ -423,24 +418,25 @@ export default function JupyterNotebookFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag
-                color="blue"
+              <Text
+                strong
                 style={{
                   alignSelf: "flex-start",
-                  background: COLORS.ANTD_BG_BLUE_L,
                   color: COLORS.BLUE_D,
-                  marginInlineEnd: 0,
+                  fontSize: 12,
+                  letterSpacing: 0,
+                  textTransform: "uppercase",
                 }}
               >
-                Jupyter in CoCalc
-              </Tag>
+                Jupyter notebooks
+              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Notebooks that keep running, collaborating, and remembering
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc keeps standard Jupyter notebooks in a shared project with
-                backend execution, realtime collaboration, TimeTravel, files,
-                terminals, courses, whiteboards, and Codex nearby.
+                CoCalc keeps standard Jupyter notebooks in a project where
+                execution, files, collaborators, history, and assistance stay
+                together.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Use it when notebooks need to outlive the first experiment:
@@ -503,17 +499,6 @@ export default function JupyterNotebookFeaturePage({
           </Col>
           <Col xs={24} lg={13}>
             <Flex vertical gap={12}>
-              <Tag
-                color="blue"
-                style={{
-                  alignSelf: "flex-start",
-                  background: COLORS.ANTD_BG_BLUE_L,
-                  color: COLORS.BLUE_D,
-                  marginInlineEnd: 0,
-                }}
-              >
-                Notebook in context
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Keep the notebook next to the data, shell, paper, and agent
               </Title>
@@ -572,7 +557,7 @@ export default function JupyterNotebookFeaturePage({
               style={{
                 background: "#fff",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 26,
+                borderRadius: PANEL_RADIUS,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
                 padding: 24,
               }}
@@ -583,21 +568,24 @@ export default function JupyterNotebookFeaturePage({
                   ["Project restarts", "Output is recoverable"],
                   ["Collaborator joins", "State synchronizes"],
                 ].map(([left, right]) => (
-                  <Flex align="center" gap={12} key={left}>
-                    <Tag style={{ marginInlineEnd: 0, minWidth: 128 }}>
-                      {left}
-                    </Tag>
-                    <Icon
-                      name="arrow-right"
-                      style={{ color: PUBLIC_COLORS.brand }}
-                    />
-                    <Tag
-                      color="blue"
-                      style={{ marginInlineEnd: 0, minWidth: 150 }}
-                    >
+                  <div
+                    key={left}
+                    style={{
+                      alignItems: "center",
+                      background: PUBLIC_COLORS.surfaceMuted,
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: PANEL_RADIUS,
+                      display: "grid",
+                      gap: 12,
+                      gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                      padding: 14,
+                    }}
+                  >
+                    <Text strong>{left}</Text>
+                    <Text style={{ color: PUBLIC_COLORS.mutedText }}>
                       {right}
-                    </Tag>
-                  </Flex>
+                    </Text>
+                  </div>
                 ))}
               </Flex>
             </div>
@@ -660,20 +648,14 @@ export default function JupyterNotebookFeaturePage({
           </Col>
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Tag
-                color="purple"
-                style={{ alignSelf: "flex-start", marginInlineEnd: 0 }}
-              >
-                Codex and notebooks
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Let the agent work with the notebook you actually have open
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                An `.ipynb` file on disk can lag behind what is happening in a
-                live notebook session. CoCalc gives Codex project-scoped
-                notebook commands, so it can inspect current cells, start
-                focused runs, and reason from actual output.
+                Saving an `.ipynb` file is not the same as understanding the
+                live session. CoCalc gives Codex project-scoped notebook
+                commands, so it can inspect current cells, start focused runs,
+                and reason from actual output.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 That changes the practical workflow: ask Codex to debug a cell,
@@ -692,12 +674,6 @@ export default function JupyterNotebookFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Tag
-                color="blue"
-                style={{ alignSelf: "flex-start", marginInlineEnd: 0 }}
-              >
-                Beyond linear notebooks
-              </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Put notebook cells on a whiteboard when the idea is a graph
               </Title>
@@ -768,10 +744,7 @@ export default function JupyterNotebookFeaturePage({
             </Paragraph>
             <Flex wrap gap={12}>
               <LinkButton href={`${GUIDE_BASE}/cocalc-for-jupyter/`}>
-                Jupyter alternatives
-              </LinkButton>
-              <LinkButton href={`${GUIDE_BASE}/cocalc-for-jupyter/`}>
-                Positioning guide
+                Jupyter comparison guide
               </LinkButton>
             </Flex>
           </PublicSection>

@@ -246,6 +246,25 @@ const FEATURE_INDEX_CSS = `
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .cocalc-feature-link-card,
+  .cocalc-feature-starter-card {
+    cursor: pointer;
+    transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  }
+
+  .cocalc-feature-link-card:hover,
+  .cocalc-feature-starter-card:hover {
+    border-color: ${PUBLIC_COLORS.linkHover} !important;
+    box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.1)} !important;
+    transform: translateY(-1px);
+  }
+
+  .cocalc-feature-link-card:focus-visible,
+  .cocalc-feature-starter-card:focus-visible {
+    outline: 2px solid ${PUBLIC_COLORS.linkHover};
+    outline-offset: 3px;
+  }
+
   @media (max-width: 920px) {
     .cocalc-feature-index-hero {
       grid-template-columns: minmax(0, 1fr);

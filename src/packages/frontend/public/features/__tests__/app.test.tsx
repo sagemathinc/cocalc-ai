@@ -42,6 +42,14 @@ describe("getFeaturesRouteFromPath", () => {
 describe("PublicFeaturesApp", () => {
   const auditedFeaturePages = [
     {
+      marker: "Codex where the work happens.",
+      slug: "ai",
+    },
+    {
+      marker: "Notebooks that keep running, collaborating, and remembering",
+      slug: "jupyter-notebook",
+    },
+    {
       marker: "Python that moves from notebook to script to paper.",
       slug: "python",
     },
@@ -64,6 +72,10 @@ describe("PublicFeaturesApp", () => {
     {
       marker: "A terminal is a live project document.",
       slug: "terminal",
+    },
+    {
+      marker: "Teach where students compute, write, and collaborate",
+      slug: "teaching",
     },
     {
       marker: "Write the paper where the code, figures, and review live",
@@ -193,6 +205,12 @@ describe("PublicFeaturesApp", () => {
     )) {
       expect(textLength(card)).toBeLessThanOrEqual(260);
     }
+    const css = Array.from(container.querySelectorAll("style"))
+      .map((style) => style.textContent ?? "")
+      .join("\n");
+    expect(css).toContain(".cocalc-feature-link-card:hover");
+    expect(css).toContain(".cocalc-feature-starter-card:hover");
+    expect(css).toContain("cursor: pointer");
   });
 
   it("shows Projects and Settings in the shared nav when authenticated", () => {
@@ -309,7 +327,7 @@ describe("PublicFeaturesApp", () => {
   });
 
   it("renders the richer jupyter feature page", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "jupyter-notebook", view: "detail" }}
@@ -327,6 +345,15 @@ describe("PublicFeaturesApp", () => {
         "Put notebook cells on a whiteboard when the idea is a graph",
       ),
     ).not.toBeNull();
+    expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
+    expect(container.textContent ?? "").not.toMatch(
+      /stale files|Positioning guide/i,
+    );
+    expect(
+      screen
+        .getByRole("link", { name: "Jupyter comparison guide" })
+        .getAttribute("href"),
+    ).toBe("https://sagemathinc.github.io/cocalc-guides/cocalc-for-jupyter/");
   });
 
   it("uses projects as the jupyter CTA for authenticated users", () => {
@@ -418,6 +445,7 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Share a reusable course environment"),
     ).not.toBeNull();
+    expect(container.querySelectorAll(".ant-tag")).toHaveLength(0);
     expect(
       screen.getByRole("link", { name: "Environment guide" }),
     ).toHaveAttribute(
