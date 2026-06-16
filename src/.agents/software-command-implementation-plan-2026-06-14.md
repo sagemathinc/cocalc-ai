@@ -927,9 +927,9 @@ cocalc software deploy star <tag-or-id> dev
 Initial backend:
 
 - Resolve local/remote Star artifact manifest.
-- Ensure immutable GitHub release assets exist.
+- Ensure immutable GitHub release assets exist before mutating the channel.
 - Run/wrap `promote-github-release-channel.sh --upload <release-id> <channel>`.
-- Record channel promotion in the local software deploy log.
+- Record channel promotion in durable R2 deployment history.
 
 ## Smoke Semantics
 
@@ -1010,6 +1010,11 @@ Implemented:
   fetch the public channel manifest for the current OS/architecture, download
   the referenced artifact, verify sha256, materialize the temporary executable,
   and run `--version` with release metadata injected.
+- `deploy`/promote for `star` release channels. This resolves the Star
+  artifact from the software store, verifies the immutable GitHub release
+  exists with `gh release view`, promotes the GitHub channel release with
+  `promote-github-release-channel.sh --upload`, and records the promotion in R2
+  deployment history.
 - `latest` as a reserved selector that resolves to the newest local or remote
   artifact for a component.
 - Human-readable build/deploy durations and artifact sizes.
@@ -1020,7 +1025,6 @@ Still not implemented:
 
 - Deeper throwaway project lifecycle `smoke` coverage for `project-host`,
   `project`, and `tools`, plus smoke coverage for `star`.
-- `deploy`/promote for `star`.
 - Product/documentation updates for the new CLI channel model, including a
   dedicated `/products/cocalc-cli` page and channel notes on public installer
   pages.

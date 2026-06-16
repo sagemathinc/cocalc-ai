@@ -1946,6 +1946,63 @@ function releaseInstallInfo({
   };
 }
 
+function starDeployTargetForComponent(component: SoftwareDeployComponent):
+  | {
+      artifactComponent: "star";
+    }
+  | undefined {
+  return component === "star" ? { artifactComponent: "star" } : undefined;
+}
+
+function starGithubRepo(deps: SoftwareCommandDeps): string {
+  return (
+    `${deps.env?.COCALC_STAR_GITHUB_REPO ?? process.env.COCALC_STAR_GITHUB_REPO ?? ""}`.trim() ||
+    "sagemathinc/cocalc-ai"
+  );
+}
+
+function starChannelTag({
+  channel,
+  deps,
+}: {
+  channel: string;
+  deps: SoftwareCommandDeps;
+}): string {
+  return (
+    `${deps.env?.COCALC_STAR_CHANNEL_TAG ?? process.env.COCALC_STAR_CHANNEL_TAG ?? ""}`.trim() ||
+    `cocalc-star-${channel}`
+  );
+}
+
+function starInstallInfo({
+  repo,
+  channelTag,
+}: {
+  repo: string;
+  channelTag: string;
+}): {
+  github_repo: string;
+  channel_tag: string;
+  install_url: string;
+  install_command: string;
+  lima_install_url: string;
+  lima_install_command: string;
+  available_channels: string[];
+} {
+  const baseUrl = `https://github.com/${repo}/releases/download/${channelTag}`;
+  const installUrl = `${baseUrl}/install-cocalc-star.sh`;
+  const limaInstallUrl = `${baseUrl}/install-cocalc-star-local-lima.sh`;
+  return {
+    github_repo: repo,
+    channel_tag: channelTag,
+    install_url: installUrl,
+    install_command: `curl -fsSL ${installUrl} | bash`,
+    lima_install_url: limaInstallUrl,
+    lima_install_command: `curl -fsSL ${limaInstallUrl} | bash`,
+    available_channels: ["dev", "candidate", "stable"],
+  };
+}
+
 function deploymentId({
   startedAt,
   artifactId,
@@ -2281,16 +2338,19 @@ Supported deploy/smoke components:
         const rocketTarget = rocketDeployTargetForComponent(component);
         const hostTarget = hostDeployTargetForComponent(component);
         const releaseTarget = releaseDeployTargetForComponent(component);
-        const releaseChannel = releaseTarget
-          ? validateSoftwareReleaseChannel(deployTarget)
-          : undefined;
+        const starTarget = starDeployTargetForComponent(component);
+        const releaseChannel =
+          releaseTarget || starTarget
+            ? validateSoftwareReleaseChannel(deployTarget)
+            : undefined;
         const artifactComponent =
           rocketTarget?.artifactComponent ??
           hostTarget?.artifactComponent ??
-          releaseTarget?.artifactComponent;
+          releaseTarget?.artifactComponent ??
+          starTarget?.artifactComponent;
         if (!artifactComponent) {
           throw new Error(
-            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, bay-conat-router, bay-conat-persist, bay-frontdoor, bay-cloudflared, bay-scaffold, host-conat-router, host-conat-persist, project-host, project, tools, cli, launchpad, plus`,
+            `software deploy ${component} is not wired yet; currently supported: static, hub, bay, bay-conat-router, bay-conat-persist, bay-frontdoor, bay-cloudflared, bay-scaffold, host-conat-router, host-conat-persist, project-host, project, tools, cli, launchpad, plus, star`,
           );
         }
         if (!releaseTarget && !deps.runCommand) {
@@ -2302,19 +2362,20 @@ Supported deploy/smoke components:
           opts,
           deps,
         });
-        const target = releaseTarget
-          ? {
-              profileName: releaseChannel!,
-              api: undefined,
-              remote: undefined,
-              account_id: undefined,
-              email_address: undefined,
-            }
-          : resolveDeploySite({
-              profile: deployTarget,
-              opts,
-              deps,
-            });
+        const target =
+          releaseTarget || starTarget
+            ? {
+                profileName: releaseChannel!,
+                api: undefined,
+                remote: undefined,
+                account_id: undefined,
+                email_address: undefined,
+              }
+            : resolveDeploySite({
+                profile: deployTarget,
+                opts,
+                deps,
+              });
         const config = await resolveSoftwareRemoteConfig({
           env: deps.env ?? process.env,
           envFile: opts.envFile,
@@ -2329,6 +2390,8 @@ Supported deploy/smoke components:
         let releaseProduct: string | undefined;
         let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
         let releaseChannelManifestUrls: string[] | undefined;
+        let starInstall: ReturnType<typeof starInstallInfo> | undefined;
+        let starPromoteScript: string | undefined;
         let targetKind: SoftwareDeploymentRecord["target"]["kind"];
         if (rocketTarget) {
           const remoteFile = remoteBundleFile(artifact.remote_entry);
@@ -2428,6 +2491,23 @@ Supported deploy/smoke components:
             publicBaseUrl: config.publicBaseUrl,
           });
           targetKind = "release-channel";
+        } else if (starTarget) {
+          const cwd = resolve(deps.cwd ?? process.cwd());
+          const { srcRoot } = resolveRepoLayout({ cwd, deps });
+          const repo = starGithubRepo(deps);
+          const channelTag = starChannelTag({
+            channel: releaseChannel!,
+            deps,
+          });
+          releaseProduct = "cocalc-star";
+          starPromoteScript = join(
+            srcRoot,
+            "scripts",
+            "star",
+            "promote-github-release-channel.sh",
+          );
+          starInstall = starInstallInfo({ repo, channelTag });
+          targetKind = "release-channel";
         } else {
           throw new Error(`software deploy ${component} is not wired yet`);
         }
@@ -2465,6 +2545,7 @@ Supported deploy/smoke components:
             ...(releaseProduct ? { release_product: releaseProduct } : {}),
             ...(releaseChannel ? { release_channel: releaseChannel } : {}),
             ...(releaseInstall ?? {}),
+            ...(starInstall ?? {}),
           },
           deps,
         });
@@ -2495,6 +2576,47 @@ Supported deploy/smoke components:
                   ? { latest_alias: "updated" }
                   : {}),
                 ...(releaseInstall ?? {}),
+              };
+              return;
+            }
+            if (starTarget) {
+              const repo = starInstall!.github_repo;
+              const viewCode = await deps.runCommand!(
+                "gh",
+                ["release", "view", artifact.artifact_id, "--repo", repo],
+                {
+                  stdio: "inherit",
+                  env: deps.env ?? process.env,
+                },
+              );
+              if (viewCode !== 0) {
+                throw new Error(
+                  `immutable Star GitHub release ${artifact.artifact_id} was not found in ${repo}; upload the release assets before promoting ${releaseChannel}`,
+                );
+              }
+              const promoteCode = await deps.runCommand!(
+                starPromoteScript!,
+                ["--upload", artifact.artifact_id, releaseChannel!],
+                {
+                  stdio: "inherit",
+                  env: {
+                    ...(deps.env ?? process.env),
+                    COCALC_STAR_GITHUB_REPO: repo,
+                    COCALC_STAR_GIT_REVISION: artifact.remote_entry.git.commit,
+                  },
+                },
+              );
+              if (promoteCode !== 0) {
+                throw new Error(
+                  `software deploy star failed with exit status ${promoteCode}`,
+                );
+              }
+              record.details = {
+                ...(record.details ?? {}),
+                release_product: releaseProduct,
+                release_channel: releaseChannel,
+                github_release: artifact.artifact_id,
+                ...(starInstall ?? {}),
               };
               return;
             }
@@ -2544,6 +2666,8 @@ Supported deploy/smoke components:
             ...(releaseProduct ? { release_product: releaseProduct } : {}),
             ...(releaseChannel ? { channel: releaseChannel } : {}),
             ...(releaseInstall ?? {}),
+            ...(starInstall ?? {}),
+            ...(starTarget ? { github_release: artifact.artifact_id } : {}),
             ...(releaseChannelManifestUrls
               ? { channel_manifests: releaseChannelManifestUrls }
               : {}),

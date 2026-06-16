@@ -1596,6 +1596,148 @@ test("software deploy plus stable also updates the legacy latest manifest", asyn
   assert.equal(history.deployments[0].target.channel, "stable");
 });
 
+test("software deploy star promotes an immutable GitHub release channel", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-star-channel-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client, cwd: dir }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "star",
+    "star-channel",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "star",
+    "star-channel",
+    "candidate",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = "20260614T235912Z-e882d124-star-channel";
+  assert.equal(runs.length, 3);
+  assert.equal(
+    runs[0].command.endsWith("build-github-release-assets.sh"),
+    true,
+  );
+  assert.deepEqual(runs[1], {
+    command: "gh",
+    args: ["release", "view", artifactId, "--repo", "sagemathinc/cocalc-ai"],
+  });
+  assert.equal(
+    runs[2].command.endsWith("promote-github-release-channel.sh"),
+    true,
+  );
+  assert.deepEqual(runs[2].args, ["--upload", artifactId, "candidate"]);
+
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/candidate/star/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].target.kind, "release-channel");
+  assert.equal(history.deployments[0].target.channel, "candidate");
+  const record = JSON.parse(
+    r2.objects
+      .get(
+        `software/deployments/candidate/star/${history.deployments[0].deployment_id}.json`,
+      )!
+      .toString("utf8"),
+  );
+  assert.equal(record.details.release_product, "cocalc-star");
+  assert.equal(record.details.github_release, artifactId);
+  assert.equal(record.details.github_repo, "sagemathinc/cocalc-ai");
+  assert.equal(record.details.channel_tag, "cocalc-star-candidate");
+  assert.equal(
+    record.details.install_url,
+    "https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-candidate/install-cocalc-star.sh",
+  );
+});
+
+test("software deploy star fails before promotion when immutable release is missing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-star-missing-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const deps = makeDeps({
+    localStore,
+    runs,
+    env: r2Env,
+    r2Client: r2.client,
+    cwd: dir,
+  });
+  deps.runCommand = async (command, args, options) => {
+    runs.push({ command, args });
+    if (command.endsWith("build-github-release-assets.sh")) {
+      const outDir = args[0];
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(join(outDir, "install-cocalc-star.sh"), "star install");
+      writeFileSync(join(outDir, "SHA256SUMS"), "star sums");
+      writeFileSync(join(outDir, "release-notes.md"), "star notes");
+      return 0;
+    }
+    if (command === "gh" && args.includes("view")) {
+      return 1;
+    }
+    return options?.env ? 0 : 0;
+  };
+  const program = createProgram(deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "star",
+    "missing-release",
+  ]);
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "deploy",
+        "star",
+        "missing-release",
+        "stable",
+        "--env-file",
+        join(dir, "missing.env"),
+      ]),
+    /immutable Star GitHub release .* was not found/,
+  );
+
+  assert.equal(
+    runs.some((run) =>
+      run.command.endsWith("promote-github-release-channel.sh"),
+    ),
+    false,
+  );
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/stable/star/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "failed");
+  assert.match(history.deployments[0].error, /immutable Star GitHub release/);
+});
+
 test("software deploy bay uses the full bay Rocket scope", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-bay-"));
   const localStore = join(dir, "store");
