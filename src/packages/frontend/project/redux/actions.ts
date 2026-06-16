@@ -1049,6 +1049,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       !opts.change_history &&
       prev_active_project_tab === key
     ) {
+      const path = misc.tab_to_path(key);
+      if (path != null) {
+        this.set_current_path(this.workingDirectoryForProjectFile(path));
+      }
       // already active -- nothing further to do
       return;
     }

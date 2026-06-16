@@ -353,8 +353,8 @@ export async function open_file(
 
   const tabIsOpened = () =>
     !!actions.get_store()?.get("open_files")?.has(displayPath);
-  const workingDirectory = () =>
-    workingDirectoryForProjectFile(displayPath, {
+  const workingDirectory = (path = displayPath) =>
+    workingDirectoryForProjectFile(path, {
       projectHomeDirectory: projectHome,
       workspaceRecords: getRuntimeWorkspaceRecords(actions.project_id),
     });
@@ -503,6 +503,7 @@ export async function open_file(
       }
       redux.getActions("page").save_session();
       if (opts.foreground) {
+        actions.set_current_path(workingDirectory(alreadyOpenAliasPath));
         actions.foreground_project(opts.change_history);
         actions.set_active_tab(path_to_tab(alreadyOpenAliasPath), {
           change_history: opts.change_history,
