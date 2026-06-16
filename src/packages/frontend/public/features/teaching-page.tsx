@@ -14,6 +14,7 @@ import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
   featureAppPath as appPath,
+  featureSupportPath,
   LinkButton,
 } from "./page-components";
 
@@ -299,13 +300,22 @@ function WorkflowDiagram() {
   );
 }
 
-function CourseFitDiagram() {
+function CourseBoundaryPanel() {
   const rows = [
-    ["LMS", "rosters, calendars, announcements, institutional shell"],
-    ["Notebook hub", "kernels, notebooks, autograding, compute"],
     [
-      "CoCalc",
-      "student projects, assignments, files, terminals, TimeTravel, shared environments",
+      "Keep in your LMS",
+      "Rosters, calendars, announcements, and institution-wide communication.",
+      PUBLIC_COLORS.mutedText,
+    ],
+    [
+      "Use CoCalc for technical coursework",
+      "Student projects, notebook and file assignments, grading, help, shared environments, and recovery.",
+      COURSE_ACCENT,
+    ],
+    [
+      "Use a notebook hub when",
+      "A shared kernel service for mostly independent notebooks is enough.",
+      PUBLIC_COLORS.brand,
     ],
   ];
   return (
@@ -314,29 +324,22 @@ function CourseFitDiagram() {
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: PANEL_RADIUS,
-        boxShadow: `0 18px 52px ${alpha(PUBLIC_COLORS.heading, 0.08)}`,
-        padding: 24,
+        padding: 22,
       }}
     >
-      <Flex vertical gap={12}>
-        {rows.map(([label, description], index) => (
+      <Flex vertical gap={14}>
+        {rows.map(([label, description, accent]) => (
           <div
             key={label}
             style={{
-              background:
-                index === 2
-                  ? alpha(PUBLIC_COLORS.brand, 0.08)
-                  : PUBLIC_COLORS.surfaceMuted,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              display: "grid",
-              gap: 10,
-              gridTemplateColumns: "120px minmax(0, 1fr)",
-              padding: "12px 14px",
+              borderLeft: `3px solid ${accent}`,
+              paddingLeft: 14,
             }}
           >
-            <Text strong>{label}</Text>
-            <Text style={{ color: PUBLIC_COLORS.mutedText }}>
+            <Text strong style={{ display: "block" }}>
+              {label}
+            </Text>
+            <Text style={{ color: PUBLIC_COLORS.mutedText, display: "block" }}>
               {description}
             </Text>
           </div>
@@ -347,7 +350,6 @@ function CourseFitDiagram() {
 }
 
 export default function TeachingFeaturePage({
-  helpEmail,
   isAuthenticated,
 }: {
   helpEmail?: string;
@@ -362,6 +364,12 @@ export default function TeachingFeaturePage({
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
     : "Use hosted CoCalc.ai";
+  const supportHref = featureSupportPath({
+    body: "I want to discuss CoCalc for technical course workflows. Helpful context: course size, notebook or terminal needs, grading workflow, LMS relationship, shared environment requirements, and whether hosted CoCalc.ai or another operating model matters.",
+    context: "teaching",
+    subject: "CoCalc technical course workflows",
+    title: "Ask CoCalc about teaching workflows",
+  });
 
   return (
     <Flex vertical gap={18}>
@@ -457,24 +465,19 @@ export default function TeachingFeaturePage({
       <PublicSection>
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={12}>
-            <CourseFitDiagram />
-          </Col>
-          <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                Pair CoCalc with the systems your institution already uses
+                Use the LMS for administration. Use CoCalc for the work.
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Canvas, Moodle, and similar systems are good at rosters,
-                calendars, announcements, and institution-wide communication.
-                Notebook hubs are good at running notebooks and kernels.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                CoCalc becomes the course workspace when instructors need
-                assignments, help, grading, files, and compute to stay close to
-                student projects.
+                The cleanest course setup keeps institutional coordination in
+                the LMS and moves technical coursework into projects where
+                students actually compute, write, and ask for help.
               </Paragraph>
             </Flex>
+          </Col>
+          <Col xs={24} lg={12}>
+            <CourseBoundaryPanel />
           </Col>
         </Row>
       </PublicSection>
@@ -661,9 +664,7 @@ export default function TeachingFeaturePage({
                 <Button href={appPath("products")}>
                   Compare product paths
                 </Button>
-                {helpEmail ? (
-                  <Button href={`mailto:${helpEmail}`}>Talk with CoCalc</Button>
-                ) : null}
+                <Button href={supportHref}>Ask about teaching workflows</Button>
               </Flex>
             </Col>
           </Row>

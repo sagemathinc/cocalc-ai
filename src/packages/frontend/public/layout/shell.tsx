@@ -348,6 +348,7 @@ interface PublicPageProps {
   beforeTitle?: ReactNode;
   children: ReactNode;
   config?: PublicConfig;
+  hideTitleVisually?: boolean;
   sider?: ReactNode;
   siderLabel?: string;
   title?: ReactNode;
@@ -358,6 +359,7 @@ export function PublicPage({
   beforeTitle,
   children,
   config,
+  hideTitleVisually = false,
   sider,
   siderLabel,
   title,
@@ -438,9 +440,23 @@ export function PublicPage({
                 {title != null ? (
                   <Title
                     level={1}
-                    style={{
-                      textAlign: "center",
-                    }}
+                    style={
+                      hideTitleVisually
+                        ? {
+                            border: 0,
+                            clip: "rect(0 0 0 0)",
+                            height: 1,
+                            margin: -1,
+                            overflow: "hidden",
+                            padding: 0,
+                            position: "absolute",
+                            whiteSpace: "nowrap",
+                            width: 1,
+                          }
+                        : {
+                            textAlign: "center",
+                          }
+                    }
                   >
                     {title}
                   </Title>

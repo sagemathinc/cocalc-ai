@@ -52,6 +52,11 @@ describe("PublicFeaturesApp", () => {
       slug: "jupyter-notebook",
     },
     {
+      context: "feature-teaching",
+      label: "Ask about teaching workflows",
+      slug: "teaching",
+    },
+    {
       context: "feature-terminal",
       label: "Ask about terminal workflows",
       slug: "terminal",
@@ -300,17 +305,16 @@ describe("PublicFeaturesApp", () => {
     const featureNav = screen.getByRole("region", {
       name: "Feature page navigation",
     });
-    expect(within(featureNav).getByText("Feature detail")).not.toBeNull();
     expect(
       within(featureNav)
-        .getByRole("link", { name: "All features" })
+        .getByRole("link", { name: "Features" })
         .getAttribute("href"),
     ).toBe("/features");
+    expect(within(featureNav).getByText("AI Agents")).not.toBeNull();
+    expect(within(featureNav).queryByText("Feature detail")).toBeNull();
     expect(
-      within(featureNav)
-        .getByRole("link", { name: "Next: Jupyter Notebooks" })
-        .getAttribute("href"),
-    ).toBe("/features/jupyter-notebook");
+      within(featureNav).queryByRole("link", { name: /Next:/ }),
+    ).toBeNull();
     expect(
       within(featureNav).queryByRole("link", { name: /Previous:/ }),
     ).toBeNull();
@@ -334,7 +338,7 @@ describe("PublicFeaturesApp", () => {
       screen
         .getAllByRole("link", { name: "All features" })
         .map((link) => link.getAttribute("href")),
-    ).toEqual(["/features", "/features"]);
+    ).toEqual(["/features"]);
     expect(
       screen
         .getByRole("link", { name: "Next feature: Jupyter Notebooks" })
@@ -356,9 +360,13 @@ describe("PublicFeaturesApp", () => {
     });
     expect(
       within(featureNav)
-        .getByRole("link", { name: "Next: Jupyter Notebooks" })
+        .getByRole("link", { name: "Features" })
         .getAttribute("href"),
-    ).toBe("/features/jupyter-notebook");
+    ).toBe("/features");
+    expect(within(featureNav).getByText("AI Agents")).not.toBeNull();
+    expect(
+      within(featureNav).queryByRole("link", { name: /Next:/ }),
+    ).toBeNull();
   });
 
   it("uses projects as the ai CTA for authenticated users", () => {
@@ -394,9 +402,17 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("When a notebook needs the project around it"),
     ).not.toBeNull();
     expect(
-      screen.getByText("Choose the nearby workflow when the notebook grows"),
+      screen.getByText("Choose the next workflow when the notebook grows"),
     ).not.toBeNull();
-    expect(screen.getByText("AI-assisted notebooks")).not.toBeNull();
+    expect(screen.getByText("Debug a live notebook with Codex")).not.toBeNull();
+    expect(
+      screen.getByText("Turn notebook work into a visual flow"),
+    ).not.toBeNull();
+    expect(screen.getByText("Run notebook-based courses")).not.toBeNull();
+    expect(screen.getByText("Stay compatible with Jupyter")).not.toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Compare notebook tools" }),
+    ).toBeNull();
     expect(
       screen.queryByText(
         "Let the agent work with the notebook you actually have open",
@@ -497,9 +513,19 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByText(
-        "Pair CoCalc with the systems your institution already uses",
+        "Use the LMS for administration. Use CoCalc for the work.",
       ),
     ).not.toBeNull();
+    expect(screen.getByText("Keep in your LMS")).not.toBeNull();
+    expect(
+      screen.getByText("Use CoCalc for technical coursework"),
+    ).not.toBeNull();
+    expect(screen.getByText("Use a notebook hub when")).not.toBeNull();
+    expect(
+      screen.queryByText(
+        "Pair CoCalc with the systems your institution already uses",
+      ),
+    ).toBeNull();
     expect(screen.getByText("Assign, collect, grade, return")).not.toBeNull();
     expect(
       screen.getByText("Grade in the same workspace students used"),
@@ -532,6 +558,7 @@ describe("PublicFeaturesApp", () => {
       "teaching center",
       "first minute",
       "strongest",
+      "institutional shell",
       ["serious", "technical"].join(" "),
     ];
     expect(container.textContent ?? "").not.toMatch(

@@ -219,30 +219,6 @@ function NotebookMock() {
             ))}
           </Flex>
         </div>
-        <Row gutter={[10, 10]}>
-          {[
-            ["history", "TimeTravel"],
-            ["users", "Realtime"],
-            ["robot", "Codex"],
-            ["terminal", "Terminal"],
-          ].map(([icon, label]) => (
-            <Col key={label} xs={12} sm={6}>
-              <Flex
-                align="center"
-                gap={8}
-                style={{
-                  background: "#fff",
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: PANEL_RADIUS,
-                  padding: "9px 10px",
-                }}
-              >
-                <Icon name={icon as IconName} />
-                <Text strong>{label}</Text>
-              </Flex>
-            </Col>
-          ))}
-        </Row>
       </Flex>
     </div>
   );
@@ -368,9 +344,6 @@ export default function JupyterNotebookFeaturePage({
                 <Button href={`${GUIDE_BASE}/jupyter-notebooks/`}>
                   Read the Jupyter guide
                 </Button>
-                <LinkButton href={`${GUIDE_BASE}/cocalc-for-jupyter/`}>
-                  Compare notebook tools
-                </LinkButton>
               </Flex>
             </Flex>
           </Col>
@@ -488,7 +461,7 @@ export default function JupyterNotebookFeaturePage({
         <Flex vertical gap={18}>
           <div>
             <Title level={3} style={{ margin: 0 }}>
-              Choose the nearby workflow when the notebook grows
+              Choose the next workflow when the notebook grows
             </Title>
             <Paragraph style={{ margin: "8px 0 0", maxWidth: 760 }}>
               When a notebook pulls in agents, whiteboards, teaching workflows,
@@ -505,9 +478,9 @@ export default function JupyterNotebookFeaturePage({
                     See agent details
                   </Button>
                 }
-                body="Let Codex inspect live notebook state while people keep output, discussion, and review context visible."
+                body="Ask Codex to inspect cells, run focused checks, and summarize output while people keep the review context visible."
                 icon="robot"
-                title="AI-assisted notebooks"
+                title="Debug a live notebook with Codex"
               />
             </Col>
             <Col xs={24} md={12} xl={6}>
@@ -518,9 +491,9 @@ export default function JupyterNotebookFeaturePage({
                     Whiteboard workflows
                   </Button>
                 }
-                body="Use a canvas when notebook cells, diagrams, and explanations need a graph instead of a single vertical list."
+                body="Use a canvas when notebook cells, diagrams, and explanations need relationships instead of one vertical list."
                 icon="layout"
-                title="Visual notebook flows"
+                title="Turn notebook work into a visual flow"
               />
             </Col>
             <Col xs={24} md={12} xl={6}>
@@ -531,9 +504,9 @@ export default function JupyterNotebookFeaturePage({
                     Teaching workflows
                   </Button>
                 }
-                body="Distribute, collect, grade, and support notebook assignments without treating CoCalc as a general LMS."
+                body="Distribute, collect, grade, and support notebook assignments while keeping computation in student projects."
                 icon="users"
-                title="Notebook courses"
+                title="Run notebook-based courses"
               />
             </Col>
             <Col xs={24} md={12} xl={6}>
@@ -543,9 +516,9 @@ export default function JupyterNotebookFeaturePage({
                     Jupyter compatibility guide
                   </LinkButton>
                 }
-                body="Use CoCalc notebooks for collaboration and recovery, and open standard Jupyter interfaces when extensions require them."
+                body="Keep `.ipynb`, JupyterLab, widgets, and standard notebook workflows available beside CoCalc collaboration."
                 icon="jupyter"
-                title="Jupyter compatibility"
+                title="Stay compatible with Jupyter"
               />
             </Col>
           </Row>

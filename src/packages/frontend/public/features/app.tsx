@@ -333,14 +333,6 @@ function getAdjacentFeaturePages(currentSlug: string): {
   };
 }
 
-function ButtonIcon({ name }: { name: IconName }) {
-  return (
-    <span aria-hidden="true" style={{ display: "inline-flex" }}>
-      <Icon name={name} />
-    </span>
-  );
-}
-
 type FeatureIndexCard = {
   href: string;
   slug: string;
@@ -626,76 +618,19 @@ function FeaturesIndex() {
 }
 
 function FeatureDetailNavigation({ page }: { page: FeaturePage }) {
-  const { next, previous } = getAdjacentFeaturePages(page.slug);
-  const meta = featureMeta(page.slug);
-
   return (
     <section
       aria-label="Feature page navigation"
       style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        padding: 16,
+        paddingBlock: 4,
       }}
     >
-      <Flex align="center" justify="space-between" wrap gap={14}>
-        <Flex align="center" gap={12} wrap>
-          <span
-            aria-hidden="true"
-            style={{
-              alignItems: "center",
-              background: `${meta.accent}12`,
-              border: `1px solid ${meta.accent}2e`,
-              borderRadius: 8,
-              color: meta.accent,
-              display: "inline-flex",
-              fontSize: 20,
-              height: 42,
-              justifyContent: "center",
-              width: 42,
-            }}
-          >
-            <Icon name={meta.icon} />
-          </span>
-          <span>
-            <Text
-              strong
-              style={{
-                color: PUBLIC_COLORS.brand,
-                display: "block",
-                fontSize: 12,
-                letterSpacing: 0,
-                textTransform: "uppercase",
-              }}
-            >
-              Feature detail
-            </Text>
-            <Text strong>{page.title}</Text>
-          </span>
-        </Flex>
-        <Flex wrap gap={10}>
-          <Button href={featurePath()} icon={<ButtonIcon name="overview" />}>
-            All features
-          </Button>
-          {previous ? (
-            <Button
-              href={featurePath(previous.slug)}
-              icon={<ButtonIcon name="arrow-left" />}
-            >
-              Previous: {previous.title}
-            </Button>
-          ) : null}
-          {next ? (
-            <Button
-              href={featurePath(next.slug)}
-              icon={<ButtonIcon name="arrow-right" />}
-              type="primary"
-            >
-              Next: {next.title}
-            </Button>
-          ) : null}
-        </Flex>
+      <Flex align="center" gap={8} wrap>
+        <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
+          Features
+        </Button>
+        <Text type="secondary">/</Text>
+        <Text strong>{page.title}</Text>
       </Flex>
     </section>
   );
@@ -994,6 +929,7 @@ export default function PublicFeaturesApp({
     <PublicPage
       active="features"
       config={marketingConfig}
+      hideTitleVisually={initialRoute.view === "detail"}
       title={
         initialRoute.view === "index"
           ? undefined
