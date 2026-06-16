@@ -18,6 +18,7 @@ export function parseSoftwareBuildComponent(
     case "project-host":
     case "project":
     case "tools":
+    case "tools-minimal":
     case "cli":
     case "launchpad":
     case "plus":

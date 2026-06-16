@@ -5,6 +5,7 @@ export const SOFTWARE_BUILD_COMPONENTS = [
   "project-host",
   "project",
   "tools",
+  "tools-minimal",
   "cli",
   "launchpad",
   "plus",

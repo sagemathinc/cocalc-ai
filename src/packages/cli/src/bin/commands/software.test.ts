@@ -136,6 +136,31 @@ function makeDeps({
         }
       } else if (
         command === "pnpm" &&
+        args.includes("@cocalc/project") &&
+        args.includes("build:tools-minimal")
+      ) {
+        bundle = undefined;
+        for (const [os, arch] of [
+          ["linux", "amd64"],
+          ["linux", "arm64"],
+          ["darwin", "arm64"],
+        ] as const) {
+          const toolsBundle = join(
+            repoRoot,
+            "src",
+            "packages",
+            "project",
+            "build",
+            `tools-minimal-${os}-${arch}.tar.xz`,
+          );
+          mkdirSync(join(toolsBundle, ".."), { recursive: true });
+          writeFileSync(
+            toolsBundle,
+            `built tools-minimal bundle ${os} ${arch}`,
+          );
+        }
+      } else if (
+        command === "pnpm" &&
         args.includes("@cocalc/cli") &&
         artifactId
       ) {
@@ -272,6 +297,85 @@ function createProgram(deps: SoftwareCommandDeps): Command {
   return program;
 }
 
+function deploymentHistoryObjects({
+  component,
+  profileOrChannel,
+  artifactId,
+  tag = "rollback-target",
+  status = "succeeded",
+  details,
+}: {
+  component: string;
+  profileOrChannel: string;
+  artifactId: string;
+  tag?: string;
+  status?: "started" | "succeeded" | "failed";
+  details?: Record<string, unknown>;
+}): Map<string, Buffer> {
+  const deploymentId = `20260615T000000Z-${artifactId}`;
+  const recordKey = `software/deployments/${profileOrChannel}/${component}/${deploymentId}.json`;
+  const record = {
+    schema: "cocalc-software-deployment-v1",
+    deployment_id: deploymentId,
+    component,
+    artifact_component: component === "bay-conat-router" ? "bay" : component,
+    profile_or_channel: profileOrChannel,
+    started_at: "2026-06-15T00:00:00.000Z",
+    updated_at: "2026-06-15T00:00:01.000Z",
+    finished_at: status === "started" ? undefined : "2026-06-15T00:00:01.000Z",
+    artifact_id: artifactId,
+    tag,
+    git: { commit: "abcdef123456", short: "abcdef12", dirty: false },
+    deployed_by: { user: "operator" },
+    target: {
+      kind:
+        component === "cli" || component === "plus"
+          ? "release-channel"
+          : "rocket-bay",
+      ...(component === "cli" || component === "plus"
+        ? { channel: profileOrChannel }
+        : { profile: profileOrChannel }),
+    },
+    status,
+    duration_ms: status === "started" ? undefined : 1000,
+    details,
+  };
+  const entry = {
+    deployment_id: deploymentId,
+    component,
+    artifact_component: record.artifact_component,
+    profile_or_channel: profileOrChannel,
+    started_at: record.started_at,
+    updated_at: record.updated_at,
+    finished_at: record.finished_at,
+    artifact_id: artifactId,
+    tag,
+    git: record.git,
+    deployed_by: record.deployed_by,
+    target: record.target,
+    status,
+    duration_ms: record.duration_ms,
+    record_key: recordKey,
+    record_url: `https://software.example.test/${recordKey}`,
+  };
+  return new Map([
+    [recordKey, Buffer.from(JSON.stringify(record), "utf8")],
+    [
+      `software/deployments/${profileOrChannel}/${component}/index.json`,
+      Buffer.from(
+        JSON.stringify({
+          schema: "cocalc-software-deployment-index-v1",
+          component,
+          profile_or_channel: profileOrChannel,
+          generated_at: "2026-06-15T00:00:02.000Z",
+          deployments: [entry],
+        }),
+        "utf8",
+      ),
+    ],
+  ]);
+}
+
 test("software help lists supported components", () => {
   const program = createProgram(makeDeps({ localStore: "/tmp/software-help" }));
   const software = program.commands.find(
@@ -279,21 +383,97 @@ test("software help lists supported components", () => {
   );
   assert.ok(software);
   const build = software.commands.find((command) => command.name() === "build");
+  const info = software.commands.find((command) => command.name() === "info");
   const list = software.commands.find((command) => command.name() === "list");
   const deploy = software.commands.find(
     (command) => command.name() === "deploy",
   );
   assert.ok(build);
+  assert.ok(info);
   assert.ok(list);
   assert.ok(deploy);
+  assert.match(info.helpInformation(), /tools-minimal/);
   assert.match(build.helpInformation(), /static\|hub\|bay\|project-host/);
   assert.match(list.helpInformation(), /cli\|launchpad\|plus\|star/);
   assert.match(deploy.helpInformation(), /bay-conat-router/);
   assert.match(
     deploy.helpInformation(),
-    /site profile \(see cocalc auth list\) or release channel\s+\(dev, candidate or stable\)/,
+    /site profile \(see cocalc auth list\) or release\s+channel \(dev, candidate or stable\)/,
   );
   assert.doesNotMatch(deploy.helpInformation(), /hub-conat-router/);
+});
+
+test("software info prints an overview for humans", async () => {
+  const program = createProgram(makeDeps({ localStore: "/tmp/software-info" }));
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync(["node", "test", "software", "info"]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const output = logs.join("\n");
+  assert.match(output, /# cocalc software info/);
+  assert.match(output, /Build\/list\/push components:/);
+  assert.match(output, /tools-minimal/);
+  assert.match(output, /rollback/);
+});
+
+test("software info prints component docs for humans", async () => {
+  const program = createProgram(makeDeps({ localStore: "/tmp/software-info" }));
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync(["node", "test", "software", "info", "plus"]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const output = logs.join("\n");
+  assert.match(output, /# cocalc software info plus/);
+  assert.match(output, /tools-minimal/);
+  assert.match(output, /--tools-minimal/);
+  assert.match(output, /cocalc-plus/);
+});
+
+test("software info emits agent-oriented json", async () => {
+  const program = createProgram(makeDeps({ localStore: "/tmp/software-info" }));
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "info",
+      "plus",
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.command, "software info");
+  assert.equal(payload.data.schema, "cocalc-software-info-v1");
+  assert.equal(payload.data.audience, "agent");
+  assert.equal(payload.data.component.component, "plus");
+  assert.equal(payload.data.component.target_kind, "release-channel");
+  assert.deepEqual(payload.data.component.related_components, [
+    "tools-minimal",
+  ]);
+  assert.match(payload.data.component.agent_notes.join("\n"), /tools-minimal/);
 });
 
 test("software build records an existing file with a generated tag", async () => {
@@ -577,6 +757,45 @@ test("software build tools runs the package tools builder", async () => {
           "20260614T235912Z-e882d124-tools-test",
           "files",
           `tools-linux-${arch}.tar.xz`,
+        ),
+      ),
+      true,
+    );
+  }
+});
+
+test("software build tools-minimal runs the package minimal tools builder", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-tools-minimal-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "tools-minimal",
+    "tools-minimal-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/project"), true);
+  assert.equal(runs[0].args.includes("build:tools-minimal"), true);
+  for (const [os, arch] of [
+    ["linux", "amd64"],
+    ["linux", "arm64"],
+    ["darwin", "arm64"],
+  ] as const) {
+    assert.equal(
+      existsSync(
+        join(
+          localStore,
+          "tools-minimal",
+          "20260614T235912Z-e882d124-tools-minimal-test",
+          "files",
+          `tools-minimal-${os}-${arch}.tar.xz`,
         ),
       ),
       true,
@@ -1135,6 +1354,149 @@ test("software history shows unknown for unsealed started deployments", async ()
   assert.equal(payload.data.deployments[0].status, "unknown");
 });
 
+test("software rollback redeploys a successful historical artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-rollback-static-"));
+  const artifactId = "20260614T235912Z-e882d124-old-static";
+  const r2 = makeR2Client(
+    deploymentHistoryObjects({
+      component: "static",
+      profileOrChannel: "staging",
+      artifactId,
+      tag: "old-static",
+    }),
+  );
+  const runs: CapturedRun[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "rollback",
+    "static",
+    "staging",
+    artifactId,
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  assert.equal(runs.length, 1);
+  const softwareIndex = runs[0].args.indexOf("software");
+  assert.notEqual(softwareIndex, -1);
+  assert.deepEqual(runs[0].args.slice(softwareIndex), [
+    "software",
+    "deploy",
+    "static",
+    artifactId,
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+  assert.equal(runs[0].args.includes("--quiet"), true);
+});
+
+test("software rollback plus reuses historical tools-minimal artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-rollback-plus-"));
+  const artifactId = "20260614T235912Z-e882d124-old-plus";
+  const toolsArtifactId = "20260614T235912Z-e882d124-old-tools-minimal";
+  const r2 = makeR2Client(
+    deploymentHistoryObjects({
+      component: "plus",
+      profileOrChannel: "candidate",
+      artifactId,
+      tag: "old-plus",
+      details: {
+        tools_minimal: {
+          artifact_id: toolsArtifactId,
+        },
+      },
+    }),
+  );
+  const runs: CapturedRun[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "rollback",
+    "plus",
+    "candidate",
+    artifactId,
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const softwareIndex = runs[0].args.indexOf("software");
+  assert.deepEqual(runs[0].args.slice(softwareIndex), [
+    "software",
+    "deploy",
+    "plus",
+    artifactId,
+    "candidate",
+    "--env-file",
+    join(dir, "missing.env"),
+    "--tools-minimal",
+    toolsArtifactId,
+  ]);
+});
+
+test("software rollback rejects artifacts without successful history", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-rollback-no-success-"));
+  const artifactId = "20260614T235912Z-e882d124-failed-static";
+  const r2 = makeR2Client(
+    deploymentHistoryObjects({
+      component: "static",
+      profileOrChannel: "staging",
+      artifactId,
+      status: "failed",
+    }),
+  );
+  const runs: CapturedRun[] = [];
+  const program = createProgram(
+    makeDeps({
+      localStore: join(dir, "store"),
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "rollback",
+        "static",
+        "staging",
+        artifactId,
+        "--env-file",
+        join(dir, "missing.env"),
+      ]),
+    /has no succeeded deployment/,
+  );
+  assert.equal(runs.length, 0);
+});
+
 test("software deploy latest chooses the newest remote artifact", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-latest-"));
   const localStore = join(dir, "store");
@@ -1566,6 +1928,15 @@ test("software deploy plus stable also updates the legacy latest manifest", asyn
     "test",
     "--quiet",
     "software",
+    "build",
+    "tools-minimal",
+    "plus-stable",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
     "deploy",
     "plus",
     "plus-stable",
@@ -1587,6 +1958,25 @@ test("software deploy plus stable also updates the legacy latest manifest", asyn
   assert.equal(stable.artifact_id, "20260614T235912Z-e882d124-plus-stable");
   assert.equal(latest.artifact_id, stable.artifact_id);
   assert.equal(latest.channel, "latest");
+  const toolsStable = JSON.parse(
+    r2.objects
+      .get("software/tools-minimal/stable-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  const toolsLatest = JSON.parse(
+    r2.objects
+      .get("software/tools-minimal/latest-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  assert.equal(toolsStable.product, "tools-minimal");
+  assert.equal(toolsStable.component, "tools-minimal");
+  assert.equal(
+    toolsStable.artifact_id,
+    "20260614T235912Z-e882d124-plus-stable",
+  );
+  assert.match(toolsStable.url, /tools-minimal-linux-amd64\.tar\.xz$/);
+  assert.equal(toolsLatest.artifact_id, toolsStable.artifact_id);
+  assert.equal(toolsLatest.channel, "latest");
   const history = JSON.parse(
     r2.objects
       .get("software/deployments/stable/plus/index.json")!
@@ -1594,6 +1984,67 @@ test("software deploy plus stable also updates the legacy latest manifest", asyn
   );
   assert.equal(history.deployments[0].target.kind, "release-channel");
   assert.equal(history.deployments[0].target.channel, "stable");
+  const record = JSON.parse(
+    r2.objects
+      .get(
+        `software/deployments/stable/plus/${history.deployments[0].deployment_id}.json`,
+      )!
+      .toString("utf8"),
+  );
+  assert.deepEqual(record.details.tools_minimal_channel_manifests, [
+    "https://software.example.test/software/tools-minimal/stable-linux-amd64.json",
+    "https://software.example.test/software/tools-minimal/stable-linux-arm64.json",
+    "https://software.example.test/software/tools-minimal/stable-darwin-arm64.json",
+    "https://software.example.test/software/tools-minimal/latest-linux-amd64.json",
+    "https://software.example.test/software/tools-minimal/latest-linux-arm64.json",
+    "https://software.example.test/software/tools-minimal/latest-darwin-arm64.json",
+  ]);
+});
+
+test("software deploy plus requires a coordinated tools-minimal artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-plus-no-tools-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "cocalc-plus-bin");
+  writeFileSync(source, "plus binary");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "plus",
+    "plus-only",
+    "--from-file",
+    source,
+    "--artifact-name",
+    "cocalc-plus-20260614T235912Z-e882d124-plus-only-x86_64-linux",
+  ]);
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "deploy",
+        "plus",
+        "plus-only",
+        "candidate",
+        "--env-file",
+        join(dir, "missing.env"),
+      ]),
+    /requires a matching tools-minimal artifact/,
+  );
+
+  assert.equal(
+    r2.objects.has("software/cocalc-plus/candidate-linux-amd64.json"),
+    false,
+  );
 });
 
 test("software deploy star promotes an immutable GitHub release channel", async () => {
@@ -2443,6 +2894,57 @@ test("software smoke project validates project bundle artifact", async () => {
     "project",
     "staging",
   ]);
+});
+
+test("software smoke star runs the Star smoke script for a release channel", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-star-"));
+  const runs: CapturedRun[] = [];
+  let smokeEnv: NodeJS.ProcessEnv | undefined;
+  const deps = makeDeps({ localStore: join(dir, "store"), runs });
+  deps.runCommand = async (command, args, options) => {
+    runs.push({ command, args });
+    smokeEnv = options?.env;
+    return 0;
+  };
+  const program = createProgram(deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "smoke",
+    "star",
+    "candidate",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].command.endsWith("scripts/star/smoke-star.sh"), true);
+  assert.deepEqual(runs[0].args, []);
+  assert.equal(smokeEnv?.SRC_ROOT, "/repo/src");
+  assert.equal(smokeEnv?.COCALC_STAR_CHANNEL, "candidate");
+  assert.equal(smokeEnv?.COCALC_STAR_RELEASE_CHANNEL, "candidate");
+});
+
+test("software smoke star reports script failure", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-smoke-star-fail-"));
+  const deps = makeDeps({ localStore: join(dir, "store") });
+  deps.runCommand = async () => 9;
+  const program = createProgram(deps);
+
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "smoke",
+        "star",
+        "dev",
+      ]),
+    /star smoke script failed with exit status 9/,
+  );
 });
 
 test("software smoke rejects components that are not wired yet", async () => {

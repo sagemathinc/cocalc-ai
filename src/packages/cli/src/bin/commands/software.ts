@@ -121,12 +121,15 @@ type DeployOptions = {
   config?: string;
   remote?: string;
   api?: string;
+  toolsMinimal?: string;
 };
 
 type HistoryOptions = {
   envFile?: string;
   limit?: string;
 };
+
+type RollbackOptions = DeployOptions;
 
 type SmokeOptions = {
   api?: string;
@@ -144,8 +147,13 @@ type SoftwareSmokeCheck = {
 
 const BUILD_COMPONENTS_HELP = SOFTWARE_BUILD_COMPONENTS.join("|");
 const DEPLOY_COMPONENTS_HELP = SOFTWARE_DEPLOY_COMPONENTS.join("|");
+const INFO_COMPONENTS = Array.from(
+  new Set([...SOFTWARE_BUILD_COMPONENTS, ...SOFTWARE_DEPLOY_COMPONENTS]),
+) as SoftwareInfoComponent[];
+const INFO_COMPONENTS_HELP = INFO_COMPONENTS.join("|");
 const BUILD_COMPONENT_ARGUMENT = `software component (${BUILD_COMPONENTS_HELP})`;
 const DEPLOY_COMPONENT_ARGUMENT = `software component (${DEPLOY_COMPONENTS_HELP})`;
+const INFO_COMPONENT_ARGUMENT = `software component (${INFO_COMPONENTS_HELP})`;
 const PROFILE_OR_CHANNEL_ARGUMENT =
   "site profile (see cocalc auth list) or release channel (dev, candidate or stable)";
 const KNOWN_ROCKET_REMOTES: Record<string, string> = {
@@ -153,6 +161,636 @@ const KNOWN_ROCKET_REMOTES: Record<string, string> = {
   "https://cocalc.ai": "ubuntu@10.206.0.38",
   "https://delta.cocalc.ai": "ubuntu@10.206.15.209",
 };
+
+type SoftwareInfoComponent = SoftwareBuildComponent | SoftwareDeployComponent;
+
+type SoftwareComponentInfo = {
+  component: SoftwareInfoComponent;
+  title: string;
+  status: "build-and-deploy" | "build-only" | "deploy-only";
+  artifact_component?: SoftwareBuildComponent;
+  target_kind?: "rocket-bay" | "project-host-fleet" | "release-channel";
+  purpose: string;
+  lifecycle: string[];
+  commands: {
+    build?: string[];
+    push?: string[];
+    deploy?: string[];
+    smoke?: string[];
+    history?: string[];
+    rollback?: string[];
+  };
+  related_components: string[];
+  operator_notes: string[];
+  agent_notes: string[];
+  common_failure_modes: string[];
+};
+
+function parseSoftwareInfoComponent(value: string): SoftwareInfoComponent {
+  if (INFO_COMPONENTS.includes(value as SoftwareInfoComponent)) {
+    return value as SoftwareInfoComponent;
+  }
+  throw new Error(`unknown software component: ${value}`);
+}
+
+function softwareInfoPayload(componentArg: string | undefined): {
+  schema: "cocalc-software-info-v1";
+  audience: "agent";
+  overview?: ReturnType<typeof softwareInfoOverview>;
+  component?: SoftwareComponentInfo;
+  components?: SoftwareComponentInfo[];
+  agent_guidance: string[];
+} {
+  const agentGuidance = [
+    "Use build/list/push for immutable artifacts, deploy for site profiles or release channels, smoke after deploy, history to confirm sealed deployment records, and rollback for known-good artifacts.",
+    "Treat release channels as dev, candidate, or stable. Treat site profiles as names from cocalc auth list.",
+    "Prefer explicit profile/channel arguments. Do not rely on ambient defaults for deploy, smoke, history, or rollback.",
+  ];
+  if (componentArg) {
+    const component = parseSoftwareInfoComponent(componentArg);
+    return {
+      schema: "cocalc-software-info-v1",
+      audience: "agent",
+      component: softwareComponentInfo(component),
+      agent_guidance: agentGuidance,
+    };
+  }
+  return {
+    schema: "cocalc-software-info-v1",
+    audience: "agent",
+    overview: softwareInfoOverview(),
+    components: INFO_COMPONENTS.map(softwareComponentInfo),
+    agent_guidance: agentGuidance,
+  };
+}
+
+function softwareInfoOverview() {
+  return {
+    build_components: SOFTWARE_BUILD_COMPONENTS,
+    deploy_components: SOFTWARE_DEPLOY_COMPONENTS,
+    release_channels: ["dev", "candidate", "stable"],
+    site_profile_source: "cocalc auth list",
+    artifact_store: "R2 software artifact store",
+    deployment_history_store: "R2 software deployment history records",
+    component_groups: {
+      bay: [
+        "static",
+        "hub",
+        "bay",
+        "bay-conat-router",
+        "bay-conat-persist",
+        "bay-frontdoor",
+        "bay-cloudflared",
+        "bay-scaffold",
+      ],
+      project_hosts: [
+        "project-host",
+        "project",
+        "tools",
+        "host-conat-router",
+        "host-conat-persist",
+      ],
+      release_channels: ["cli", "launchpad", "plus", "tools-minimal", "star"],
+    },
+  };
+}
+
+function softwareComponentInfo(
+  component: SoftwareInfoComponent,
+): SoftwareComponentInfo {
+  if (
+    component === "bay-conat-router" ||
+    component === "bay-conat-persist" ||
+    component === "bay-frontdoor" ||
+    component === "bay-cloudflared" ||
+    component === "bay-scaffold"
+  ) {
+    const service = component.replace(/^bay-/, "");
+    const scaffoldOnly = component === "bay-scaffold";
+    return {
+      component,
+      title: scaffoldOnly
+        ? "Bay scaffold installer"
+        : `Bay service: ${service}`,
+      status: "deploy-only",
+      artifact_component: "bay",
+      target_kind: "rocket-bay",
+      purpose: scaffoldOnly
+        ? "Install or refresh the bay scaffold without rolling a runtime bundle."
+        : `Deploy only the ${service} bay service from a full bay artifact.`,
+      lifecycle: [
+        "Build a bay artifact.",
+        "Push or let deploy push the selected artifact.",
+        scaffoldOnly
+          ? "Deploy with the Rocket scaffold-only path."
+          : `Deploy with the Rocket one-service path for ${service}.`,
+        "Use history and rollback against this deploy component name, not against bay.",
+      ],
+      commands: {
+        build: ["cocalc software build bay <tag>"],
+        push: ["cocalc software push bay <tag-or-id>"],
+        deploy: [`cocalc software deploy ${component} <tag-or-id> <profile>`],
+        smoke: ["cocalc software smoke bay <profile>"],
+        history: [`cocalc software history ${component} <profile>`],
+        rollback: [
+          `cocalc software rollback ${component} <profile> <artifact-id>`,
+        ],
+      },
+      related_components: ["bay"],
+      operator_notes: [
+        "This is intentionally narrower than a full bay deploy.",
+        "The artifact id is a bay artifact id even though the deployment component is service-specific.",
+      ],
+      agent_notes: [
+        "Resolve artifacts using artifact_component=bay.",
+        "Deployment records should use the service component name so rollback/history remain service-scoped.",
+      ],
+      common_failure_modes: [
+        "Selected bay artifact is missing from local and remote stores.",
+        "Rocket cannot infer the bay SSH target from the profile API URL.",
+      ],
+    };
+  }
+
+  if (component === "host-conat-router" || component === "host-conat-persist") {
+    const service = component.replace(/^host-/, "");
+    return {
+      component,
+      title: `Project-host service: ${service}`,
+      status: "deploy-only",
+      artifact_component: "project-host",
+      target_kind: "project-host-fleet",
+      purpose: `Roll only the ${service} managed service on online project hosts using a project-host artifact.`,
+      lifecycle: [
+        "Build a project-host artifact.",
+        "Publish host compatibility metadata.",
+        `Set the desired managed component version for ${service}.`,
+        "Reconcile online project hosts and wait for convergence.",
+      ],
+      commands: {
+        build: ["cocalc software build project-host <tag>"],
+        push: ["cocalc software push project-host <tag-or-id>"],
+        deploy: [`cocalc software deploy ${component} <tag-or-id> <profile>`],
+        smoke: ["cocalc software smoke project-host <profile>"],
+        history: [`cocalc software history ${component} <profile>`],
+        rollback: [
+          `cocalc software rollback ${component} <profile> <artifact-id>`,
+        ],
+      },
+      related_components: ["project-host"],
+      operator_notes: [
+        "This updates host deploy desired state and reconciles online hosts.",
+        "Offline hosts converge when the host deployment machinery sees them later.",
+      ],
+      agent_notes: [
+        "Resolve artifacts using artifact_component=project-host.",
+        "Expect host deploy set and host deploy reconcile subprocesses during deploy.",
+      ],
+      common_failure_modes: [
+        "No online representative host is available for smoke verification.",
+        "Host deploy status reports version_state other than aligned.",
+      ],
+    };
+  }
+
+  switch (component) {
+    case "static":
+      return {
+        component,
+        title: "Bay static frontend assets",
+        status: "build-and-deploy",
+        artifact_component: "static",
+        target_kind: "rocket-bay",
+        purpose:
+          "Ship browser frontend, public assets, webapp assets, and provider setup scripts to a bay.",
+        lifecycle: [
+          "Build static assets and package a static bundle.",
+          "Push to R2 or let deploy push it.",
+          "Deploy to a site profile with Rocket scope static.",
+          "Smoke HTTP bootstrap and static asset endpoints.",
+        ],
+        commands: {
+          build: ["cocalc software build static <tag>"],
+          push: ["cocalc software push static <tag-or-id>"],
+          deploy: ["cocalc software deploy static <tag-or-id> <profile>"],
+          smoke: ["cocalc software smoke static <profile>"],
+          history: ["cocalc software history static <profile>"],
+          rollback: ["cocalc software rollback static <profile> <artifact-id>"],
+        },
+        related_components: ["hub", "bay"],
+        operator_notes: [
+          "Static deploys should not require hub worker restarts just to serve new static files.",
+          "Use history after deploy to confirm the record sealed as succeeded.",
+        ],
+        agent_notes: [
+          "Rocket scope is static and the artifact component is static.",
+          "Smoke uses the profile API URL and does not need SSH.",
+        ],
+        common_failure_modes: [
+          "Static bundle missing the expected manifest or frontend assets.",
+          "Profile does not resolve an API URL for smoke.",
+        ],
+      };
+    case "hub":
+      return {
+        component,
+        title: "Bay hub workers",
+        status: "build-and-deploy",
+        artifact_component: "hub",
+        target_kind: "rocket-bay",
+        purpose: "Deploy hub worker runtime code on a bay.",
+        lifecycle: [
+          "Build the hub-only runtime artifact.",
+          "Push to R2 or let deploy push it.",
+          "Deploy to a site profile with Rocket scope hub.",
+          "Smoke API endpoints and Rocket host-route health.",
+        ],
+        commands: {
+          build: ["cocalc software build hub <tag>"],
+          push: ["cocalc software push hub <tag-or-id>"],
+          deploy: ["cocalc software deploy hub <tag-or-id> <profile>"],
+          smoke: ["cocalc software smoke hub <profile>"],
+          history: ["cocalc software history hub <profile>"],
+          rollback: ["cocalc software rollback hub <profile> <artifact-id>"],
+        },
+        related_components: ["static", "bay"],
+        operator_notes: [
+          "Prefer hub artifacts for hub-only fixes; they are smaller and faster than full bay artifacts.",
+          "A failed deploy should still leave a failed history record when R2 is available.",
+        ],
+        agent_notes: [
+          "Rocket scope is hub and the artifact component is hub.",
+          "Smoke runs HTTP checks plus a Rocket host-route health subprocess.",
+        ],
+        common_failure_modes: [
+          "Hub workers fail health after rollout.",
+          "Rocket target profile lacks remote or API resolution.",
+        ],
+      };
+    case "bay":
+      return {
+        component,
+        title: "Full bay runtime",
+        status: "build-and-deploy",
+        artifact_component: "bay",
+        target_kind: "rocket-bay",
+        purpose:
+          "Deploy the full bay runtime bundle and scaffold-compatible services.",
+        lifecycle: [
+          "Build the full bay runtime artifact.",
+          "Push to R2 or let deploy push it.",
+          "Deploy to a site profile with Rocket scope bay.",
+          "Smoke bay HTTP and health checks.",
+        ],
+        commands: {
+          build: ["cocalc software build bay <tag>"],
+          push: ["cocalc software push bay <tag-or-id>"],
+          deploy: ["cocalc software deploy bay <tag-or-id> <profile>"],
+          smoke: ["cocalc software smoke bay <profile>"],
+          history: ["cocalc software history bay <profile>"],
+          rollback: ["cocalc software rollback bay <profile> <artifact-id>"],
+        },
+        related_components: [
+          "hub",
+          "static",
+          "bay-conat-router",
+          "bay-conat-persist",
+          "bay-frontdoor",
+          "bay-cloudflared",
+          "bay-scaffold",
+        ],
+        operator_notes: [
+          "Use service-specific bay deploy components when only one bay service needs to move.",
+          "Full bay deploys have the broadest blast radius among bay components.",
+        ],
+        agent_notes: [
+          "Rocket scope is bay and artifact component is bay.",
+          "Service deploy components also resolve the bay artifact index.",
+        ],
+        common_failure_modes: [
+          "Scaffold and runtime expectations drift.",
+          "One bay service fails to restart or pass health checks.",
+        ],
+      };
+    case "project-host":
+      return projectHostArtifactInfo({
+        component,
+        title: "Project-host runtime",
+        purpose: "Upgrade project host runtime code across online hosts.",
+        upgradeArtifact: "project-host",
+        notes: [
+          "This is the primary artifact for project-host agent/runtime fixes.",
+          "Host service subcomponents use project-host artifacts too.",
+        ],
+      });
+    case "project":
+      return projectHostArtifactInfo({
+        component,
+        title: "Project bundle",
+        purpose:
+          "Upgrade the project runtime bundle used by projects on hosts.",
+        upgradeArtifact: "project",
+        notes: [
+          "Smoke verifies host deploy status and project bundle observation on a representative host.",
+        ],
+      });
+    case "tools":
+      return projectHostArtifactInfo({
+        component,
+        title: "Full project tools",
+        purpose:
+          "Upgrade full project tools bundles for supported project-host CPU architectures.",
+        upgradeArtifact: "tools",
+        notes: [
+          "Tools builds intentionally include both linux/amd64 and linux/arm64 because project hosts can be either architecture.",
+        ],
+      });
+    case "tools-minimal":
+      return {
+        component,
+        title: "Minimal tools for Plus",
+        status: "build-only",
+        artifact_component: "tools-minimal",
+        purpose:
+          "Publish small cross-platform tools bundles consumed by CoCalc Plus installers.",
+        lifecycle: [
+          "Build tools-minimal artifacts.",
+          "Push them to the R2 artifact store.",
+          "Coordinate promotion with plus using cocalc software deploy plus --tools-minimal.",
+        ],
+        commands: {
+          build: ["cocalc software build tools-minimal <tag>"],
+          push: ["cocalc software push tools-minimal <tag-or-id>"],
+          deploy: [
+            "cocalc software deploy plus <tag-or-id> <channel> --tools-minimal <tools-tag-or-id>",
+          ],
+        },
+        related_components: ["plus"],
+        operator_notes: [
+          "There is no standalone tools-minimal deploy component.",
+          "For Plus, promote plus and tools-minimal together so installers see a compatible pair.",
+        ],
+        agent_notes: [
+          "Use component=tools-minimal for artifact lookup and component=plus for deployment history.",
+          "When --tools-minimal is omitted, plus deploy attempts to use the same selector as plus.",
+        ],
+        common_failure_modes: [
+          "Plus deploy fails because no matching tools-minimal artifact exists.",
+          "Only one platform bundle exists when installers expect multiple platforms.",
+        ],
+      };
+    case "cli":
+    case "launchpad":
+    case "plus":
+      return releaseComponentInfo(component);
+    case "star":
+      return {
+        component,
+        title: "CoCalc Star",
+        status: "build-and-deploy",
+        artifact_component: "star",
+        target_kind: "release-channel",
+        purpose:
+          "Build immutable Star GitHub release assets and promote dev/candidate/stable channel releases.",
+        lifecycle: [
+          "Build Star GitHub release assets.",
+          "Upload immutable release assets to GitHub.",
+          "Deploy by promoting an immutable release to dev, candidate, or stable.",
+          "Smoke the selected release channel with the Star smoke script.",
+        ],
+        commands: {
+          build: ["cocalc software build star <tag>"],
+          push: ["cocalc software push star <tag-or-id>"],
+          deploy: ["cocalc software deploy star <tag-or-id> <channel>"],
+          smoke: ["cocalc software smoke star <channel>"],
+          history: ["cocalc software history star <channel>"],
+          rollback: ["cocalc software rollback star <channel> <artifact-id>"],
+        },
+        related_components: [],
+        operator_notes: [
+          "Star promotion validates that the immutable GitHub release exists before moving a channel.",
+          "VM-level Star smoke can be done manually when operator trust is more important than automation speed.",
+        ],
+        agent_notes: [
+          "Channel deploy target is a release channel, not a site profile.",
+          "Default GitHub repo is sagemathinc/cocalc-ai unless COCALC_STAR_GITHUB_REPO is set.",
+        ],
+        common_failure_modes: [
+          "Immutable GitHub release assets were not uploaded before channel promotion.",
+          "GitHub CLI auth is missing or cannot view/promote the release.",
+        ],
+      };
+  }
+}
+
+function projectHostArtifactInfo({
+  component,
+  title,
+  purpose,
+  upgradeArtifact,
+  notes,
+}: {
+  component: "project-host" | "project" | "tools";
+  title: string;
+  purpose: string;
+  upgradeArtifact: "project-host" | "project" | "tools";
+  notes: string[];
+}): SoftwareComponentInfo {
+  return {
+    component,
+    title,
+    status: "build-and-deploy",
+    artifact_component: component,
+    target_kind: "project-host-fleet",
+    purpose,
+    lifecycle: [
+      "Build the package artifact.",
+      "Publish host compatibility metadata.",
+      `Run host upgrade --artifact ${upgradeArtifact} against online hosts.`,
+      "Smoke a representative online host.",
+    ],
+    commands: {
+      build: [`cocalc software build ${component} <tag>`],
+      push: [`cocalc software push ${component} <tag-or-id>`],
+      deploy: [`cocalc software deploy ${component} <tag-or-id> <profile>`],
+      smoke: [`cocalc software smoke ${component} <profile>`],
+      history: [`cocalc software history ${component} <profile>`],
+      rollback: [
+        `cocalc software rollback ${component} <profile> <artifact-id>`,
+      ],
+    },
+    related_components:
+      component === "project-host"
+        ? ["host-conat-router", "host-conat-persist"]
+        : [],
+    operator_notes: [
+      ...notes,
+      "Deploy affects online hosts and records history under the selected site profile.",
+    ],
+    agent_notes: [
+      `Host upgrade artifact is ${upgradeArtifact}.`,
+      "Smoke uses cocalc host list/status/rootfs style checks through the selected profile.",
+    ],
+    common_failure_modes: [
+      "No online hosts are available for upgrade or smoke.",
+      "A representative host reports stale artifact versions after deploy.",
+    ],
+  };
+}
+
+function releaseComponentInfo(
+  component: "cli" | "launchpad" | "plus",
+): SoftwareComponentInfo {
+  const product = releaseProductForArtifactComponent(component);
+  const baseUrl = `https://software.cocalc.ai/software/${product}`;
+  return {
+    component,
+    title:
+      component === "cli"
+        ? "CoCalc CLI"
+        : component === "launchpad"
+          ? "CoCalc Launchpad"
+          : "CoCalc Plus",
+    status: "build-and-deploy",
+    artifact_component: component,
+    target_kind: "release-channel",
+    purpose:
+      component === "plus"
+        ? "Publish and promote CoCalc Plus release-channel installers, coordinated with tools-minimal."
+        : `Publish and promote ${product} release-channel installers.`,
+    lifecycle: [
+      "Build an immutable SEA-style release artifact.",
+      "Push to the R2 software artifact store.",
+      "Deploy by promoting the artifact to dev, candidate, or stable.",
+      "Smoke the public channel manifest and downloaded binary.",
+    ],
+    commands: {
+      build: [`cocalc software build ${component} <tag>`],
+      push: [`cocalc software push ${component} <tag-or-id>`],
+      deploy:
+        component === "plus"
+          ? [
+              "cocalc software deploy plus <tag-or-id> <channel> --tools-minimal <tools-tag-or-id>",
+            ]
+          : [`cocalc software deploy ${component} <tag-or-id> <channel>`],
+      smoke: [`cocalc software smoke ${component} <channel>`],
+      history: [`cocalc software history ${component} <channel>`],
+      rollback: [
+        `cocalc software rollback ${component} <channel> <artifact-id>`,
+      ],
+    },
+    related_components: component === "plus" ? ["tools-minimal"] : [],
+    operator_notes: [
+      "Release channels are dev, candidate, and stable.",
+      `Install script: ${baseUrl}/install.sh`,
+      `Channel manifests: ${baseUrl}/dev-<os>-<arch>.json, ${baseUrl}/candidate-<os>-<arch>.json, ${baseUrl}/stable-<os>-<arch>.json`,
+      ...(component === "plus"
+        ? [
+            "Plus promotion should move the plus artifact and tools-minimal artifact together.",
+          ]
+        : []),
+    ],
+    agent_notes: [
+      "Channel deploy target is a release channel, not a site profile.",
+      "Stable promotion also maintains the legacy latest alias where applicable.",
+      ...(component === "plus"
+        ? [
+            "Resolve tools-minimal separately and include it in deployment details.",
+          ]
+        : []),
+    ],
+    common_failure_modes: [
+      "Unsupported channel name; only dev, candidate, and stable are valid.",
+      "Release channel manifest points at an artifact that no longer downloads or fails sha256.",
+      ...(component === "plus"
+        ? [
+            "Missing coordinated tools-minimal artifact for the selected plus deploy.",
+          ]
+        : []),
+    ],
+  };
+}
+
+function formatSoftwareInfoPayload(
+  payload: ReturnType<typeof softwareInfoPayload>,
+): string {
+  if (payload.component) {
+    return formatSoftwareComponentInfo(payload.component);
+  }
+  const overview = payload.overview!;
+  const lines = [
+    "# cocalc software info",
+    "",
+    "CoCalc software manages immutable artifacts, R2 publication, site/profile deploys, release-channel promotion, smoke checks, deployment history, and rollback.",
+    "",
+    "Build/list/push components:",
+    `  ${overview.build_components.join(", ")}`,
+    "",
+    "Deploy/smoke/history/rollback components:",
+    `  ${overview.deploy_components.join(", ")}`,
+    "",
+    "Release channels:",
+    `  ${overview.release_channels.join(", ")}`,
+    "",
+    "Site profiles:",
+    `  ${overview.site_profile_source}`,
+    "",
+    "Component groups:",
+  ];
+  for (const [group, components] of Object.entries(overview.component_groups)) {
+    lines.push(`  ${group}: ${components.join(", ")}`);
+  }
+  lines.push(
+    "",
+    "Examples:",
+    "  cocalc software info hub",
+    "  cocalc software build hub <tag>",
+    "  cocalc software deploy hub <tag-or-id> <profile>",
+    "  cocalc software smoke hub <profile>",
+    "  cocalc software history hub <profile>",
+    "  cocalc software rollback hub <profile> <artifact-id>",
+    "",
+    "Use --json for an agent-oriented component map.",
+  );
+  return lines.join("\n");
+}
+
+function formatSoftwareComponentInfo(info: SoftwareComponentInfo): string {
+  const lines = [
+    `# cocalc software info ${info.component}`,
+    "",
+    `${info.title}`,
+    "",
+    info.purpose,
+    "",
+    "Lifecycle:",
+    ...info.lifecycle.map((line) => `  - ${line}`),
+    "",
+    "Commands:",
+  ];
+  for (const [group, commands] of Object.entries(info.commands)) {
+    if (!commands?.length) continue;
+    lines.push(`  ${group}:`);
+    for (const command of commands) {
+      lines.push(`    ${command}`);
+    }
+  }
+  if (info.related_components.length > 0) {
+    lines.push("", `Related components: ${info.related_components.join(", ")}`);
+  }
+  lines.push(
+    "",
+    "Operator notes:",
+    ...info.operator_notes.map((line) => `  - ${line}`),
+    "",
+    "Agent notes:",
+    ...info.agent_notes.map((line) => `  - ${line}`),
+    "",
+    "Common failure modes:",
+    ...info.common_failure_modes.map((line) => `  - ${line}`),
+  );
+  return lines.join("\n");
+}
 
 function runGitText(cwd: string, args: string[]): string | null {
   const result = spawnSync("git", args, {
@@ -335,6 +973,29 @@ function packageBuildInfo(
       artifactFiles: (srcRoot) =>
         ["amd64", "arm64"].map((arch) => {
           const name = `tools-linux-${arch}.tar.xz`;
+          return {
+            name,
+            source: join(srcRoot, "packages", "project", "build", name),
+          };
+        }),
+    };
+  }
+  if (component === "tools-minimal") {
+    const toolsArch = process.arch === "arm64" ? "arm64" : "amd64";
+    const artifactName = `tools-minimal-linux-${toolsArch}.tar.xz`;
+    return {
+      packageFilter: "@cocalc/project",
+      script: "build:tools-minimal",
+      artifactName,
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "project", "build", artifactName),
+      artifactFiles: (srcRoot) =>
+        [
+          ["linux", "amd64"],
+          ["linux", "arm64"],
+          ["darwin", "arm64"],
+        ].map(([os, arch]) => {
+          const name = `tools-minimal-${os}-${arch}.tar.xz`;
           return {
             name,
             source: join(srcRoot, "packages", "project", "build", name),
@@ -585,6 +1246,47 @@ function hostArtifactForSmoke(
   if (component === "project") return "project-bundle";
   if (component === "tools") return "tools";
   return undefined;
+}
+
+function isStarSmokeComponent(component: SoftwareDeployComponent): boolean {
+  return component === "star";
+}
+
+async function smokeStarChecks({
+  channel,
+  deps,
+}: {
+  channel: string;
+  deps: SoftwareCommandDeps;
+}): Promise<SoftwareSmokeCheck[]> {
+  const releaseChannel = validateSoftwareReleaseChannel(channel);
+  if (!deps.runCommand) {
+    throw new Error("software smoke star requires runCommand dependency");
+  }
+  const cwd = resolve(deps.cwd ?? process.cwd());
+  const { srcRoot } = resolveRepoLayout({ cwd, deps });
+  const script = join(srcRoot, "scripts", "star", "smoke-star.sh");
+  return [
+    await runTimedSmokeCheck(
+      "star smoke script",
+      async () => {
+        const code = await deps.runCommand!(script, [], {
+          stdio: "inherit",
+          env: {
+            ...(deps.env ?? process.env),
+            SRC_ROOT: srcRoot,
+            COCALC_STAR_CHANNEL: releaseChannel,
+            COCALC_STAR_RELEASE_CHANNEL: releaseChannel,
+          },
+        });
+        if (code !== 0) {
+          throw new Error(`star smoke script failed with exit status ${code}`);
+        }
+        return `smoke-star.sh ok channel=${releaseChannel}`;
+      },
+      deps,
+    ),
+  ];
 }
 
 function selectRepresentativeHost(rows: any[], requestedHost?: string): any {
@@ -1144,6 +1846,103 @@ function deploymentHistoryRow(
     error: entry.error,
     record: entry.record_url,
   };
+}
+
+async function readDeploymentRecordByKey({
+  client,
+  config,
+  key,
+}: {
+  client: SoftwareR2Client;
+  config: Awaited<ReturnType<typeof resolveSoftwareRemoteConfig>>;
+  key: string;
+}): Promise<SoftwareDeploymentRecord> {
+  const body = await client.getR2ObjectBuffer({
+    auth: config.auth,
+    key,
+  });
+  if (!body) {
+    throw new Error(`software deployment record is missing: ${key}`);
+  }
+  const record = JSON.parse(body.toString("utf8"));
+  if (record?.schema !== "cocalc-software-deployment-v1") {
+    throw new Error(`invalid software deployment record: ${key}`);
+  }
+  return record;
+}
+
+function successfulRollbackTarget({
+  index,
+  artifactId,
+}: {
+  index: Awaited<ReturnType<typeof readDeploymentIndex>>;
+  artifactId: string;
+}): SoftwareDeploymentIndexEntry {
+  const matches = index.deployments.filter(
+    (entry) => entry.artifact_id === artifactId,
+  );
+  const succeeded = matches.find((entry) => entry.status === "succeeded");
+  if (succeeded) {
+    return succeeded;
+  }
+  if (matches.length) {
+    throw new Error(
+      `software rollback target ${artifactId} exists in history but has no succeeded deployment`,
+    );
+  }
+  throw new Error(
+    `software rollback target ${artifactId} was not found in deployment history for ${index.component}/${index.profile_or_channel}`,
+  );
+}
+
+function toolsMinimalArtifactIdFromRecord(
+  record: SoftwareDeploymentRecord,
+): string | undefined {
+  const details = record.details as any;
+  const value = `${details?.tools_minimal?.artifact_id ?? ""}`.trim();
+  return value || undefined;
+}
+
+function rollbackDeployArgs({
+  cliArgs,
+  component,
+  artifactId,
+  profileOrChannel,
+  opts,
+  record,
+}: {
+  cliArgs: string[];
+  component: SoftwareDeployComponent;
+  artifactId: string;
+  profileOrChannel: string;
+  opts: RollbackOptions;
+  record: SoftwareDeploymentRecord;
+}): string[] {
+  const args = [
+    ...cliArgs,
+    "--quiet",
+    "software",
+    "deploy",
+    component,
+    artifactId,
+    profileOrChannel,
+  ];
+  if (opts.localStore) args.push("--local-store", opts.localStore);
+  if (opts.config) args.push("--config", opts.config);
+  if (opts.remote) args.push("--remote", opts.remote);
+  if (opts.api) args.push("--api", opts.api);
+  if (opts.envFile) args.push("--env-file", opts.envFile);
+  if (component === "plus") {
+    const toolsMinimal =
+      opts.toolsMinimal || toolsMinimalArtifactIdFromRecord(record);
+    if (!toolsMinimal) {
+      throw new Error(
+        `software rollback plus requires historical tools-minimal artifact metadata or --tools-minimal <tag-or-id>`,
+      );
+    }
+    args.push("--tools-minimal", toolsMinimal);
+  }
+  return args;
 }
 
 function elapsedMsSince(
@@ -2166,6 +2965,20 @@ Supported deploy/smoke components:
     );
 
   software
+    .command("info")
+    .description("describe software components for humans or agents")
+    .argument("[component]", INFO_COMPONENT_ARGUMENT)
+    .action(function (this: Command, componentArg: string | undefined) {
+      const globals = this.optsWithGlobals() as any;
+      const payload = softwareInfoPayload(componentArg);
+      if (globals.json || globals.output === "json") {
+        emitSuccess({ globals }, "software info", payload);
+        return;
+      }
+      console.log(formatSoftwareInfoPayload(payload));
+    });
+
+  software
     .command("build")
     .description("build or record a local immutable software artifact")
     .argument("<component>", BUILD_COMPONENT_ARGUMENT)
@@ -2321,6 +3134,10 @@ Supported deploy/smoke components:
       "R2 credential env file",
       "/run/secrets/cocalc/rocket-software-env.sh",
     )
+    .option(
+      "--tools-minimal <tag-or-id>",
+      "tools-minimal artifact selector to promote with plus; defaults to the plus selector",
+    )
     .action(
       async (
         componentArg: string,
@@ -2390,6 +3207,11 @@ Supported deploy/smoke components:
         let releaseProduct: string | undefined;
         let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
         let releaseChannelManifestUrls: string[] | undefined;
+        let toolsMinimalArtifact:
+          | Awaited<ReturnType<typeof resolveDeployArtifact>>
+          | undefined;
+        let toolsMinimalSelector: string | undefined;
+        let toolsMinimalChannelManifestUrls: string[] | undefined;
         let starInstall: ReturnType<typeof starInstallInfo> | undefined;
         let starPromoteScript: string | undefined;
         let targetKind: SoftwareDeploymentRecord["target"]["kind"];
@@ -2490,6 +3312,24 @@ Supported deploy/smoke components:
             channel: releaseChannel!,
             publicBaseUrl: config.publicBaseUrl,
           });
+          if (releaseTarget.artifactComponent === "plus") {
+            toolsMinimalSelector = `${opts.toolsMinimal ?? selector}`.trim();
+            try {
+              toolsMinimalArtifact = await resolveDeployArtifact({
+                component: "tools-minimal",
+                selector: toolsMinimalSelector,
+                opts,
+                deps,
+              });
+            } catch (err) {
+              if (opts.toolsMinimal) {
+                throw err;
+              }
+              throw new Error(
+                `software deploy plus requires a matching tools-minimal artifact; build/push tools-minimal with tag '${selector}' or pass --tools-minimal <tag-or-id>`,
+              );
+            }
+          }
           targetKind = "release-channel";
         } else if (starTarget) {
           const cwd = resolve(deps.cwd ?? process.cwd());
@@ -2545,6 +3385,23 @@ Supported deploy/smoke components:
             ...(releaseProduct ? { release_product: releaseProduct } : {}),
             ...(releaseChannel ? { release_channel: releaseChannel } : {}),
             ...(releaseInstall ?? {}),
+            ...(toolsMinimalArtifact
+              ? {
+                  tools_minimal: {
+                    selector: toolsMinimalSelector,
+                    artifact_id: toolsMinimalArtifact.artifact_id,
+                    tag: toolsMinimalArtifact.tag,
+                    source: toolsMinimalArtifact.source,
+                    remote_manifest: toolsMinimalArtifact.remote_manifest,
+                    files: toolsMinimalArtifact.files.map((file) => ({
+                      name: file.name,
+                      url: file.url,
+                      sha256: file.sha256,
+                      size_bytes: file.size_bytes,
+                    })),
+                  },
+                }
+              : {}),
             ...(starInstall ?? {}),
           },
           deps,
@@ -2556,6 +3413,20 @@ Supported deploy/smoke components:
           deps,
           run: async () => {
             if (releaseTarget) {
+              if (toolsMinimalArtifact) {
+                const publishedToolsMinimal =
+                  await publishReleaseChannelArtifact({
+                    client,
+                    config,
+                    entry: toolsMinimalArtifact.remote_entry,
+                    channel: releaseChannel!,
+                    now: deps.now?.() ?? new Date(),
+                  });
+                toolsMinimalChannelManifestUrls =
+                  publishedToolsMinimal.manifests.map(
+                    (manifest) => manifest.url,
+                  );
+              }
               const published = await publishReleaseChannelArtifact({
                 client,
                 config,
@@ -2572,6 +3443,12 @@ Supported deploy/smoke components:
                 release_product: published.product,
                 release_channel: published.channel,
                 channel_manifests: releaseChannelManifestUrls,
+                ...(toolsMinimalChannelManifestUrls
+                  ? {
+                      tools_minimal_channel_manifests:
+                        toolsMinimalChannelManifestUrls,
+                    }
+                  : {}),
                 ...(published.channel === "stable"
                   ? { latest_alias: "updated" }
                   : {}),
@@ -2671,12 +3548,26 @@ Supported deploy/smoke components:
             ...(releaseChannelManifestUrls
               ? { channel_manifests: releaseChannelManifestUrls }
               : {}),
-            ...(releaseChannel === "stable" ? { latest_alias: "updated" } : {}),
-            ...(releaseTarget?.artifactComponent === "plus"
+            ...(toolsMinimalArtifact
               ? {
-                  note: "Plus installer still resolves tools-minimal from its own channel manifest.",
+                  tools_minimal_artifact_id: toolsMinimalArtifact.artifact_id,
+                  tools_minimal_tag: toolsMinimalArtifact.tag,
+                  tools_minimal_source: toolsMinimalArtifact.source,
+                  tools_minimal_size: artifactSizeSummary(
+                    toolsMinimalArtifact.files,
+                  ).size,
+                  tools_minimal_size_bytes: artifactSizeSummary(
+                    toolsMinimalArtifact.files,
+                  ).size_bytes,
                 }
               : {}),
+            ...(toolsMinimalChannelManifestUrls
+              ? {
+                  tools_minimal_channel_manifests:
+                    toolsMinimalChannelManifestUrls,
+                }
+              : {}),
+            ...(releaseChannel === "stable" ? { latest_alias: "updated" } : {}),
             ...(releaseTarget ? {} : { profile: deployTarget }),
             deployment_id: finalRecord.deployment_id,
             deployment_record: `${config.publicBaseUrl}/${recordKey}`,
@@ -2737,6 +3628,102 @@ Supported deploy/smoke components:
     );
 
   software
+    .command("rollback")
+    .description(
+      "redeploy a previously successful artifact from deployment history",
+    )
+    .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
+    .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
+    .argument("<artifact-id>", "previously deployed artifact id")
+    .option("--local-store <path>", "local artifact store")
+    .option("--config <path>", "rocket config path")
+    .option("--remote <ssh-target>", "bay SSH target")
+    .option("--api <url>", "site API URL")
+    .option(
+      "--env-file <path>",
+      "R2 credential env file",
+      "/run/secrets/cocalc/rocket-software-env.sh",
+    )
+    .option(
+      "--tools-minimal <tag-or-id>",
+      "tools-minimal artifact selector for plus rollback; defaults to historical deployment metadata",
+    )
+    .action(
+      async (
+        componentArg: string,
+        profileOrChannel: string,
+        artifactId: string,
+        opts: RollbackOptions,
+        command: Command,
+      ) => {
+        const component = parseSoftwareDeployComponent(componentArg);
+        const target = `${profileOrChannel ?? ""}`.trim();
+        const rollbackArtifactId = `${artifactId ?? ""}`.trim();
+        if (!target) {
+          throw new Error("software rollback requires <profile-or-channel>");
+        }
+        if (!rollbackArtifactId) {
+          throw new Error("software rollback requires <artifact-id>");
+        }
+        if (!deps.runCommand) {
+          throw new Error("software rollback requires runCommand dependency");
+        }
+        const startedAt = deps.now?.() ?? new Date();
+        const config = await resolveSoftwareRemoteConfig({
+          env: deps.env ?? process.env,
+          envFile: opts.envFile,
+        });
+        const client = softwareR2Client(deps);
+        const index = await readDeploymentIndex({
+          client,
+          auth: config.auth,
+          component,
+          profileOrChannel: target,
+        });
+        const entry = successfulRollbackTarget({
+          index,
+          artifactId: rollbackArtifactId,
+        });
+        const record = await readDeploymentRecordByKey({
+          client,
+          config,
+          key: entry.record_key,
+        });
+        const cli = currentCliInvocation();
+        const args = rollbackDeployArgs({
+          cliArgs: cli.args,
+          component,
+          artifactId: rollbackArtifactId,
+          profileOrChannel: target,
+          opts,
+          record,
+        });
+        const code = await deps.runCommand(cli.command, args, {
+          stdio: "inherit",
+          env: deps.env ?? process.env,
+        });
+        if (code !== 0) {
+          throw new Error(
+            `software rollback ${component} failed with exit status ${code}`,
+          );
+        }
+        emitSuccess(
+          { globals: command.optsWithGlobals() as any },
+          "software rollback",
+          {
+            component,
+            profile_or_channel: target,
+            artifact_id: rollbackArtifactId,
+            tag: entry.tag,
+            deployment_id: entry.deployment_id,
+            duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+            redeploy_command: [cli.command, ...args].join(" "),
+          },
+        );
+      },
+    );
+
+  software
     .command("smoke")
     .description("run a software smoke test")
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
@@ -2759,13 +3746,15 @@ Supported deploy/smoke components:
         }
         const hostSmokeArtifact = hostArtifactForSmoke(component);
         const releaseSmokeTarget = releaseSmokeTargetForComponent(component);
+        const starSmoke = isStarSmokeComponent(component);
         if (
           !["static", "hub", "bay"].includes(component) &&
           !hostSmokeArtifact &&
-          !releaseSmokeTarget
+          !releaseSmokeTarget &&
+          !starSmoke
         ) {
           throw new Error(
-            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools, cli, launchpad, plus`,
+            `software smoke ${component} is not implemented yet; currently supported: static, hub, bay, project-host, project, tools, cli, launchpad, plus, star`,
           );
         }
         const startedAt = deps.now?.() ?? new Date();
@@ -2785,6 +3774,24 @@ Supported deploy/smoke components:
               component,
               channel: targetName,
               public_base_url: softwarePublicBaseUrl(deps),
+              duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+              checks,
+            },
+          );
+          return;
+        }
+        if (starSmoke) {
+          const checks = await smokeStarChecks({
+            channel: targetName,
+            deps,
+          });
+          assertSmokeChecks(checks);
+          emitSuccess(
+            { globals: command.optsWithGlobals() as any },
+            "software smoke",
+            {
+              component,
+              channel: targetName,
               duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
               checks,
             },

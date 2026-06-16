@@ -95,8 +95,8 @@ export type SoftwareReleaseChannel = "dev" | "candidate" | "stable";
 
 export type SoftwareReleaseChannelManifest = {
   schema: "cocalc-software-release-channel-v1";
-  product: "cocalc" | "cocalc-launchpad" | "cocalc-plus";
-  component: "cli" | "launchpad" | "plus";
+  product: "cocalc" | "cocalc-launchpad" | "cocalc-plus" | "tools-minimal";
+  component: "cli" | "launchpad" | "plus" | "tools-minimal";
   channel: SoftwareReleaseChannel | "latest";
   artifact_id: string;
   tag: string;
@@ -593,6 +593,7 @@ function releaseProductForComponent(
   if (component === "cli") return "cocalc";
   if (component === "launchpad") return "cocalc-launchpad";
   if (component === "plus") return "cocalc-plus";
+  if (component === "tools-minimal") return "tools-minimal";
   return undefined;
 }
 
@@ -600,7 +601,10 @@ function isReleaseComponent(
   component: SoftwareBuildComponent,
 ): component is SoftwareReleaseChannelManifest["component"] {
   return (
-    component === "cli" || component === "launchpad" || component === "plus"
+    component === "cli" ||
+    component === "launchpad" ||
+    component === "plus" ||
+    component === "tools-minimal"
   );
 }
 
@@ -620,7 +624,7 @@ function releaseFilePlatform({
   component,
   fileName,
 }: {
-  component: "cli" | "launchpad" | "plus";
+  component: "cli" | "launchpad" | "plus" | "tools-minimal";
   fileName: string;
 }): {
   os: SoftwareReleaseChannelManifest["os"];
@@ -631,7 +635,9 @@ function releaseFilePlatform({
       ? "cocalc-cli-"
       : component === "launchpad"
         ? "cocalc-launchpad-"
-        : "cocalc-plus-";
+        : component === "plus"
+          ? "cocalc-plus-"
+          : "tools-minimal-";
   if (!fileName.startsWith(prefix)) {
     throw new Error(
       `release channel file for ${component} must start with ${prefix}: ${fileName}`,
@@ -639,11 +645,15 @@ function releaseFilePlatform({
   }
   const withoutArchive = fileName.replace(/\.tar\.xz$|\.xz$/, "");
   const parts = withoutArchive.slice(prefix.length).split("-");
-  const os = parts.at(-1);
-  const arch = normalizeReleaseMachine(parts.at(-2) ?? "");
+  const os = component === "tools-minimal" ? parts.at(-2) : parts.at(-1);
+  const arch = normalizeReleaseMachine(
+    component === "tools-minimal" ? (parts.at(-1) ?? "") : (parts.at(-2) ?? ""),
+  );
   if ((os !== "linux" && os !== "darwin") || !arch) {
     throw new Error(
-      `release channel file for ${component} must end in <machine>-<os>: ${fileName}`,
+      `release channel file for ${component} must end in ${
+        component === "tools-minimal" ? "<os>-<arch>" : "<machine>-<os>"
+      }: ${fileName}`,
     );
   }
   return { os, arch };
@@ -688,7 +698,7 @@ function releaseChannelManifest({
   file,
   publishedAt,
 }: {
-  component: "cli" | "launchpad" | "plus";
+  component: "cli" | "launchpad" | "plus" | "tools-minimal";
   product: SoftwareReleaseChannelManifest["product"];
   channel: SoftwareReleaseChannelManifest["channel"];
   entry: SoftwareRemoteIndexEntry;

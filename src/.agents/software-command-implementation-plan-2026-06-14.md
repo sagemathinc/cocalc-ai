@@ -991,6 +991,10 @@ Implemented:
   publish installer-facing channel manifests under
   `software/cocalc*/<channel>-<os>-<arch>.json`, with `stable` also updating
   legacy `latest-<os>-<arch>.json` aliases for existing installer defaults.
+- `build`, `list`, and `push` for `tools-minimal` artifacts, plus coordinated
+  Plus/tools-minimal channel promotion. `software deploy plus ...` now promotes
+  the selected Plus artifact and a matching or explicitly selected
+  `tools-minimal` artifact in the same deployment history record.
 - CLI/Launchpad/Plus installers now prefer channel-manifest `artifact_id`
   identity over package semver and persist release metadata such as
   `published_at` and git hash for local inspection/version output.
@@ -1015,6 +1019,14 @@ Implemented:
   exists with `gh release view`, promotes the GitHub channel release with
   `promote-github-release-channel.sh --upload`, and records the promotion in R2
   deployment history.
+- Initial `smoke` slice for `star`. This validates the requested release
+  channel and runs `src/scripts/star/smoke-star.sh` with
+  `COCALC_STAR_CHANNEL`/`COCALC_STAR_RELEASE_CHANNEL` set, so the current local
+  Star smoke workflow is available through the common software command.
+- `software rollback <component> <profile-or-channel> <artifact-id>` wrappers.
+  Rollback validates that the target artifact has a successful deployment in
+  durable R2 history, recovers coordinated Plus/tools-minimal metadata when
+  present, and delegates to the normal deploy path.
 - `latest` as a reserved selector that resolves to the newest local or remote
   artifact for a component.
 - Human-readable build/deploy durations and artifact sizes.
@@ -1024,14 +1036,10 @@ Implemented:
 Still not implemented:
 
 - Deeper throwaway project lifecycle `smoke` coverage for `project-host`,
-  `project`, and `tools`, plus smoke coverage for `star`.
+  `project`, and `tools`, plus disposable VM install smoke coverage for `star`.
 - Product/documentation updates for the new CLI channel model, including a
   dedicated `/products/cocalc-cli` page and channel notes on public installer
   pages.
-- Coordinated Plus/tools-minimal channel promotion. Today `plus` channel
-  promotion updates the Plus binary manifest only; the installer still resolves
-  `tools-minimal` from its own channel manifest.
-- Rollback wrappers.
 
 ### Phase 0: Documentation And Test Fixtures
 
@@ -1248,6 +1256,7 @@ separate deliberate installer change.
 Validation:
 
 - candidate channel update.
+- local Star smoke through `software smoke star candidate`.
 - GCP disposable VM smoke install.
 - manual promotion from candidate to stable after testing.
 
