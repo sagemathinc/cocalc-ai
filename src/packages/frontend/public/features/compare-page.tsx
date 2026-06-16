@@ -25,7 +25,7 @@ const COCALC_FITS = [
   "The operating model may change: hosted, local, single-VM, or customer-operated.",
 ] as const;
 
-const NARROWER_FITS = [
+const FOCUSED_TOOL_FITS = [
   "A single notebook, dashboard, IDE, or reporting surface is enough.",
   "Collaboration mostly happens after the work is finished.",
   "Course administration is separate from the computational environment.",
@@ -36,37 +36,37 @@ const NARROWER_FITS = [
 const DECISION_ROWS = [
   {
     cocalc:
-      "Use CoCalc when files, notebooks, terminals, documents, output, discussion, and recovery should stay with the project.",
+      "Files, notebooks, terminals, documents, output, discussion, and recovery should stay with the project.",
     other:
-      "Use a narrower tool when the surrounding artifacts already live somewhere stable.",
+      "A focused tool can work when the surrounding artifacts already live somewhere stable.",
     question: "What needs to stay together?",
   },
   {
     cocalc:
-      "Use CoCalc when researchers, instructors, support staff, and AI agents need to inspect the same working state.",
+      "Researchers, instructors, support staff, and AI agents need to inspect the same working state.",
     other:
-      "Use a narrower tool when collaboration mostly happens in one surface.",
+      "A focused tool can work when collaboration mostly happens in one surface.",
     question: "Who needs to inspect the work?",
   },
   {
     cocalc:
-      "Use CoCalc when teammates review, explain, and hand off work while it is still active.",
+      "Teammates review, explain, and hand off work while it is still active.",
     other:
-      "Use a narrower tool when review happens after the work is complete.",
+      "A focused tool can work when review happens after the work is complete.",
     question: "When does collaboration happen?",
   },
   {
     cocalc:
-      "Use CoCalc when assignments, grading, lab support, or workshops need the same environment as the computation.",
+      "Assignments, grading, lab support, or workshops need the same environment as the computation.",
     other:
       "Use an LMS or lightweight notebook host when course administration and computation can stay separate.",
     question: "Is teaching part of the workflow?",
   },
   {
     cocalc:
-      "Use CoCalc when you need a path from hosted use to local, single-VM, or customer-operated deployments.",
+      "The group may need hosted use, local evaluation, a single VM, or a customer-operated deployment.",
     other:
-      "Use a narrower tool when the hosting and operations model is already fixed.",
+      "A focused tool can work when the hosting and operations model is already fixed.",
     question: "Who operates it?",
   },
 ] as const;
@@ -320,7 +320,7 @@ export default function CompareFeaturePage({
     <Flex vertical gap={30}>
       <style>{COMPARE_PAGE_CSS}</style>
 
-      <section aria-label="Compare CoCalc workspace model">
+      <section aria-label="Compare CoCalc fit">
         <div className="cocalc-compare-hero">
           <Flex vertical gap={16}>
             <Text
@@ -334,13 +334,13 @@ export default function CompareFeaturePage({
               Workspace model
             </Text>
             <Title level={2} style={{ margin: 0 }}>
-              Decide whether your group needs a shared project workspace.
+              When is CoCalc the right fit?
             </Title>
             <Paragraph style={{ fontSize: 18, margin: 0, maxWidth: "65ch" }}>
-              CoCalc is worth evaluating when people, notebooks, terminals,
-              documents, AI assistance, and project history need to stay
-              together. If one notebook, dashboard, or editor is enough, a
-              narrower tool may be simpler.
+              CoCalc is worth evaluating when the work is larger than one
+              notebook, dashboard, or editor. It helps when people need to
+              review active work, recover context, and choose where the
+              workspace runs.
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
               <Button type="primary" href={featureAppPath("products")}>
@@ -360,7 +360,7 @@ export default function CompareFeaturePage({
             </Text>
             <ul className="cocalc-compare-list">
               <li>Best fit: work that needs review, handoff, and recovery.</li>
-              <li>Probably too much: one-off notebooks or isolated reports.</li>
+              <li>Better elsewhere: one-off notebooks or isolated reports.</li>
               <li>Next question: who operates the workspace?</li>
             </ul>
           </div>
@@ -380,8 +380,8 @@ export default function CompareFeaturePage({
           />
           <DecisionList
             accent={COLORS.GRAY_M}
-            items={NARROWER_FITS}
-            title="A narrower tool fits when..."
+            items={FOCUSED_TOOL_FITS}
+            title="A focused tool fits when..."
           />
         </div>
       </PublicSection>

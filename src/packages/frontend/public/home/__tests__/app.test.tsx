@@ -99,7 +99,7 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       within(hero).getByText(
-        /CoCalc keeps the work in one project, so people and AI agents can review what happened/i,
+        /CoCalc gives teams one shared place to work, review changes, and keep going without rebuilding context/i,
       ),
     ).not.toBeNull();
     expect(within(hero).queryByText(/notebooks, code, documents/i)).toBeNull();
@@ -316,7 +316,7 @@ describe("PublicHomeApp", () => {
     }
     expect(
       within(continuityDialog).getByRole("link", {
-        name: "Compare workspace model",
+        name: "Compare CoCalc",
       }),
     ).toHaveAttribute("href", "/features/compare");
     fireEvent.click(
@@ -396,7 +396,7 @@ describe("PublicHomeApp", () => {
       /project hosts|backend state|logs stay scoped|RootFS|multi-bay/i,
     );
     expect(container.textContent ?? "").not.toMatch(
-      /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Make computational work easier to share, review, and continue|CoCalc is a shared project workspace for computational work/i,
+      /One workspace for code, notebooks, documents, compute, and AI|Bring technical work back into one context|One workspace for research, courses, and platform teams|Make computational work easier to share, review, and continue|CoCalc is a shared project workspace for computational work|CoCalc keeps the work in one project/i,
     );
   });
 

@@ -284,7 +284,7 @@ const DIFFERENTIATORS = [
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Keep the main artifacts of computational work near the discussions, outputs, and decisions they produce.",
     ctaHref: "features/compare",
-    ctaLabel: "Compare workspace model",
+    ctaLabel: "Compare CoCalc",
     details: PROJECT_FACTS,
     eyebrow: "Project continuity",
     icon: "project-outlined",
@@ -526,9 +526,8 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            CoCalc keeps the work in one project, so people and AI agents can
-            review what happened, pick up where someone left off, and keep
-            moving without recreating the setup.
+            CoCalc gives teams one shared place to work, review changes, and
+            keep going without rebuilding context.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>

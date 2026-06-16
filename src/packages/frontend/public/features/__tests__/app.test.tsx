@@ -50,14 +50,13 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "The CoCalc workspace model.",
+        name: "Features for shared computational projects.",
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText(/^CoCalc features make the most sense/),
+      screen.getByText(/^Start with the workflow your team needs/),
     ).not.toBeNull();
     expect(screen.queryByText(/Launchpad features make/)).toBeNull();
-    expect(screen.getByText("Durable collaborative projects")).not.toBeNull();
     const startingPoints = screen.getByRole("region", {
       name: "CoCalc feature starting points",
     });
@@ -78,9 +77,20 @@ describe("PublicFeaturesApp", () => {
     ).toBe("/features/ai");
     expect(
       within(startingPoints)
-        .getByRole("link", { name: /Projects/i })
+        .getByRole("link", { name: /Courses/i })
         .getAttribute("href"),
-    ).toBe("/features/compare");
+    ).toBe("/features/teaching");
+    expect(
+      within(startingPoints).queryByRole("link", { name: /Compare CoCalc/i }),
+    ).toBeNull();
+    expect(
+      screen.getByAltText(
+        "CoCalc feature map with documents, compute, AI, teaching, and platform categories",
+      ),
+    ).toHaveStyle({
+      aspectRatio: "3 / 2",
+      objectFit: "contain",
+    });
     expect(screen.getByText("Documents")).not.toBeNull();
     expect(screen.getByText("Compute")).not.toBeNull();
     expect(screen.getByText("AI and automation")).not.toBeNull();
@@ -89,7 +99,7 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText("Open page")).toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "Compare workspace model" })
+        .getAllByRole("link", { name: "Compare CoCalc" })[0]
         .getAttribute("href"),
     ).toBe("/features/compare");
     expect(
@@ -107,6 +117,46 @@ describe("PublicFeaturesApp", () => {
         .getAllByRole("link", { name: /Jupyter Notebooks/i })[0]
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
+  });
+
+  it("keeps the feature index visually calm and route-specific", () => {
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "index" }}
+      />,
+    );
+
+    expect(
+      container.querySelector(".cocalc-feature-index-hero"),
+    ).not.toBeNull();
+    expect(
+      container.querySelectorAll(".cocalc-feature-starter-card"),
+    ).toHaveLength(4);
+    expect(container.querySelectorAll(".cocalc-feature-link-card").length).toBe(
+      15,
+    );
+    expect(
+      container.querySelectorAll(".cocalc-feature-link-card .ant-tag"),
+    ).toHaveLength(0);
+    expect(
+      container.querySelectorAll(".cocalc-feature-link-card .fa-arrow-right")
+        .length,
+    ).toBe(0);
+    expect(
+      container.querySelectorAll(
+        ".cocalc-feature-card-icon-row .ant-typography",
+      ),
+    ).toHaveLength(0);
+    expect(container.textContent ?? "").not.toMatch(
+      /Compare workspace model|FilesRuntimeHistoryPeopleAgents|The CoCalc workspace model|The shared unit of work|Durable collaborative projects|Full feature index/i,
+    );
+
+    for (const card of container.querySelectorAll(
+      ".cocalc-feature-link-card",
+    )) {
+      expect(textLength(card)).toBeLessThanOrEqual(260);
+    }
   });
 
   it("shows Projects and Settings in the shared nav when authenticated", () => {
@@ -136,9 +186,9 @@ describe("PublicFeaturesApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Codex agent chat where the project already lives."),
+      screen.getByText("Codex chat where project work happens."),
     ).not.toBeNull();
-    expect(screen.getByText("One AI path")).not.toBeNull();
+    expect(screen.getByText("Codex in chat")).not.toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
     const featureNav = screen.getByRole("region", {
       name: "Feature page navigation",
@@ -171,9 +221,7 @@ describe("PublicFeaturesApp", () => {
         .getAttribute("href"),
     ).toBe("/pricing");
     expect(
-      screen
-        .getByRole("link", { name: "Compare workspace model" })
-        .getAttribute("href"),
+      screen.getByRole("link", { name: "Compare CoCalc" }).getAttribute("href"),
     ).toBe("/features/compare");
     expect(
       screen.getByRole("link", { name: "Feature map" }).getAttribute("href"),
@@ -194,7 +242,7 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("Codex agent chat where the project already lives."),
+      screen.getByText("Codex chat where project work happens."),
     ).not.toBeNull();
     const featureNav = screen.getByRole("region", {
       name: "Feature page navigation",
@@ -613,7 +661,7 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Decide whether your group needs a shared project workspace.",
+        name: "When is CoCalc the right fit?",
       }),
     ).not.toBeNull();
     expect(
@@ -628,7 +676,7 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "A narrower tool fits when...",
+        name: "A focused tool fits when...",
       }),
     ).not.toBeNull();
     expect(
@@ -674,7 +722,7 @@ describe("PublicFeaturesApp", () => {
     ).toBeNull();
     expect(container.querySelector("table")).toBeNull();
     expect(container.textContent ?? "").not.toMatch(
-      /These comparisons are intentionally high level|How CoCalc compares by category|Google Colab|Deepnote|narrower point solution|product ladder|card wall/i,
+      /These comparisons are intentionally high level|How CoCalc compares by category|Google Colab|Deepnote|narrower point solution|product ladder|card wall|Use CoCalc when/i,
     );
   });
 
@@ -722,7 +770,7 @@ describe("PublicFeaturesApp", () => {
     expect(css).toContain("@media (max-width: 560px)");
 
     expect(container.textContent ?? "").not.toMatch(
-      /serious technical work|internal planning|multi-bay|project hosts|control plane|stale files/i,
+      /serious technical work|internal planning|multi-bay|project hosts|control plane|stale files|Use CoCalc when|narrower tool/i,
     );
   });
 });

@@ -250,15 +250,13 @@ export default function RStatisticalSoftwareFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3}>
-              Why use R on CoCalc
-            </Title>
+            <Title level={3}>Why use R on CoCalc</Title>
             <BulletList
               items={[
                 "Use notebooks, terminals, scripts, and reproducible document workflows in one place.",
                 "Share an R environment with collaborators or students without local setup drift.",
                 "Keep R near Python, Linux tools, LaTeX, Git, and project chat.",
-                "Use CoCalc when the project context matters more than a dedicated R IDE.",
+                "Best fit when project context matters more than a dedicated R IDE.",
               ]}
             />
             <Flex wrap gap={12}>

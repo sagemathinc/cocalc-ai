@@ -434,7 +434,7 @@ export default function TeachingFeaturePage({
             title="Review history"
           >
             See how students got to a result, recover accidental damage, and
-            make learning safer.
+            make recovery easier.
           </StoryCard>
         </Col>
         <Col xs={24} md={12} xl={6}>
@@ -655,7 +655,7 @@ export default function TeachingFeaturePage({
           <Row gutter={[20, 20]} align="middle">
             <Col xs={24} lg={15}>
               <Title level={3} style={{ margin: 0 }}>
-                Choose CoCalc when coursework needs a shared workspace
+                For courses that need a shared workspace
               </Title>
               <Paragraph style={{ margin: "8px 0 0" }}>
                 If students need notebooks, terminals, data, LaTeX, shared

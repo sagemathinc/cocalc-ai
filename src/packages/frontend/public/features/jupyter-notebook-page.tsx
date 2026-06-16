@@ -432,22 +432,20 @@ export default function JupyterNotebookFeaturePage({
                   marginInlineEnd: 0,
                 }}
               >
-                Jupyter, but project-native
+                Jupyter in CoCalc
               </Tag>
               <Title level={2} style={{ margin: 0 }}>
                 Notebooks that keep running, collaborating, and remembering
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc keeps the familiar Jupyter notebook shape, then puts it
-                inside a durable project: backend execution, realtime
-                collaboration, TimeTravel, Codex access to live notebook state,
-                files, terminals, courses, and whiteboards.
+                CoCalc keeps standard Jupyter notebooks in a shared project with
+                backend execution, realtime collaboration, TimeTravel, files,
+                terminals, courses, whiteboards, and Codex nearby.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                This is for notebooks that matter after the first experiment:
-                research computations, teaching material, reports, shared
-                analysis, and workflows where the notebook needs surrounding
-                tools to stay close.
+                Use it when notebooks need to outlive the first experiment:
+                research computations, teaching material, shared analysis, or
+                reports that depend on surrounding files and tools.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -514,13 +512,13 @@ export default function JupyterNotebookFeaturePage({
                   marginInlineEnd: 0,
                 }}
               >
-                Notebook becomes project
+                Notebook in context
               </Tag>
               <Title level={3} style={{ margin: 0 }}>
                 Keep the notebook next to the data, shell, paper, and agent
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                A serious notebook rarely lives alone. It depends on data files,
+                Many notebooks do not live alone. They depend on data files,
                 packages, scripts, figures, papers, discussions, and sometimes a
                 long-running computation.
               </Paragraph>
@@ -785,7 +783,7 @@ export default function JupyterNotebookFeaturePage({
           <Row gutter={[20, 20]} align="middle">
             <Col xs={24} lg={15}>
               <Title level={3} style={{ margin: 0 }}>
-                Choose CoCalc when the notebook needs to become durable work
+                When notebooks become shared work
               </Title>
               <Paragraph style={{ margin: "8px 0 0" }}>
                 Quick notebook tools are excellent for quick notebook tasks.

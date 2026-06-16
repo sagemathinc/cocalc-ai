@@ -328,10 +328,9 @@ function CredentialPanel() {
           </div>
         </Flex>
         <Paragraph style={{ margin: 0 }}>
-          CoCalc-AI&apos;s native Codex integration is intentionally narrow: use
-          an OpenAI API key, an OpenAI subscription plan where supported, or a
-          shared project/site configuration. Human <code>@mentions</code> are
-          for notifying collaborators; they do not invoke AI models.
+          Use an OpenAI API key, an OpenAI subscription plan where supported, or
+          a shared project/site configuration. Human <code>@mentions</code>{" "}
+          notify collaborators; they do not invoke AI models.
         </Paragraph>
       </Flex>
     </div>
@@ -425,19 +424,17 @@ export default function AIFeaturePage({
                 Codex in CoCalc
               </Tag>
               <Title level={2} style={{ margin: 0 }}>
-                Codex agent chat where the project already lives.
+                Codex chat where project work happens.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                CoCalc-AI uses AI through Codex chat threads. A thread is either
-                a human conversation or a conversation with Codex in the same
-                project that holds the files, notebooks, terminals, images, and
-                collaborators.
+                Use Codex from a project chat thread, next to the files,
+                notebooks, terminals, images, and collaborators involved in the
+                work.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                The result is less copy-and-paste between tools: ask Codex to
-                inspect code, debug a notebook, edit documentation, run a
-                focused test, or summarize what changed from inside the project
-                workspace.
+                Ask it to inspect code, debug a notebook, edit documentation,
+                run a focused check, or summarize changes without copying
+                context into a separate tool.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -457,10 +454,9 @@ export default function AIFeaturePage({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={8}>
-          <StoryCard accent="#7c3aed" icon="robot" title="One AI path">
-            Native CoCalc-AI support centers on Codex in chat threads. The
-            product no longer uses <code>@mentions</code> to invoke language
-            models in chat rooms or side chats.
+          <StoryCard accent="#7c3aed" icon="robot" title="Codex in chat">
+            Start a thread for human discussion or Codex assistance, with the
+            same project files nearby for review.
           </StoryCard>
         </Col>
         <Col xs={24} lg={8}>
@@ -579,8 +575,8 @@ export default function AIFeaturePage({
               CoCalc projects are real Linux environments with persistent
               terminals. Command-line agents such as Claude Code, OpenCode, or
               similar tools can be installed and run there like ordinary Linux
-              programs. That is terminal use, not a native CoCalc AI provider
-              integration.
+              programs. They run as terminal tools rather than CoCalc-managed AI
+              integrations.
             </Paragraph>
           </div>
         </Col>

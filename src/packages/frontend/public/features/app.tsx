@@ -5,7 +5,7 @@
 
 import { useEffect } from "react";
 
-import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Empty, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { getPublicMarketingConfig } from "@cocalc/frontend/public/config";
@@ -132,38 +132,34 @@ const FEATURE_GROUPS = [
 ] as const;
 
 const FEATURE_META = {
-  ai: { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot", label: "Agents" },
-  api: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "api", label: "API" },
-  compare: { accent: COLORS.BLUE_D, icon: "swap", label: "Positioning" },
+  ai: { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot" },
+  api: { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "api" },
+  compare: { accent: COLORS.BLUE_D, icon: "swap" },
   "jupyter-notebook": {
     accent: COLORS.BLUE_D,
     icon: "jupyter",
-    label: "Notebook",
   },
-  julia: { accent: COLORS.BRWN, icon: "julia", label: "Language" },
-  "latex-editor": { accent: COLORS.YELL_D, icon: "tex", label: "Writing" },
+  julia: { accent: COLORS.BRWN, icon: "julia" },
+  "latex-editor": { accent: COLORS.YELL_D, icon: "tex" },
   linux: {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     icon: "linux",
-    label: "Environment",
   },
-  octave: { accent: COLORS.FG_RED, icon: "octave", label: "Language" },
-  python: { accent: COLORS.BLUE_D, icon: "python", label: "Language" },
+  octave: { accent: COLORS.FG_RED, icon: "octave" },
+  python: { accent: COLORS.BLUE_D, icon: "python" },
   "r-statistical-software": {
     accent: COLORS.BLUE_DD,
     icon: "r",
-    label: "Stats",
   },
-  sage: { accent: COLORS.RUN, icon: "sagemath", label: "Math" },
-  slides: { accent: COLORS.BG_WARNING, icon: "slides", label: "Present" },
-  teaching: { accent: COLORS.RUN, icon: "graduation-cap", label: "Courses" },
+  sage: { accent: COLORS.RUN, icon: "sagemath" },
+  slides: { accent: COLORS.BG_WARNING, icon: "slides" },
+  teaching: { accent: COLORS.RUN, icon: "graduation-cap" },
   terminal: {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     icon: "terminal",
-    label: "Shell",
   },
-  whiteboard: { accent: COLORS.FG_RED, icon: "layout", label: "Canvas" },
-} satisfies Record<string, { accent: string; icon: IconName; label: string }>;
+  whiteboard: { accent: COLORS.FG_RED, icon: "layout" },
+} satisfies Record<string, { accent: string; icon: IconName }>;
 
 const FEATURE_STARTERS = [
   {
@@ -185,10 +181,10 @@ const FEATURE_STARTERS = [
     title: "AI agents",
   },
   {
-    body: "Files, collaborators, snapshots, and product paths as one workspace model.",
-    icon: "project-outlined",
-    slug: "compare",
-    title: "Projects",
+    body: "Assignments, grading, shared environments, and student support.",
+    icon: "graduation-cap",
+    slug: "teaching",
+    title: "Courses",
   },
 ] satisfies {
   body: string;
@@ -221,7 +217,6 @@ function featureMeta(slug: string) {
     FEATURE_META[slug as keyof typeof FEATURE_META] ?? {
       accent: PUBLIC_COLORS.brand,
       icon: "star",
-      label: "Feature",
     }
   );
 }
@@ -275,6 +270,7 @@ function FeatureLinkCard({ page }: { page: FeaturePage }) {
   const meta = featureMeta(page.slug);
   return (
     <a
+      className="cocalc-feature-link-card"
       href={featurePath(page.slug)}
       style={{
         background: PUBLIC_COLORS.surface,
@@ -290,7 +286,7 @@ function FeatureLinkCard({ page }: { page: FeaturePage }) {
       }}
     >
       <Flex vertical gap={12}>
-        <Flex align="center" justify="space-between">
+        <Flex className="cocalc-feature-card-icon-row" align="center">
           <div
             style={{
               alignItems: "center",
@@ -307,19 +303,7 @@ function FeatureLinkCard({ page }: { page: FeaturePage }) {
           >
             <Icon name={meta.icon} />
           </div>
-          <Icon name="arrow-right" style={{ color: meta.accent }} />
         </Flex>
-        <Tag
-          style={{
-            alignSelf: "flex-start",
-            background: `${meta.accent}12`,
-            borderColor: `${meta.accent}2e`,
-            color: meta.accent,
-            marginInlineEnd: 0,
-          }}
-        >
-          {meta.label}
-        </Tag>
         <div>
           <Title level={4} style={{ margin: "0 0 8px" }}>
             {page.title}
@@ -328,55 +312,6 @@ function FeatureLinkCard({ page }: { page: FeaturePage }) {
         </div>
       </Flex>
     </a>
-  );
-}
-
-function CapabilityCard({
-  body,
-  icon,
-  title,
-}: {
-  body: string;
-  icon: IconName;
-  title: string;
-}) {
-  return (
-    <div
-      style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: FEATURE_PANEL_RADIUS,
-        boxShadow: FEATURE_PANEL_SHADOW,
-        height: "100%",
-        padding: 20,
-      }}
-    >
-      <Flex gap={14}>
-        <div
-          style={{
-            alignItems: "center",
-            background: PUBLIC_COLORS.surfaceMuted,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: FEATURE_PANEL_RADIUS,
-            color: PUBLIC_COLORS.brand,
-            display: "flex",
-            flex: "0 0 auto",
-            fontSize: 24,
-            height: 48,
-            justifyContent: "center",
-            width: 48,
-          }}
-        >
-          <Icon name={icon} />
-        </div>
-        <div>
-          <Title level={3} style={{ margin: "0 0 8px" }}>
-            {title}
-          </Title>
-          <Paragraph style={{ margin: 0 }}>{body}</Paragraph>
-        </div>
-      </Flex>
-    </div>
   );
 }
 
@@ -435,15 +370,6 @@ function FeatureGroupSection({
                   {group.description}
                 </Paragraph>
               </div>
-              <div
-                aria-hidden="true"
-                style={{
-                  background: `linear-gradient(180deg, ${group.accent}66 0%, ${group.accent}12 100%)`,
-                  borderRadius: 999,
-                  height: 90,
-                  width: 4,
-                }}
-              />
             </Flex>
           </div>
         </Col>
@@ -472,10 +398,18 @@ function FeaturesIndex() {
       <section>
         <Row align="middle" gutter={[36, 36]}>
           <Col lg={11} xs={24}>
-            <Flex vertical gap={20}>
-              <Tag color="blue" style={{ width: "fit-content" }}>
+            <Flex className="cocalc-feature-index-hero" vertical gap={20}>
+              <Text
+                strong
+                style={{
+                  color: PUBLIC_COLORS.brand,
+                  fontSize: 12,
+                  letterSpacing: 0,
+                  textTransform: "uppercase",
+                }}
+              >
                 Feature map
-              </Tag>
+              </Text>
               <Title
                 level={1}
                 style={{
@@ -485,7 +419,7 @@ function FeaturesIndex() {
                   margin: 0,
                 }}
               >
-                The CoCalc workspace model.
+                Features for shared computational projects.
               </Title>
               <Paragraph
                 style={{
@@ -494,13 +428,13 @@ function FeaturesIndex() {
                   margin: 0,
                 }}
               >
-                CoCalc features make the most sense as one project workspace:
-                documents, compute, AI agents, teaching, and operations share
-                the same files, collaborators, history, and environment.
+                Start with the workflow your team needs: notebooks, terminals,
+                documents, AI assistance, teaching, or deployment choices. Each
+                page explains where that workflow fits and what to do next.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button href={featurePath("compare")} type="primary">
-                  Compare workspace model
+                  Compare CoCalc
                 </Button>
                 <Button href={appPath("products")}>
                   Compare product paths
@@ -511,7 +445,9 @@ function FeaturesIndex() {
           </Col>
           <Col lg={13} xs={24}>
             <FeatureImage
+              aspectRatio="3 / 2"
               alt="CoCalc feature map with documents, compute, AI, teaching, and platform categories"
+              objectFit="contain"
               src="/public/landing/feature-map.jpg"
             />
           </Col>
@@ -536,7 +472,6 @@ function FeaturesIndex() {
               Choose the workflow you recognize.
             </Title>
           </div>
-          <Button href={featurePath("compare")}>Open comparison</Button>
         </Flex>
         <div
           style={{
@@ -550,6 +485,7 @@ function FeaturesIndex() {
             const meta = featureMeta(starter.slug);
             return (
               <a
+                className="cocalc-feature-starter-card"
                 href={featurePath(starter.slug)}
                 key={starter.slug}
                 style={{
@@ -593,153 +529,9 @@ function FeaturesIndex() {
         </div>
       </section>
 
-      <section>
-        <Row gutter={[18, 18]}>
-          <Col lg={8} xs={24}>
-            <div
-              style={{
-                background: `linear-gradient(145deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 100%)`,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: FEATURE_PANEL_RADIUS,
-                boxShadow: FEATURE_PANEL_SHADOW,
-                height: "100%",
-                padding: 22,
-              }}
-            >
-              <Flex vertical gap={18}>
-                <Flex align="center" gap={14}>
-                  <div
-                    style={{
-                      alignItems: "center",
-                      background: PUBLIC_COLORS.surfaceMuted,
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: FEATURE_PANEL_RADIUS,
-                      color: PUBLIC_COLORS.brand,
-                      display: "flex",
-                      fontSize: 24,
-                      height: 50,
-                      justifyContent: "center",
-                      width: 50,
-                    }}
-                  >
-                    <Icon name="project-outlined" />
-                  </div>
-                  <div>
-                    <Text strong style={{ color: PUBLIC_COLORS.brand }}>
-                      One project
-                    </Text>
-                    <Title level={3} style={{ margin: "4px 0 0" }}>
-                      The shared unit of work.
-                    </Title>
-                  </div>
-                </Flex>
-                <Paragraph style={{ margin: 0 }}>
-                  Files, compute, documents, chat, agents, history, snapshots,
-                  backups, and collaborators stay together across product paths.
-                </Paragraph>
-                <Flex gap={8} wrap>
-                  {["Files", "Runtime", "History", "People", "Agents"].map(
-                    (label) => (
-                      <Tag
-                        key={label}
-                        color="blue"
-                        style={{ marginInlineEnd: 0 }}
-                      >
-                        {label}
-                      </Tag>
-                    ),
-                  )}
-                </Flex>
-              </Flex>
-            </div>
-          </Col>
-          <Col lg={8} xs={24}>
-            <CapabilityCard
-              body="CoCalc projects keep files, notebooks, terminals, chat, agents, snapshots, backups, and history together instead of splitting work across unrelated tools."
-              icon="history"
-              title="Durable collaborative projects"
-            />
-          </Col>
-          <Col lg={8} xs={24}>
-            <CapabilityCard
-              body="Codex can work in the same project context as humans: reading files, using terminals, interacting with notebooks, writing documents, and participating in durable chat threads."
-              icon="robot"
-              title="Agent-aware by design"
-            />
-          </Col>
-        </Row>
-      </section>
-
       {FEATURE_GROUPS.map((group) => (
         <FeatureGroupSection group={group} key={group.title} pages={pages} />
       ))}
-
-      <section>
-        <Flex align="end" justify="space-between" wrap gap={14}>
-          <div>
-            <Title level={2} style={{ margin: 0 }}>
-              Full feature index
-            </Title>
-            <Paragraph
-              style={{
-                color: PUBLIC_COLORS.mutedText,
-                margin: "8px 0 0",
-                maxWidth: "70ch",
-              }}
-            >
-              Prefer the alphabetical view? Every feature page is still one
-              click away. Product paths and pricing explain where the shared
-              workspace should run.
-            </Paragraph>
-          </div>
-        </Flex>
-        <div
-          style={{
-            display: "grid",
-            gap: 12,
-            gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-            marginTop: 18,
-          }}
-        >
-          {pages.map((page) => {
-            const meta = featureMeta(page.slug);
-            return (
-              <a
-                href={featurePath(page.slug)}
-                key={page.slug}
-                style={{
-                  alignItems: "center",
-                  background: PUBLIC_COLORS.surface,
-                  border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: FEATURE_PANEL_RADIUS,
-                  color: "inherit",
-                  display: "flex",
-                  gap: 12,
-                  padding: "12px 14px",
-                  textDecoration: "none",
-                }}
-              >
-                <span
-                  style={{
-                    alignItems: "center",
-                    background: `${meta.accent}12`,
-                    borderRadius: FEATURE_PANEL_RADIUS,
-                    color: meta.accent,
-                    display: "flex",
-                    flex: "0 0 auto",
-                    height: 36,
-                    justifyContent: "center",
-                    width: 36,
-                  }}
-                >
-                  <Icon name={meta.icon} />
-                </span>
-                <Text strong>{page.title}</Text>
-              </a>
-            );
-          })}
-        </div>
-      </section>
     </>
   );
 }
@@ -824,41 +616,43 @@ function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
   const { next, previous } = getAdjacentFeaturePages(currentSlug);
 
   return (
-    <PublicSection>
-      <Title level={3} style={{ margin: 0 }}>
-        Choose the operating model that fits.
-      </Title>
-      <Paragraph style={{ margin: 0 }}>
-        These feature pages describe shared workspace capabilities. Next, choose
-        hosted CoCalc.ai, local CoCalc Plus, single-VM CoCalc Star, or a
-        customer-operated private deployment with Launchpad or Rocket.
-      </Paragraph>
-      <Flex wrap gap={12}>
-        <Button href={appPath("products")} type="primary">
-          Compare product paths
-        </Button>
-        <Button href={appPath("pricing")}>Pricing and licensing</Button>
-        {currentSlug !== "compare" ? (
-          <LinkButton href={featurePath("compare")}>
-            Compare workspace model
-          </LinkButton>
-        ) : null}
-        <LinkButton href={featurePath()}>Feature map</LinkButton>
-      </Flex>
-      {previous || next ? (
+    <PublicSection ariaLabel="Feature operating model next steps">
+      <Flex className="cocalc-feature-product-paths" vertical gap={12}>
+        <Title level={3} style={{ margin: 0 }}>
+          Choose the operating model that fits.
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          After you know which workflows matter, compare how CoCalc should run:
+          hosted CoCalc.ai, local CoCalc Plus, single-VM CoCalc Star, or a
+          customer-operated Launchpad or Rocket deployment.
+        </Paragraph>
         <Flex wrap gap={12}>
-          {previous ? (
-            <LinkButton href={featurePath(previous.slug)}>
-              Previous feature: {previous.title}
+          <Button href={appPath("products")} type="primary">
+            Compare product paths
+          </Button>
+          <Button href={appPath("pricing")}>Pricing and licensing</Button>
+          {currentSlug !== "compare" ? (
+            <LinkButton href={featurePath("compare")}>
+              Compare CoCalc
             </LinkButton>
           ) : null}
-          {next ? (
-            <LinkButton href={featurePath(next.slug)}>
-              Next feature: {next.title}
-            </LinkButton>
-          ) : null}
+          <LinkButton href={featurePath()}>Feature map</LinkButton>
         </Flex>
-      ) : null}
+        {previous || next ? (
+          <Flex wrap gap={12}>
+            {previous ? (
+              <LinkButton href={featurePath(previous.slug)}>
+                Previous feature: {previous.title}
+              </LinkButton>
+            ) : null}
+            {next ? (
+              <LinkButton href={featurePath(next.slug)}>
+                Next feature: {next.title}
+              </LinkButton>
+            ) : null}
+          </Flex>
+        ) : null}
+      </Flex>
     </PublicSection>
   );
 }

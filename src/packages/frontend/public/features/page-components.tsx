@@ -8,23 +8,36 @@ import type { ReactNode } from "react";
 import { Button } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 export function featureAppPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
-export function FeatureImage({ alt, src }: { alt: string; src?: string }) {
+export function FeatureImage({
+  alt,
+  aspectRatio = "16 / 9",
+  objectFit = "cover",
+  src,
+}: {
+  alt: string;
+  aspectRatio?: string;
+  objectFit?: "contain" | "cover";
+  src?: string;
+}) {
   if (!src) return null;
   return (
     <img
       src={src}
       alt={alt}
       style={{
-        width: "100%",
-        aspectRatio: "16 / 9",
-        objectFit: "cover",
+        aspectRatio,
+        background: PUBLIC_COLORS.surfaceMuted,
         borderRadius: 14,
+        display: "block",
+        objectFit,
+        width: "100%",
       }}
     />
   );
