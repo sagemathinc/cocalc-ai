@@ -187,6 +187,9 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "pool-request-canceled",
   "pool-request-approved",
   "pool-request-rejected",
+  "external-claim-consumed",
+  "external-claim-granted",
+  "external-claim-side-effect-failed",
   "seat-released-by-user",
   "seat-released-for-upgrade",
   "seat-affiliation-reverified",
@@ -216,7 +219,9 @@ async function withLocalSiteLicenseTransaction<T>(
   }
 }
 
-async function ensureSiteLicenseSchema(client?: PoolClient): Promise<void> {
+export async function ensureSiteLicenseSchema(
+  client?: PoolClient,
+): Promise<void> {
   if (client == null) {
     schemaEnsured ??= ensureSiteLicenseSchemaWithClient(getPool());
     await schemaEnsured;
@@ -397,6 +402,122 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
   );
   await db.query(
     "CREATE INDEX IF NOT EXISTS site_license_audit_log_action_idx ON site_license_audit_log (action)",
+  );
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS site_license_external_claim_pools (
+      id UUID PRIMARY KEY,
+      slug TEXT,
+      site_license_id UUID NOT NULL,
+      package_id UUID NOT NULL,
+      name TEXT NOT NULL,
+      issuer TEXT NOT NULL,
+      audience TEXT NOT NULL DEFAULT 'cocalc.ai.site-license-claim',
+      default_membership_class TEXT,
+      allow_membership_class_override BOOLEAN NOT NULL DEFAULT FALSE,
+      default_membership_duration_days INTEGER,
+      default_membership_expires_at TIMESTAMPTZ,
+      allow_membership_expires_at_override BOOLEAN NOT NULL DEFAULT FALSE,
+      min_membership_duration_days INTEGER,
+      max_membership_duration_days INTEGER,
+      max_membership_expires_at TIMESTAMPTZ,
+      default_rootfs_id TEXT,
+      max_claims INTEGER,
+      max_claims_per_account INTEGER,
+      starts_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      disabled_at TIMESTAMPTZ,
+      metadata JSONB,
+      created_by_account_id UUID,
+      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_site_license_id_idx ON site_license_external_claim_pools (site_license_id)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_package_id_idx ON site_license_external_claim_pools (package_id)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_issuer_idx ON site_license_external_claim_pools (issuer)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_disabled_at_idx ON site_license_external_claim_pools (disabled_at)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_expires_at_idx ON site_license_external_claim_pools (expires_at)",
+  );
+  await db.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_pools_slug_unique_idx ON site_license_external_claim_pools (site_license_id, issuer, slug) WHERE slug IS NOT NULL",
+  );
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS site_license_external_claim_keys (
+      id UUID PRIMARY KEY,
+      pool_id UUID NOT NULL,
+      kid TEXT NOT NULL,
+      alg TEXT NOT NULL,
+      public_key_jwk JSONB,
+      public_key_pem TEXT,
+      starts_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      created_by_account_id UUID,
+      metadata JSONB,
+      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (public_key_jwk IS NOT NULL OR public_key_pem IS NOT NULL),
+      CHECK (NOT (public_key_jwk IS NOT NULL AND public_key_pem IS NOT NULL))
+    )
+  `);
+  await db.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_keys_pool_kid_idx ON site_license_external_claim_keys (pool_id, kid)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_external_claim_keys_revoked_at_idx ON site_license_external_claim_keys (revoked_at)",
+  );
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS site_license_external_claim_consumptions (
+      id UUID PRIMARY KEY,
+      pool_id UUID NOT NULL,
+      site_license_id UUID NOT NULL,
+      package_id UUID NOT NULL,
+      jti TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      issuer TEXT NOT NULL,
+      kid TEXT,
+      account_id UUID NOT NULL,
+      status TEXT NOT NULL,
+      side_effect_key TEXT NOT NULL,
+      assignment_id UUID,
+      membership_grant_id UUID,
+      membership_class TEXT NOT NULL,
+      membership_expires_at TIMESTAMPTZ,
+      rootfs_id TEXT,
+      external_subject TEXT,
+      token_expires_at TIMESTAMPTZ,
+      error_code TEXT,
+      error_message TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      last_retry_at TIMESTAMPTZ,
+      metadata JSONB,
+      consumed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_consumptions_pool_jti_idx ON site_license_external_claim_consumptions (pool_id, jti)",
+  );
+  await db.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_consumptions_token_hash_idx ON site_license_external_claim_consumptions (token_hash)",
+  );
+  await db.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_consumptions_side_effect_key_idx ON site_license_external_claim_consumptions (side_effect_key)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_external_claim_consumptions_account_id_idx ON site_license_external_claim_consumptions (account_id)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_external_claim_consumptions_status_idx ON site_license_external_claim_consumptions (status)",
   );
 }
 
@@ -1067,7 +1188,7 @@ function normalizeSiteLicenseAuditEventRow(
   };
 }
 
-async function recordSiteLicenseAuditEvent({
+export async function recordSiteLicenseAuditEvent({
   site_license_id,
   action,
   actor_account_id,
