@@ -991,6 +991,10 @@ Implemented:
   publish installer-facing channel manifests under
   `software/cocalc*/<channel>-<os>-<arch>.json`, with `stable` also updating
   legacy `latest-<os>-<arch>.json` aliases for existing installer defaults.
+- `build`, `list`, and `push` for `tools-minimal` artifacts, plus coordinated
+  Plus/tools-minimal channel promotion. `software deploy plus ...` now promotes
+  the selected Plus artifact and a matching or explicitly selected
+  `tools-minimal` artifact in the same deployment history record.
 - CLI/Launchpad/Plus installers now prefer channel-manifest `artifact_id`
   identity over package semver and persist release metadata such as
   `published_at` and git hash for local inspection/version output.
@@ -1032,9 +1036,6 @@ Still not implemented:
 - Product/documentation updates for the new CLI channel model, including a
   dedicated `/products/cocalc-cli` page and channel notes on public installer
   pages.
-- Coordinated Plus/tools-minimal channel promotion. Today `plus` channel
-  promotion updates the Plus binary manifest only; the installer still resolves
-  `tools-minimal` from its own channel manifest.
 - Rollback wrappers.
 
 ### Phase 0: Documentation And Test Fixtures

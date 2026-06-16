@@ -121,6 +121,7 @@ type DeployOptions = {
   config?: string;
   remote?: string;
   api?: string;
+  toolsMinimal?: string;
 };
 
 type HistoryOptions = {
@@ -335,6 +336,29 @@ function packageBuildInfo(
       artifactFiles: (srcRoot) =>
         ["amd64", "arm64"].map((arch) => {
           const name = `tools-linux-${arch}.tar.xz`;
+          return {
+            name,
+            source: join(srcRoot, "packages", "project", "build", name),
+          };
+        }),
+    };
+  }
+  if (component === "tools-minimal") {
+    const toolsArch = process.arch === "arm64" ? "arm64" : "amd64";
+    const artifactName = `tools-minimal-linux-${toolsArch}.tar.xz`;
+    return {
+      packageFilter: "@cocalc/project",
+      script: "build:tools-minimal",
+      artifactName,
+      artifactPath: (srcRoot) =>
+        join(srcRoot, "packages", "project", "build", artifactName),
+      artifactFiles: (srcRoot) =>
+        [
+          ["linux", "amd64"],
+          ["linux", "arm64"],
+          ["darwin", "arm64"],
+        ].map(([os, arch]) => {
+          const name = `tools-minimal-${os}-${arch}.tar.xz`;
           return {
             name,
             source: join(srcRoot, "packages", "project", "build", name),
@@ -2300,6 +2324,10 @@ Supported deploy/smoke components:
       "R2 credential env file",
       "/run/secrets/cocalc/rocket-software-env.sh",
     )
+    .option(
+      "--tools-minimal <tag-or-id>",
+      "tools-minimal artifact selector to promote with plus; defaults to the plus selector",
+    )
     .action(
       async (
         componentArg: string,
@@ -2431,6 +2459,11 @@ Supported deploy/smoke components:
         let releaseProduct: string | undefined;
         let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
         let releaseChannelManifestUrls: string[] | undefined;
+        let toolsMinimalArtifact:
+          | Awaited<ReturnType<typeof resolveDeployArtifact>>
+          | undefined;
+        let toolsMinimalSelector: string | undefined;
+        let toolsMinimalChannelManifestUrls: string[] | undefined;
         let starInstall: ReturnType<typeof starInstallInfo> | undefined;
         let starPromoteScript: string | undefined;
         let targetKind: SoftwareDeploymentRecord["target"]["kind"];
@@ -2531,6 +2564,24 @@ Supported deploy/smoke components:
             channel: releaseChannel!,
             publicBaseUrl: config.publicBaseUrl,
           });
+          if (releaseTarget.artifactComponent === "plus") {
+            toolsMinimalSelector = `${opts.toolsMinimal ?? selector}`.trim();
+            try {
+              toolsMinimalArtifact = await resolveDeployArtifact({
+                component: "tools-minimal",
+                selector: toolsMinimalSelector,
+                opts,
+                deps,
+              });
+            } catch (err) {
+              if (opts.toolsMinimal) {
+                throw err;
+              }
+              throw new Error(
+                `software deploy plus requires a matching tools-minimal artifact; build/push tools-minimal with tag '${selector}' or pass --tools-minimal <tag-or-id>`,
+              );
+            }
+          }
           targetKind = "release-channel";
         } else if (starTarget) {
           const cwd = resolve(deps.cwd ?? process.cwd());
@@ -2586,6 +2637,23 @@ Supported deploy/smoke components:
             ...(releaseProduct ? { release_product: releaseProduct } : {}),
             ...(releaseChannel ? { release_channel: releaseChannel } : {}),
             ...(releaseInstall ?? {}),
+            ...(toolsMinimalArtifact
+              ? {
+                  tools_minimal: {
+                    selector: toolsMinimalSelector,
+                    artifact_id: toolsMinimalArtifact.artifact_id,
+                    tag: toolsMinimalArtifact.tag,
+                    source: toolsMinimalArtifact.source,
+                    remote_manifest: toolsMinimalArtifact.remote_manifest,
+                    files: toolsMinimalArtifact.files.map((file) => ({
+                      name: file.name,
+                      url: file.url,
+                      sha256: file.sha256,
+                      size_bytes: file.size_bytes,
+                    })),
+                  },
+                }
+              : {}),
             ...(starInstall ?? {}),
           },
           deps,
@@ -2597,6 +2665,20 @@ Supported deploy/smoke components:
           deps,
           run: async () => {
             if (releaseTarget) {
+              if (toolsMinimalArtifact) {
+                const publishedToolsMinimal =
+                  await publishReleaseChannelArtifact({
+                    client,
+                    config,
+                    entry: toolsMinimalArtifact.remote_entry,
+                    channel: releaseChannel!,
+                    now: deps.now?.() ?? new Date(),
+                  });
+                toolsMinimalChannelManifestUrls =
+                  publishedToolsMinimal.manifests.map(
+                    (manifest) => manifest.url,
+                  );
+              }
               const published = await publishReleaseChannelArtifact({
                 client,
                 config,
@@ -2613,6 +2695,12 @@ Supported deploy/smoke components:
                 release_product: published.product,
                 release_channel: published.channel,
                 channel_manifests: releaseChannelManifestUrls,
+                ...(toolsMinimalChannelManifestUrls
+                  ? {
+                      tools_minimal_channel_manifests:
+                        toolsMinimalChannelManifestUrls,
+                    }
+                  : {}),
                 ...(published.channel === "stable"
                   ? { latest_alias: "updated" }
                   : {}),
@@ -2712,12 +2800,26 @@ Supported deploy/smoke components:
             ...(releaseChannelManifestUrls
               ? { channel_manifests: releaseChannelManifestUrls }
               : {}),
-            ...(releaseChannel === "stable" ? { latest_alias: "updated" } : {}),
-            ...(releaseTarget?.artifactComponent === "plus"
+            ...(toolsMinimalArtifact
               ? {
-                  note: "Plus installer still resolves tools-minimal from its own channel manifest.",
+                  tools_minimal_artifact_id: toolsMinimalArtifact.artifact_id,
+                  tools_minimal_tag: toolsMinimalArtifact.tag,
+                  tools_minimal_source: toolsMinimalArtifact.source,
+                  tools_minimal_size: artifactSizeSummary(
+                    toolsMinimalArtifact.files,
+                  ).size,
+                  tools_minimal_size_bytes: artifactSizeSummary(
+                    toolsMinimalArtifact.files,
+                  ).size_bytes,
                 }
               : {}),
+            ...(toolsMinimalChannelManifestUrls
+              ? {
+                  tools_minimal_channel_manifests:
+                    toolsMinimalChannelManifestUrls,
+                }
+              : {}),
+            ...(releaseChannel === "stable" ? { latest_alias: "updated" } : {}),
             ...(releaseTarget ? {} : { profile: deployTarget }),
             deployment_id: finalRecord.deployment_id,
             deployment_record: `${config.publicBaseUrl}/${recordKey}`,

@@ -136,6 +136,31 @@ function makeDeps({
         }
       } else if (
         command === "pnpm" &&
+        args.includes("@cocalc/project") &&
+        args.includes("build:tools-minimal")
+      ) {
+        bundle = undefined;
+        for (const [os, arch] of [
+          ["linux", "amd64"],
+          ["linux", "arm64"],
+          ["darwin", "arm64"],
+        ] as const) {
+          const toolsBundle = join(
+            repoRoot,
+            "src",
+            "packages",
+            "project",
+            "build",
+            `tools-minimal-${os}-${arch}.tar.xz`,
+          );
+          mkdirSync(join(toolsBundle, ".."), { recursive: true });
+          writeFileSync(
+            toolsBundle,
+            `built tools-minimal bundle ${os} ${arch}`,
+          );
+        }
+      } else if (
+        command === "pnpm" &&
         args.includes("@cocalc/cli") &&
         artifactId
       ) {
@@ -577,6 +602,45 @@ test("software build tools runs the package tools builder", async () => {
           "20260614T235912Z-e882d124-tools-test",
           "files",
           `tools-linux-${arch}.tar.xz`,
+        ),
+      ),
+      true,
+    );
+  }
+});
+
+test("software build tools-minimal runs the package minimal tools builder", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-tools-minimal-build-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const program = createProgram(makeDeps({ localStore, runs, cwd: dir }));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "tools-minimal",
+    "tools-minimal-test",
+  ]);
+
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].args.includes("@cocalc/project"), true);
+  assert.equal(runs[0].args.includes("build:tools-minimal"), true);
+  for (const [os, arch] of [
+    ["linux", "amd64"],
+    ["linux", "arm64"],
+    ["darwin", "arm64"],
+  ] as const) {
+    assert.equal(
+      existsSync(
+        join(
+          localStore,
+          "tools-minimal",
+          "20260614T235912Z-e882d124-tools-minimal-test",
+          "files",
+          `tools-minimal-${os}-${arch}.tar.xz`,
         ),
       ),
       true,
@@ -1566,6 +1630,15 @@ test("software deploy plus stable also updates the legacy latest manifest", asyn
     "test",
     "--quiet",
     "software",
+    "build",
+    "tools-minimal",
+    "plus-stable",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
     "deploy",
     "plus",
     "plus-stable",
@@ -1587,6 +1660,25 @@ test("software deploy plus stable also updates the legacy latest manifest", asyn
   assert.equal(stable.artifact_id, "20260614T235912Z-e882d124-plus-stable");
   assert.equal(latest.artifact_id, stable.artifact_id);
   assert.equal(latest.channel, "latest");
+  const toolsStable = JSON.parse(
+    r2.objects
+      .get("software/tools-minimal/stable-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  const toolsLatest = JSON.parse(
+    r2.objects
+      .get("software/tools-minimal/latest-linux-amd64.json")!
+      .toString("utf8"),
+  );
+  assert.equal(toolsStable.product, "tools-minimal");
+  assert.equal(toolsStable.component, "tools-minimal");
+  assert.equal(
+    toolsStable.artifact_id,
+    "20260614T235912Z-e882d124-plus-stable",
+  );
+  assert.match(toolsStable.url, /tools-minimal-linux-amd64\.tar\.xz$/);
+  assert.equal(toolsLatest.artifact_id, toolsStable.artifact_id);
+  assert.equal(toolsLatest.channel, "latest");
   const history = JSON.parse(
     r2.objects
       .get("software/deployments/stable/plus/index.json")!
@@ -1594,6 +1686,67 @@ test("software deploy plus stable also updates the legacy latest manifest", asyn
   );
   assert.equal(history.deployments[0].target.kind, "release-channel");
   assert.equal(history.deployments[0].target.channel, "stable");
+  const record = JSON.parse(
+    r2.objects
+      .get(
+        `software/deployments/stable/plus/${history.deployments[0].deployment_id}.json`,
+      )!
+      .toString("utf8"),
+  );
+  assert.deepEqual(record.details.tools_minimal_channel_manifests, [
+    "https://software.example.test/software/tools-minimal/stable-linux-amd64.json",
+    "https://software.example.test/software/tools-minimal/stable-linux-arm64.json",
+    "https://software.example.test/software/tools-minimal/stable-darwin-arm64.json",
+    "https://software.example.test/software/tools-minimal/latest-linux-amd64.json",
+    "https://software.example.test/software/tools-minimal/latest-linux-arm64.json",
+    "https://software.example.test/software/tools-minimal/latest-darwin-arm64.json",
+  ]);
+});
+
+test("software deploy plus requires a coordinated tools-minimal artifact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-plus-no-tools-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "cocalc-plus-bin");
+  writeFileSync(source, "plus binary");
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "plus",
+    "plus-only",
+    "--from-file",
+    source,
+    "--artifact-name",
+    "cocalc-plus-20260614T235912Z-e882d124-plus-only-x86_64-linux",
+  ]);
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "deploy",
+        "plus",
+        "plus-only",
+        "candidate",
+        "--env-file",
+        join(dir, "missing.env"),
+      ]),
+    /requires a matching tools-minimal artifact/,
+  );
+
+  assert.equal(
+    r2.objects.has("software/cocalc-plus/candidate-linux-amd64.json"),
+    false,
+  );
 });
 
 test("software deploy star promotes an immutable GitHub release channel", async () => {
