@@ -678,6 +678,11 @@ function parseMembershipTierImportJson(value: unknown): Tier[] {
   });
 }
 
+function prioritySortValue(tier: Tier): number {
+  const priority = Number(tier.priority);
+  return Number.isFinite(priority) ? priority : Number.NEGATIVE_INFINITY;
+}
+
 function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [editing, set_editing] = React.useState<Tier | null>(null);
@@ -3545,7 +3550,7 @@ export function MembershipTiers() {
         v.key = v.id;
         return v;
       }),
-      "id",
+      [(tier) => -prioritySortValue(tier), "id"],
     );
     const rowSelection = {
       selectedRowKeys: sel_rows,
@@ -3569,9 +3574,14 @@ export function MembershipTiers() {
           }
         >
           <Table.Column<Tier>
+            title="Priority"
+            dataIndex="priority"
+            defaultSortOrder={"descend"}
+            sorter={(a, b) => prioritySortValue(a) - prioritySortValue(b)}
+          />
+          <Table.Column<Tier>
             title="Tier ID"
             dataIndex="id"
-            defaultSortOrder={"ascend"}
             sorter={(a, b) => a.id.localeCompare(b.id)}
           />
           <Table.Column<Tier> title="Label" dataIndex="label" />
@@ -3600,7 +3610,6 @@ export function MembershipTiers() {
               )
             }
           />
-          <Table.Column<Tier> title="Priority" dataIndex="priority" />
           <Table.Column<Tier>
             title="Monthly"
             dataIndex="price_monthly"
