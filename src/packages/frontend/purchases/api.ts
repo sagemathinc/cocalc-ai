@@ -26,6 +26,8 @@ import type {
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
+  TeamLicenseOverview,
+  TeamLicenseQuote,
 } from "@cocalc/conat/hub/api/purchases";
 import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
@@ -383,6 +385,51 @@ export async function purchaseMembershipPackage(opts: {
   return await (
     await getPurchasesHubRpc()
   ).purchaseMembershipPackage({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
+}
+
+export async function purchaseMembershipPackages(opts: {
+  products: {
+    type: "membership-package";
+    package_id?: string;
+    kind: MembershipPackageKind;
+    membership_class: MembershipClass;
+    seat_count: number;
+    interval?: "month" | "year";
+    course_project_id?: string;
+    starts_at?: Date | string;
+    expires_at?: Date | string;
+    metadata?: Record<string, unknown> | null;
+  }[];
+}): Promise<{ package_id: string; purchase_id: number }[]> {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).purchaseMembershipPackages({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
+}
+
+export async function getTeamLicense(): Promise<TeamLicenseOverview | null> {
+  return await (await getPurchasesHubRpc()).getTeamLicense();
+}
+
+export async function getTeamLicenseQuote(opts: {
+  target_seats: Record<string, number>;
+}): Promise<TeamLicenseQuote> {
+  return await (await getPurchasesHubRpc()).getTeamLicenseQuote(opts);
+}
+
+export async function purchaseTeamLicenseChange(opts: {
+  target_seats: Record<string, number>;
+}): Promise<TeamLicenseOverview> {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).purchaseTeamLicenseChange({
     ...opts,
     browser_id: webapp_client.browser_id,
   });

@@ -10,6 +10,8 @@ import {
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
   MEMBERSHIP_PACKAGE_PURCHASE,
+  TEAM_LICENSE_CHANGE,
+  TEAM_LICENSE_RENEWAL,
 } from "@cocalc/util/db-schema/purchases";
 import {
   processSubscriptionRenewal,
@@ -30,7 +32,14 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import getPool from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
-import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
+import purchaseMembershipPackage, {
+  purchaseMembershipPackages,
+} from "@cocalc/server/purchases/membership-package";
+import {
+  processTeamLicenseRenewal,
+  processTeamLicenseRenewalFailure,
+  purchaseTeamLicenseChange,
+} from "@cocalc/server/purchases/team-license";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
@@ -84,6 +93,44 @@ function getMembershipPackageProductFromMetadata(
     throw Error("invalid membership package purchase metadata");
   }
   return product;
+}
+
+function getMembershipPackageProductsFromMetadata(
+  metadata?: Record<string, string>,
+): MembershipPackageProduct[] {
+  const value = `${metadata?.membership_package_products ?? ""}`.trim();
+  if (!value) {
+    return [getMembershipPackageProductFromMetadata(metadata)];
+  }
+  const products = JSON.parse(value);
+  if (!Array.isArray(products) || products.length === 0) {
+    throw Error("invalid membership package purchase metadata");
+  }
+  for (const product of products) {
+    if (product?.type !== "membership-package") {
+      throw Error("invalid membership package purchase metadata");
+    }
+  }
+  return products;
+}
+
+function getTeamLicenseTargetSeatsFromMetadata(
+  metadata?: Record<string, string>,
+): Record<string, number> {
+  const value = `${metadata?.team_license_target_seats ?? ""}`.trim();
+  if (!value) {
+    throw Error("team license change metadata is missing");
+  }
+  const parsed = JSON.parse(value);
+  if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw Error("invalid team license change metadata");
+  }
+  return Object.fromEntries(
+    Object.entries(parsed).map(([key, value]) => [
+      key,
+      Math.max(0, Math.floor(Number(value) || 0)),
+    ]),
+  );
 }
 
 export default async function processPaymentIntents({
@@ -476,6 +523,14 @@ customer.  So we don't know what to do with this.  Please manually investigate.
           paymentIntent.metadata.purpose == MEMBERSHIP_PACKAGE_PURCHASE
         ) {
           result = "the membership package purchase was not completed";
+        } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_CHANGE) {
+          result = "the team license change was not completed";
+        } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_RENEWAL) {
+          result = "the team license renewal was not completed";
+          await processTeamLicenseRenewalFailure({
+            account_id,
+            paymentIntent,
+          });
         } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
           const statement_id = parseInt(
             paymentIntent.metadata.purpose.split("-")[1],
@@ -594,18 +649,40 @@ ${await support()}`;
       } else if (
         paymentIntent.metadata.purpose == MEMBERSHIP_PACKAGE_PURCHASE
       ) {
-        const product = getMembershipPackageProductFromMetadata(
+        const products = getMembershipPackageProductsFromMetadata(
           paymentIntent.metadata,
         );
-        reason =
-          product.package_id != null
-            ? `expand membership package ${product.package_id}`
-            : `purchase a ${product.kind} membership package`;
-        await purchaseMembershipPackage({
+        if (products.length === 1) {
+          const product = products[0];
+          reason =
+            product.package_id != null
+              ? `expand membership package ${product.package_id}`
+              : `purchase a ${product.kind} membership package`;
+          await purchaseMembershipPackage({
+            account_id,
+            product,
+            amount,
+          });
+        } else {
+          reason = `purchase ${products.length} membership package changes`;
+          await purchaseMembershipPackages({
+            account_id,
+            products,
+            amount,
+          });
+        }
+      } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_CHANGE) {
+        reason = "change your team license";
+        await purchaseTeamLicenseChange({
           account_id,
-          product,
+          target_seats: getTeamLicenseTargetSeatsFromMetadata(
+            paymentIntent.metadata,
+          ),
           amount,
         });
+      } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_RENEWAL) {
+        reason = `renew team license ${paymentIntent.metadata.team_license_id}`;
+        await processTeamLicenseRenewal({ account_id, paymentIntent, amount });
       } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
         const statement_id = parseInt(
           paymentIntent.metadata.purpose.split("-")[1],

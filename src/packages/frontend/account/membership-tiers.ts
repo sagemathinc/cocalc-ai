@@ -15,6 +15,7 @@ export interface MembershipTierLike extends MembershipTierWithPresentation {
   price_yearly?: number;
   priority?: number;
   store_visible?: boolean;
+  team_visible?: boolean;
   disabled?: boolean;
   site_license_pool_description?: string;
   project_defaults?: Record<string, unknown>;

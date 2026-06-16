@@ -44,7 +44,9 @@ import {
   createTestMembershipPackage,
   createTestMembershipTier,
 } from "@cocalc/server/purchases/test-data";
-import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
+import purchaseMembershipPackage, {
+  purchaseMembershipPackages,
+} from "@cocalc/server/purchases/membership-package";
 import { uuid } from "@cocalc/util/misc";
 import { resolveMembershipForAccount } from "./resolve";
 import { getMembershipClaimIdentity } from "./claim-directory";
@@ -70,6 +72,7 @@ afterAll(after);
 
 describe("membership packages", () => {
   const teamTier = `team-tier-${uuid()}`;
+  const teamTier2 = `team-tier-${uuid()}`;
   const courseTier = `course-tier-${uuid()}`;
   let remoteGrantUpserts: Array<{ dest_bay: string; grant: any }>;
   let remoteGrantRevocations: Array<{ dest_bay: string; opts: any }>;
@@ -115,6 +118,12 @@ describe("membership packages", () => {
       priority: 25,
       price_monthly: 20,
       price_yearly: 200,
+    });
+    await createTestMembershipTier({
+      id: teamTier2,
+      priority: 30,
+      price_monthly: 50,
+      price_yearly: 500,
     });
     await createTestMembershipTier({
       id: courseTier,
@@ -1186,6 +1195,49 @@ describe("membership packages", () => {
         },
       }),
     ).rejects.toThrow(/account is homed on bay-1/);
+  });
+
+  it("purchases multiple team package products in one bundle", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+
+    const result = await purchaseMembershipPackages({
+      account_id: owner_account_id,
+      amount: 900,
+      products: [
+        {
+          type: "membership-package",
+          kind: "team",
+          membership_class: teamTier,
+          seat_count: 2,
+          interval: "year",
+        },
+        {
+          type: "membership-package",
+          kind: "team",
+          membership_class: teamTier2,
+          seat_count: 1,
+          interval: "year",
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(2);
+    const details = await listMembershipPackageDetailsForOwner({
+      owner_account_id,
+    });
+    expect(
+      details.map(({ kind, membership_class, seat_count }) => ({
+        kind,
+        membership_class,
+        seat_count,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        { kind: "team", membership_class: teamTier, seat_count: 2 },
+        { kind: "team", membership_class: teamTier2, seat_count: 1 },
+      ]),
+    );
   });
 
   it("rejects seat assignment writes on a stale non-home bay", async () => {

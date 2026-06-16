@@ -22,7 +22,6 @@ import {
   Select,
   Space,
   Spin,
-  Statistic,
   Table,
   Tag,
   Typography,
@@ -44,11 +43,10 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, Loading, Tooltip } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { MembershipTierBenefits } from "./membership-tier-benefits";
 import type { MembershipTierLike } from "./membership-tiers";
-import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
-import Payments from "@cocalc/frontend/purchases/payments";
 import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
@@ -57,12 +55,11 @@ import {
   cancelSiteLicensePoolRequest,
   claimMembershipPackageSeat,
   getClaimableMembershipPackages,
-  getMembershipPackageQuote,
-  getMembershipPackages,
-  isPurchaseAllowed,
+  getTeamLicense,
+  getTeamLicenseQuote,
   listSiteLicenseOverviews,
   processPaymentIntents,
-  purchaseMembershipPackage,
+  purchaseTeamLicenseChange,
   releaseSiteLicensePoolSeat,
   removeSiteLicenseManager,
   requestSiteLicensePool,
@@ -81,14 +78,15 @@ import type {
   MembershipPackageAssignment,
   MembershipPackageDetails,
   MembershipPackageKind,
-  MembershipPackageQuote,
   SiteLicenseManagerRole,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
   SiteLicenseVerificationPolicy,
+  TeamLicenseOverview,
+  TeamLicenseQuote,
 } from "@cocalc/conat/hub/api/purchases";
-import { MEMBERSHIP_PACKAGE_PURCHASE } from "@cocalc/util/db-schema/purchases";
+import { TEAM_LICENSE_CHANGE } from "@cocalc/util/db-schema/purchases";
 import {
   capitalize,
   currency,
@@ -97,6 +95,7 @@ import {
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { COLORS } from "@cocalc/util/theme";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import type { LineItem } from "@cocalc/util/stripe/types";
 
 const { Paragraph, Text, Title } = Typography;
@@ -255,13 +254,7 @@ function getPackageKindLabel(kind: MembershipPackageKind): string {
 
 function getTeamSeatTiers(tiers: MembershipTierLike[]): MembershipTierLike[] {
   return sortMembershipTiersByDisplayOrder(
-    tiers.filter(
-      (tier) =>
-        !tier.disabled &&
-        tier.store_visible !== false &&
-        tier.id !== "free" &&
-        tier.id !== "student",
-    ),
+    tiers.filter((tier) => !tier.disabled && tier.team_visible === true),
   );
 }
 
@@ -1289,9 +1282,9 @@ export function TeamPackageManager({
   const ownerAccountId = user_account_id ?? account_id;
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const [membershipPackages, setMembershipPackages] = useState<
-    MembershipPackageDetails[]
-  >([]);
+  const [teamLicense, setTeamLicense] = useState<TeamLicenseOverview | null>(
+    null,
+  );
   const [refreshToken, setRefreshToken] = useState<number>(0);
   const [purchaseTarget, setPurchaseTarget] = useState<
     MembershipPackageDetails | null | undefined
@@ -1305,10 +1298,10 @@ export function TeamPackageManager({
     setLoading(true);
     setError("");
     try {
-      const next = await getMembershipPackages(
-        user_account_id ? { user_account_id } : {},
-      );
-      setMembershipPackages(sortPackagesByRecent(next));
+      if (user_account_id) {
+        throw Error("team-license user lookup is not supported here");
+      }
+      setTeamLicense(await getTeamLicense());
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -1318,7 +1311,7 @@ export function TeamPackageManager({
 
   useEffect(() => {
     if (!ownerAccountId) {
-      setMembershipPackages([]);
+      setTeamLicense(null);
       setAccountNames({});
       setError("");
       setLoading(false);
@@ -1326,6 +1319,11 @@ export function TeamPackageManager({
     }
     void refreshPackages();
   }, [ownerAccountId, refreshToken, user_account_id]);
+
+  const membershipPackages = useMemo(
+    () => sortPackagesByRecent(teamLicense?.packages ?? []),
+    [teamLicense],
+  );
 
   const assignedAccountIds = useMemo(() => {
     return Array.from(
@@ -1388,18 +1386,31 @@ export function TeamPackageManager({
       {error && (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
       )}
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Button type="primary" onClick={() => setPurchaseTarget(null)}>
-          <Icon name="shopping-cart" /> Buy team seats
-        </Button>
-        <Button onClick={() => setRefreshToken((value) => value + 1)}>
-          <Icon name="refresh" /> Refresh
-        </Button>
-      </Space>
       {loading ? (
         <Loading />
+      ) : teamPackages.length === 0 ? (
+        <Space vertical>
+          <Text>
+            Create a team license to give membership seats to other CoCalc
+            accounts.
+            <br />
+            After setup, you can assign seats to the people who should receive
+            membership access.
+          </Text>
+          <Button type="primary" onClick={() => setPurchaseTarget(null)}>
+            <Icon name="shopping-cart" /> Set up team license
+          </Button>
+        </Space>
       ) : (
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <Space wrap>
+            <Button type="primary" onClick={() => setPurchaseTarget(null)}>
+              <Icon name="shopping-cart" /> Buy team seats
+            </Button>
+            <Button onClick={() => setRefreshToken((value) => value + 1)}>
+              <Icon name="refresh" /> Refresh
+            </Button>
+          </Space>
           <PackageGroup
             title="Team packages"
             emptyTitle="No team packages yet"
@@ -1432,7 +1443,7 @@ export function TeamPackageManager({
       )}
       <TeamPackagePurchaseModal
         open={purchaseTarget !== undefined}
-        membershipPackage={purchaseTarget ?? undefined}
+        teamLicense={teamLicense}
         tiers={tiers}
         onClose={() => setPurchaseTarget(undefined)}
         onPurchased={handleChanged}
@@ -4536,148 +4547,113 @@ function EditSiteLicenseModal({
 
 function TeamPackagePurchaseModal({
   open,
-  membershipPackage,
+  teamLicense,
   tiers,
   onClose,
   onPurchased,
 }: {
   open: boolean;
-  membershipPackage?: MembershipPackageDetails;
+  teamLicense: TeamLicenseOverview | null;
   tiers: MembershipTierLike[];
   onClose: () => void;
   onPurchased: () => Promise<void>;
 }) {
   const purchaseableTiers = useMemo(() => getTeamSeatTiers(tiers), [tiers]);
-  const [selectedTierId, setSelectedTierId] = useState<string>("");
-  const [interval, setInterval] = useState<"month" | "year">("month");
-  const [seatCount, setSeatCount] = useState<number>(1);
-  const [quote, setQuote] = useState<MembershipPackageQuote | null>(null);
+  const [seatTargets, setSeatTargets] = useState<Record<string, number>>({});
+  const [quote, setQuote] = useState<TeamLicenseQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [quoteError, setQuoteError] = useState<string>("");
   const [actionError, setActionError] = useState<string>("");
   const [disabled, setDisabled] = useState<boolean>(false);
-  const [place, setPlace] = useState<"checkout" | "processing" | "done">(
-    "checkout",
-  );
-  const numPaymentsRef = useRef<number | null>(null);
-  const [chargeAmount, setChargeAmount] = useState<number>(0);
+  const [place, setPlace] = useState<
+    "choose" | "review" | "processing" | "done"
+  >("choose");
+  const modalWasOpenRef = useRef(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const hasExistingLicense = teamLicense != null;
+
+  const initialSeatCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tier of purchaseableTiers) {
+      counts[tier.id] =
+        teamLicense?.seat_lines.find(
+          (line) => line.membership_class === tier.id,
+        )?.seat_count ?? 0;
+    }
+    return counts;
+  }, [purchaseableTiers, teamLicense]);
+
+  const assignedSeatCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tier of purchaseableTiers) {
+      counts[tier.id] =
+        teamLicense?.seat_lines.find(
+          (line) => line.membership_class === tier.id,
+        )?.package?.active_assignment_count ?? 0;
+    }
+    return counts;
+  }, [purchaseableTiers, teamLicense]);
 
   useEffect(() => {
-    if (!open) return;
-    setPlace("checkout");
+    if (!open) {
+      modalWasOpenRef.current = false;
+      return;
+    }
+    if (modalWasOpenRef.current) return;
+    modalWasOpenRef.current = true;
+    setPlace("choose");
     setQuote(null);
     setQuoteError("");
     setActionError("");
     setDisabled(false);
-    setSeatCount(1);
-    if (membershipPackage) {
-      setSelectedTierId(membershipPackage.membership_class);
-      setInterval(
-        `${membershipPackage.metadata?.interval ?? ""}` === "year"
-          ? "year"
-          : "month",
-      );
-    } else {
-      setSelectedTierId(purchaseableTiers[0]?.id ?? "");
-      setInterval("month");
-    }
-  }, [open, membershipPackage, purchaseableTiers]);
+    setSeatTargets(initialSeatCounts);
+  }, [open, initialSeatCounts]);
 
-  const product = useMemo(
+  const hasSeatIncrease = useMemo(
     () =>
-      membershipPackage
-        ? {
-            package_id: membershipPackage.id,
-            kind: "team" as const,
-            seat_count: seatCount,
-            membership_class:
-              (membershipPackage.membership_class as MembershipClass) ??
-              undefined,
-            interval: (`${membershipPackage.metadata?.interval ?? interval}` ===
-            "year"
-              ? "year"
-              : "month") as "month" | "year",
-          }
-        : {
-            kind: "team" as const,
-            membership_class:
-              (selectedTierId as MembershipClass | "") || undefined,
-            seat_count: seatCount,
-            interval,
-          },
-    [membershipPackage, seatCount, selectedTierId, interval],
+      purchaseableTiers.some((tier) => {
+        const initial = initialSeatCounts[tier.id] ?? 0;
+        const target = seatTargets[tier.id] ?? initial;
+        return target > initial;
+      }),
+    [initialSeatCounts, purchaseableTiers, seatTargets],
   );
 
-  useEffect(() => {
-    if (!open) return;
-    if (!seatCount || seatCount < 1) {
-      setQuote(null);
-      return;
-    }
-    if (!membershipPackage && !selectedTierId) {
-      setQuote(null);
-      return;
-    }
-    let canceled = false;
-    async function loadQuote() {
-      setQuoteLoading(true);
-      setQuoteError("");
-      try {
-        const nextQuote = await getMembershipPackageQuote(product);
-        const purchaseAllowed = await isPurchaseAllowed(
-          "membership",
-          nextQuote.total_price,
-        );
-        if (!canceled) {
-          setQuote(nextQuote);
-          setChargeAmount(
-            purchaseAllowed.chargeAmount ?? nextQuote.total_price ?? 0,
-          );
-        }
-      } catch (err) {
-        if (!canceled) {
-          setQuoteError(`${err}`);
-          setQuote(null);
-        }
-      } finally {
-        if (!canceled) {
-          setQuoteLoading(false);
-        }
-      }
-    }
-    void loadQuote();
-    return () => {
-      canceled = true;
-    };
-  }, [open, product, seatCount, membershipPackage, selectedTierId]);
+  const lineItems: LineItem[] = (quote?.line_items ?? []).map((item) => ({
+    description: item.description,
+    amount: moneyRound2Up(toDecimal(item.amount)).toNumber(),
+  }));
 
-  const selectedTier = purchaseableTiers.find(
-    (tier) => tier.id === selectedTierId,
-  );
-  const selectedTierLabel =
-    selectedTier?.label ??
-    capitalize(selectedTierId || membershipPackage?.membership_class || "team");
-  const totalValue = toDecimal(quote?.total_price ?? 0);
-  const chargeAmountValue = toDecimal(chargeAmount);
-  const lineItems: LineItem[] = [];
-  if (quote) {
-    lineItems.push({
-      description: `${seatCount} ${selectedTierLabel} team seat${seatCount === 1 ? "" : "s"} (${currency(
-        quote.seat_price,
-      )} each)`,
-      amount: moneyRound2Up(totalValue).toNumber(),
-    });
-    if (chargeAmountValue.lt(totalValue)) {
-      lineItems.push({
-        description: "Apply account credit toward team seats",
-        amount: chargeAmountValue.sub(totalValue).toNumber(),
-      });
-    } else if (chargeAmountValue.gt(totalValue)) {
-      lineItems.push({
-        description: "Minimum charge top-up added to account credit",
-        amount: chargeAmountValue.sub(totalValue).toNumber(),
-      });
+  function setTargetSeatCount(tierId: string, value: number) {
+    const initial = initialSeatCounts[tierId] ?? 0;
+    const next = Number.isFinite(value)
+      ? Math.max(initial, Math.floor(value))
+      : initial;
+    setSeatTargets((current) => ({
+      ...current,
+      [tierId]: next,
+    }));
+    setQuote(null);
+    setQuoteError("");
+    setActionError("");
+  }
+
+  async function loadQuotes() {
+    if (!hasSeatIncrease) {
+      setQuoteError("Increase at least one team seat count to continue.");
+      return;
+    }
+    setQuoteLoading(true);
+    setQuoteError("");
+    setActionError("");
+    try {
+      setQuote(await getTeamLicenseQuote({ target_seats: seatTargets }));
+      setPlace("review");
+    } catch (err) {
+      setQuoteError(`${err}`);
+      setQuote(null);
+    } finally {
+      setQuoteLoading(false);
     }
   }
 
@@ -4686,7 +4662,7 @@ function TeamPackagePurchaseModal({
     setDisabled(true);
     try {
       const completed = await runFreshAuthAction(async () => {
-        await purchaseMembershipPackage(product);
+        await purchaseTeamLicenseChange({ target_seats: seatTargets });
         await onPurchased();
         setPlace("done");
       });
@@ -4703,14 +4679,141 @@ function TeamPackagePurchaseModal({
   async function refreshProcessing() {
     setActionError("");
     try {
-      const { count } = await processPaymentIntents();
-      if (count > 0) {
-        await onPurchased();
+      await processPaymentIntents();
+      const updated = await getTeamLicense();
+      await onPurchased();
+      if (teamLicenseMatchesTargets(updated, seatTargets, purchaseableTiers)) {
         setPlace("done");
+      } else {
+        setActionError(
+          "Payment was submitted, but CoCalc could not confirm the team license update yet. Please check again shortly or contact support if the license does not update.",
+        );
       }
     } catch (err) {
       setActionError(`${err}`);
     }
+  }
+
+  function renderChooseStep() {
+    return (
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <Text>Choose annual team seats.</Text>
+        {purchaseableTiers.length === 0 ? (
+          <Alert
+            showIcon
+            type="info"
+            title="No team-license tiers are currently available."
+          />
+        ) : (
+          <Table
+            columns={[
+              {
+                title: "Tier",
+                render: (_, { tier }) => tier.label ?? capitalize(tier.id),
+              },
+              {
+                title: "Assigned",
+                render: (_, { assigned }) => `${assigned} used`,
+              },
+              {
+                title: "Seats",
+                render: (_, { tier, initial, target }) => (
+                  <Space>
+                    <Button
+                      disabled={target <= initial}
+                      onClick={() => setTargetSeatCount(tier.id, target - 1)}
+                    >
+                      -
+                    </Button>
+                    <InputNumber
+                      min={initial}
+                      precision={0}
+                      style={{ width: 80 }}
+                      value={target}
+                      onChange={(value) =>
+                        setTargetSeatCount(
+                          tier.id,
+                          typeof value === "number" ? value : initial,
+                        )
+                      }
+                      onBlur={(event) =>
+                        setTargetSeatCount(
+                          tier.id,
+                          Number(event.currentTarget.value),
+                        )
+                      }
+                    />
+                    <Button
+                      onClick={() => setTargetSeatCount(tier.id, target + 1)}
+                    >
+                      +
+                    </Button>
+                  </Space>
+                ),
+              },
+            ]}
+            dataSource={purchaseableTiers.map((tier) => ({
+              tier,
+              assigned: assignedSeatCounts[tier.id] ?? 0,
+              initial: initialSeatCounts[tier.id] ?? 0,
+              target: seatTargets[tier.id] ?? initialSeatCounts[tier.id] ?? 0,
+            }))}
+            pagination={false}
+            rowKey={({ tier }) => tier.id}
+            size="small"
+          />
+        )}
+        <Space wrap>
+          <Button
+            href={joinUrlPath(appBasePath, "pricing")}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Compare membership details <Icon name="external-link" />
+          </Button>
+          <Button
+            disabled={!hasSeatIncrease || quoteLoading}
+            loading={quoteLoading}
+            onClick={loadQuotes}
+            type="primary"
+          >
+            Continue
+          </Button>
+        </Space>
+      </Space>
+    );
+  }
+
+  function renderReviewStep() {
+    return (
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <Alert
+          showIcon={false}
+          type="info"
+          title="These seats start now and renew with your team license."
+        />
+        <Button disabled={disabled} onClick={() => setPlace("choose")}>
+          Change selection
+        </Button>
+        <StripePayment
+          disabled={disabled}
+          description="Team license seats"
+          lineItems={lineItems}
+          purpose={TEAM_LICENSE_CHANGE}
+          metadata={{
+            team_license_target_seats: JSON.stringify(seatTargets),
+          }}
+          onFinished={async (total) => {
+            if (!total) {
+              await completePurchase();
+              return;
+            }
+            setPlace("processing");
+            await refreshProcessing();
+          }}
+        />
+      </Space>
+    );
   }
 
   return (
@@ -4724,7 +4827,7 @@ function TeamPackagePurchaseModal({
       title={
         <>
           <Icon name="shopping-cart" style={{ marginRight: 10 }} />
-          {membershipPackage ? "Add team seats" : "Purchase team seats"}
+          {hasExistingLicense ? "Update team license" : "Set up team license"}
         </>
       }
     >
@@ -4740,152 +4843,15 @@ function TeamPackagePurchaseModal({
             }}
           />
         ) : null}
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Team seats grant account-wide membership access. Mid-term seat
-          increases use the same per-seat price as the original package.
-        </Paragraph>
-        <Space wrap>
-          <Tag color="blue">
-            {membershipPackage ? "Existing team package" : "New team package"}
-          </Tag>
-          {membershipPackage ? <Tag>{selectedTierLabel}</Tag> : null}
-        </Space>
-        {!membershipPackage ? (
-          <>
-            <div>
-              <Text strong>Membership tier</Text>
-              <div style={{ marginTop: 8 }}>
-                <Radio.Group
-                  value={selectedTierId}
-                  onChange={(e) => setSelectedTierId(e.target.value)}
-                >
-                  <Space orientation="vertical">
-                    {purchaseableTiers.map((tier) => (
-                      <Radio key={tier.id} value={tier.id}>
-                        {tier.label ?? capitalize(tier.id)}
-                      </Radio>
-                    ))}
-                  </Space>
-                </Radio.Group>
-              </div>
-              {selectedTier != null ? (
-                <div style={{ marginTop: 8 }}>
-                  <MembershipTierBenefits
-                    compact
-                    showBilling={false}
-                    tier={selectedTier}
-                  />
-                </div>
-              ) : null}
-            </div>
-            <div>
-              <Text strong>Billing interval</Text>
-              <div style={{ marginTop: 8 }}>
-                <Radio.Group
-                  value={interval}
-                  onChange={(e) => setInterval(e.target.value)}
-                >
-                  <Space>
-                    <Radio.Button value="month">Monthly</Radio.Button>
-                    <Radio.Button value="year">Yearly</Radio.Button>
-                  </Space>
-                </Radio.Group>
-              </div>
-            </div>
-          </>
-        ) : null}
-        <div>
-          <Text strong>
-            {membershipPackage ? "Additional seats" : "Seats to purchase"}
-          </Text>
-          <div style={{ marginTop: 8 }}>
-            <InputNumber
-              min={1}
-              precision={0}
-              value={seatCount}
-              onChange={(value) =>
-                setSeatCount(typeof value === "number" ? value : 1)
-              }
-            />
-          </div>
-        </div>
-        {quoteLoading ? <Spin /> : null}
-        {quote ? (
-          <>
-            <Space wrap>
-              <MoneyStatistic title="Total price" value={quote.total_price} />
-              <MoneyStatistic title="Seat price" value={quote.seat_price} />
-              <Statistic
-                title="Seats after purchase"
-                value={(membershipPackage?.seat_count ?? 0) + seatCount}
-                precision={0}
-              />
-            </Space>
-            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              Access runs
-              {quote.starts_at ? (
-                <>
-                  {" "}
-                  from <TimeAgo date={quote.starts_at} />
-                </>
-              ) : null}
-              {quote.expires_at ? (
-                <>
-                  {" "}
-                  until <TimeAgo date={quote.expires_at} />
-                </>
-              ) : null}
-              .
-            </Paragraph>
-            {chargeAmountValue.gt(totalValue) ? (
-              <Alert
-                type="warning"
-                showIcon
-                title={`The minimum immediate charge is ${currency(
-                  chargeAmountValue.toNumber(),
-                )}.`}
-                description="Any amount above the seat price is added to account credit and can be used for future purchases."
-              />
-            ) : null}
-          </>
-        ) : null}
-        <Divider style={{ margin: "8px 0" }} />
-        {place === "checkout" && quote ? (
-          <StripePayment
-            disabled={disabled}
-            description={
-              membershipPackage ? "Add team seats" : "Purchase team seats"
-            }
-            lineItems={lineItems}
-            purpose={MEMBERSHIP_PACKAGE_PURCHASE}
-            metadata={{
-              membership_package_product: JSON.stringify({
-                type: "membership-package",
-                ...product,
-              }),
-            }}
-            onFinished={async (total) => {
-              if (!total) {
-                await completePurchase();
-                return;
-              }
-              setPlace("processing");
-              await refreshProcessing();
-            }}
-          />
-        ) : null}
+        {place === "choose" ? renderChooseStep() : null}
+        {place === "review" ? renderReviewStep() : null}
         {place === "processing" ? (
           <>
             <Alert
               type="info"
               showIcon
               title="Payment submitted"
-              description="We are waiting for the payment to finish processing. When it does, the purchased seats will appear in this package."
-            />
-            <Payments
-              purpose={MEMBERSHIP_PACKAGE_PURCHASE}
-              numPaymentsRef={numPaymentsRef}
-              limit={5}
+              description="CoCalc is updating your team license. This can take a few seconds."
             />
             <Button onClick={refreshProcessing}>
               <Icon name="refresh" /> Refresh status
@@ -4893,17 +4859,35 @@ function TeamPackagePurchaseModal({
           </>
         ) : null}
         {place === "done" ? (
-          <Alert
-            type="success"
-            showIcon
-            title="Team seats purchased"
-            description="The package seat count has been updated. You can assign seats immediately."
-          />
+          <Space orientation="vertical" style={{ width: "100%" }}>
+            <Alert
+              type="success"
+              showIcon
+              title="Team license updated"
+              description="The seat counts have been updated. You can assign seats immediately."
+            />
+            <Button onClick={onClose}>Close</Button>
+          </Space>
         ) : null}
         <FreshAuthModal {...freshAuthModalProps} />
       </Space>
     </Modal>
   );
+}
+
+function teamLicenseMatchesTargets(
+  teamLicense: TeamLicenseOverview | null,
+  targets: Record<string, number>,
+  tiers: MembershipTierLike[],
+): boolean {
+  if (!teamLicense) return false;
+  return tiers.every((tier) => {
+    const target = targets[tier.id] ?? 0;
+    const actual =
+      teamLicense.seat_lines.find((line) => line.membership_class === tier.id)
+        ?.seat_count ?? 0;
+    return actual >= target;
+  });
 }
 
 function AssignMembershipSeatModal({

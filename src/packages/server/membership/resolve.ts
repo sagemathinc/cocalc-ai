@@ -84,9 +84,11 @@ async function buildMembershipCandidates(
   ]);
 
   const candidates: MembershipCandidate[] = [];
-  const siteLicenseDisplayNames =
-    await getCurrentSiteLicenseDisplayNamesForGrants(grants);
   const packageMetadata = await getMembershipPackageMetadataForGrants(grants);
+  const [siteLicenseDisplayNames, teamLicenseInfo] = await Promise.all([
+    getCurrentSiteLicenseDisplayNamesForGrants(grants),
+    getCurrentTeamLicenseInfoForPackageMetadata(packageMetadata),
+  ]);
 
   for (const sub of subResult.rows) {
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
@@ -150,6 +152,24 @@ async function buildMembershipCandidates(
     const pkgMetadata = grant.package_id
       ? packageMetadata.get(grant.package_id)
       : undefined;
+    const teamLicenseId =
+      getMetadataString(pkgMetadata, "team_license_id") ??
+      getMetadataString(grant.metadata, "team_license_id");
+    const teamLicense = teamLicenseId
+      ? teamLicenseInfo.get(teamLicenseId)
+      : undefined;
+    const teamLicensePeriodEnd = teamLicense?.current_period_end;
+    const teamLicenseWarning =
+      teamLicenseId &&
+      teamLicense?.status === "past_due" &&
+      teamLicensePeriodEnd
+        ? {
+            type: "past_due" as const,
+            team_license_id: teamLicenseId,
+            expired_at: teamLicensePeriodEnd,
+            message: `Your Team License expired on ${formatDate(teamLicensePeriodEnd)}. Please contact your manager to avoid losing access.`,
+          }
+        : undefined;
     candidates.push({
       class: membershipClass,
       source: "grant",
@@ -173,6 +193,15 @@ async function buildMembershipCandidates(
       organization_name:
         siteLicenseDisplayName?.organization_name ??
         getMetadataString(grant.metadata, "organization_name"),
+      team_license_id: teamLicenseId,
+      team_license_status:
+        teamLicense?.status === "past_due" || teamLicense?.status === "canceled"
+          ? teamLicense.status
+          : teamLicense?.status
+            ? "active"
+            : undefined,
+      team_license_period_end: teamLicensePeriodEnd,
+      team_license_warning: teamLicenseWarning,
       expires: grant.expires_at ? new Date(grant.expires_at) : undefined,
     });
   }
@@ -203,6 +232,42 @@ async function getMembershipPackageMetadataForGrants(
     [packageIds],
   );
   return new Map(rows.map((row) => [row.id, row.metadata]));
+}
+
+async function getCurrentTeamLicenseInfoForPackageMetadata(
+  packageMetadata: Map<string, Record<string, unknown> | null>,
+): Promise<
+  Map<string, { status?: string; current_period_end?: Date | string }>
+> {
+  const teamLicenseIds = Array.from(
+    new Set(
+      Array.from(packageMetadata.values())
+        .map((metadata) => getMetadataString(metadata, "team_license_id"))
+        .filter((teamLicenseId): teamLicenseId is string => !!teamLicenseId),
+    ),
+  );
+  if (teamLicenseIds.length === 0) {
+    return new Map();
+  }
+  const { rows } = await getPool("medium").query<{
+    id: string;
+    status?: string | null;
+    current_period_end?: Date | string | null;
+  }>(
+    `SELECT id::text AS id, status, current_period_end
+       FROM team_licenses
+      WHERE id::text = ANY($1::text[])`,
+    [teamLicenseIds],
+  );
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        status: getMetadataString(row, "status"),
+        current_period_end: row.current_period_end ?? undefined,
+      },
+    ]),
+  );
 }
 
 async function getCurrentSiteLicenseDisplayNamesForGrants(
@@ -245,6 +310,15 @@ function getMetadataString(
 ): string | undefined {
   const value = `${metadata?.[key] ?? ""}`.trim();
   return value || undefined;
+}
+
+function formatDate(date: Date | string): string {
+  return new Date(date).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 async function buildMembershipResolutionForAccount(
@@ -382,6 +456,10 @@ function pickBestMembership(
       site_license_id: best.site_license_id,
       site_license_name: best.site_license_name,
       organization_name: best.organization_name,
+      team_license_id: best.team_license_id,
+      team_license_status: best.team_license_status,
+      team_license_period_end: best.team_license_period_end,
+      team_license_warning: best.team_license_warning,
       expires: best.expires,
     };
   }

@@ -1,5 +1,6 @@
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import maintainSubscriptions from "./maintain-subscriptions";
+import maintainTeamLicenses from "./maintain-team-licenses";
 import maintainStatements from "./statements/maintenance";
 import getLogger from "@cocalc/backend/logger";
 import maintainAutomaticPayments from "./maintain-automatic-payments";
@@ -25,6 +26,11 @@ const FUNCTIONS: MaintenanceDescription[] = [
   {
     f: maintainSubscriptions,
     desc: "maintain subscriptions",
+    requiresStripe: true,
+  },
+  {
+    f: maintainTeamLicenses,
+    desc: "maintain team licenses",
     requiresStripe: true,
   },
   { f: maintainStatements, desc: "maintain statements" },

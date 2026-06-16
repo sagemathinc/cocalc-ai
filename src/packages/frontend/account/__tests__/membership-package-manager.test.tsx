@@ -13,7 +13,6 @@ import {
   TeamPackageManager,
 } from "../membership-package-manager";
 
-const getMembershipPackages = jest.fn();
 const getClaimableMembershipPackages = jest.fn();
 const claimMembershipPackageSeat = jest.fn();
 const requestSiteLicensePool = jest.fn();
@@ -22,9 +21,9 @@ const releaseSiteLicensePoolSeat = jest.fn();
 const getSiteLicenseOverview = jest.fn();
 const listSiteLicenseOverviews = jest.fn();
 const reviewSiteLicensePoolRequest = jest.fn();
-const getMembershipPackageQuote = jest.fn();
-const isPurchaseAllowed = jest.fn();
-const purchaseMembershipPackage = jest.fn();
+const getTeamLicense = jest.fn();
+const getTeamLicenseQuote = jest.fn();
+const purchaseTeamLicenseChange = jest.fn();
 const processPaymentIntents = jest.fn();
 const adminProvisionSiteLicense = jest.fn();
 const addSiteLicensePool = jest.fn();
@@ -126,7 +125,6 @@ jest.mock("@cocalc/frontend/purchases/stripe-payment", () => (props: any) => (
 ));
 
 jest.mock("@cocalc/frontend/purchases/api", () => ({
-  getMembershipPackages: (...args: any[]) => getMembershipPackages(...args),
   getClaimableMembershipPackages: (...args: any[]) =>
     getClaimableMembershipPackages(...args),
   claimMembershipPackageSeat: (...args: any[]) =>
@@ -141,11 +139,10 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
     listSiteLicenseOverviews(...args),
   reviewSiteLicensePoolRequest: (...args: any[]) =>
     reviewSiteLicensePoolRequest(...args),
-  getMembershipPackageQuote: (...args: any[]) =>
-    getMembershipPackageQuote(...args),
-  isPurchaseAllowed: (...args: any[]) => isPurchaseAllowed(...args),
-  purchaseMembershipPackage: (...args: any[]) =>
-    purchaseMembershipPackage(...args),
+  getTeamLicense: (...args: any[]) => getTeamLicense(...args),
+  getTeamLicenseQuote: (...args: any[]) => getTeamLicenseQuote(...args),
+  purchaseTeamLicenseChange: (...args: any[]) =>
+    purchaseTeamLicenseChange(...args),
   processPaymentIntents: (...args: any[]) => processPaymentIntents(...args),
   adminProvisionSiteLicense: (...args: any[]) =>
     adminProvisionSiteLicense(...args),
@@ -187,12 +184,14 @@ const TIERS = [
     label: "Member",
     site_license_pool_description: "Member site-license pool access.",
     store_visible: true,
+    team_visible: true,
   },
   {
     id: "pro",
     label: "Pro",
     site_license_pool_description: "Pro site-license pool access.",
     store_visible: true,
+    team_visible: true,
   },
 ];
 
@@ -220,6 +219,44 @@ function makeSitePackage(patch: Record<string, any> = {}) {
     exclusive_group: "student",
     pending_request_count: 0,
     ...patch,
+  };
+}
+
+function makeTeamPackage(patch: Record<string, any> = {}) {
+  return {
+    id: "team-1",
+    owner_account_id: "owner-1",
+    kind: "team",
+    membership_class: "member",
+    seat_count: 5,
+    active_assignment_count: 0,
+    available_seat_count: 5,
+    assignments: [],
+    metadata: { interval: "year", seat_price: 10 },
+    ...patch,
+  };
+}
+
+function makeTeamLicenseOverview(packages: any[]) {
+  return {
+    id: "team-license-1",
+    owner_account_id: "owner-1",
+    status: "active",
+    current_period_start: new Date("2026-06-01T00:00:00Z"),
+    current_period_end: new Date("2027-06-01T00:00:00Z"),
+    seat_lines: packages.map((membershipPackage) => ({
+      id: `line-${membershipPackage.id}`,
+      team_license_id: "team-license-1",
+      owner_account_id: membershipPackage.owner_account_id,
+      membership_class: membershipPackage.membership_class,
+      package_id: membershipPackage.id,
+      seat_count: membershipPackage.seat_count,
+      annual_price_per_seat: Number(
+        membershipPackage.metadata?.seat_price ?? 0,
+      ),
+      package: membershipPackage,
+    })),
+    packages,
   };
 }
 
@@ -311,6 +348,19 @@ describe("membership package managers", () => {
     getClaimableMembershipPackages.mockResolvedValue([]);
     sendVerificationEmail.mockResolvedValue(undefined);
     listSiteLicenseOverviews.mockResolvedValue([]);
+    getTeamLicense.mockResolvedValue(null);
+    getTeamLicenseQuote.mockResolvedValue({
+      current_period_start: new Date("2026-06-01T00:00:00Z"),
+      current_period_end: new Date("2027-06-01T00:00:00Z"),
+      target_seats: {},
+      current_seats: {},
+      assigned_seats: {},
+      added_seats: {},
+      line_items: [],
+      total_price: 0,
+      interval: "year",
+    });
+    purchaseTeamLicenseChange.mockResolvedValue(null);
     processPaymentIntents.mockResolvedValue({ count: 0 });
     runFreshAuthAction.mockClear();
     userSearch.mockResolvedValue([]);
@@ -320,26 +370,22 @@ describe("membership package managers", () => {
   });
 
   it("renders team packages without loading site-license dashboards", async () => {
-    getMembershipPackages.mockResolvedValue([
-      {
-        id: "team-1",
-        owner_account_id: "owner-1",
-        kind: "team",
-        membership_class: "member",
-        seat_count: 5,
-        active_assignment_count: 1,
-        available_seat_count: 4,
-        assignments: [
-          {
-            id: "assignment-1",
-            package_id: "team-1",
-            account_id: "user-1",
-            assigned_at: new Date("2026-05-01T00:00:00Z"),
-          },
-        ],
-        metadata: { interval: "month", seat_price: 10 },
-      },
-    ]);
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          active_assignment_count: 1,
+          available_seat_count: 4,
+          assignments: [
+            {
+              id: "assignment-1",
+              package_id: "team-1",
+              account_id: "user-1",
+              assigned_at: new Date("2026-05-01T00:00:00Z"),
+            },
+          ],
+        }),
+      ]),
+    );
     render(<TeamPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
@@ -350,70 +396,88 @@ describe("membership package managers", () => {
   });
 
   it("purchases a new team package", async () => {
-    getMembershipPackages.mockResolvedValue([]);
-    getMembershipPackageQuote.mockResolvedValue({
-      kind: "team",
-      membership_class: "member",
-      seat_count: 1,
-      seat_price: 10,
-      total_price: 10,
-      interval: "month",
+    getTeamLicenseQuote.mockResolvedValue({
+      current_period_start: new Date("2026-06-01T00:00:00Z"),
+      current_period_end: new Date("2027-06-01T00:00:00Z"),
+      target_seats: { member: 16, pro: 0 },
+      current_seats: { member: 0, pro: 0 },
+      assigned_seats: { member: 0, pro: 0 },
+      added_seats: { member: 16, pro: 0 },
+      line_items: [{ description: "16 Member team seats", amount: 160 }],
+      total_price: 160,
+      interval: "year",
     });
-    isPurchaseAllowed.mockResolvedValue({ allowed: true, chargeAmount: 10 });
-    purchaseMembershipPackage.mockResolvedValue({
-      package_id: "team-1",
-      purchase_id: 1,
-    });
+    purchaseTeamLicenseChange.mockImplementation(async ({ target_seats }) =>
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          seat_count: target_seats.member,
+          available_seat_count: target_seats.member,
+        }),
+      ]),
+    );
+    getTeamLicense.mockResolvedValueOnce(null).mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          seat_count: 16,
+          available_seat_count: 16,
+        }),
+      ]),
+    );
 
     render(<TeamPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Buy team seats")).toBeTruthy();
+      expect(screen.getByText("Set up team license")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByText("Buy team seats"));
+    fireEvent.click(screen.getByText("Set up team license"));
 
     await waitFor(() => {
-      expect(screen.getByText("Purchase team seats")).toBeTruthy();
+      expect(screen.getAllByText("Set up team license").length).toBeGreaterThan(
+        0,
+      );
+      expect(screen.getByText("Choose annual team seats.")).toBeTruthy();
+    });
+
+    const memberRow = screen
+      .getAllByRole("row")
+      .find((row) => within(row).queryByText("Member"));
+    if (memberRow == null) {
+      throw Error("Member row not found");
+    }
+    fireEvent.change(within(memberRow).getByRole("spinbutton"), {
+      target: { value: "16" },
+    });
+    fireEvent.click(screen.getByText("Continue"));
+
+    await waitFor(() => {
       expect(screen.getByText("complete-payment")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByText("complete-payment"));
 
     await waitFor(() => {
-      expect(purchaseMembershipPackage).toHaveBeenCalledWith({
-        kind: "team",
-        membership_class: "member",
-        seat_count: 1,
-        interval: "month",
+      expect(getTeamLicenseQuote).toHaveBeenCalledWith({
+        target_seats: expect.objectContaining({ member: 16, pro: 0 }),
       });
-      expect(screen.getByText("Team seats purchased")).toBeTruthy();
+      expect(purchaseTeamLicenseChange).toHaveBeenCalledWith({
+        target_seats: expect.objectContaining({ member: 16, pro: 0 }),
+      });
+      expect(screen.getByText("Team license updated")).toBeTruthy();
     });
   });
 
-  it("shows seats after purchase as a plain count when adding team seats", async () => {
-    getMembershipPackages.mockResolvedValue([
-      {
-        id: "team-1",
-        owner_account_id: "owner-1",
-        kind: "team",
-        membership_class: "member",
-        seat_count: 5,
-        active_assignment_count: 0,
-        available_seat_count: 5,
-        assignments: [],
-        metadata: { interval: "month", seat_price: 10 },
-      },
-    ]);
-    getMembershipPackageQuote.mockResolvedValue({
-      kind: "team",
-      membership_class: "member",
-      seat_count: 1,
-      seat_price: 10,
-      total_price: 10,
-      interval: "month",
-    });
-    isPurchaseAllowed.mockResolvedValue({ allowed: true, chargeAmount: 10 });
+  it("initializes team license seat counts from existing packages", async () => {
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          seat_count: 5,
+          active_assignment_count: 0,
+          available_seat_count: 5,
+          assignments: [],
+        }),
+      ]),
+    );
 
     render(<TeamPackageManager tiers={TIERS} />);
 
@@ -423,27 +487,42 @@ describe("membership package managers", () => {
 
     fireEvent.click(screen.getByText("Add seats"));
 
-    await waitFor(() => {
-      expect(screen.getByText("Seats after purchase")).toBeTruthy();
-      expect(screen.getByText("6")).toBeTruthy();
+    const memberRow = await waitFor(() => {
+      const row = screen
+        .getAllByRole("row")
+        .find((row) => within(row).queryByText("Member"));
+      if (row == null) {
+        throw Error("Member row not found");
+      }
+      return row;
     });
-    expect(screen.queryByText("Seats after purchase: 6")).toBeNull();
+    expect(within(memberRow).getByRole("spinbutton")).toHaveValue("5");
+
+    fireEvent.click(within(memberRow).getByText("+"));
+    expect(within(memberRow).getByRole("spinbutton")).toHaveValue("6");
+
+    fireEvent.click(within(memberRow).getByText("-"));
+    expect(within(memberRow).getByRole("spinbutton")).toHaveValue("5");
+    expect(within(memberRow).getByText("-").closest("button")).toBeDisabled();
+
+    fireEvent.change(within(memberRow).getByRole("spinbutton"), {
+      target: { value: "3" },
+    });
+    fireEvent.blur(within(memberRow).getByRole("spinbutton"));
+    expect(within(memberRow).getByRole("spinbutton")).toHaveValue("5");
   });
 
   it("assigns a seat from an existing package", async () => {
-    getMembershipPackages.mockResolvedValue([
-      {
-        id: "team-1",
-        owner_account_id: "owner-1",
-        kind: "team",
-        membership_class: "member",
-        seat_count: 5,
-        active_assignment_count: 0,
-        available_seat_count: 5,
-        assignments: [],
-        metadata: { interval: "month", seat_price: 10 },
-      },
-    ]);
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          seat_count: 5,
+          active_assignment_count: 0,
+          available_seat_count: 5,
+          assignments: [],
+        }),
+      ]),
+    );
     userSearch.mockResolvedValue([
       {
         account_id: "user-2",
@@ -494,19 +573,16 @@ describe("membership package managers", () => {
   });
 
   it("reserves a seat by email when no account exists yet", async () => {
-    getMembershipPackages.mockResolvedValue([
-      {
-        id: "team-1",
-        owner_account_id: "owner-1",
-        kind: "team",
-        membership_class: "member",
-        seat_count: 5,
-        active_assignment_count: 0,
-        available_seat_count: 5,
-        assignments: [],
-        metadata: { interval: "month", seat_price: 10 },
-      },
-    ]);
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          seat_count: 5,
+          active_assignment_count: 0,
+          available_seat_count: 5,
+          assignments: [],
+        }),
+      ]),
+    );
     userSearch.mockResolvedValue([]);
     assignMembershipPackageSeat.mockResolvedValue({
       id: "assignment-2",
