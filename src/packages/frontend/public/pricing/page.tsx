@@ -757,10 +757,10 @@ export default function PricingPage({
             Hosted CoCalc.ai plans
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Use these plans when CoCalc should be hosted and operated by us. If
-            you are choosing local use, a single-VM appliance, private
-            deployment, or an organizational agreement, start with the product
-            path and licensing sections below.
+            Use these plans when CoCalc should be hosted and operated by us. The
+            plan limits below apply to hosted memberships; local use, single-VM
+            appliances, private deployment, procurement, and support
+            expectations belong in the buying paths below.
           </Paragraph>
           <Flex gap={12} wrap>
             <Button
@@ -771,7 +771,7 @@ export default function PricingPage({
             </Button>
             <Button
               href={supportPurchasePath({
-                body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, and support coordination needs.",
+                body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, data-location or security reviews, and support coordination needs.",
                 context: "pricing-site-license",
                 subject: "Site licensing",
                 title: "Ask CoCalc about site licensing",
@@ -858,12 +858,13 @@ export default function PricingPage({
               </Title>
               <Paragraph style={{ margin: 0 }}>
                 Use site licensing when an organization needs one agreement
-                around procurement, governance, support, rollout, or deployment
-                rights across CoCalc.ai, Star, Launchpad, or Rocket.
+                around procurement, governance, support expectations, rollout,
+                data-location or security review, or deployment rights across
+                CoCalc.ai, Star, Launchpad, or Rocket.
               </Paragraph>
               <Button
                 href={supportPurchasePath({
-                  body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, and support coordination needs.",
+                  body: "I want to discuss a CoCalc site license for an organization. Helpful context: expected users or groups, operating model, procurement timeline, onboarding needs, data-location or security reviews, and support coordination needs.",
                   context: "pricing-site-license",
                   subject: "Site licensing",
                   title: "Ask CoCalc about site licensing",
@@ -910,7 +911,7 @@ export default function PricingPage({
               </Paragraph>
               <Button
                 href={supportPurchasePath({
-                  body: "I want to request a quote, site license, or customized invoice for CoCalc. Helpful context: product path, expected users or projects, billing timeline, procurement process, and any deployment or support constraints.",
+                  body: "I want to request a quote, site license, or customized invoice for CoCalc. Helpful context: product path, expected users or projects, billing timeline, procurement process, and any deployment, security, data-location, or support constraints.",
                   context: "pricing-quote",
                   subject: "Quote, site license, or customized invoice",
                   title: "Request a CoCalc quote",

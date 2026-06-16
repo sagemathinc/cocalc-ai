@@ -32,6 +32,12 @@ describe("PublicSupportApp", () => {
     expect(screen.getByText("Talk with CoCalc")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
     expect(
+      screen.getByText(/support, security, or data-location expectations/),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/deployment boundaries, site licensing/),
+    ).not.toBeNull();
+    expect(
       screen.getByRole("link", { name: "Compare operating models" }),
     ).toHaveAttribute("href", "/products");
     expect(

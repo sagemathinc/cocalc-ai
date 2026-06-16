@@ -487,8 +487,14 @@ describe("PublicApp", () => {
     expect(siteLicenseLink.getAttribute("href")).toContain(
       "context=pricing-site-license",
     );
+    expect(siteLicenseLink.getAttribute("href")).toContain(
+      "data-location+or+security+reviews",
+    );
     expect(
       screen.getByRole("heading", { name: "Site licensing" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/support expectations, rollout, data-location/i),
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", { name: "Dedicated project hosts" }),
@@ -1105,6 +1111,7 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("Site licensing wraps the product path."),
     ).not.toBeNull();
+    expect(screen.getByText(/commercial and support wrapper/i)).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "Talk with CoCalc" }),
     ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
@@ -1119,6 +1126,12 @@ describe("PublicApp", () => {
     ).toHaveAttribute(
       "href",
       expect.stringContaining("subject=Operating+model+and+site+licensing"),
+    );
+    expect(
+      screen.getByRole("link", { name: "Talk with CoCalc" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("data-location+or+security+reviews"),
     );
   });
 
@@ -1193,6 +1206,12 @@ describe("PublicApp", () => {
       expect.stringContaining("context=product-cocalc-launchpad"),
     );
     expect(
+      screen.getByRole("link", { name: "Talk with CoCalc about Launchpad" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("data-location+constraints"),
+    );
+    expect(
       screen.getByRole("link", { name: "Compare with Rocket" }),
     ).toHaveAttribute("href", "/products/cocalc-rocket");
     expectNoProductDetailStalePhrasing();
@@ -1264,6 +1283,14 @@ describe("PublicApp", () => {
     ).toHaveAttribute(
       "href",
       expect.stringContaining("context=product-cocalc-rocket"),
+    );
+    expect(
+      screen.getAllByRole("link", {
+        name: "Talk with CoCalc about Rocket",
+      })[0],
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("data-ownership+expectations"),
     );
     expectNoProductDetailStalePhrasing();
   });

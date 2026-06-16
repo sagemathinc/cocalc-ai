@@ -227,7 +227,8 @@ function PurchaseFields({
             <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
               <li>
                 Which CoCalc path you are considering: hosted CoCalc.ai, Plus,
-                Star, Launchpad, Rocket, or site licensing.
+                Star, Launchpad, Rocket, or site licensing, and who would
+                operate it.
               </li>
               <li>
                 Approximate users or projects, and whether this is for a course,
@@ -235,8 +236,8 @@ function PurchaseFields({
               </li>
               <li>Timeline, procurement requirements, or invoice needs.</li>
               <li>
-                Any deployment, governance, data-location, or support
-                constraints.
+                Any deployment, governance, security, data-location,
+                data-ownership, or support constraints.
               </li>
             </ul>
           }
@@ -246,7 +247,7 @@ function PurchaseFields({
         disabled={disabled}
         rows={8}
         defaultValue={defaultValue}
-        placeholder="Tell us which CoCalc path you are considering, who it is for, and any purchasing or deployment constraints."
+        placeholder="Tell us which CoCalc path you are considering, who it is for, who will operate it, and any purchasing or deployment constraints."
         onChange={(e) => onChange(e.target.value)}
       />
     </Space>

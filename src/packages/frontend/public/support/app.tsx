@@ -135,8 +135,8 @@ function SupportIndex({
     <div style={{ display: "grid", gap: 16 }}>
       <Paragraph style={{ fontSize: "16px", margin: 0 }}>
         Use support when you need help choosing how CoCalc should run, planning
-        licensing or deployment, or resolving an existing account or project
-        issue.
+        licensing or deployment, clarifying support, security, or data-location
+        expectations, or resolving an existing account or project issue.
       </Paragraph>
       <PublicGrid columns={3}>
         <SupportCard
@@ -146,14 +146,14 @@ function SupportIndex({
           <Button href={appPath("/products")}>Compare operating models</Button>
         </SupportCard>
         <SupportCard
-          description="Review hosted plans, site licensing, and organizational buying routes."
+          description="Review hosted plans, site licensing, and organizational buying routes before asking for a quote."
           title="Pricing and licensing"
         >
           <Button href={appPath("/pricing")}>Review pricing</Button>
         </SupportCard>
         {hasZendesk ? (
           <SupportCard
-            description="Start here when you are ready to ask about pricing, deployment, or an existing account or project issue."
+            description="Start here when you are ready to ask about pricing, deployment boundaries, site licensing, support expectations, or an existing account or project issue."
             title="Talk with CoCalc"
           >
             <Button type="primary" onClick={() => onNavigate("new")}>

@@ -51,14 +51,14 @@ function supportContactPath({
 function supportProductPath(product: "Launchpad" | "Rocket"): string {
   if (product === "Launchpad") {
     return supportContactPath({
-      body: "I want to talk with CoCalc about CoCalc Launchpad. Helpful context: expected users or projects, pilot/lab/workshop/department scope, operating environment, timeline, and whether pricing or site licensing is part of the decision.",
+      body: "I want to talk with CoCalc about CoCalc Launchpad. Helpful context: expected users or projects, pilot/lab/workshop/department scope, operating environment, timeline, support expectations, and whether pricing, site licensing, or data-location constraints are part of the decision.",
       context: "product-cocalc-launchpad",
       subject: "CoCalc Launchpad",
       title: "Talk with CoCalc about Launchpad",
     });
   }
   return supportContactPath({
-    body: "I want to talk with CoCalc about CoCalc Rocket. Helpful context: organization type, expected users or projects, private-cloud requirements, governance or procurement needs, timeline, and support or deployment-planning questions.",
+    body: "I want to talk with CoCalc about CoCalc Rocket. Helpful context: organization type, expected users or projects, private-cloud requirements, governance, security or data-ownership expectations, procurement needs, timeline, and support or deployment-planning questions.",
     context: "product-cocalc-rocket",
     subject: "CoCalc Rocket",
     title: "Talk with CoCalc about Rocket",
@@ -253,8 +253,9 @@ function ProductsOverviewPage() {
           Which path fits?
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Use this as a decision guide. Pick the closest fit, then move to
-          pricing, documentation, or a support conversation for rollout details.
+          Use this as a decision guide. The cards separate who operates CoCalc,
+          where it runs, and when to move into pricing, documentation, or a
+          support conversation for rollout details.
         </Paragraph>
         <div
           aria-label="CoCalc product path chooser"
@@ -346,10 +347,11 @@ function ProductsOverviewPage() {
           Site licensing wraps the product path.
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Use site licensing for procurement, governance, support, rollout, and
-          broader deployment rights across the product family. It does not
-          change who operates CoCalc by itself; it wraps the hosted, local,
-          appliance, or private path your group chooses.
+          Use site licensing for procurement, governance, support expectations,
+          rollout, data-location or security reviews, and broader deployment
+          rights across the product family. It does not change who operates
+          CoCalc by itself; it gives the hosted, local, appliance, or private
+          path a commercial and support wrapper.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("pricing")}>
@@ -357,7 +359,7 @@ function ProductsOverviewPage() {
           </LinkButton>
           <LinkButton
             href={supportContactPath({
-              body: "I want to talk with CoCalc about operating model, site licensing, or an organizational buying route. Helpful context: where you want CoCalc to run, who will operate it, expected users or projects, and procurement or support needs.",
+              body: "I want to talk with CoCalc about operating model, site licensing, or an organizational buying route. Helpful context: where you want CoCalc to run, who will operate it, expected users or projects, procurement needs, data-location or security reviews, and support expectations.",
               context: "products-site-licensing",
               subject: "Operating model and site licensing",
               title: "Talk with CoCalc about operating models",

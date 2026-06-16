@@ -101,6 +101,9 @@ describe("SupportNew", () => {
     expect(
       screen.getByText(/Which CoCalc path you are considering/),
     ).not.toBeNull();
+    expect(screen.getByText(/who would operate it/)).not.toBeNull();
+    expect(screen.getByText(/data-ownership/)).not.toBeNull();
+    expect(screen.getByPlaceholderText(/who will operate it/)).not.toBeNull();
   });
 
   it("passes prefilled purchase context to the support ticket", async () => {

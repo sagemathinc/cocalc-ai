@@ -12,7 +12,15 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Rename spine CTAs so `/products` reads as "Compare operating models", `/features/compare` reads as "Compare CoCalc fit", and `/pricing` remains "Pricing and licensing".
 - [x] Move the CoCalc.ai card on `/products` forward to hosted pricing instead of looping visitors back to the homepage.
 - [x] Keep support/contact as the point for context-preserving sales, licensing, deployment, and existing account/project questions.
-- [ ] Future proof pass: decide where the public spine needs concrete trust signals such as screenshots, support expectations, deployment boundaries, security/data-ownership notes, or customer-style proof without making the pages noisy.
+- [x] Future proof pass: decide where the public spine needs concrete trust signals such as screenshots, support expectations, deployment boundaries, security/data-ownership notes, or customer-style proof without making the pages noisy.
+
+## Trust And Buyer Confidence Pass
+
+- [x] Keep trust signals at decision points instead of adding a broad proof section that competes with the conversion spine.
+- [x] Products: use the operating-model and site-licensing sections to clarify who operates CoCalc, what the boundary is, and when support should discuss rollout, procurement, data-location, security, or support expectations.
+- [x] Pricing: keep hosted plans self-service while pointing organizational buyers toward site licensing, quotes, deployment rights, and support expectations.
+- [x] Support: make purchase/contact context collect the product path, who will operate it, expected users, procurement timeline, security/data-ownership expectations, and support constraints.
+- [ ] Future evidence pass: add real screenshots, workflow examples, security/data-ownership documentation links, or customer-style proof only when the evidence exists and answers a visitor decision better than concise copy.
 
 ## Jupyter And Teaching Pass
 
