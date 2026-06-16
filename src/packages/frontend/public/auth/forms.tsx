@@ -284,12 +284,26 @@ export function defaultAuthRedirectPath(): string {
   return appUrl("projects");
 }
 
+function isDefaultAuthRedirectTarget(target?: string): boolean {
+  const normalized = `${target ?? ""}`.trim();
+  if (!normalized) {
+    return true;
+  }
+  const appRoot = appBasePath === "/" ? "/" : appBasePath;
+  return (
+    normalized === "/" || normalized === appRoot || normalized === `${appRoot}/`
+  );
+}
+
 export function resolveAuthRedirectPath(
   redirectToPath?: string | (() => string),
 ): string {
   const target =
     typeof redirectToPath === "function" ? redirectToPath() : redirectToPath;
-  return target ?? defaultAuthRedirectPath();
+  if (target == null || isDefaultAuthRedirectTarget(target)) {
+    return defaultAuthRedirectPath();
+  }
+  return target;
 }
 
 export function PublicSignInForm({
