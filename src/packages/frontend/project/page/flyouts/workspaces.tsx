@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Dropdown,
   Empty,
   Input,
   Modal,
@@ -18,6 +19,7 @@ import {
   Switch,
   Tag,
   Typography,
+  type MenuProps,
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pathMatchesWorkspace } from "@cocalc/conat/workspaces";
@@ -183,6 +185,54 @@ export function applyWorkspaceBulkSelection({
     selectedIds: orderedIds.filter((id) => current.has(id)),
     anchorId: clickedId,
   };
+}
+
+export type WorkspaceStarredItem = {
+  path: string;
+  label: string;
+  isDirectory: boolean;
+};
+
+function stripTrailingSlash(path: string): string {
+  const normalized = `${path ?? ""}`.trim();
+  if (normalized !== "/" && normalized.endsWith("/")) {
+    return normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function workspaceRelativeStarredLabel(
+  record: WorkspaceRecord,
+  path: string,
+): string {
+  const cleanPath = stripTrailingSlash(path);
+  const cleanRoot = stripTrailingSlash(record.root_path);
+  if (cleanPath === cleanRoot) {
+    return ".";
+  }
+  const prefix = cleanRoot === "/" ? "/" : `${cleanRoot}/`;
+  const label = cleanPath.startsWith(prefix)
+    ? cleanPath.slice(prefix.length)
+    : cleanPath;
+  return label || ".";
+}
+
+export function getWorkspaceStarredItems(
+  record: WorkspaceRecord,
+  starred: string[],
+): WorkspaceStarredItem[] {
+  return starred
+    .map((path) => `${path ?? ""}`.trim())
+    .filter((path) => path !== "")
+    .filter((path) => pathMatchesWorkspace(record, stripTrailingSlash(path)))
+    .map((path) => ({
+      path,
+      label: workspaceRelativeStarredLabel(record, path),
+      isDirectory: path.endsWith("/"),
+    }))
+    .sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+    );
 }
 
 function workspaceOpenFileActivityLabel(
@@ -618,7 +668,8 @@ function getWorkspaceOpenFileActivity(
 }
 
 export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
-  const { actions, active_project_tab, workspaces } = useProjectContext();
+  const { actions, active_project_tab, manageStarredFiles, workspaces } =
+    useProjectContext();
   const account_id = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
   const current_path_abs =
     useTypedRedux({ project_id }, "current_path_abs") ?? "/";
@@ -894,6 +945,69 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     }
   }
 
+  function renderStarredDropdown(record: WorkspaceRecord): React.JSX.Element {
+    const starredItems = getWorkspaceStarredItems(
+      record,
+      manageStarredFiles.starred,
+    );
+    const menuItems: MenuProps["items"] =
+      starredItems.length > 0
+        ? starredItems.map((item) => ({
+            key: item.path,
+            icon: <Icon name={item.isDirectory ? "folder-open" : "file"} />,
+            label: (
+              <span
+                title={item.path}
+                style={{
+                  display: "inline-block",
+                  maxWidth: 280,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  verticalAlign: "bottom",
+                }}
+              >
+                {item.label}
+              </span>
+            ),
+          }))
+        : [
+            {
+              key: "empty",
+              disabled: true,
+              label: "No starred files in this workspace",
+            },
+          ];
+
+    return (
+      <Tooltip title="Star files so that they appear here" placement="top">
+        <span onClick={(e) => e.stopPropagation()}>
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: menuItems,
+              onClick: ({ key }) => {
+                const item = starredItems.find((item) => item.path === key);
+                if (!item || !actions) return;
+                if (item.isDirectory) {
+                  void actions.open_directory(item.path, true, true);
+                } else {
+                  void actions.open_file({ path: item.path, foreground: true });
+                }
+              },
+            }}
+          >
+            <Button
+              size="small"
+              icon={<Icon name="star-filled" style={{ color: COLORS.STAR }} />}
+            >
+              Starred
+            </Button>
+          </Dropdown>
+        </span>
+      </Tooltip>
+    );
+  }
+
   function renderRecord(record: WorkspaceRecord): React.JSX.Element {
     const selected =
       workspaces.selection.kind === "workspace" &&
@@ -1019,8 +1133,25 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               </div>
               <div
                 onClick={(e) => e.stopPropagation()}
-                style={{ color: COLORS.GRAY, flex: "0 0 auto" }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  color: COLORS.GRAY,
+                  flex: "0 0 auto",
+                }}
               >
+                <Button
+                  size="small"
+                  type="text"
+                  onClick={() =>
+                    workspaces.updateWorkspace(record.workspace_id, {
+                      pinned: !record.pinned,
+                    })
+                  }
+                >
+                  {record.pinned ? "Unpin" : "Pin"}
+                </Button>
                 <DragHandle id={record.workspace_id} />
               </div>
             </div>
@@ -1192,17 +1323,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                   Agent
                 </Button>
               </Tooltip>
-              <Button
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  workspaces.updateWorkspace(record.workspace_id, {
-                    pinned: !record.pinned,
-                  });
-                }}
-              >
-                {record.pinned ? "Unpin" : "Pin"}
-              </Button>
+              {renderStarredDropdown(record)}
             </Space>
           </div>
         </div>
