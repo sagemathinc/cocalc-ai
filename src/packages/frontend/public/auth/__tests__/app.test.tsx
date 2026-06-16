@@ -14,6 +14,7 @@ import {
   postAuthApi,
   signOutAuthSession,
 } from "@cocalc/frontend/auth/api";
+import { enableForceConsent } from "@cocalc/frontend/cookie-consent";
 import type { PublicConfig } from "@cocalc/frontend/public/common";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
 import { getPublicAuthRedirectTargetFromSearch } from "../routes";
@@ -28,6 +29,11 @@ jest.mock("@cocalc/frontend/auth/api", () => ({
   isWrongBayAuthResponse: jest.fn(() => false),
   retryAuthOnHomeBay: jest.fn(),
 }));
+jest.mock("@cocalc/frontend/cookie-consent", () => ({
+  enableForceConsent: jest.fn(() => jest.fn()),
+  requireEssentialConsent: jest.fn(() => true),
+  useEssentialConsent: jest.fn(() => true),
+}));
 
 const mockedApi = jest.mocked(api);
 const mockedGetControlPlaneAuthBootstrap = jest.mocked(
@@ -36,6 +42,7 @@ const mockedGetControlPlaneAuthBootstrap = jest.mocked(
 const mockedPostAuthApi = jest.mocked(postAuthApi);
 const mockedSignOutAuthSession = jest.mocked(signOutAuthSession);
 const mockedIsMfaRequiredAuthResponse = jest.mocked(isMfaRequiredAuthResponse);
+const mockedEnableForceConsent = jest.mocked(enableForceConsent);
 const config = (overrides: Partial<PublicConfig> = {}): PublicConfig => ({
   site_name: "Launchpad",
   ...overrides,
@@ -67,6 +74,8 @@ beforeEach(() => {
   mockedSignOutAuthSession.mockReset();
   mockedIsMfaRequiredAuthResponse.mockReset();
   mockedIsMfaRequiredAuthResponse.mockReturnValue(false);
+  mockedEnableForceConsent.mockReset();
+  mockedEnableForceConsent.mockReturnValue(jest.fn());
 });
 
 describe("getPublicAuthRouteFromPath", () => {
@@ -199,6 +208,47 @@ describe("PublicAuthApp", () => {
       screen.getByRole("heading", { name: "Create your Launchpad account" }),
     ).not.toBeNull();
     expect(await screen.findByText("Registration token")).not.toBeNull();
+  });
+
+  it("forces cookie consent only on the sign-up auth page", async () => {
+    mockedApi.mockResolvedValue(false);
+
+    const { unmount } = render(
+      <PublicAuthApp
+        config={config({ cookie_banner_enabled: true })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    await waitFor(() => expect(mockedEnableForceConsent).toHaveBeenCalled());
+    unmount();
+
+    mockedEnableForceConsent.mockClear();
+    const signIn = render(
+      <PublicAuthApp
+        config={config({ cookie_banner_enabled: true })}
+        initialRoute={{ kind: "auth-form", view: "sign-in" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Sign in to Launchpad" }),
+    ).not.toBeNull();
+    expect(mockedEnableForceConsent).not.toHaveBeenCalled();
+    signIn.unmount();
+
+    mockedEnableForceConsent.mockClear();
+    render(
+      <PublicAuthApp
+        config={config({ cookie_banner_enabled: true })}
+        initialRoute={{ kind: "sso-index" }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("Single sign-on for Launchpad")).not.toBeNull(),
+    );
+    expect(mockedEnableForceConsent).not.toHaveBeenCalled();
   });
 
   it("shows and enforces a public signup allow-list domain policy", async () => {

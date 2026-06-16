@@ -128,6 +128,10 @@ function cardWidthForRoute(route: PublicAuthRoute): string | undefined {
   }
 }
 
+function routeForcesCookieConsent(route: PublicAuthRoute): boolean {
+  return route.kind === "auth-form" && route.view === "sign-up";
+}
+
 export { getPublicAuthRouteFromPath };
 
 export default function PublicAuthApp({
@@ -182,9 +186,9 @@ export default function PublicAuthApp({
 
   useEffect(() => {
     if (!resolvedConfig?.cookie_banner_enabled) return;
-    if (route.kind !== "sso-detail" && route.kind !== "sso-index") return;
+    if (!routeForcesCookieConsent(route)) return;
     return enableForceConsent();
-  }, [resolvedConfig?.cookie_banner_enabled, route.kind]);
+  }, [resolvedConfig?.cookie_banner_enabled, route]);
 
   function onNavigate(next: AuthView) {
     const nextRoute: PublicAuthRoute = { kind: "auth-form", view: next };
