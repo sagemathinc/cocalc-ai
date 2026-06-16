@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ReactNode } from "react";
-
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -46,39 +44,6 @@ function IconBadge({
     >
       <Icon name={icon} />
     </span>
-  );
-}
-
-function StoryCard({
-  accent = PUBLIC_COLORS.brand,
-  children,
-  icon,
-  title,
-}: {
-  accent?: string;
-  children: ReactNode;
-  icon: IconName;
-  title: string;
-}) {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
-        height: "100%",
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
-          {title}
-        </Title>
-        <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
-      </Flex>
-    </div>
   );
 }
 
@@ -294,64 +259,6 @@ function CredentialPanel() {
   );
 }
 
-function TerminalAgentPanel() {
-  return (
-    <div
-      style={{
-        background: "#0b1522",
-        borderRadius: 8,
-        boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
-        color: "#dbeafe",
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          alignItems: "center",
-          background: "rgba(255,255,255,0.08)",
-          display: "flex",
-          gap: 8,
-          padding: "12px 14px",
-        }}
-      >
-        {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
-          <span
-            aria-hidden="true"
-            key={color}
-            style={{
-              background: color,
-              borderRadius: "50%",
-              height: 10,
-              width: 10,
-            }}
-          />
-        ))}
-        <Text style={{ color: "#dbeafe", marginLeft: 8 }}>
-          persistent terminal
-        </Text>
-      </div>
-      <Flex
-        vertical
-        gap={8}
-        style={{
-          fontFamily:
-            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          padding: 18,
-        }}
-      >
-        <Text style={{ color: "#bfdbfe" }}>
-          $ npm install -g @anthropic-ai/claude-code
-        </Text>
-        <Text style={{ color: "#86efac" }}>installed command-line agent</Text>
-        <Text style={{ color: "#bfdbfe" }}>$ claude</Text>
-        <Text style={{ color: "#f8fafc" }}>
-          runs like any Linux terminal program
-        </Text>
-      </Flex>
-    </div>
-  );
-}
-
 export default function AIFeaturePage({
   isAuthenticated,
 }: {
@@ -396,40 +303,6 @@ export default function AIFeaturePage({
           </Col>
         </Row>
       </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#7c3aed"
-            icon="robot"
-            title="Start from the project"
-          >
-            Ask from a thread that sits beside the files, notebooks, terminal
-            output, and discussion already under review.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#2f6fda"
-            icon="markdown"
-            title="Give inspectable context"
-          >
-            The chat editor handles Markdown, code blocks, images, quotes, and
-            longer instructions, so the request can include the materials a
-            teammate would inspect too.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#278c83"
-            icon="users"
-            title="Review before relying on it"
-          >
-            Teammates can inspect the patch, command output, screenshots, and
-            discussion before building on the result.
-          </StoryCard>
-        </Col>
-      </Row>
 
       <WorkflowStrip />
 
@@ -526,21 +399,24 @@ export default function AIFeaturePage({
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={11}>
-            <TerminalAgentPanel />
-          </Col>
-          <Col xs={24} lg={13}>
+          <Col xs={24} lg={14}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
-                A sandbox for agent work, with humans nearby.
+                Choose the AI path that fits
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                The broader CoCalc story is a collaborative project sandbox:
-                files, terminals, notebooks, chat, backups, snapshots, and
-                collaborators in one place. Codex is the native chat-based agent
-                path; terminals leave room for any normal command-line workflow
-                your project needs.
+                Start with Codex when the agent should work beside the project
+                record. Use terminal workflows when you need another
+                command-line agent, and compare operating models when
+                deployment, licensing, or policy constraints matter.
               </Paragraph>
+              <BulletList
+                items={[
+                  "Use Codex chat when review should stay near files, notebooks, terminal output, and discussion.",
+                  "Use terminal workflows when the task depends on a command-line tool or shell process.",
+                  "Ask CoCalc when the AI workflow is tied to course, team, or deployment requirements.",
+                ]}
+              />
               <Flex wrap gap={12}>
                 <Button href={appPath("features/terminal")}>
                   Terminal workflows
@@ -563,6 +439,33 @@ export default function AIFeaturePage({
                 Read the agent sandbox guide
               </LinkButton>
             </Flex>
+          </Col>
+          <Col xs={24} lg={10}>
+            <div
+              style={{
+                background: "#10213f",
+                borderRadius: 8,
+                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
+                color: "#fff",
+                padding: 26,
+              }}
+            >
+              <Title level={4} style={{ color: "#fff", margin: "0 0 10px" }}>
+                Ready to use Codex in CoCalc?
+              </Title>
+              <Paragraph style={{ color: "rgba(255,255,255,0.78)" }}>
+                Open a project thread, give Codex the context it should inspect,
+                and keep the result available for review.
+              </Paragraph>
+              <Flex vertical gap={10} align="start">
+                <Button type="primary" href={primaryHref}>
+                  {primaryLabel}
+                </Button>
+                <Button href={appPath("products")}>
+                  Compare operating models
+                </Button>
+              </Flex>
+            </div>
           </Col>
         </Row>
       </PublicSection>

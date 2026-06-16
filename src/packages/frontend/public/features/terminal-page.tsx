@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ReactNode } from "react";
-
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -46,39 +44,6 @@ function IconBadge({
     >
       <Icon name={icon} />
     </span>
-  );
-}
-
-function StoryCard({
-  accent = PUBLIC_COLORS.brand,
-  children,
-  icon,
-  title,
-}: {
-  accent?: string;
-  children: ReactNode;
-  icon: IconName;
-  title: string;
-}) {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
-        height: "100%",
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
-          {title}
-        </Title>
-        <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
-      </Flex>
-    </div>
   );
 }
 
@@ -401,39 +366,6 @@ export default function TerminalFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#096dd9"
-            icon="terminal"
-            title="Run project commands"
-          >
-            Run packages, scripts, compilers, SSH, Git, Python, Sage, R, Julia,
-            and command-line tools inside the project environment.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#278c83"
-            icon="users"
-            title="Share one live stream"
-          >
-            Multiple browsers and collaborators can attach to the same terminal
-            stream instead of passing screenshots around.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#ad6800"
-            icon="robot"
-            title="Give agents terminal state"
-          >
-            Codex can inspect terminal sessions and use the CoCalc CLI to work
-            with live terminal state when the task calls for it.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
@@ -537,7 +469,7 @@ export default function TerminalFeaturePage({
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={14}>
             <Title level={3} style={{ margin: 0 }}>
-              When a terminal should be shared
+              Choose the terminal path that fits
             </Title>
             <Paragraph style={{ margin: 0 }}>
               The terminal becomes more valuable because it sits beside Jupyter
@@ -578,15 +510,20 @@ export default function TerminalFeaturePage({
               }}
             >
               <Title level={4} style={{ color: "#fff", margin: "0 0 10px" }}>
-                Start using CoCalc
+                Ready to use terminals in CoCalc?
               </Title>
               <Paragraph style={{ color: "rgba(255,255,255,0.78)" }}>
                 Open a project, create a <code>.term</code> file, and put the
                 shell next to the document or notebook it supports.
               </Paragraph>
-              <Button type="primary" href={primaryCtaHref}>
-                {finalCtaLabel}
-              </Button>
+              <Flex vertical gap={10} align="start">
+                <Button type="primary" href={primaryCtaHref}>
+                  {finalCtaLabel}
+                </Button>
+                <Button href={appPath("products")}>
+                  Compare operating models
+                </Button>
+              </Flex>
             </div>
           </Col>
         </Row>

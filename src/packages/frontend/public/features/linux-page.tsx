@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ReactNode } from "react";
-
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -47,39 +45,6 @@ function IconBadge({
     >
       <Icon name={icon} />
     </span>
-  );
-}
-
-function StoryCard({
-  accent = PUBLIC_COLORS.brand,
-  children,
-  icon,
-  title,
-}: {
-  accent?: string;
-  children: ReactNode;
-  icon: IconName;
-  title: string;
-}) {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
-        height: "100%",
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <IconBadge accent={accent} icon={icon} />
-        <Title level={4} style={{ margin: 0 }}>
-          {title}
-        </Title>
-        <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
-      </Flex>
-    </div>
   );
 }
 
@@ -331,40 +296,6 @@ export default function LinuxFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#096dd9"
-            icon="linux"
-            title="Install system packages"
-          >
-            Install system packages, update configuration, and work with the
-            root filesystem of the project environment when the task requires
-            it.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#278c83"
-            icon="users"
-            title="Give everyone the same setup"
-          >
-            Collaborators see the same files, packages, terminals, notebooks,
-            services, and setup decisions inside the project.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard
-            accent="#ad6800"
-            icon="history"
-            title="Save known-good environments"
-          >
-            Snapshots, backups, and reusable environment images make
-            experimentation and teaching setup much less fragile.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
@@ -477,7 +408,7 @@ PY`}</code>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={14}>
             <Title level={3} style={{ margin: 0 }}>
-              When a project-local Linux environment matters
+              Choose the Linux path that fits
             </Title>
             <Paragraph style={{ margin: 0 }}>
               Notebooks, LaTeX, course workflows, coding agents, terminals, and
@@ -515,15 +446,20 @@ PY`}</code>
               }}
             >
               <Title level={4} style={{ color: "#fff", margin: "0 0 10px" }}>
-                Start using CoCalc
+                Ready to use Linux in CoCalc?
               </Title>
               <Paragraph style={{ color: "rgba(255,255,255,0.78)" }}>
                 Open a project, launch a terminal, and install the software your
                 work actually needs.
               </Paragraph>
-              <Button type="primary" href={primaryCtaHref}>
-                {finalCtaLabel}
-              </Button>
+              <Flex vertical gap={10} align="start">
+                <Button type="primary" href={primaryCtaHref}>
+                  {finalCtaLabel}
+                </Button>
+                <Button href={appPath("products")}>
+                  Compare operating models
+                </Button>
+              </Flex>
             </div>
           </Col>
         </Row>

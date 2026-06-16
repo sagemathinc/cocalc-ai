@@ -103,6 +103,17 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Teaching: preserve course management as a workflow destination beside the LMS, not a product path or LMS replacement.
 - [x] Keep shared operating-model handoff on ordinary feature routes, but suppress it on pages that already own a route-specific final decision block.
 
+## High-Traffic Workflow Set Pass
+
+- [x] Re-audit `/features/ai`, `/features/jupyter-notebook`, `/features/teaching`, `/features/terminal`, and `/features/linux` as a set after the earlier feature cleanup.
+- [x] Leave Jupyter and Teaching structurally intact in this pass because they already have one primary workflow example and one route-owned final decision block.
+- [x] AI: remove the hero-adjacent summary cards because the Codex thread, workflow strip, and live-project section already carry those points with more specific evidence.
+- [x] AI: treat the Codex thread/workflow strip as the primary workflow example, make the lower CTA the route-owned ending, and suppress the shared operating-model handoff.
+- [x] Terminal: remove the hero-adjacent summary cards because `.term` addressing and shared terminal-stream sections carry those points with more specific evidence.
+- [x] Terminal: treat the `.term` file workflow as the primary example, make the final terminal CTA own the next step, and suppress the shared operating-model handoff.
+- [x] Linux: remove the hero-adjacent summary cards because install/verify and reusable-environment sections carry those points with more specific evidence.
+- [x] Linux: treat install/verify as the primary workflow example, make the final Linux CTA own the next step, and suppress the shared operating-model handoff.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

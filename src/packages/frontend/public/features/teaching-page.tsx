@@ -116,13 +116,33 @@ function CourseDashboardMock() {
                     justify="space-between"
                     key={name}
                     style={{
-                      background: alpha(PUBLIC_COLORS.surface, 0.09),
+                      background: PUBLIC_COLORS.surface,
+                      border: `1px solid ${alpha(PUBLIC_COLORS.brand, 0.12)}`,
                       borderRadius: PANEL_RADIUS,
                       padding: "10px 12px",
                     }}
                   >
-                    <Text style={{ color: PUBLIC_COLORS.surface }}>{name}</Text>
-                    <Text strong style={{ color: PUBLIC_COLORS.footerText }}>
+                    <Text
+                      style={{
+                        color: PUBLIC_COLORS.heading,
+                        flex: "1 1 auto",
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {name}
+                    </Text>
+                    <Text
+                      strong
+                      style={{
+                        color: PUBLIC_COLORS.brand,
+                        flex: "0 0 auto",
+                        marginLeft: 8,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {status}
                     </Text>
                   </Flex>

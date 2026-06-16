@@ -621,9 +621,14 @@ function FeatureDetailNavigation({ page }: { page: FeaturePage }) {
 
 function FeatureProductPathLinks({ currentSlug }: { currentSlug: string }) {
   if (
-    currentSlug === "compare" ||
-    currentSlug === "jupyter-notebook" ||
-    currentSlug === "teaching"
+    [
+      "ai",
+      "compare",
+      "jupyter-notebook",
+      "linux",
+      "teaching",
+      "terminal",
+    ].includes(currentSlug)
   ) {
     return null;
   }

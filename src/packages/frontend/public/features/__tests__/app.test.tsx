@@ -309,14 +309,19 @@ describe("PublicFeaturesApp", () => {
       }),
     ).not.toBeNull();
     expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
-    expect(screen.getByText("Start from the project")).not.toBeNull();
-    expect(screen.getByText("Give inspectable context")).not.toBeNull();
-    expect(screen.getByText("Review before relying on it")).not.toBeNull();
+    expect(screen.queryByText("Start from the project")).toBeNull();
+    expect(screen.queryByText("Give inspectable context")).toBeNull();
+    expect(screen.queryByText("Review before relying on it")).toBeNull();
+    expect(screen.getByText("Choose the AI path that fits")).not.toBeNull();
+    expect(screen.getByText("Ready to use Codex in CoCalc?")).not.toBeNull();
     expect(screen.queryByText("Codex in chat")).toBeNull();
     expect(screen.queryByText("Give Codex useful context")).toBeNull();
     expect(screen.queryByText("Review agent work together")).toBeNull();
     expect(screen.queryByText("rich prompts")).toBeNull();
-    expect(screen.getByText("Create account")).not.toBeNull();
+    expect(
+      screen.queryByText("A sandbox for agent work, with humans nearby."),
+    ).toBeNull();
+    expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
     const featureNav = screen.getByRole("region", {
       name: "Feature page navigation",
     });
@@ -333,27 +338,23 @@ describe("PublicFeaturesApp", () => {
     expect(
       within(featureNav).queryByRole("link", { name: /Previous:/ }),
     ).toBeNull();
-    expect(screen.getByText("Decide how CoCalc should run")).not.toBeNull();
     expect(
       screen
         .getByRole("link", { name: "Compare operating models" })
         .getAttribute("href"),
     ).toBe("/products");
     expect(
-      screen
-        .getByRole("link", { name: "Pricing and licensing" })
-        .getAttribute("href"),
-    ).toBe("/pricing");
+      screen.queryByRole("region", {
+        name: "Feature operating model next steps",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
     expect(
-      screen
-        .getByRole("link", { name: "Compare CoCalc fit" })
-        .getAttribute("href"),
-    ).toBe("/features/compare");
+      screen.queryByRole("link", { name: "Pricing and licensing" }),
+    ).toBeNull();
     expect(
-      screen
-        .getAllByRole("link", { name: "Browse feature workflows" })
-        .map((link) => link.getAttribute("href")),
-    ).toEqual(["/features"]);
+      screen.queryByRole("link", { name: "Compare CoCalc fit" }),
+    ).toBeNull();
     expect(screen.queryByRole("link", { name: /Next feature:/ })).toBeNull();
     expect(
       screen.queryByRole("link", { name: /Previous feature:/ }),
@@ -693,6 +694,21 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Collaborate in one terminal stream"),
     ).not.toBeNull();
+    expect(screen.queryByText("Run project commands")).toBeNull();
+    expect(screen.queryByText("Share one live stream")).toBeNull();
+    expect(screen.queryByText("Give agents terminal state")).toBeNull();
+    expect(
+      screen.getByText("Choose the terminal path that fits"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Ready to use terminals in CoCalc?"),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "Feature operating model next steps",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
   });
 
   it("uses projects as the terminal CTA for authenticated users", () => {
@@ -732,6 +748,17 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Build course and team environments once"),
     ).not.toBeNull();
+    expect(screen.queryByText("Install system packages")).toBeNull();
+    expect(screen.queryByText("Give everyone the same setup")).toBeNull();
+    expect(screen.queryByText("Save known-good environments")).toBeNull();
+    expect(screen.getByText("Choose the Linux path that fits")).not.toBeNull();
+    expect(screen.getByText("Ready to use Linux in CoCalc?")).not.toBeNull();
+    expect(
+      screen.queryByRole("region", {
+        name: "Feature operating model next steps",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText("Decide how CoCalc should run")).toBeNull();
     expect(screen.getByText("graphviz version reported")).not.toBeNull();
     expect(screen.queryByText("graphviz version 2.43.0")).toBeNull();
     expect(screen.queryByText("RootFS images make setup reusable")).toBeNull();
@@ -871,6 +898,33 @@ describe("PublicFeaturesApp", () => {
   it("keeps compressed workflow pages from restoring duplicate card rows", () => {
     const pages = [
       {
+        removedHeadings: [
+          "Start from the project",
+          "Give inspectable context",
+          "Review before relying on it",
+          "A sandbox for agent work, with humans nearby.",
+        ],
+        slug: "ai",
+      },
+      {
+        removedHeadings: [
+          "Run project commands",
+          "Share one live stream",
+          "Give agents terminal state",
+          "When a terminal should be shared",
+        ],
+        slug: "terminal",
+      },
+      {
+        removedHeadings: [
+          "Install system packages",
+          "Give everyone the same setup",
+          "Save known-good environments",
+          "When a project-local Linux environment matters",
+        ],
+        slug: "linux",
+      },
+      {
         removedHeadings: ["Scripts and modules", "Terminals"],
         slug: "python",
       },
@@ -978,8 +1032,17 @@ describe("PublicFeaturesApp", () => {
       const nextSteps = screen.queryByRole("region", {
         name: "Feature operating model next steps",
       });
-      if (slug === "jupyter-notebook" || slug === "teaching") {
+      if (
+        ["ai", "jupyter-notebook", "linux", "teaching", "terminal"].includes(
+          slug,
+        )
+      ) {
         expect(nextSteps).toBeNull();
+        expect(
+          screen
+            .getAllByRole("link")
+            .some((link) => link.getAttribute("href") === "/products"),
+        ).toBe(true);
         return;
       }
       expect(nextSteps).not.toBeNull();
