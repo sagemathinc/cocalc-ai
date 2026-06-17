@@ -91,7 +91,7 @@ const FEATURE_GROUPS = [
       "Use Codex inside CoCalc projects, or use API and CLI routes when workflows need automation around CoCalc.",
     icon: "robot",
     slugs: ["ai", "api", "cli"],
-    title: "AI workflows and integration",
+    title: "AI workflows",
     variant: "cards",
   },
   {
@@ -115,7 +115,7 @@ const FEATURE_GROUPS = [
       "Find shell, Linux, and dedicated hosted capacity for work that needs a real runtime.",
     icon: "terminal",
     slugs: ["terminal", "linux", "project-hosts"],
-    title: "Runtime and hosted compute",
+    title: "Runtime",
     variant: "cards",
   },
   {
@@ -124,7 +124,7 @@ const FEATURE_GROUPS = [
       "Jump directly to the language or math environment you need for notebooks, scripts, courses, or research.",
     icon: "python",
     slugs: ["python", "r-statistical-software", "julia", "sage", "octave"],
-    title: "Languages and math",
+    title: "Languages",
     variant: "list",
   },
 ] as const;
@@ -595,7 +595,7 @@ function TeachingWorkflowCallout() {
               </div>
               <div>
                 <Title level={2} style={{ margin: "0 0 8px" }}>
-                  Teaching and workshops
+                  Teaching
                 </Title>
                 <Paragraph
                   style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}
@@ -794,9 +794,7 @@ function FeaturesIndex() {
       {FEATURE_GROUPS.map((group) => (
         <Fragment key={group.title}>
           <FeatureGroupSection group={group} pages={pages} />
-          {group.title === "Runtime and hosted compute" ? (
-            <TeachingWorkflowCallout />
-          ) : null}
+          {group.title === "Runtime" ? <TeachingWorkflowCallout /> : null}
         </Fragment>
       ))}
     </>

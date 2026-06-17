@@ -762,9 +762,9 @@ export default function PricingPage({
             Hosted CoCalc.ai plans
           </Title>
           <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Use these plans when CoCalc should be hosted and operated by us. The
-            plan limits below apply to hosted memberships; local use, single-VM
-            appliances, private deployment, procurement, and support
+            Use these plans when CoCalc should be hosted and operated by CoCalc.
+            The plan limits below apply to hosted memberships; local use,
+            single-VM appliances, private deployment, procurement, and support
             expectations belong in the buying paths below.
           </Paragraph>
           <Flex gap={12} wrap>

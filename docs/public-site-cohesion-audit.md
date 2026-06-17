@@ -207,6 +207,17 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Change: restyle the shared-project note as a compact inline callout with a left rule, muted copy, and no card background so it supports the lead instead of competing with the decision cards.
 - [x] Run focused tests, browser QA, rebuild, and commit.
 
+## Product Detail Bottom Conversion Pass
+
+- [x] Audit `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` for whether the bottom conversion area gives the right next action without repeating the page.
+- [x] Finding: CTA order is broadly correct: install-first for Plus and Star, support-first for Launchpad and Rocket, with pricing or neighboring product paths as secondary actions.
+- [x] Finding: the final paragraphs on Plus, Star, Launchpad, and Rocket are longer than needed for conversion; the visitor has already seen the buyer question, boundary, and evidence cue above.
+- [x] Change: shorten final conversion copy while preserving route-owned endings and existing CTA destinations.
+- [x] Change: make pricing handoff copy say hosted plans are operated by CoCalc, not "operated by us," so the buyer-facing boundary is explicit.
+- [x] Finding: feature-index group labels drifted too long during prior specificity passes. Keep the order and information scent, but return headings to shorter labels backed by descriptive body copy.
+- [x] Change: shorten `AI workflows and integration`, `Runtime and hosted compute`, `Teaching and workshops`, and `Languages and math` to shorter scannable labels.
+- [x] Run focused tests, browser QA, rebuild, and commit.
+
 ## Workflow To Product Decision Handoff Pass
 
 - [x] Audit `/features`, `/features/ai`, `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`, `/features/teaching`, `/products`, `/pricing`, `/features/compare`, and `/support/new` as one path from workflow fit to operating-model decision.

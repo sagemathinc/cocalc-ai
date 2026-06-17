@@ -245,23 +245,27 @@ describe("PublicFeaturesApp", () => {
         .getByRole("link", { name: "Project notes and Markdown" })
         .getAttribute("href"),
     ).toBe("/docs/files/markdown");
-    expect(screen.getByText("AI workflows and integration")).not.toBeNull();
-    expect(screen.getByText("Runtime and hosted compute")).not.toBeNull();
-    expect(screen.getByText("Languages and math")).not.toBeNull();
-    expect(screen.getByText("Teaching and workshops")).not.toBeNull();
+    expect(screen.getByText("AI workflows")).not.toBeNull();
+    expect(screen.getByText("Runtime")).not.toBeNull();
+    expect(screen.getByText("Languages")).not.toBeNull();
+    expect(screen.getByText("Teaching")).not.toBeNull();
     const indexText = container.textContent ?? "";
-    expect(indexText.indexOf("AI workflows and integration")).toBeLessThan(
+    expect(indexText.indexOf("AI workflows")).toBeLessThan(
       indexText.indexOf("Notebook, writing, and visual work"),
     );
-    expect(indexText.indexOf("Teaching and workshops")).toBeGreaterThan(
+    expect(indexText.indexOf("Teaching")).toBeGreaterThan(
       indexText.indexOf("Notebook, writing, and visual work"),
     );
-    expect(indexText.indexOf("Teaching and workshops")).toBeGreaterThan(
-      indexText.indexOf("Runtime and hosted compute"),
+    expect(indexText.indexOf("Teaching")).toBeGreaterThan(
+      indexText.indexOf("Runtime"),
     );
-    expect(indexText.indexOf("Teaching and workshops")).toBeLessThan(
-      indexText.indexOf("Languages and math"),
+    expect(indexText.indexOf("Teaching")).toBeLessThan(
+      indexText.indexOf("Languages"),
     );
+    expect(screen.queryByText("AI workflows and integration")).toBeNull();
+    expect(screen.queryByText("Runtime and hosted compute")).toBeNull();
+    expect(screen.queryByText("Languages and math")).toBeNull();
+    expect(screen.queryByText("Teaching and workshops")).toBeNull();
     expect(screen.queryByText("AI and integration")).toBeNull();
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);

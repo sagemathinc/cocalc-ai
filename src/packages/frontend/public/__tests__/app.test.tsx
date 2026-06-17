@@ -475,6 +475,8 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Hosted CoCalc.ai plans" }),
     ).not.toBeNull();
+    expect(screen.getByText(/hosted and operated by CoCalc/i)).not.toBeNull();
+    expect(screen.queryByText(/operated by us/i)).toBeNull();
     expect(screen.getAllByText("Member").length).toBeGreaterThan(0);
     expect(
       screen.getByText("A solid choice for everyday work."),
@@ -1184,6 +1186,13 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(
+      screen.getByText(/Install Plus to evaluate locally/i),
+    ).not.toBeNull();
+    expect(screen.getAllByText(/operated by CoCalc/i).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.queryByText(/operated by us/i)).toBeNull();
+    expect(
       screen
         .getAllByRole("link", { name: "Review hosted plans" })
         .every((link) => link.getAttribute("href") === "/pricing"),
@@ -1434,8 +1443,11 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByText(/ongoing operations/i)).not.toBeNull();
     expect(
-      screen.getByText(/Support can cover install guidance/i),
+      screen.getByText(/deployment rights, rollout planning, licensing/i),
     ).not.toBeNull();
+    expect(
+      screen.queryByText(/Support can cover install guidance/i),
+    ).toBeNull();
     expect(
       screen
         .getAllByRole("link", { name: "Pricing and licensing" })
@@ -1510,6 +1522,11 @@ describe("PublicApp", () => {
         name: "Install Star when one VM is enough",
       }),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /Compare paths first if the organization needs private deployment/i,
+      ),
+    ).not.toBeNull();
     expect(screen.getAllByText(/public Ubuntu VM/).length).toBeGreaterThan(0);
     expect(
       screen.getByText(/not a high-availability or scale-out/),
@@ -1555,7 +1572,10 @@ describe("PublicApp", () => {
     expect(
       screen.getByText(/clear ownership of ongoing operations/i),
     ).not.toBeNull();
-    expect(screen.getByText(/level of deployment help/i)).not.toBeNull();
+    expect(
+      screen.getByText(/deployment-planning expectations/i),
+    ).not.toBeNull();
+    expect(screen.queryByText(/level of deployment help/i)).toBeNull();
     expect(
       screen.getByRole("heading", { name: "Plan Rocket with CoCalc" }),
     ).not.toBeNull();

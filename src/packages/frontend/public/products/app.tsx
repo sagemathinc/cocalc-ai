@@ -616,9 +616,9 @@ function CocalcRocketPage() {
         </ProductDetailCard>
         <ProductDetailCard icon="servers" title="Plan Rocket with CoCalc">
           <Paragraph style={{ marginTop: 0 }}>
-            Start with support when the conversation includes infrastructure,
-            rollout, governance, support coverage, site licensing, or the level
-            of deployment help your organization expects.
+            Start with support when the decision includes infrastructure,
+            rollout, governance, site licensing, or deployment-planning
+            expectations.
           </Paragraph>
           <ProductActions
             actions={[
@@ -731,9 +731,9 @@ function CocalcStarPage() {
           Install Star when one VM is enough
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Install Star when you already have a fresh public Ubuntu VM. Compare
-          deployment paths first if the organization needs a private environment
-          or broader operational planning.
+          Install Star if you already have a fresh public Ubuntu VM. Compare
+          paths first if the organization needs private deployment or broader
+          operational planning.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href="#install-cocalc-star">
@@ -836,11 +836,10 @@ function CocalcLaunchpadPage() {
           Plan a bounded private deployment
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Start with Launchpad when your team is ready to operate a private
-          CoCalc environment. Use pricing and support when procurement,
-          deployment rights, or rollout planning are part of the decision.
-          Support can cover install guidance, licensing questions, product
-          defects, and upgrade planning while your team remains the operator.
+          Start with Launchpad when your team is ready to operate a bounded
+          private CoCalc environment. Use pricing and support for deployment
+          rights, rollout planning, licensing, and upgrade questions while your
+          team remains the operator.
         </Paragraph>
         <ProductActions
           actions={[
@@ -943,9 +942,9 @@ function CocalcPlusPage() {
           Choose a shared path after local evaluation
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Install Plus to evaluate the workspace model locally. Move to hosted
-          plans when CoCalc should be operated by us, or compare operating
-          models when the group needs one VM or a customer-operated path.
+          Install Plus to evaluate locally. Use hosted plans when CoCalc should
+          be operated by CoCalc, or compare operating models when the group
+          needs one VM or a customer-operated path.
         </Paragraph>
         <ProductActions
           actions={[
