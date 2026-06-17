@@ -111,6 +111,43 @@ the entry in place as a decision record.
   sections with the route-owned ending, but do not remove high-intent language
   routes or useful workflow examples.
 
+### PSL-2026-06-17-011: Landing Page Agent Operating Audit
+
+- **Routes:** public-site agent workflow, prompt handoff, process docs, and
+  reusable skill guidance.
+- **Trigger:** User asked why several days of Landing Page Agent work produced
+  limited progress and asked for a systematic diagnosis of Codex/CoCalc agent
+  workflow failures.
+- **Principle:** The agent should operate from a small durable workflow, not
+  from ever-longer prompts. Broad page audits must start with a visitor
+  question, page classification, change budget, and active issue reference
+  before source edits.
+- **Finding:** The existing ledger, prompt log, browser QA script, and focused
+  tests are useful, but they are often used as end-of-turn cleanup rather than
+  as the controlling structure for decisions. This lets visual feedback turn
+  into broad source changes too quickly.
+- **Decision:** Add an internal operating audit file and a repo-scoped
+  `public-site-landing-page` skill. Update project guidance and tests so future
+  public-site turns load this process deliberately and keep known issues
+  referenceable.
+- **Changed files:** `AGENTS.md`,
+  `.agents/skills/public-site-landing-page/SKILL.md`,
+  `src/.agents/landing-page-agent-operating-audit.md`,
+  `src/.agents/public-site-audit-prompt-log.md`,
+  `docs/public-site-cohesion-audit.md`, and
+  `src/packages/frontend/public/__tests__/public-site-agent-workflow.test.ts`.
+- **Validation state:** Focused process-doc Jest test passed. Frontend lint
+  passed. Frontend package typecheck passed. No public runtime source changed,
+  so no static preview rebuild or browser QA was required for this process-only
+  pass. Pre-commit hygiene passed: `git diff --check`, `git status --short`,
+  `git diff --name-only`, and `git ls-files --others --exclude-standard`.
+- **Open sub-actions:**
+  - [x] Research Codex operating guidance and web-development workflow sources.
+  - [x] Create a referenceable failure register for Landing Page Agent issues.
+  - [x] Add a repo-scoped skill for future public-site turns.
+  - [x] Run focused process-doc tests.
+  - [x] Commit the process docs and report residual risks.
+
 ### PSL-2026-06-17-001: Feature Index Starter Cards
 
 - **Routes:** `/features`
@@ -331,6 +368,8 @@ the entry in place as a decision record.
       edits, format touched files, run focused tests, lint/typecheck, rebuild,
       post-rebuild browser QA, prompt-log update, pre-commit hygiene, commit,
       and final residual-risk report.
+- [x] `PSL-2026-06-17-011`: run focused process-doc tests, pre-commit hygiene,
+      commit, and report the Landing Page Agent operating changes.
 - [x] `PSL-2026-06-17-001` through `PSL-2026-06-17-004`: run static preview
       rebuild after the Guides changes.
 - [x] `PSL-2026-06-17-001`, `PSL-2026-06-17-002`, and
@@ -379,6 +418,11 @@ entry, or by explicitly recording why the issue was deliberately left alone.
       update `src/.agents/public-site-audit-prompt-log.md` with one next prompt
       before final response, and must link that prompt to the active `PSL-*`
       ledger item so the process does not stall without a reusable next step.
+- [ ] `KI-2026-06-17-F`: Landing Page Agent operating reliability. Future
+      public-site turns should use `.agents/skills/public-site-landing-page`
+      plus `src/.agents/landing-page-agent-operating-audit.md`, state the
+      visitor question and change budget before source edits, and close or
+      carry forward `LPA-*` issues explicitly.
 
 ## Agentic Public-Site Operating Model
 

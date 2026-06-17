@@ -96,6 +96,7 @@ EOF
 ## Public Site and Artifact Hygiene
 
 - Treat public React routes, public metadata, and files under `src/packages/frontend/public` as user-facing publication surfaces. Do not copy internal pitch language, competitor research, agent planning notes, or compliance interpretation into them unless the user explicitly approves that exact public wording.
+- For CoCalc.ai public-site, landing-page, feature-page, product-page, guides, CTA, or public-copy work, use the repo skill `.agents/skills/public-site-landing-page/SKILL.md` and the operating audit `src/.agents/landing-page-agent-operating-audit.md` as the durable workflow standard.
 - Keep scratch browser-QA screenshots, Playwright traces, generated reports, terminal transcripts, and temporary research files outside the repository, preferably under `/tmp/cocalc-public-qa-*`.
 - Commit only source, tests, and intentional docs. Do not commit generated QA artifacts or candidate screenshots unless they are approved public assets with a clear freshness/source rationale.
 - Before committing public-site work, run `git status --short`, review `git diff --name-only`, and check untracked files with `git ls-files --others --exclude-standard` so accidental scratch artifacts do not enter the repository.

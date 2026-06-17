@@ -15,7 +15,13 @@ function readSrcFile(path: string): string {
 
 describe("public-site agent workflow documentation", () => {
   const auditDoc = readRepoFile("docs/public-site-cohesion-audit.md");
+  const landingAgentAudit = readSrcFile(
+    ".agents/landing-page-agent-operating-audit.md",
+  );
   const promptLog = readSrcFile(".agents/public-site-audit-prompt-log.md");
+  const publicSiteSkill = readRepoFile(
+    ".agents/skills/public-site-landing-page/SKILL.md",
+  );
 
   it("keeps the reusable operating model and check matrix in the audit ledger", () => {
     expect(auditDoc).toContain("### PSL-2026-06-17-006");
@@ -43,5 +49,25 @@ describe("public-site agent workflow documentation", () => {
     expect(promptLog).toContain("scratch QA artifacts outside the repository");
     expect(promptLog).toContain("Do not paste raw chat transcripts");
     expect(promptLog).toContain("Reusable Browser QA Harness");
+  });
+
+  it("keeps the Landing Page Agent operating audit and skill discoverable", () => {
+    expect(auditDoc).toContain("### PSL-2026-06-17-011");
+    expect(auditDoc).toContain("KI-2026-06-17-F");
+    expect(promptLog).toContain("public-site-landing-page/SKILL.md");
+
+    expect(landingAgentAudit).toContain("## Operating Failure Register");
+    expect(landingAgentAudit).toContain("LPA-001");
+    expect(landingAgentAudit).toContain("change budget");
+    expect(landingAgentAudit).toContain("visitor question");
+    expect(landingAgentAudit).toContain("human product judgment");
+
+    expect(publicSiteSkill).toContain("name: public-site-landing-page");
+    expect(publicSiteSkill).toContain(
+      "State the page's primary visitor question",
+    );
+    expect(publicSiteSkill).toContain("Set a small change budget");
+    expect(publicSiteSkill).toContain("Do not flatten route-specific evidence");
+    expect(publicSiteSkill).toContain("Store browser QA artifacts only under");
   });
 });

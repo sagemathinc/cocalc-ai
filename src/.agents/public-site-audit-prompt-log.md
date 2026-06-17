@@ -27,6 +27,9 @@ turns.
 - Keep scratch QA artifacts outside the repository.
 - Use `docs/public-site-cohesion-audit.md#agentic-public-site-operating-model`
   as the default workflow for CoCalc.ai public-site work.
+- Use `.agents/skills/public-site-landing-page/SKILL.md` and
+  `src/.agents/landing-page-agent-operating-audit.md` for public-site passes
+  instead of relying on increasingly long prompts.
 - Every prompt should preserve the current product framing unless it explicitly
   says otherwise: AI-native technical workspace, five product paths, teaching as
   a secondary workflow, feature pages as workflow spokes, and proof claims gated
@@ -43,6 +46,19 @@ turns.
   tests, and intentional docs.
 
 ## Prompt Backlog
+
+### Dogfood Landing Page Agent Workflow
+
+Use `.agents/skills/public-site-landing-page/SKILL.md` and continue from
+`PSL-2026-06-17-011`, `KI-2026-06-17-F`, and
+`src/.agents/landing-page-agent-operating-audit.md`. Run one deliberately small
+public-site pass that proves the improved operating loop works: choose exactly
+one active known issue, state the visitor question and change budget before
+editing, log findings first, make only high-confidence source/test changes if
+needed, run focused validation, and update the `LPA-*`, `KI-*`, and `PSL-*`
+status fields before final handoff. Keep scratch artifacts under
+`/tmp/cocalc-public-qa-*`, commit completed work, and report residual risks plus
+the next recommended prompt.
 
 ### Language/Math Feature Ending Density Review
 
