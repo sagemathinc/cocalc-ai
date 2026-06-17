@@ -5,6 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import type { LroStatus } from "@cocalc/conat/hub/api/lro";
 import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { updateLro } from "@cocalc/server/lro/lro-db";
 import {
@@ -16,6 +17,11 @@ const log = getLogger("server:projects:start-lro-cleanup");
 
 const ACTIVE_START_STATUSES = ["queued", "running"] as const;
 const ORPHANED_START_LRO_GRACE_MS = 30_000;
+const ORPHANED_RESTORE_START_LRO_GRACE_MS = Math.max(
+  ORPHANED_START_LRO_GRACE_MS,
+  Number(process.env.COCALC_ORPHANED_RESTORE_START_LRO_GRACE_MS) ||
+    3 * 60 * 60_000,
+);
 const RECENT_STARTING_STATE_MS = 5 * 60_000;
 
 type ProjectStartLroRow = {
@@ -23,24 +29,41 @@ type ProjectStartLroRow = {
   scope_type: "project";
   scope_id: string;
   error?: string | null;
+  input?: any;
+  progress_summary?: any;
   created_at?: Date | string | null;
 };
 
-async function cancelProjectStartLro({
+function progressSummaryFailureError(row: ProjectStartLroRow): string | null {
+  const summary = row.progress_summary ?? {};
+  if (summary?.phase !== "failed") {
+    return null;
+  }
+  return (
+    `${summary?.detail?.error ?? ""}`.trim() ||
+    `${summary?.error ?? ""}`.trim() ||
+    `${summary?.message ?? ""}`.trim() ||
+    null
+  );
+}
+
+async function finishProjectStartLro({
   project_id,
   op_id,
+  status,
   error,
   context,
 }: {
   project_id: string;
   op_id: string;
+  status: Extract<LroStatus, "canceled" | "failed">;
   error?: string | null;
   context: string;
 }): Promise<void> {
   try {
     const updated = await updateLro({
       op_id,
-      status: "canceled",
+      status,
       error: error ?? context,
     });
     if (updated) {
@@ -51,13 +74,33 @@ async function cancelProjectStartLro({
       });
     }
   } catch (err) {
-    log.warn("unable to cancel project-start lro", {
+    log.warn("unable to finish stale project-start lro", {
       project_id,
       op_id,
+      status,
       context,
       err: `${err}`,
     });
   }
+}
+
+async function cancelOrFailProjectStartLro({
+  project_id,
+  row,
+  context,
+}: {
+  project_id: string;
+  row: ProjectStartLroRow;
+  context: string;
+}): Promise<void> {
+  const progressError = progressSummaryFailureError(row);
+  await finishProjectStartLro({
+    project_id,
+    op_id: row.op_id,
+    status: progressError ? "failed" : "canceled",
+    error: row.error ?? progressError,
+    context,
+  });
 }
 
 function parseProjectState(rawState: any): { state?: string; timeMs?: number } {
@@ -70,6 +113,14 @@ function parseProjectState(rawState: any): { state?: string; timeMs?: number } {
     state,
     timeMs: Number.isFinite(timeMs) ? timeMs : undefined,
   };
+}
+
+function orphanGraceMs(row: ProjectStartLroRow): number {
+  const input = row.input ?? {};
+  return typeof input?.restore_backup_id === "string" &&
+    input.restore_backup_id.trim()
+    ? ORPHANED_RESTORE_START_LRO_GRACE_MS
+    : ORPHANED_START_LRO_GRACE_MS;
 }
 
 export async function cancelStaleProjectStartLros({
@@ -86,7 +137,7 @@ export async function cancelStaleProjectStartLros({
   try {
     const result = await getPool().query<ProjectStartLroRow>(
       `
-        SELECT op_id, scope_type, scope_id, error, created_at
+        SELECT op_id, scope_type, scope_id, error, input, progress_summary, created_at
         FROM long_running_operations
         WHERE kind='project-start'
           AND scope_type='project'
@@ -177,10 +228,9 @@ export async function cancelStaleProjectStartLros({
       if (opId === currentActiveStartOpId) {
         continue;
       }
-      await cancelProjectStartLro({
+      await cancelOrFailProjectStartLro({
         project_id,
-        op_id: opId,
-        error: row.error,
+        row,
         context: `superseded by active project start ${currentActiveStartOpId}`,
       });
       canceled += 1;
@@ -194,17 +244,16 @@ export async function cancelStaleProjectStartLros({
       createdAtMs != null && Number.isFinite(createdAtMs)
         ? nowMs - createdAtMs
         : undefined;
-    if (ageMs == null || ageMs < ORPHANED_START_LRO_GRACE_MS) {
+    if (ageMs == null || ageMs < orphanGraceMs(row)) {
       continue;
     }
     if (recentStartingState && opId === newestOpId) {
       continue;
     }
 
-    await cancelProjectStartLro({
+    await cancelOrFailProjectStartLro({
       project_id,
-      op_id: opId,
-      error: row.error,
+      row,
       context: "orphaned project start operation",
     });
     canceled += 1;
@@ -229,7 +278,7 @@ export async function supersedeOlderProjectStartLros({
   try {
     const result = await getPool().query<ProjectStartLroRow>(
       `
-        SELECT op_id, scope_type, scope_id, error
+        SELECT op_id, scope_type, scope_id, error, progress_summary
         FROM long_running_operations
         WHERE kind='project-start'
           AND scope_type='project'
@@ -252,10 +301,9 @@ export async function supersedeOlderProjectStartLros({
   }
 
   for (const row of rows) {
-    await cancelProjectStartLro({
+    await cancelOrFailProjectStartLro({
       project_id,
-      op_id: row.op_id,
-      error: row.error,
+      row,
       context: `superseded by later successful project start ${targetOpId}`,
     });
   }

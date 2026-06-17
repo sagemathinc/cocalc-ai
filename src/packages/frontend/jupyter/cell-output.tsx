@@ -22,6 +22,11 @@ import {
   type RunCellOverlay,
 } from "./run-cell-overlay";
 
+export const OUTPUT_COLUMN_STYLE: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+};
+
 interface CellOutputProps {
   actions?: JupyterActions;
   name?: string;
@@ -159,7 +164,7 @@ export function CellOutput({
           runOverlay={runOverlay}
         />
       )}
-      <div style={{ flex: 1 }}>
+      <div style={OUTPUT_COLUMN_STYLE}>
         <OutputColumn
           cell={cell}
           actions={actions}

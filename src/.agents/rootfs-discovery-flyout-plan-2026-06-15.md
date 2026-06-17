@@ -160,6 +160,13 @@ The normalized content should live with the rootfs catalog entry so:
 - Search/filter can include publisher/title/highlights later.
 - Rootfs flyout can render quickly from catalog metadata.
 
+Use dedicated catalog storage for this rather than overloading visual theme
+metadata:
+
+- `content?: RootfsContentManifest` as public normalized metadata.
+- `content_warnings?: RootfsContentValidationWarning[]` or equivalent
+  admin-only validation metadata.
+
 Admin UI can initially expose this as JSON editing plus validation. A polished
 publisher editor can come later.
 
@@ -182,8 +189,17 @@ content metadata directly.
 Route shape can be decided during implementation, but it should support stable
 links such as:
 
-- `/rootfs/<image_id>`
+- `/rootfs/<slug>`
+- `/rootfs/id/<image_id>` or another explicit image-id fallback route
 - `/publishers/<publisher_slug>/<publication_slug>`
+
+The public/shareable URL should not expose a long hash by default. Each rootfs
+catalog entry should get a short globally unique slug, generated automatically
+when the user does not choose one. Publisher/admin users may optionally choose a
+slug if the UI cost stays low. User-selected slugs should follow the same
+general constraints as names in `src/packages/util/db-schema/name-rules.ts`:
+short, URL-safe, no UUID-looking names, no reserved words, and no consecutive
+hyphens. Slugs must have a unique database constraint.
 
 Initial page contents:
 
@@ -234,24 +250,34 @@ environment variables only.
 
 ### `open`
 
-- Opens a file by absolute rootfs path if the project host can expose it.
-- If direct rootfs file open is not already supported, first implementation may
-  copy the file to HOME and open the copy, but the UI must say that.
+- Opens a file by absolute rootfs path.
+- CoCalc projects already support access to paths outside HOME, including
+  read-only and read-write rootfs paths depending on how the image was
+  published. The MVP should use that directly when possible.
+- If a path is outside HOME and writeability is ambiguous, the UI should make
+  it clear that edits may live in the overlay and may stop being visible after
+  changing the runtime image. Offer an obvious copy-to-HOME action.
 
 ### `browse`
 
-- Opens the file explorer at an absolute rootfs directory if supported.
-- If the existing explorer is HOME-centered only, open a read-only rootfs
-  browser view or defer to copy-to-HOME for MVP.
+- Opens the file explorer at an absolute rootfs directory.
+- Browsing outside HOME should be a generic file-explorer capability, not only
+  a Rootfs flyout special case.
+- Whenever the user is browsing a directory outside HOME, the UI should make it
+  easy to copy selected files/directories into HOME.
 
 ### `copy-to-home`
 
 - Server/project-host copies rootfs content into HOME.
 - Target is relative to HOME.
 - Existing target behavior must be explicit: fail, merge, or create a numbered
-  copy. MVP should default to fail with a clear message unless user confirms.
+  copy.
+- MVP should default to not overwriting existing files. A later iteration may
+  add an explicit overwrite checkbox, but it should not be checked by default.
 - Progress should be visible in the flyout and survive panel close/reopen if
   practical.
+- The same copy-to-HOME operation should be usable from the generic file
+  explorer when the source is outside HOME.
 
 ### `external-link`
 
@@ -264,7 +290,10 @@ The Rootfs flyout needs safe project-host operations:
 - Check whether a rootfs path exists.
 - Copy a file/directory from rootfs lower filesystem to HOME.
 - Return progress for a copy operation.
-- Possibly open/browse read-only rootfs paths.
+- Open/browse rootfs paths outside HOME using existing project filesystem
+  access semantics.
+- Support a generic "copy this non-HOME path into HOME" operation that can be
+  used by both the Rootfs flyout and the file explorer.
 
 Do not route steady-state file copy or path probing through the hub unless
 there is a documented reason. The hub/control plane should authorize and issue
@@ -306,13 +335,16 @@ security and content subsystems.
 - Add validation/sanitization helpers with tests.
 - Extend rootfs catalog entry types with normalized content metadata.
 - Add admin-only validation warning storage.
+- Define slug validation, generated-slug format, and uniqueness rules.
 
 ### Phase 2: Catalog Storage and Admin Editing
 
 - Extend rootfs save/publish APIs to accept content metadata.
-- Add schema/migration support if current `rootfs_images` storage needs a new
-  column.
+- Add schema/migration support for dedicated `rootfs_images.content`,
+  admin-only validation warnings, and public slug storage.
 - Add JSON editor/preview in admin rootfs management.
+- Allow users with manage permission to accept an auto-generated slug or choose
+  a valid unique slug.
 - Hide trust/scan/version UI from ordinary users for now.
 
 ### Phase 3: Rootfs Flyout Skeleton
@@ -329,14 +361,14 @@ security and content subsystems.
 - Implement safe action rendering.
 - Implement project-host copy-to-HOME operation.
 - Add progress and success/failure UX.
-- Add read-only open/browse support if feasible; otherwise use clear copy-first
-  behavior for MVP.
+- Add direct open/browse support for rootfs paths outside HOME.
+- Add generic file-explorer copy-to-HOME affordance for non-HOME source paths.
 - Add tests for path sanitization, copy target handling, and unsupported action
   kinds.
 
 ### Phase 5: Public Landing Page and Create Project Flow
 
-- Add rootfs landing route.
+- Add rootfs landing route by slug, plus an image-id fallback route.
 - Render publisher/title/description/highlights/actions preview.
 - Integrate sign-in/sign-up continuation.
 - Integrate optional token redemption as an entitlement step.
@@ -357,23 +389,44 @@ security and content subsystems.
 
 - A rootfs catalog entry can advertise publisher content without starting a
   project.
+- A public landing page renders from catalog metadata alone; it does not require
+  starting a project or inspecting `/`.
 - A project using that rootfs shows a Rootfs flyout with the current runtime
   image and publisher content actions.
 - Runtime image management works from the Rootfs flyout.
 - Trust/scan/version details are visible to admins only.
-- A user can one-click copy an advertised example directory into HOME with
-  clear progress and result state.
-- A public landing page can create a project using a stable rootfs image id.
+- A user can directly open/browse advertised rootfs paths when permitted.
+- A user can one-click copy an advertised example directory, or any browsed
+  non-HOME path, into HOME with clear progress and result state.
+- Copy-to-HOME does not overwrite existing files by default.
+- A public landing page can create a project using a stable rootfs image id,
+  reached through a short rootfs slug.
 - The implementation works with seed-global catalog authority and project-owned
   bay routing.
 
 ## Open Decisions
 
 - Exact landing URL shape.
-- Whether `rootfs_images` needs a dedicated `content` column or can initially
-  use existing metadata storage.
+  - Current direction: `/rootfs/<slug>` for human/shareable links, with an
+    explicit image-id fallback route. Generate short unique slugs by default.
+    Optionally allow user-selected slugs using the existing name-rule style.
+- Exact slug schema fields and whether publisher/publication aliases are
+  separate tables or initially stored directly on `rootfs_images`.
+- `rootfs_images` should get dedicated content storage rather than using
+  `theme`.
 - Whether the MVP supports read-only browsing of `/` or only copy-to-HOME.
+  - Current direction: support direct open/browse because CoCalc projects
+    already support read-only and read-write access to `/` and other non-HOME
+    paths. Copy-to-HOME is still important, but not the only discovery path.
 - Initial overwrite policy for copy-to-HOME.
+  - Current direction: do not overwrite by default. Consider an explicit
+    overwrite checkbox later, unchecked by default.
 - Publisher slug/publication slug ownership and uniqueness rules.
+  - Current direction: auto-generate short random globally unique slugs, but
+    optionally allow user-selected slugs if validation and uniqueness are
+    straightforward.
 - Whether rootfs manifest extraction should run during all publishes or only
   when requested.
+  - Current direction: run extraction on all publishes, non-fatally. Store
+    normalized content when valid and admin-visible warnings when invalid.
+    Only fail publish if a future explicit "manifest required" option is set.

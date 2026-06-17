@@ -122,6 +122,15 @@ describe("shouldShowAcpResubmitToAgentButton", () => {
     expect(shouldShowAcpResubmitToAgentButton(base)).toBe(true);
   });
 
+  it("hides while the assistant turn is actively running", () => {
+    expect(
+      shouldShowAcpResubmitToAgentButton({
+        ...base,
+        isTurnRunning: true,
+      }),
+    ).toBe(false);
+  });
+
   it("shows on active terminal thread errors without parent not-sent state", () => {
     expect(
       shouldShowAcpResubmitToAgentButton({

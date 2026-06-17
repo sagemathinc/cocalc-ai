@@ -1,5 +1,6 @@
 import {
   jupyterLiveRunKey,
+  jupyterLiveRunStoreName,
   jupyterLiveRunSubject,
   openJupyterLiveRunStore,
 } from "@cocalc/conat/project/jupyter/live-run";
@@ -16,13 +17,23 @@ describe("jupyter live-run helpers", () => {
     expect(
       jupyterLiveRunKey({ path: metaPath, run_id: "run-1" }),
     ).toStrictEqual(jupyterLiveRunKey({ path: ipynbPath, run_id: "run-1" }));
+    expect(jupyterLiveRunStoreName(metaPath)).toStrictEqual(
+      jupyterLiveRunStoreName(ipynbPath),
+    );
   });
 
-  it("recreates a closed cached store for the same project", async () => {
-    const created: any[] = [];
+  it("scopes replay stores by notebook path", async () => {
+    expect(jupyterLiveRunStoreName("a.ipynb")).not.toStrictEqual(
+      jupyterLiveRunStoreName("b.ipynb"),
+    );
+  });
+
+  it("delegates each open to dkv so its refcount cache owns lifetime", async () => {
+    const calls: any[] = [];
     const project_id = `project-${Date.now()}`;
     const client = {
-      dkv: async () => {
+      dkv: async (opts: any) => {
+        calls.push(opts);
         const store = {
           closed: false,
           isClosed() {
@@ -32,7 +43,6 @@ describe("jupyter live-run helpers", () => {
             this.closed = true;
           },
         };
-        created.push(store);
         return store;
       },
     };
@@ -40,21 +50,24 @@ describe("jupyter live-run helpers", () => {
     const first = await openJupyterLiveRunStore({
       client: client as any,
       project_id,
+      path: "a.ipynb",
     });
     const second = await openJupyterLiveRunStore({
       client: client as any,
       project_id,
+      path: "a.ipynb",
     });
-    expect(second).toBe(first);
-    expect(created).toHaveLength(1);
-
-    first.close();
-
-    const third = await openJupyterLiveRunStore({
-      client: client as any,
+    expect(second).not.toBe(first);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
       project_id,
+      name: jupyterLiveRunStoreName("a.ipynb"),
+      ephemeral: true,
     });
-    expect(third).not.toBe(first);
-    expect(created).toHaveLength(2);
+    expect(calls[1]).toMatchObject({
+      project_id,
+      name: jupyterLiveRunStoreName("a.ipynb"),
+      ephemeral: true,
+    });
   });
 });

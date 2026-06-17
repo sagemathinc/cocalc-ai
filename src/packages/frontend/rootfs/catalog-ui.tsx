@@ -73,9 +73,15 @@ export function groupedRootfsOptions(images: RootfsImageEntry[]) {
         entry,
         searchText: [
           entry.label,
+          entry.slug,
           entry.image,
           entry.description,
+          entry.content?.title,
+          entry.content?.subtitle,
+          entry.content?.description,
+          entry.content?.publisher?.name,
           entry.owner_name,
+          ...(entry.content?.highlights ?? []),
           ...(entry.tags ?? []),
         ]
           .filter(Boolean)

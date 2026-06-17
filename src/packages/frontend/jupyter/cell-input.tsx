@@ -329,7 +329,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
           }}
           saveDebounceMs={SAVE_DEBOUNCE_MS}
           cmOptions={cmOptions}
-          autoFocus={props.is_focused || props.is_current}
+          autoFocus={props.is_focused}
           onUndo={
             props.actions == null
               ? undefined
@@ -490,11 +490,14 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
               display: "flex",
               flexDirection: "row",
               alignItems: "stretch",
+              minWidth: 0,
             }}
             cocalc-test="cell-input"
           >
             {render_input_prompt(cell_type)}
-            {render_input_value(cell_type)}
+            <div style={{ flex: 1, minWidth: 0, maxWidth: "100%" }}>
+              {render_input_value(cell_type)}
+            </div>
           </div>
         </div>
       </FileContext.Provider>

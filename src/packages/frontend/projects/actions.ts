@@ -376,6 +376,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
     Object.create(null);
   private projectLifecycleReconcileTokens: Record<string, number> =
     Object.create(null);
+  private projectMetadataReconcileTokens: Record<string, number> =
+    Object.create(null);
   private visibleProjectWindowIds: string[] = [];
 
   _init() {
@@ -675,6 +677,96 @@ export class ProjectsActions extends Actions<ProjectsState> {
           project_ids: [project_id],
           reason,
         });
+      }, delay);
+      (timer as any).unref?.();
+    }
+  }
+
+  private projectMetadataReconcileKey(
+    project_id: string,
+    field: "title" | "description",
+  ): string {
+    return `${project_id}:${field}`;
+  }
+
+  private nextProjectMetadataReconcileToken(
+    project_id: string,
+    field: "title" | "description",
+  ): number {
+    const key = this.projectMetadataReconcileKey(project_id, field);
+    const token = (this.projectMetadataReconcileTokens[key] ?? 0) + 1;
+    this.projectMetadataReconcileTokens[key] = token;
+    return token;
+  }
+
+  private projectMetadataReconcileTokenIsCurrent({
+    project_id,
+    field,
+    token,
+  }: {
+    project_id: string;
+    field: "title" | "description";
+    token: number;
+  }): boolean {
+    return (
+      this.projectMetadataReconcileTokens[
+        this.projectMetadataReconcileKey(project_id, field)
+      ] === token
+    );
+  }
+
+  private scheduleProjectedProjectMetadataReconcile({
+    project_id,
+    field,
+    value,
+    reason,
+    token,
+  }: {
+    project_id: string;
+    field: "title" | "description";
+    value: string;
+    reason: ProjectProjectionRepairReason;
+    token: number;
+  }): void {
+    for (const delay of ProjectsActions.PROJECT_ROW_RECONCILE_DELAYS_MS) {
+      const timer = setTimeout(() => {
+        void (async () => {
+          if (
+            !this.projectMetadataReconcileTokenIsCurrent({
+              project_id,
+              field,
+              token,
+            })
+          ) {
+            return;
+          }
+          try {
+            await this.repairProjectProjection({
+              kind: "project-ids",
+              project_ids: [project_id],
+              reason,
+            });
+          } catch (err) {
+            console.warn("project metadata projection repair failed", {
+              project_id,
+              field,
+              err,
+            });
+            return;
+          }
+          if (
+            !this.projectMetadataReconcileTokenIsCurrent({
+              project_id,
+              field,
+              token,
+            })
+          ) {
+            return;
+          }
+          if (store.getIn(["project_map", project_id, field]) !== value) {
+            this.setProjectLocalScalarField(project_id, field, value);
+          }
+        })();
       }, delay);
       (timer as any).unref?.();
     }
@@ -2426,14 +2518,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } as ProjectsState);
   };
 
-  private projectLocalScalarFieldMatches = (
-    project_id: string,
-    field: "title" | "description",
-    value: string,
-  ): boolean => {
-    return store.getIn(["project_map", project_id, field]) === value;
-  };
-
   private setProjectLocalBooleanField = (
     project_id: string,
     field:
@@ -2521,6 +2605,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
     before: string | undefined,
   ): Promise<void> => {
     const projectionName = `project.${field}`;
+    const reconcileToken = this.nextProjectMetadataReconcileToken(
+      project_id,
+      field,
+    );
     this.setProjectLocalScalarField(project_id, field, value);
     try {
       await writeAndWaitForProjection({
@@ -2542,11 +2630,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
           }),
       });
     } catch (err) {
-      if (
-        isProjectionConvergenceError(err, projectionName) &&
-        this.projectLocalScalarFieldMatches(project_id, field, value)
-      ) {
-        this.scheduleProjectedProjectReconcile(project_id, "write-ack");
+      if (isProjectionConvergenceError(err, projectionName)) {
+        const current = store.getIn(["project_map", project_id, field]);
+        if (current === before) {
+          this.setProjectLocalScalarField(project_id, field, value);
+        }
+        this.scheduleProjectedProjectMetadataReconcile({
+          project_id,
+          field,
+          value,
+          reason: "write-ack",
+          token: reconcileToken,
+        });
         console.warn("project metadata projection did not converge", {
           project_id,
           field,

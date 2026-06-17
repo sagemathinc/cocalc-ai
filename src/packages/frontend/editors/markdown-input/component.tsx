@@ -224,7 +224,7 @@ export function MarkdownInput(props: Props) {
   const [isFocusedStyle, setIsFocusedStyle] = useState<boolean>(!!autoFocus);
   const onCtrlEnterRef = useRef<typeof onCtrlEnter>(onCtrlEnter);
   const onFontSizeChangeRef = useRef<typeof onFontSizeChange>(onFontSizeChange);
-  const isFocusedRef = useRef<boolean>(!!autoFocus);
+  const isFocusedRef = useRef<boolean>(false);
 
   useEffect(() => {
     onCtrlEnterRef.current = onCtrlEnter;
@@ -387,6 +387,10 @@ export function MarkdownInput(props: Props) {
 
   const ensureCaretVisibleIfNeeded = useCallback(
     (editor: CodeMirror.Editor) => {
+      const scroller = editor.getScrollerElement?.() as HTMLElement | null;
+      if (scroller?.style.overflowY === "hidden") {
+        return;
+      }
       const scrollInfo = editor.getScrollInfo();
       if (scrollInfo.height <= scrollInfo.clientHeight + 1) {
         return;
@@ -600,6 +604,12 @@ export function MarkdownInput(props: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    let preventWindowCursorScroll:
+      | ((
+          editor: CodeMirror.Editor,
+          event?: { preventDefault?: () => void },
+        ) => void)
+      | undefined;
 
     // initialize the codemirror editor
     const node = textarea_ref.current;
@@ -737,6 +747,16 @@ export function MarkdownInput(props: Props) {
         cm.current.on("focus", onFocus);
       }
 
+      preventWindowCursorScroll = (
+        _editor: CodeMirror.Editor,
+        event?: { preventDefault?: () => void },
+      ) => {
+        if (isAutoGrow && unboundedAutoGrow) {
+          event?.preventDefault?.();
+        }
+      };
+      cm.current.on("scrollCursorIntoView", preventWindowCursorScroll);
+
       cm.current.on("blur", () => {
         isFocusedRef.current = false;
         setIsFocusedStyle(false);
@@ -790,7 +810,9 @@ export function MarkdownInput(props: Props) {
       const e: any = cm.current.getWrapperElement();
       const fixedHeight = !isAutoGrow ? "100%" : undefined;
       const baseHeight = fixedHeight ?? `${initialMinHeight}px`;
-      let s = `height:${baseHeight}; font-family:sans-serif !important;`;
+      let s =
+        `height:${baseHeight};width:100%;max-width:100%;` +
+        `box-sizing:border-box;font-family:sans-serif !important;`;
       if (compact) {
         s += "padding:0";
       } else {
@@ -878,7 +900,7 @@ export function MarkdownInput(props: Props) {
       }
 
       if (autoFocus) {
-        cm.current.focus();
+        cm.current.getInputField().focus({ preventScroll: true });
       }
 
       if (selectionRef != null) {
@@ -894,7 +916,7 @@ export function MarkdownInput(props: Props) {
             if (cm.current == null) {
               return false;
             }
-            cm.current.focus();
+            cm.current.getInputField().focus({ preventScroll: true });
             return true;
           },
         };
@@ -932,6 +954,9 @@ export function MarkdownInput(props: Props) {
       }
       if (onFocus) {
         cm.current.off("focus", onFocus as any);
+      }
+      if (preventWindowCursorScroll != null) {
+        cm.current.off("scrollCursorIntoView", preventWindowCursorScroll);
       }
       unregisterEditor?.();
       cm.current.getWrapperElement().remove();
@@ -1308,7 +1333,7 @@ export function MarkdownInput(props: Props) {
         cm.current.off("change", mentions_cursor_ref.current.change);
         mentions_cursor_ref.current = undefined;
       }
-      cm.current.focus();
+      cm.current.getInputField().focus({ preventScroll: true });
     }
   }
 
@@ -1359,7 +1384,7 @@ export function MarkdownInput(props: Props) {
             } as CodeMirror.TextMarkerOptions /* @types are out of date */,
           );
           close_mentions(); // must be after use of mentions_cursor_ref above.
-          cm.current.focus();
+          cm.current.getInputField().focus({ preventScroll: true });
         }}
         offset={mentions_offset}
       />
@@ -1382,6 +1407,8 @@ export function MarkdownInput(props: Props) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
+        minWidth: 0,
+        maxWidth: "100%",
         width: "100%",
       }}
     >
@@ -1395,6 +1422,8 @@ export function MarkdownInput(props: Props) {
             fontSize: `${fontSize ? fontSize : defaultFontSize}px`,
             flex: "1 1 auto",
             minHeight: 0,
+            minWidth: 0,
+            maxWidth: "100%",
             overflow: "hidden",
             width: "100%",
             clear: "right",

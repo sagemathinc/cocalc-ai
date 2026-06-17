@@ -954,6 +954,7 @@ export default function Message({
       !shouldShowAcpResubmitToAgentButton({
         hasActions: true,
         hasParentMessage: true,
+        isTurnRunning: acpState === "running",
         isViewersMessage: is_viewers_message,
         parentAcpState,
         readOnly: read_only,

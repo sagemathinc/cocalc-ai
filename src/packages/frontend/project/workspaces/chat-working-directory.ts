@@ -59,10 +59,16 @@ export function workingDirectoryForProjectFile(
     workspaceRecords?: WorkspaceRecord[];
   } = {},
 ): string {
+  const normalized = cleanPath(path);
   const workspace = resolveWorkspaceForPath(opts.workspaceRecords ?? [], path);
+  const workspaceRoot =
+    workspace != null &&
+    cleanPath(workspace.chat_path ?? undefined) === normalized
+      ? workspace.root_path
+      : undefined;
   return defaultWorkingDirectoryForChat(
     path,
-    workspace?.root_path,
+    workspaceRoot,
     opts.projectHomeDirectory,
   );
 }

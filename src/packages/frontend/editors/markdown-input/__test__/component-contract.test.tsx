@@ -444,8 +444,8 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 74);
   });
 
-  it("clears the mode switch float on the editor box so markdown keeps full width", () => {
-    const { container } = render(
+  it("clears the mode switch float on the editor box so markdown keeps full width", async () => {
+    const { container } = await renderMarkdownInput(
       <MarkdownInput
         value="hello"
         onChange={() => {}}
@@ -457,7 +457,12 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     const editorHost = container.querySelector("textarea")
       ?.parentElement as HTMLElement;
     expect(editorHost.style.width).toBe("100%");
+    expect(editorHost.style.minWidth).toBe("0");
+    expect(editorHost.style.maxWidth).toBe("100%");
     expect(editorHost.style.clear).toBe("right");
+    expect(latestEditor.getWrapperElement().style.width).toBe("100%");
+    expect(latestEditor.getWrapperElement().style.maxWidth).toBe("100%");
+    expect(latestEditor.getWrapperElement().style.boxSizing).toBe("border-box");
   });
 
   it("does not reserve internal help chrome when the editor is using an external toolbar", () => {
@@ -610,5 +615,83 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
 
     expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 80);
     expect(scroller.style.overflowY).toBe("auto");
+  });
+
+  it("does not scroll the notebook to reveal the cursor for unbounded auto-grow markdown", async () => {
+    await renderMarkdownInput(
+      <MarkdownInput
+        value={"1\n2\n3"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        unboundedAutoGrow
+      />,
+    );
+
+    latestEditor.__setScrollInfo({ height: 200, clientHeight: 40 });
+    act(() => {
+      latestEditor.__trigger("focus", latestEditor);
+    });
+
+    expect(latestEditor.getScrollerElement().style.overflowY).toBe("hidden");
+    expect(latestEditor.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("blocks CodeMirror window scrolling for unbounded auto-grow markdown", async () => {
+    await renderMarkdownInput(
+      <MarkdownInput
+        value={"1\n2\n3"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        unboundedAutoGrow
+      />,
+    );
+
+    const event = { preventDefault: jest.fn() };
+    act(() => {
+      latestEditor.__trigger("scrollCursorIntoView", latestEditor, event);
+    });
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps CodeMirror window cursor scrolling for capped markdown", async () => {
+    await renderMarkdownInput(
+      <MarkdownInput
+        value={"1\n2\n3\n4\n5\n6\n7\n8"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        autoGrowMaxHeight={80}
+      />,
+    );
+
+    const event = { preventDefault: jest.fn() };
+    act(() => {
+      latestEditor.__trigger("scrollCursorIntoView", latestEditor, event);
+    });
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("keeps cursor reveal for capped auto-grow markdown with an internal scroller", async () => {
+    await renderMarkdownInput(
+      <MarkdownInput
+        value={"1\n2\n3\n4\n5\n6\n7\n8"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        autoGrowMaxHeight={80}
+      />,
+    );
+
+    latestEditor.__setScrollInfo({ height: 200, clientHeight: 40 });
+    act(() => {
+      latestEditor.__trigger("focus", latestEditor);
+    });
+
+    expect(latestEditor.getScrollerElement().style.overflowY).toBe("auto");
+    expect(latestEditor.scrollIntoView).toHaveBeenCalled();
   });
 });
