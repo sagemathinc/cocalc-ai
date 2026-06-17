@@ -604,6 +604,12 @@ export function MarkdownInput(props: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    let preventWindowCursorScroll:
+      | ((
+          editor: CodeMirror.Editor,
+          event?: { preventDefault?: () => void },
+        ) => void)
+      | undefined;
 
     // initialize the codemirror editor
     const node = textarea_ref.current;
@@ -740,6 +746,16 @@ export function MarkdownInput(props: Props) {
       if (onFocus != null) {
         cm.current.on("focus", onFocus);
       }
+
+      preventWindowCursorScroll = (
+        _editor: CodeMirror.Editor,
+        event?: { preventDefault?: () => void },
+      ) => {
+        if (isAutoGrow && unboundedAutoGrow) {
+          event?.preventDefault?.();
+        }
+      };
+      cm.current.on("scrollCursorIntoView", preventWindowCursorScroll);
 
       cm.current.on("blur", () => {
         isFocusedRef.current = false;
@@ -938,6 +954,9 @@ export function MarkdownInput(props: Props) {
       }
       if (onFocus) {
         cm.current.off("focus", onFocus as any);
+      }
+      if (preventWindowCursorScroll != null) {
+        cm.current.off("scrollCursorIntoView", preventWindowCursorScroll);
       }
       unregisterEditor?.();
       cm.current.getWrapperElement().remove();

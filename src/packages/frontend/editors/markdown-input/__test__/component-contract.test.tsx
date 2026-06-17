@@ -637,6 +637,44 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(latestEditor.scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it("blocks CodeMirror window scrolling for unbounded auto-grow markdown", async () => {
+    await renderMarkdownInput(
+      <MarkdownInput
+        value={"1\n2\n3"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        unboundedAutoGrow
+      />,
+    );
+
+    const event = { preventDefault: jest.fn() };
+    act(() => {
+      latestEditor.__trigger("scrollCursorIntoView", latestEditor, event);
+    });
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps CodeMirror window cursor scrolling for capped markdown", async () => {
+    await renderMarkdownInput(
+      <MarkdownInput
+        value={"1\n2\n3\n4\n5\n6\n7\n8"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        autoGrowMaxHeight={80}
+      />,
+    );
+
+    const event = { preventDefault: jest.fn() };
+    act(() => {
+      latestEditor.__trigger("scrollCursorIntoView", latestEditor, event);
+    });
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
   it("keeps cursor reveal for capped auto-grow markdown with an internal scroller", async () => {
     await renderMarkdownInput(
       <MarkdownInput
