@@ -5,6 +5,7 @@
 
 import { Button, Flex, Typography } from "antd";
 
+import { PublicNextStep } from "@cocalc/frontend/public/common";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 
 const { Paragraph, Text, Title } = Typography;
@@ -61,6 +62,7 @@ export default function CommunityView() {
           </PublicSection>
         ))}
       </div>
+      <PublicNextStep heading="Ready to get started, or need direct help?" />
     </div>
   );
 }

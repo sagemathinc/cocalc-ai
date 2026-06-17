@@ -16,6 +16,7 @@ import { downloadStandaloneDocsHtml } from "@cocalc/frontend/docs/download-html"
 import {
   appPath,
   getPublicMarketingSiteName,
+  PublicNextStep,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
@@ -79,6 +80,7 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
           {downloadHtmlBusy ? (
             <Text type="secondary">Preparing HTML download...</Text>
           ) : null}
+          <PublicNextStep authenticated={!!config?.is_authenticated} />
         </Flex>
       </section>
     </PublicSectionShell>
