@@ -226,7 +226,7 @@ describe("supersedeOlderProjectStartLros", () => {
     expect(updateLroMock).not.toHaveBeenCalled();
   });
 
-  it("cancels restore-backed start lros after the extended orphan grace window", async () => {
+  it("keeps restore-backed start lros during long cross-region restore windows", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("FROM long_running_operations")) {
         return {
@@ -253,7 +253,41 @@ describe("supersedeOlderProjectStartLros", () => {
     const { cancelStaleProjectStartLros } = await import("./start-lro-cleanup");
     const canceled = await cancelStaleProjectStartLros({
       project_id: "proj-1",
-      nowMs: Date.UTC(2026, 4, 6, 12, 11, 0),
+      nowMs: Date.UTC(2026, 4, 6, 14, 30, 0),
+    });
+
+    expect(canceled).toBe(0);
+    expect(updateLroMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels restore-backed start lros after the restore orphan grace window", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM long_running_operations")) {
+        return {
+          rows: [
+            {
+              op_id: "restore-op-1",
+              scope_type: "project",
+              scope_id: "proj-1",
+              error: null,
+              input: { restore_backup_id: "backup-1" },
+              created_at: "2026-05-06T12:00:00.000Z",
+            },
+          ],
+        };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-05-06T12:00:00Z" } }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { cancelStaleProjectStartLros } = await import("./start-lro-cleanup");
+    const canceled = await cancelStaleProjectStartLros({
+      project_id: "proj-1",
+      nowMs: Date.UTC(2026, 4, 6, 15, 1, 0),
     });
 
     expect(canceled).toBe(1);
