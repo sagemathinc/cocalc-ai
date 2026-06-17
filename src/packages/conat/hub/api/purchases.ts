@@ -508,6 +508,86 @@ export interface SiteLicenseAuditEvent {
   created?: Date;
 }
 
+export type SiteLicenseExternalClaimSigningAlgorithm = "EdDSA" | "ES256";
+
+export type SiteLicenseExternalClaimConsumptionStatus =
+  | "pending-side-effect"
+  | "granted"
+  | "failed-retryable"
+  | "failed-terminal";
+
+export interface SiteLicenseExternalClaimPool {
+  id: string;
+  slug?: string | null;
+  site_license_id: string;
+  package_id: string;
+  name: string;
+  issuer: string;
+  audience: string;
+  default_membership_class?: MembershipClass | null;
+  allow_membership_class_override: boolean;
+  default_membership_duration_days?: number | null;
+  default_membership_expires_at?: Date | null;
+  allow_membership_expires_at_override: boolean;
+  min_membership_duration_days?: number | null;
+  max_membership_duration_days?: number | null;
+  max_membership_expires_at?: Date | null;
+  default_rootfs_id?: string | null;
+  max_claims?: number | null;
+  max_claims_per_account?: number | null;
+  starts_at?: Date | null;
+  expires_at?: Date | null;
+  disabled_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  created_by_account_id?: string | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export interface SiteLicenseExternalClaimKey {
+  id: string;
+  pool_id: string;
+  kid: string;
+  alg: SiteLicenseExternalClaimSigningAlgorithm;
+  public_key_jwk?: Record<string, unknown> | null;
+  public_key_pem?: string | null;
+  starts_at?: Date | null;
+  expires_at?: Date | null;
+  revoked_at?: Date | null;
+  created_by_account_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export interface SiteLicenseExternalClaimConsumption {
+  id: string;
+  pool_id: string;
+  site_license_id: string;
+  package_id: string;
+  jti: string;
+  token_hash: string;
+  issuer: string;
+  kid?: string | null;
+  account_id: string;
+  status: SiteLicenseExternalClaimConsumptionStatus;
+  side_effect_key: string;
+  assignment_id?: string | null;
+  membership_grant_id?: string | null;
+  membership_class: MembershipClass;
+  membership_expires_at?: Date | null;
+  rootfs_id?: string | null;
+  external_subject?: string | null;
+  token_expires_at?: Date | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  retry_count: number;
+  last_retry_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  consumed_at: Date;
+  updated: Date;
+}
+
 export interface SiteLicenseAccountDetails {
   account_id: string;
   first_name?: string;
@@ -1178,6 +1258,85 @@ export interface Purchases {
     site_license_id?: string;
     pool?: SiteLicensePoolConfig;
   }) => Promise<SiteLicenseOverview>;
+  createSiteLicenseExternalClaimPool: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    site_license_id?: string;
+    package_id?: string;
+    name?: string;
+    issuer?: string;
+    slug?: string | null;
+    audience?: string;
+    default_membership_class?: MembershipClass | null;
+    allow_membership_class_override?: boolean;
+    default_membership_duration_days?: number | null;
+    default_membership_expires_at?: Date | string | null;
+    allow_membership_expires_at_override?: boolean;
+    min_membership_duration_days?: number | null;
+    max_membership_duration_days?: number | null;
+    max_membership_expires_at?: Date | string | null;
+    default_rootfs_id?: string | null;
+    max_claims?: number | null;
+    max_claims_per_account?: number | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+    disabled_at?: Date | string | null;
+    metadata?: Record<string, unknown> | null;
+  }) => Promise<SiteLicenseExternalClaimPool>;
+  addSiteLicenseExternalClaimKey: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    pool_id?: string;
+    kid?: string;
+    alg?: SiteLicenseExternalClaimSigningAlgorithm;
+    public_key_jwk?: Record<string, unknown> | null;
+    public_key_pem?: string | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+    revoked_at?: Date | string | null;
+    metadata?: Record<string, unknown> | null;
+  }) => Promise<SiteLicenseExternalClaimKey>;
+  listSiteLicenseExternalClaimPools: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+    package_id?: string;
+    pool_id?: string;
+    limit?: number;
+  }) => Promise<SiteLicenseExternalClaimPool[]>;
+  disableSiteLicenseExternalClaimPool: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    pool_id?: string;
+    disabled_at?: Date | string | null;
+  }) => Promise<SiteLicenseExternalClaimPool>;
+  listSiteLicenseExternalClaimKeys: (opts?: {
+    account_id?: string;
+    pool_id?: string;
+    limit?: number;
+  }) => Promise<SiteLicenseExternalClaimKey[]>;
+  revokeSiteLicenseExternalClaimKey: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    pool_id?: string;
+    kid?: string;
+    revoked_at?: Date | string | null;
+  }) => Promise<SiteLicenseExternalClaimKey>;
+  listSiteLicenseExternalClaimConsumptions: (opts?: {
+    account_id?: string;
+    pool_id?: string;
+    site_license_id?: string;
+    target_account_id?: string;
+    status?: SiteLicenseExternalClaimConsumptionStatus;
+    limit?: number;
+  }) => Promise<SiteLicenseExternalClaimConsumption[]>;
+  consumeSiteLicenseExternalClaimToken: (opts?: {
+    account_id?: string;
+    token?: string;
+  }) => Promise<SiteLicenseExternalClaimConsumption>;
   archiveSiteLicensePool: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1286,6 +1445,14 @@ export const purchases = {
   getSiteLicenseOverview: authFirst,
   updateSiteLicense: authFirst,
   addSiteLicensePool: authFirst,
+  createSiteLicenseExternalClaimPool: authFirst,
+  addSiteLicenseExternalClaimKey: authFirst,
+  listSiteLicenseExternalClaimPools: authFirst,
+  disableSiteLicenseExternalClaimPool: authFirst,
+  listSiteLicenseExternalClaimKeys: authFirst,
+  revokeSiteLicenseExternalClaimKey: authFirst,
+  listSiteLicenseExternalClaimConsumptions: authFirst,
+  consumeSiteLicenseExternalClaimToken: authFirst,
   archiveSiteLicensePool: authFirst,
   setSiteLicenseManager: authFirst,
   removeSiteLicenseManager: authFirst,

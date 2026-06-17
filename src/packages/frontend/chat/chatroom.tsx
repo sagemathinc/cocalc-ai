@@ -23,6 +23,7 @@ import { COLORS } from "@cocalc/util/theme";
 import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
+import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
 import { ChatRoomComposer } from "./composer";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
@@ -42,7 +43,10 @@ import type { ThreadIndexEntry } from "./message-cache";
 import { markChatAsReadIfUnseen, stableDraftKeyFromThreadKey } from "./utils";
 import { useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
-import { useChatComposerDraft } from "./use-chat-composer-draft";
+import {
+  useChatComposerDraft,
+  writeChatComposerDraft,
+} from "./use-chat-composer-draft";
 import * as immutable from "immutable";
 import {
   resetThreadSelectionForNewChat,
@@ -861,6 +865,59 @@ export function ChatPanel({
     [setInput],
   );
   useEffect(() => {
+    actions.appendToComposerDraft = (
+      request: ChatComposerDraftAppendRequest,
+    ) => {
+      const text = `${request.text ?? ""}`.trim();
+      if (!text) return;
+      const targetThreadKey = request.threadKey?.trim() || null;
+      const appendToExisting = (existing: string) =>
+        existing.trim() ? `${existing.replace(/\s+$/g, "")}\n\n${text}` : text;
+      if (targetThreadKey && targetThreadKey !== selectedThreadKey) {
+        void (async () => {
+          let nextText = appendToExisting("");
+          try {
+            nextText =
+              (await writeChatComposerDraft({
+                account_id,
+                project_id,
+                path,
+                composerDraftKey: stableDraftKeyFromThreadKey(targetThreadKey),
+                text,
+                append: true,
+              })) || nextText;
+          } catch (err) {
+            console.warn("failed to stage chat composer draft", err);
+          }
+          pendingThreadDraftTransferRef.current = {
+            threadKey: targetThreadKey,
+            text: nextText,
+            sourceDraftKey: composerDraftKey,
+          };
+          setAllowAutoSelectThread(false);
+          setSelectedThreadKey(targetThreadKey);
+        })();
+        return;
+      }
+      setComposerInput(appendToExisting(inputRef.current ?? ""));
+    };
+    return () => {
+      if (actions.appendToComposerDraft != null) {
+        actions.appendToComposerDraft = undefined;
+      }
+    };
+  }, [
+    actions,
+    account_id,
+    composerDraftKey,
+    path,
+    project_id,
+    selectedThreadKey,
+    setAllowAutoSelectThread,
+    setComposerInput,
+    setSelectedThreadKey,
+  ]);
+  useEffect(() => {
     const pending = pendingThreadDraftTransferRef.current;
     if (!pending || selectedThreadKey !== pending.threadKey) {
       return;
@@ -1374,6 +1431,10 @@ export function ChatPanel({
         reasoning:
           typeof acpConfig?.reasoning === "string"
             ? acpConfig.reasoning
+            : undefined,
+        serviceTier:
+          typeof acpConfig?.serviceTier === "string"
+            ? acpConfig.serviceTier
             : undefined,
         thread_color:
           typeof thread.threadColor === "string"

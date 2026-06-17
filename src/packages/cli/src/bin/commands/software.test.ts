@@ -68,6 +68,7 @@ function makeDeps({
   loadAuthConfig,
   fetch,
   outputRuns,
+  now,
 }: {
   localStore: string;
   runs?: CapturedRun[];
@@ -78,13 +79,14 @@ function makeDeps({
   r2Client?: SoftwareR2Client;
   loadAuthConfig?: SoftwareCommandDeps["loadAuthConfig"];
   fetch?: SoftwareCommandDeps["fetch"];
+  now?: () => Date;
 }): SoftwareCommandDeps {
   const resolvedRepoRoot = repoRoot ?? makeRepoRoot();
   const resolvedCwd = cwd ?? resolvedRepoRoot;
   return {
     cwd: resolvedCwd,
     env: { COCALC_SOFTWARE_LOCAL_STORE: localStore, ...env },
-    now: () => new Date("2026-06-14T23:59:12.345Z"),
+    now: now ?? (() => new Date("2026-06-14T23:59:12.345Z")),
     gitMetadata: () => ({
       commit: "e882d124c7abcdef",
       short: "e882d124c7ab",
@@ -402,6 +404,7 @@ test("software help lists supported components", () => {
   assert.match(build.helpInformation(), /static\|hub\|bay\|project-host/);
   assert.match(list.helpInformation(), /cli\|launchpad\|plus\|star/);
   assert.match(deploy.helpInformation(), /bay-conat-router/);
+  assert.match(deploy.helpInformation(), /--build/);
   assert.match(
     deploy.helpInformation(),
     /site profile \(see cocalc auth list\) or release\s+channel \(dev, candidate or stable\)/,
@@ -529,8 +532,7 @@ test("software build hub runs the Rocket bay hub builder", async () => {
     "--quiet",
     "software",
     "build",
-    "hub",
-    "runtime-test",
+    "hub:runtime-test",
   ]);
 
   assert.equal(runs.length, 1);
@@ -934,12 +936,18 @@ test("software build star records GitHub release assets", async () => {
   }
 });
 
-test("software build rejects duplicate explicit local tags", async () => {
+test("software build allows duplicate explicit local tags", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-duplicate-"));
   const localStore = join(dir, "store");
   const source = join(dir, "artifact.tar.xz");
   writeFileSync(source, "artifact contents");
-  const program = createProgram(makeDeps({ localStore }));
+  let nowCalls = 0;
+  const program = createProgram(
+    makeDeps({
+      localStore,
+      now: () => new Date(1781481552345 + nowCalls++ * 60_000),
+    }),
+  );
 
   await program.parseAsync([
     "node",
@@ -953,20 +961,40 @@ test("software build rejects duplicate explicit local tags", async () => {
     source,
   ]);
 
-  await assert.rejects(
-    async () =>
-      await program.parseAsync([
-        "node",
-        "test",
-        "--quiet",
-        "software",
-        "build",
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "hub",
+    "fix-bug",
+    "--from-file",
+    source,
+  ]);
+
+  const manifests = JSON.parse(
+    readFileSync(
+      join(
+        localStore,
         "hub",
-        "fix-bug",
-        "--from-file",
-        source,
-      ]),
-    /software tag already exists locally/,
+        "20260615T000112Z-e882d124-fix-bug",
+        "manifest.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(manifests.tag, "fix-bug");
+  assert.equal(
+    existsSync(
+      join(
+        localStore,
+        "hub",
+        "20260614T235912Z-e882d124-fix-bug",
+        "manifest.json",
+      ),
+    ),
+    true,
   );
 });
 
@@ -1048,8 +1076,7 @@ test("software push uploads files manifest and component index", async () => {
       "--json",
       "software",
       "push",
-      "hub",
-      "push-test",
+      "hub:push-test",
       "--env-file",
       join(dir, "missing.env"),
     ]);
@@ -1573,7 +1600,6 @@ test("software deploy latest chooses the newest remote artifact", async () => {
     "software",
     "deploy",
     "static",
-    "latest",
     "staging",
     "--env-file",
     join(dir, "missing.env"),
@@ -1601,6 +1627,94 @@ test("software deploy latest chooses the newest remote artifact", async () => {
     "https://staging.cocalc.ai",
     "--yes",
   ]);
+});
+
+test("software deploy component tag chooses the newest duplicate remote tag", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-dup-tag-"));
+  const localStore = join(dir, "store");
+  const runs: CapturedRun[] = [];
+  const oldFileKey =
+    "software/artifacts/static/20260614T000000Z-abcdef12-dup/files/static-old.tar.xz";
+  const newFileKey =
+    "software/artifacts/static/20260615T000000Z-abcdef12-dup/files/static-new.tar.xz";
+  const remoteIndex = {
+    schema: "cocalc-software-index-v1",
+    component: "static",
+    generated_at: "2026-06-15T00:00:00.000Z",
+    artifacts: [
+      {
+        artifact_id: "20260614T000000Z-abcdef12-dup",
+        tag: "dup",
+        tag_generated: false,
+        timestamp: "2026-06-14T00:00:00.000Z",
+        git: { commit: "abcdef123456", short: "abcdef123456", dirty: false },
+        manifest_key:
+          "software/artifacts/static/20260614T000000Z-abcdef12-dup/manifest.json",
+        manifest_url:
+          "https://software.example.test/software/artifacts/static/20260614T000000Z-abcdef12-dup/manifest.json",
+        files: [
+          {
+            name: "static-old.tar.xz",
+            size_bytes: "old static bundle".length,
+            sha256: "old",
+            key: oldFileKey,
+            url: `https://software.example.test/${oldFileKey}`,
+          },
+        ],
+      },
+      {
+        artifact_id: "20260615T000000Z-abcdef12-dup",
+        tag: "dup",
+        tag_generated: false,
+        timestamp: "2026-06-15T00:00:00.000Z",
+        git: { commit: "abcdef123456", short: "abcdef123456", dirty: false },
+        manifest_key:
+          "software/artifacts/static/20260615T000000Z-abcdef12-dup/manifest.json",
+        manifest_url:
+          "https://software.example.test/software/artifacts/static/20260615T000000Z-abcdef12-dup/manifest.json",
+        files: [
+          {
+            name: "static-new.tar.xz",
+            size_bytes: "new static bundle".length,
+            sha256: "new",
+            key: newFileKey,
+            url: `https://software.example.test/${newFileKey}`,
+          },
+        ],
+      },
+    ],
+  };
+  const r2 = makeR2Client(
+    new Map([
+      [
+        "software/indexes/static.json",
+        Buffer.from(JSON.stringify(remoteIndex), "utf8"),
+      ],
+      [oldFileKey, Buffer.from("old static bundle", "utf8")],
+      [newFileKey, Buffer.from("new static bundle", "utf8")],
+    ]),
+  );
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "static:dup",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const rocketIndex = runs[0].args.indexOf("rocket");
+  assert.notEqual(rocketIndex, -1);
+  const rocketArgs = runs[0].args.slice(rocketIndex);
+  assert.equal(rocketArgs[6], `https://software.example.test/${newFileKey}`);
+  assert.equal(rocketArgs[8], "new");
 });
 
 test("software deploy resolves API from auth profile and infers known bay remote", async () => {
@@ -1740,6 +1854,75 @@ test("software deploy hub pushes a local-only artifact before Rocket deploy", as
     "https://cocalc.ai",
     "--yes",
   ]);
+});
+
+test("software deploy --build builds the artifact tag before deploying", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-build-hub-"));
+  const localStore = join(dir, "store");
+  const repoRoot = makeRepoRoot("software-deploy-build-repo-");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({
+      localStore,
+      repoRoot,
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = join(dir, "cocalc-bin");
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "deploy",
+      "--build",
+      "hub:build-deploy",
+      "prod",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+    process.argv[1] = originalArgv1;
+  }
+
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0].command, "pnpm");
+  assert.equal(runs[0].args.includes("build:bay-hub-bundle"), true);
+  assert.equal(runs[1].command, join(dir, "cocalc-bin"));
+  const rocketIndex = runs[1].args.indexOf("rocket");
+  assert.notEqual(rocketIndex, -1);
+  assert.deepEqual(runs[1].args.slice(rocketIndex, rocketIndex + 5), [
+    "rocket",
+    "deploy",
+    "prod",
+    "--scope",
+    "hub",
+  ]);
+  const index = JSON.parse(
+    r2.objects.get("software/indexes/hub.json")!.toString("utf8"),
+  );
+  assert.equal(index.artifacts[0].tag, "build-deploy");
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.command, "software deploy");
+  assert.equal(payload.data.component, "hub");
+  assert.equal(payload.data.tag, "build-deploy");
+  assert.equal(payload.data.built, true);
+  assert.equal(payload.data.built_component, "hub");
+  assert.equal(payload.data.built_artifact_id, payload.data.artifact_id);
+  assert.equal(payload.data.source, "local+pushed");
 });
 
 test("software deploy records failed history when subprocess fails", async () => {
@@ -2976,7 +3159,7 @@ test("software smoke rejects components that are not wired yet", async () => {
   );
 });
 
-test("software push rejects remote duplicate tags", async () => {
+test("software push allows remote duplicate tags", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-push-duplicate-"));
   const localStore = join(dir, "store");
   const source = join(dir, "artifact.tar.xz");
@@ -3022,18 +3205,27 @@ test("software push rejects remote duplicate tags", async () => {
     source,
   ]);
 
-  await assert.rejects(
-    async () =>
-      await program.parseAsync([
-        "node",
-        "test",
-        "software",
-        "push",
-        "hub",
-        "push-test",
-        "--env-file",
-        join(dir, "missing.env"),
-      ]),
-    /remote software artifact already exists/,
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "push",
+    "hub",
+    "push-test",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const index = JSON.parse(
+    r2.objects.get("software/indexes/hub.json")!.toString("utf8"),
   );
+  assert.equal(index.artifacts.length, 2);
+  assert.equal(index.artifacts[0].tag, "push-test");
+  assert.equal(
+    index.artifacts[0].artifact_id,
+    "20260614T235912Z-e882d124-push-test",
+  );
+  assert.equal(index.artifacts[1].tag, "push-test");
+  assert.equal(index.artifacts[1].artifact_id, "old");
 });

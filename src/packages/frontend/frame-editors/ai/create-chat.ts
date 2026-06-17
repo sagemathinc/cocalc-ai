@@ -5,6 +5,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import {
   dispatchNavigatorPromptIntent,
+  stageNavigatorPromptInWorkspaceChat,
   submitNavigatorPromptInWorkspaceChat,
 } from "@cocalc/frontend/project/new/navigator-intents";
 import { getMaxTokens as getModelMaxTokens } from "@cocalc/util/db-schema/ai-models";
@@ -23,6 +24,8 @@ export interface Options {
   tag?: string;
   model: string;
   agentSession?: AssistantAgentSessionTarget;
+  submitToAgent?: boolean;
+  createNewThread?: boolean;
 }
 
 export type AssistantAgentSessionTarget = Pick<
@@ -41,6 +44,7 @@ export type AssistantAgentSessionTarget = Pick<
   | "mode"
   | "model"
   | "reasoning"
+  | "serviceTier"
   | "thread_color"
   | "thread_accent_color"
   | "thread_icon"
@@ -83,7 +87,6 @@ export default async function createChat({
   const frameType = actions._get_frame_type(frameId);
   const { model } = options;
 
-  const visiblePrompt = createAssistantVisiblePrompt(options.command);
   const { message } = await createChatMessage(actions, frameId, options, input);
   const codexModel = resolveAssistantCodexModel(model);
   const prompt = createNavigatorAssistantPrompt({
@@ -98,27 +101,46 @@ export default async function createChat({
     frameType === "terminal"
       ? "intent:terminal-assistant"
       : "intent:editor-assistant";
-  const sent = await submitNavigatorPromptInWorkspaceChat({
-    project_id: actions.project_id,
-    path: actions.path,
-    prompt,
-    visiblePrompt,
-    title,
-    tag: intent,
-    forceCodex: true,
-    codexConfig: { model: codexModel },
-    agentSession: options.agentSession,
-    openFloating: true,
-    waitForAgent: false,
-  });
+  const submitToAgent = options.submitToAgent !== false;
+  const sent = submitToAgent
+    ? await submitNavigatorPromptInWorkspaceChat({
+        project_id: actions.project_id,
+        path: actions.path,
+        prompt,
+        visiblePrompt: prompt,
+        title,
+        tag: intent,
+        forceCodex: true,
+        codexConfig: { model: codexModel },
+        agentSession: options.agentSession,
+        createNewThread: options.createNewThread,
+        openFloating: true,
+        waitForAgent: false,
+      })
+    : await stageNavigatorPromptInWorkspaceChat({
+        project_id: actions.project_id,
+        path: actions.path,
+        prompt,
+        visiblePrompt: prompt,
+        title,
+        tag: intent,
+        forceCodex: true,
+        codexConfig: { model: codexModel },
+        agentSession: options.agentSession,
+        createNewThread: options.createNewThread,
+        stageInComposer: true,
+        openFloating: true,
+        waitForAgent: false,
+      });
   if (!sent) {
     dispatchNavigatorPromptIntent({
       prompt,
-      visiblePrompt,
+      visiblePrompt: prompt,
       title,
       tag: intent,
       forceCodex: true,
       codexConfig: { model: codexModel },
+      createNewThread: options.createNewThread,
     });
   }
 }

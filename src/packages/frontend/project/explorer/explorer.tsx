@@ -274,6 +274,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
   } = useBackupsListing({
     project_id,
     path: effective_current_path,
+    cacheContext: host_id,
   });
   const backupOps = useTypedRedux({ project_id }, "backup_ops");
   const prevBackupStatuses = useRef<Map<string, string>>(new Map());

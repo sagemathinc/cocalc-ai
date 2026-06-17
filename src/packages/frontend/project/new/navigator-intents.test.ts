@@ -9,6 +9,7 @@ const mockLoadOpenedAgentSessionSelection = jest.fn();
 const mockEnsureWorkspaceChatForPath = jest.fn();
 const mockEnsureWorkspaceChatPath = jest.fn();
 const mockOpenFile = jest.fn();
+const mockWriteChatComposerDraft = jest.fn();
 let mockAccountId = "00000000-1000-4000-8000-000000000001";
 let mockProjectStoreState: Record<string, any> = {};
 let mockOtherSettings: Record<string, any> = {};
@@ -24,6 +25,11 @@ jest.mock("@cocalc/frontend/chat/register", () => ({
 
 jest.mock("@cocalc/frontend/chat/actions/ai", () => ({
   processAI: (...args: any[]) => mockProcessAI(...args),
+}));
+
+jest.mock("@cocalc/frontend/chat/use-chat-composer-draft", () => ({
+  writeChatComposerDraft: (...args: any[]) =>
+    mockWriteChatComposerDraft(...args),
 }));
 
 jest.mock("@cocalc/frontend/project/page/agent-panel-state", () => ({
@@ -92,6 +98,8 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     mockProjectStoreState = {};
     mockOtherSettings = {};
     mockOpenFile.mockReset();
+    mockWriteChatComposerDraft.mockReset();
+    mockWriteChatComposerDraft.mockResolvedValue("draft text");
     mockLoadOpenedAgentSessionSelection.mockReset();
     mockLoadOpenedAgentSessionSelection.mockReturnValue(null);
     window.localStorage.clear();
@@ -902,6 +910,83 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     );
     expect(save).toHaveBeenCalled();
     expect(mockOpenFloating).not.toHaveBeenCalled();
+  });
+
+  it("stages a workspace prompt in the thread composer without sending a chat row", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-composer.chat";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-composer",
+        root_path: "/home/wstein/project/composer",
+        theme: {
+          title: "composer",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockListSessions.mockResolvedValue([]);
+    const save = jest.fn().mockResolvedValue(undefined);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-composer");
+    const actions = {
+      syncdb: { get_state: () => "ready", save },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await stageNavigatorPromptInWorkspaceChat({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/composer/a.ipynb",
+      prompt: "Full visible agent prompt",
+      visiblePrompt: "Full visible agent prompt",
+      title: "Fresh thread",
+      forceCodex: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+      createNewThread: true,
+      stageInComposer: true,
+      openFloating: true,
+    });
+
+    expect(ok).toBe(true);
+    expect(createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Codex",
+        threadAgent: expect.objectContaining({
+          mode: "codex",
+          model: "gpt-5.4-mini",
+        }),
+      }),
+    );
+    expect(sendChat).not.toHaveBeenCalled();
+    expect(mockWriteChatComposerDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "00000000-1000-4000-8000-000000000000",
+        path: workspaceChatPath,
+        text: "Full visible agent prompt",
+        append: true,
+      }),
+    );
+    expect(save).toHaveBeenCalled();
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      "00000000-1000-4000-8000-000000000000",
+      expect.objectContaining({
+        thread_key: "thread-composer",
+        title: "Codex",
+      }),
+      expect.anything(),
+    );
   });
 
   it("ignores phantom thread keys when staging a workspace prompt", async () => {

@@ -254,8 +254,8 @@ targets use \`dev\`, \`candidate\`, or \`stable\`.
 ## Minimal operator pattern
 
 ~~~sh
-cocalc software build hub fix-name
-cocalc software deploy hub fix-name staging
+cocalc software build hub:fix-name
+cocalc software deploy hub:fix-name staging
 cocalc software smoke hub staging
 cocalc software history hub staging
 ~~~
@@ -263,7 +263,7 @@ cocalc software history hub staging
 For release-channel products, replace the site profile with a channel:
 
 ~~~sh
-cocalc software deploy cli fix-name candidate
+cocalc software deploy cli:fix-name candidate
 cocalc software smoke cli candidate
 ~~~
 

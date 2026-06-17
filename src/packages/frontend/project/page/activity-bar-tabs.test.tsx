@@ -219,7 +219,7 @@ jest.mock("./file-tab", () => ({
     workspaces: { label: "Workspaces", icon: "cube" },
     agents: { label: "Agents", icon: "comment" },
     files: { label: "Files", icon: "folder-open-o" },
-    rootfs: { label: "Rootfs", icon: "docker" },
+    rootfs: { label: "RootFS", icon: "docker" },
     new: { label: "New", icon: "plus-circle" },
     search: { label: "Search", icon: "search" },
     docs: { label: "Docs", icon: "book" },
