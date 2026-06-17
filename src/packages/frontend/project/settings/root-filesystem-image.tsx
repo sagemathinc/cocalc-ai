@@ -33,7 +33,13 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import ActionAssist from "@cocalc/frontend/components/action-assist";
-import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
+import {
+  Icon,
+  isIconName,
+  Paragraph,
+  ThemeEditorModal,
+  type IconName,
+} from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
@@ -2937,7 +2943,10 @@ function renderRootfsThemePreview(entry?: {
   const imageUrl = rootfsThemeImageUrl(entry?.theme);
   const accentColor = entry?.theme?.accent_color?.trim();
   const color = entry?.theme?.color?.trim();
-  const iconName = entry?.theme?.icon?.trim() || "cube";
+  const requestedIconName = entry?.theme?.icon?.trim();
+  const iconName: IconName = isIconName(requestedIconName)
+    ? requestedIconName
+    : "docker";
   return imageUrl ? (
     <img
       src={imageUrl}

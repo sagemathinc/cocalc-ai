@@ -585,6 +585,8 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
           visibility: input.visibility,
           tags: Array.isArray(input.tags) ? input.tags : undefined,
           theme: input.theme,
+          content: input.content,
+          content_warnings: input.content_warnings,
           official: input.official,
           prepull: input.prepull,
           hidden: input.hidden,
