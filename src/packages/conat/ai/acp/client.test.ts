@@ -11,6 +11,7 @@ jest.mock("./server", () => ({
 import {
   automationAcp,
   forkAcpSession,
+  interruptAcp,
   steerAcp,
   streamAcp,
   truncateAcpSession,
@@ -57,6 +58,61 @@ describe("acp client explicit routing", () => {
         },
       } as any),
     ).rejects.toThrow("must provide an explicit Conat client");
+  });
+
+  it("requires an explicit client for interruptAcp", async () => {
+    await expect(
+      interruptAcp({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        threadId: "thread-1",
+      }),
+    ).rejects.toThrow("must provide an explicit Conat client");
+  });
+});
+
+describe("interruptAcp", () => {
+  it("treats an empty legacy acknowledgement as queued", async () => {
+    const client = {
+      request: jest.fn().mockResolvedValue({ data: undefined }),
+    };
+
+    await expect(
+      interruptAcp(
+        {
+          project_id: "00000000-0000-4000-8000-000000000000",
+          account_id: "00000000-0000-4000-8000-000000000001",
+          threadId: "thread-1",
+        },
+        client as any,
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      state: "queued",
+    });
+  });
+
+  it("returns the backend interrupt state", async () => {
+    const client = {
+      request: jest.fn().mockResolvedValue({
+        data: { ok: true, state: "missing", threadId: "thread-1" },
+      }),
+    };
+
+    await expect(
+      interruptAcp(
+        {
+          project_id: "00000000-0000-4000-8000-000000000000",
+          account_id: "00000000-0000-4000-8000-000000000001",
+          threadId: "thread-1",
+        },
+        client as any,
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      state: "missing",
+      threadId: "thread-1",
+    });
   });
 });
 

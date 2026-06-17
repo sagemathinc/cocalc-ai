@@ -2732,29 +2732,31 @@ export class ChatActions extends Actions<ChatState> {
       thread_id: threadId,
     };
     try {
-      await webapp_client.conat_client.interruptAcp({
+      const result = await webapp_client.conat_client.interruptAcp({
         project_id,
         threadId,
         chat,
       });
-      this.markAcpTurnInterrupted({
-        message: targetMessage,
-        messageDate,
-        threadId,
-        note: "Conversation interrupted.",
-      });
-      return true;
+      if (
+        result?.state === "interrupted" ||
+        result?.state === "repaired" ||
+        result?.state === "missing"
+      ) {
+        this.markAcpTurnInterrupted({
+          message: targetMessage,
+          messageDate,
+          threadId,
+          note:
+            result.state === "missing"
+              ? "Conversation interrupted locally after the backend confirmed that no running session exists."
+              : "Conversation interrupted.",
+        });
+        return true;
+      }
+      return result?.ok === true;
     } catch (err) {
       console.warn("failed to interrupt codex turn", err);
-      // If the ACP worker/session is already gone, a backend interrupt cannot
-      // acknowledge. The user's explicit interrupt should still clear durable
-      // queued/running chat state so the thread does not stay stuck forever.
-      return this.markAcpTurnInterrupted({
-        message: targetMessage,
-        messageDate,
-        threadId,
-        note: "Conversation interrupted locally after the running backend session could not be reached.",
-      });
+      return false;
     }
   }
 

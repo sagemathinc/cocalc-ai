@@ -92,7 +92,10 @@ describe("shouldOptimisticallyStopGeneratingLocally", () => {
   it("durably clears Codex running state after backend interrupt acknowledgement", async () => {
     const message = runningCodexMessage();
     const actions = makeActions(message);
-    mockInterruptAcp.mockResolvedValueOnce(undefined);
+    mockInterruptAcp.mockResolvedValueOnce({
+      ok: true,
+      state: "interrupted",
+    });
 
     await expect(
       actions.languageModelStopGenerating(new Date(message.date), {
@@ -125,10 +128,13 @@ describe("shouldOptimisticallyStopGeneratingLocally", () => {
     );
   });
 
-  it("clears stale Codex state when backend interrupt cannot reach a session", async () => {
+  it("clears stale Codex state when backend confirms no session exists", async () => {
     const message = runningCodexMessage();
     const actions = makeActions(message);
-    mockInterruptAcp.mockRejectedValueOnce(new Error("timeout"));
+    mockInterruptAcp.mockResolvedValueOnce({
+      ok: true,
+      state: "missing",
+    });
 
     await expect(
       actions.languageModelStopGenerating(new Date(message.date), {
@@ -143,11 +149,35 @@ describe("shouldOptimisticallyStopGeneratingLocally", () => {
         message_id: "message-running",
         acp_state: null,
         acp_interrupted: true,
-        acp_interrupted_text: expect.stringContaining("could not be reached"),
+        acp_interrupted_text: expect.stringContaining(
+          "confirmed that no running session exists",
+        ),
       }),
     );
     expect(actions.store.setState).toHaveBeenCalledWith({
       acpState: expect.anything(),
     });
+  });
+
+  it("does not clear Codex running state on interrupt transport failure", async () => {
+    const message = runningCodexMessage();
+    const actions = makeActions(message);
+    mockInterruptAcp.mockRejectedValueOnce(new Error("timeout"));
+
+    await expect(
+      actions.languageModelStopGenerating(new Date(message.date), {
+        threadId: message.thread_id,
+        senderId: message.sender_id,
+      }),
+    ).resolves.toBe(false);
+
+    expect(actions.syncdb.set).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "chat",
+        message_id: "message-running",
+        acp_interrupted: true,
+      }),
+    );
+    expect(actions.store.setState).not.toHaveBeenCalled();
   });
 });
