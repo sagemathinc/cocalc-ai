@@ -494,6 +494,109 @@ describe("moveProjectToHost", () => {
     ]);
   });
 
+  it("clears stale destination data before restoring a final backup", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "55555555-5555-4555-8555-555555555555") {
+        return {
+          status: "succeeded",
+          result: {
+            id: "backup-1",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      if (op_id === "44444444-4444-4444-8444-444444444444") {
+        return { status: "succeeded" };
+      }
+      throw new Error(`unexpected op_id ${op_id}`);
+    });
+    createBackupLroMock = jest.fn(async () => {
+      moveCallOrder.push("backup");
+      return {
+        op_id: "55555555-5555-4555-8555-555555555555",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      };
+    });
+    deleteProjectDataOnHostMock = jest.fn(async () => {
+      moveCallOrder.push("clear-dest");
+    });
+    savePlacementMock = jest.fn(async (_project_id, { host_id }: any) => {
+      moveCallOrder.push("placement");
+      currentRoutedHostId = host_id;
+    });
+    startProjectLroMock = jest.fn(async () => {
+      moveCallOrder.push("start-dest");
+      return {
+        op_id: "44444444-4444-4444-8444-444444444444",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      };
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(moveCallOrder.indexOf("backup")).toBeGreaterThanOrEqual(0);
+    expect(moveCallOrder.indexOf("clear-dest")).toBeGreaterThan(
+      moveCallOrder.indexOf("backup"),
+    );
+    expect(moveCallOrder.indexOf("clear-dest")).toBeLessThan(
+      moveCallOrder.indexOf("placement"),
+    );
+    expect(moveCallOrder.indexOf("placement")).toBeLessThan(
+      moveCallOrder.indexOf("start-dest"),
+    );
+  });
+
   it("retries when the source project file server is still initializing", async () => {
     fsNotInitializedFailuresByHost.set(SOURCE_HOST_ID, 2);
     queryMock = jest.fn(async (sql: string) => {
@@ -1380,7 +1483,11 @@ describe("moveProjectToHost", () => {
     expect(savePlacementMock).toHaveBeenNthCalledWith(1, PROJECT_ID, {
       host_id: DEST_HOST_ID,
     });
-    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledTimes(1);
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      host_id: DEST_HOST_ID,
+    });
     expect(purgeProjectBackupsForRepoMock).not.toHaveBeenCalled();
     expect(hasMoveSentinel(routedFsByHost.get(DEST_HOST_ID))).toBe(false);
   });
@@ -1498,7 +1605,11 @@ describe("moveProjectToHost", () => {
       host_id: DEST_HOST_ID,
     });
     expect(savePlacementMock).toHaveBeenCalledTimes(1);
-    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledTimes(1);
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      host_id: DEST_HOST_ID,
+    });
   });
 
   it("keeps a remote current host as the source placement", async () => {

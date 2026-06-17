@@ -1803,6 +1803,32 @@ export async function moveProjectToHost(
       }
       await checkCanceled("backup");
     }
+    if (startDest && finalBackupId && context.provisioned !== false) {
+      currentStage = "prepare-destination-restore";
+      progress({
+        step: "prepare-dest",
+        message: "clearing stale destination project data before restore",
+        detail: { dest_host_id: context.dest_host_id },
+      });
+      try {
+        await deleteProjectDataOnHost({
+          project_id: context.project_id,
+          host_id: context.dest_host_id,
+        });
+      } catch (err) {
+        log.error("moveProjectToHost destination pre-restore cleanup failed", {
+          project_id: context.project_id,
+          dest_host_id: context.dest_host_id,
+          err,
+        });
+        throw err;
+      }
+      progress({
+        step: "prepare-dest",
+        message: "stale destination project data cleared",
+        detail: { dest_host_id: context.dest_host_id },
+      });
+    }
     progress({
       step: "placement",
       message: "updating project placement",
