@@ -17,6 +17,7 @@ import {
   LinkButton,
   LoadingSection,
   MUTED_STYLE,
+  PublicNextStep,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
@@ -341,6 +342,7 @@ export default function PublicAboutApp({
         <>
           <AboutOverview />
           <AboutEventsPage />
+          <PublicNextStep authenticated={!!config?.is_authenticated} />
         </>
       )}
     </PublicSectionShell>

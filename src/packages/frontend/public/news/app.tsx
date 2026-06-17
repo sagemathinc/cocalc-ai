@@ -21,6 +21,7 @@ import {
   getPublicMarketingSiteName,
   LinkButton,
   LoadingSection,
+  PublicNextStep,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
@@ -295,7 +296,10 @@ export default function PublicNewsApp({
       initialRoute.view === "news-history" ? (
         <NewsDetailPage route={initialRoute} />
       ) : (
-        <NewsListPage isAdmin={!!config?.is_admin} />
+        <>
+          <NewsListPage isAdmin={!!config?.is_admin} />
+          <PublicNextStep authenticated={!!config?.is_authenticated} />
+        </>
       )}
     </PublicSectionShell>
   );
