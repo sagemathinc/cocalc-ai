@@ -180,6 +180,8 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Decide that Markdown/project notes should appear as a small docs-linked discovery surface on `/features`, not as a new feature page or full card.
 - [x] Add the `/features` surface as a low-density text link in the notebook/writing group so it does not create an orphan fifth card at common desktop widths.
 - [x] Decide that `/features/ai` should mention Markdown as editable project context, but should not mention `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or internal agent-instruction files in public copy.
+- [x] Follow-up visual audit: keep `Project notes and Markdown` as a supporting docs link in the writing group; it is visible enough on desktop/mobile and does not add a fifth card, tag row, or decorative metadata.
+- [x] Follow-up AI audit: keep Markdown in the AI hero copy only; do not repeat it in the route-owned ending, where the visitor needs to choose Codex, terminal workflows, support, or product comparison.
 - [x] Keep RootFS and operating-system language out of high-level public marketing copy unless a technical-doc route is the explicit destination.
 - [x] Avoid broad "all open formats" claims until the supported scope is defined and reviewed.
 

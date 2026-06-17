@@ -100,6 +100,19 @@ Decision update, 2026-06-17:
 - Keep RootFS, operating-system, and broad open-format language out of public
   route copy.
 
+Follow-up visual audit, 2026-06-17:
+
+- Keep the `/features` Markdown surface as a supporting text link. Browser QA at
+  desktop and mobile widths showed it is discoverable in the writing group while
+  preserving four balanced workflow cards.
+- Do not convert the Markdown link into a card. A fifth card would create a
+  weaker visual rhythm and overstate Markdown relative to notebooks, LaTeX,
+  whiteboards, and slides.
+- Do not add Markdown to the `/features/ai` route-owned ending. The AI hero copy
+  already names Markdown as editable project context; the ending should stay
+  focused on the visitor's next decision: Codex, terminal agents, support, or
+  product comparison.
+
 ### High Confidence
 
 - Keep homepage copy unchanged for now unless a future hero/workflow pass needs
