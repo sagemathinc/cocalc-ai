@@ -22,6 +22,7 @@ import {
   consumeVerifiedSiteLicenseExternalClaim,
   createSiteLicenseExternalClaimPool,
   hashSiteLicenseExternalClaimToken,
+  runSiteLicenseExternalClaimRepairPass,
 } from "./site-license-external-claims";
 
 beforeAll(async () => {
@@ -364,5 +365,53 @@ describe("site license external claim tokens", () => {
         account_id,
       }),
     ).rejects.toThrow("external claim token signature is invalid");
+  });
+
+  it("repairs retryable consumed claims by replaying the idempotent side effect", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool();
+    const consumption = await consumeVerifiedSiteLicenseExternalClaim({
+      issuer: claimPool.issuer,
+      site_license_id: claimPool.site_license_id,
+      pool_id: claimPool.id,
+      jti: uuid(),
+      token_hash: hashSiteLicenseExternalClaimToken({
+        token: `repair-token-${uuid()}`,
+      }),
+      account_id,
+    });
+    await getPool().query(
+      `UPDATE site_license_external_claim_consumptions
+          SET status='failed-retryable',
+              assignment_id=NULL,
+              membership_grant_id=NULL,
+              error_code='Synthetic',
+              error_message='synthetic repair test',
+              updated=NOW()
+        WHERE id=$1`,
+      [consumption.id],
+    );
+
+    const result = await runSiteLicenseExternalClaimRepairPass({ limit: 10 });
+    expect(result.scanned).toBeGreaterThanOrEqual(1);
+    expect(result.granted).toBeGreaterThanOrEqual(1);
+    expect(result.failed).toBe(0);
+
+    const { rows } = await getPool().query<{
+      status: string;
+      assignment_id: string | null;
+      membership_grant_id: string | null;
+      error_message: string | null;
+    }>(
+      `SELECT status, assignment_id, membership_grant_id, error_message
+         FROM site_license_external_claim_consumptions
+        WHERE id=$1`,
+      [consumption.id],
+    );
+    expect(rows[0]?.status).toBe("granted");
+    expect(rows[0]?.assignment_id).toBeTruthy();
+    expect(rows[0]?.membership_grant_id).toBeTruthy();
+    expect(rows[0]?.error_message).toBeNull();
   });
 });

@@ -1300,3 +1300,49 @@ export async function consumeSiteLicenseExternalClaimToken({
     await verifySiteLicenseExternalClaimToken({ token, account_id }),
   );
 }
+
+export interface SiteLicenseExternalClaimRepairResult {
+  scanned: number;
+  granted: number;
+  failed: number;
+  errors: Array<{ consumption_id: string; error: string }>;
+}
+
+export async function runSiteLicenseExternalClaimRepairPass({
+  limit = 100,
+}: {
+  limit?: number;
+} = {}): Promise<SiteLicenseExternalClaimRepairResult> {
+  await ensureSiteLicenseSchema();
+  const { rows } = await getPool().query<RawExternalClaimConsumption>(
+    `SELECT *
+       FROM site_license_external_claim_consumptions
+      WHERE status IN ('pending-side-effect', 'failed-retryable')
+      ORDER BY updated ASC, consumed_at ASC
+      LIMIT $1`,
+    [Math.max(1, Math.min(1000, Math.floor(limit)))],
+  );
+  const result: SiteLicenseExternalClaimRepairResult = {
+    scanned: rows.length,
+    granted: 0,
+    failed: 0,
+    errors: [],
+  };
+  for (const row of rows) {
+    const consumption = normalizeConsumptionRow(row);
+    try {
+      const repaired =
+        await applySiteLicenseExternalClaimSideEffect(consumption);
+      if (repaired.status === "granted") {
+        result.granted += 1;
+      }
+    } catch (err) {
+      result.failed += 1;
+      result.errors.push({
+        consumption_id: consumption.id,
+        error: err instanceof Error ? err.message : `${err}`,
+      });
+    }
+  }
+  return result;
+}
