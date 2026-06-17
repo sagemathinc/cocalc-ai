@@ -25,6 +25,7 @@ const listingCache = new Map<
 const backupMetaCache = new Map<string, { meta: BackupMeta[]; at: number }>();
 const inflight = new Map<string, Promise<DirectoryListingEntry[]>>();
 const cacheListeners = new Set<() => void>();
+const cacheGeneration = new Map<string, number>();
 
 function notifyCacheListeners() {
   for (const listener of cacheListeners) {
@@ -42,6 +43,26 @@ function cacheKey({
   subpath: string;
 }) {
   return `${project_id}:${backup_id}:${subpath}`;
+}
+
+function getCacheGeneration(project_id: string): number {
+  return cacheGeneration.get(project_id) ?? 0;
+}
+
+export function clearBackupsCache(project_id: string): void {
+  backupMetaCache.delete(project_id);
+  for (const key of listingCache.keys()) {
+    if (key.startsWith(`${project_id}:`)) {
+      listingCache.delete(key);
+    }
+  }
+  for (const key of inflight.keys()) {
+    if (key.startsWith(`${project_id}:`)) {
+      inflight.delete(key);
+    }
+  }
+  cacheGeneration.set(project_id, getCacheGeneration(project_id) + 1);
+  notifyCacheListeners();
 }
 
 function readBackupMeta(project_id: string): BackupMeta[] | null {
@@ -116,11 +137,13 @@ export default function useBackupsListing({
   path,
   sortField = "name",
   sortDirection = "asc",
+  cacheContext,
 }: {
   project_id: string;
   path: string;
   sortField?: "name" | "mtime" | "size" | "type";
   sortDirection?: "asc" | "desc";
+  cacheContext?: string | null;
 }): {
   listing: DirectoryListingEntry[] | null;
   error: any;
@@ -131,8 +154,21 @@ export default function useBackupsListing({
   const [tick, setTick] = useState(0);
   const requestId = useRef(0);
   const lastTick = useRef(0);
+  const lastCacheContext = useRef<string | null>(null);
 
   const refresh = useCallback(() => setTick((x) => x + 1), []);
+
+  useEffect(() => {
+    const context = `${project_id}:${cacheContext ?? ""}`;
+    if (lastCacheContext.current == null) {
+      lastCacheContext.current = context;
+      return;
+    }
+    if (lastCacheContext.current === context) return;
+    lastCacheContext.current = context;
+    clearBackupsCache(project_id);
+    setTick((x) => x + 1);
+  }, [project_id, cacheContext]);
 
   useAsyncEffect(async () => {
     if (!isBackupsPath(path)) {
@@ -141,6 +177,7 @@ export default function useBackupsListing({
       return;
     }
     const id = ++requestId.current;
+    const generation = getCacheGeneration(project_id);
     const force = tick !== lastTick.current;
     lastTick.current = tick;
     setListing(null);
@@ -204,6 +241,7 @@ export default function useBackupsListing({
         backup_id: backup.id,
         subpath,
         force,
+        generation,
       });
       if (requestId.current !== id) return;
       const entries = sortEntries(entriesRaw);
@@ -233,12 +271,14 @@ export default function useBackupsListing({
     backup_id,
     subpath,
     force,
+    generation,
   }: {
     key: string;
     project_id: string;
     backup_id: string;
     subpath: string;
     force: boolean;
+    generation: number;
   }): Promise<DirectoryListingEntry[]> {
     if (!force) {
       const cached = readListingCache(key);
@@ -259,8 +299,10 @@ export default function useBackupsListing({
         mtime,
         size,
       }));
-      listingCache.set(key, { entries, at: Date.now() });
-      notifyCacheListeners();
+      if (getCacheGeneration(project_id) === generation) {
+        listingCache.set(key, { entries, at: Date.now() });
+        notifyCacheListeners();
+      }
       return entries;
     })();
     inflight.set(key, promise);
@@ -295,6 +337,7 @@ export default function useBackupsListing({
         backup_id: backupId,
         subpath,
         force: false,
+        generation: getCacheGeneration(projectId),
       }).catch(() => undefined);
     }
   }
