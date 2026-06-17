@@ -715,6 +715,24 @@ Examples:
               hubPassword,
               disableEnvAuthDefaults: false,
             });
+            const configPath = authConfigPath();
+            const config = loadAuthConfig(configPath);
+            const profileName = sanitizeProfileName(globals.profile);
+            const next = {
+              ...(config.profiles[profileName] ?? {}),
+              api: apiBaseUrl,
+              account_id: requestedAccountId,
+              cookie: buildRememberMeCookieHeader(
+                apiBaseUrl,
+                bootstrappedDevSession.value,
+              ),
+            };
+            delete (next as any).api_key;
+            delete (next as any).bearer;
+            delete (next as any).hub_password;
+            config.profiles[profileName] = next;
+            config.current_profile = profileName;
+            saveAuthConfig(config, configPath);
           }
           if (!cookieHeader) {
             throw new Error(

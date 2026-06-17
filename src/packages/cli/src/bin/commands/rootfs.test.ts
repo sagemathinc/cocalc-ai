@@ -314,6 +314,7 @@ test("rootfs save accepts portable config json", async () => {
   assert.deepEqual(capturedArgs, {
     image_id: undefined,
     image: "cocalc.local/rootfs/pluto",
+    browser_id: undefined,
     label: "Pluto notebooks",
     description: "Julia and Pluto examples",
     family: "julia",
@@ -418,6 +419,7 @@ test("rootfs publish accepts config json and lets flags override it", async () =
 
   assert.deepEqual(capturedArgs, {
     project_id: "project-1",
+    browser_id: undefined,
     label: "CLI label",
     family: undefined,
     version: undefined,
