@@ -39,6 +39,11 @@ jest.mock("@cocalc/backend/logger", () => ({
   })),
 }));
 
+jest.mock("@cocalc/backend/conat", () => ({
+  __esModule: true,
+  conat: jest.fn(() => ({})),
+}));
+
 jest.mock("@cocalc/conat/lro/client", () => ({
   __esModule: true,
   get: (...args: any[]) => getLroStreamMock(...args),
@@ -57,6 +62,8 @@ jest.mock("@cocalc/server/lro/stream", () => ({
 describe("mirrorStartLroProgress", () => {
   beforeEach(() => {
     jest.resetModules();
+    jest.useRealTimers();
+    delete process.env.COCALC_START_LRO_PROGRESS_STREAM_TIMEOUT_MS;
     getLroStreamMock = jest.fn();
     updateLroMock = jest.fn(async ({ op_id, progress_summary }) => ({
       op_id,
@@ -66,6 +73,10 @@ describe("mirrorStartLroProgress", () => {
       progress_summary,
     }));
     publishLroSummaryMock = jest.fn(async () => undefined);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it("persists streamed project-start progress into the lro summary", async () => {
@@ -111,5 +122,20 @@ describe("mirrorStartLroProgress", () => {
         }),
       }),
     );
+  });
+
+  it("does not block project start when the lro progress stream hangs", async () => {
+    process.env.COCALC_START_LRO_PROGRESS_STREAM_TIMEOUT_MS = "1";
+    getLroStreamMock.mockReturnValue(new Promise(() => undefined));
+    const { mirrorStartLroProgress } = await import("./start-lro-progress");
+
+    const close = await mirrorStartLroProgress({
+      project_id: "proj-1",
+      op_id: "op-1",
+    });
+    await close();
+
+    expect(updateLroMock).not.toHaveBeenCalled();
+    expect(publishLroSummaryMock).not.toHaveBeenCalled();
   });
 });
