@@ -988,10 +988,19 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               onClick: ({ key }) => {
                 const item = starredItems.find((item) => item.path === key);
                 if (!item || !actions) return;
+                const nextSelection = {
+                  kind: "workspace",
+                  workspace_id: record.workspace_id,
+                } satisfies WorkspaceSelection;
+                select(nextSelection);
                 if (item.isDirectory) {
                   void actions.open_directory(item.path, true, true);
                 } else {
-                  void actions.open_file({ path: item.path, foreground: true });
+                  void actions.open_file({
+                    path: item.path,
+                    foreground: true,
+                    workspaceSelection: nextSelection,
+                  });
                 }
               },
             }}
