@@ -13,6 +13,7 @@ describe("activity-bar preferences", () => {
       "workspaces",
       "agents",
       "files",
+      "rootfs",
       "new",
       "search",
       "docs",
@@ -33,6 +34,7 @@ describe("activity-bar preferences", () => {
       "files",
       "agents",
       "workspaces",
+      "rootfs",
       "new",
       "search",
       "docs",
@@ -54,6 +56,7 @@ describe("activity-bar preferences", () => {
         "workspaces",
         "agents",
         "files",
+        "rootfs",
         "new",
         "search",
         "docs",
@@ -93,7 +96,7 @@ describe("activity-bar preferences", () => {
       { liteMode: true },
     );
     expect(splitRailTabs(order, hidden)).toEqual({
-      visible: ["workspaces", "agents", "files", "new", "docs"],
+      visible: ["workspaces", "agents", "files", "new", "rootfs", "docs"],
       overflow: ["search", "settings", "active", "log", "servers", "info"],
     });
   });
@@ -108,6 +111,7 @@ describe("activity-bar preferences", () => {
       "settings",
       "workspaces",
       "agents",
+      "rootfs",
       "new",
       "search",
       "docs",

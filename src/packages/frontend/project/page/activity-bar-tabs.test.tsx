@@ -16,6 +16,7 @@ let mockLite = true;
 let mockPageState: Record<string, any> = {};
 let mockProjectAccessRole: "owner" | "collaborator" | "viewer" = "collaborator";
 let mockAgentAIEnabled = true;
+let mockRootfsImages: any[] = [];
 
 const mockPageStore = {
   get: (key: string) => mockPageState[key],
@@ -123,6 +124,7 @@ jest.mock("@cocalc/frontend/app/account-store-ready", () => ({
 
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: any) => <span>{name}</span>,
+  isIconName: (name: unknown) => typeof name === "string",
   Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
@@ -141,6 +143,12 @@ jest.mock("@cocalc/frontend/project/context", () => ({
     },
     agentAIEnabled: mockAgentAIEnabled,
     project_id: "project-1",
+    project: {
+      get: (name: string) => {
+        if (name === "rootfs_image_id") return "rootfs-image-1";
+        return undefined;
+      },
+    },
     active_project_tab: "files",
     projectAccess: {
       role: mockProjectAccessRole,
@@ -150,6 +158,11 @@ jest.mock("@cocalc/frontend/project/context", () => ({
     },
     workspaces: { current: null },
   }),
+}));
+
+jest.mock("@cocalc/frontend/rootfs/manifest", () => ({
+  managedRootfsCatalogUrl: () => "/rootfs-images.json",
+  useRootfsImages: () => ({ images: mockRootfsImages }),
 }));
 
 jest.mock("@cocalc/frontend/projects/remove-myself", () => ({
@@ -193,11 +206,14 @@ jest.mock("./file-tabs", () => ({
 }));
 
 jest.mock("./file-tab", () => ({
-  FileTab: ({ name }: any) => <div data-testid={`rail-${name}`}>{name}</div>,
+  FileTab: ({ iconName, name }: any) => (
+    <div data-testid={`rail-${name}`}>{iconName ?? name}</div>
+  ),
   FIXED_PROJECT_TABS: {
     workspaces: { label: "Workspaces", icon: "cube" },
     agents: { label: "Agents", icon: "comment" },
     files: { label: "Files", icon: "folder-open-o" },
+    rootfs: { label: "Rootfs", icon: "docker" },
     new: { label: "New", icon: "plus-circle" },
     search: { label: "Search", icon: "search" },
     docs: { label: "Docs", icon: "book" },
@@ -233,6 +249,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockPageState = {};
     mockProjectAccessRole = "collaborator";
     mockAgentAIEnabled = true;
+    mockRootfsImages = [];
     window.localStorage.clear();
     (global as any).ResizeObserver = class {
       observe() {}
@@ -291,6 +308,21 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(screen.queryByTestId("menu-overflow:agents")).toBeNull();
   });
 
+  it("uses the current Rootfs theme icon on the rail", () => {
+    mockRootfsImages = [
+      {
+        id: "rootfs-image-1",
+        image: "registry.example/runtime:1",
+        label: "Runtime",
+        theme: { icon: "python", color: "#3572a5" },
+      },
+    ];
+
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    expect(screen.getByTestId("rail-rootfs")).toHaveTextContent("python");
+  });
+
   it("lets viewers remove themselves from the overflow rail menu", () => {
     mockProjectAccessRole = "viewer";
 
@@ -336,6 +368,7 @@ describe("ProjectTabs settings affordance", () => {
     mockPageState = {};
     mockProjectAccessRole = "collaborator";
     mockAgentAIEnabled = true;
+    mockRootfsImages = [];
   });
 
   afterEach(() => {
@@ -426,6 +459,23 @@ describe("HiddenActivityBarLauncher", () => {
     render(<HiddenActivityBarLauncher />);
 
     expect(screen.queryByTestId("menu-launcher:agents")).toBeNull();
+  });
+
+  it("uses the current Rootfs theme icon in hidden-launcher menus", () => {
+    mockRootfsImages = [
+      {
+        id: "rootfs-image-1",
+        image: "registry.example/runtime:1",
+        label: "Runtime",
+        theme: { icon: "python" },
+      },
+    ];
+
+    render(<HiddenActivityBarLauncher />);
+
+    expect(screen.getByTestId("menu-launcher:rootfs")).toHaveTextContent(
+      "python",
+    );
   });
 
   it("lets viewers remove themselves from the hidden rail launcher menu", () => {

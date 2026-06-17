@@ -23,7 +23,12 @@ import { CSS, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useAccountStoreReady } from "@cocalc/frontend/app/account-store-ready";
 import useAppContext from "@cocalc/frontend/app/use-context";
 import { ChatIndicator } from "@cocalc/frontend/chat/chat-indicator";
-import { Icon, Tooltip, type IconName } from "@cocalc/frontend/components";
+import {
+  Icon,
+  isIconName,
+  Tooltip,
+  type IconName,
+} from "@cocalc/frontend/components";
 import {
   DragHandle,
   SortableItem,
@@ -43,6 +48,10 @@ import SettingsButton from "@cocalc/frontend/account/settings-button";
 import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
 import SshUpgradeButton from "@cocalc/frontend/ssh/ssh-upgrade-button";
 import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
+import {
+  managedRootfsCatalogUrl,
+  useRootfsImages,
+} from "@cocalc/frontend/rootfs/manifest";
 import {
   getDefaultFixedTabOrder,
   getDefaultHiddenFixedTabs,
@@ -70,6 +79,33 @@ const VIEWER_FIXED_TABS = new Set<FixedTab>([
   "files",
   "users",
 ]);
+
+interface ThemedFixedTab {
+  color?: string;
+  iconName?: IconName;
+}
+
+function useRootfsFixedTabTheme(enabled = true): ThemedFixedTab {
+  const { project } = useProjectContext();
+  const rootfsImageId = enabled
+    ? `${project?.get?.("rootfs_image_id") ?? ""}`.trim()
+    : "";
+  const { images } = useRootfsImages(
+    rootfsImageId ? [managedRootfsCatalogUrl()] : [],
+    {
+      imageIds: rootfsImageId ? [rootfsImageId] : [],
+      limit: 1,
+    },
+  );
+  const entry = rootfsImageId
+    ? images.find((candidate) => candidate.id === rootfsImageId)
+    : undefined;
+  const iconName = isIconName(entry?.theme?.icon)
+    ? entry.theme.icon
+    : undefined;
+  const color = entry?.theme?.color?.trim() || undefined;
+  return { color, iconName };
+}
 
 function filterTabsForProjectAccess({
   agentAIEnabled,
@@ -198,6 +234,8 @@ export function VerticalFixedTabs({
   const { showActBarLabels } = useAppContext();
   const account_id = useTypedRedux("account", "account_id");
   const active_flyout = useTypedRedux({ project_id }, "flyout");
+  const viewer = projectAccess?.role === "viewer";
+  const rootfsTheme = useRootfsFixedTabTheme(!viewer);
   const parent = useRef<HTMLDivElement>(null);
   const gap = useRef<HTMLDivElement>(null);
   const breakPoint = useRef<number>(0);
@@ -209,7 +247,6 @@ export function VerticalFixedTabs({
   const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
     liteMode: lite,
   });
-  const viewer = projectAccess?.role === "viewer";
   const projectLabel = intl.formatMessage(labels.project);
   const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(() => {
     const filteredOrder = filterTabsForProjectAccess({
@@ -321,11 +358,15 @@ export function VerticalFixedTabs({
       name === "workspaces"
         ? (workspaces.current?.theme?.icon?.trim() as IconName | undefined) ||
           undefined
-        : undefined;
+        : name === "rootfs"
+          ? rootfsTheme.iconName
+          : undefined;
     const themedIconStyle =
       name === "workspaces" && workspaces.current?.theme?.color
         ? { color: workspaces.current.theme.color }
-        : undefined;
+        : name === "rootfs" && rootfsTheme.color
+          ? { color: rootfsTheme.color }
+          : undefined;
 
     const tab = (
       <FileTab
@@ -408,6 +449,9 @@ export function VerticalFixedTabs({
           : undefined,
       sectionKeyPrefix: "overflow",
       showActBarLabels: showActBarLabels === true,
+      tabIcons: {
+        rootfs: rootfsTheme.iconName,
+      },
     });
     return (
       <Tooltip title="More" placement="rightTop">
@@ -543,6 +587,8 @@ export function HiddenActivityBarLauncher() {
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const account_id = useTypedRedux("account", "account_id");
+  const viewer = projectAccess?.role === "viewer";
+  const rootfsTheme = useRootfsFixedTabTheme(!viewer);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
   const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
@@ -550,7 +596,6 @@ export function HiddenActivityBarLauncher() {
   });
   if (!accountStoreReady) return null;
 
-  const viewer = projectAccess?.role === "viewer";
   const projectLabel = intl.formatMessage(labels.project);
   const items = createRailMenuItems({
     intl,
@@ -602,6 +647,9 @@ export function HiddenActivityBarLauncher() {
         : undefined,
     sectionKeyPrefix: "launcher",
     showActBarLabels: showActBarLabels === true,
+    tabIcons: {
+      rootfs: rootfsTheme.iconName,
+    },
   });
 
   return (
@@ -694,6 +742,7 @@ function createRailMenuItems(opts: {
   };
   sectionKeyPrefix: string;
   showActBarLabels: boolean;
+  tabIcons?: Partial<Record<FixedTab, IconName | undefined>>;
 }): NonNullable<MenuProps["items"]> {
   const {
     intl,
@@ -708,11 +757,12 @@ function createRailMenuItems(opts: {
     requestCollaboratorAccess,
     sectionKeyPrefix,
     showActBarLabels,
+    tabIcons,
   } = opts;
   const items: NonNullable<MenuProps["items"]> = names.map((name) => ({
     key: `${sectionKeyPrefix}:${name}`,
     label: renderMenuLabel(
-      <Icon name={FIXED_PROJECT_TABS[name].icon} />,
+      <Icon name={tabIcons?.[name] ?? FIXED_PROJECT_TABS[name].icon} />,
       renderFixedTabLabel(name, intl),
     ),
     onClick: ({ domEvent }) => onTabClick(name, domEvent),

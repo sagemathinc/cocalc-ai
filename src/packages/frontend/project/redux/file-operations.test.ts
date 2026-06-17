@@ -106,6 +106,29 @@ describe("project redux file operations", () => {
     });
   });
 
+  it("passes no-overwrite copy options through to the filesystem client", async () => {
+    const cp = jest.fn().mockResolvedValue(undefined);
+
+    await copyPaths({
+      src: "/opt/examples",
+      dest: "/home/user/examples",
+      options: { force: false, errorOnExist: true },
+      fs: () => ({ cp }) as any,
+      setActivity: jest.fn(),
+      log: jest.fn(),
+      appendSlashToDirectoryPaths: jest
+        .fn()
+        .mockResolvedValue(["/opt/examples"]),
+    });
+
+    expect(cp).toHaveBeenCalledWith("/opt/examples", "/home/user/examples", {
+      recursive: true,
+      reflink: true,
+      force: false,
+      errorOnExist: true,
+    });
+  });
+
   it("deletes matching fd results and returns the selected paths", async () => {
     const fd = jest.fn().mockResolvedValue({
       stdout: Buffer.from("keep.txt\nskip.log\n"),

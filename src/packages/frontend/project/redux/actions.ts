@@ -2587,17 +2587,20 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     dest,
     id,
     only_contents,
+    options,
   }: {
     src: string[] | string;
     dest: string;
     id?: string;
     only_contents?: boolean;
+    options?: CopyOptions;
   }) => {
     await copyPaths({
       src,
       dest,
       id,
       only_contents,
+      options,
       fs: () => this.fs(),
       setActivity: (opts) => this.set_activity(opts),
       log: (event) => this.log(event),

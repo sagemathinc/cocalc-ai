@@ -79,6 +79,7 @@ import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   ProjectRootfsStateEntry,
+  RootfsContentAction,
   RootfsImageEntry,
   RootfsImageTheme,
   RootfsImageVisibility,
@@ -896,6 +897,33 @@ export default function RootFilesystemImage({
             </div>
           </div>
 
+          {activeDisplayEntry?.content
+            ? renderRootfsContentPanel({
+                entry: activeDisplayEntry,
+                onCopyToHome: async (action) => {
+                  if (!actions) return;
+                  const source =
+                    action.source_path?.trim() || action.path?.trim();
+                  const dest = rootfsCopyTargetPath(
+                    action,
+                    getProjectHomeDirectory(project_id),
+                  );
+                  if (!source || !dest) {
+                    message.error("Copy action is missing a source or target.");
+                    return;
+                  }
+                  await actions.copyPaths({
+                    src: source,
+                    dest,
+                    options: { force: false, errorOnExist: true },
+                  });
+                },
+                onOpenPath: (path) => {
+                  void actions?.open_file({ path, foreground: true });
+                },
+              })
+            : null}
+
           {suggestedUpgradeEntry ? (
             <Alert
               type="info"
@@ -1482,6 +1510,7 @@ export default function RootFilesystemImage({
                         {draftRootfsEntry.image}
                       </div>
                       {renderRootfsEntryFacts(draftRootfsEntry)}
+                      {renderRootfsContentPreview(draftRootfsEntry)}
                       {renderRootfsWarning(draftRootfsEntry)}
                       {renderRootfsScan(draftRootfsEntry)}
                     </Space>
@@ -2455,13 +2484,28 @@ function renderRootfsTags(
 function rootfsCatalogSearchText(entry: RootfsImageEntry): string {
   return [
     entry.label,
+    entry.slug,
     entry.image,
     entry.description,
+    entry.content?.title,
+    entry.content?.subtitle,
+    entry.content?.description,
+    entry.content?.publisher?.name,
+    entry.content?.license?.name,
     entry.owner_name,
     entry.family,
     entry.version,
     entry.channel,
     entry.section,
+    ...(entry.content?.highlights ?? []),
+    ...(entry.content?.actions ?? []).flatMap((action) => [
+      action.label,
+      action.description,
+      action.path,
+      action.source_path,
+      action.target_path,
+      action.url,
+    ]),
     ...(entry.tags ?? []),
   ]
     .filter(Boolean)
@@ -2491,6 +2535,11 @@ function RootfsCatalogCard({
   ]
     .filter(Boolean)
     .join(" • ");
+  const description =
+    entry.description?.trim() ||
+    entry.content?.subtitle?.trim() ||
+    entry.content?.description?.trim();
+  const contentTitle = entry.content?.title?.trim();
 
   return (
     <button
@@ -2557,7 +2606,23 @@ function RootfsCatalogCard({
         >
           {label}
         </div>
-        {entry.description ? (
+        {contentTitle && contentTitle !== label ? (
+          <div
+            title={contentTitle}
+            style={{
+              color: COLORS.GRAY_D,
+              fontSize: 12,
+              fontWeight: 600,
+              marginBottom: 3,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {contentTitle}
+          </div>
+        ) : null}
+        {description ? (
           <div
             style={{
               color: COLORS.GRAY_D,
@@ -2570,8 +2635,17 @@ function RootfsCatalogCard({
               WebkitLineClamp: 2,
             }}
           >
-            {entry.description}
+            {description}
           </div>
+        ) : null}
+        {entry.content?.highlights?.length ? (
+          <Space wrap size={[4, 4]} style={{ marginTop: 6 }}>
+            {entry.content.highlights.slice(0, 3).map((highlight) => (
+              <Tag key={highlight} style={{ marginInlineEnd: 0 }}>
+                {highlight}
+              </Tag>
+            ))}
+          </Space>
         ) : null}
         {facts ? (
           <div
@@ -3076,6 +3150,270 @@ function renderRootfsEntryFacts(
       {facts.join(" • ")}
     </Paragraph>
   );
+}
+
+function renderRootfsContentPreview(
+  entry: RootfsImageEntry | undefined,
+): React.JSX.Element | null {
+  const content = entry?.content;
+  if (!content) return null;
+  if (!rootfsContentHasDisplay(content)) {
+    return null;
+  }
+  const title = content.title?.trim();
+  const subtitle = content.subtitle?.trim();
+  const description = content.description?.trim();
+  return (
+    <div style={{ marginTop: 8 }}>
+      {title ? (
+        <div style={{ fontWeight: 600, marginBottom: 3 }}>{title}</div>
+      ) : null}
+      {subtitle || description ? (
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          {subtitle || description}
+        </Paragraph>
+      ) : null}
+      {content.highlights?.length ? (
+        <Space wrap size={[4, 4]} style={{ marginTop: 6 }}>
+          {content.highlights.slice(0, 4).map((highlight) => (
+            <Tag key={highlight} style={{ marginInlineEnd: 0 }}>
+              {highlight}
+            </Tag>
+          ))}
+        </Space>
+      ) : null}
+    </div>
+  );
+}
+
+function renderRootfsContentPanel({
+  entry,
+  onCopyToHome,
+  onOpenPath,
+}: {
+  entry: RootfsImageEntry;
+  onCopyToHome: (action: RootfsContentAction) => Promise<void>;
+  onOpenPath: (path: string) => void;
+}): React.JSX.Element | null {
+  const content = entry.content;
+  if (!content) return null;
+  if (!rootfsContentHasDisplay(content)) return null;
+  const title = content.title?.trim() || "Included content";
+  const subtitle =
+    content.subtitle?.trim() ||
+    content.publisher?.name?.trim() ||
+    "Files, examples, or links bundled with this runtime image.";
+  const description = content.description?.trim();
+  const publisher = renderRootfsContentLink(content.publisher);
+  const license = renderRootfsContentLink(content.license);
+  const actions = content.actions ?? [];
+
+  return (
+    <RuntimePanel icon="folder-open" title={title} subtitle={subtitle}>
+      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        {description ? (
+          <Paragraph style={{ marginBottom: 0 }}>{description}</Paragraph>
+        ) : null}
+        {content.highlights?.length ? (
+          <Space wrap size={[6, 6]}>
+            {content.highlights.map((highlight) => (
+              <Tag key={highlight}>{highlight}</Tag>
+            ))}
+          </Space>
+        ) : null}
+        {publisher || license ? (
+          <Space wrap size={[10, 4]} style={{ color: COLORS.GRAY_M }}>
+            {publisher ? <span>Publisher: {publisher}</span> : null}
+            {license ? <span>License: {license}</span> : null}
+          </Space>
+        ) : null}
+        {actions.length ? (
+          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+            {actions.map((action, index) => (
+              <RootfsContentActionRow
+                key={`${action.kind}:${action.label}:${index}`}
+                action={action}
+                onCopyToHome={onCopyToHome}
+                onOpenPath={onOpenPath}
+              />
+            ))}
+          </Space>
+        ) : null}
+      </Space>
+    </RuntimePanel>
+  );
+}
+
+function rootfsContentHasDisplay(
+  content: RootfsImageEntry["content"],
+): boolean {
+  if (!content) return false;
+  return !!(
+    content.title?.trim() ||
+    content.subtitle?.trim() ||
+    content.description?.trim() ||
+    content.publisher?.name?.trim() ||
+    content.publisher?.url?.trim() ||
+    content.license?.name?.trim() ||
+    content.license?.url?.trim() ||
+    content.highlights?.length ||
+    content.actions?.length
+  );
+}
+
+function renderRootfsContentLink(
+  ref: { name?: string; url?: string } | undefined,
+): ReactNode {
+  const name = ref?.name?.trim();
+  const url = ref?.url?.trim();
+  if (!name && !url) return null;
+  if (!url) return name;
+  return (
+    <a href={url} rel="noreferrer" target="_blank">
+      {name || url}
+    </a>
+  );
+}
+
+function RootfsContentActionRow({
+  action,
+  onCopyToHome,
+  onOpenPath,
+}: {
+  action: RootfsContentAction;
+  onCopyToHome: (action: RootfsContentAction) => Promise<void>;
+  onOpenPath: (path: string) => void;
+}): React.JSX.Element {
+  const [copying, setCopying] = useState<boolean>(false);
+  const label = action.label.trim();
+  const description = action.description?.trim();
+  const openPath = rootfsContentActionOpenPath(action);
+  const canCopyToHome =
+    action.kind === "copy-to-home" &&
+    !!(action.source_path?.trim() || action.path?.trim());
+
+  async function copyToHome(): Promise<void> {
+    setCopying(true);
+    try {
+      await onCopyToHome(action);
+    } finally {
+      setCopying(false);
+    }
+  }
+
+  return (
+    <RuntimeAction
+      title={
+        <Space wrap size={[6, 4]}>
+          <span>{label}</span>
+          <Tag style={{ marginInlineEnd: 0 }}>
+            {rootfsContentActionKindLabel(action.kind)}
+          </Tag>
+        </Space>
+      }
+      description={
+        <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          {description ? <span>{description}</span> : null}
+          {rootfsContentActionPathLabel(action) ? (
+            <code style={{ overflowWrap: "anywhere" }}>
+              {rootfsContentActionPathLabel(action)}
+            </code>
+          ) : null}
+        </Space>
+      }
+      action={
+        action.kind === "external-link" && action.url ? (
+          <Button
+            href={action.url}
+            icon={<Icon name="external-link" />}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Open
+          </Button>
+        ) : openPath && action.kind !== "copy-to-home" ? (
+          <Button
+            icon={
+              <Icon name={action.kind === "browse" ? "folder-open" : "file"} />
+            }
+            onClick={() => onOpenPath(openPath)}
+          >
+            {action.kind === "browse" ? "Browse" : "Open"}
+          </Button>
+        ) : action.kind === "copy-to-home" ? (
+          <Button
+            disabled={!canCopyToHome}
+            icon={<Icon name="copy" />}
+            loading={copying}
+            onClick={copyToHome}
+          >
+            Copy to HOME
+          </Button>
+        ) : null
+      }
+    />
+  );
+}
+
+function rootfsCopyTargetPath(
+  action: RootfsContentAction,
+  projectHome: string,
+): string | undefined {
+  const source = action.source_path?.trim() || action.path?.trim();
+  const fallbackName = source
+    ?.replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean)
+    .at(-1);
+  const target = action.target_path?.trim() || fallbackName;
+  if (!target) return;
+  const relativeTarget = target.replace(/^\/+/, "");
+  if (!relativeTarget) return;
+  return `${projectHome.replace(/\/+$/, "")}/${relativeTarget}`;
+}
+
+function rootfsContentActionOpenPath(
+  action: RootfsContentAction,
+): string | undefined {
+  const path =
+    action.path?.trim() ||
+    action.source_path?.trim() ||
+    action.target_path?.trim();
+  if (!path) return;
+  if (action.kind === "browse" && !path.endsWith("/")) {
+    return `${path}/`;
+  }
+  return path;
+}
+
+function rootfsContentActionPathLabel(
+  action: RootfsContentAction,
+): string | undefined {
+  if (action.kind === "copy-to-home") {
+    const source = action.source_path?.trim() || action.path?.trim();
+    const target = action.target_path?.trim();
+    if (source && target) return `${source} -> ${target}`;
+    return source || target;
+  }
+  return (
+    action.path?.trim() || action.source_path?.trim() || action.url?.trim()
+  );
+}
+
+function rootfsContentActionKindLabel(
+  kind: RootfsContentAction["kind"],
+): string {
+  switch (kind) {
+    case "browse":
+      return "Browse";
+    case "copy-to-home":
+      return "Copy";
+    case "external-link":
+      return "Link";
+    case "open":
+    default:
+      return "Open";
+  }
 }
 
 function renderRootfsScan(

@@ -21,8 +21,10 @@ Table({
       "family",
       "channel",
       "supersedes_image_id",
+      "slug",
       "updated",
     ],
+    pg_unique_indexes: ["slug"],
   },
   fields: {
     image_id: {
@@ -34,6 +36,11 @@ Table({
       type: "string",
       pg_type: "VARCHAR(128)",
       desc: "Optional immutable RootFS release referenced by this catalog entry.",
+    },
+    slug: {
+      type: "string",
+      pg_type: "VARCHAR(39)",
+      desc: "Optional globally unique short name used for human-friendly RootFS discovery URLs.",
     },
     owner_id: {
       type: "uuid",
@@ -162,6 +169,14 @@ Table({
     theme: {
       type: "map",
       desc: "Optional theme metadata for this image.",
+    },
+    content: {
+      type: "map",
+      desc: "Optional sanitized content discovery manifest for this image.",
+    },
+    content_warnings: {
+      type: "map",
+      desc: "Non-fatal validation warnings from the most recent content manifest ingestion.",
     },
     created: {
       type: "timestamp",

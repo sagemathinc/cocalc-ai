@@ -60,9 +60,21 @@ describe("RootFS catalog seed sync", () => {
               release_id: "release-seed",
               image: "cocalc.local/rootfs/seed",
               label: "Seed Official",
+              slug: "seed-official",
               official: true,
               visibility: "public",
               arch: ["amd64"],
+              content: {
+                version: 1,
+                title: "Seed Content",
+                actions: [
+                  {
+                    kind: "open",
+                    label: "Open notebook",
+                    path: "/opt/seed/notebook.ipynb",
+                  },
+                ],
+              },
             },
             {
               id: "seed-public-untrusted",
@@ -76,7 +88,7 @@ describe("RootFS catalog seed sync", () => {
       })),
     };
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
-      if (sql.includes("COALESCE($21::TIMESTAMP")) {
+      if (sql.includes("COALESCE($24::TIMESTAMP")) {
         synced.push(params ?? []);
         return { rows: [] };
       }
@@ -100,7 +112,10 @@ describe("RootFS catalog seed sync", () => {
             digest: row[16],
             deprecated: row[17],
             deprecated_reason: row[18],
-            theme: row[19] ? JSON.parse(row[19]) : null,
+            slug: row[19],
+            theme: row[20] ? JSON.parse(row[20]) : null,
+            content: row[21] ? JSON.parse(row[21]) : null,
+            content_warnings: row[22] ? JSON.parse(row[22]) : null,
             owner_id: null,
             hidden: false,
             blocked: false,
@@ -123,9 +138,11 @@ describe("RootFS catalog seed sync", () => {
       timeout_ms: 15_000,
     });
     expect(manifest.images.map((entry) => entry.id)).toEqual(["seed-official"]);
+    expect(manifest.images[0]?.slug).toBe("seed-official");
+    expect(manifest.images[0]?.content?.title).toBe("Seed Content");
     expect(
       queryMock.mock.calls
-        .filter(([sql]) => `${sql}`.includes("COALESCE($21::TIMESTAMP"))
+        .filter(([sql]) => `${sql}`.includes("COALESCE($24::TIMESTAMP"))
         .map(([, params]) => params[0]),
     ).toEqual(["seed-official"]);
   });
