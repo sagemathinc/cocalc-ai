@@ -74,7 +74,7 @@ function LinuxWorkspaceMock() {
             <div>
               <Text strong>project Ubuntu environment</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                files, root filesystem, services, and tools
+                files, system packages, services, and tools
               </div>
             </div>
           </Flex>
@@ -183,7 +183,7 @@ function SoftwareLayersDiagram() {
     {
       body: "Use sudo and apt for Ubuntu packages, command-line tools, services, and system libraries.",
       icon: "linux",
-      title: "Root filesystem",
+      title: "System packages",
     },
   ] satisfies { body: string; icon: IconName; title: string }[];
   return (

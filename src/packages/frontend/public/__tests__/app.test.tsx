@@ -1194,6 +1194,11 @@ describe("PublicApp", () => {
     expect(screen.getByText("Start with who operates CoCalc")).not.toBeNull();
     expect(
       screen.getByText(
+        /Files, notebooks, terminals, chats, and agent context stay with the project/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
         "Most groups can narrow the decision quickly by separating managed hosted use, self-operated use, and customer-operated private deployment.",
       ),
     ).not.toBeNull();

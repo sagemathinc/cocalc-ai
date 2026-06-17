@@ -113,6 +113,22 @@ Follow-up visual audit, 2026-06-17:
   focused on the visitor's next decision: Codex, terminal agents, support, or
   product comparison.
 
+Project-files-as-agent-context audit, 2026-06-17:
+
+- Current external docs still support the premise: Codex reads `AGENTS.md`,
+  GitHub Copilot supports repository custom-instruction Markdown files and
+  agent instruction files, and Claude Code uses Markdown memory/instruction
+  files. That reinforces Markdown as agent context, not as a standalone product
+  promise.
+- Keep Markdown itself as a supporting `/features` docs link. The broader
+  buyer-facing idea belongs in `/products`: one CoCalc project model keeps files,
+  notebooks, terminals, chats, and agent context together across hosted, local,
+  single-VM, and private deployment paths.
+- Do not create a `Project files and context` feature group yet. It would risk
+  becoming an abstract taxonomy layer between workflow discovery and product
+  decision, and the existing first-click routes already explain the concrete
+  workflows.
+
 ### High Confidence
 
 - Keep homepage copy unchanged for now unless a future hero/workflow pass needs

@@ -186,8 +186,9 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
         </Title>
         <Paragraph style={{ fontSize: 18, margin: 0 }}>
           CoCalc has one project workspace model across hosted, local, single-VM
-          appliance, and private deployment options. The first decision is where
-          it should run and who will operate it.
+          appliance, and private deployment options. Files, notebooks,
+          terminals, chats, and agent context stay with the project; the first
+          decision is where that workspace should run and who will operate it.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("features/compare")}>

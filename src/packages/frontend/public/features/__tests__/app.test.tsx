@@ -844,6 +844,9 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Choose the Linux path that fits")).not.toBeNull();
     expect(screen.getByText("Ready to use Linux in CoCalc?")).not.toBeNull();
     expect(
+      screen.getByText("files, system packages, services, and tools"),
+    ).not.toBeNull();
+    expect(
       screen.queryByRole("region", {
         name: "Feature operating model next steps",
       }),
@@ -852,6 +855,7 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("graphviz version reported")).not.toBeNull();
     expect(screen.queryByText("graphviz version 2.43.0")).toBeNull();
     expect(screen.queryByText("RootFS images make setup reusable")).toBeNull();
+    expect(screen.queryByText(/root filesystem/i)).toBeNull();
   });
 
   it("uses projects as the linux CTA for authenticated users", () => {
