@@ -2253,6 +2253,11 @@ export class ConatClient extends EventEmitter {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
       }
+      this.reconnectCoordinator.requestResourceReconnects({
+        includeBackground: true,
+        reason: "routed_host_connected",
+        resetBackoff: true,
+      });
     });
     state.client.on("info", (info) => {
       const error = `${info?.user?.error ?? ""}`.trim();
