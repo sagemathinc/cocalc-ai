@@ -11,6 +11,7 @@ jest.mock("@cocalc/frontend/feature", () => ({
 
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }) => <span data-testid={`icon-${name}`} />,
+  isIconName: (name: unknown) => typeof name === "string",
   TimeAgo: () => <span>time ago</span>,
   Tooltip: ({ children }: any) => <>{children}</>,
 }));
