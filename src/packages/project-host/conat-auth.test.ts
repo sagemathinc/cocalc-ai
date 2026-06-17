@@ -307,4 +307,30 @@ describe("project-host Conat auth", () => {
       ).resolves.toBe(false);
     }
   });
+
+  it("does not cache negative collaborator decisions across user syncs", async () => {
+    mockGetRow.mockReturnValueOnce({ users: {} }).mockReturnValue({
+      users: {
+        [account_id]: {
+          group: "owner",
+        },
+      },
+    });
+    const { isAllowed } = createProjectHostConatAuth({ host_id });
+
+    await expect(
+      isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: `fs.project-${project_id}`,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: `fs.project-${project_id}`,
+      }),
+    ).resolves.toBe(true);
+  });
 });

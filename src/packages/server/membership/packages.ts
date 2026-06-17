@@ -285,7 +285,40 @@ function grantSourceForAssignment(
   ) {
     return "student-course-purchase";
   }
+  if (
+    pkg.kind === "site" &&
+    metadata?.grant_source === "site-license-external-claim"
+  ) {
+    return "site-license-external-claim";
+  }
   return grantSourceForKind(pkg.kind);
+}
+
+function externalClaimGrantOverride<T extends string | Date | null>({
+  pkg,
+  metadata,
+  key,
+  fallback,
+}: {
+  pkg: MembershipPackageRecord;
+  metadata?: Record<string, unknown> | null;
+  key: string;
+  fallback: T;
+}): T {
+  if (
+    pkg.kind !== "site" ||
+    metadata?.grant_source !== "site-license-external-claim"
+  ) {
+    return fallback;
+  }
+  const value = metadata[key];
+  if (value == null || value === "") {
+    return fallback;
+  }
+  if (fallback instanceof Date || key.endsWith("_at")) {
+    return asDate(value as string) as T;
+  }
+  return `${value}` as T;
 }
 
 function getPackageDomains(
@@ -836,17 +869,29 @@ async function prepareGrantForAssignment({
   }
   const grant_id = uuid();
   const grant_source = grantSourceForAssignment(pkg, metadata);
+  const membership_class = externalClaimGrantOverride({
+    pkg,
+    metadata,
+    key: "grant_membership_class",
+    fallback: pkg.membership_class,
+  });
+  const expires_at = externalClaimGrantOverride({
+    pkg,
+    metadata,
+    key: "grant_expires_at",
+    fallback: pkg.expires_at ?? null,
+  });
   return {
     grant: {
       id: grant_id,
       account_id,
-      membership_class: pkg.membership_class,
+      membership_class,
       source: grant_source,
       package_id,
       purchase_id: pkg.purchase_id ?? null,
       granted_by_account_id: assigned_by_account_id ?? null,
       starts_at: pkg.starts_at ?? null,
-      expires_at: pkg.expires_at ?? null,
+      expires_at,
       metadata: {
         ...normalizeMetadata(metadata),
         assignment_id,

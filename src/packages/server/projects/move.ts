@@ -29,10 +29,7 @@ import { createBackup as createBackupLro } from "../conat/api/project-backups";
 import type { ManagedBackupEgressOverride } from "@cocalc/conat/files/file-server";
 import { resolveHostConnection } from "../conat/api/hosts";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
-import {
-  get as getLroStream,
-  waitForCompletion as waitForLroCompletion,
-} from "@cocalc/conat/lro/client";
+import { get as getLroStream } from "@cocalc/conat/lro/client";
 import {
   getProjectBackupAssignmentState,
   resolveProjectBackupRepoAssignment,
@@ -60,6 +57,15 @@ const MOVE_START_DEST_TIMEOUT_MS = Math.max(
   Number(process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS) || 2 * 60 * 60 * 1000,
 );
 const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
+const RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 5000),
+);
+const RESTORE_BACKUP_NOT_FOUND_RETRIES = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRIES) || 3,
+);
 const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
 const MOVE_SENTINEL_DIR = ".cocalc/move-sentinels";
 const MOVE_SENTINEL_VERIFY_TIMEOUT_MS = Math.max(
@@ -85,6 +91,10 @@ const MOVE_PROJECT_FS_READY_RETRY_MS = Math.max(
 const CHILD_LRO_POLL_INTERVAL_MS = Math.max(
   250,
   Number(process.env.COCALC_MOVE_CHILD_LRO_POLL_INTERVAL_MS) || 1000,
+);
+const CHILD_LRO_STREAM_OPEN_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_CHILD_LRO_STREAM_OPEN_TIMEOUT_MS) || 5000,
 );
 const TERMINAL_LRO_STATUSES = new Set([
   "succeeded",
@@ -724,7 +734,28 @@ function isRetryableTransientMoveError(err: unknown): boolean {
     text.includes("unexpected end of data") ||
     text.includes("missing raw payload") ||
     text.includes("disconnected") ||
+    isRestoreBackupNotFoundDuringDestinationStart(err) ||
     (err as any)?.code === 408
+  );
+}
+
+function isRestoreBackupNotFoundDuringDestinationStart(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    text.includes("destination start failed:") &&
+    text.includes("backup ") &&
+    text.includes(" not found for project ")
+  );
+}
+
+function lroFailureReason(summary: LroSummary): string {
+  const progressSummary = summary.progress_summary ?? {};
+  return (
+    `${summary.error ?? ""}`.trim() ||
+    `${progressSummary?.detail?.error ?? ""}`.trim() ||
+    `${progressSummary?.error ?? ""}`.trim() ||
+    `${progressSummary?.message ?? ""}`.trim() ||
+    summary.status
   );
 }
 
@@ -745,27 +776,49 @@ async function retryOnceOnTransientMoveError<T>({
   progress: (update: MoveProjectProgressUpdate) => void;
   run: () => Promise<T>;
 }): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    if (!isRetryableTransientMoveError(err)) {
-      throw err;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (err) {
+      if (!isRetryableTransientMoveError(err)) {
+        throw err;
+      }
+      const restoreBackupNotFound =
+        operation === "start-dest" &&
+        isRestoreBackupNotFoundDuringDestinationStart(err);
+      const maxRetries = restoreBackupNotFound
+        ? RESTORE_BACKUP_NOT_FOUND_RETRIES
+        : 1;
+      if (attempt >= maxRetries) {
+        throw err;
+      }
+      const retryDelayMs = restoreBackupNotFound
+        ? RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS
+        : TRANSIENT_MOVE_RPC_RETRY_DELAY_MS;
+      const message = restoreBackupNotFound
+        ? "backup is not visible on destination yet; retrying start"
+        : "transient error; retrying once";
+      log.warn("moveProjectToHost transient operation failure; retrying", {
+        operation,
+        attempt: attempt + 1,
+        maxRetries,
+        retryDelayMs,
+        err,
+        detail,
+      });
+      progress({
+        step: progress_step ?? operation,
+        message,
+        detail: {
+          ...(detail ?? {}),
+          attempt: attempt + 1,
+          max_retries: maxRetries,
+          retry_delay_ms: retryDelayMs,
+          error: `${err}`,
+        },
+      });
+      await delay(retryDelayMs);
     }
-    log.warn("moveProjectToHost transient operation failure; retrying once", {
-      operation,
-      err,
-      detail,
-    });
-    progress({
-      step: progress_step ?? operation,
-      message: "transient error; retrying once",
-      detail: {
-        ...(detail ?? {}),
-        error: `${err}`,
-      },
-    });
-    await delay(TRANSIENT_MOVE_RPC_RETRY_DELAY_MS);
-    return await run();
   }
 }
 
@@ -820,22 +873,11 @@ async function waitForChildLroCompletion({
   shouldCancel?: () => Promise<boolean>;
   cancelStage?: string;
 }): Promise<LroSummary> {
-  let stream: Awaited<ReturnType<typeof getLroStream>> | undefined;
-  try {
-    stream = await getLroStream({
-      op_id,
-      scope_type,
-      scope_id,
-      client: conat(),
-    });
-  } catch (err) {
-    log.warn("move child lro stream init failed; using db polling", {
-      op_id,
-      scope_type,
-      scope_id,
-      err,
-    });
-  }
+  const stream = await openChildLroStreamWithTimeout({
+    op_id,
+    scope_type,
+    scope_id,
+  });
 
   let done = false;
   let lastIndex = 0;
@@ -956,6 +998,72 @@ async function waitForChildLroCompletion({
   });
 }
 
+async function openChildLroStreamWithTimeout({
+  op_id,
+  scope_type,
+  scope_id,
+}: {
+  op_id: string;
+  scope_type: "project" | "account" | "host" | "hub";
+  scope_id?: string;
+}): Promise<Awaited<ReturnType<typeof getLroStream>> | undefined> {
+  let timedOut = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const streamPromise = getLroStream({
+    op_id,
+    scope_type,
+    scope_id,
+    client: conat(),
+  })
+    .then((stream) => {
+      if (timedOut) {
+        stream.close();
+        return undefined;
+      }
+      return stream;
+    })
+    .catch((err) => {
+      if (timedOut) {
+        log.warn("move child lro stream late init failed after fallback", {
+          op_id,
+          scope_type,
+          scope_id,
+          err,
+        });
+        return undefined;
+      }
+      throw err;
+    });
+  const timeoutPromise = new Promise<undefined>((resolve) => {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      log.warn("move child lro stream init timed out; using db polling", {
+        op_id,
+        scope_type,
+        scope_id,
+        timeout_ms: CHILD_LRO_STREAM_OPEN_TIMEOUT_MS,
+      });
+      resolve(undefined);
+    }, CHILD_LRO_STREAM_OPEN_TIMEOUT_MS);
+    timeoutId.unref?.();
+  });
+  try {
+    return await Promise.race([streamPromise, timeoutPromise]);
+  } catch (err) {
+    log.warn("move child lro stream init failed; using db polling", {
+      op_id,
+      scope_type,
+      scope_id,
+      err,
+    });
+    return undefined;
+  } finally {
+    if (!timedOut && timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 async function cancelChildLro({
   op_id,
   error,
@@ -974,73 +1082,6 @@ async function cancelChildLro({
       op_id,
       err,
     });
-  }
-}
-
-async function waitForExternalChildLroCompletion({
-  op_id,
-  scope_type,
-  scope_id,
-  client,
-  timeout_ms,
-  onProgress,
-  shouldCancel,
-  cancelStage,
-}: {
-  op_id: string;
-  scope_type: "project" | "account" | "host" | "hub";
-  scope_id?: string;
-  client: ReturnType<typeof conat>;
-  timeout_ms?: number;
-  onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
-  shouldCancel?: () => Promise<boolean>;
-  cancelStage: string;
-}): Promise<LroSummary> {
-  if (!shouldCancel) {
-    return await waitForLroCompletion({
-      op_id,
-      scope_type,
-      scope_id,
-      client,
-      timeout_ms,
-      onProgress,
-    });
-  }
-  let cancelPoll: ReturnType<typeof setInterval> | undefined;
-  const cancelPromise = new Promise<never>((_resolve, reject) => {
-    cancelPoll = setInterval(() => {
-      void (async () => {
-        try {
-          if (await shouldCancel()) {
-            await cancelChildLro({
-              op_id,
-              error: `parent move canceled during ${cancelStage}`,
-            });
-            reject(new MoveCanceledError(cancelStage));
-          }
-        } catch (err) {
-          reject(err);
-        }
-      })();
-    }, CHILD_LRO_POLL_INTERVAL_MS);
-    cancelPoll.unref?.();
-  });
-  try {
-    return await Promise.race([
-      waitForLroCompletion({
-        op_id,
-        scope_type,
-        scope_id,
-        client,
-        timeout_ms,
-        onProgress,
-      }),
-      cancelPromise,
-    ]);
-  } finally {
-    if (cancelPoll) {
-      clearInterval(cancelPoll);
-    }
   }
 }
 
@@ -1749,11 +1790,10 @@ export async function moveProjectToHost(
             });
             let summary: LroSummary | undefined;
             try {
-              summary = await waitForExternalChildLroCompletion({
+              summary = await waitForChildLroCompletion({
                 op_id: startOp.op_id,
                 scope_type: startOp.scope_type,
                 scope_id: startOp.scope_id,
-                client: conat(),
                 timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
                 onProgress: (event) => {
                   progress({
@@ -1823,7 +1863,7 @@ export async function moveProjectToHost(
               } as LroSummary;
             }
             if (summary && summary.status !== "succeeded") {
-              const reason = summary.error ?? summary.status;
+              const reason = lroFailureReason(summary);
               throw new Error(`destination start failed: ${reason}`);
             }
             return { startOp, summary };
@@ -2098,3 +2138,10 @@ export async function moveProjectToHost(
     throw err;
   }
 }
+
+export const __test__ = {
+  isRestoreBackupNotFoundDuringDestinationStart,
+  isRetryableTransientMoveError,
+  lroFailureReason,
+  retryOnceOnTransientMoveError,
+};
