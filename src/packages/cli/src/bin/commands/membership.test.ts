@@ -781,3 +781,250 @@ test("membership site-license request and review call site-license APIs", async 
     review_note: "Confirmed",
   });
 });
+
+test("membership site-license external-pool create parses claim pool options", async () => {
+  let capturedArgs: any;
+  let captured: any;
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "admin-1",
+        hub: {
+          purchases: {
+            createSiteLicenseExternalClaimPool: async (opts) => {
+              capturedArgs = opts;
+              return {
+                id: "claim-pool-1",
+                site_license_id: opts.site_license_id,
+                package_id: opts.package_id,
+                name: opts.name,
+                issuer: opts.issuer,
+                audience: opts.audience,
+                slug: opts.slug,
+                default_membership_class: opts.default_membership_class,
+                allow_membership_class_override:
+                  opts.allow_membership_class_override,
+                default_membership_duration_days:
+                  opts.default_membership_duration_days,
+                allow_membership_expires_at_override:
+                  opts.allow_membership_expires_at_override,
+                max_claims: opts.max_claims,
+                max_claims_per_account: opts.max_claims_per_account,
+                metadata: opts.metadata,
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "external-pool",
+    "create",
+    "--site-license",
+    "license-1",
+    "--package",
+    "package-1",
+    "--name",
+    "Instructor LMS",
+    "--issuer",
+    "https://lms.example.edu",
+    "--slug",
+    "instructor-lms",
+    "--audience",
+    "cocalc-site-license",
+    "--default-membership-class",
+    "instructor",
+    "--allow-membership-class-override",
+    "--default-membership-duration-days",
+    "90",
+    "--allow-membership-expires-at-override",
+    "--max-claims",
+    "500",
+    "--max-claims-per-account",
+    "2",
+    "--metadata-json",
+    '{"integration":"canvas"}',
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    account_id: "admin-1",
+    site_license_id: "license-1",
+    package_id: "package-1",
+    name: "Instructor LMS",
+    issuer: "https://lms.example.edu",
+    slug: "instructor-lms",
+    audience: "cocalc-site-license",
+    default_membership_class: "instructor",
+    allow_membership_class_override: true,
+    default_membership_duration_days: 90,
+    default_membership_expires_at: undefined,
+    allow_membership_expires_at_override: true,
+    min_membership_duration_days: undefined,
+    max_membership_duration_days: undefined,
+    max_membership_expires_at: undefined,
+    default_rootfs_id: undefined,
+    max_claims: 500,
+    max_claims_per_account: 2,
+    starts_at: undefined,
+    expires_at: undefined,
+    disabled_at: undefined,
+    metadata: { integration: "canvas" },
+  });
+  assert.equal(captured?.pool_id, "claim-pool-1");
+  assert.equal(captured?.metadata?.integration, "canvas");
+});
+
+test("membership site-license external-key add parses key material", async () => {
+  let capturedArgs: any;
+  let captured: any;
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "admin-1",
+        hub: {
+          purchases: {
+            addSiteLicenseExternalClaimKey: async (opts) => {
+              capturedArgs = opts;
+              return {
+                id: "key-1",
+                pool_id: opts.pool_id,
+                kid: opts.kid,
+                alg: opts.alg,
+                public_key_jwk: opts.public_key_jwk,
+                public_key_pem: opts.public_key_pem,
+                starts_at: opts.starts_at,
+                expires_at: opts.expires_at,
+                revoked_at: opts.revoked_at,
+                created_by_account_id: opts.account_id,
+                metadata: opts.metadata,
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "external-key",
+    "add",
+    "--pool",
+    "claim-pool-1",
+    "--kid",
+    "key-2026-06",
+    "--alg",
+    "EdDSA",
+    "--jwk-json",
+    '{"kty":"OKP","crv":"Ed25519","x":"abc"}',
+    "--starts-at",
+    "2026-06-17T00:00:00.000Z",
+    "--metadata-json",
+    '{"rotated_by":"test"}',
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    account_id: "admin-1",
+    pool_id: "claim-pool-1",
+    kid: "key-2026-06",
+    alg: "EdDSA",
+    public_key_jwk: { kty: "OKP", crv: "Ed25519", x: "abc" },
+    public_key_pem: null,
+    starts_at: "2026-06-17T00:00:00.000Z",
+    expires_at: undefined,
+    revoked_at: undefined,
+    metadata: { rotated_by: "test" },
+  });
+  assert.equal(captured?.key_id, "key-1");
+  assert.equal(captured?.public_key_type, "jwk");
+});
+
+test("membership site-license claim-token consumes an external claim token", async () => {
+  let capturedArgs: any;
+  let captured: any;
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "user-1",
+        hub: {
+          purchases: {
+            consumeSiteLicenseExternalClaimToken: async (opts) => {
+              capturedArgs = opts;
+              return {
+                id: "consumption-1",
+                pool_id: "claim-pool-1",
+                site_license_id: "license-1",
+                package_id: "package-1",
+                jti: "token-1",
+                token_hash: "hash",
+                issuer: "https://lms.example.edu",
+                kid: "key-2026-06",
+                account_id: opts.account_id,
+                status: "granted",
+                side_effect_key: "membership-package-assignment",
+                assignment_id: "assignment-1",
+                membership_grant_id: "grant-1",
+                membership_class: "instructor",
+                retry_count: 0,
+                consumed_at: "2026-06-17T00:00:00.000Z",
+                updated: "2026-06-17T00:00:00.000Z",
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "claim-token",
+    "header.payload.signature",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    account_id: "user-1",
+    token: "header.payload.signature",
+  });
+  assert.equal(captured?.consumption_id, "consumption-1");
+  assert.equal(captured?.status, "granted");
+});

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { Command } from "commander";
 
 import type {
@@ -6,6 +8,10 @@ import type {
   MembershipPackageDetails,
   MembershipPackageKind,
   MembershipPackageQuote,
+  SiteLicenseExternalClaimConsumption,
+  SiteLicenseExternalClaimKey,
+  SiteLicenseExternalClaimPool,
+  SiteLicenseExternalClaimSigningAlgorithm,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
@@ -26,8 +32,17 @@ function parsePositiveInteger(value: string | undefined, flagName: string) {
   return parsed;
 }
 
-function parseMetadataJson(
+function parseOptionalPositiveInteger(
+  value: string | undefined,
+  flagName: string,
+): number | undefined {
+  if (`${value ?? ""}`.trim() === "") return;
+  return parsePositiveInteger(value, flagName);
+}
+
+function parseJsonObject(
   raw: string | undefined,
+  flagName: string,
 ): Record<string, unknown> | undefined {
   const trimmed = `${raw ?? ""}`.trim();
   if (!trimmed) return;
@@ -35,12 +50,18 @@ function parseMetadataJson(
   try {
     parsed = JSON.parse(trimmed);
   } catch (err) {
-    throw new Error(`invalid --metadata-json: ${err}`);
+    throw new Error(`invalid ${flagName}: ${err}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("--metadata-json must be a JSON object");
+    throw new Error(`${flagName} must be a JSON object`);
   }
   return parsed as Record<string, unknown>;
+}
+
+function parseMetadataJson(
+  raw: string | undefined,
+): Record<string, unknown> | undefined {
+  return parseJsonObject(raw, "--metadata-json");
 }
 
 function parseJsonArray<T>(raw: string | undefined, flagName: string): T[] {
@@ -58,6 +79,75 @@ function parseJsonArray<T>(raw: string | undefined, flagName: string): T[] {
     throw new Error(`${flagName} must be a JSON array`);
   }
   return parsed as T[];
+}
+
+function readTextFile(path: string | undefined, flagName: string): string {
+  const normalizedPath = `${path ?? ""}`.trim();
+  if (!normalizedPath) {
+    throw new Error(`${flagName} is required`);
+  }
+  try {
+    return readFileSync(normalizedPath, "utf8");
+  } catch (err) {
+    throw new Error(`unable to read ${flagName}: ${err}`);
+  }
+}
+
+function parseExternalClaimPublicKey(opts: {
+  jwkJson?: string;
+  jwkFile?: string;
+  pem?: string;
+  pemFile?: string;
+}): {
+  public_key_jwk?: Record<string, unknown> | null;
+  public_key_pem?: string | null;
+} {
+  const candidates = [
+    `${opts.jwkJson ?? ""}`.trim() ? "--jwk-json" : undefined,
+    `${opts.jwkFile ?? ""}`.trim() ? "--jwk-file" : undefined,
+    `${opts.pem ?? ""}`.trim() ? "--pem" : undefined,
+    `${opts.pemFile ?? ""}`.trim() ? "--pem-file" : undefined,
+  ].filter(Boolean);
+  if (candidates.length === 0) {
+    throw new Error(
+      "one of --jwk-json, --jwk-file, --pem, or --pem-file is required",
+    );
+  }
+  if (candidates.length > 1) {
+    throw new Error(
+      "only one of --jwk-json, --jwk-file, --pem, or --pem-file may be used",
+    );
+  }
+  if (`${opts.jwkJson ?? ""}`.trim()) {
+    return {
+      public_key_jwk: parseJsonObject(opts.jwkJson, "--jwk-json"),
+      public_key_pem: null,
+    };
+  }
+  if (`${opts.jwkFile ?? ""}`.trim()) {
+    return {
+      public_key_jwk: parseJsonObject(
+        readTextFile(opts.jwkFile, "--jwk-file"),
+        "--jwk-file",
+      ),
+      public_key_pem: null,
+    };
+  }
+  return {
+    public_key_jwk: null,
+    public_key_pem:
+      `${opts.pem ?? readTextFile(opts.pemFile, "--pem-file")}`.trim(),
+  };
+}
+
+function normalizeExternalClaimAlg(
+  raw: string | undefined,
+): SiteLicenseExternalClaimSigningAlgorithm {
+  const value = `${raw ?? ""}`.trim();
+  if (value === "EdDSA" || value === "ES256") {
+    return value;
+  }
+  throw new Error("--alg must be EdDSA or ES256");
 }
 
 function normalizeStringList(values: string[] | undefined): string[] {
@@ -361,6 +451,95 @@ function serializeSiteLicenseOverview(
     pending_requests: overview.pending_requests.map((request) =>
       serializeSiteLicenseRequest(request, toIso),
     ),
+  };
+}
+
+function serializeSiteLicenseExternalClaimPool(
+  claimPool: SiteLicenseExternalClaimPool,
+  toIso: MembershipCommandDeps["toIso"],
+) {
+  return {
+    pool_id: claimPool.id,
+    slug: claimPool.slug ?? null,
+    site_license_id: claimPool.site_license_id,
+    package_id: claimPool.package_id,
+    name: claimPool.name,
+    issuer: claimPool.issuer,
+    audience: claimPool.audience,
+    default_membership_class: claimPool.default_membership_class ?? null,
+    allow_membership_class_override: claimPool.allow_membership_class_override,
+    default_membership_duration_days:
+      claimPool.default_membership_duration_days ?? null,
+    default_membership_expires_at: toIso(
+      claimPool.default_membership_expires_at,
+    ),
+    allow_membership_expires_at_override:
+      claimPool.allow_membership_expires_at_override,
+    min_membership_duration_days:
+      claimPool.min_membership_duration_days ?? null,
+    max_membership_duration_days:
+      claimPool.max_membership_duration_days ?? null,
+    max_membership_expires_at: toIso(claimPool.max_membership_expires_at),
+    default_rootfs_id: claimPool.default_rootfs_id ?? null,
+    max_claims: claimPool.max_claims ?? null,
+    max_claims_per_account: claimPool.max_claims_per_account ?? null,
+    starts_at: toIso(claimPool.starts_at),
+    expires_at: toIso(claimPool.expires_at),
+    disabled_at: toIso(claimPool.disabled_at),
+    created_by_account_id: claimPool.created_by_account_id ?? null,
+    metadata: claimPool.metadata ?? null,
+    created: toIso(claimPool.created),
+    updated: toIso(claimPool.updated),
+  };
+}
+
+function serializeSiteLicenseExternalClaimKey(
+  key: SiteLicenseExternalClaimKey,
+  toIso: MembershipCommandDeps["toIso"],
+) {
+  return {
+    key_id: key.id,
+    pool_id: key.pool_id,
+    kid: key.kid,
+    alg: key.alg,
+    public_key_type: key.public_key_jwk ? "jwk" : "pem",
+    starts_at: toIso(key.starts_at),
+    expires_at: toIso(key.expires_at),
+    revoked_at: toIso(key.revoked_at),
+    created_by_account_id: key.created_by_account_id ?? null,
+    metadata: key.metadata ?? null,
+    created: toIso(key.created),
+    updated: toIso(key.updated),
+  };
+}
+
+function serializeSiteLicenseExternalClaimConsumption(
+  consumption: SiteLicenseExternalClaimConsumption,
+  toIso: MembershipCommandDeps["toIso"],
+) {
+  return {
+    consumption_id: consumption.id,
+    pool_id: consumption.pool_id,
+    site_license_id: consumption.site_license_id,
+    package_id: consumption.package_id,
+    jti: consumption.jti,
+    issuer: consumption.issuer,
+    kid: consumption.kid ?? null,
+    account_id: consumption.account_id,
+    status: consumption.status,
+    assignment_id: consumption.assignment_id ?? null,
+    membership_grant_id: consumption.membership_grant_id ?? null,
+    membership_class: consumption.membership_class,
+    membership_expires_at: toIso(consumption.membership_expires_at),
+    rootfs_id: consumption.rootfs_id ?? null,
+    external_subject: consumption.external_subject ?? null,
+    token_expires_at: toIso(consumption.token_expires_at),
+    error_code: consumption.error_code ?? null,
+    error_message: consumption.error_message ?? null,
+    retry_count: consumption.retry_count,
+    metadata: consumption.metadata ?? null,
+    consumed_at: toIso(consumption.consumed_at),
+    updated: toIso(consumption.updated),
   };
 }
 
@@ -1029,6 +1208,228 @@ export function registerMembershipCommand(
         );
       },
     );
+
+  const externalPool = siteLicense
+    .command("external-pool")
+    .description("admin operations for external site-license claim pools");
+
+  externalPool
+    .command("create")
+    .description("admin create or update an external token claim pool")
+    .requiredOption("--site-license <siteLicenseId>", "site license id")
+    .requiredOption("--package <packageId>", "site-license package/pool id")
+    .requiredOption("--name <name>", "external claim pool name")
+    .requiredOption("--issuer <issuer>", "expected token issuer")
+    .option("--slug <slug>", "stable external claim pool slug")
+    .option("--audience <aud>", "expected token audience")
+    .option(
+      "--default-membership-class <class>",
+      "default membership class granted by tokens",
+    )
+    .option(
+      "--allow-membership-class-override",
+      "allow tokens to choose membership_class",
+    )
+    .option(
+      "--default-membership-duration-days <days>",
+      "default membership duration in days",
+    )
+    .option(
+      "--default-membership-expires-at <iso>",
+      "default absolute membership expiry",
+    )
+    .option(
+      "--allow-membership-expires-at-override",
+      "allow tokens to choose membership expiry",
+    )
+    .option(
+      "--min-membership-duration-days <days>",
+      "minimum token-selected membership duration in days",
+    )
+    .option(
+      "--max-membership-duration-days <days>",
+      "maximum token-selected membership duration in days",
+    )
+    .option(
+      "--max-membership-expires-at <iso>",
+      "maximum token-selected absolute membership expiry",
+    )
+    .option("--default-rootfs-id <id>", "default rootfs id granted by tokens")
+    .option("--max-claims <n>", "pool-wide maximum token consumptions")
+    .option(
+      "--max-claims-per-account <n>",
+      "per-account maximum token consumptions",
+    )
+    .option("--starts-at <iso>", "pool activation time")
+    .option("--expires-at <iso>", "pool expiry time")
+    .option("--disabled-at <iso>", "pool disabled time")
+    .option("--metadata-json <json>", "pool metadata as a JSON object")
+    .action(
+      async (
+        opts: {
+          siteLicense: string;
+          package: string;
+          name: string;
+          issuer: string;
+          slug?: string;
+          audience?: string;
+          defaultMembershipClass?: string;
+          allowMembershipClassOverride?: boolean;
+          defaultMembershipDurationDays?: string;
+          defaultMembershipExpiresAt?: string;
+          allowMembershipExpiresAtOverride?: boolean;
+          minMembershipDurationDays?: string;
+          maxMembershipDurationDays?: string;
+          maxMembershipExpiresAt?: string;
+          defaultRootfsId?: string;
+          maxClaims?: string;
+          maxClaimsPerAccount?: string;
+          startsAt?: string;
+          expiresAt?: string;
+          disabledAt?: string;
+          metadataJson?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license external-pool create",
+          async (ctx) => {
+            return serializeSiteLicenseExternalClaimPool(
+              await ctx.hub.purchases.createSiteLicenseExternalClaimPool({
+                account_id: ctx.accountId,
+                site_license_id: `${opts.siteLicense ?? ""}`.trim(),
+                package_id: `${opts.package ?? ""}`.trim(),
+                name: `${opts.name ?? ""}`.trim(),
+                issuer: `${opts.issuer ?? ""}`.trim(),
+                slug: `${opts.slug ?? ""}`.trim() || undefined,
+                audience: `${opts.audience ?? ""}`.trim() || undefined,
+                default_membership_class:
+                  `${opts.defaultMembershipClass ?? ""}`.trim() || undefined,
+                allow_membership_class_override:
+                  opts.allowMembershipClassOverride === true,
+                default_membership_duration_days: parseOptionalPositiveInteger(
+                  opts.defaultMembershipDurationDays,
+                  "--default-membership-duration-days",
+                ),
+                default_membership_expires_at:
+                  `${opts.defaultMembershipExpiresAt ?? ""}`.trim() ||
+                  undefined,
+                allow_membership_expires_at_override:
+                  opts.allowMembershipExpiresAtOverride === true,
+                min_membership_duration_days: parseOptionalPositiveInteger(
+                  opts.minMembershipDurationDays,
+                  "--min-membership-duration-days",
+                ),
+                max_membership_duration_days: parseOptionalPositiveInteger(
+                  opts.maxMembershipDurationDays,
+                  "--max-membership-duration-days",
+                ),
+                max_membership_expires_at:
+                  `${opts.maxMembershipExpiresAt ?? ""}`.trim() || undefined,
+                default_rootfs_id:
+                  `${opts.defaultRootfsId ?? ""}`.trim() || undefined,
+                max_claims: parseOptionalPositiveInteger(
+                  opts.maxClaims,
+                  "--max-claims",
+                ),
+                max_claims_per_account: parseOptionalPositiveInteger(
+                  opts.maxClaimsPerAccount,
+                  "--max-claims-per-account",
+                ),
+                starts_at: `${opts.startsAt ?? ""}`.trim() || undefined,
+                expires_at: `${opts.expiresAt ?? ""}`.trim() || undefined,
+                disabled_at: `${opts.disabledAt ?? ""}`.trim() || undefined,
+                metadata: parseMetadataJson(opts.metadataJson) ?? null,
+              }),
+              toIso,
+            );
+          },
+        );
+      },
+    );
+
+  const externalKey = siteLicense
+    .command("external-key")
+    .description("admin operations for external site-license claim keys");
+
+  externalKey
+    .command("add")
+    .description("admin add or update an external token verification key")
+    .requiredOption("--pool <poolId>", "external claim pool id")
+    .requiredOption("--kid <kid>", "token key id")
+    .requiredOption("--alg <alg>", "signing algorithm: EdDSA or ES256")
+    .option("--jwk-json <json>", "public key JWK JSON")
+    .option("--jwk-file <path>", "file containing public key JWK JSON")
+    .option("--pem <pem>", "public key PEM")
+    .option("--pem-file <path>", "file containing public key PEM")
+    .option("--starts-at <iso>", "key activation time")
+    .option("--expires-at <iso>", "key expiry time")
+    .option("--revoked-at <iso>", "key revocation time")
+    .option("--metadata-json <json>", "key metadata as a JSON object")
+    .action(
+      async (
+        opts: {
+          pool: string;
+          kid: string;
+          alg: string;
+          jwkJson?: string;
+          jwkFile?: string;
+          pem?: string;
+          pemFile?: string;
+          startsAt?: string;
+          expiresAt?: string;
+          revokedAt?: string;
+          metadataJson?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license external-key add",
+          async (ctx) => {
+            const publicKey = parseExternalClaimPublicKey(opts);
+            return serializeSiteLicenseExternalClaimKey(
+              await ctx.hub.purchases.addSiteLicenseExternalClaimKey({
+                account_id: ctx.accountId,
+                pool_id: `${opts.pool ?? ""}`.trim(),
+                kid: `${opts.kid ?? ""}`.trim(),
+                alg: normalizeExternalClaimAlg(opts.alg),
+                ...publicKey,
+                starts_at: `${opts.startsAt ?? ""}`.trim() || undefined,
+                expires_at: `${opts.expiresAt ?? ""}`.trim() || undefined,
+                revoked_at: `${opts.revokedAt ?? ""}`.trim() || undefined,
+                metadata: parseMetadataJson(opts.metadataJson) ?? null,
+              }),
+              toIso,
+            );
+          },
+        );
+      },
+    );
+
+  siteLicense
+    .command("claim-token <token>")
+    .description("consume an external site-license claim token")
+    .action(async (token: string, _opts: {}, command: Command) => {
+      await withContext(
+        command,
+        "membership site-license claim-token",
+        async (ctx) => {
+          const normalizedToken = `${token ?? ""}`.trim();
+          if (!normalizedToken) {
+            throw new Error("token must be non-empty");
+          }
+          return serializeSiteLicenseExternalClaimConsumption(
+            await ctx.hub.purchases.consumeSiteLicenseExternalClaimToken({
+              account_id: ctx.accountId,
+              token: normalizedToken,
+            }),
+            toIso,
+          );
+        },
+      );
+    });
 
   return membership;
 }
