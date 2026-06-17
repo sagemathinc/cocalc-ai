@@ -8,6 +8,7 @@ import type {
   AcpControlResponse,
   AcpForkSessionRequest,
   AcpInterruptRequest,
+  AcpInterruptResponse,
   AcpRequest,
   AcpSteerRequest,
   AcpSteerResponse,
@@ -173,7 +174,9 @@ type EvaluateHandler = (
   options: AcpRequest & { stream: StreamHandler },
 ) => Promise<void>;
 
-type InterruptHandler = (options: AcpInterruptRequest) => Promise<void>;
+type InterruptHandler = (
+  options: AcpInterruptRequest,
+) => Promise<AcpInterruptResponse>;
 type SteerHandler = (options: AcpSteerRequest) => Promise<AcpSteerResponse>;
 type ForkHandler = (
   options: AcpForkSessionRequest,
@@ -543,8 +546,8 @@ async function handleInterruptMessage(
 
   try {
     validateOptions(options, mesg.subject);
-    await interrupt(options);
-    await respond();
+    const result = await interrupt(options);
+    await respond(result);
   } catch (err) {
     await respond(undefined, `${err}`);
   }

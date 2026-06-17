@@ -25,7 +25,7 @@ import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
-import { appUrl } from "./util";
+import { signedInRedirectUrl } from "./util";
 import { COLORS } from "@cocalc/util/theme";
 import { legacyNamePartsFromDisplayName } from "@cocalc/util/accounts/display-name";
 
@@ -39,10 +39,6 @@ interface SignUpFormBaseProps {
 
 function getQueryParam(name: string): string | null {
   return new URL(window.location.href).searchParams.get(name);
-}
-
-function signedInRedirectUrl(): string {
-  return appUrl("projects");
 }
 
 export default function SignUpFormBase({

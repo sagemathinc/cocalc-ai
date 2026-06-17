@@ -21,6 +21,7 @@ import type { SettingsPageType } from "@cocalc/util/types/settings";
 export type PageTopTab =
   | "account"
   | "auth"
+  | "claim"
   | "admin"
   | "docs"
   | "file-use"
@@ -49,6 +50,10 @@ export type ParsedPageTarget =
   | {
       page: "auth";
       view: AuthView;
+    }
+  | {
+      page: "claim";
+      kind: "site-license";
     };
 
 function parseAuthView(value?: string): AuthView {
@@ -112,6 +117,11 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
       return { page: "ssh" };
     case "auth":
       return { page: "auth", view: parseAuthView(segments[1]) };
+    case "claim":
+      if (segments[1] === "site-license") {
+        return { page: "claim", kind: "site-license" };
+      }
+      return { page: "account", tab: "index" };
     default:
       return { page: "account", tab: "index" };
   }
@@ -170,6 +180,8 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
       return "ssh";
     case "auth":
       return `auth/${parsed.view}`;
+    case "claim":
+      return "claim/site-license";
   }
 }
 

@@ -7,6 +7,7 @@ import type {
   AcpControlResponse,
   AcpForkSessionRequest,
   AcpInterruptRequest,
+  AcpInterruptResponse,
   AcpRequest,
   AcpSteerRequest,
   AcpSteerResponse,
@@ -101,7 +102,7 @@ export async function runAcp(
 export async function interruptAcp(
   request: AcpInterruptRequest,
   client?: Client,
-): Promise<void> {
+): Promise<AcpInterruptResponse> {
   if (!isValidUUID(request.project_id)) {
     throw Error("project_id must be a valid uuid");
   }
@@ -112,6 +113,10 @@ export async function interruptAcp(
   if (error) {
     throw Error(error);
   }
+  return (resp?.data ?? {
+    ok: true,
+    state: "queued",
+  }) as AcpInterruptResponse;
 }
 
 export async function steerAcp(

@@ -156,7 +156,8 @@ export function load_target(
   if (
     !redux.getStore("account").get("is_logged_in") &&
     !webapp_client.is_signed_in() &&
-    parsed.page !== "auth"
+    parsed.page !== "auth" &&
+    parsed.page !== "claim"
   ) {
     // this will redirect to the sign in page after a brief pause
     redux.getActions("page").set_active_tab("account", false);
@@ -216,6 +217,10 @@ export function load_target(
         active_top_tab: "auth",
         auth_view: parsed.view,
       });
+      break;
+
+    case "claim":
+      redux.getActions("page").set_active_tab("claim", change_history);
       break;
 
     case "file-use":
