@@ -3542,7 +3542,7 @@ function defaultRootfsContentActionDraft(
         draft_id,
         kind: "open",
         label: "Open file",
-        path: "",
+        path: "/",
       };
   }
 }
