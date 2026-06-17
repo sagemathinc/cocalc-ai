@@ -452,17 +452,19 @@ function ProductSharedProjectNote() {
       aria-label="Shared CoCalc project context"
       role="note"
       style={{
-        background: PUBLIC_COLORS.surfaceMuted,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        padding: "14px 18px",
+        borderLeft: `3px solid ${PUBLIC_COLORS.brandSubtle}`,
+        color: PUBLIC_COLORS.mutedText,
+        fontSize: 15,
+        lineHeight: 1.55,
+        maxWidth: "76ch",
+        padding: "2px 0 2px 14px",
       }}
     >
       <Text strong>Same project, different operating path.</Text>{" "}
-      <Text>
-        The product choice changes where CoCalc runs and who operates it; files,
-        notebooks, terminals, chats, and agent context still stay with the
-        project.
+      <Text style={{ color: PUBLIC_COLORS.mutedText }}>
+        The product path changes where CoCalc runs and who operates it; the
+        project remains the working context for files, notebooks, terminals,
+        chats, and agent context.
       </Text>
     </div>
   );

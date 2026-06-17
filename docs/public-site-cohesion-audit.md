@@ -198,6 +198,15 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Add focused product-detail tests for shared project-context continuity and blocked RootFS/open-format/operating-system marketing language.
 - [x] Run focused tests, lint, browser QA, rebuild, and commit.
 
+## Product Context Note Visual Weight Pass
+
+- [x] Audit `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` for whether the shared-project continuity note helps buyer comprehension without competing with the route-owned buyer question, positioning cards, or next-step ending.
+- [x] Finding: the continuity note is conceptually useful because it prevents product-path pages from feeling disconnected from workflow discovery.
+- [x] Finding: the full-width muted blue block reads like a card, alert, or extra section on desktop and mobile; it has too much visual weight for a supporting continuity reminder.
+- [x] Finding: the four product detail pages still have one clear buyer question and route-owned ending; the change should reduce note weight rather than restructure the pages.
+- [x] Change: restyle the shared-project note as a compact inline callout with a left rule, muted copy, and no card background so it supports the lead instead of competing with the decision cards.
+- [x] Run focused tests, browser QA, rebuild, and commit.
+
 ## Workflow To Product Decision Handoff Pass
 
 - [x] Audit `/features`, `/features/ai`, `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`, `/features/teaching`, `/products`, `/pricing`, `/features/compare`, and `/support/new` as one path from workflow fit to operating-model decision.

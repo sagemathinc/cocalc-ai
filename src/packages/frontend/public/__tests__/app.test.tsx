@@ -114,12 +114,16 @@ function expectSharedProjectContextNote() {
   const note = screen.getByRole("note", {
     name: "Shared CoCalc project context",
   });
+  const style = note.getAttribute("style") ?? "";
+  expect(style).toContain("border-left");
+  expect(style).toContain("max-width: 76ch");
+  expect(style).not.toContain("background");
   expect(
     within(note).getByText("Same project, different operating path."),
   ).not.toBeNull();
   expect(
     within(note).getByText(
-      /files, notebooks, terminals, chats, and agent context still stay with the project/i,
+      /project remains the working context for files, notebooks, terminals, chats, and agent context/i,
     ),
   ).not.toBeNull();
 }
