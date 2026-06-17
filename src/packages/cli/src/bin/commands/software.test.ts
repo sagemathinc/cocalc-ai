@@ -402,6 +402,7 @@ test("software help lists supported components", () => {
   assert.match(build.helpInformation(), /static\|hub\|bay\|project-host/);
   assert.match(list.helpInformation(), /cli\|launchpad\|plus\|star/);
   assert.match(deploy.helpInformation(), /bay-conat-router/);
+  assert.match(deploy.helpInformation(), /--build/);
   assert.match(
     deploy.helpInformation(),
     /site profile \(see cocalc auth list\) or release\s+channel \(dev, candidate or stable\)/,
@@ -1740,6 +1741,76 @@ test("software deploy hub pushes a local-only artifact before Rocket deploy", as
     "https://cocalc.ai",
     "--yes",
   ]);
+});
+
+test("software deploy --build builds the artifact tag before deploying", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-build-hub-"));
+  const localStore = join(dir, "store");
+  const repoRoot = makeRepoRoot("software-deploy-build-repo-");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({
+      localStore,
+      repoRoot,
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = join(dir, "cocalc-bin");
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "deploy",
+      "--build",
+      "hub",
+      "build-deploy",
+      "prod",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+    process.argv[1] = originalArgv1;
+  }
+
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0].command, "pnpm");
+  assert.equal(runs[0].args.includes("build:bay-hub-bundle"), true);
+  assert.equal(runs[1].command, join(dir, "cocalc-bin"));
+  const rocketIndex = runs[1].args.indexOf("rocket");
+  assert.notEqual(rocketIndex, -1);
+  assert.deepEqual(runs[1].args.slice(rocketIndex, rocketIndex + 5), [
+    "rocket",
+    "deploy",
+    "prod",
+    "--scope",
+    "hub",
+  ]);
+  const index = JSON.parse(
+    r2.objects.get("software/indexes/hub.json")!.toString("utf8"),
+  );
+  assert.equal(index.artifacts[0].tag, "build-deploy");
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.command, "software deploy");
+  assert.equal(payload.data.component, "hub");
+  assert.equal(payload.data.tag, "build-deploy");
+  assert.equal(payload.data.built, true);
+  assert.equal(payload.data.built_component, "hub");
+  assert.equal(payload.data.built_artifact_id, payload.data.artifact_id);
+  assert.equal(payload.data.source, "local+pushed");
 });
 
 test("software deploy records failed history when subprocess fails", async () => {

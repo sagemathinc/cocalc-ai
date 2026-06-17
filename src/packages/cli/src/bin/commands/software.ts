@@ -122,6 +122,7 @@ type DeployOptions = {
   remote?: string;
   api?: string;
   toolsMinimal?: string;
+  build?: boolean;
 };
 
 type HistoryOptions = {
@@ -3179,6 +3180,10 @@ Supported deploy/smoke components:
     .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
     .argument("<tag-or-id>", "artifact tag or id")
     .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
+    .option(
+      "--build",
+      "build the component tag before deploying; deploy-only service components build their underlying artifact component",
+    )
     .option("--local-store <path>", "local artifact store")
     .option("--config <path>", "rocket config path")
     .option("--remote <ssh-target>", "bay SSH target")
@@ -3226,6 +3231,26 @@ Supported deploy/smoke components:
         }
         if (!releaseTarget && !deps.runCommand) {
           throw new Error("software deploy requires runCommand dependency");
+        }
+        let builtArtifact:
+          | (SoftwareArtifactManifest & { local_dir: string })
+          | undefined;
+        if (opts.build) {
+          builtArtifact = await buildFromFile({
+            component: artifactComponent,
+            tagArg: selector,
+            opts: {
+              localStore: opts.localStore,
+            },
+            deps: {
+              cwd: deps.cwd,
+              env: deps.env ?? process.env,
+              now: deps.now ?? (() => new Date()),
+              gitMetadata: deps.gitMetadata,
+              repoRoot: deps.repoRoot,
+              runCommand: deps.runCommand,
+            },
+          });
         }
         const artifact = await resolveDeployArtifact({
           component: artifactComponent,
@@ -3578,6 +3603,13 @@ Supported deploy/smoke components:
             artifact_id: artifact.artifact_id,
             duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
             source: artifact.source,
+            ...(builtArtifact
+              ? {
+                  built: true,
+                  built_component: builtArtifact.component,
+                  built_artifact_id: builtArtifact.artifact_id,
+                }
+              : {}),
             ...artifactSizeSummary(artifact.files),
             remote_manifest: artifact.remote_manifest,
             files: artifact.files.map((file) => file.url),
