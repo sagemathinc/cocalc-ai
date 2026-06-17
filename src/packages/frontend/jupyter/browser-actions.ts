@@ -300,6 +300,21 @@ export class JupyterActions extends JupyterActions0 {
     }, delayMs);
   };
 
+  private markKernelBusyForLocalRun = (runId: string): void => {
+    if (this.isClosed()) {
+      return;
+    }
+    this.runDebug("kernel.status.local_busy", {
+      runId,
+      backend_state: this.get_runtime_setting("backend_state"),
+      kernel_state: this.get_runtime_setting("kernel_state"),
+    });
+    this.set_runtime_settings({
+      backend_state: "running",
+      kernel_state: "busy",
+    });
+  };
+
   private resolveRunDebugMode = (): "off" | "on" | "json" => {
     try {
       const value = get_local_storage("jupyter_run_debug");
@@ -3008,6 +3023,7 @@ export class JupyterActions extends JupyterActions0 {
         });
         return;
       }
+      this.markKernelBusyForLocalRun(runId);
       const runner = await client.run(cells, {
         ...opts,
         limit,
