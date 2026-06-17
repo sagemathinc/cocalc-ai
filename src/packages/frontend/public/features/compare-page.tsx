@@ -312,14 +312,25 @@ const HERO_ACTION_STYLE = {
   alignItems: "flex-start",
 } satisfies CSSProperties;
 
+function compareSupportPath(): string {
+  const params = new URLSearchParams({
+    body: "I want to discuss whether CoCalc fits our workflow and which operating model to evaluate. Helpful context: workflow type, AI/notebook/terminal/teaching needs, expected users or projects, who would operate CoCalc, purchasing timeline, and any deployment or support constraints.",
+    context: "feature-compare",
+    subject: "CoCalc fit and operating model",
+    title: "Talk with CoCalc about CoCalc fit",
+    type: "purchase",
+  });
+  return `${featureAppPath("support/new")}?${params.toString()}`;
+}
+
 export default function CompareFeaturePage({
   config,
-  helpEmail,
 }: {
   config?: PublicConfig;
   helpEmail?: string;
 }) {
   const trustHref = builtinPolicyPath(config, "trust");
+  const supportHref = compareSupportPath();
   const nextRoutes = [
     ...NEXT_ROUTES,
     ...(trustHref
@@ -367,9 +378,7 @@ export default function CompareFeaturePage({
               <Button href={featureAppPath("pricing")}>
                 Pricing and licensing
               </Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Talk with CoCalc</Button>
-              ) : null}
+              <Button href={supportHref}>Talk with CoCalc</Button>
             </Flex>
           </Flex>
           <div className="cocalc-compare-quick-read">

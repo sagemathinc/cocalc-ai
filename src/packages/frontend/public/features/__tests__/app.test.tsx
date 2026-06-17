@@ -1314,7 +1314,22 @@ describe("PublicFeaturesApp", () => {
       screen
         .getByRole("link", { name: "Talk with CoCalc" })
         .getAttribute("href"),
-    ).toBe("mailto:help@example.com");
+    ).toEqual(expect.stringContaining("/support/new?"));
+    expect(
+      screen
+        .getByRole("link", { name: "Talk with CoCalc" })
+        .getAttribute("href"),
+    ).toEqual(expect.stringContaining("context=feature-compare"));
+    expect(
+      screen
+        .getByRole("link", { name: "Talk with CoCalc" })
+        .getAttribute("href"),
+    ).toEqual(expect.stringContaining("type=purchase"));
+    expect(
+      screen
+        .getByRole("link", { name: "Talk with CoCalc" })
+        .getAttribute("href"),
+    ).not.toContain("mailto:");
     expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
     expect(
       screen.queryByRole("region", {

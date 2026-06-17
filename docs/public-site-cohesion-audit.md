@@ -174,6 +174,21 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Finding: teaching should not be a top starter, but placing it after every runtime and language route makes it feel like a footer orphan; move it after the core workflow group while keeping the styling secondary.
 - [x] Browser QA: validate `/features` plus the five first-click routes on desktop, tablet, and mobile for expected route text, section order, and horizontal overflow.
 
+## Workflow To Product Decision Handoff Pass
+
+- [x] Audit `/features`, `/features/ai`, `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`, `/features/teaching`, `/products`, `/pricing`, `/features/compare`, and `/support/new` as one path from workflow fit to operating-model decision.
+- [x] Verify that workflow pages explain value first, then route visitors to product comparison, pricing, or support without making each feature page a duplicate product chooser.
+- [x] Keep product-path boundaries clear: CoCalc.ai hosted, Plus local/self-directed, Star bounded to one public Ubuntu VM, Launchpad lightweight customer-operated private deployment, and Rocket broader private-cloud path.
+- [x] Preserve AI-first positioning and keep teaching as a secondary workflow path for courses, labs, and workshops rather than a top-level product focus.
+- [x] Keep project-host language bounded to dedicated hosted compute and technical docs, not a standalone public product.
+- [x] Check support/contact prefill context so visitors arriving from workflow pages or product pages know what information to provide.
+- [x] Add focused tests for workflow-to-product CTA discipline, support context, and stale/internal language before rebuilding the preview.
+- [x] Finding: `/features/ai`, `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`, and `/features/teaching` already keep workflow value first and route visitors toward products, docs, or contextual support without turning each feature page into a full product chooser.
+- [x] Finding: `/products`, `/pricing`, and `/support/new` already preserve the five operating paths and purchase context; leave those boundaries intact during this pass.
+- [x] Finding: `/features/compare` was the handoff weak point because it is the decision page but still sent "Talk with CoCalc" to a raw email link instead of the contextual support form.
+- [x] Change: move the compare-page contact CTA to `/support/new` with product-decision context so visitors can describe workflow fit, operating model, purchasing, deployment, and support constraints in one place.
+- [x] Browser QA: validate the workflow and decision route set on desktop, tablet, and mobile with zero horizontal overflow; confirm compare-page contact uses `context=feature-compare` and `type=purchase`, and confirm `/support/new` preserves the prefilled decision context in the preview's email-only mode.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.
