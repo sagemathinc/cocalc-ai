@@ -321,6 +321,12 @@ describe("PublicApp", () => {
     expect(screen.getByText("Teaching with CoCalc")).not.toBeNull();
     expect(screen.getByText("Self-hosting CoCalc")).not.toBeNull();
     expect(screen.getByText("How CoCalc works")).not.toBeNull();
+    expect(
+      document.querySelectorAll(".cocalc-guide-link-featured"),
+    ).toHaveLength(3);
+    expect(
+      document.querySelectorAll(".cocalc-guide-link-compact").length,
+    ).toBeGreaterThan(8);
     expect(document.querySelectorAll(".ant-tag")).toHaveLength(0);
     expect(screen.queryByText("CoCalc-AI")).toBeNull();
     expect(

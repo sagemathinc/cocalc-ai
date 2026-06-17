@@ -180,51 +180,25 @@ shows concentration after normalization.
   );
 }
 
-function PaperProjectDiagram() {
-  const items = [
-    ["tex", "paper.tex", "#ad6800"],
-    ["file-pdf", "PDF build", "#d4380d"],
-    ["file", "bibliography", PUBLIC_COLORS.brand],
-    ["database", "figures", PUBLIC_COLORS.brand],
-    ["jupyter", "notebooks", "#f37726"],
-    ["terminal", "scripts", PUBLIC_COLORS.brand],
-  ] as const;
+function PaperProjectContext() {
   return (
     <div
+      aria-label="Project context that stays with a LaTeX paper in CoCalc"
       style={{
-        background:
-          "radial-gradient(circle at center, #eef5ff 0%, #ffffff 48%, #fff8e8 100%)",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-        padding: 24,
+        borderLeft: `3px solid ${PUBLIC_COLORS.brandSubtle}`,
+        paddingLeft: 18,
       }}
     >
-      <div
-        style={{
-          display: "grid",
-          gap: 14,
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-        }}
-      >
-        {items.map(([icon, label, accent], index) => (
-          <Flex
-            align="center"
-            gap={10}
-            key={label}
-            style={{
-              background: index === 0 ? "#fff7e6" : "#fff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 8,
-              minHeight: 74,
-              padding: 14,
-            }}
-          >
-            <IconBadge accent={accent} icon={icon} />
-            <Text strong>{label}</Text>
-          </Flex>
-        ))}
-      </div>
+      <Flex vertical gap={10}>
+        <Text strong>What stays with the paper</Text>
+        <BulletList
+          items={[
+            "source, bibliography, generated tables, and figures",
+            "notebooks, scripts, terminals, and package state",
+            "review notes, project history, chat, and collaborator context",
+          ]}
+        />
+      </Flex>
     </div>
   );
 }
@@ -354,11 +328,8 @@ export default function LatexEditorFeaturePage({
       </PublicSection>
 
       <PublicSection>
-        <Row gutter={[28, 28]} align="middle">
-          <Col xs={24} lg={11}>
-            <PaperProjectDiagram />
-          </Col>
-          <Col xs={24} lg={13}>
+        <Row gutter={[28, 28]} align="top">
+          <Col xs={24} lg={15}>
             <Flex vertical gap={12}>
               <Title level={3} style={{ margin: 0 }}>
                 Keep the working tree together
@@ -383,6 +354,9 @@ export default function LatexEditorFeaturePage({
                 <Button href={appPath("features/ai")}>AI workflows</Button>
               </Flex>
             </Flex>
+          </Col>
+          <Col xs={24} lg={9}>
+            <PaperProjectContext />
           </Col>
         </Row>
       </PublicSection>

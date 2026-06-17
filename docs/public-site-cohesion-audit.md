@@ -9,6 +9,46 @@ Use these IDs in follow-up prompts, commits, and review comments. Keep new
 public-site work in this ledger until it is validated and committed, then leave
 the entry in place as a decision record.
 
+### PSL-2026-06-17-009: Feature Details And Guides Visual Triage
+
+- **Routes:** `/features/latex-editor`, `/guides`, `/features/whiteboard`,
+  `/features/slides`, and the language/math feature pages through the
+  `feature-details` browser-QA group.
+- **Trigger:** Follow-up browser QA requested after the reusable QA harness was
+  added, with manual attention to pages that still looked visually heavy.
+- **Principle:** Deterministic QA should catch route, copy, CTA, and overflow
+  regressions; human screenshot review should identify density problems and
+  only promote high-confidence layout changes.
+- **Finding:** `feature-details` and `guides` passed deterministic browser QA
+  on `https://blaec.cocalc.ai`, but screenshot review showed two high-confidence
+  visual issues: `/guides` still reads as a large wall of card links, and
+  `/features/latex-editor` repeats bulky project/file diagrams before the page
+  reaches its decision content.
+- **Decision:** Keep the Guides route inventory, but make non-featured guide
+  links compact grouped rows. Keep the LaTeX workflow framing, but replace the
+  secondary working-tree diagram with a quiet project-context list so the hero
+  mock remains the primary visual.
+- **Changed files:** `src/packages/frontend/public/guides/app.tsx`,
+  `src/packages/frontend/public/features/latex-editor-page.tsx`,
+  `src/packages/frontend/public/__tests__/app.test.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`,
+  `docs/public-site-cohesion-audit.md`,
+  `src/.agents/public-site-audit-prompt-log.md`
+- **Validation state:** Initial browser QA passed before edits:
+  `feature-details` 492 assertions, 0 failures at
+  `/tmp/cocalc-public-qa-c0F4qw`; `guides` 69 assertions, 0 failures at
+  `/tmp/cocalc-public-qa-zdXgsG`. Focused public app, feature app, browser-QA
+  script, and process-doc Jest tests passed; frontend lint passed; frontend
+  typecheck passed; and `pnpm -C src build:dev` completed.
+  Post-rebuild browser QA passed: `feature-details` 504 assertions, 0 failures
+  at `/tmp/cocalc-public-qa-ndpxRq`; `guides` 72 assertions, 0 failures at
+  `/tmp/cocalc-public-qa-YHy5Gl`.
+- **Follow-up:** After this pass, inspect `/features/whiteboard`,
+  `/features/slides`, and the language/math routes for whether their visual
+  examples still earn their space, but do not flatten useful workflow-specific
+  evidence merely for uniformity.
+
 ### PSL-2026-06-17-001: Feature Index Starter Cards
 
 - **Routes:** `/features`
@@ -67,9 +107,10 @@ the entry in place as a decision record.
 - **Changed files:** none.
 - **Validation state:** Browser QA completed before the Guides pivot. No source
   validation required because no LaTeX source changed.
-- **Follow-up:** If mobile length becomes a concern, evaluate whether the
-  working-tree diagram and computation-flow diagram can be combined or one moved
-  behind a disclosure.
+- **Follow-up:** Mobile length concern was partially addressed in
+  `PSL-2026-06-17-009` by replacing the working-tree diagram with a quiet
+  context list. Continue watching whether the computation-flow diagram still
+  earns its space after broader feature-page visual review.
 
 ### PSL-2026-06-17-004: Guides Entry Page
 
@@ -719,7 +760,7 @@ still need to inspect screenshots and log human-review residual risks.
 - [x] Active: run focused public app and feature tests after the Guides changes.
 - [x] Active: browser-QA `/guides`, `/features`, and `/features/ai` on desktop, tablet, and mobile after rebuild.
 - [x] Active: rebuild the public static preview and commit the source, tests, docs, and prompt-log changes.
-- [ ] Future: review `/guides` mobile featured-link weight with a human eye after deployment. Browser QA passed, but the top three featured guide links remain visually stronger than the compact rows below.
+- [x] Future closed in `PSL-2026-06-17-009`: review `/guides` mobile featured-link weight with a human eye after deployment. Browser QA passed, and the ordinary guide links were compressed into calmer rows while keeping the top three starter routes mildly emphasized.
 
 ## LaTeX Feature Re-Audit
 

@@ -25,6 +25,54 @@ const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = FIELD_GUIDES_URL.replace(/\/$/, "");
 
+const GUIDES_PAGE_CSS = `
+.cocalc-guide-link {
+  color: inherit;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr);
+  text-decoration: none;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.cocalc-guide-link-featured {
+  background: ${PUBLIC_COLORS.surfaceMuted};
+  border: 1px solid ${PUBLIC_COLORS.brandSubtle};
+  border-radius: 8px;
+  height: 100%;
+  padding: 18px;
+}
+
+.cocalc-guide-link-compact {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  min-height: 68px;
+  padding: 8px 10px;
+}
+
+.cocalc-guide-link:hover {
+  background: ${PUBLIC_COLORS.surface};
+  border-color: ${PUBLIC_COLORS.border};
+  box-shadow: 0 8px 24px rgba(33, 49, 57, 0.08);
+  color: inherit;
+}
+
+@media (max-width: 767px) {
+  .cocalc-guide-link-featured {
+    padding: 14px;
+  }
+
+  .cocalc-guide-link-compact {
+    min-height: auto;
+    padding: 10px 0;
+  }
+}
+`;
+
 function guidePath(slug: string): string {
   return `${GUIDE_BASE}/${slug}/`;
 }
@@ -163,7 +211,13 @@ interface GuideCardSpec {
   title: string;
 }
 
-function GuideIcon({ icon }: { icon: IconName }) {
+function GuideIcon({
+  compact = false,
+  icon,
+}: {
+  compact?: boolean;
+  icon: IconName;
+}) {
   return (
     <div
       style={{
@@ -173,10 +227,10 @@ function GuideIcon({ icon }: { icon: IconName }) {
         borderRadius: 8,
         color: PUBLIC_COLORS.brand,
         display: "flex",
-        fontSize: 22,
-        height: 46,
+        fontSize: compact ? 18 : 22,
+        height: compact ? 38 : 46,
         justifyContent: "center",
-        width: 46,
+        width: compact ? 38 : 46,
       }}
     >
       <Icon name={icon} />
@@ -191,29 +245,18 @@ function GuideLink({
   icon,
   title,
 }: GuideCardSpec & { featured?: boolean }) {
+  const compact = !featured;
+
   return (
     <a
+      className={`cocalc-guide-link ${
+        featured ? "cocalc-guide-link-featured" : "cocalc-guide-link-compact"
+      }`}
       href={href}
       rel="noreferrer"
-      style={{
-        background: featured
-          ? PUBLIC_COLORS.surfaceMuted
-          : PUBLIC_COLORS.surface,
-        border: `1px solid ${
-          featured ? PUBLIC_COLORS.brandSubtle : PUBLIC_COLORS.border
-        }`,
-        borderRadius: 8,
-        color: "inherit",
-        display: "grid",
-        gap: 12,
-        gridTemplateColumns: "46px minmax(0, 1fr)",
-        height: "100%",
-        padding: featured ? 18 : 14,
-        textDecoration: "none",
-      }}
       target="_blank"
     >
-      <GuideIcon icon={icon} />
+      <GuideIcon compact={compact} icon={icon} />
       <span>
         <Text strong style={{ display: "block" }}>
           {title}
@@ -325,50 +368,53 @@ export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
   }, [title]);
 
   return (
-    <PublicSectionShell active="guides" config={config}>
-      <PublicHero
-        actions={
+    <>
+      <style>{GUIDES_PAGE_CSS}</style>
+      <PublicSectionShell active="guides" config={config}>
+        <PublicHero
+          actions={
+            <Flex gap={12} wrap>
+              <Button
+                href={FIELD_GUIDES_URL}
+                rel="noreferrer"
+                target="_blank"
+                type="primary"
+              >
+                Open all guides
+              </Button>
+              <Button href={appPath("docs")}>Browse docs</Button>
+            </Flex>
+          }
+          subtitle={
+            <>
+              Narrative walkthroughs for common CoCalc workflows. Start with a
+              guide when you want a practical path through the work; use docs
+              when you need reference details for this CoCalc site.
+            </>
+          }
+          title="Guides"
+        />
+        <GuideDirectory />
+        <PublicSection
+          intro="Use guides for narrative workflows. Use docs for reference material, exact UI behavior, API details, and site-specific product help."
+          title="Guides and docs work together"
+        >
           <Flex gap={12} wrap>
-            <Button
-              href={FIELD_GUIDES_URL}
-              rel="noreferrer"
-              target="_blank"
-              type="primary"
-            >
-              Open all guides
+            <Button href={appPath("docs")} type="primary">
+              Open docs
             </Button>
-            <Button href={appPath("docs")}>Browse docs</Button>
+            <Button href={appPath("support")}>Get support</Button>
           </Flex>
-        }
-        subtitle={
-          <>
-            Narrative walkthroughs for common CoCalc workflows. Start with a
-            guide when you want a practical path through the work; use docs when
-            you need reference details for this CoCalc site.
-          </>
-        }
-        title="Guides"
-      />
-      <GuideDirectory />
-      <PublicSection
-        intro="Use guides for narrative workflows. Use docs for reference material, exact UI behavior, API details, and site-specific product help."
-        title="Guides and docs work together"
-      >
-        <Flex gap={12} wrap>
-          <Button href={appPath("docs")} type="primary">
-            Open docs
-          </Button>
-          <Button href={appPath("support")}>Get support</Button>
-        </Flex>
-      </PublicSection>
-      <PublicSection>
-        <Flex gap={12} wrap>
-          <Button href={FIELD_GUIDES_URL} rel="noreferrer" target="_blank">
-            Open the full guide library
-          </Button>
-          <Button href={appPath("features")}>Browse workflow features</Button>
-        </Flex>
-      </PublicSection>
-    </PublicSectionShell>
+        </PublicSection>
+        <PublicSection>
+          <Flex gap={12} wrap>
+            <Button href={FIELD_GUIDES_URL} rel="noreferrer" target="_blank">
+              Open the full guide library
+            </Button>
+            <Button href={appPath("features")}>Browse workflow features</Button>
+          </Flex>
+        </PublicSection>
+      </PublicSectionShell>
+    </>
   );
 }

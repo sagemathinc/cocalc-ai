@@ -264,6 +264,14 @@ const ROUTE_RULES = {
       { text: "Terminal workflows", hrefIncludes: "/features/terminal" },
     ],
   },
+  "/features/latex-editor": {
+    requireText: [
+      "Keep the working tree together",
+      "What stays with the paper",
+      "Use computation as part of the writing process",
+    ],
+    forbidText: ["PDF build"],
+  },
   "/guides": {
     requireText: [
       "Find the guide by task",
@@ -278,6 +286,7 @@ const ROUTE_RULES = {
       "How CoCalc works",
     ],
     forbidSelectors: [".ant-tag"],
+    requireSelectors: [".cocalc-guide-link-compact"],
     requireLinks: [
       {
         text: "From notebook to paper",

@@ -636,6 +636,8 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Use computation as part of the writing process"),
     ).not.toBeNull();
+    expect(screen.getByText("What stays with the paper")).not.toBeNull();
+    expect(screen.queryByText("PDF build")).toBeNull();
     expect(screen.queryByText("Recover draft history")).toBeNull();
     expect(
       screen.queryByText(

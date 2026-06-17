@@ -44,6 +44,21 @@ turns.
 
 ## Prompt Backlog
 
+### Remaining Feature Detail Visual Evidence Review
+
+Continue from `PSL-2026-06-17-009` and audit the remaining feature-detail pages
+whose visual examples may still be too heavy or not clearly necessary:
+`/features/whiteboard`, `/features/slides`, `/features/python`,
+`/features/sage`, `/features/r-statistical-software`, `/features/julia`, and
+`/features/octave`. Run the reusable browser QA script against `feature-details`
+on the rebuilt `blaec.cocalc.ai` preview, inspect desktop/tablet/mobile
+screenshots, and decide whether each visual example answers a distinct visitor
+question. Log findings first in `docs/public-site-cohesion-audit.md`, make only
+high-confidence layout/copy/test changes, avoid flattening route-specific
+evidence just for uniformity, keep artifacts under `/tmp/cocalc-public-qa-*`,
+rebuild if public source changes, commit, and report residual risks plus the
+next recommended prompt.
+
 ### Feature Detail And Guides Visual Triage
 
 Run the reusable public-site browser QA script against `feature-details` and

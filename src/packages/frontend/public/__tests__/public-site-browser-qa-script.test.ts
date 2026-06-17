@@ -62,4 +62,10 @@ describe("public-site browser QA script", () => {
     expect(scriptSource).toContain('"context=product-cocalc-launchpad"');
     expect(scriptSource).toContain('"context=product-cocalc-rocket"');
   });
+
+  it("guards visual-triage route invariants", () => {
+    expect(scriptSource).toContain('"What stays with the paper"');
+    expect(scriptSource).toContain('"PDF build"');
+    expect(scriptSource).toContain('".cocalc-guide-link-compact"');
+  });
 });
