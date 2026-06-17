@@ -157,20 +157,19 @@ guides, policies** (use policies as the trust-page model). Findings, ranked:
 - `features/api-page.tsx`: off-message — leads with infrastructure ("documented HTTP
   endpoints"), serves the secondary buyer, no continuity tie. Reposition around institutional
   integration. (High, M)
-- `features/teaching-page.tsx`: well-built but treated as a top-level path; Brief says teaching
-  is **secondary**. → **Blaec's call** (product-hierarchy decision), not an agent tweak.
+- `features/teaching-page.tsx`: ✅ **RESOLVED — no change.** Verified teaching is a *feature*
+  page, not in any product-path list, so it already satisfies the Brief's "secondary workflow
+  destination." The page quality is good; left intact.
 - `features/r-statistical-software-page.tsx`: reads as generic "language + project," not
   differentiated from Python. Lead with reporting / RMarkdown-Quarto. (High, M)
 - `features/julia-page.tsx`: its real differentiator (Pluto reactive notebooks) is buried in a
   list; front it in the hero. (High, M)
-- `products/app.tsx`: neutral 5-path chooser with no hosted-first signal + an arbitrary
-  warning-tint highlight on the Star card (index 2). → **Blaec's call** (positioning); page is
-  also copy-pinned by tests.
+- `products/app.tsx`: ✅ **DONE.** Removed the arbitrary Star warning-tint and added a
+  "Start here" tag to the CoCalc.ai card (hosted-first nudge, chooser stays neutral).
 
 **Tier 2 — strong improvements**
-- ✅ **Dead-end pages (About, News)** — fixed this round via new `PublicNextStep`. Remaining
-  dead-ends to apply it to: About team-member, News detail, `docs/app.tsx` index,
-  `support/community-view.tsx` (now trivial — one component). (Low–Med, S each)
+- ✅ **Dead-end pages** — `PublicNextStep` now on About, News, Docs index, and Community.
+  Remaining minor ones if wanted: About team-member, News detail, Docs not-found. (S each)
 - `pricing/page.tsx`: opens defensively ("Use these plans when CoCalc should be hosted…")
   instead of promise-first. (Med, S)
 - `features/linux-page.tsx`: audience split (learner vs researcher); missing continuity tie. (Med, M)
