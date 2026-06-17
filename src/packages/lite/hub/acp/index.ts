@@ -176,7 +176,9 @@ import {
 } from "../sqlite/acp-jobs";
 import {
   heartbeatAcpSession,
+  setAcpSessionPublisher,
   upsertAcpSession,
+  type AcpSessionRow,
   type AcpSessionState,
 } from "../sqlite/acp-sessions";
 import {
@@ -5044,8 +5046,45 @@ function initializeAcpRuntime(client: ConatClient): void {
     `${process.env.COCALC_LITE_SQLITE_FILENAME ?? ""}`.trim() ||
     path.join(data, "hub.db");
   initAcpDatabase({ legacyFilename: sqliteFilename });
+  configureAcpSessionPublisher();
   conatClient = client;
   blobStore = getBlobstore(client);
+}
+
+let acpSessionPublisherConfigured = false;
+let lastAcpSessionPublishWarning = 0;
+
+function configureAcpSessionPublisher(): void {
+  if (acpSessionPublisherConfigured) {
+    return;
+  }
+  acpSessionPublisherConfigured = true;
+  if (!hasRemote) {
+    setAcpSessionPublisher(undefined);
+    return;
+  }
+  setAcpSessionPublisher((row) => {
+    void publishAcpSessionToRemoteHub(row).catch((err) => {
+      const now = Date.now();
+      if (now - lastAcpSessionPublishWarning > 60_000) {
+        lastAcpSessionPublishWarning = now;
+        logger.warn("failed to publish ACP session state to remote hub", err);
+      }
+    });
+  });
+}
+
+async function publishAcpSessionToRemoteHub(row: AcpSessionRow): Promise<void> {
+  await callRemoteHub({
+    name: "aiSessions.upsertProjectHostSession",
+    args: [
+      {
+        ...row,
+        terminal: row.terminal === 1,
+      },
+    ],
+    timeout: 5000,
+  });
 }
 
 export function configureAcpDetachedWorkerRunning(

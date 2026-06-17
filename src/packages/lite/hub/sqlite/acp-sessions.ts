@@ -1,19 +1,10 @@
 import type { AcpJobRequest, AcpChatContext } from "@cocalc/conat/ai/acp/types";
+import type { AiSessionState } from "@cocalc/conat/hub/api/ai-sessions";
 import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_sessions";
 
-export type AcpSessionState =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "interrupted"
-  | "canceled"
-  | "host_stopped"
-  | "possibly_active"
-  | "orphaned"
-  | "unknown";
+export type AcpSessionState = AiSessionState;
 
 export interface AcpSessionRow {
   session_key: string;
@@ -100,6 +91,8 @@ export interface AcpSessionJobMirrorRow {
   finished_at?: number | null;
 }
 
+export type AcpSessionPublisher = (row: AcpSessionRow) => void | Promise<void>;
+
 const TERMINAL_STATES = new Set<AcpSessionState>([
   "completed",
   "failed",
@@ -168,6 +161,21 @@ function init(): void {
 }
 
 let initialized = false;
+let publisher: AcpSessionPublisher | undefined;
+
+export function setAcpSessionPublisher(
+  nextPublisher: AcpSessionPublisher | undefined,
+): void {
+  publisher = nextPublisher;
+}
+
+function publishAcpSession(row: AcpSessionRow | undefined): void {
+  if (!row || !publisher) return;
+  void Promise.resolve(publisher(row)).catch(() => {
+    // Publication is best-effort; local session tracking must not fail because
+    // the owning hub is temporarily unreachable.
+  });
+}
 
 function ensureInit(): void {
   if (!initialized) {
@@ -179,6 +187,13 @@ function ensureInit(): void {
 function clean(value: unknown): string | null {
   const text = `${value ?? ""}`.trim();
   return text || null;
+}
+
+function localProjectHostId(): string | null {
+  return (
+    clean(process.env.PROJECT_HOST_ID) ??
+    clean(process.env.COCALC_PROJECT_HOST_ID)
+  );
 }
 
 function sessionKey({
@@ -316,7 +331,7 @@ export function upsertAcpSession(opts: UpsertAcpSessionOptions): AcpSessionRow {
     clean(opts.project_id),
     clean(opts.account_id),
     clean(opts.approver_account_id),
-    clean(opts.host_id),
+    clean(opts.host_id) ?? localProjectHostId(),
     clean(opts.path),
     clean(opts.thread_id),
     clean(opts.message_id),
@@ -340,7 +355,9 @@ export function upsertAcpSession(opts: UpsertAcpSessionOptions): AcpSessionRow {
     clean(opts.error),
     metadata,
   );
-  return getAcpSession(key)!;
+  const row = getAcpSession(key)!;
+  publishAcpSession(row);
+  return row;
 }
 
 export function upsertAcpSessionFromRequest({
@@ -461,6 +478,7 @@ export function heartbeatAcpSession({
           AND terminal = 0`,
     )
     .run(now, now, clean(session_id), key);
+  publishAcpSession(getAcpSession(key));
 }
 
 export function getAcpSession(session_key: string): AcpSessionRow | undefined {

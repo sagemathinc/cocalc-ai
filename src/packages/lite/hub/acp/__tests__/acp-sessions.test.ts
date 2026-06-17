@@ -13,7 +13,9 @@ import {
 } from "../../sqlite/acp-jobs";
 import {
   getAcpSessionByOpId,
+  heartbeatAcpSession,
   listAcpSessions,
+  setAcpSessionPublisher,
   upsertAcpSessionFromRequest,
 } from "../../sqlite/acp-sessions";
 
@@ -57,6 +59,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  setAcpSessionPublisher(undefined);
   getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
   getAcpDatabase().prepare("DELETE FROM acp_sessions").run();
 });
@@ -143,5 +146,36 @@ describe("acp session registry", () => {
     expect(failed?.state).toBe("failed");
     expect(failed?.terminal).toBe(1);
     expect(failed?.error).toBe("provider failed");
+  });
+
+  it("publishes local session changes best-effort", async () => {
+    const published: string[] = [];
+    setAcpSessionPublisher((row) => {
+      published.push(`${row.op_id}:${row.state}:${row.terminal}`);
+    });
+    const request = makeRequest({
+      userMessageId: "user-3",
+      assistantMessageId: "assistant-3",
+      assistantDate: "2026-06-17T20:00:02.000Z",
+    });
+
+    upsertAcpSessionFromRequest({
+      request,
+      state: "running",
+      op_id: request.chat.message_id,
+      session_id: request.session_id,
+    });
+    heartbeatAcpSession({
+      op_id: request.chat.message_id,
+      project_id: request.project_id,
+      path: request.chat.path,
+      message_id: request.chat.message_id,
+    });
+
+    await Promise.resolve();
+    expect(published).toEqual([
+      "assistant-3:running:0",
+      "assistant-3:running:0",
+    ]);
   });
 });
