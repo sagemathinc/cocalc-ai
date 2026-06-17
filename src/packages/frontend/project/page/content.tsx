@@ -49,6 +49,7 @@ import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useProjectContext } from "../context";
 import { AgentsPanel } from "./flyouts/agents";
+import { RootfsPanel } from "./flyouts/rootfs";
 import getAnchorTagComponent from "./anchor-tag-component";
 import getUrlTransform from "./url-transform";
 
@@ -232,6 +233,8 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
       return <ProjectDocsPanel project_id={project_id} layout="page" />;
     case "workspaces":
       return <WorkspacesPanel project_id={project_id} layout="page" />;
+    case "rootfs":
+      return <RootfsPanel layout="page" />;
     default:
       // check for "editor-[filename]"
       if (!tab_name.startsWith("editor-")) {
