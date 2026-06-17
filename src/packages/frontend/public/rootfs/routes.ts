@@ -52,3 +52,21 @@ export function rootfsPath(entry?: Pick<RootfsImageEntry, "id" | "slug">) {
   }
   return `${base}/rootfs`;
 }
+
+export function rootfsEntryMatchesImageTarget(
+  entry: Pick<RootfsImageEntry, "digest" | "id" | "image" | "release_id">,
+  target?: string,
+): boolean {
+  const value = `${target ?? ""}`.trim();
+  if (!value) return false;
+  const candidates = [
+    entry.id,
+    entry.release_id,
+    entry.image,
+    entry.digest,
+    entry.image?.replace(/\/+$/, "").split("/").filter(Boolean).at(-1),
+  ]
+    .map((candidate) => `${candidate ?? ""}`.trim())
+    .filter(Boolean);
+  return candidates.includes(value);
+}

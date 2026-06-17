@@ -8,6 +8,7 @@ export type ProjectFixedRouteTab =
   | "docs"
   | "info"
   | "log"
+  | "rootfs"
   | "servers"
   | "settings"
   | "users"
@@ -123,6 +124,7 @@ export function parseProjectTarget(
     case "docs":
     case "info":
     case "log":
+    case "rootfs":
     case "servers":
     case "settings":
     case "users":
