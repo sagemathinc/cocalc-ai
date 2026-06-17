@@ -226,6 +226,21 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Add focused tests for product evidence cues, support-context preservation, product-boundary discipline, and unsupported proof phrasing.
 - [x] Browser QA: validate `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` on desktop, tablet, and mobile with zero horizontal overflow; confirm Star setup-guide routing, Plus local ownership language, Launchpad support context, and Rocket operator-boundary support context.
 
+## Product Visual Proof Readiness Pass
+
+- [x] Active: audit `/products`, `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` for approved visual proof readiness.
+- [x] Finding: `/products` benefits most from a non-visual evidence cue because it is the route chooser; adding a short `What to verify` line in each existing card is lower-risk than adding screenshots or another proof section.
+- [x] Finding: CoCalc Star is the only product-detail page with a public, route-specific setup-guide asset that is already ready to link from the product page. Keep that as a link rather than lifting the screenshot into the product page until the docs asset has an explicit public marketing freshness owner.
+- [x] Finding: Plus, Launchpad, and Rocket still need owner-approved captures before screenshots can be used as visual proof. Keep their proof concrete through install commands, operating-boundary copy, and contextual support prefill.
+- [x] Proposed future visual: CoCalc.ai workspace screenshot. Buyer question: "What does the hosted workspace look like?" Freshness owner needed: Blaec for marketing fit plus William or product reviewer for UI accuracy. Placement: `/products` hosted card or a future hosted detail page; do not add until a current capture is approved.
+- [x] Proposed future visual: CoCalc Plus install/starter-project capture. Buyer question: "Can I evaluate CoCalc locally on my own machine?" Freshness owner needed: Blaec recording readiness plus William/product reviewer for installer accuracy. Placement: Plus install card; do not add until Plus install fixture and supported baseline are approved.
+- [x] Proposed future visual: CoCalc Star setup screenshot or excerpt. Buyer question: "What checks are involved in the one-public-VM path?" Freshness owner needed: Star docs owner plus product reviewer. Placement: Star install card or linked setup guide; link is safe now, embedded visual deferred.
+- [x] Proposed future visual: Launchpad operator-boundary diagram. Buyer question: "What does my team operate, and where does CoCalc support fit?" Freshness owner needed: Blaec messaging plus William/product reviewer; Andrey only if trust/privacy/security language is strengthened. Placement: Launchpad boundary card or disclosure; defer until the diagram is approved.
+- [x] Proposed future visual: Rocket planning checklist or deployment-boundary diagram. Buyer question: "What context should procurement and platform teams bring before talking to CoCalc?" Freshness owner needed: Blaec messaging plus William/product reviewer; Andrey only if compliance/security details are included. Placement: Rocket planning card; keep current text-only support context until approved.
+- [x] Change: add compact `What to verify` cues to the `/products` overview cards without introducing screenshots, metrics, customer proof, or new claims.
+- [x] Add focused tests that the `/products` overview exposes route-specific verification cues and still blocks unapproved proof language.
+- [x] Browser QA: validate `/products`, `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` on desktop, tablet, and mobile with zero horizontal overflow; confirm the `/products` route shows five `What to verify` cues and the detail pages retain their route-specific evidence links and support context.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

@@ -1217,8 +1217,12 @@ describe("PublicApp", () => {
     expect(pathChooser).not.toBeNull();
     expect(within(pathChooser).getAllByText("Where it runs")).toHaveLength(5);
     expect(within(pathChooser).getAllByText("Best fit")).toHaveLength(5);
+    expect(within(pathChooser).getAllByText("What to verify")).toHaveLength(5);
     expect(
       screen.getByText("Hosted service operated by CoCalc"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Hosted plans and the site-licensing path."),
     ).not.toBeNull();
     expect(
       screen.getByText(
@@ -1226,17 +1230,47 @@ describe("PublicApp", () => {
       ),
     ).not.toBeNull();
     expect(
+      screen.getByText(
+        "Local install command and self-serve ownership boundary.",
+      ),
+    ).not.toBeNull();
+    expect(
       screen.getByText("Single-VM appliance operated by the user or customer"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Public-VM setup guide and one-VM boundary."),
     ).not.toBeNull();
     expect(
       screen.getByText(
         "Users or small teams that want a shared CoCalc instance on one public Ubuntu VM.",
       ),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Installer, supported target, and customer-operated boundary.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Planning context, operator boundary, and support expectations.",
+      ),
+    ).not.toBeNull();
     expect(screen.queryByText(/local Lima/i)).toBeNull();
     expect(screen.queryByText(/quick team starts/i)).toBeNull();
     expect(screen.queryByText(/Production private cloud/i)).toBeNull();
     expect(screen.queryByText(/multi-bay operations/i)).toBeNull();
+    for (const phrase of [
+      /setup-time/i,
+      /restore-time/i,
+      /deployment-time/i,
+      /benchmark/i,
+      /guaranteed support/i,
+      /\bSLA\b/i,
+      /managed private cloud/i,
+      /air-gapped/i,
+    ]) {
+      expect(screen.queryByText(phrase)).toBeNull();
+    }
     expect(
       screen.getByRole("link", { name: "View CoCalc Rocket" }),
     ).toHaveAttribute("href", "/products/cocalc-rocket");
