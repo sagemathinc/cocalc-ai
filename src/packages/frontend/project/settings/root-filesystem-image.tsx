@@ -179,7 +179,6 @@ export default function RootFilesystemImage({
   );
   const [switchPublishedProject, setSwitchPublishedProject] =
     useState<boolean>(true);
-  const [publishAdvanced, setPublishAdvanced] = useState<boolean>(false);
   const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
   const [publishTab, setPublishTab] = useState<string>("metadata");
   const [publishContentLoading, setPublishContentLoading] =
@@ -659,7 +658,6 @@ export default function RootFilesystemImage({
         ? "publish"
         : "metadata",
     );
-    setPublishAdvanced(false);
     setPublishDraft({
       image: currentImage,
       label: nextLabel,
@@ -1820,12 +1818,7 @@ export default function RootFilesystemImage({
 
             <Tabs
               activeKey={publishTab}
-              onChange={(key) => {
-                setPublishTab(key);
-                if (key === "advanced") {
-                  setPublishAdvanced(true);
-                }
-              }}
+              onChange={setPublishTab}
               items={[
                 {
                   key: "publish",
@@ -1895,56 +1888,6 @@ export default function RootFilesystemImage({
                       </RuntimePanel>
 
                       {publishMode === "copy" &&
-                        publishCopyMode === "project" && (
-                          <Alert
-                            type={
-                              liveRootfsScan
-                                ? Number(
-                                    liveRootfsScan.summary.severity_counts
-                                      ?.critical ?? 0,
-                                  ) > 0
-                                  ? "warning"
-                                  : "success"
-                                : "info"
-                            }
-                            showIcon
-                            title="Preflight scan the live project RootFS before publishing"
-                            description={
-                              <Space
-                                direction="vertical"
-                                size="small"
-                                style={{ width: "100%" }}
-                              >
-                                <div>
-                                  This scans the currently mounted project
-                                  RootFS. Published images are scanned again
-                                  after publication, but this check catches
-                                  obvious vulnerabilities before creating the
-                                  image.
-                                </div>
-                                {liveRootfsScan ? (
-                                  <>
-                                    {renderLiveRootfsScanSummary(
-                                      liveRootfsScan,
-                                    )}
-                                    {renderLiveRootfsScanActions(
-                                      liveRootfsScan,
-                                    )}
-                                  </>
-                                ) : null}
-                                <Button
-                                  size="small"
-                                  loading={scanningLiveRootfs}
-                                  onClick={scanCurrentProjectRootfs}
-                                >
-                                  Scan current RootFS now
-                                </Button>
-                              </Space>
-                            }
-                          />
-                        )}
-
-                      {publishMode === "copy" &&
                       publishCopyMode === "project" ? (
                         <Space
                           direction="vertical"
@@ -1974,6 +1917,61 @@ export default function RootFilesystemImage({
                       ) : null}
                     </Space>
                   ),
+                },
+                {
+                  key: "scan",
+                  label: "Scan",
+                  children:
+                    publishMode === "copy" && publishCopyMode === "project" ? (
+                      <Alert
+                        type={
+                          liveRootfsScan
+                            ? Number(
+                                liveRootfsScan.summary.severity_counts
+                                  ?.critical ?? 0,
+                              ) > 0
+                              ? "warning"
+                              : "success"
+                            : "info"
+                        }
+                        showIcon
+                        title="Preflight scan the live project RootFS before publishing"
+                        description={
+                          <Space
+                            direction="vertical"
+                            size="small"
+                            style={{ width: "100%" }}
+                          >
+                            <div>
+                              This scans the currently mounted project RootFS.
+                              Published images are scanned again after
+                              publication, but this check catches obvious
+                              vulnerabilities before creating the image.
+                            </div>
+                            {liveRootfsScan ? (
+                              <>
+                                {renderLiveRootfsScanSummary(liveRootfsScan)}
+                                {renderLiveRootfsScanActions(liveRootfsScan)}
+                              </>
+                            ) : null}
+                            <Button
+                              size="small"
+                              loading={scanningLiveRootfs}
+                              onClick={scanCurrentProjectRootfs}
+                            >
+                              Scan current RootFS now
+                            </Button>
+                          </Space>
+                        }
+                      />
+                    ) : (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="Preflight scan is only for publishing a live project RootFS."
+                        description="Metadata-only catalog updates do not snapshot the current project filesystem, so there is no live RootFS to scan in this dialog."
+                      />
+                    ),
                 },
                 {
                   key: "metadata",
@@ -2154,255 +2152,223 @@ export default function RootFilesystemImage({
                   key: "advanced",
                   label: "Advanced",
                   children: (
-                    <Space
-                      direction="vertical"
-                      size={16}
-                      style={{ width: "100%" }}
+                    <RuntimePanel
+                      icon="settings"
+                      title="Advanced publish options"
+                      subtitle="Version metadata, theme, admin flags, and CLI or agent helpers."
                     >
-                      <Collapse
-                        size="small"
-                        activeKey={publishAdvanced ? ["advanced"] : []}
-                        onChange={(keys) =>
-                          setPublishAdvanced(
-                            Array.isArray(keys)
-                              ? keys.includes("advanced")
-                              : keys === "advanced",
-                          )
-                        }
-                        items={[
-                          {
-                            key: "advanced",
-                            label: "Advanced publish options",
-                            children: (
-                              <Space
-                                direction="vertical"
-                                size="middle"
-                                style={{ width: "100%" }}
-                              >
-                                <div>
-                                  <Paragraph
-                                    strong
-                                    style={{ marginBottom: "6px" }}
-                                  >
-                                    Version metadata
-                                  </Paragraph>
-                                  <Space
-                                    direction="vertical"
-                                    size="small"
-                                    style={{ width: "100%" }}
-                                  >
-                                    <Input
-                                      value={publishDraft.family}
-                                      onChange={(e) =>
+                      <Space
+                        direction="vertical"
+                        size="middle"
+                        style={{ width: "100%" }}
+                      >
+                        <div>
+                          <Paragraph strong style={{ marginBottom: "6px" }}>
+                            Version metadata
+                          </Paragraph>
+                          <Space
+                            direction="vertical"
+                            size="small"
+                            style={{ width: "100%" }}
+                          >
+                            <Input
+                              value={publishDraft.family}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  family: e.target.value,
+                                }))
+                              }
+                              placeholder="Family or series, e.g. tensorflow or ubuntu"
+                            />
+                            {publishFamilyOptions.length > 0 ? (
+                              <Space wrap size={[6, 6]}>
+                                {publishFamilyOptions
+                                  .slice(0, 8)
+                                  .map((option) => (
+                                    <Tag
+                                      key={`${option.value}`}
+                                      style={{ cursor: "pointer" }}
+                                      onClick={() =>
                                         setPublishDraft((cur) => ({
                                           ...cur,
-                                          family: e.target.value,
-                                        }))
-                                      }
-                                      placeholder="Family or series, e.g. tensorflow or ubuntu"
-                                    />
-                                    {publishFamilyOptions.length > 0 ? (
-                                      <Space wrap size={[6, 6]}>
-                                        {publishFamilyOptions
-                                          .slice(0, 8)
-                                          .map((option) => (
-                                            <Tag
-                                              key={`${option.value}`}
-                                              style={{ cursor: "pointer" }}
-                                              onClick={() =>
-                                                setPublishDraft((cur) => ({
-                                                  ...cur,
-                                                  family: `${option.value}`,
-                                                }))
-                                              }
-                                            >
-                                              {option.value}
-                                            </Tag>
-                                          ))}
-                                      </Space>
-                                    ) : null}
-                                    <Input
-                                      value={publishDraft.version}
-                                      onChange={(e) =>
-                                        setPublishDraft((cur) => ({
-                                          ...cur,
-                                          version: e.target.value,
-                                        }))
-                                      }
-                                      placeholder="Version, e.g. 2.4 or 24.04"
-                                    />
-                                    <Input
-                                      value={publishDraft.channel}
-                                      onChange={(e) =>
-                                        setPublishDraft((cur) => ({
-                                          ...cur,
-                                          channel: e.target.value,
-                                        }))
-                                      }
-                                      placeholder="Channel, e.g. stable, beta, or nightly"
-                                    />
-                                    {publishChannelOptions.length > 0 ? (
-                                      <Space wrap size={[6, 6]}>
-                                        {publishChannelOptions
-                                          .slice(0, 8)
-                                          .map((option) => (
-                                            <Tag
-                                              key={`${option.value}`}
-                                              style={{ cursor: "pointer" }}
-                                              onClick={() =>
-                                                setPublishDraft((cur) => ({
-                                                  ...cur,
-                                                  channel: `${option.value}`,
-                                                }))
-                                              }
-                                            >
-                                              {option.value}
-                                            </Tag>
-                                          ))}
-                                      </Space>
-                                    ) : null}
-                                    <Select
-                                      allowClear
-                                      showSearch
-                                      optionFilterProp="label"
-                                      options={publishSupersedesOptions}
-                                      value={
-                                        publishDraft.supersedes_image_id ||
-                                        undefined
-                                      }
-                                      onChange={(value) =>
-                                        setPublishDraft((cur) => ({
-                                          ...cur,
-                                          supersedes_image_id: value ?? "",
-                                        }))
-                                      }
-                                      placeholder="Optional image this replaces for upgrade guidance"
-                                    />
-                                  </Space>
-                                  <Paragraph
-                                    type="secondary"
-                                    style={{
-                                      marginTop: "6px",
-                                      marginBottom: 0,
-                                    }}
-                                  >
-                                    Optional. Use these fields for curated
-                                    versioned images so CoCalc can show upgrade
-                                    recommendations.
-                                  </Paragraph>
-                                </div>
-                                <div>
-                                  <Space
-                                    align="start"
-                                    size="middle"
-                                    style={{
-                                      width: "100%",
-                                      justifyContent: "space-between",
-                                    }}
-                                  >
-                                    <div style={{ minWidth: 0, flex: 1 }}>
-                                      <Paragraph
-                                        type="secondary"
-                                        style={{ marginBottom: 0 }}
-                                      >
-                                        Theme this image with a color, accent
-                                        color, icon, and optional artwork so it
-                                        stands out in RootFS pickers.
-                                      </Paragraph>
-                                      <Space wrap style={{ marginTop: "8px" }}>
-                                        {publishDraft.theme.color ? (
-                                          <Tag color={publishDraft.theme.color}>
-                                            Color
-                                          </Tag>
-                                        ) : null}
-                                        {publishDraft.theme.accent_color ? (
-                                          <Tag
-                                            color={
-                                              publishDraft.theme.accent_color
-                                            }
-                                          >
-                                            Accent
-                                          </Tag>
-                                        ) : null}
-                                        {publishDraft.theme.image_blob?.trim() ? (
-                                          <Tag>Image</Tag>
-                                        ) : null}
-                                        {publishDraft.theme.icon?.trim() ? (
-                                          <Tag>
-                                            {publishDraft.theme.icon.trim()}
-                                          </Tag>
-                                        ) : null}
-                                      </Space>
-                                    </div>
-                                    <Button
-                                      onClick={() => setPublishThemeOpen(true)}
-                                    >
-                                      Edit theme...
-                                    </Button>
-                                  </Space>
-                                </div>
-                                {isAdmin && (
-                                  <Space direction="vertical" size="small">
-                                    <Checkbox
-                                      checked={publishDraft.official}
-                                      onChange={(e) =>
-                                        setPublishDraft((cur) => ({
-                                          ...cur,
-                                          official: e.target.checked,
+                                          family: `${option.value}`,
                                         }))
                                       }
                                     >
-                                      Official image
-                                    </Checkbox>
-                                    <Checkbox
-                                      checked={publishDraft.prepull}
-                                      onChange={(e) =>
-                                        setPublishDraft((cur) => ({
-                                          ...cur,
-                                          prepull: e.target.checked,
-                                        }))
-                                      }
-                                    >
-                                      Pre-pull on all hosts
-                                    </Checkbox>
-                                    <Checkbox
-                                      checked={publishDraft.hidden}
-                                      onChange={(e) =>
-                                        setPublishDraft((cur) => ({
-                                          ...cur,
-                                          hidden: e.target.checked,
-                                        }))
-                                      }
-                                    >
-                                      Hide from user-facing catalog views
-                                    </Checkbox>
-                                  </Space>
-                                )}
-                                <ActionAssist
-                                  title="Use CLI or Agent"
-                                  description={
-                                    publishMode === "copy" &&
-                                    publishCopyMode === "project"
-                                      ? "Preview the equivalent CLI command, or send the same publish request to the current workspace agent thread."
-                                      : "Preview the equivalent CLI command, or send the same catalog-save request to the current workspace agent thread."
-                                  }
-                                  cliTitle="RootFS CLI"
-                                  cliCommands={[publishAssistCommand]}
-                                  onSendAgent={sendPublishAssistToAgent}
-                                  agentDescription={
-                                    switchPublishedProject &&
-                                    publishMode === "copy" &&
-                                    publishCopyMode === "project"
-                                      ? "Agent support depends on the current workspace Codex session. This publish request also switches the project to the new image when the background operation succeeds."
-                                      : "Agent support depends on the current workspace Codex session."
-                                  }
-                                />
+                                      {option.value}
+                                    </Tag>
+                                  ))}
                               </Space>
-                            ),
-                          },
-                        ]}
-                      />
-                    </Space>
+                            ) : null}
+                            <Input
+                              value={publishDraft.version}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  version: e.target.value,
+                                }))
+                              }
+                              placeholder="Version, e.g. 2.4 or 24.04"
+                            />
+                            <Input
+                              value={publishDraft.channel}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  channel: e.target.value,
+                                }))
+                              }
+                              placeholder="Channel, e.g. stable, beta, or nightly"
+                            />
+                            {publishChannelOptions.length > 0 ? (
+                              <Space wrap size={[6, 6]}>
+                                {publishChannelOptions
+                                  .slice(0, 8)
+                                  .map((option) => (
+                                    <Tag
+                                      key={`${option.value}`}
+                                      style={{ cursor: "pointer" }}
+                                      onClick={() =>
+                                        setPublishDraft((cur) => ({
+                                          ...cur,
+                                          channel: `${option.value}`,
+                                        }))
+                                      }
+                                    >
+                                      {option.value}
+                                    </Tag>
+                                  ))}
+                              </Space>
+                            ) : null}
+                            <Select
+                              allowClear
+                              showSearch
+                              optionFilterProp="label"
+                              options={publishSupersedesOptions}
+                              value={
+                                publishDraft.supersedes_image_id || undefined
+                              }
+                              onChange={(value) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  supersedes_image_id: value ?? "",
+                                }))
+                              }
+                              placeholder="Optional image this replaces for upgrade guidance"
+                            />
+                          </Space>
+                          <Paragraph
+                            type="secondary"
+                            style={{
+                              marginTop: "6px",
+                              marginBottom: 0,
+                            }}
+                          >
+                            Optional. Use these fields for curated versioned
+                            images so CoCalc can show upgrade recommendations.
+                          </Paragraph>
+                        </div>
+                        <div>
+                          <Space
+                            align="start"
+                            size="middle"
+                            style={{
+                              width: "100%",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <Paragraph
+                                type="secondary"
+                                style={{ marginBottom: 0 }}
+                              >
+                                Theme this image with a color, accent color,
+                                icon, and optional artwork so it stands out in
+                                RootFS pickers.
+                              </Paragraph>
+                              <Space wrap style={{ marginTop: "8px" }}>
+                                {publishDraft.theme.color ? (
+                                  <Tag color={publishDraft.theme.color}>
+                                    Color
+                                  </Tag>
+                                ) : null}
+                                {publishDraft.theme.accent_color ? (
+                                  <Tag color={publishDraft.theme.accent_color}>
+                                    Accent
+                                  </Tag>
+                                ) : null}
+                                {publishDraft.theme.image_blob?.trim() ? (
+                                  <Tag>Image</Tag>
+                                ) : null}
+                                {publishDraft.theme.icon?.trim() ? (
+                                  <Tag>{publishDraft.theme.icon.trim()}</Tag>
+                                ) : null}
+                              </Space>
+                            </div>
+                            <Button onClick={() => setPublishThemeOpen(true)}>
+                              Edit theme...
+                            </Button>
+                          </Space>
+                        </div>
+                        {isAdmin && (
+                          <Space direction="vertical" size="small">
+                            <Checkbox
+                              checked={publishDraft.official}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  official: e.target.checked,
+                                }))
+                              }
+                            >
+                              Official image
+                            </Checkbox>
+                            <Checkbox
+                              checked={publishDraft.prepull}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  prepull: e.target.checked,
+                                }))
+                              }
+                            >
+                              Pre-pull on all hosts
+                            </Checkbox>
+                            <Checkbox
+                              checked={publishDraft.hidden}
+                              onChange={(e) =>
+                                setPublishDraft((cur) => ({
+                                  ...cur,
+                                  hidden: e.target.checked,
+                                }))
+                              }
+                            >
+                              Hide from user-facing catalog views
+                            </Checkbox>
+                          </Space>
+                        )}
+                        <ActionAssist
+                          title="Use CLI or Agent"
+                          description={
+                            publishMode === "copy" &&
+                            publishCopyMode === "project"
+                              ? "Preview the equivalent CLI command, or send the same publish request to the current workspace agent thread."
+                              : "Preview the equivalent CLI command, or send the same catalog-save request to the current workspace agent thread."
+                          }
+                          cliTitle="RootFS CLI"
+                          cliCommands={[publishAssistCommand]}
+                          onSendAgent={sendPublishAssistToAgent}
+                          agentDescription={
+                            switchPublishedProject &&
+                            publishMode === "copy" &&
+                            publishCopyMode === "project"
+                              ? "Agent support depends on the current workspace Codex session. This publish request also switches the project to the new image when the background operation succeeds."
+                              : "Agent support depends on the current workspace Codex session."
+                          }
+                        />
+                      </Space>
+                    </RuntimePanel>
                   ),
                 },
               ]}
