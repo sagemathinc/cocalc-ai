@@ -74,6 +74,150 @@ const GLOBAL_FORBIDDEN_TEXT = [
 ];
 
 const ROUTE_RULES = {
+  "/": {
+    requireText: [
+      "AI-NATIVE TECHNICAL WORKSPACE",
+      "Shared projects for research, teaching, and technical teams",
+      "Choose the operating model that fits your team.",
+    ],
+    requireLinks: [
+      { text: "Start on CoCalc.ai", hrefIncludes: "/auth/sign-up" },
+      { text: "Compare operating models", hrefIncludes: "/products" },
+      { text: "Browse feature workflows", hrefIncludes: "/features" },
+    ],
+  },
+  "/products": {
+    requireText: [
+      "Ways to Run CoCalc",
+      "Choose how CoCalc should run for your team.",
+      "CoCalc.ai",
+      "CoCalc Plus",
+      "CoCalc Star",
+      "CoCalc Launchpad",
+      "CoCalc Rocket",
+    ],
+    requireLinks: [
+      { text: "Compare CoCalc fit", hrefIncludes: "/features/compare" },
+      { text: "Pricing and licensing", hrefIncludes: "/pricing" },
+      { text: "View CoCalc Plus", hrefIncludes: "/products/cocalc-plus" },
+      { text: "View CoCalc Star", hrefIncludes: "/products/cocalc-star" },
+      {
+        text: "View CoCalc Launchpad",
+        hrefIncludes: "/products/cocalc-launchpad",
+      },
+      { text: "View CoCalc Rocket", hrefIncludes: "/products/cocalc-rocket" },
+    ],
+  },
+  "/pricing": {
+    requireText: [
+      "CoCalc.ai Pricing and Licensing",
+      "Hosted CoCalc.ai plans",
+      "Site licensing",
+      "Dedicated project hosts",
+    ],
+    requireLinks: [
+      { text: "Compare operating models", hrefIncludes: "/products" },
+      {
+        text: "Talk with CoCalc about site licensing",
+        hrefIncludes: "context=pricing-site-license",
+      },
+      { text: "Review trust materials", hrefIncludes: "/policies/trust" },
+    ],
+  },
+  "/features/compare": {
+    requireText: [
+      "Compare CoCalc",
+      "When is CoCalc the right fit?",
+      "The practical split.",
+      "Where to go next.",
+    ],
+    requireLinks: [
+      { text: "Compare operating models", hrefIncludes: "/products" },
+      { text: "Pricing and licensing", hrefIncludes: "/pricing" },
+      { text: "Talk with CoCalc", hrefIncludes: "context=feature-compare" },
+      { text: "AI workflows", hrefIncludes: "/features/ai" },
+    ],
+  },
+  "/support": {
+    requireText: ["CoCalc Support", "Choose an operating model"],
+    requireLinks: [
+      { text: "Review trust materials", hrefIncludes: "/policies/trust" },
+      { text: "Compare operating models", hrefIncludes: "/products" },
+      { text: "Review pricing", hrefIncludes: "/pricing" },
+      { text: "Read the docs", hrefIncludes: "/docs" },
+    ],
+  },
+  "/support/new": {
+    requireText: ["Contact CoCalc Support"],
+    requireLinks: [
+      { text: "Email CoCalc", hrefIncludes: "help@cocalc.com" },
+      { text: "trust materials", hrefIncludes: "/policies/trust" },
+      { text: "the privacy policy", hrefIncludes: "/policies/privacy" },
+    ],
+  },
+  "/products/cocalc-plus": {
+    requireText: [
+      "CoCalc Plus",
+      "Need local CoCalc before choosing a shared path?",
+      "Boundary: local, one-user runtime",
+    ],
+    requireLinks: [
+      { text: "Install CoCalc Plus", hrefIncludes: "/products/cocalc-plus" },
+      { text: "Review hosted plans", hrefIncludes: "/pricing" },
+      { text: "Compare with Star", hrefIncludes: "/products/cocalc-star" },
+    ],
+  },
+  "/products/cocalc-star": {
+    requireText: [
+      "CoCalc Star",
+      "Is one public Ubuntu VM enough?",
+      "Boundary: one public VM",
+    ],
+    requireLinks: [
+      { text: "Install CoCalc Star", hrefIncludes: "/products/cocalc-star" },
+      {
+        text: "Compare with Launchpad",
+        hrefIncludes: "/products/cocalc-launchpad",
+      },
+      {
+        text: "Read Star setup guide",
+        hrefIncludes: "/docs/self-hosting/cocalc-star",
+      },
+    ],
+  },
+  "/products/cocalc-launchpad": {
+    requireText: [
+      "CoCalc Launchpad",
+      "Need a bounded private CoCalc deployment?",
+      "Boundary: bounded private deployment",
+    ],
+    requireLinks: [
+      {
+        text: "Talk with CoCalc about Launchpad",
+        hrefIncludes: "context=product-cocalc-launchpad",
+      },
+      { text: "Pricing and licensing", hrefIncludes: "/pricing" },
+      { text: "Compare with Star", hrefIncludes: "/products/cocalc-star" },
+    ],
+  },
+  "/products/cocalc-rocket": {
+    requireText: [
+      "CoCalc Rocket",
+      "Planning an institutional private CoCalc deployment?",
+      "Boundary: planned private cloud",
+    ],
+    requireLinks: [
+      {
+        text: "Talk with CoCalc about Rocket",
+        hrefIncludes: "context=product-cocalc-rocket",
+      },
+      { text: "Pricing and licensing", hrefIncludes: "/pricing" },
+      {
+        text: "Compare with Launchpad",
+        hrefIncludes: "/products/cocalc-launchpad",
+      },
+    ],
+  },
   "/features": {
     requireText: [
       "AI workflows",

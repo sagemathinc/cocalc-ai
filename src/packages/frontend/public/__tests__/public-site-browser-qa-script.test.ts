@@ -50,4 +50,16 @@ describe("public-site browser QA script", () => {
     expect(scriptSource).toContain("stale route text absent");
     expect(scriptSource).not.toContain("approve visual design");
   });
+
+  it("guards conversion-spine and product-path boundaries", () => {
+    expect(scriptSource).toContain('"Ways to Run CoCalc"');
+    expect(scriptSource).toContain('"CoCalc.ai Pricing and Licensing"');
+    expect(scriptSource).toContain('"context=feature-compare"');
+    expect(scriptSource).toContain('"Boundary: local, one-user runtime"');
+    expect(scriptSource).toContain('"Boundary: one public VM"');
+    expect(scriptSource).toContain('"Boundary: bounded private deployment"');
+    expect(scriptSource).toContain('"Boundary: planned private cloud"');
+    expect(scriptSource).toContain('"context=product-cocalc-launchpad"');
+    expect(scriptSource).toContain('"context=product-cocalc-rocket"');
+  });
 });

@@ -44,6 +44,20 @@ turns.
 
 ## Prompt Backlog
 
+### Feature Detail And Guides Visual Triage
+
+Run the reusable public-site browser QA script against `feature-details` and
+`guides` on the rebuilt `blaec.cocalc.ai` preview, then manually inspect the
+desktop/tablet/mobile screenshots for the pages that still look visually heavy,
+starting with `/features/latex-editor`, `/guides`, `/features/whiteboard`,
+`/features/slides`, and the language/math feature pages. Create or update a
+`PSL-*` ledger item in `docs/public-site-cohesion-audit.md` before editing.
+Use the agentic public-site check matrix to separate deterministic regressions
+from human design judgment. Make only high-confidence layout/copy/test changes,
+keep artifacts under `/tmp/cocalc-public-qa-*`, rebuild `blaec.cocalc.ai` if
+public source changes, commit, and report residual risks plus the next
+recommended prompt.
+
 ### Browser QA Route Registry Hardening
 
 Run the reusable public-site browser QA script against `feature-core`, `guides`,

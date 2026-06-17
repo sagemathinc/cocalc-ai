@@ -417,6 +417,48 @@ horizontal overflow, known section order, stale text, route-specific hrefs, and
 selected visual classes. It does not approve subjective visual design; agents
 still need to inspect screenshots and log human-review residual risks.
 
+### Browser QA Route Registry Hardening, 2026-06-17
+
+- [x] Ran `feature-core` against `https://blaec.cocalc.ai`: 264 assertions,
+      0 failures. Artifacts: `/tmp/cocalc-public-qa-0Gq6kI`.
+- [x] Ran `guides` against `https://blaec.cocalc.ai`: 69 assertions,
+      0 failures. Artifacts: `/tmp/cocalc-public-qa-zf8yW1`.
+- [x] Ran `conversion-spine` against `https://blaec.cocalc.ai`: 198 assertions,
+      0 failures. Artifacts: `/tmp/cocalc-public-qa-tm9dpy`.
+- [x] Ran `product-details` against `https://blaec.cocalc.ai`: 132 assertions,
+      0 failures. Artifacts: `/tmp/cocalc-public-qa-vS8oDn`.
+- [x] Finding: the route groups are useful as-is. `feature-core` catches the
+      highest-traffic workflow routes, `guides` keeps the bridge isolated,
+      `conversion-spine` covers the decision path, and `product-details`
+      isolates Plus/Star/Launchpad/Rocket boundary checks.
+- [x] Finding: the assertion depth was uneven. Feature index, AI, and Guides had
+      route-specific checks; conversion-spine and product-detail pages only had
+      global stale-copy and overflow checks.
+- [x] Decision: keep the route groups unchanged and add conservative route-owned
+      assertions for conversion-spine and product-detail pages: core headings,
+      product-path labels, key operating-boundary phrases, and CTA destinations.
+      Do not add visual-design approval or brittle exact-copy assertions.
+- [x] Updated the browser QA script and focused tests to cover the previously
+      shallow conversion-spine and product-detail route groups.
+- [x] Reran `conversion-spine` with the stronger route-owned assertions: 330
+      assertions, 0 failures. Artifacts: `/tmp/cocalc-public-qa-Ai3HYw`.
+- [x] Reran `product-details` with product-boundary and CTA assertions: 204
+      assertions, 0 failures. Artifacts: `/tmp/cocalc-public-qa-sCrJVk`.
+- [x] Reran `feature-core` on the current harness: 264 assertions, 0 failures.
+      Artifacts: `/tmp/cocalc-public-qa-JQ8men`.
+- [x] Reran `guides` on the current harness: 69 assertions, 0 failures.
+      Artifacts: `/tmp/cocalc-public-qa-spMud6`.
+- [x] Validation: focused Jest tests for the browser QA script and agent
+      workflow passed; `pnpm -C src lint:frontend` passed; frontend package
+      `tsc --build` passed.
+- [x] Rebuild decision: no public route, style, asset, or metadata source
+      changed in this pass, so the already rebuilt `blaec.cocalc.ai` preview did
+      not need another rebuild.
+- [x] Remaining standard: the harness is a regression screen for objective
+      route, copy, CTA, overflow, and selected class checks. It should not grow
+      into subjective design approval; human screenshot review remains required
+      for visual hierarchy, rhythm, and page-specific judgment.
+
 ## Conversion Spine Pass
 
 - [x] Re-audit homepage, `/products`, `/pricing`, `/features/compare`, and `/support` as the core public decision path before continuing deeper feature cleanup.
