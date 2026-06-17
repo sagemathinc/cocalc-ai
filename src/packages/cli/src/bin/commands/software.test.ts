@@ -1328,6 +1328,96 @@ test("software deploy static invokes Rocket with a local remote-backed bundle", 
   assert.equal(history.deployments[0].profile_or_channel, "staging");
 });
 
+test("software deploy static accepts comma-separated profiles", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-static-multi-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "static.tar.xz");
+  writeFileSync(source, "static bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = join(dir, "cocalc-bin");
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "build",
+      "static:multi-deploy",
+      "--from-file",
+      source,
+    ]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "deploy",
+      "static:multi-deploy",
+      "staging,prod",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+    process.argv[1] = originalArgv1;
+  }
+
+  assert.equal(runs.length, 2);
+  const firstRocket = runs[0].args.slice(runs[0].args.indexOf("rocket"));
+  const secondRocket = runs[1].args.slice(runs[1].args.indexOf("rocket"));
+  assert.equal(firstRocket[2], "staging");
+  assert.deepEqual(
+    firstRocket.slice(
+      firstRocket.indexOf("--remote"),
+      firstRocket.indexOf("--remote") + 2,
+    ),
+    ["--remote", "ubuntu@10.206.0.27"],
+  );
+  assert.equal(secondRocket[2], "prod");
+  assert.deepEqual(
+    secondRocket.slice(
+      secondRocket.indexOf("--remote"),
+      secondRocket.indexOf("--remote") + 2,
+    ),
+    ["--remote", "ubuntu@10.206.0.38"],
+  );
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.data.targets, ["staging", "prod"]);
+  assert.equal(payload.data.deployments.length, 2);
+  assert.equal(payload.data.deployments[0].profile, "staging");
+  assert.equal(payload.data.deployments[1].profile, "prod");
+  const stagingHistory = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/static/index.json")!
+      .toString("utf8"),
+  );
+  const prodHistory = JSON.parse(
+    r2.objects
+      .get("software/deployments/prod/static/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(
+    stagingHistory.deployments[0].artifact_id,
+    payload.data.artifact_id,
+  );
+  assert.equal(
+    prodHistory.deployments[0].artifact_id,
+    payload.data.artifact_id,
+  );
+});
+
 test("software history shows unknown for unsealed started deployments", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-history-started-"));
   const localStore = join(dir, "store");
@@ -1925,6 +2015,70 @@ test("software deploy --build builds the artifact tag before deploying", async (
   assert.equal(payload.data.source, "local+pushed");
 });
 
+test("software deploy --build builds once for comma-separated profiles", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-build-multi-"));
+  const localStore = join(dir, "store");
+  const repoRoot = makeRepoRoot("software-deploy-build-multi-repo-");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({
+      localStore,
+      repoRoot,
+      runs,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = join(dir, "cocalc-bin");
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    logs.push(String(value ?? ""));
+  };
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--json",
+      "software",
+      "deploy",
+      "--build",
+      "hub:build-multi",
+      "staging,prod",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    console.log = originalLog;
+    process.argv[1] = originalArgv1;
+  }
+
+  assert.equal(runs.length, 3);
+  assert.equal(runs[0].command, "pnpm");
+  assert.equal(runs[0].args.includes("build:bay-hub-bundle"), true);
+  assert.equal(runs[1].command, join(dir, "cocalc-bin"));
+  assert.equal(runs[2].command, join(dir, "cocalc-bin"));
+  const payload = JSON.parse(logs.at(-1) ?? "{}");
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.data.targets, ["staging", "prod"]);
+  assert.equal(payload.data.deployments.length, 2);
+  assert.equal(
+    payload.data.deployments[0].built_artifact_id,
+    payload.data.artifact_id,
+  );
+  assert.equal(
+    payload.data.deployments[1].built_artifact_id,
+    payload.data.artifact_id,
+  );
+  assert.equal(
+    payload.data.deployments[0].artifact_id,
+    payload.data.deployments[1].artifact_id,
+  );
+});
+
 test("software deploy records failed history when subprocess fails", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-failed-history-"));
   const localStore = join(dir, "store");
@@ -2237,6 +2391,28 @@ test("software deploy plus requires a coordinated tools-minimal artifact", async
   assert.equal(
     r2.objects.has("software/cocalc-plus/candidate-linux-amd64.json"),
     false,
+  );
+});
+
+test("software deploy release channels reject comma-separated targets", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-release-multi-"));
+  const localStore = join(dir, "store");
+  const program = createProgram(makeDeps({ localStore, env: r2Env }));
+
+  await assert.rejects(
+    async () =>
+      await program.parseAsync([
+        "node",
+        "test",
+        "--quiet",
+        "software",
+        "deploy",
+        "cli:release-test",
+        "candidate,stable",
+        "--env-file",
+        join(dir, "missing.env"),
+      ]),
+    /software deploy cli accepts exactly one release channel/,
   );
 });
 

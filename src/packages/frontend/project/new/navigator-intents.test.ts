@@ -10,6 +10,7 @@ const mockEnsureWorkspaceChatForPath = jest.fn();
 const mockEnsureWorkspaceChatPath = jest.fn();
 const mockOpenFile = jest.fn();
 const mockWriteChatComposerDraft = jest.fn();
+const mockWriteChatComposerAcpPromptDraft = jest.fn();
 let mockAccountId = "00000000-1000-4000-8000-000000000001";
 let mockProjectStoreState: Record<string, any> = {};
 let mockOtherSettings: Record<string, any> = {};
@@ -28,6 +29,8 @@ jest.mock("@cocalc/frontend/chat/actions/ai", () => ({
 }));
 
 jest.mock("@cocalc/frontend/chat/use-chat-composer-draft", () => ({
+  writeChatComposerAcpPromptDraft: (...args: any[]) =>
+    mockWriteChatComposerAcpPromptDraft(...args),
   writeChatComposerDraft: (...args: any[]) =>
     mockWriteChatComposerDraft(...args),
 }));
@@ -100,6 +103,8 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     mockOpenFile.mockReset();
     mockWriteChatComposerDraft.mockReset();
     mockWriteChatComposerDraft.mockResolvedValue("draft text");
+    mockWriteChatComposerAcpPromptDraft.mockReset();
+    mockWriteChatComposerAcpPromptDraft.mockResolvedValue("acp draft text");
     mockLoadOpenedAgentSessionSelection.mockReset();
     mockLoadOpenedAgentSessionSelection.mockReturnValue(null);
     window.localStorage.clear();
@@ -454,7 +459,10 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     const createEmptyThread = jest.fn(() => "thread-first");
     const actions = {
       syncdb: { get_state: () => "ready" },
-      messageCache: { getThreadIndex: () => new Map() },
+      messageCache: {
+        getThreadIndex: () =>
+          new Map([["existing-thread", { threadId: "existing-thread" }]]),
+      },
       sendChat,
       createEmptyThread,
       store: {
@@ -930,13 +938,29 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         },
       },
     });
-    mockListSessions.mockResolvedValue([]);
+    mockListSessions.mockResolvedValue([
+      {
+        session_id: "existing-session",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: mockAccountId,
+        chat_path: workspaceChatPath,
+        thread_key: "existing-thread",
+        title: "Existing thread",
+        created_at: "2026-06-17T00:00:00.000Z",
+        updated_at: "2026-06-17T00:01:00.000Z",
+        status: "active",
+        entrypoint: "file",
+      },
+    ]);
     const save = jest.fn().mockResolvedValue(undefined);
     const sendChat = jest.fn(() => new Date().toISOString());
     const createEmptyThread = jest.fn(() => "thread-composer");
     const actions = {
       syncdb: { get_state: () => "ready", save },
-      messageCache: { getThreadIndex: () => new Map() },
+      messageCache: {
+        getThreadIndex: () =>
+          new Map([["existing-thread", { threadId: "existing-thread" }]]),
+      },
       sendChat,
       createEmptyThread,
       store: {
@@ -962,7 +986,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(ok).toBe(true);
     expect(createEmptyThread).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "Codex",
+        name: "Fresh thread",
         threadAgent: expect.objectContaining({
           mode: "codex",
           model: "gpt-5.4-mini",
@@ -978,12 +1002,20 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         append: true,
       }),
     );
+    expect(mockWriteChatComposerAcpPromptDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "00000000-1000-4000-8000-000000000000",
+        path: workspaceChatPath,
+        text: "Full visible agent prompt",
+        append: true,
+      }),
+    );
     expect(save).toHaveBeenCalled();
     expect(mockOpenFloating).toHaveBeenCalledWith(
       "00000000-1000-4000-8000-000000000000",
       expect.objectContaining({
         thread_key: "thread-composer",
-        title: "Codex",
+        title: "Fresh thread",
       }),
       expect.anything(),
     );
@@ -1525,6 +1557,119 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         thread_key: threadKey,
         title: "Codex",
         working_directory: "/home/wstein/project/live",
+      }),
+      {
+        workspaceId,
+        workspaceOnly: true,
+      },
+    );
+  });
+
+  it("creates a fresh thread in the already-open agent panel and stages the composer", async () => {
+    const projectId = "00000000-1000-4000-8000-000000000000";
+    const workspaceId = "ws-open-fresh";
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-open-fresh.chat";
+    const newThreadKey = "thread-open-fresh";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: workspaceId,
+        root_path: "/home/wstein/project/live",
+        theme: {
+          title: "live",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockLoadOpenedAgentSessionSelection.mockImplementation(
+      (_project_id: string, layout: string) =>
+        layout === "flyout"
+          ? {
+              chat_path: workspaceChatPath,
+              thread_key: "existing-thread",
+              workspace_id: workspaceId,
+              session: {
+                session_id: "existing-thread",
+                project_id: projectId,
+                account_id: mockAccountId,
+                chat_path: workspaceChatPath,
+                thread_key: "existing-thread",
+                title: "Existing",
+                created_at: "2026-06-17T00:00:00.000Z",
+                updated_at: "2026-06-17T00:01:00.000Z",
+                status: "active",
+                entrypoint: "file",
+                working_directory: "/home/wstein/project/live",
+              },
+            }
+          : null,
+    );
+    mockProjectStoreState = {
+      active_project_tab: "/home/wstein/project/live/a.ipynb",
+    };
+    mockListSessions.mockResolvedValue([]);
+    const save = jest.fn().mockResolvedValue(undefined);
+    const openedActions = {
+      isSyncdbReady: jest.fn(() => true),
+      syncdb: { get_state: () => "ready", save },
+      createEmptyThread: jest.fn(() => newThreadKey),
+      appendToComposerDraft: jest.fn(),
+      store: { get: () => undefined },
+      scrollToIndex: jest.fn(),
+    };
+    mockGetChatActions.mockImplementation(
+      (_projectId: string, chatPath: string, opts?: any) =>
+        chatPath === workspaceChatPath &&
+        opts?.instanceKey === "agents-panel-inline"
+          ? (openedActions as any)
+          : undefined,
+    );
+    mockInitChat.mockReturnValue(undefined);
+
+    const ok = await stageNavigatorPromptInWorkspaceChat({
+      project_id: projectId,
+      path: "/home/wstein/project/live/a.ipynb",
+      prompt: "Full visible prompt",
+      visiblePrompt: "Full visible prompt",
+      title: "Agent: a.ipynb",
+      tag: "intent:editor-assistant",
+      forceCodex: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+      createNewThread: true,
+      stageInComposer: true,
+      openFloating: true,
+      waitForAgent: false,
+    });
+
+    expect(ok).toBe(true);
+    expect(mockInitChat).not.toHaveBeenCalled();
+    expect(openedActions.createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Agent: a.ipynb",
+        threadAgent: expect.objectContaining({
+          mode: "codex",
+          model: "gpt-5.4-mini",
+        }),
+      }),
+    );
+    expect(openedActions.appendToComposerDraft).toHaveBeenCalledWith({
+      threadKey: newThreadKey,
+      text: "Full visible prompt",
+      acpPrompt: "Full visible prompt",
+    });
+    expect(mockWriteChatComposerDraft).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalled();
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      projectId,
+      expect.objectContaining({
+        chat_path: workspaceChatPath,
+        thread_key: newThreadKey,
+        title: "Agent: a.ipynb",
       }),
       {
         workspaceId,

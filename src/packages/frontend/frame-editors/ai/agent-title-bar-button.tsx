@@ -14,6 +14,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { COLORS } from "@cocalc/util/theme";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
+import { useAgentAutoSubmit } from "./agent-auto-submit";
 import {
   AgentSessionError,
   AgentSessionSelect,
@@ -25,7 +26,6 @@ import { PopupAgentComposer } from "./popup-agent-composer";
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 
 const TITLE_BAR_AGENT_LABEL = "Agent";
-const AUTO_SUBMIT_LS_KEY = "AI-CODEX-ASSISTANT-AUTO-SUBMIT:v1";
 
 interface Props {
   id: string;
@@ -62,10 +62,7 @@ export default function AgentTitleBarButton({
   const [querying, setQuerying] = useState<boolean>(false);
   const [submitProgress, setSubmitProgress] = useState<number>(0);
   const [command, setCommand] = useState<string>("");
-  const [autoSubmit, setAutoSubmit] = useState<boolean>(() => {
-    const stored = LS.get<boolean>(AUTO_SUBMIT_LS_KEY);
-    return stored == null ? true : stored !== false;
-  });
+  const [autoSubmit, setAutoSubmit] = useAgentAutoSubmit();
   const {
     fontSize,
     increaseFontSize,
@@ -135,10 +132,6 @@ export default function AgentTitleBarButton({
     }
     LS.set(promptLsKey, command);
   }, [command, promptLsKey]);
-
-  useEffect(() => {
-    LS.set(AUTO_SUBMIT_LS_KEY, autoSubmit);
-  }, [autoSubmit]);
 
   const normalizedPath = `${path ?? ""}`.trim().toLowerCase();
   if (type === "chat" || normalizedPath.endsWith(".chat")) {
@@ -347,7 +340,7 @@ export default function AgentTitleBarButton({
                   name={querying ? "spinner" : "paper-plane"}
                   spin={querying}
                 />{" "}
-                {autoSubmit ? "Send to Agent" : "Add to Composer"}
+                Send
               </Button>
             </Space>
           </div>

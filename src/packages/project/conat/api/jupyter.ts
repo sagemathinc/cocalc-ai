@@ -39,6 +39,10 @@ export async function stop(path: string) {
   await control.stop({ path });
 }
 
+export async function getKernelStatus(opts: { path: string }) {
+  return await control.getKernelStatus(opts);
+}
+
 export async function save(opts: JupyterSaveOptions) {
   await start(opts.path);
   await control.save(opts);

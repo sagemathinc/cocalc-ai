@@ -577,6 +577,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "site-license commercial terms and domain entitlement mutation",
   },
+  "purchases.addSiteLicenseExternalClaimKey": {
+    decision: "fresh-auth-required",
+    reason: "site-license external token verification authority mutation",
+  },
   "purchases.archiveSiteLicensePool": {
     decision: "fresh-auth-required",
     reason: "site-license commercial terms and domain entitlement mutation",
@@ -597,6 +601,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason:
       "admin abuse-review annotation can mark accounts/projects as abusive or urgent",
+  },
+  "purchases.createSiteLicenseExternalClaimPool": {
+    decision: "fresh-auth-required",
+    reason: "site-license external token claim authority mutation",
+  },
+  "purchases.disableSiteLicenseExternalClaimPool": {
+    decision: "fresh-auth-required",
+    reason: "site-license external token claim authority mutation",
   },
   "purchases.purchaseMembershipPackage": {
     decision: "fresh-auth-required",
@@ -631,6 +643,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "purchases.revokeMembershipPackageSeat": {
     decision: "fresh-auth-required",
     reason: "paid membership seat revocation",
+  },
+  "purchases.revokeSiteLicenseExternalClaimKey": {
+    decision: "fresh-auth-required",
+    reason: "site-license external token verification authority mutation",
   },
   "purchases.setSiteLicenseManager": {
     decision: "fresh-auth-required",

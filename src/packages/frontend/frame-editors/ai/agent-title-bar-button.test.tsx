@@ -152,7 +152,7 @@ describe("AgentTitleBarButton", () => {
       target: { value: "Explain this cell" },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Send to Agent/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Send/ }));
     });
 
     expect(languageModel).toHaveBeenCalledWith(
@@ -214,7 +214,7 @@ describe("AgentTitleBarButton", () => {
       target: { value: "Explain this cell" },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Send to Agent/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Send/ }));
     });
 
     expect(languageModel).toHaveBeenCalledWith(
@@ -263,7 +263,7 @@ describe("AgentTitleBarButton", () => {
       target: { value: "Start fresh" },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Add to Composer/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Send/ }));
     });
 
     expect(languageModel).toHaveBeenCalledWith(

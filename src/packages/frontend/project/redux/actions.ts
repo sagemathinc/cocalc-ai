@@ -727,6 +727,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.rootfsPublishOpsManager.track(op);
   };
 
+  dismissRootfsPublishLro = (op_id?: string) => {
+    this.rootfsPublishOpsManager.dismiss(op_id);
+  };
+
   dismissMoveLro = (op_id?: string) => {
     this.moveOpsManager.dismiss(op_id);
   };

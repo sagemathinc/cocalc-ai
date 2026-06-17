@@ -96,7 +96,12 @@ export default async function createChat({
     options,
     codexModel,
   });
-  const title = createAssistantThreadTitle(options.command);
+  const visiblePrompt = createAssistantVisiblePrompt(options.command);
+  const title = createAssistantThreadTitle({
+    command: options.command,
+    path: actions.path,
+    createNewThread: options.createNewThread,
+  });
   const intent =
     frameType === "terminal"
       ? "intent:terminal-assistant"
@@ -107,7 +112,7 @@ export default async function createChat({
         project_id: actions.project_id,
         path: actions.path,
         prompt,
-        visiblePrompt: prompt,
+        visiblePrompt,
         title,
         tag: intent,
         forceCodex: true,
@@ -121,7 +126,7 @@ export default async function createChat({
         project_id: actions.project_id,
         path: actions.path,
         prompt,
-        visiblePrompt: prompt,
+        visiblePrompt,
         title,
         tag: intent,
         forceCodex: true,
@@ -135,7 +140,7 @@ export default async function createChat({
   if (!sent) {
     dispatchNavigatorPromptIntent({
       prompt,
-      visiblePrompt: prompt,
+      visiblePrompt,
       title,
       tag: intent,
       forceCodex: true,
@@ -145,7 +150,22 @@ export default async function createChat({
   }
 }
 
-function createAssistantThreadTitle(command?: string): string | undefined {
+function createAssistantThreadTitle({
+  command,
+  path,
+  createNewThread,
+}: {
+  command?: string;
+  path?: string;
+  createNewThread?: boolean;
+}): string | undefined {
+  if (createNewThread) {
+    const trimmedPath = `${path ?? ""}`.trim();
+    const basename = trimmedPath.split("/").filter(Boolean).pop();
+    if (basename) {
+      return `Agent: ${basename}`;
+    }
+  }
   const trimmed = `${command ?? ""}`.trim();
   if (!trimmed) return;
   return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77).trim()}...`;

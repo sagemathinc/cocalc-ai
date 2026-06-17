@@ -5,6 +5,8 @@
 
 export const ROOTFS_IMAGE_MANIFEST_VERSION = 1;
 export const ROOTFS_CONTENT_MANIFEST_VERSION = 1;
+export const ROOTFS_CONFIG_EXPORT_KIND = "cocalc-rootfs-config";
+export const ROOTFS_CONFIG_EXPORT_VERSION = 1;
 export const ROOTFS_CONTENT_MAX_JSON_BYTES = 32_000;
 export const ROOTFS_CONTENT_MAX_ACTIONS = 20;
 export const ROOTFS_CONTENT_MAX_HIGHLIGHTS = 20;
@@ -71,7 +73,8 @@ export type RootfsContentActionKind =
   | "open"
   | "browse"
   | "copy-to-home"
-  | "external-link";
+  | "external-link"
+  | "project-app";
 
 export type RootfsContentAction = {
   kind: RootfsContentActionKind;
@@ -80,6 +83,7 @@ export type RootfsContentAction = {
   source_path?: string;
   target_path?: string;
   url?: string;
+  app_spec?: Record<string, unknown>;
   description?: string;
 };
 
@@ -113,6 +117,26 @@ export type RootfsContentValidationWarning = {
 export type RootfsContentValidationResult = {
   content?: RootfsContentManifest;
   warnings: RootfsContentValidationWarning[];
+};
+
+export type RootfsConfigExportMetadata = {
+  label?: string;
+  description?: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
+  visibility?: RootfsImageVisibility;
+  tags?: string[];
+};
+
+export type RootfsConfigExport = {
+  kind: typeof ROOTFS_CONFIG_EXPORT_KIND;
+  version: typeof ROOTFS_CONFIG_EXPORT_VERSION;
+  exported_at: string;
+  metadata?: RootfsConfigExportMetadata;
+  theme?: RootfsImageTheme;
+  content?: RootfsContentManifest;
 };
 
 export type RootfsScanSummary = {
@@ -649,6 +673,10 @@ function isSafeHomeTargetPath(path: string): boolean {
   return path.length > 0 && !path.split("/").includes("..");
 }
 
+function isSafeProjectAppId(id: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9._-]{0,63})$/i.test(id);
+}
+
 function normalizeHttpsUrl(
   value: unknown,
   warnings: RootfsContentValidationWarning[],
@@ -697,7 +725,8 @@ function normalizeContentAction(
     kind !== "open" &&
     kind !== "browse" &&
     kind !== "copy-to-home" &&
-    kind !== "external-link"
+    kind !== "external-link" &&
+    kind !== "project-app"
   ) {
     warning(
       warnings,
@@ -716,6 +745,39 @@ function normalizeContentAction(
   if (kind === "external-link") {
     const url = normalizeHttpsUrl(value.url, warnings, `${path}.url`);
     return url ? { kind, label, url, description } : undefined;
+  }
+  if (kind === "project-app") {
+    const app_spec = value.app_spec;
+    if (!isPlainObject(app_spec)) {
+      warning(
+        warnings,
+        "invalid-app-spec",
+        "Project app action must include an app_spec object",
+        `${path}.app_spec`,
+      );
+      return undefined;
+    }
+    const appId = trimString(app_spec.id, 64);
+    if (!appId || !isSafeProjectAppId(appId)) {
+      warning(
+        warnings,
+        "invalid-app-spec-id",
+        "Project app spec must include a valid app id",
+        `${path}.app_spec.id`,
+      );
+      return undefined;
+    }
+    const appKind = trimString(app_spec.kind, 32);
+    if (appKind && appKind !== "service" && appKind !== "static") {
+      warning(
+        warnings,
+        "invalid-app-spec-kind",
+        "Project app spec kind must be service or static",
+        `${path}.app_spec.kind`,
+      );
+      return undefined;
+    }
+    return { kind, label, app_spec, description };
   }
   if (kind === "copy-to-home") {
     const source_path = trimString(value.source_path, 2048);
@@ -751,6 +813,115 @@ function normalizeContentAction(
     return undefined;
   }
   return { kind, label, path: actionPath, description };
+}
+
+export function parseRootfsConfigExport(input: unknown): RootfsConfigExport {
+  if (!isPlainObject(input)) {
+    throw new Error("expected a JSON object");
+  }
+  if (input.kind !== ROOTFS_CONFIG_EXPORT_KIND) {
+    throw new Error("expected a CoCalc RootFS config export");
+  }
+  if (input.version !== ROOTFS_CONFIG_EXPORT_VERSION) {
+    throw new Error(`unsupported RootFS config version ${input.version}`);
+  }
+  const metadata = parseRootfsConfigExportMetadata(input.metadata);
+  const theme = parseRootfsConfigExportTheme(input.theme);
+  const content = parseRootfsConfigExportContent(input.content);
+  if (!metadata && !theme && !content) {
+    throw new Error("config does not contain metadata, theme, or discovery");
+  }
+  return {
+    kind: ROOTFS_CONFIG_EXPORT_KIND,
+    version: ROOTFS_CONFIG_EXPORT_VERSION,
+    exported_at: `${input.exported_at ?? ""}`,
+    metadata,
+    theme,
+    content,
+  };
+}
+
+function parseRootfsConfigExportMetadata(
+  input: unknown,
+): RootfsConfigExportMetadata | undefined {
+  if (input == null) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("metadata must be an object");
+  }
+  const visibility = trimString(input.visibility, 64);
+  return {
+    label: trimString(input.label, 160),
+    description: trimString(input.description, 2000),
+    family: trimString(input.family, 160),
+    version: trimString(input.version, 160),
+    channel: trimString(input.channel, 80),
+    supersedes_image_id: trimString(input.supersedes_image_id, 160),
+    visibility: isRootfsImageVisibility(visibility) ? visibility : undefined,
+    tags: Array.isArray(input.tags)
+      ? normalizeRootfsTagArray(input.tags)
+      : parseRootfsTagString(input.tags),
+  };
+}
+
+function parseRootfsConfigExportTheme(
+  input: unknown,
+): RootfsImageTheme | undefined {
+  if (input == null) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("theme must be an object");
+  }
+  return {
+    title: trimString(input.title, 160),
+    description: trimString(input.description, 2000),
+    color: nullableTrimmedString(input.color, 80),
+    accent_color: nullableTrimmedString(input.accent_color, 80),
+    icon: nullableTrimmedString(input.icon, 80),
+    image_blob: nullableTrimmedString(
+      input.image_blob,
+      ROOTFS_CONTENT_MAX_JSON_BYTES,
+    ),
+  };
+}
+
+function parseRootfsConfigExportContent(
+  input: unknown,
+): RootfsContentManifest | undefined {
+  if (input == null) return undefined;
+  const result = normalizeRootfsContentManifest(input);
+  if (!result.content) {
+    throw new Error("discovery config is invalid");
+  }
+  return result.content;
+}
+
+function parseRootfsTagString(tags: unknown): string[] | undefined {
+  if (typeof tags !== "string") return undefined;
+  return normalizeRootfsTagArray(tags.split(","));
+}
+
+function normalizeRootfsTagArray(tags: unknown[]): string[] | undefined {
+  const values = Array.from(
+    new Set(
+      tags
+        .map((tag) => trimString(tag, 80))
+        .filter((tag): tag is string => tag != null),
+    ),
+  );
+  return values.length ? values : undefined;
+}
+
+function nullableTrimmedString(
+  value: unknown,
+  maxLength: number,
+): string | null | undefined {
+  if (value == null) return null;
+  return trimString(value, maxLength) ?? null;
+}
+
+function isRootfsImageVisibility(
+  value: string | undefined,
+): value is RootfsImageVisibility {
+  return value === "private" || value === "collaborators" || value === "public";
 }
 
 export function validateRootfsSlug(slug?: unknown): string | undefined {

@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import type {
+  RootfsConfigExport,
   RootfsAdminCatalogEntry,
   RootfsDeleteRequestResult,
   RootfsImageEntry,
@@ -10,6 +12,7 @@ import type {
   RootfsReleaseGcRunResult,
   RootfsRusticRepoListResult,
 } from "@cocalc/util/rootfs-images";
+import { parseRootfsConfigExport } from "@cocalc/util/rootfs-images";
 import type { RootfsReleaseScanRun } from "@cocalc/util/rootfs-scan";
 
 export type RootfsCommandDeps = {
@@ -78,6 +81,63 @@ function parseThemeJson(value?: string): RootfsImageTheme | undefined {
     throw new Error("--theme-json must be a JSON object");
   }
   return parsed as RootfsImageTheme;
+}
+
+function parseRootfsConfigFile(value?: string): RootfsConfigExport | undefined {
+  const path = `${value ?? ""}`.trim();
+  if (!path) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    throw new Error(`invalid --config-file: ${err}`);
+  }
+  try {
+    return parseRootfsConfigExport(parsed);
+  } catch (err) {
+    throw new Error(`invalid --config-file: ${err}`);
+  }
+}
+
+function rootfsCatalogConfigPayload(
+  opts: {
+    label?: string;
+    family?: string;
+    imageVersion?: string;
+    channel?: string;
+    supersedesImageId?: string;
+    description?: string;
+    visibility?: string;
+    tags?: string;
+    themeJson?: string;
+  },
+  config?: RootfsConfigExport,
+) {
+  const label = `${opts.label ?? config?.metadata?.label ?? ""}`.trim();
+  if (!label) {
+    throw new Error("missing RootFS label; pass --label or --config-file");
+  }
+  const content =
+    config?.content != null
+      ? { content: config.content, content_warnings: [] }
+      : {};
+  return {
+    label,
+    family: opts.family ?? config?.metadata?.family,
+    version: opts.imageVersion ?? config?.metadata?.version,
+    channel: opts.channel ?? config?.metadata?.channel,
+    supersedes_image_id:
+      opts.supersedesImageId ?? config?.metadata?.supersedes_image_id,
+    description: opts.description ?? config?.metadata?.description,
+    visibility:
+      opts.visibility != null
+        ? parseVisibility(opts.visibility)
+        : config?.metadata?.visibility,
+    tags: opts.tags != null ? parseTags(opts.tags) : config?.metadata?.tags,
+    theme:
+      opts.themeJson != null ? parseThemeJson(opts.themeJson) : config?.theme,
+    ...content,
+  };
 }
 
 function normalizeSection(value?: string): RootfsImageSection | undefined {
@@ -1141,8 +1201,13 @@ export function registerRootfsCommand(
     .command("save")
     .description("create or update a RootFS catalog entry")
     .requiredOption("--image <image>", "runtime image reference")
-    .requiredOption("--label <label>", "catalog label")
+    .option("--label <label>", "catalog label")
     .option("--image-id <id>", "update an existing catalog entry by id")
+    .option("--browser-id <id>", "browser session id for fresh-auth checks")
+    .option(
+      "--config-file <path>",
+      "portable RootFS config JSON exported from the UI or authored by an agent",
+    )
     .option("--family <family>", "optional image family for upgrade grouping")
     .option("--image-version <version>", "optional user-facing image version")
     .option("--channel <channel>", "optional release channel, e.g. stable")
@@ -1161,8 +1226,10 @@ export function registerRootfsCommand(
       async (
         opts: {
           image: string;
-          label: string;
+          label?: string;
           imageId?: string;
+          browserId?: string;
+          configFile?: string;
           family?: string;
           imageVersion?: string;
           channel?: string;
@@ -1178,18 +1245,13 @@ export function registerRootfsCommand(
         command: Command,
       ) => {
         await withContext(command, "rootfs save", async (ctx) => {
+          const config = parseRootfsConfigFile(opts.configFile);
+          const payload = rootfsCatalogConfigPayload(opts, config);
           const entry = await ctx.hub.system.saveRootfsCatalogEntry({
             image_id: `${opts.imageId ?? ""}`.trim() || undefined,
             image: opts.image,
-            label: opts.label,
-            family: opts.family,
-            version: opts.imageVersion,
-            channel: opts.channel,
-            supersedes_image_id: opts.supersedesImageId,
-            description: opts.description,
-            visibility: parseVisibility(opts.visibility),
-            tags: parseTags(opts.tags),
-            theme: parseThemeJson(opts.themeJson),
+            browser_id: `${opts.browserId ?? ""}`.trim() || undefined,
+            ...payload,
             official: opts.official ? true : undefined,
             prepull: opts.prepull ? true : undefined,
             hidden: opts.hidden ? true : undefined,
@@ -1203,7 +1265,12 @@ export function registerRootfsCommand(
     .command("publish")
     .description("publish the current RootFS state of a project")
     .option("-w, --project <project>", "project id or name")
-    .requiredOption("--label <label>", "catalog label for the published image")
+    .option("--label <label>", "catalog label for the published image")
+    .option("--browser-id <id>", "browser session id for fresh-auth checks")
+    .option(
+      "--config-file <path>",
+      "portable RootFS config JSON exported from the UI or authored by an agent",
+    )
     .option("--family <family>", "optional image family for upgrade grouping")
     .option("--image-version <version>", "optional user-facing image version")
     .option("--channel <channel>", "optional release channel, e.g. stable")
@@ -1227,7 +1294,9 @@ export function registerRootfsCommand(
       async (
         opts: {
           project?: string;
-          label: string;
+          label?: string;
+          browserId?: string;
+          configFile?: string;
           family?: string;
           imageVersion?: string;
           channel?: string;
@@ -1246,17 +1315,12 @@ export function registerRootfsCommand(
       ) => {
         await withContext(command, "rootfs publish", async (ctx) => {
           const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const config = parseRootfsConfigFile(opts.configFile);
+          const payload = rootfsCatalogConfigPayload(opts, config);
           const op = await ctx.hub.system.publishProjectRootfsImage({
             project_id: ws.project_id,
-            label: opts.label,
-            family: opts.family,
-            version: opts.imageVersion,
-            channel: opts.channel,
-            supersedes_image_id: opts.supersedesImageId,
-            description: opts.description,
-            visibility: parseVisibility(opts.visibility),
-            tags: parseTags(opts.tags),
-            theme: parseThemeJson(opts.themeJson),
+            browser_id: `${opts.browserId ?? ""}`.trim() || undefined,
+            ...payload,
             official: opts.official ? true : undefined,
             prepull: opts.prepull ? true : undefined,
             hidden: opts.hidden ? true : undefined,

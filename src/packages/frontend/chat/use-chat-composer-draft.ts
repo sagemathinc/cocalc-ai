@@ -51,12 +51,15 @@ function composerDraftStorageKey({
   project_id,
   path,
   composerDraftKey,
+  suffix,
 }: {
   project_id: string;
   path: string;
   composerDraftKey: number;
+  suffix?: string;
 }): string {
-  return `${project_id}:${path}:${composerDraftKey}`;
+  const base = `${project_id}:${path}:${composerDraftKey}`;
+  return suffix ? `${base}:${suffix}` : base;
 }
 
 function composerDraftLocalStorageKey(storageKey: string): string {
@@ -70,6 +73,7 @@ export async function writeChatComposerDraft({
   composerDraftKey,
   text,
   append = false,
+  suffix,
 }: {
   account_id?: string;
   project_id: string;
@@ -77,11 +81,13 @@ export async function writeChatComposerDraft({
   composerDraftKey: number;
   text: string;
   append?: boolean;
+  suffix?: string;
 }): Promise<string> {
   const storageKey = composerDraftStorageKey({
     project_id,
     path,
     composerDraftKey,
+    suffix,
   });
   const localStorageKey = composerDraftLocalStorageKey(storageKey);
   const trimmedText = `${text ?? ""}`.trim();
@@ -148,6 +154,7 @@ interface UseChatComposerDraftOptions {
   path: string;
   composerDraftKey: number;
   debounceMs?: number;
+  suffix?: string;
 }
 
 interface UseChatComposerDraftResult {
@@ -163,6 +170,7 @@ export function useChatComposerDraft({
   path,
   composerDraftKey,
   debounceMs,
+  suffix,
 }: UseChatComposerDraftOptions): UseChatComposerDraftResult {
   const [input, setInputState] = useState("");
   const controllerRef = useRef<DraftController | null>(null);
@@ -177,8 +185,9 @@ export function useChatComposerDraft({
         project_id,
         path,
         composerDraftKey,
+        suffix,
       }),
-    [project_id, path, composerDraftKey],
+    [project_id, path, composerDraftKey, suffix],
   );
   const localStorageKey = useMemo(
     () => composerDraftLocalStorageKey(storageKey),
@@ -340,7 +349,12 @@ export function useChatComposerDraft({
 
   const clearComposerDraft = useCallback(
     async (draftKey: number) => {
-      const key = `${project_id}:${path}:${draftKey}`;
+      const key = composerDraftStorageKey({
+        project_id,
+        path,
+        composerDraftKey: draftKey,
+        suffix,
+      });
       const localKey = `chat-composer-draft:${key}`;
       const now = Date.now();
       cancelPendingLocalWrite();
@@ -372,8 +386,27 @@ export function useChatComposerDraft({
         { ttlMs: CHAT_DRAFT_TTL_MS },
       );
     },
-    [adapter, cancelPendingLocalWrite, composerDraftKey, path, project_id],
+    [
+      adapter,
+      cancelPendingLocalWrite,
+      composerDraftKey,
+      path,
+      project_id,
+      suffix,
+    ],
   );
 
   return { input, setInput, clearInput, clearComposerDraft };
+}
+
+export function writeChatComposerAcpPromptDraft(
+  opts: Omit<Parameters<typeof writeChatComposerDraft>[0], "suffix">,
+): Promise<string> {
+  return writeChatComposerDraft({ ...opts, suffix: "acp-prompt" });
+}
+
+export function useChatComposerAcpPromptDraft(
+  opts: Omit<UseChatComposerDraftOptions, "suffix">,
+): UseChatComposerDraftResult {
+  return useChatComposerDraft({ ...opts, suffix: "acp-prompt" });
 }

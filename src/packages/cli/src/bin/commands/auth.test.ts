@@ -521,6 +521,7 @@ test("auth elevate --dev approves the current CLI session with hub password", as
 test("auth elevate --dev bootstraps a local dev session when only hub password auth is available", async () => {
   const capture: { data?: any } = {};
   let bootstrapArgs: any;
+  let config: any = { profiles: {} };
   const originalFetch = global.fetch;
   global.fetch = (async (url: string | URL | Request) => {
     throw new Error(`unexpected fetch url ${url}`);
@@ -542,6 +543,10 @@ test("auth elevate --dev bootstraps a local dev session when only hub password a
           profile: "default",
           fromProfile: false,
         }),
+        loadAuthConfig: () => config,
+        saveAuthConfig: (next: any) => {
+          config = next;
+        },
         buildCookieHeader: (_apiBaseUrl: string, effective: any) => {
           if (effective.cookie) return effective.cookie;
           return effective.hubPassword
@@ -570,6 +575,12 @@ test("auth elevate --dev bootstraps a local dev session when only hub password a
     assert.equal(capture.data.dev, true);
     assert.equal(capture.data.factor_level, "totp");
     assert.equal(capture.data.fresh_auth_until, "2026-05-08T18:00:00.000Z");
+    assert.equal(config.current_profile, "default");
+    assert.deepEqual(config.profiles.default, {
+      api: "http://127.0.0.1:9100",
+      account_id: "00000000-1000-4000-8000-000000000056",
+      cookie: "remember_me=remember-cookie-1",
+    });
   } finally {
     global.fetch = originalFetch;
   }
