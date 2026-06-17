@@ -14,6 +14,12 @@ export default function initPublicFeatures(router: Router): void {
     "/features/",
     "/features/:slug",
     "/features/:slug/",
+    "/rootfs",
+    "/rootfs/",
+    "/rootfs/id/:imageId",
+    "/rootfs/id/:imageId/",
+    "/rootfs/:slug",
+    "/rootfs/:slug/",
     /^\/docs(?:\/.*)?$/,
   ];
 

@@ -917,6 +917,7 @@ export default function RootFilesystemImage({
                     dest,
                     options: { force: false, errorOnExist: true },
                   });
+                  return dest;
                 },
                 onOpenPath: (path) => {
                   void actions?.open_file({ path, foreground: true });
@@ -3192,7 +3193,7 @@ function renderRootfsContentPanel({
   onOpenPath,
 }: {
   entry: RootfsImageEntry;
-  onCopyToHome: (action: RootfsContentAction) => Promise<void>;
+  onCopyToHome: (action: RootfsContentAction) => Promise<string | undefined>;
   onOpenPath: (path: string) => void;
 }): React.JSX.Element | null {
   const content = entry.content;
@@ -3281,7 +3282,7 @@ function RootfsContentActionRow({
   onOpenPath,
 }: {
   action: RootfsContentAction;
-  onCopyToHome: (action: RootfsContentAction) => Promise<void>;
+  onCopyToHome: (action: RootfsContentAction) => Promise<string | undefined>;
   onOpenPath: (path: string) => void;
 }): React.JSX.Element {
   const [copying, setCopying] = useState<boolean>(false);
@@ -3295,7 +3296,10 @@ function RootfsContentActionRow({
   async function copyToHome(): Promise<void> {
     setCopying(true);
     try {
-      await onCopyToHome(action);
+      const targetPath = await onCopyToHome(action);
+      if (targetPath) {
+        onOpenPath(targetPath);
+      }
     } finally {
       setCopying(false);
     }
