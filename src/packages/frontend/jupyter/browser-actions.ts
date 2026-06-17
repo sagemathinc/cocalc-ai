@@ -3199,6 +3199,7 @@ export class JupyterActions extends JupyterActions0 {
       if (this.isClosed()) {
         return;
       }
+      this.scheduleKernelStatusRefresh();
       this.syncdb.save();
       setTimeout(() => {
         if (!this.isClosed()) {
