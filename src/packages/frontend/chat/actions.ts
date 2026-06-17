@@ -2737,11 +2737,78 @@ export class ChatActions extends Actions<ChatState> {
         threadId,
         chat,
       });
+      this.markAcpTurnInterrupted({
+        message: targetMessage,
+        messageDate,
+        threadId,
+        note: "Conversation interrupted.",
+      });
       return true;
     } catch (err) {
       console.warn("failed to interrupt codex turn", err);
-      return false;
+      // If the ACP worker/session is already gone, a backend interrupt cannot
+      // acknowledge. The user's explicit interrupt should still clear durable
+      // queued/running chat state so the thread does not stay stuck forever.
+      return this.markAcpTurnInterrupted({
+        message: targetMessage,
+        messageDate,
+        threadId,
+        note: "Conversation interrupted locally after the running backend session could not be reached.",
+      });
     }
+  }
+
+  private markAcpTurnInterrupted({
+    message,
+    messageDate,
+    threadId,
+    note,
+  }: {
+    message?: ChatMessage;
+    messageDate: Date;
+    threadId: string;
+    note: string;
+  }): boolean {
+    if (!this.syncdb || !this.store) return false;
+    const targetSenderId = senderId(message);
+    const targetMessageId = field<string>(message, "message_id");
+    const targetThreadId = field<string>(message, "thread_id") ?? threadId;
+    const where = chatRowWhere({
+      date: messageDate,
+      sender_id: targetSenderId,
+      message_id: targetMessageId,
+      thread_id: targetThreadId,
+    });
+    if (!where || !targetThreadId) return false;
+
+    this.setSyncdb({
+      ...where,
+      acp_state: null,
+      acp_interrupted: true,
+      acp_interrupted_text: note,
+    });
+    this.syncdb.delete({
+      event: "chat-thread-state",
+      thread_id: targetThreadId,
+    });
+    this.setSyncdb({
+      event: "chat-thread-state",
+      sender_id: `__thread_state__:${targetThreadId}`,
+      date: CHAT_THREAD_META_ROW_DATE,
+      thread_id: targetThreadId,
+      active_message_id: targetMessageId ?? null,
+      state: "interrupted",
+    });
+    this.syncdb.commit();
+    void this.saveSyncdb();
+
+    let next = this.store.get("acpState") ?? new Map();
+    if (targetMessageId) {
+      next = next.delete(`message:${targetMessageId}`);
+    }
+    next = next.delete(`thread:${targetThreadId}`);
+    this.store.setState({ acpState: next });
+    return true;
   }
 
   summarizeThread = async ({
