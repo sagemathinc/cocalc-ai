@@ -697,24 +697,171 @@ async function writeNavigatorPromptInWorkspaceChat(
     if (openedReadyChat) {
       const actions = openedReadyChat.actions;
       const openedSession =
-        openedReadyChat.opened.session != null
+        opts.createNewThread === true
+          ? fallbackSession
+          : openedReadyChat.opened.session != null
+            ? {
+                ...openedReadyChat.opened.session,
+                working_directory:
+                  openedReadyChat.opened.session.working_directory ??
+                  fallbackWorkingDirectory,
+              }
+            : fallbackSession;
+      if (opts.createNewThread === true) {
+        const sessionModel =
+          typeof openedSession.model === "string" &&
+          openedSession.model.trim().length > 0
+            ? openedSession.model.trim()
+            : undefined;
+        const model = resolveNavigatorCodexModel({
+          requestedModel,
+          sessionModel,
+          defaultModel: defaultCodexConfig.model,
+          forceCodex,
+        });
+        const threadAgentCodexConfig = {
+          ...defaultCodexConfig,
+          model,
+          reasoning: (openedSession.reasoning ??
+            defaultCodexConfig.reasoning) as any,
+          sessionMode: (openedSession.mode ??
+            defaultCodexConfig.sessionMode) as any,
+          serviceTier: (openedSession.serviceTier ??
+            defaultCodexConfig.serviceTier) as any,
+          workingDirectory:
+            openedSession.working_directory ?? fallbackWorkingDirectory,
+          ...(opts.codexConfig ?? {}),
+        };
+        const threadAgent = forceCodex
           ? {
-              ...openedReadyChat.opened.session,
-              working_directory:
-                openedReadyChat.opened.session.working_directory ??
-                fallbackWorkingDirectory,
+              mode: "codex" as const,
+              model,
+              codexConfig: threadAgentCodexConfig,
             }
-          : fallbackSession;
+          : undefined;
+        const createdThreadKey = actions.createEmptyThread?.({
+          name: requestedTitle ?? openedSession.title ?? "Agent",
+          threadAgent,
+          threadAppearance: {
+            color: openedSession.thread_color,
+            icon: openedSession.thread_icon,
+            image: openedSession.thread_image,
+          },
+        });
+        if (!createdThreadKey) return false;
+        const composerText = visiblePrompt ?? basePrompt;
+        if (!submitToAgent && opts.stageInComposer === true) {
+          if (typeof actions.appendToComposerDraft === "function") {
+            actions.appendToComposerDraft({
+              threadKey: createdThreadKey,
+              text: composerText,
+            });
+          } else {
+            await writeChatComposerDraft({
+              account_id,
+              project_id,
+              path: targetChatPath,
+              composerDraftKey: stableDraftKeyFromThreadKey(createdThreadKey),
+              text: composerText,
+              append: true,
+            });
+          }
+          saveNavigatorSelectedThreadKey(createdThreadKey, targetChatPath);
+          if (typeof actions.syncdb?.save === "function") {
+            await actions.syncdb.save();
+          }
+          if (opts.openFloating === true) {
+            revealAgentSession(
+              project_id,
+              {
+                ...openedSession,
+                session_id: createdThreadKey,
+                thread_key: createdThreadKey,
+                title: requestedTitle ?? openedSession.title ?? "Agent",
+                updated_at: new Date().toISOString(),
+                status: "active",
+                model,
+                working_directory:
+                  openedSession.working_directory ?? fallbackWorkingDirectory,
+              },
+              {
+                workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+                workspaceOnly: workspaceTarget != null,
+              },
+            );
+          }
+          setTimeout(() => {
+            actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+          }, 50);
+          return true;
+        }
+        const timeStamp = actions.sendChat({
+          input: composerText,
+          acp_prompt: basePrompt,
+          name: requestedTitle,
+          reply_thread_id: createdThreadKey,
+          tag: opts.tag ?? "intent:navigator",
+          noNotification: true,
+          skipModelDispatch: true,
+        });
+        if (!timeStamp) return false;
+        saveNavigatorSelectedThreadKey(createdThreadKey, targetChatPath);
+        if (typeof actions.syncdb?.save === "function") {
+          await actions.syncdb.save();
+        }
+        if (opts.openFloating === true) {
+          revealAgentSession(
+            project_id,
+            {
+              ...openedSession,
+              session_id: createdThreadKey,
+              thread_key: createdThreadKey,
+              title: requestedTitle ?? openedSession.title ?? "Agent",
+              updated_at: new Date().toISOString(),
+              status: "active",
+              model,
+              working_directory:
+                openedSession.working_directory ?? fallbackWorkingDirectory,
+            },
+            {
+              workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+              workspaceOnly: workspaceTarget != null,
+            },
+          );
+        }
+        if (submitToAgent) {
+          const message =
+            actions.getMessageByDate?.(timeStamp) ??
+            actions.syncdb?.get_one?.({
+              event: "chat",
+              date: timeStamp,
+              sender_id: account_id,
+            });
+          if (!message) return false;
+          const process = processChatAI({
+            actions,
+            message,
+            tag: opts.tag ?? "intent:navigator",
+            threadModel: model ?? null,
+            acpConfigOverride: threadAgentCodexConfig,
+          });
+          if (opts.waitForAgent === false) {
+            void process.catch(() => undefined);
+          } else {
+            await process;
+          }
+        }
+        setTimeout(() => {
+          actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+        }, 50);
+        return true;
+      }
       let replyThreadKey = chooseThreadKeyFromIndex({
         actions,
         preferredThreadKey:
-          opts.createNewThread === true
-            ? ""
-            : (targetThreadKey ?? openedReadyChat.opened.thread_key),
+          targetThreadKey ?? openedReadyChat.opened.thread_key,
         fallbackThreadKey:
-          opts.createNewThread === true
-            ? ""
-            : `${openedReadyChat.opened.thread_key ?? targetThreadKey ?? ""}`.trim(),
+          `${openedReadyChat.opened.thread_key ?? targetThreadKey ?? ""}`.trim(),
       });
       let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
       if (
@@ -902,11 +1049,14 @@ async function writeNavigatorPromptInWorkspaceChat(
       timeoutMs: NAVIGATOR_SYNC_READY_TIMEOUT_MS,
     });
     const sessions = await sessionsPromise;
-    const indexedSession = pickNavigatorSession({
-      records: sessions,
-      preferredThreadKey: targetThreadKey,
-      chatPath: targetChatPath,
-    });
+    const indexedSession =
+      opts.createNewThread === true
+        ? undefined
+        : pickNavigatorSession({
+            records: sessions,
+            preferredThreadKey: targetThreadKey,
+            chatPath: targetChatPath,
+          });
     const session: AgentSessionRecord = indexedSession
       ? {
           ...indexedSession,
@@ -989,9 +1139,12 @@ async function writeNavigatorPromptInWorkspaceChat(
       requestedTitle && (!replyThreadId || !existingThreadTitle)
         ? requestedTitle
         : undefined;
-    const createdThreadTitle = workspaceTarget
-      ? getWorkspaceSharedThreadTitle()
-      : messageThreadTitle;
+    const createdThreadTitle =
+      opts.createNewThread === true
+        ? messageThreadTitle
+        : workspaceTarget
+          ? getWorkspaceSharedThreadTitle()
+          : messageThreadTitle;
     const sessionModel =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
@@ -1023,7 +1176,7 @@ async function writeNavigatorPromptInWorkspaceChat(
     let createdThreadNow = false;
     if (!replyThreadKey) {
       const createdThreadKey = actions.createEmptyThread?.({
-        name: createdThreadTitle,
+        name: createdThreadTitle ?? requestedTitle,
         threadAgent: newThreadAgent,
         threadAppearance: {
           color: session.thread_color,
