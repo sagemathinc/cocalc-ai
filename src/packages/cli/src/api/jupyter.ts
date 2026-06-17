@@ -5,7 +5,9 @@ import {
 import {
   createProjectJupyterOps,
   type NotebookCellInfo,
+  type NotebookCellDetailInfo,
   type ProjectJupyterKernelResult,
+  type ProjectJupyterRestartResult,
   type ProjectJupyterRunSession,
 } from "../bin/core/project-jupyter";
 
@@ -34,6 +36,12 @@ export type JupyterRunOptions = {
   }) => Promise<string>;
 };
 
+export type JupyterCellSelectionOptions = {
+  cellIds?: string[];
+  cellIndices?: number[];
+  all?: boolean;
+};
+
 export interface BoundJupyterDocument<Project extends ProjectIdentity> {
   readonly projectIdentifier?: string;
   readonly path: string;
@@ -59,6 +67,57 @@ export interface BoundJupyterDocument<Project extends ProjectIdentity> {
     kernel: string | null;
     kernelSpec: ProjectJupyterKernelResult["kernel_spec"];
     kernels: ProjectJupyterKernelResult["kernels"];
+  }>;
+
+  restart(): Promise<{
+    project: Project;
+    path: string;
+    restarted: ProjectJupyterRestartResult["restarted"];
+  }>;
+
+  interrupt(): Promise<{
+    project: Project;
+    path: string;
+    interrupted: true;
+  }>;
+
+  status(): Promise<{
+    project: Project;
+    path: string;
+    backendState: string;
+    kernelState: string;
+  }>;
+
+  save(): Promise<{
+    project: Project;
+    path: string;
+    saved: true;
+  }>;
+
+  outputs(options?: JupyterCellSelectionOptions): Promise<{
+    project: Project;
+    path: string;
+    cells: NotebookCellDetailInfo[];
+  }>;
+
+  clearOutputs(options?: JupyterCellSelectionOptions): Promise<{
+    project: Project;
+    path: string;
+    cleared: string[];
+  }>;
+
+  metadata(options?: { cellId?: string; metadata?: unknown }): Promise<{
+    project: Project;
+    path: string;
+    scope: "notebook" | "cell";
+    cell?: NotebookCellDetailInfo;
+    metadata: unknown;
+  }>;
+
+  trust(options?: { trust?: boolean }): Promise<{
+    project: Project;
+    path: string;
+    trust: boolean | null;
   }>;
 
   setCell(options: {
@@ -216,6 +275,170 @@ export function createJupyterApi<Ctx, Project extends ProjectIdentity>({
             kernel: result.kernel,
             kernelSpec: result.kernel_spec,
             kernels: result.kernels,
+          };
+        },
+        async restart() {
+          const result = await ops.projectJupyterRestartData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            restarted: result.restarted,
+          };
+        },
+        async interrupt() {
+          const result = await ops.projectJupyterInterruptData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            interrupted: result.interrupted,
+          };
+        },
+        async status() {
+          const result = await ops.projectJupyterStatusData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            backendState: result.backend_state,
+            kernelState: result.kernel_state,
+          };
+        },
+        async save() {
+          const result = await ops.projectJupyterSaveData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            saved: result.saved,
+          };
+        },
+        async outputs(options) {
+          const result = await ops.projectJupyterOutputsData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            cellIds: options?.cellIds,
+            cellIndices: options?.cellIndices,
+            all: options?.all,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            cells: result.cells,
+          };
+        },
+        async clearOutputs(options) {
+          const result = await ops.projectJupyterClearOutputsData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            cellIds: options?.cellIds,
+            cellIndices: options?.cellIndices,
+            all: options?.all,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            cleared: result.cleared,
+          };
+        },
+        async metadata(options) {
+          const result = await ops.projectJupyterMetadataData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            cellId: options?.cellId,
+            metadata: options?.metadata,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            scope: result.scope,
+            cell: result.cell,
+            metadata: result.metadata,
+          };
+        },
+        async trust(options) {
+          const result = await ops.projectJupyterTrustData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            trust: options?.trust,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            trust: result.trust,
           };
         },
         async setCell(options) {
