@@ -1621,6 +1621,7 @@ export class ConatClient extends EventEmitter {
     for (const host_id of [source_host_id, dest_host_id]) {
       if (!host_id) continue;
       this.invalidateProjectHostToken(host_id, { resetFailureState: true });
+      this.invalidateProjectHostBrowserSession(host_id);
       this.removeRoutedHubClient(host_id, {
         reason: "refresh_project_host_routing",
         details: { source_host_id, dest_host_id },
