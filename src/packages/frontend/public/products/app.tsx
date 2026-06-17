@@ -138,7 +138,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
     },
     {
       bestFit:
-        "Users or small teams that want a shared CoCalc instance on one public Ubuntu VM or local Lima VM.",
+        "Users or small teams that want a shared CoCalc instance on one public Ubuntu VM.",
       actionLabel: "View CoCalc Star",
       href: publicPath("products/cocalc-star"),
       icon: "star",
@@ -565,7 +565,7 @@ function CocalcRocketPage() {
             ]}
           />
         </ProductDetailCard>
-        <ProductDetailCard icon="servers" title="Next action">
+        <ProductDetailCard icon="servers" title="Plan Rocket with CoCalc">
           <Paragraph style={{ marginTop: 0 }}>
             Start with support when the conversation includes infrastructure,
             rollout, governance, support coverage, or site licensing.
@@ -579,7 +579,7 @@ function CocalcRocketPage() {
               },
               {
                 href: publicPath("products/cocalc-launchpad"),
-                label: "Compare Launchpad",
+                label: "Compare with Launchpad",
               },
               {
                 href: publicPath("products"),
@@ -598,7 +598,7 @@ function CocalcStarPage() {
     "curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash";
   const detailItems = [
     {
-      body: "Users, instructors, labs, GPU-box owners, agent sandbox operators, and small teams that want collaborators in one browser-based CoCalc instance.",
+      body: "Users, instructors, labs, and small teams that want collaborators in one browser-based CoCalc instance on a public VM.",
       icon: "star",
       title: "Audience",
     },
@@ -625,11 +625,11 @@ function CocalcStarPage() {
           },
           {
             href: publicPath("products/cocalc-launchpad"),
-            label: "Compare Launchpad",
+            label: "Compare with Launchpad",
           },
           {
             href: publicPath("products/cocalc-rocket"),
-            label: "Compare Rocket",
+            label: "Compare with Rocket",
           },
         ]}
         title="Shared CoCalc on a single VM"
@@ -670,7 +670,7 @@ function CocalcStarPage() {
       </PublicGrid>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Next action
+          Install Star when one VM is enough
         </Title>
         <Paragraph style={{ margin: 0 }}>
           Install Star when you already have a fresh public Ubuntu VM. Compare
@@ -678,6 +678,9 @@ function CocalcStarPage() {
           or broader operational planning.
         </Paragraph>
         <Flex gap={12} wrap>
+          <LinkButton href="#install-cocalc-star">
+            Install CoCalc Star
+          </LinkButton>
           <LinkButton href={publicPath("products/cocalc-launchpad")}>
             Compare with Launchpad
           </LinkButton>
@@ -721,7 +724,10 @@ function CocalcLaunchpadPage() {
             primary: true,
           },
           { href: appPath("pricing"), label: "Pricing and licensing" },
-          { href: publicPath("products/cocalc-star"), label: "Compare Star" },
+          {
+            href: publicPath("products/cocalc-star"),
+            label: "Compare with Star",
+          },
         ]}
         title="Lightweight private deployment for teams that operate CoCalc"
         body="CoCalc Launchpad is the customer-operated private deployment path for pilots, labs, workshops, departments, and platform teams that need more control than hosted CoCalc.ai or a single-VM Star appliance."
@@ -764,27 +770,31 @@ function CocalcLaunchpadPage() {
       </PublicGrid>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Next action
+          Plan a bounded private deployment
         </Title>
         <Paragraph style={{ margin: 0 }}>
           Start with Launchpad when your team is ready to operate a private
           CoCalc environment. Use pricing and support when procurement,
           deployment rights, or rollout planning are part of the decision.
         </Paragraph>
-        <Flex gap={12} wrap>
-          <LinkButton href={appPath("pricing")}>
-            Pricing and licensing
-          </LinkButton>
-          <LinkButton href={publicPath("products/cocalc-star")}>
-            Compare with Star
-          </LinkButton>
-          <LinkButton href={publicPath("products/cocalc-plus")}>
-            Compare with CoCalc Plus
-          </LinkButton>
-          <LinkButton href={publicPath("products/cocalc-rocket")}>
-            Compare with Rocket
-          </LinkButton>
-        </Flex>
+        <ProductActions
+          actions={[
+            {
+              href: supportProductPath("Launchpad"),
+              label: "Discuss Launchpad requirements",
+              primary: true,
+            },
+            { href: appPath("pricing"), label: "Pricing and licensing" },
+            {
+              href: publicPath("products/cocalc-star"),
+              label: "Compare with Star",
+            },
+            {
+              href: publicPath("products/cocalc-rocket"),
+              label: "Compare with Rocket",
+            },
+          ]}
+        />
       </PublicSection>
     </Flex>
   );
@@ -820,8 +830,11 @@ function CocalcPlusPage() {
             label: "Install CoCalc Plus",
             primary: true,
           },
-          { href: appPath(""), label: "Use hosted CoCalc.ai" },
-          { href: publicPath("products/cocalc-star"), label: "Compare Star" },
+          { href: appPath("pricing"), label: "Review hosted plans" },
+          {
+            href: publicPath("products/cocalc-star"),
+            label: "Compare with Star",
+          },
         ]}
         title="Local CoCalc for evaluation and individual work"
         body="CoCalc Plus is the local source-available runtime for one user on Linux or macOS. It is the right starting point when you want to evaluate CoCalc or work on your own machine before choosing a shared path."
@@ -857,24 +870,27 @@ function CocalcPlusPage() {
       </PublicGrid>
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Next action
+          Choose a shared path after local evaluation
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          Install Plus to evaluate the workspace model locally, then move to
-          hosted CoCalc.ai, Star, Launchpad, or Rocket when the work needs
-          shared access or an organizational operating model.
+          Install Plus to evaluate the workspace model locally. Move to hosted
+          plans when CoCalc should be operated by us, or compare operating
+          models when the group needs one VM or a customer-operated path.
         </Paragraph>
-        <Flex gap={12} wrap>
-          <LinkButton href={appPath("features/jupyter-notebook")}>
-            Jupyter notebooks
-          </LinkButton>
-          <LinkButton href={appPath("features/linux")}>
-            Linux workflow
-          </LinkButton>
-          <LinkButton href={publicPath("products")}>
-            Compare operating models
-          </LinkButton>
-        </Flex>
+        <ProductActions
+          actions={[
+            {
+              href: "#install-cocalc-plus",
+              label: "Install CoCalc Plus",
+              primary: true,
+            },
+            { href: appPath("pricing"), label: "Review hosted plans" },
+            {
+              href: publicPath("products"),
+              label: "Compare operating models",
+            },
+          ]}
+        />
       </PublicSection>
     </Flex>
   );

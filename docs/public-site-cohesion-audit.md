@@ -189,6 +189,20 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Change: move the compare-page contact CTA to `/support/new` with product-decision context so visitors can describe workflow fit, operating model, purchasing, deployment, and support constraints in one place.
 - [x] Browser QA: validate the workflow and decision route set on desktop, tablet, and mobile with zero horizontal overflow; confirm compare-page contact uses `context=feature-compare` and `type=purchase`, and confirm `/support/new` preserves the prefilled decision context in the preview's email-only mode.
 
+## Product Decision Buyer Path Pass
+
+- [x] Active: audit `/products`, `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, `/products/cocalc-rocket`, `/pricing`, and `/features/compare` as one buyer path.
+- [x] Active: keep `/products` as the operating-model chooser and `/features/compare` as the fit/comparison page rather than duplicating the same decision on every page.
+- [x] Active: preserve the five product paths: hosted CoCalc.ai, local/self-directed Plus, single-VM Star, customer-operated Launchpad, and customer-operated Rocket.
+- [x] Finding: the `/products` overview already separates who operates CoCalc and where it runs; leave the overview structure intact during this pass.
+- [x] Finding: `/pricing` already frames hosted plans, site licensing, dedicated hosted compute, quotes, and trust/privacy routes without becoming another product chooser; leave its structure intact.
+- [x] Finding: `/features/compare` now hands off to products, pricing, and contextual support correctly; leave its structure intact.
+- [x] Change: replace repeated generic product-detail "Next action" endings with route-owned ending labels that describe the buyer decision on that product page.
+- [x] Change: keep Plus focused on local evaluation, hosted pricing, and operating-model comparison instead of routing its ending back to workflow feature pages.
+- [x] Change: tighten Star to the public-facing single public Ubuntu VM path for this buyer pass, without local Lima or agent-sandbox-oriented framing.
+- [x] Change: focus Launchpad's ending on Launchpad requirements, pricing, and neighboring Star/Rocket decisions rather than a low-value comparison back to Plus.
+- [x] Browser QA: validate `/products`, all four self-directed/customer-operated product-detail pages, `/pricing`, and `/features/compare` on desktop, tablet, and mobile with zero horizontal overflow; confirm Plus hosted evaluation routes to `/pricing`, Launchpad support uses `context=product-cocalc-launchpad`, and stale `Next action`, `local Lima`, and `agent sandbox` language is absent. The known `CoCalc Crashed` overlay remains present in the DOM and was ignored per user instruction.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.

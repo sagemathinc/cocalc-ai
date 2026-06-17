@@ -86,6 +86,9 @@ function expectNoProductDetailStalePhrasing() {
     /production operations matter/i,
     /Production private cloud/i,
     /lower-level operator control plane/i,
+    /local Lima/i,
+    /agent sandbox/i,
+    /^Next action$/i,
   ]) {
     expect(screen.queryByText(phrase)).toBeNull();
   }
@@ -1135,8 +1138,25 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Operational boundary" }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Use hosted CoCalc.ai" }),
-    ).toHaveAttribute("href", "/");
+      screen.getByRole("heading", {
+        name: "Choose a shared path after local evaluation",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getAllByRole("link", { name: "Review hosted plans" })
+        .every((link) => link.getAttribute("href") === "/pricing"),
+    ).toBe(true);
+    expect(
+      screen.getByRole("link", { name: "Compare operating models" }),
+    ).toHaveAttribute("href", "/products");
+    expect(
+      screen.queryByRole("link", { name: "Use hosted CoCalc.ai" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Jupyter notebooks" }),
+    ).toBeNull();
+    expect(screen.queryByRole("link", { name: "Linux workflow" })).toBeNull();
     expectNoProductDetailStalePhrasing();
   });
 
@@ -1189,6 +1209,12 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("Single-VM appliance operated by the user or customer"),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Users or small teams that want a shared CoCalc instance on one public Ubuntu VM.",
+      ),
+    ).not.toBeNull();
+    expect(screen.queryByText(/local Lima/i)).toBeNull();
     expect(screen.queryByText(/quick team starts/i)).toBeNull();
     expect(screen.queryByText(/Production private cloud/i)).toBeNull();
     expect(screen.queryByText(/multi-bay operations/i)).toBeNull();
@@ -1310,6 +1336,11 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Install CoCalc Launchpad" }),
     ).not.toBeNull();
     expect(
+      screen.getByRole("heading", {
+        name: "Plan a bounded private deployment",
+      }),
+    ).not.toBeNull();
+    expect(
       screen.getByText(/customer-operated private environment/),
     ).not.toBeNull();
     expect(
@@ -1337,6 +1368,18 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("link", { name: "Compare with Rocket" }),
     ).toHaveAttribute("href", "/products/cocalc-rocket");
+    expect(
+      screen.getByRole("link", { name: "Discuss Launchpad requirements" }),
+    ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
+    expect(
+      screen.getByRole("link", { name: "Discuss Launchpad requirements" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("context=product-cocalc-launchpad"),
+    );
+    expect(
+      screen.queryByRole("link", { name: "Compare with CoCalc Plus" }),
+    ).toBeNull();
     expectNoProductDetailStalePhrasing();
   });
 
@@ -1361,6 +1404,11 @@ describe("PublicApp", () => {
     }
     expect(
       screen.getByRole("heading", { name: "Install CoCalc Star" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Install Star when one VM is enough",
+      }),
     ).not.toBeNull();
     expect(screen.getAllByText(/public Ubuntu VM/).length).toBeGreaterThan(0);
     expect(
@@ -1394,6 +1442,9 @@ describe("PublicApp", () => {
       screen.getAllByText(/customer-operated private-cloud path/i).length,
     ).toBeGreaterThan(0);
     expect(screen.getByText(/governance, support/i)).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Plan Rocket with CoCalc" }),
+    ).not.toBeNull();
     expect(
       screen.getAllByRole("link", {
         name: "Talk with CoCalc about Rocket",
