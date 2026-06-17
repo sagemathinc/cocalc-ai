@@ -25,6 +25,7 @@ import {
   Spin,
   Tabs,
   Tag,
+  Typography,
 } from "antd";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -67,6 +68,7 @@ import {
   sectionLabel,
   sectionTagColor,
 } from "@cocalc/frontend/rootfs/catalog-ui";
+import { rootfsPath } from "@cocalc/frontend/public/rootfs/routes";
 import { openProjectAppStatus } from "@cocalc/frontend/project/app-server-open";
 import {
   RootfsScanDetailsButton,
@@ -109,6 +111,7 @@ import type { RootfsProjectPreflightScanResult } from "@cocalc/util/rootfs-scan"
 type PublishDraft = {
   image: string;
   label: string;
+  slug: string;
   description: string;
   family: string;
   version: string;
@@ -216,6 +219,7 @@ export default function RootFilesystemImage({
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
     image: DEFAULT_PROJECT_IMAGE,
     label: "",
+    slug: "",
     description: "",
     family: "",
     version: "",
@@ -451,6 +455,11 @@ export default function RootFilesystemImage({
       switchPublishedProject,
     ],
   );
+  const rootfsLandingPath = rootfsPublicLandingPath({
+    publishDraft,
+    publishSourceEntry,
+  });
+  const rootfsLandingUrl = absoluteRootfsPublicUrl(rootfsLandingPath);
   const publishTagOptions = useMemo(
     () =>
       Array.from(
@@ -615,6 +624,7 @@ export default function RootFilesystemImage({
     setPublishDraft({
       image: currentImage,
       label: nextLabel,
+      slug: currentEntry?.slug ?? "",
       description: nextDescription,
       family: currentEntry?.family ?? "",
       version: currentEntry?.version ?? "",
@@ -744,6 +754,7 @@ export default function RootFilesystemImage({
             const op = await publishProjectRootfsImage({
               project_id: project.get("project_id"),
               label: publishDraft.label,
+              slug: publishDraft.slug.trim() || undefined,
               family: publishDraft.family.trim() || undefined,
               version: publishDraft.version.trim() || undefined,
               channel: publishDraft.channel.trim() || undefined,
@@ -768,6 +779,7 @@ export default function RootFilesystemImage({
                   : undefined,
               image: publishDraft.image,
               label: publishDraft.label,
+              slug: publishDraft.slug.trim() || undefined,
               family: publishDraft.family.trim() || undefined,
               version: publishDraft.version.trim() || undefined,
               channel: publishDraft.channel.trim() || undefined,
@@ -783,6 +795,10 @@ export default function RootFilesystemImage({
               hidden: isAdmin ? publishDraft.hidden : undefined,
             });
             setPublishOpen(false);
+            setPublishDraft((cur) => ({
+              ...cur,
+              slug: entry.slug ?? cur.slug,
+            }));
             setCatalogRefresh(Date.now());
             if (entry.image === value) {
               setImageId(entry.id);
@@ -825,6 +841,7 @@ export default function RootFilesystemImage({
                 : undefined,
             image: publishDraft.image,
             label: publishDraft.label,
+            slug: publishDraft.slug.trim() || undefined,
             family: publishDraft.family.trim() || undefined,
             version: publishDraft.version.trim() || undefined,
             channel: publishDraft.channel.trim() || undefined,
@@ -840,6 +857,10 @@ export default function RootFilesystemImage({
             hidden: isAdmin ? publishDraft.hidden : undefined,
           });
           setPublishSourceEntry(entry);
+          setPublishDraft((cur) => ({
+            ...cur,
+            slug: entry.slug ?? cur.slug,
+          }));
           setCatalogRefresh(Date.now());
           if (entry.image === value) {
             setImageId(entry.id);
@@ -897,6 +918,7 @@ export default function RootFilesystemImage({
       setPublishDraft((cur) => ({
         ...cur,
         label: candidate.metadata?.label ?? cur.label,
+        slug: candidate.metadata?.slug ?? cur.slug,
         description: candidate.metadata?.description ?? cur.description,
         family: candidate.metadata?.family ?? cur.family,
         version: candidate.metadata?.version ?? cur.version,
@@ -2165,6 +2187,30 @@ export default function RootFilesystemImage({
                           </Paragraph>
                         </div>
                         <div>
+                          <Paragraph strong style={{ marginBottom: 6 }}>
+                            Public slug
+                          </Paragraph>
+                          <Input
+                            addonBefore="/rootfs/"
+                            value={publishDraft.slug}
+                            onChange={(e) =>
+                              setPublishDraft((cur) => ({
+                                ...cur,
+                                slug: e.target.value,
+                              }))
+                            }
+                            placeholder="auto-generated on save"
+                          />
+                          <Paragraph
+                            type="secondary"
+                            style={{ marginTop: 6, marginBottom: 0 }}
+                          >
+                            Leave blank to generate one when saving or
+                            publishing. Use lowercase letters, numbers, and
+                            hyphens.
+                          </Paragraph>
+                        </div>
+                        <div>
                           <Paragraph strong style={{ marginBottom: 8 }}>
                             Visibility
                           </Paragraph>
@@ -2212,6 +2258,53 @@ export default function RootFilesystemImage({
                               title="Public"
                             />
                           </div>
+                        </div>
+                        <div>
+                          <Paragraph strong style={{ marginBottom: 8 }}>
+                            Public landing page
+                          </Paragraph>
+                          {rootfsLandingUrl ? (
+                            <Space
+                              direction="vertical"
+                              size={8}
+                              style={{ width: "100%" }}
+                            >
+                              <Typography.Text
+                                copyable={{ text: rootfsLandingUrl }}
+                              >
+                                <Typography.Link
+                                  href={rootfsLandingPath}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {rootfsLandingUrl}
+                                </Typography.Link>
+                              </Typography.Text>
+                              <Space wrap>
+                                <Button
+                                  href={rootfsLandingPath}
+                                  icon={<Icon name="external-link" />}
+                                  target="_blank"
+                                >
+                                  Open landing page
+                                </Button>
+                                <Button
+                                  icon={<Icon name="copy" />}
+                                  onClick={() =>
+                                    void copyRootfsPublicUrl(rootfsLandingUrl)
+                                  }
+                                >
+                                  Copy link
+                                </Button>
+                              </Space>
+                            </Space>
+                          ) : (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="Save or publish this catalog entry to create a public landing URL."
+                            />
+                          )}
                         </div>
                       </Space>
                     </RuntimePanel>
@@ -2857,6 +2950,7 @@ function rootfsConfigMetadataFromPublishDraft(
 ): RootfsConfigExportMetadata {
   return {
     label: draft.label,
+    slug: draft.slug.trim() || undefined,
     description: draft.description,
     family: draft.family.trim() || undefined,
     version: draft.version.trim() || undefined,
@@ -2865,6 +2959,35 @@ function rootfsConfigMetadataFromPublishDraft(
     visibility: draft.visibility,
     tags: parseRootfsTagString(draft.tags),
   };
+}
+
+function rootfsPublicLandingPath({
+  publishDraft,
+  publishSourceEntry,
+}: {
+  publishDraft: PublishDraft;
+  publishSourceEntry?: RootfsImageEntry;
+}): string | undefined {
+  const slug = publishDraft.slug.trim() || publishSourceEntry?.slug?.trim();
+  if (slug) {
+    return rootfsPath({ id: publishSourceEntry?.id ?? "", slug });
+  }
+  if (publishSourceEntry?.id) {
+    return rootfsPath({ id: publishSourceEntry.id });
+  }
+  return undefined;
+}
+
+function absoluteRootfsPublicUrl(path?: string): string | undefined {
+  if (!path) return undefined;
+  if (typeof window === "undefined") return path;
+  return new URL(path, window.location.origin).toString();
+}
+
+async function copyRootfsPublicUrl(url?: string): Promise<void> {
+  if (!url) return;
+  await navigator.clipboard.writeText(url);
+  message.success("Copied RootFS landing page link.");
 }
 
 function rootfsConfigImportOptionsFor(
@@ -5063,6 +5186,7 @@ function buildRootfsPublishAssistCommand(opts: {
     pushCliOption(parts, "--image-id", publishSourceEntry.id);
   }
   pushCliOption(parts, "--description", publishDraft.description);
+  pushCliOption(parts, "--slug", publishDraft.slug);
   pushCliOption(parts, "--family", publishDraft.family);
   pushCliOption(parts, "--image-version", publishDraft.version);
   pushCliOption(parts, "--channel", publishDraft.channel);
@@ -5133,6 +5257,7 @@ function buildRootfsPublishAgentPrompt(opts: {
     "Desired metadata:",
     `- label: ${publishDraft.label}`,
     `- description: ${publishDraft.description || "(empty)"}`,
+    `- slug: ${publishDraft.slug || "(auto)"}`,
     `- family: ${publishDraft.family || "(none)"}`,
     `- version: ${publishDraft.version || "(none)"}`,
     `- channel: ${publishDraft.channel || "(none)"}`,

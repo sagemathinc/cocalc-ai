@@ -206,6 +206,14 @@ general constraints as names in `src/packages/util/db-schema/name-rules.ts`:
 short, URL-safe, no UUID-looking names, no reserved words, and no consecutive
 hyphens. Slugs must have a unique database constraint.
 
+Current implementation note:
+
+- The landing page route exists and works, including `/rootfs/<slug>` and
+  `/rootfs/id/<image_id>`.
+- The remaining product gap is discoverability: the catalog-management RootFS
+  config UI must show and link the public landing URL, and it must provide a
+  place to create or edit the slug.
+
 Initial page contents:
 
 - Publisher and title.
@@ -283,6 +291,12 @@ environment variables only.
   practical.
 - The same copy-to-HOME operation should be usable from the generic file
   explorer when the source is outside HOME.
+- For the RootFS action UI, provide both a fast default copy and a chooser flow:
+  a clean "Copy to HOME" path for the configured target, plus a "Copy..."
+  option that opens a small directory selector modal. The modal should reuse
+  the simple HOME / parent / choose directory selector style from the New/Find
+  flows, allow typing a directory name under HOME, and copy without overwriting
+  existing content by default.
 
 ### `external-link`
 
@@ -353,6 +367,8 @@ security and content subsystems.
   `rootfs publish`.
 - Allow users with manage permission to accept an auto-generated slug or choose
   a valid unique slug.
+- Link to the public landing page from the catalog-management/config UI so the
+  share page is discoverable while authors are editing RootFS metadata.
 - Hide trust/scan/version UI from ordinary users for now.
 
 ### Phase 3: Rootfs Flyout Skeleton
@@ -371,6 +387,9 @@ security and content subsystems.
 - Add progress and success/failure UX.
 - Add direct open/browse support for rootfs paths outside HOME.
 - Add generic file-explorer copy-to-HOME affordance for non-HOME source paths.
+- As an MVP compromise before the generic file-explorer affordance, add a
+  RootFS copy destination chooser so users can pick or type the HOME-relative
+  destination at copy time.
 - Add tests for path sanitization, copy target handling, and unsupported action
   kinds.
 
@@ -383,6 +402,8 @@ security and content subsystems.
 - Create project with selected rootfs image id.
 - Redirect to the new project Rootfs flyout after creation so the user sees the
   content immediately.
+- Make the landing page URL easy to find from RootFS catalog management and
+  config authoring UI.
 
 ### Phase 6: CUP Pilot
 
@@ -392,6 +413,18 @@ security and content subsystems.
   copy-to-HOME.
 - Write publisher-facing instructions for authoring and importing/exporting
   RootFS config JSON.
+- Token/claim integration is being implemented in parallel via
+  `site-license-token-authority-plan-2026-06-15.md`; RootFS discovery should
+  stay compatible with that flow without blocking on it.
+
+### Phase 8: Publisher and Agent Documentation
+
+- Add pages under `src/packages/docs` that explain RootFS publishing,
+  catalog/config metadata, public landing pages, slugs, JSON import/export,
+  app actions, and testing.
+- Link from the RootFS catalog/config UI to these docs.
+- Link from the docs back to the RootFS management/config entry points where
+  possible.
 
 ### Phase 7: CLI / Agent Parity Pilot
 
@@ -420,6 +453,8 @@ security and content subsystems.
 - Copy-to-HOME does not overwrite existing files by default.
 - A public landing page can create a project using a stable rootfs image id,
   reached through a short rootfs slug.
+- The public landing URL is shown in RootFS config/catalog management and can be
+  copied/opened by authors.
 - The implementation works with seed-global catalog authority and project-owned
   bay routing.
 
@@ -447,4 +482,3 @@ security and content subsystems.
 - Whether rootfs config should ever be embedded in the immutable rootfs.
   - Current direction: no. Catalog metadata is the source of truth. Portable
     JSON files are import/export bundles only.
-
