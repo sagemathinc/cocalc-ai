@@ -307,10 +307,31 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Guides" })).not.toBeNull();
-    expect(screen.getByText("Jupyter workflows")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Find the guide by task",
+      }),
+    ).not.toBeNull();
+    expect(screen.getByText("Codex agent chat")).not.toBeNull();
+    expect(screen.getByText("Jupyter notebooks")).not.toBeNull();
+    expect(screen.getByText("Terminal workflows")).not.toBeNull();
+    expect(screen.getByText("From notebook to paper")).not.toBeNull();
+    expect(screen.getByText("Installing software")).not.toBeNull();
+    expect(screen.getByText("Reviewing agent commits")).not.toBeNull();
+    expect(screen.getByText("Teaching with CoCalc")).not.toBeNull();
+    expect(screen.getByText("Self-hosting CoCalc")).not.toBeNull();
+    expect(screen.getByText("How CoCalc works")).not.toBeNull();
+    expect(document.querySelectorAll(".ant-tag")).toHaveLength(0);
+    expect(screen.queryByText("CoCalc-AI")).toBeNull();
     expect(
       screen.getByRole("link", { name: /Open all guides/i }),
     ).toHaveAttribute("href", "https://sagemathinc.github.io/cocalc-guides/");
+    expect(
+      screen.getByRole("link", { name: /From notebook to paper/i }),
+    ).toHaveAttribute(
+      "href",
+      "https://sagemathinc.github.io/cocalc-guides/paper-polishing/",
+    );
     expect(screen.getByRole("link", { name: "Browse docs" })).toHaveAttribute(
       "href",
       "/docs",

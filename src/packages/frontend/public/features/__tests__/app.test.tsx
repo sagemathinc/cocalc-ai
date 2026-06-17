@@ -320,6 +320,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       container.querySelectorAll(".cocalc-feature-starter-card-featured"),
     ).toHaveLength(1);
+    for (const card of container.querySelectorAll(
+      ".cocalc-feature-starter-card",
+    )) {
+      expect(card.getAttribute("style") ?? "").not.toContain("230, 244, 255");
+    }
     expect(
       container.querySelectorAll(".cocalc-feature-group-label"),
     ).toHaveLength(4);
@@ -385,7 +390,7 @@ describe("PublicFeaturesApp", () => {
   });
 
   it("renders a detail page", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "ai", view: "detail" }}
@@ -405,8 +410,22 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText(/edit Markdown notes or documentation/i),
     ).not.toBeNull();
+    expect(screen.getByText("Agent thread")).not.toBeNull();
+    expect(screen.queryByText("Codex thread")).toBeNull();
+    expect(
+      container
+        .querySelector(".cocalc-ai-workflow-panel")
+        ?.getAttribute("style") ?? "",
+    ).not.toContain("#0b1522");
+    expect(screen.getByText("Durable agent thread")).not.toBeNull();
+    expect(screen.queryByText("Durable chat history")).toBeNull();
     expect(screen.getByText("Choose the AI path that fits")).not.toBeNull();
-    expect(screen.getByText("Ready to use Codex in CoCalc?")).not.toBeNull();
+    expect(screen.queryByText("Ready to use Codex in CoCalc?")).toBeNull();
+    expect(screen.queryByText("Built-in provider support")).toBeNull();
+    expect(
+      screen.queryByText("Other agents can still run in terminals."),
+    ).toBeNull();
+    expect(screen.queryByText("Read the agent sandbox guide")).toBeNull();
     expect(screen.queryByText("Codex in chat")).toBeNull();
     expect(screen.queryByText("Give Codex useful context")).toBeNull();
     expect(screen.queryByText("Review agent work together")).toBeNull();

@@ -5,7 +5,7 @@
 
 import { useEffect } from "react";
 
-import { Button, Flex, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import {
@@ -15,15 +15,13 @@ import {
   PublicSectionShell,
 } from "@cocalc/frontend/public/common";
 import {
-  PublicCard,
-  PublicGrid,
   PublicHero,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { FIELD_GUIDES_URL } from "@cocalc/util/theme";
 
-const { Paragraph, Text } = Typography;
+const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = FIELD_GUIDES_URL.replace(/\/$/, "");
 
@@ -31,94 +29,290 @@ function guidePath(slug: string): string {
   return `${GUIDE_BASE}/${slug}/`;
 }
 
-const GUIDE_CARDS = [
+const FEATURED_GUIDES = [
   {
-    body: "Notebook-centered workflows, long-running computation, kernels, collaboration, and practical project organization.",
-    href: guidePath("cocalc-for-jupyter"),
-    icon: "jupyter",
-    tag: "Compute",
-    title: "Jupyter workflows",
-  },
-  {
-    body: "Use CoCalc terminals, install software, manage files from the shell, and connect command-line work to the browser UI.",
-    href: guidePath("terminal"),
-    icon: "terminal",
-    tag: "Linux",
-    title: "Terminal workflows",
-  },
-  {
-    body: "Run courses with shared projects, assignments, grading workflows, and durable technical collaboration.",
-    href: guidePath("teaching"),
-    icon: "graduation-cap",
-    tag: "Courses",
-    title: "Teaching with CoCalc",
-  },
-  {
-    body: "Write, compile, and collaborate on technical documents with LaTeX inside the same project as code and data.",
-    href: guidePath("cocalc-for-latex"),
-    icon: "tex",
-    tag: "Writing",
-    title: "LaTeX projects",
-  },
-  {
-    body: "Use Codex agent chat in a real project workspace with files, terminals, notebooks, and persistent context.",
+    body: "Use Codex agent chat beside project files, notebooks, terminals, screenshots, patches, and review notes.",
     href: guidePath("codex-agent-chat"),
     icon: "robot",
-    tag: "AI",
     title: "Codex agent chat",
   },
   {
-    body: "Understand RootFS images and reusable project environments when you need a controlled software stack.",
-    href: guidePath("rootfs-management"),
-    icon: "servers",
-    tag: "Environment",
-    title: "Runtime images",
+    body: "Keep durable execution, output, collaboration, TimeTravel, and review close to the notebook.",
+    href: guidePath("jupyter-notebooks"),
+    icon: "jupyter",
+    title: "Jupyter notebooks",
+  },
+  {
+    body: "Use `.term` files, shared terminal streams, side chat, Linux tools, and agent-aware command-line work.",
+    href: guidePath("terminal"),
+    icon: "terminal",
+    title: "Terminal workflows",
+  },
+] satisfies GuideCardSpec[];
+
+const GUIDE_GROUPS = [
+  {
+    guides: [
+      {
+        body: "Polish a paper with LaTeX, notebooks, figures, collaborators, Codex, and project history.",
+        href: guidePath("paper-polishing"),
+        icon: "file-pdf",
+        title: "From notebook to paper",
+      },
+      {
+        body: "Choose and use CoCalc for LaTeX projects that depend on figures, code, review, and collaborators.",
+        href: guidePath("cocalc-for-latex"),
+        icon: "tex",
+        title: "LaTeX projects",
+      },
+      {
+        body: "Move from notebook exploration to scripts, packages, debugging, and figures in papers.",
+        href: guidePath("python-workflow"),
+        icon: "python",
+        title: "Python in CoCalc",
+      },
+      {
+        body: "Manage messy computation with logs, retries, partial outputs, summaries, and recovery.",
+        href: guidePath("research-computation"),
+        icon: "line-chart",
+        title: "Research runs",
+      },
+    ],
+    intro:
+      "Guides for papers, notebooks, code-backed figures, and long-running research work.",
+    title: "Research and writing",
+  },
+  {
+    guides: [
+      {
+        body: "Install packages and make a project environment work from the terminal.",
+        href: guidePath("software-install"),
+        icon: "download",
+        title: "Installing software",
+      },
+      {
+        body: "Use GitHub issues, pull requests, releases, and reviews from a CoCalc project.",
+        href: guidePath("github-workflow"),
+        icon: "github",
+        title: "GitHub workflow",
+      },
+      {
+        body: "Inspect agent commits, ask line-level questions, and keep code review accountable.",
+        href: guidePath("git-review-workflow"),
+        icon: "git",
+        title: "Reviewing agent commits",
+      },
+      {
+        body: "Prepare reusable software environments for courses, teams, sites, and demonstrations.",
+        href: guidePath("rootfs-management"),
+        icon: "servers",
+        title: "Reusable runtime images",
+      },
+    ],
+    intro:
+      "Guides for software setup, Git workflows, agent review, and repeatable project environments.",
+    title: "Runtime and code",
+  },
+  {
+    guides: [
+      {
+        body: "Use live student projects, assignments, grading workflows, TimeTravel, and shared environments.",
+        href: guidePath("teaching"),
+        icon: "graduation-cap",
+        title: "Teaching with CoCalc",
+      },
+      {
+        body: "Install a self-contained one-user CoCalc for a laptop, workstation, or SSH machine.",
+        href: guidePath("cocalc-plus"),
+        icon: "laptop",
+        title: "CoCalc Plus",
+      },
+      {
+        body: "Understand the small-team self-hosting path and when a larger private deployment is a better fit.",
+        href: guidePath("self-hosting"),
+        icon: "server",
+        title: "Self-hosting CoCalc",
+      },
+      {
+        body: "Understand CoCalc as a durable collaborative project cloud for humans and agents.",
+        href: guidePath("agent-sandbox-cloud"),
+        icon: "robot",
+        title: "Agent sandbox cloud",
+      },
+      {
+        body: "Learn the architecture model behind projects, project hosts, routing, storage, and scale.",
+        href: guidePath("how-cocalc-works"),
+        icon: "sitemap",
+        title: "How CoCalc works",
+      },
+    ],
+    intro:
+      "Guides for instructors, local evaluation, self-hosting, agent sandboxes, and architecture.",
+    title: "Teaching and operating paths",
   },
 ] satisfies {
-  body: string;
-  href: string;
-  icon: IconName;
-  tag: string;
+  guides: GuideCardSpec[];
+  intro: string;
   title: string;
 }[];
 
-function GuideCard({
+interface GuideCardSpec {
+  body: string;
+  href: string;
+  icon: IconName;
+  title: string;
+}
+
+function GuideIcon({ icon }: { icon: IconName }) {
+  return (
+    <div
+      style={{
+        alignItems: "center",
+        background: PUBLIC_COLORS.surfaceMuted,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 8,
+        color: PUBLIC_COLORS.brand,
+        display: "flex",
+        fontSize: 22,
+        height: 46,
+        justifyContent: "center",
+        width: 46,
+      }}
+    >
+      <Icon name={icon} />
+    </div>
+  );
+}
+
+function GuideLink({
   body,
+  featured,
   href,
   icon,
-  tag,
   title,
-}: (typeof GUIDE_CARDS)[number]) {
+}: GuideCardSpec & { featured?: boolean }) {
   return (
-    <PublicCard href={href} rel="noreferrer" target="_blank" title={title}>
-      <Flex vertical gap="middle">
-        <Flex align="center" justify="space-between">
+    <a
+      href={href}
+      rel="noreferrer"
+      style={{
+        background: featured
+          ? PUBLIC_COLORS.surfaceMuted
+          : PUBLIC_COLORS.surface,
+        border: `1px solid ${
+          featured ? PUBLIC_COLORS.brandSubtle : PUBLIC_COLORS.border
+        }`,
+        borderRadius: 8,
+        color: "inherit",
+        display: "grid",
+        gap: 12,
+        gridTemplateColumns: "46px minmax(0, 1fr)",
+        height: "100%",
+        padding: featured ? 18 : 14,
+        textDecoration: "none",
+      }}
+      target="_blank"
+    >
+      <GuideIcon icon={icon} />
+      <span>
+        <Text strong style={{ display: "block" }}>
+          {title}
+        </Text>
+        <Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+          {body}
+        </Text>
+      </span>
+    </a>
+  );
+}
+
+function GuideDirectory() {
+  return (
+    <PublicSection>
+      <div
+        style={{
+          background: PUBLIC_COLORS.surface,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: 8,
+          padding: 24,
+        }}
+      >
+        <Flex vertical gap={24}>
+          <Row gutter={[24, 24]}>
+            <Col xs={24} lg={7}>
+              <Flex vertical gap={10}>
+                <Title level={2} style={{ margin: 0 }}>
+                  Find the guide by task
+                </Title>
+                <Paragraph
+                  style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}
+                >
+                  Start with the workflow you are evaluating. Open the full
+                  guide library when you want the complete illustrated set.
+                </Paragraph>
+                <Flex gap={10} wrap>
+                  <Button
+                    href={FIELD_GUIDES_URL}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Full guide library
+                  </Button>
+                  <Button href={appPath("docs")}>Reference docs</Button>
+                </Flex>
+              </Flex>
+            </Col>
+            <Col xs={24} lg={17}>
+              <Row gutter={[12, 12]}>
+                {FEATURED_GUIDES.map((guide) => (
+                  <Col key={guide.href} xs={24} md={8}>
+                    <GuideLink {...guide} featured />
+                  </Col>
+                ))}
+              </Row>
+            </Col>
+          </Row>
+
           <div
             style={{
-              alignItems: "center",
-              background: "#eef5ff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 14,
-              color: PUBLIC_COLORS.brand,
-              display: "flex",
-              fontSize: 24,
-              height: 50,
-              justifyContent: "center",
-              width: 50,
+              borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+              paddingTop: 24,
             }}
           >
-            <Icon name={icon} />
+            <Flex vertical gap={24}>
+              {GUIDE_GROUPS.map((group) => (
+                <section key={group.title}>
+                  <Row gutter={[18, 14]}>
+                    <Col xs={24} lg={7}>
+                      <Title level={3} style={{ margin: 0 }}>
+                        {group.title}
+                      </Title>
+                      <Paragraph
+                        style={{
+                          color: PUBLIC_COLORS.mutedText,
+                          margin: "8px 0 0",
+                        }}
+                      >
+                        {group.intro}
+                      </Paragraph>
+                    </Col>
+                    <Col xs={24} lg={17}>
+                      <Row gutter={[12, 12]}>
+                        {group.guides.map((guide) => (
+                          <Col key={guide.href} xs={24} md={12}>
+                            <GuideLink {...guide} />
+                          </Col>
+                        ))}
+                      </Row>
+                    </Col>
+                  </Row>
+                </section>
+              ))}
+            </Flex>
           </div>
-          <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-            {tag}
-          </Tag>
         </Flex>
-        <Paragraph style={{ margin: 0 }}>{body}</Paragraph>
-        <Text style={{ color: PUBLIC_COLORS.link }}>
-          Open guide <Icon name="external-link" />
-        </Text>
-      </Flex>
-    </PublicCard>
+      </div>
+    </PublicSection>
   );
 }
 
@@ -148,20 +342,16 @@ export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
         }
         subtitle={
           <>
-            Workflow-oriented guides are maintained as a companion site. The
-            versioned docs stay here, with URLs and behavior tied to this CoCalc
-            instance.
+            Narrative walkthroughs for common CoCalc workflows. Start with a
+            guide when you want a practical path through the work; use docs when
+            you need reference details for this CoCalc site.
           </>
         }
         title="Guides"
       />
-      <PublicGrid columns={3}>
-        {GUIDE_CARDS.map((card) => (
-          <GuideCard key={card.href} {...card} />
-        ))}
-      </PublicGrid>
+      <GuideDirectory />
       <PublicSection
-        intro="Use guides when you want a narrative path through a workflow. Use docs when you need versioned product help, exact UI actions, or Codex-readable documentation for this site."
+        intro="Use guides for narrative workflows. Use docs for reference material, exact UI behavior, API details, and site-specific product help."
         title="Guides and docs work together"
       >
         <Flex gap={12} wrap>
@@ -169,6 +359,14 @@ export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
             Open docs
           </Button>
           <Button href={appPath("support")}>Get support</Button>
+        </Flex>
+      </PublicSection>
+      <PublicSection>
+        <Flex gap={12} wrap>
+          <Button href={FIELD_GUIDES_URL} rel="noreferrer" target="_blank">
+            Open the full guide library
+          </Button>
+          <Button href={appPath("features")}>Browse workflow features</Button>
         </Flex>
       </PublicSection>
     </PublicSectionShell>

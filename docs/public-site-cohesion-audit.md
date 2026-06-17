@@ -3,6 +3,228 @@
 Running checklist for the public-site redesign work. Keep this file updated as
 recommendations are evaluated, completed, or deliberately deferred.
 
+## Current Reference Ledger
+
+Use these IDs in follow-up prompts, commits, and review comments. Keep new
+public-site work in this ledger until it is validated and committed, then leave
+the entry in place as a decision record.
+
+### PSL-2026-06-17-001: Feature Index Starter Cards
+
+- **Routes:** `/features`
+- **Trigger:** Browser QA and user feedback showed that the blue-tinted starter
+  cards felt visually arbitrary now that the top page is no longer centered on
+  terminal/runtime visuals.
+- **Principle:** Small starter links should not carry more visual mood than the
+  actual route directory below them.
+- **Decision:** Keep the starter panel and route order, but make starter links
+  use the same neutral surface as the rest of the feature directory.
+- **Changed files:** `src/packages/frontend/public/features/app.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`
+- **Validation state:** Focused feature tests passed, public app tests passed,
+  frontend lint passed, frontend typecheck passed, static preview rebuilt, and
+  desktop/tablet/mobile browser QA passed on 2026-06-17.
+- **Follow-up:** If `/features` still feels too tall on mobile, audit the hero
+  and starter panel together; do not hide high-intent language/runtime routes
+  merely to shorten the page.
+
+### PSL-2026-06-17-002: AI Page Visual Weight
+
+- **Routes:** `/features/ai`
+- **Trigger:** User feedback flagged `Codex thread` as potentially too
+  vendor-specific and the lower AI page sections as visually heavy/busy. Browser
+  inspection also showed the dark workflow strip dominating a non-terminal
+  section.
+- **Principle:** The AI page should make the agent/project-context story clear
+  without using terminal-like dark panels or repeated CTA cards that compete for
+  attention.
+- **Decision:** Use `Agent thread` for the visible durable-thread concept, keep
+  `Codex` where naming the actual integration/guide, simplify live-project
+  context to a quiet left-rule list, convert the workflow strip to a light panel,
+  and replace the lower stacked cards with one route-owned ending.
+- **Changed files:** `src/packages/frontend/public/features/ai-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`
+- **Validation state:** Focused feature tests passed, public app tests passed,
+  frontend lint passed, frontend typecheck passed, static preview rebuilt, and
+  desktop/tablet/mobile browser QA passed on 2026-06-17.
+- **Follow-up:** Audit `/features/ai` together with `/features/terminal` and
+  `/features/linux` for whether command-line agent guidance belongs on AI,
+  terminal, or both without creating repeated sections.
+
+### PSL-2026-06-17-003: LaTeX Feature Re-Audit
+
+- **Routes:** `/features/latex-editor`
+- **Trigger:** User requested a fresh LaTeX feature-page re-audit.
+- **Principle:** A feature detail page should have one clear workflow example,
+  one route-owned ending, no decorative metadata, no unsupported proof, and no
+  repeated visual sections that answer the same visitor question.
+- **Finding:** Desktop/tablet/mobile browser QA showed no horizontal overflow,
+  a route-owned ending, no direct competitor naming in public page copy, and no
+  stale separate Codex/build-assistant heading.
+- **Decision:** No source change in this pass. The page still has three visual
+  explanations, but they answer distinct questions: editor workflow, project
+  working tree, and computation-backed writing.
+- **Changed files:** none.
+- **Validation state:** Browser QA completed before the Guides pivot. No source
+  validation required because no LaTeX source changed.
+- **Follow-up:** If mobile length becomes a concern, evaluate whether the
+  working-tree diagram and computation-flow diagram can be combined or one moved
+  behind a disclosure.
+
+### PSL-2026-06-17-004: Guides Entry Page
+
+- **Routes:** `/guides`
+- **Trigger:** User noted the Guides page had not received the same systematic
+  cleanup as features/products. Source inspection showed `/guides` was a small
+  bridge page with six stale/tagged cards while the companion guide site has a
+  much broader current guide set.
+- **Principle:** `/guides` should be a curated public front door that answers
+  "which practical guide should I open first?" without duplicating the companion
+  guide homepage or becoming a docs dump.
+- **Decision:** Replace decorative tag cards with task-based groups: common
+  workflows, research/writing, runtime/code, and teaching/operating paths. Add
+  high-intent current guide routes from the companion guide site while keeping
+  RootFS and competitor-comparison detail out of bridge copy.
+- **Changed files:** `src/packages/frontend/public/guides/app.tsx`,
+  `src/packages/frontend/public/__tests__/app.test.tsx`
+- **Visual follow-up:** User review confirmed the route inventory was better
+  "in spirit" but the page still looked like a visual eyesore because too many
+  large bordered cards stacked after the hero.
+- **Follow-up decision:** Keep the guide inventory, but compress the body into
+  one calmer task directory. Only the top three routes get mild emphasis; the
+  remaining routes become compact grouped rows.
+- **Validation state:** Public app tests passed, focused feature tests passed,
+  frontend lint passed, frontend typecheck passed, static preview rebuilt, and
+  desktop/tablet/mobile browser QA passed on 2026-06-17.
+- **Follow-up:** Browser-QA `/guides` at desktop/tablet/mobile for visual
+  density, wrapping, external-link clarity, and whether the guide groups feel
+  useful without overwhelming visitors.
+
+### PSL-2026-06-17-005: Prompt And Audit Logging
+
+- **Routes:** repo process, not a public route.
+- **Trigger:** User asked whether prompts are stored somewhere referenceable and
+  then asked for more detailed, referenceable task logging.
+- **Principle:** Public-site audit continuity needs stable references without
+  committing raw chat transcripts, screenshots, competitor research, compliance
+  interpretation, or unapproved public copy.
+- **Decision:** Keep reusable next prompts in
+  `src/.agents/public-site-audit-prompt-log.md`; keep decisions, task status,
+  rationale, changed files, and follow-ups in this audit doc.
+- **Changed files:** `src/.agents/public-site-audit-prompt-log.md`,
+  `docs/public-site-cohesion-audit.md`
+- **Validation state:** Prompt log file is intentional source documentation.
+  The next recommended prompts were appended before final handoff.
+- **Follow-up:** Every future public-site pass should add a ledger item before
+  editing, update it after validation, and include the next prompt in both the
+  final response and the prompt log.
+
+### PSL-2026-06-17-006: Agentic Public-Site Development Workflow
+
+- **Routes:** repo process for public-site design, copy, QA, and prompt
+  continuity.
+- **Trigger:** User asked for research on how to build an agentic system for
+  professional web development and how to adapt the useful parts to CoCalc.ai
+  language/design cleanup.
+- **External research checked:** Anthropic's agent guidance emphasizes simple,
+  composable workflows before autonomous complexity; ReAct supports
+  observation-grounded reasoning/action loops; SWE-agent shows that
+  agent-computer interface design materially affects software-agent results;
+  GOV.UK and Material writing guidance support short, direct, user-need-driven
+  UI copy; Playwright and WCAG reflow guidance support repeatable visual/mobile
+  checks; OpenAI eval guidance supports explicit style/content criteria.
+- **Pitch-doc alignment:** `docs/pitch/pitch/06-product-pitch-outlines.md`
+  defines the public spine as AI-native technical workspace, one workspace
+  across code/notebooks/documents/compute/agents, five product paths, and
+  organization/site-license routes. `39-proof-evidence-benchmark-sheet.md`
+  requires qualitative fallback wording unless proof is measured and approved.
+- **Principle:** Use agents as an inspectable professional web-development
+  workflow, not as a free-running redesign system. The agent should gather
+  sources, classify the visitor question, make scoped edits, run deterministic
+  checks, and leave referenceable decisions.
+- **Decision:** Adopt a fixed audit loop for future public-site passes:
+  source-of-truth scan, route buyer question, component-necessity audit,
+  high-confidence edit, focused tests, desktop/tablet/mobile browser QA,
+  rebuild when public source changes, commit, residual-risk report, and next
+  prompt logged.
+- **Changed files:** `docs/public-site-cohesion-audit.md`,
+  `src/.agents/public-site-audit-prompt-log.md`
+- **Validation state:** Process documentation change. It was committed with the
+  current public-site source/test changes after focused validation and browser
+  QA.
+- **Follow-up:** Future agents should explicitly name the ledger ID they are
+  executing against, list buyer questions before edits, and update the ledger
+  as each sub-action closes.
+
+### Current Open Validation Tasks
+
+- [x] `PSL-2026-06-17-001` through `PSL-2026-06-17-004`: run static preview
+      rebuild after the Guides changes.
+- [x] `PSL-2026-06-17-001`, `PSL-2026-06-17-002`, and
+      `PSL-2026-06-17-004`: browser-QA `/features`, `/features/ai`, and `/guides`
+      on desktop, tablet, and mobile after rebuild.
+- [x] `PSL-2026-06-17-005`: append the next recommended prompt to
+      `src/.agents/public-site-audit-prompt-log.md`.
+- [x] `PSL-2026-06-17-006`: incorporate the agentic public-site workflow into
+      the prompt log so future agents start from the same operating model.
+- [x] Final pre-commit hygiene: run `git status --short`, `git diff --name-only`,
+      and `git ls-files --others --exclude-standard` so scratch QA artifacts do not
+      enter the repository.
+
+## Agentic Public-Site Operating Model
+
+Use this for CoCalc.ai public-site cleanup at `blaec.cocalc.ai`.
+
+The system should behave more like a senior web team with an agent assistant
+than a fully autonomous redesign agent. The reliable path is a structured
+workflow with explicit checkpoints:
+
+1. **Ground the route.** Read the route source, relevant pitch docs, existing
+   audit ledger entries, and any current user feedback. State the visitor
+   question before proposing edits.
+2. **Classify the work.** Decide whether the page is a workflow-discovery page,
+   product-decision page, support/trust page, docs/guides bridge, or proof
+   destination. Do not import patterns from one class into another without a
+   reason.
+3. **Apply the component-necessity test.** Every visible component must answer a
+   distinct visitor question. Omit, combine, or move details behind links or
+   disclosures when they repeat the same point.
+4. **Protect product framing.** Keep AI first, teaching secondary, Markdown as
+   supporting project context, Star bounded to single-VM, Launchpad/Rocket
+   customer-operated, and feature pages as workflow spokes rather than product
+   taxonomy.
+5. **Protect evidence boundaries.** Do not add metrics, proof claims,
+   security/privacy claims, competitor positioning, or broad open-format
+   promises unless the pitch evidence register says they are approved.
+6. **Edit narrowly.** Prefer copy, spacing, CTA, and layout-density changes that
+   directly resolve the route question. Avoid redesigning adjacent pages unless
+   the route handoff is the problem.
+7. **Test what automation can test.** Use focused tests for stale phrasing,
+   duplicate labels, route-specific CTAs, decorative metadata, product-boundary
+   violations, and known layout regressions.
+8. **Browser-QA what tests cannot judge.** Check desktop, tablet, and mobile for
+   visual density, wrapping, horizontal overflow, card monotony, dark/light
+   section weight, and whether the route-owned ending still feels like the
+   right next step.
+9. **Log as the work moves.** Add or update a `PSL-YYYY-MM-DD-NNN` ledger item
+   before edits, then update changed files, validation state, residual risks,
+   and follow-ups before final handoff.
+10. **Handoff with continuity.** Store the next recommended prompt in
+    `src/.agents/public-site-audit-prompt-log.md`, cite the relevant ledger IDs,
+    and keep scratch QA artifacts outside the repository.
+
+The acceptance rubric for future agents:
+
+- Can a technical visitor quickly identify the workflow value?
+- Can an executive or platform buyer quickly understand the operating path?
+- Does the page preserve the AI-native technical workspace pitch without
+  becoming generic AI-tool marketing?
+- Does each card/section earn its visual weight?
+- Are CTAs specific to the route and the visitor's next decision?
+- Is the language natural, concise, and public-facing?
+- Are unapproved proof/compliance/competitor/internal claims absent?
+- Does mobile scanning work without horizontal scroll or crammed endings?
+
 ## Conversion Spine Pass
 
 - [x] Re-audit homepage, `/products`, `/pricing`, `/features/compare`, and `/support` as the core public decision path before continuing deeper feature cleanup.
@@ -228,7 +450,49 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Change: shorten the notebook/writing label to `Notebooks and writing` and tighten the group description so it reads like a route marker instead of a taxonomy.
 - [x] Change: add mobile-only spacing reductions for the feature hero, starter cards, route cards, and language rows while keeping every high-intent route visible.
 - [x] Validation: focused feature tests, frontend lint, frontend typecheck, and static dev build passed.
-- [ ] Follow-up: rerun desktop/tablet/mobile browser QA when an agent-accessible browser session is healthy. The shared CoCalc browser session timed out during this pass, and package-local Playwright could not install Chromium on the Ubuntu 26.04 container.
+- [x] Follow-up closed: reran desktop/tablet/mobile browser QA with a
+      throwaway system-Chrome DevTools session after the later feature/guides
+      pass.
+
+## Feature Index Visual QA Pass
+
+- [x] Browser QA: capture desktop, tablet, and mobile screenshots for `/features` using a throwaway headless Chrome session and keep screenshots under `/tmp/cocalc-public-qa-*`.
+- [x] Finding: the intended hierarchy is mechanically correct: AI first, notebooks/writing second, runtime before teaching, teaching secondary, and languages visible.
+- [x] Finding: the page has no horizontal overflow and the old `Notebook, writing, and visual work` label is absent.
+- [x] Finding: the blue-tinted starter cards carry too much visual mood for simple route links. That treatment made more sense when darker/tinted areas were tied to terminal/runtime content; on the current index it reads as arbitrary emphasis before the actual directory begins.
+- [x] Decision: neutralize the starter-link treatment instead of changing the information architecture. Keep the starter panel useful, but make its internal links align with the light directory rhythm used by the rest of the page.
+- [x] Change: make the starter links use the same neutral surface as the route cards while preserving their clickable treatment and icon color.
+- [x] AI copy note: change the mock header from `Codex thread` to `Agent thread` so the persistent-thread concept reads as a CoCalc workflow concept rather than vendor-specific UI terminology. Keep `Codex` where the page names the actual agent integration or guide.
+- [x] Change: simplify the AI page's live-project evidence from a gradient panel with nested icon rows into a quiet left-rule list. This keeps files, notebooks, terminals, and durable agent thread as evidence without making a second dashboard mock.
+- [x] Change: convert the AI page workflow strip from a dark terminal-like section into a light workflow panel. The four-step workflow is useful, but the dark treatment made a non-terminal AI section feel visually heavier than its visitor question.
+- [x] Change: simplify the AI page bottom section into one route-owned ending. Remove the standalone provider-support card, the separate other-agent terminal card, and the dark final CTA box; keep Codex, terminal workflows, support, and operating-model comparison as lower-friction next actions.
+- [x] Active: rerun focused validation and browser QA after the visual changes.
+- [x] Active: rebuild the public static preview after validation.
+- [x] Browser QA: use a throwaway system-Chrome DevTools session to validate `/features`, `/features/ai`, and `/guides` on desktop, tablet, and mobile; 75 assertions passed with no failures. Screenshots and `results.json` were kept under `/tmp/cocalc-public-qa-agent-web-mvq7WK`.
+- [x] Active: commit the source, tests, docs, and prompt-log changes.
+- [x] Active: add the next recommended prompt to `src/.agents/public-site-audit-prompt-log.md` before final handoff.
+
+## Guides Entry Pass
+
+- [x] Re-audit `/guides` as a public resource-discovery page rather than a simple bridge to the companion guide site.
+- [x] Finding: the companion guide site has a much broader current guide set than the `/guides` bridge exposed, including paper polishing, software install, Python, GitHub, research runs, Git review, Jupyter, teaching, terminal, self-hosting, Plus, agent sandbox, and architecture guides.
+- [x] Finding: the existing six-card bridge used decorative blue tags and stale category coverage, making it feel less aligned with the cleaner feature-index standard.
+- [x] Decision: keep `/guides` as a curated front door, not a duplicate of the companion guide homepage. The page should answer "which guide should I open first?" and then route visitors to the full guide library, docs, features, or support.
+- [x] Change: replace decorative tag cards with task-based guide groups: common workflows, research/writing, runtime/code, and teaching/operating paths.
+- [x] Change: add high-intent current guide routes from the companion guide site while keeping RootFS and competitor-comparison details out of the bridge copy.
+- [x] Change: keep docs/support/feature routes as lower-page handoffs so the guide page remains connected to the public site decision path.
+- [x] Visual follow-up: compress the large guide-card wall into one calmer task directory. Keep the top three workflow guides mildly emphasized and render the rest as compact grouped rows.
+- [x] Active: run focused public app and feature tests after the Guides changes.
+- [x] Active: browser-QA `/guides`, `/features`, and `/features/ai` on desktop, tablet, and mobile after rebuild.
+- [x] Active: rebuild the public static preview and commit the source, tests, docs, and prompt-log changes.
+- [ ] Future: review `/guides` mobile featured-link weight with a human eye after deployment. Browser QA passed, but the top three featured guide links remain visually stronger than the compact rows below.
+
+## LaTeX Feature Re-Audit
+
+- [x] Browser-QA `/features/latex-editor` on desktop, tablet, and mobile after the current source state.
+- [x] Finding: the LaTeX page has one route-owned ending, no horizontal overflow, no direct competitor naming in public page copy, and no stale separate Codex/build-assistant heading.
+- [x] Finding: the page still uses three visual explanations: hero editor mock, working-tree diagram, and computation-flow diagram. They answer distinct questions, but this should be watched if the page later feels long on mobile.
+- [x] Decision: make no immediate LaTeX source change in this pass; prioritize the newly identified `/guides` gap.
 
 ## Workflow To Product Decision Handoff Pass
 

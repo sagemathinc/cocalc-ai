@@ -763,7 +763,7 @@ function FeaturesIndex() {
                     href={featurePath(starter.slug)}
                     key={starter.slug}
                     style={{
-                      background: PUBLIC_COLORS.surfaceMuted,
+                      background: PUBLIC_COLORS.surface,
                       border: `1px solid ${PUBLIC_COLORS.border}`,
                       borderRadius: FEATURE_PANEL_RADIUS,
                       color: "inherit",

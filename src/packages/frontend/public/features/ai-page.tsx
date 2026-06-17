@@ -76,7 +76,7 @@ function ThreadMock() {
 
   return (
     <div
-      aria-label="Illustration of a CoCalc Codex chat thread connected to files, notebooks, and terminals"
+      aria-label="Illustration of a CoCalc agent thread connected to files, notebooks, and terminals"
       style={{
         background:
           "linear-gradient(145deg, #ffffff 0%, #f7f4ff 52%, #fff8e8 100%)",
@@ -91,7 +91,7 @@ function ThreadMock() {
           <Flex align="center" gap={10}>
             <IconBadge accent="#7c3aed" icon="robot" />
             <div>
-              <Text strong>Codex thread</Text>
+              <Text strong>Agent thread</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
                 chat, files, notebooks, terminals, and collaborators
               </div>
@@ -129,33 +129,81 @@ function ThreadMock() {
   );
 }
 
+function ProjectContextList() {
+  const items = [
+    ["file", "Files and synced documents"],
+    ["jupyter", "Live notebooks"],
+    ["terminal", "Persistent terminals"],
+    ["history", "Durable agent thread"],
+  ] satisfies [IconName, string][];
+
+  return (
+    <div
+      aria-label="Project context available to CoCalc agents"
+      style={{
+        borderLeft: `3px solid ${PUBLIC_COLORS.brand}`,
+        paddingLeft: 18,
+      }}
+    >
+      <Flex vertical gap={12}>
+        {items.map(([icon, label]) => (
+          <Flex align="center" gap={12} key={label}>
+            <span
+              style={{
+                alignItems: "center",
+                background: `${PUBLIC_COLORS.brand}10`,
+                borderRadius: 8,
+                color: PUBLIC_COLORS.brand,
+                display: "inline-flex",
+                flex: "0 0 auto",
+                fontSize: 18,
+                height: 36,
+                justifyContent: "center",
+                width: 36,
+              }}
+            >
+              <Icon name={icon} />
+            </span>
+            <Text strong>{label}</Text>
+          </Flex>
+        ))}
+      </Flex>
+    </div>
+  );
+}
+
 function WorkflowStrip() {
   const steps = [
     {
+      accent: "#278c83",
       body: "Start a chat thread as a human-only conversation or invite Codex into the thread.",
       icon: "comments",
       label: "1",
       title: "Choose the thread",
     },
     {
+      accent: "#2f6fda",
       body: "Paste images, code blocks, quotes, files, and exact instructions into the rich editor.",
       icon: "markdown",
       label: "2",
       title: "Give useful context",
     },
     {
+      accent: "#f59e0b",
       body: "Let Codex inspect project files, work with terminals, and use CoCalc-aware tools.",
       icon: "robot",
       label: "3",
       title: "Run the turn",
     },
     {
+      accent: "#7c3aed",
       body: "Review the patch, test output, and discussion in the same durable project history.",
       icon: "history",
       label: "4",
       title: "Keep the trail",
     },
   ] satisfies {
+    accent: string;
     body: string;
     icon: IconName;
     label: string;
@@ -163,99 +211,66 @@ function WorkflowStrip() {
   }[];
 
   return (
-    <section
-      style={{
-        background: "#0b1522",
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 8,
-        color: "#dbeafe",
-        minWidth: 0,
-        padding: 24,
-      }}
-    >
-      <Flex vertical gap={22}>
-        <div>
-          <Title level={3} style={{ color: "#fff", margin: 0 }}>
+    <PublicSection>
+      <div
+        className="cocalc-ai-workflow-panel"
+        style={{
+          background: PUBLIC_COLORS.surfaceMuted,
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: 8,
+          padding: 24,
+        }}
+      >
+        <Flex vertical gap={22}>
+          <Title level={3} style={{ margin: 0 }}>
             Agent work should leave a readable project trail.
           </Title>
-        </div>
-        <Row gutter={[14, 14]}>
-          {steps.map((step) => (
-            <Col key={step.label} xs={24} md={12} xl={6}>
-              <div
-                style={{
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 8,
-                  height: "100%",
-                  padding: 18,
-                }}
-              >
-                <Flex vertical gap={12}>
-                  <Flex align="center" justify="space-between">
-                    <span
-                      style={{
-                        alignItems: "center",
-                        background: "rgba(255,255,255,0.1)",
-                        border: "1px solid rgba(255,255,255,0.16)",
-                        borderRadius: 8,
-                        display: "inline-flex",
-                        fontSize: 24,
-                        height: 52,
-                        justifyContent: "center",
-                        width: 52,
-                      }}
-                    >
-                      <Icon name={step.icon} />
-                    </span>
-                    <Text style={{ color: "#93c5fd", fontSize: 24 }} strong>
-                      {step.label}
-                    </Text>
+          <Row gutter={[14, 14]}>
+            {steps.map((step) => (
+              <Col key={step.label} xs={24} md={12} xl={6}>
+                <div
+                  style={{
+                    background: PUBLIC_COLORS.surface,
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: 8,
+                    height: "100%",
+                    padding: 18,
+                  }}
+                >
+                  <Flex vertical gap={12}>
+                    <Flex align="center" justify="space-between">
+                      <span
+                        style={{
+                          alignItems: "center",
+                          background: `${step.accent}12`,
+                          border: `1px solid ${step.accent}2e`,
+                          borderRadius: 8,
+                          color: step.accent,
+                          display: "inline-flex",
+                          fontSize: 22,
+                          height: 46,
+                          justifyContent: "center",
+                          width: 46,
+                        }}
+                      >
+                        <Icon name={step.icon} />
+                      </span>
+                      <Text style={{ color: step.accent, fontSize: 22 }} strong>
+                        {step.label}
+                      </Text>
+                    </Flex>
+                    <Title level={4} style={{ margin: 0 }}>
+                      {step.title}
+                    </Title>
+                    <Paragraph style={{ margin: 0 }}>{step.body}</Paragraph>
                   </Flex>
-                  <Title level={4} style={{ color: "#fff", margin: 0 }}>
-                    {step.title}
-                  </Title>
-                  <Paragraph style={{ color: "#cbd5e1", margin: 0 }}>
-                    {step.body}
-                  </Paragraph>
-                </Flex>
-              </div>
-            </Col>
-          ))}
-        </Row>
-      </Flex>
-    </section>
-  );
-}
-
-function CredentialPanel() {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
-        padding: 22,
-      }}
-    >
-      <Flex vertical gap={14}>
-        <Flex align="center" gap={12}>
-          <IconBadge accent="#7c3aed" icon="key" />
-          <div>
-            <Text strong>Built-in provider support</Text>
-            <div style={{ color: PUBLIC_COLORS.mutedText }}>
-              OpenAI API keys and OpenAI subscription plans
-            </div>
-          </div>
+                </div>
+              </Col>
+            ))}
+          </Row>
         </Flex>
-        <Paragraph style={{ margin: 0 }}>
-          Use an OpenAI API key, an OpenAI subscription plan where supported, or
-          a shared project/site configuration. Human <code>@mentions</code>{" "}
-          notify collaborators; they do not invoke AI models.
-        </Paragraph>
-      </Flex>
-    </div>
+      </div>
+    </PublicSection>
   );
 }
 
@@ -330,99 +345,45 @@ export default function AIFeaturePage({
             </Flex>
           </Col>
           <Col xs={24} lg={12}>
-            <div
-              style={{
-                background:
-                  "linear-gradient(145deg, #ffffff 0%, #f4f9ff 58%, #fff8e8 100%)",
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 8,
-                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-                padding: 20,
-              }}
-            >
-              <Flex vertical gap={14}>
-                {[
-                  ["file", "Files and synced documents"],
-                  ["jupyter", "Live notebooks"],
-                  ["terminal", "Persistent terminals"],
-                  ["history", "Durable chat history"],
-                ].map(([icon, label]) => (
-                  <Flex
-                    align="center"
-                    gap={12}
-                    key={label}
-                    style={{
-                      background: "#fff",
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 8,
-                      padding: 14,
-                    }}
-                  >
-                    <IconBadge accent="#7c3aed" icon={icon as IconName} />
-                    <Text strong>{label}</Text>
-                  </Flex>
-                ))}
-              </Flex>
-            </div>
+            <ProjectContextList />
           </Col>
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <CredentialPanel />
-        </Col>
-        <Col xs={24} lg={12}>
-          <div
-            style={{
-              background: "#fff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 8,
-              boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
-              height: "100%",
-              padding: 22,
-            }}
-          >
-            <Title level={3} style={{ margin: 0 }}>
-              Other agents can still run in terminals.
-            </Title>
-            <Paragraph style={{ margin: "12px 0 0" }}>
-              CoCalc projects are real Linux environments with persistent
-              terminals. Command-line agents such as Claude Code, OpenCode, or
-              similar tools can be installed and run there like ordinary Linux
-              programs. They run as terminal tools rather than CoCalc-managed AI
-              integrations.
-            </Paragraph>
-          </div>
-        </Col>
-      </Row>
-
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={14}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Choose the AI path that fits
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Start with Codex when the agent should work beside the project
-                record. Use terminal workflows when you need another
-                command-line agent, and compare operating models when
-                deployment, licensing, or policy constraints matter.
-              </Paragraph>
-              <BulletList
-                items={[
-                  "Use Codex chat when review should stay near files, notebooks, terminal output, and discussion.",
-                  "Use terminal workflows when the task depends on a command-line tool or shell process.",
-                  "Ask CoCalc when the AI workflow is tied to course, team, or deployment requirements.",
-                ]}
-              />
-              <Flex wrap gap={12}>
+        <div
+          style={{
+            borderTop: `1px solid ${PUBLIC_COLORS.border}`,
+            paddingTop: 24,
+          }}
+        >
+          <Row gutter={[24, 24]} align="middle">
+            <Col xs={24} lg={15}>
+              <Flex vertical gap={12}>
+                <Title level={3} style={{ margin: 0 }}>
+                  Choose the AI path that fits
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  Start with Codex when the agent should work beside the project
+                  record. Use terminal workflows when the task depends on
+                  another command-line agent or shell process.
+                </Paragraph>
+                <BulletList
+                  items={[
+                    "Use Codex chat when review should stay near files, notebooks, terminal output, and discussion.",
+                    "Use terminal workflows when the task depends on a command-line tool or shell process.",
+                    "Ask CoCalc when AI workflows are tied to courses, teams, deployment, or policy requirements.",
+                  ]}
+                />
+              </Flex>
+            </Col>
+            <Col xs={24} lg={9}>
+              <Flex vertical gap={10} align="start">
+                <Button type="primary" href={primaryHref}>
+                  {primaryLabel}
+                </Button>
                 <Button href={appPath("features/terminal")}>
                   Terminal workflows
-                </Button>
-                <Button href={appPath("features/linux")}>
-                  Linux environment
                 </Button>
                 <Button
                   href={featureSupportPath({
@@ -434,40 +395,13 @@ export default function AIFeaturePage({
                 >
                   Ask about AI workflows
                 </Button>
-              </Flex>
-              <LinkButton href={`${GUIDE_BASE}/agent-sandbox-cloud/`}>
-                Read the agent sandbox guide
-              </LinkButton>
-            </Flex>
-          </Col>
-          <Col xs={24} lg={10}>
-            <div
-              style={{
-                background: "#10213f",
-                borderRadius: 8,
-                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
-                color: "#fff",
-                padding: 26,
-              }}
-            >
-              <Title level={4} style={{ color: "#fff", margin: "0 0 10px" }}>
-                Ready to use Codex in CoCalc?
-              </Title>
-              <Paragraph style={{ color: "rgba(255,255,255,0.78)" }}>
-                Open a project thread, give Codex the context it should inspect,
-                and keep the result available for review.
-              </Paragraph>
-              <Flex vertical gap={10} align="start">
-                <Button type="primary" href={primaryHref}>
-                  {primaryLabel}
-                </Button>
-                <Button href={appPath("products")}>
+                <LinkButton href={appPath("products")}>
                   Compare operating models
-                </Button>
+                </LinkButton>
               </Flex>
-            </div>
-          </Col>
-        </Row>
+            </Col>
+          </Row>
+        </div>
       </PublicSection>
     </Flex>
   );
