@@ -61,6 +61,7 @@ import {
   sectionLabel,
   sectionTagColor,
 } from "@cocalc/frontend/rootfs/catalog-ui";
+import { openProjectAppStatus } from "@cocalc/frontend/project/app-server-open";
 import {
   RootfsScanDetailsButton,
   RootfsScanStatus,
@@ -83,6 +84,7 @@ import {
   normalizeRootfsContentManifest,
 } from "@cocalc/util/rootfs-images";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import type {
   ProjectRootfsStateEntry,
   RootfsContentAction,
@@ -1073,6 +1075,12 @@ export default function RootFilesystemImage({
                     options: { force: false, errorOnExist: true },
                   });
                   return dest;
+                },
+                onLaunchProjectApp: async (action) => {
+                  await launchRootfsProjectAppAction({
+                    action,
+                    project_id,
+                  });
                 },
                 onOpenPath: (path) => {
                   void actions?.open_file({ path, foreground: true });
@@ -2144,6 +2152,7 @@ export default function RootFilesystemImage({
                       }
                       onSave={saveRootfsContentManifestDraft}
                       previewEntry={publishContentPreviewEntry}
+                      project_id={project_id}
                       validation={publishContentValidation}
                     />
                   ),
@@ -2946,6 +2955,7 @@ function RootfsContentManifestBuilder({
   onPickDirectory,
   onSave,
   previewEntry,
+  project_id,
   validation,
 }: {
   draft: RootfsContentDraft;
@@ -2962,9 +2972,50 @@ function RootfsContentManifestBuilder({
   ) => void;
   onSave: () => Promise<void>;
   previewEntry: RootfsImageEntry;
+  project_id: string;
   validation: ReturnType<typeof normalizeRootfsContentManifest>;
 }): React.JSX.Element {
   const [saving, setSaving] = useState<boolean>(false);
+  const [configuredAppSpecs, setConfiguredAppSpecs] = useState<AppSpec[]>([]);
+  const [configuredAppsLoading, setConfiguredAppsLoading] =
+    useState<boolean>(false);
+  const [configuredAppsError, setConfiguredAppsError] = useState<string>("");
+  const projectHome = getProjectHomeDirectory(project_id);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadConfiguredApps(): Promise<void> {
+      try {
+        setConfiguredAppsLoading(true);
+        setConfiguredAppsError("");
+        const api = webapp_client.conat_client.projectApi({ project_id });
+        const records = await api.apps.listAppSpecs();
+        if (cancelled) return;
+        setConfiguredAppSpecs(
+          records
+            .map((record) => record.spec)
+            .filter((spec): spec is AppSpec => spec != null)
+            .sort((a, b) =>
+              rootfsProjectAppSpecTitle(a).localeCompare(
+                rootfsProjectAppSpecTitle(b),
+              ),
+            ),
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setConfiguredAppsError(`${err}`);
+        }
+      } finally {
+        if (!cancelled) {
+          setConfiguredAppsLoading(false);
+        }
+      }
+    }
+    void loadConfiguredApps();
+    return () => {
+      cancelled = true;
+    };
+  }, [project_id]);
 
   function setField<K extends keyof RootfsContentDraft>(
     field: K,
@@ -2988,9 +3039,13 @@ function RootfsContentManifestBuilder({
   }
 
   function addAction(kind: RootfsContentAction["kind"]): void {
+    const appSpec = kind === "project-app" ? configuredAppSpecs[0] : undefined;
     onChange((cur) => ({
       ...cur,
-      actions: [...cur.actions, defaultRootfsContentActionDraft(kind)],
+      actions: [
+        ...cur.actions,
+        defaultRootfsContentActionDraft(kind, undefined, appSpec),
+      ],
     }));
   }
 
@@ -3007,8 +3062,9 @@ function RootfsContentManifestBuilder({
     <Space direction="vertical" size={14} style={{ width: "100%" }}>
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>
         The discovery manifest adds browse, copy-to-HOME, open, and external
-        link actions to the RootFS component so users can quickly find and use
-        the files bundled with this image.
+        link actions, plus one-click project app launchers, to the RootFS
+        component so users can quickly find and use the files and services
+        bundled with this image.
       </Paragraph>
 
       <div style={{ position: "relative" }}>
@@ -3028,6 +3084,7 @@ function RootfsContentManifestBuilder({
           renderRootfsContentPanel({
             entry: previewEntry,
             onCopyToHome: async () => undefined,
+            onLaunchProjectApp: async () => undefined,
             onOpenPath: () => undefined,
           })
         ) : (
@@ -3157,21 +3214,48 @@ function RootfsContentManifestBuilder({
                 <Button size="small" onClick={() => addAction("external-link")}>
                   Add link
                 </Button>
+                <Button
+                  disabled={configuredAppSpecs.length === 0}
+                  loading={configuredAppsLoading}
+                  size="small"
+                  onClick={() => addAction("project-app")}
+                >
+                  Add app
+                </Button>
               </Space>
             }
           >
             <Space direction="vertical" size={10} style={{ width: "100%" }}>
+              {configuredAppsError ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Unable to load configured project apps."
+                  description={configuredAppsError}
+                />
+              ) : null}
+              {!configuredAppsLoading &&
+              configuredAppSpecs.length === 0 &&
+              draft.actions.some((action) => action.kind === "project-app") ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="No configured project apps found."
+                  description="Configure and test an app in this project first, then add it to the manifest."
+                />
+              ) : null}
               {draft.actions.length === 0 ? (
                 <Alert
                   type="info"
                   showIcon
                   message="No actions yet."
-                  description="Add a browse, copy, open, or external link action to help users find the bundled content."
+                  description="Add a browse, copy, open, external link, or app action to help users find the bundled content."
                 />
               ) : null}
               {draft.actions.map((action, index) => (
                 <RootfsContentActionEditor
                   action={action}
+                  configuredAppSpecs={configuredAppSpecs}
                   index={index}
                   key={action.draft_id}
                   onPickDirectory={onPickDirectory}
@@ -3182,6 +3266,7 @@ function RootfsContentManifestBuilder({
                     }))
                   }
                   onUpdate={(patch) => updateAction(index, patch)}
+                  projectHome={projectHome}
                 />
               ))}
             </Space>
@@ -3242,12 +3327,15 @@ function RootfsContentField({
 
 function RootfsContentActionEditor({
   action,
+  configuredAppSpecs,
   index,
   onPickDirectory,
   onRemove,
   onUpdate,
+  projectHome,
 }: {
   action: RootfsContentActionDraft;
+  configuredAppSpecs: AppSpec[];
   index: number;
   onPickDirectory: (
     actionIndex: number,
@@ -3256,6 +3344,7 @@ function RootfsContentActionEditor({
   ) => void;
   onRemove: () => void;
   onUpdate: (patch: Partial<RootfsContentActionDraft>) => void;
+  projectHome: string;
 }): React.JSX.Element {
   const pathField =
     action.kind === "copy-to-home" ? (
@@ -3286,6 +3375,40 @@ function RootfsContentActionEditor({
           placeholder="https://..."
         />
       </RootfsContentField>
+    ) : action.kind === "project-app" ? (
+      <>
+        <RootfsContentField label="Configured app">
+          <Select
+            showSearch
+            optionFilterProp="label"
+            style={{ width: "100%" }}
+            value={rootfsProjectAppSpecId(action.app_spec) || undefined}
+            placeholder="Choose a configured app"
+            options={configuredAppSpecs.map((spec) => ({
+              value: rootfsProjectAppSpecId(spec),
+              label: rootfsProjectAppOptionLabel(spec),
+            }))}
+            onChange={(appId) => {
+              const spec = configuredAppSpecs.find(
+                (item) => rootfsProjectAppSpecId(item) === appId,
+              );
+              if (!spec) return;
+              onUpdate(rootfsProjectAppActionPatch(spec));
+            }}
+          />
+        </RootfsContentField>
+        {rootfsProjectAppSpecHomeWarning(action.app_spec, projectHome) ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="This app spec references HOME."
+            description={rootfsProjectAppSpecHomeWarning(
+              action.app_spec,
+              projectHome,
+            )}
+          />
+        ) : null}
+      </>
     ) : (
       <RootfsContentPathInput
         buttonLabel="Choose directory..."
@@ -3318,15 +3441,26 @@ function RootfsContentActionEditor({
           <Select
             value={action.kind}
             style={{ minWidth: 150 }}
-            onChange={(kind: RootfsContentAction["kind"]) =>
-              onUpdate(defaultRootfsContentActionDraft(kind, action.draft_id))
-            }
             options={[
               { label: "Browse", value: "browse" },
               { label: "Copy to HOME", value: "copy-to-home" },
               { label: "Open", value: "open" },
               { label: "External link", value: "external-link" },
+              {
+                disabled: configuredAppSpecs.length === 0,
+                label: "Project app",
+                value: "project-app",
+              },
             ]}
+            onChange={(kind: RootfsContentAction["kind"]) =>
+              onUpdate(
+                defaultRootfsContentActionDraft(
+                  kind,
+                  action.draft_id,
+                  kind === "project-app" ? configuredAppSpecs[0] : undefined,
+                ),
+              )
+            }
           />
           <Popconfirm
             title="Remove this action?"
@@ -3506,6 +3640,8 @@ function rootfsContentActionDraftToInput(
   switch (action.kind) {
     case "external-link":
       return { ...base, url: action.url ?? "" };
+    case "project-app":
+      return { ...base, app_spec: action.app_spec ?? {} };
     case "copy-to-home":
       return {
         ...base,
@@ -3520,6 +3656,7 @@ function rootfsContentActionDraftToInput(
 function defaultRootfsContentActionDraft(
   kind: RootfsContentAction["kind"],
   draft_id: string = nextRootfsContentActionDraftId(),
+  appSpec?: AppSpec,
 ): RootfsContentActionDraft {
   switch (kind) {
     case "browse":
@@ -3544,6 +3681,15 @@ function defaultRootfsContentActionDraft(
         label: "Open link",
         url: "",
       };
+    case "project-app":
+      return {
+        draft_id,
+        kind,
+        label: appSpec
+          ? `Launch ${rootfsProjectAppSpecTitle(appSpec)}`
+          : "Launch app",
+        app_spec: appSpec as unknown as Record<string, unknown>,
+      };
     case "open":
     default:
       return {
@@ -3558,8 +3704,71 @@ function defaultRootfsContentActionDraft(
 function normalizeRootfsContentActionDraft(
   action: RootfsContentActionDraft,
 ): RootfsContentActionDraft {
-  const base = defaultRootfsContentActionDraft(action.kind, action.draft_id);
+  const base = defaultRootfsContentActionDraft(
+    action.kind,
+    action.draft_id,
+    action.app_spec as unknown as AppSpec | undefined,
+  );
   return { ...base, ...action };
+}
+
+function rootfsProjectAppSpecId(spec: unknown): string {
+  if (spec == null || typeof spec !== "object" || Array.isArray(spec)) {
+    return "";
+  }
+  return `${(spec as any).id ?? ""}`.trim();
+}
+
+function rootfsProjectAppSpecTitle(spec: unknown): string {
+  if (spec == null || typeof spec !== "object" || Array.isArray(spec)) {
+    return "app";
+  }
+  return (
+    `${(spec as any).title ?? ""}`.trim() ||
+    rootfsProjectAppSpecId(spec) ||
+    "app"
+  );
+}
+
+function rootfsProjectAppOptionLabel(spec: AppSpec): string {
+  const title = rootfsProjectAppSpecTitle(spec);
+  const id = rootfsProjectAppSpecId(spec);
+  return id && id !== title ? `${title} (${id})` : title;
+}
+
+function rootfsProjectAppActionPatch(
+  spec: AppSpec,
+): Partial<RootfsContentActionDraft> {
+  return {
+    app_spec: spec as unknown as Record<string, unknown>,
+    label: `Launch ${rootfsProjectAppSpecTitle(spec)}`,
+  };
+}
+
+function rootfsProjectAppSpecHomeWarning(
+  spec: unknown,
+  projectHome: string,
+): string | undefined {
+  if (spec == null || typeof spec !== "object" || Array.isArray(spec)) return;
+  const home = `${projectHome ?? ""}`.replace(/\/+$/, "");
+  if (!home) return;
+  const value = spec as any;
+  const referencedPaths: string[] = [];
+  if (
+    value.kind === "static" &&
+    `${value.static?.root ?? ""}`.startsWith(home)
+  ) {
+    referencedPaths.push(`${value.static.root}`);
+  }
+  if (`${value.command?.cwd ?? ""}`.startsWith(home)) {
+    referencedPaths.push(`${value.command.cwd}`);
+  }
+  const serialized = JSON.stringify(value);
+  if (!referencedPaths.length && serialized.includes(`${home}/`)) {
+    referencedPaths.push(home);
+  }
+  if (!referencedPaths.length) return;
+  return `This app references ${referencedPaths.slice(0, 3).join(", ")}. It may not work in other projects unless those files are also copied into HOME or included somewhere stable in the RootFS.`;
 }
 
 function nextRootfsContentActionDraftId(): string {
@@ -4081,10 +4290,12 @@ function renderRootfsContentPreview(
 function renderRootfsContentPanel({
   entry,
   onCopyToHome,
+  onLaunchProjectApp,
   onOpenPath,
 }: {
   entry: RootfsImageEntry;
   onCopyToHome: (action: RootfsContentAction) => Promise<string | undefined>;
+  onLaunchProjectApp: (action: RootfsContentAction) => Promise<void>;
   onOpenPath: (path: string) => void;
 }): React.JSX.Element | null {
   const content = entry.content;
@@ -4126,6 +4337,7 @@ function renderRootfsContentPanel({
                 key={`${action.kind}:${action.label}:${index}`}
                 action={action}
                 onCopyToHome={onCopyToHome}
+                onLaunchProjectApp={onLaunchProjectApp}
                 onOpenPath={onOpenPath}
               />
             ))}
@@ -4170,13 +4382,16 @@ function renderRootfsContentLink(
 function RootfsContentActionRow({
   action,
   onCopyToHome,
+  onLaunchProjectApp,
   onOpenPath,
 }: {
   action: RootfsContentAction;
   onCopyToHome: (action: RootfsContentAction) => Promise<string | undefined>;
+  onLaunchProjectApp: (action: RootfsContentAction) => Promise<void>;
   onOpenPath: (path: string) => void;
 }): React.JSX.Element {
   const [copying, setCopying] = useState<boolean>(false);
+  const [launching, setLaunching] = useState<boolean>(false);
   const label = action.label.trim();
   const description = action.description?.trim();
   const openPath = rootfsContentActionOpenPath(action);
@@ -4193,6 +4408,15 @@ function RootfsContentActionRow({
       }
     } finally {
       setCopying(false);
+    }
+  }
+
+  async function launchProjectApp(): Promise<void> {
+    setLaunching(true);
+    try {
+      await onLaunchProjectApp(action);
+    } finally {
+      setLaunching(false);
     }
   }
 
@@ -4244,6 +4468,15 @@ function RootfsContentActionRow({
           >
             Copy to HOME
           </Button>
+        ) : action.kind === "project-app" ? (
+          <Button
+            disabled={!action.app_spec}
+            icon={<Icon name="rocket" />}
+            loading={launching}
+            onClick={launchProjectApp}
+          >
+            Launch
+          </Button>
         ) : null
       }
     />
@@ -4291,7 +4524,10 @@ function rootfsContentActionPathLabel(
     return source || target;
   }
   return (
-    action.path?.trim() || action.source_path?.trim() || action.url?.trim()
+    action.path?.trim() ||
+    action.source_path?.trim() ||
+    action.url?.trim() ||
+    rootfsProjectAppSpecId(action.app_spec)
   );
 }
 
@@ -4305,10 +4541,48 @@ function rootfsContentActionKindLabel(
       return "Copy";
     case "external-link":
       return "Link";
+    case "project-app":
+      return "App";
     case "open":
     default:
       return "Open";
   }
+}
+
+async function launchRootfsProjectAppAction({
+  action,
+  project_id,
+}: {
+  action: RootfsContentAction;
+  project_id: string;
+}): Promise<void> {
+  const embeddedSpec = action.app_spec as unknown as AppSpec | undefined;
+  const appId = rootfsProjectAppSpecId(embeddedSpec);
+  if (!embeddedSpec || !appId) {
+    message.error("App action is missing an app spec.");
+    return;
+  }
+  const api = webapp_client.conat_client.projectApi({ project_id });
+  let spec: AppSpec | undefined;
+  try {
+    spec = await api.apps.getAppSpec(appId);
+  } catch {
+    const saved = await api.apps.upsertAppSpec(embeddedSpec);
+    spec = saved.spec;
+  }
+  const status =
+    spec.kind === "service"
+      ? await api.apps.ensureRunning(appId, {
+          timeout: 90_000,
+          interval: 1000,
+        })
+      : await api.apps.statusApp(appId);
+  await openProjectAppStatus({
+    getSpec: async (id) => api.apps.getAppSpec(id),
+    project_id,
+    spec,
+    status,
+  });
 }
 
 function renderRootfsScan(

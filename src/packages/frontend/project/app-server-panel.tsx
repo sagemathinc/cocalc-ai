@@ -61,23 +61,22 @@ import {
   type AppServiceOpenMode,
 } from "./app-template-catalog";
 import {
+  buildPublicHostnameFromExposure,
+  buildPublicUrlFromExposure,
+  openProjectAppStatus,
+  type PublicAppPolicy,
+} from "./app-server-open";
+import {
   inferStaticSharingFromDirectory,
   suggestAppIdFromDirectory,
   suggestStaticDirectoryFromProjectPath,
   type StaticDirectoryInference,
   type StaticSharingSuggestionKey,
 } from "./static-sharing-inference";
-import { withProjectHostBase } from "./host-url";
 
 type AppKind = "service" | "static";
 type AppStatusFilter = "all" | "running" | "stopped" | "error" | "public";
 type AppRowAction = "expose" | "unexpose" | "audit" | "refresh";
-
-interface PublicAppPolicy {
-  enabled: boolean;
-  dns_domain?: string;
-  subdomain_suffix?: string;
-}
 
 interface StartupFailureDetails {
   appId: string;
@@ -433,47 +432,6 @@ function renderLogTailBlock({
 
 function isPublicExposure(status: ManagedAppStatus): boolean {
   return status.exposure?.mode === "public";
-}
-
-function normalizePublicSuffix(raw?: string): string {
-  const value = `${raw ?? ""}`.trim().toLowerCase();
-  return value || "app";
-}
-
-function currentPublicDnsDomain(): string | undefined {
-  if (typeof window === "undefined") return;
-  const host = `${window.location.hostname ?? ""}`.trim().toLowerCase();
-  if (!host || host === "localhost") return;
-  return host;
-}
-
-function buildPublicHostnameFromExposure(
-  status: ManagedAppStatus,
-  policy?: PublicAppPolicy,
-): string | undefined {
-  const exposure = status.exposure;
-  if (exposure?.public_hostname) return exposure.public_hostname;
-  const label = `${exposure?.random_subdomain ?? ""}`.trim().toLowerCase();
-  const dnsDomain =
-    `${policy?.dns_domain ?? ""}`.trim().toLowerCase() ||
-    currentPublicDnsDomain();
-  if (!label || !dnsDomain) return;
-  const suffix = normalizePublicSuffix(policy?.subdomain_suffix);
-  return suffix ? `${label}-${suffix}.${dnsDomain}` : `${label}.${dnsDomain}`;
-}
-
-function buildPublicUrlFromExposure(
-  status: ManagedAppStatus,
-  policy?: PublicAppPolicy,
-): string | undefined {
-  const exposure = status.exposure;
-  if (exposure?.public_url) return exposure.public_url;
-  const hostname = buildPublicHostnameFromExposure(status, policy);
-  return hostname ? `https://${hostname}` : undefined;
-}
-
-function ensureTrailingSlash(value: string): string {
-  return value.endsWith("/") ? value : `${value}/`;
 }
 
 function shellQuoteCliArg(value: string): string {
@@ -1627,58 +1585,17 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   }
 
   async function openStatus(status: ManagedAppStatus) {
-    const translateServiceOpenUrl = (
-      localUrl: string | undefined,
-      mode: AppServiceOpenMode,
-    ): string | undefined => {
-      if (!localUrl || mode !== "port") return localUrl;
-      if (localUrl.includes("/proxy/")) {
-        return localUrl.replace("/proxy/", "/port/");
-      }
-      return localUrl;
-    };
-
-    let url = buildPublicUrlFromExposure(status, publicAppPolicy);
-    if (!url) {
-      let spec = specById[status.id];
-      if (!spec) {
-        try {
-          spec = await api.apps.getAppSpec(status.id);
-          setSpecById((prev) => ({ ...prev, [status.id]: spec }));
-        } catch {
-          // fall back to status.url below
-        }
-      }
-      const declaredBasePath = `${spec?.proxy?.base_path ?? ""}`.trim();
-      const unmanagedBasePath =
-        status.lifecycle_mode === "unmanaged" ? `/apps/${status.id}/` : "";
-      let basePathLocal = declaredBasePath
-        ? declaredBasePath.startsWith(`/${project_id}/`) ||
-          declaredBasePath === `/${project_id}`
-          ? declaredBasePath
-          : `/${project_id}${declaredBasePath.startsWith("/") ? declaredBasePath : `/${declaredBasePath}`}`
-        : unmanagedBasePath
-          ? `/${project_id}${unmanagedBasePath}`
-          : undefined;
-      if (basePathLocal) {
-        basePathLocal = ensureTrailingSlash(basePathLocal);
-      }
-      const serviceOpenMode: AppServiceOpenMode =
-        spec?.kind === "service" && spec?.proxy?.open_mode === "port"
-          ? "port"
-          : "proxy";
-      const serviceLocal = translateServiceOpenUrl(status.url, serviceOpenMode);
-      const preferredLocal = basePathLocal || serviceLocal;
-      if (!preferredLocal) return;
-      const local =
-        withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;
-      url = await webapp_client.conat_client.addProjectHostAuthToUrl({
-        project_id,
-        url: local,
-      });
-    }
-    if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
+    await openProjectAppStatus({
+      getSpec: async (id) => {
+        const spec = await api.apps.getAppSpec(id);
+        setSpecById((prev) => ({ ...prev, [id]: spec }));
+        return spec;
+      },
+      project_id,
+      publicAppPolicy,
+      spec: specById[status.id],
+      status,
+    });
   }
 
   function buildSpec() {
