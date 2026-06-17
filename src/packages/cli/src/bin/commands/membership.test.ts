@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { Command } from "commander";
@@ -1221,4 +1225,71 @@ test("membership site-license external claim admin list and revoke commands", as
     status: "granted",
     limit: 5,
   });
+});
+
+test("membership site-license sample-token generates a compact claim token", async () => {
+  let captured: any;
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-claim-token-"));
+  const privateKeyFile = join(dir, "ed25519.pem");
+  writeFileSync(
+    privateKeyFile,
+    privateKey.export({ format: "pem", type: "pkcs8" }),
+  );
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      captured = await fn({ accountId: "admin-1", hub: { purchases: {} } });
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "sample-token",
+    "--site-license",
+    "license-1",
+    "--pool",
+    "claim-pool-1",
+    "--issuer",
+    "https://lms.example.edu",
+    "--kid",
+    "key-2026-06",
+    "--private-key-file",
+    privateKeyFile,
+    "--expires-at",
+    "2026-06-18T00:00:00.000Z",
+    "--membership-class",
+    "instructor",
+    "--subject",
+    "reader-1",
+    "--metadata-json",
+    '{"course":"Math 101"}',
+  ]);
+
+  const parts = `${captured?.token ?? ""}`.split(".");
+  assert.equal(parts.length, 3);
+  const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
+  const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+  assert.deepEqual(header, {
+    alg: "EdDSA",
+    kid: "key-2026-06",
+    typ: "JWT",
+  });
+  assert.equal(payload.iss, "https://lms.example.edu");
+  assert.equal(payload.site_license_id, "license-1");
+  assert.equal(payload.pool_id, "claim-pool-1");
+  assert.equal(payload.membership_class, "instructor");
+  assert.equal(payload.subject, "reader-1");
+  assert.deepEqual(payload.metadata, { course: "Math 101" });
+  assert.equal(captured.expires_at, "2026-06-18T00:00:00.000Z");
 });

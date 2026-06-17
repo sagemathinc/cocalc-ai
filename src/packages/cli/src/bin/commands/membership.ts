@@ -1,3 +1,4 @@
+import { randomUUID, sign as signData } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { Command } from "commander";
@@ -148,6 +149,47 @@ function normalizeExternalClaimAlg(
     return value;
   }
   throw new Error("--alg must be EdDSA or ES256");
+}
+
+function dateToNumericDate(value: Date): number {
+  return Math.floor(value.valueOf() / 1000);
+}
+
+function parseIsoDate(value: string | undefined, flagName: string): Date {
+  const normalized = `${value ?? ""}`.trim();
+  if (!normalized) {
+    throw new Error(`${flagName} is required`);
+  }
+  const date = new Date(normalized);
+  if (!Number.isFinite(date.valueOf())) {
+    throw new Error(`${flagName} must be an ISO date`);
+  }
+  return date;
+}
+
+function encodeBase64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function createExternalClaimSampleToken({
+  alg,
+  kid,
+  privateKeyPem,
+  payload,
+}: {
+  alg: SiteLicenseExternalClaimSigningAlgorithm;
+  kid: string;
+  privateKeyPem: string;
+  payload: Record<string, unknown>;
+}): string {
+  if (alg !== "EdDSA") {
+    throw new Error("sample-token currently supports --alg EdDSA");
+  }
+  const encodedHeader = encodeBase64UrlJson({ alg, kid, typ: "JWT" });
+  const encodedPayload = encodeBase64UrlJson(payload);
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const signature = signData(null, Buffer.from(signingInput), privateKeyPem);
+  return `${signingInput}.${signature.toString("base64url")}`;
 }
 
 function normalizeStringList(values: string[] | undefined): string[] {
@@ -1586,6 +1628,140 @@ export function registerMembershipCommand(
             ).map((consumption: SiteLicenseExternalClaimConsumption) =>
               serializeSiteLicenseExternalClaimConsumption(consumption, toIso),
             );
+          },
+        );
+      },
+    );
+
+  siteLicense
+    .command("sample-token")
+    .description("locally generate a signed external site-license claim token")
+    .requiredOption("--site-license <siteLicenseId>", "site license id")
+    .requiredOption("--pool <poolId>", "external claim pool id")
+    .requiredOption("--issuer <issuer>", "token issuer")
+    .requiredOption("--kid <kid>", "token key id")
+    .requiredOption("--private-key-file <path>", "private signing key PEM file")
+    .option("--alg <alg>", "signing algorithm; currently EdDSA", "EdDSA")
+    .option(
+      "--audience <aud>",
+      "token audience",
+      "cocalc.ai.site-license-claim",
+    )
+    .option("--jti <jti>", "explicit token id; defaults to a random UUID")
+    .option("--expires-at <iso>", "token expiration time")
+    .option(
+      "--expires-in-days <days>",
+      "token lifetime when --expires-at is omitted",
+      "1",
+    )
+    .option("--not-before <iso>", "optional token not-before time")
+    .option("--membership-class <class>", "optional membership class override")
+    .option(
+      "--membership-expires-at <iso>",
+      "optional membership expiration override",
+    )
+    .option("--rootfs-id <id>", "optional rootfs context")
+    .option("--subject <subject>", "optional external subject")
+    .option("--label <label>", "optional human-readable label")
+    .option("--metadata-json <json>", "token metadata as a JSON object")
+    .action(
+      async (
+        opts: {
+          siteLicense: string;
+          pool: string;
+          issuer: string;
+          kid: string;
+          privateKeyFile: string;
+          alg: string;
+          audience?: string;
+          jti?: string;
+          expiresAt?: string;
+          expiresInDays?: string;
+          notBefore?: string;
+          membershipClass?: string;
+          membershipExpiresAt?: string;
+          rootfsId?: string;
+          subject?: string;
+          label?: string;
+          metadataJson?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license sample-token",
+          async () => {
+            const alg = normalizeExternalClaimAlg(opts.alg);
+            const expiresAt = `${opts.expiresAt ?? ""}`.trim()
+              ? parseIsoDate(opts.expiresAt, "--expires-at")
+              : new Date(
+                  Date.now() +
+                    parsePositiveInteger(
+                      opts.expiresInDays,
+                      "--expires-in-days",
+                    ) *
+                      24 *
+                      60 *
+                      60 *
+                      1000,
+                );
+            const payload: Record<string, unknown> = {
+              iss: `${opts.issuer ?? ""}`.trim(),
+              aud: `${opts.audience ?? ""}`.trim(),
+              site_license_id: `${opts.siteLicense ?? ""}`.trim(),
+              pool_id: `${opts.pool ?? ""}`.trim(),
+              jti: `${opts.jti ?? ""}`.trim() || randomUUID(),
+              exp: dateToNumericDate(expiresAt),
+              iat: dateToNumericDate(new Date()),
+            };
+            const notBefore = `${opts.notBefore ?? ""}`.trim();
+            if (notBefore) {
+              payload.nbf = dateToNumericDate(
+                parseIsoDate(notBefore, "--not-before"),
+              );
+            }
+            const membershipClass =
+              `${opts.membershipClass ?? ""}`.trim() || undefined;
+            if (membershipClass) {
+              payload.membership_class = membershipClass;
+            }
+            const membershipExpiresAt =
+              `${opts.membershipExpiresAt ?? ""}`.trim() || undefined;
+            if (membershipExpiresAt) {
+              payload.membership_expires_at = membershipExpiresAt;
+            }
+            const rootfsId = `${opts.rootfsId ?? ""}`.trim() || undefined;
+            if (rootfsId) {
+              payload.rootfs_id = rootfsId;
+            }
+            const subject = `${opts.subject ?? ""}`.trim() || undefined;
+            if (subject) {
+              payload.subject = subject;
+            }
+            const label = `${opts.label ?? ""}`.trim() || undefined;
+            if (label) {
+              payload.label = label;
+            }
+            const metadata = parseMetadataJson(opts.metadataJson);
+            if (metadata) {
+              payload.metadata = metadata;
+            }
+            const token = createExternalClaimSampleToken({
+              alg,
+              kid: `${opts.kid ?? ""}`.trim(),
+              privateKeyPem: readTextFile(
+                opts.privateKeyFile,
+                "--private-key-file",
+              ),
+              payload,
+            });
+            return {
+              token,
+              alg,
+              kid: `${opts.kid ?? ""}`.trim(),
+              expires_at: expiresAt.toISOString(),
+              payload,
+            };
           },
         );
       },
