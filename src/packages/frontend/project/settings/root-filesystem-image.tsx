@@ -34,6 +34,7 @@ import ActionAssist from "@cocalc/frontend/components/action-assist";
 import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import {
@@ -75,11 +76,15 @@ import {
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
+import {
+  isManagedRootfsImageName,
+  normalizeRootfsContentManifest,
+} from "@cocalc/util/rootfs-images";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   ProjectRootfsStateEntry,
   RootfsContentAction,
+  RootfsContentManifest,
   RootfsImageEntry,
   RootfsImageTheme,
   RootfsImageVisibility,
@@ -102,7 +107,31 @@ type PublishDraft = {
   hidden: boolean;
 };
 
+type RootfsContentActionDraft = RootfsContentAction & {
+  draft_id: string;
+};
+
+type RootfsContentDraft = {
+  title: string;
+  subtitle: string;
+  description: string;
+  publisher_name: string;
+  publisher_url: string;
+  license_name: string;
+  license_url: string;
+  highlights: string[];
+  actions: RootfsContentActionDraft[];
+};
+
+type RootfsContentDirectoryPicker = {
+  actionIndex: number;
+  field: "path" | "source_path";
+  pendingPath: string;
+} | null;
+
 type RootFilesystemImageMode = "inline" | "modal";
+
+const ROOTFS_CONTENT_MANIFEST_PATH = "/.cocalc/rootfs-content.json";
 
 interface RootFilesystemImageProps {
   mode?: RootFilesystemImageMode;
@@ -150,6 +179,12 @@ export default function RootFilesystemImage({
     useState<boolean>(true);
   const [publishAdvanced, setPublishAdvanced] = useState<boolean>(false);
   const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
+  const [publishContentLoading, setPublishContentLoading] =
+    useState<boolean>(false);
+  const [publishContentDraft, setPublishContentDraft] =
+    useState<RootfsContentDraft>(() => emptyRootfsContentDraft());
+  const [publishContentPicker, setPublishContentPicker] =
+    useState<RootfsContentDirectoryPicker>(null);
   const [publishSourceEntry, setPublishSourceEntry] =
     useState<RootfsImageEntry>();
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
@@ -440,6 +475,35 @@ export default function RootFilesystemImage({
         })),
     [publishSourceEntry?.id, rootfsImages],
   );
+  const publishContentInput = useMemo(
+    () => rootfsContentDraftToInput(publishContentDraft),
+    [publishContentDraft],
+  );
+  const publishContentValidation = useMemo(
+    () => normalizeRootfsContentManifest(publishContentInput),
+    [publishContentInput],
+  );
+  const publishContentPreviewEntry = useMemo<RootfsImageEntry>(
+    () =>
+      ({
+        id: "rootfs-content-preview",
+        image: publishDraft.image || DEFAULT_PROJECT_IMAGE,
+        label: publishDraft.label || "RootFS image",
+        description: publishDraft.description || undefined,
+        theme:
+          rootfsThemeFromPublishDraft(publishDraft) ??
+          publishSourceEntry?.theme,
+        content: publishContentValidation.content,
+      }) as RootfsImageEntry,
+    [
+      publishContentValidation.content,
+      publishDraft.description,
+      publishDraft.image,
+      publishDraft.label,
+      publishDraft.theme,
+      publishSourceEntry?.theme,
+    ],
+  );
 
   useEffect(() => {
     const nextImage = getImage(rootfs, effectiveDefaultRootfs);
@@ -499,6 +563,76 @@ export default function RootFilesystemImage({
     setOpen(true);
   }
 
+  async function loadRootfsContentManifestFromProject(
+    fallback?: RootfsContentManifest,
+  ): Promise<void> {
+    setPublishContentDraft(rootfsContentManifestToDraft(fallback));
+    if (!actions?.fs) return;
+    setPublishContentLoading(true);
+    try {
+      const raw = await actions
+        .fs()
+        .readFile(ROOTFS_CONTENT_MANIFEST_PATH, "utf8");
+      const parsed = JSON.parse(`${raw}`);
+      const result = normalizeRootfsContentManifest(parsed);
+      if (result.content) {
+        setPublishContentDraft(rootfsContentManifestToDraft(result.content));
+      } else {
+        setPublishContentDraft(emptyRootfsContentDraft());
+      }
+      if (result.warnings.length > 0) {
+        message.warning(
+          "Loaded RootFS discovery manifest with validation warnings.",
+        );
+      }
+    } catch (err) {
+      const code = (err as any)?.code;
+      if (
+        code !== "ENOENT" &&
+        !`${err}`.includes("ENOENT") &&
+        !`${err}`.includes("no such file")
+      ) {
+        message.warning(`Unable to load RootFS discovery manifest: ${err}`);
+      }
+    } finally {
+      setPublishContentLoading(false);
+    }
+  }
+
+  async function writeRootfsContentManifestToProject(): Promise<{
+    content?: RootfsContentManifest;
+    warnings: ReturnType<typeof normalizeRootfsContentManifest>["warnings"];
+  }> {
+    if (!actions?.fs) {
+      throw Error("project filesystem is not available");
+    }
+    const result = normalizeRootfsContentManifest(publishContentInput);
+    await actions.fs().mkdir("/.cocalc", { recursive: true } as any);
+    await actions
+      .fs()
+      .writeFile(
+        ROOTFS_CONTENT_MANIFEST_PATH,
+        `${JSON.stringify(rootfsContentInputForStorage(publishContentInput), null, 2)}\n`,
+      );
+    return result;
+  }
+
+  async function saveRootfsContentManifestDraft(): Promise<void> {
+    try {
+      setPublishContentLoading(true);
+      const result = await writeRootfsContentManifestToProject();
+      if (result.warnings.length > 0) {
+        message.warning("Saved RootFS discovery manifest with warnings.");
+      } else {
+        message.success("Saved RootFS discovery manifest.");
+      }
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setPublishContentLoading(false);
+    }
+  }
+
   function openPublishDialog(opts?: {
     image?: string;
     entry?: RootfsImageEntry;
@@ -539,6 +673,13 @@ export default function RootFilesystemImage({
       prepull: currentEntry?.prepull ?? false,
       hidden: currentEntry?.hidden ?? false,
     });
+    if (defaultMode === "copy" && (opts?.copyMode ?? "project") === "project") {
+      void loadRootfsContentManifestFromProject(currentEntry?.content);
+    } else {
+      setPublishContentDraft(
+        rootfsContentManifestToDraft(currentEntry?.content),
+      );
+    }
     setPublishOpen(true);
   }
 
@@ -639,6 +780,11 @@ export default function RootFilesystemImage({
             .split(",")
             .map((tag) => tag.trim())
             .filter(Boolean);
+          const contentResult =
+            publishMode === "copy" && publishCopyMode === "project"
+              ? await writeRootfsContentManifestToProject()
+              : normalizeRootfsContentManifest(publishContentInput);
+          const contentPayload = rootfsContentCatalogPayload(contentResult);
           if (publishMode === "copy" && publishCopyMode === "project") {
             setOpen(false);
             setPublishOpen(false);
@@ -654,6 +800,7 @@ export default function RootFilesystemImage({
               visibility: publishDraft.visibility,
               tags,
               theme: rootfsThemeFromPublishDraft(publishDraft),
+              ...contentPayload,
               official: isAdmin ? publishDraft.official : undefined,
               prepull: isAdmin ? publishDraft.prepull : undefined,
               hidden: isAdmin ? publishDraft.hidden : undefined,
@@ -677,6 +824,7 @@ export default function RootFilesystemImage({
               visibility: publishDraft.visibility,
               tags,
               theme: rootfsThemeFromPublishDraft(publishDraft),
+              ...contentPayload,
               official: isAdmin ? publishDraft.official : undefined,
               prepull: isAdmin ? publishDraft.prepull : undefined,
               hidden: isAdmin ? publishDraft.hidden : undefined,
@@ -1920,6 +2068,22 @@ export default function RootFilesystemImage({
               </Space>
             </RuntimePanel>
 
+            <RootfsContentManifestBuilder
+              draft={publishContentDraft}
+              loading={publishContentLoading}
+              onChange={setPublishContentDraft}
+              onPickDirectory={(actionIndex, field, currentPath) =>
+                setPublishContentPicker({
+                  actionIndex,
+                  field,
+                  pendingPath: currentPath || "/",
+                })
+              }
+              onSave={saveRootfsContentManifestDraft}
+              previewEntry={publishContentPreviewEntry}
+              validation={publishContentValidation}
+            />
+
             <Collapse
               size="small"
               activeKey={publishAdvanced ? ["advanced"] : []}
@@ -2158,6 +2322,42 @@ export default function RootFilesystemImage({
                   : "This saves catalog metadata for the current image string without creating a new managed RootFS artifact."}
             </Paragraph>
           </Space>
+        </Modal>
+      )}
+      {publishContentPicker && (
+        <Modal
+          open
+          destroyOnHidden
+          width={860}
+          title="Choose RootFS path"
+          okText="Use this path"
+          onCancel={() => setPublishContentPicker(null)}
+          onOk={() => {
+            const { actionIndex, field, pendingPath } = publishContentPicker;
+            setPublishContentDraft((cur) => ({
+              ...cur,
+              actions: cur.actions.map((action, index) =>
+                index === actionIndex
+                  ? { ...action, [field]: pendingPath }
+                  : action,
+              ),
+            }));
+            setPublishContentPicker(null);
+          }}
+        >
+          <DirectorySelector
+            project_id={project_id}
+            startingPath={publishContentPicker.pendingPath || "/"}
+            onSelect={(path) =>
+              setPublishContentPicker((cur) =>
+                cur == null ? cur : { ...cur, pendingPath: path },
+              )
+            }
+            style={{ width: "100%" }}
+            bodyStyle={{ maxHeight: 360 }}
+            closable={false}
+            allowAbsolutePaths
+          />
         </Modal>
       )}
       <ThemeEditorModal
@@ -2675,6 +2875,605 @@ function RootfsCatalogCard({
       </div>
     </button>
   );
+}
+
+function RootfsContentManifestBuilder({
+  draft,
+  loading,
+  onChange,
+  onPickDirectory,
+  onSave,
+  previewEntry,
+  validation,
+}: {
+  draft: RootfsContentDraft;
+  loading: boolean;
+  onChange: (
+    value:
+      | RootfsContentDraft
+      | ((current: RootfsContentDraft) => RootfsContentDraft),
+  ) => void;
+  onPickDirectory: (
+    actionIndex: number,
+    field: "path" | "source_path",
+    currentPath: string,
+  ) => void;
+  onSave: () => Promise<void>;
+  previewEntry: RootfsImageEntry;
+  validation: ReturnType<typeof normalizeRootfsContentManifest>;
+}): React.JSX.Element {
+  const [saving, setSaving] = useState<boolean>(false);
+
+  function setField<K extends keyof RootfsContentDraft>(
+    field: K,
+    value: RootfsContentDraft[K],
+  ): void {
+    onChange((cur) => ({ ...cur, [field]: value }));
+  }
+
+  function updateAction(
+    index: number,
+    patch: Partial<RootfsContentActionDraft>,
+  ): void {
+    onChange((cur) => ({
+      ...cur,
+      actions: cur.actions.map((action, i) =>
+        i === index
+          ? normalizeRootfsContentActionDraft({ ...action, ...patch })
+          : action,
+      ),
+    }));
+  }
+
+  function addAction(kind: RootfsContentAction["kind"]): void {
+    onChange((cur) => ({
+      ...cur,
+      actions: [...cur.actions, defaultRootfsContentActionDraft(kind)],
+    }));
+  }
+
+  async function save(): Promise<void> {
+    setSaving(true);
+    try {
+      await onSave();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <RuntimePanel
+      icon="book"
+      title="Discovery manifest"
+      subtitle={
+        <>
+          This writes <code>{ROOTFS_CONTENT_MANIFEST_PATH}</code>, which is
+          extracted into the RootFS catalog and public landing page.
+        </>
+      }
+    >
+      <Space direction="vertical" size={14} style={{ width: "100%" }}>
+        {loading ? (
+          <FlexCentered>
+            <Spin size="small" />
+            <span>Loading discovery manifest...</span>
+          </FlexCentered>
+        ) : null}
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+          }}
+        >
+          <RootfsContentField label="Title">
+            <Input
+              value={draft.title}
+              onChange={(e) => setField("title", e.target.value)}
+              placeholder="e.g. Computational Biology Workshop"
+            />
+          </RootfsContentField>
+          <RootfsContentField label="Subtitle">
+            <Input
+              value={draft.subtitle}
+              onChange={(e) => setField("subtitle", e.target.value)}
+              placeholder="A short one-line summary"
+            />
+          </RootfsContentField>
+        </div>
+        <RootfsContentField label="Description">
+          <Input.TextArea
+            rows={3}
+            value={draft.description}
+            onChange={(e) => setField("description", e.target.value)}
+            placeholder="Explain what is included and how the image should be used."
+          />
+        </RootfsContentField>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+          }}
+        >
+          <RootfsContentField label="Publisher">
+            <Space direction="vertical" size={6} style={{ width: "100%" }}>
+              <Input
+                value={draft.publisher_name}
+                onChange={(e) => setField("publisher_name", e.target.value)}
+                placeholder="Publisher name"
+              />
+              <Input
+                value={draft.publisher_url}
+                onChange={(e) => setField("publisher_url", e.target.value)}
+                placeholder="https://..."
+              />
+            </Space>
+          </RootfsContentField>
+          <RootfsContentField label="License">
+            <Space direction="vertical" size={6} style={{ width: "100%" }}>
+              <Input
+                value={draft.license_name}
+                onChange={(e) => setField("license_name", e.target.value)}
+                placeholder="License name"
+              />
+              <Input
+                value={draft.license_url}
+                onChange={(e) => setField("license_url", e.target.value)}
+                placeholder="https://..."
+              />
+            </Space>
+          </RootfsContentField>
+        </div>
+        <RootfsContentField label="Highlights">
+          <Select
+            mode="tags"
+            value={draft.highlights}
+            onChange={(values) =>
+              setField(
+                "highlights",
+                values.map((value) => `${value}`.trim()).filter(Boolean),
+              )
+            }
+            tokenSeparators={[","]}
+            placeholder="Add short highlights users should notice"
+            style={{ width: "100%" }}
+          />
+        </RootfsContentField>
+
+        <RootfsContentField
+          label={
+            <Space size={8}>
+              <span>Actions</span>
+              <Button size="small" onClick={() => addAction("browse")}>
+                Add browse
+              </Button>
+              <Button size="small" onClick={() => addAction("copy-to-home")}>
+                Add copy
+              </Button>
+              <Button size="small" onClick={() => addAction("open")}>
+                Add open
+              </Button>
+              <Button size="small" onClick={() => addAction("external-link")}>
+                Add link
+              </Button>
+            </Space>
+          }
+        >
+          <Space direction="vertical" size={10} style={{ width: "100%" }}>
+            {draft.actions.length === 0 ? (
+              <Alert
+                type="info"
+                showIcon
+                message="No actions yet."
+                description="Add a browse, copy, open, or external link action to help users find the bundled content."
+              />
+            ) : null}
+            {draft.actions.map((action, index) => (
+              <RootfsContentActionEditor
+                action={action}
+                index={index}
+                key={action.draft_id}
+                onPickDirectory={onPickDirectory}
+                onRemove={() =>
+                  onChange((cur) => ({
+                    ...cur,
+                    actions: cur.actions.filter((_, i) => i !== index),
+                  }))
+                }
+                onUpdate={(patch) => updateAction(index, patch)}
+              />
+            ))}
+          </Space>
+        </RootfsContentField>
+
+        {validation.warnings.length > 0 ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Manifest warnings"
+            description={
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {validation.warnings.map((warning, index) => (
+                  <li key={`${warning.code}-${index}`}>
+                    {warning.path ? <code>{warning.path}: </code> : null}
+                    {warning.message}
+                  </li>
+                ))}
+              </ul>
+            }
+          />
+        ) : null}
+
+        <Space wrap>
+          <Button
+            icon={<Icon name="save" />}
+            loading={saving || loading}
+            onClick={save}
+          >
+            Save manifest file now
+          </Button>
+          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            Publishing the live project RootFS also saves this file first.
+          </Paragraph>
+        </Space>
+
+        {validation.content ? (
+          renderRootfsContentPanel({
+            entry: previewEntry,
+            onCopyToHome: async () => undefined,
+            onOpenPath: () => undefined,
+          })
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            message="No preview yet."
+            description="Add a title, description, highlight, or action to create the discovery panel."
+          />
+        )}
+      </Space>
+    </RuntimePanel>
+  );
+}
+
+function RootfsContentField({
+  children,
+  label,
+}: {
+  children: ReactNode;
+  label: ReactNode;
+}): React.JSX.Element {
+  return (
+    <div>
+      <Paragraph strong style={{ marginBottom: 6 }}>
+        {label}
+      </Paragraph>
+      {children}
+    </div>
+  );
+}
+
+function RootfsContentActionEditor({
+  action,
+  index,
+  onPickDirectory,
+  onRemove,
+  onUpdate,
+}: {
+  action: RootfsContentActionDraft;
+  index: number;
+  onPickDirectory: (
+    actionIndex: number,
+    field: "path" | "source_path",
+    currentPath: string,
+  ) => void;
+  onRemove: () => void;
+  onUpdate: (patch: Partial<RootfsContentActionDraft>) => void;
+}): React.JSX.Element {
+  const pathField =
+    action.kind === "copy-to-home" ? (
+      <>
+        <RootfsContentPathInput
+          buttonLabel="Choose source..."
+          label="Source path"
+          onPick={() =>
+            onPickDirectory(index, "source_path", action.source_path ?? "/")
+          }
+          onUpdate={(source_path) => onUpdate({ source_path })}
+          placeholder="/usr/local/share/examples"
+          value={action.source_path ?? ""}
+        />
+        <RootfsContentField label="Target path in HOME">
+          <Input
+            value={action.target_path ?? ""}
+            onChange={(e) => onUpdate({ target_path: e.target.value })}
+            placeholder="examples"
+          />
+        </RootfsContentField>
+      </>
+    ) : action.kind === "external-link" ? (
+      <RootfsContentField label="URL">
+        <Input
+          value={action.url ?? ""}
+          onChange={(e) => onUpdate({ url: e.target.value })}
+          placeholder="https://..."
+        />
+      </RootfsContentField>
+    ) : (
+      <RootfsContentPathInput
+        buttonLabel="Choose directory..."
+        label={action.kind === "browse" ? "Directory path" : "Path"}
+        onPick={() => onPickDirectory(index, "path", action.path ?? "/")}
+        onUpdate={(path) => onUpdate({ path })}
+        placeholder={
+          action.kind === "browse"
+            ? "/usr/local/share/examples"
+            : "/usr/local/share/examples/README.md"
+        }
+        value={action.path ?? ""}
+      />
+    );
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 10,
+        padding: 12,
+      }}
+    >
+      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        <Space
+          wrap
+          align="center"
+          style={{ justifyContent: "space-between", width: "100%" }}
+        >
+          <Select
+            value={action.kind}
+            style={{ minWidth: 150 }}
+            onChange={(kind: RootfsContentAction["kind"]) =>
+              onUpdate(defaultRootfsContentActionDraft(kind, action.draft_id))
+            }
+            options={[
+              { label: "Browse", value: "browse" },
+              { label: "Copy to HOME", value: "copy-to-home" },
+              { label: "Open", value: "open" },
+              { label: "External link", value: "external-link" },
+            ]}
+          />
+          <Button danger size="small" onClick={onRemove}>
+            Remove
+          </Button>
+        </Space>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
+          }}
+        >
+          <RootfsContentField label="Label">
+            <Input
+              value={action.label}
+              onChange={(e) => onUpdate({ label: e.target.value })}
+              placeholder="Button label"
+            />
+          </RootfsContentField>
+          <RootfsContentField label="Description">
+            <Input
+              value={action.description ?? ""}
+              onChange={(e) => onUpdate({ description: e.target.value })}
+              placeholder="Optional short helper text"
+            />
+          </RootfsContentField>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
+          }}
+        >
+          {pathField}
+        </div>
+      </Space>
+    </div>
+  );
+}
+
+function RootfsContentPathInput({
+  buttonLabel,
+  label,
+  onPick,
+  onUpdate,
+  placeholder,
+  value,
+}: {
+  buttonLabel: string;
+  label: ReactNode;
+  onPick: () => void;
+  onUpdate: (value: string) => void;
+  placeholder: string;
+  value: string;
+}): React.JSX.Element {
+  return (
+    <RootfsContentField label={label}>
+      <Space.Compact style={{ width: "100%" }}>
+        <Input
+          value={value}
+          onChange={(e) => onUpdate(e.target.value)}
+          placeholder={placeholder}
+        />
+        <Button onClick={onPick}>{buttonLabel}</Button>
+      </Space.Compact>
+    </RootfsContentField>
+  );
+}
+
+function FlexCentered({ children }: { children: ReactNode }) {
+  return (
+    <Space align="center" size="middle">
+      {children}
+    </Space>
+  );
+}
+
+function emptyRootfsContentDraft(): RootfsContentDraft {
+  return {
+    title: "",
+    subtitle: "",
+    description: "",
+    publisher_name: "",
+    publisher_url: "",
+    license_name: "",
+    license_url: "",
+    highlights: [],
+    actions: [],
+  };
+}
+
+function rootfsContentManifestToDraft(
+  content?: RootfsContentManifest,
+): RootfsContentDraft {
+  if (!content) return emptyRootfsContentDraft();
+  return {
+    title: content.title ?? "",
+    subtitle: content.subtitle ?? "",
+    description: content.description ?? "",
+    publisher_name: content.publisher?.name ?? "",
+    publisher_url: content.publisher?.url ?? "",
+    license_name: content.license?.name ?? "",
+    license_url: content.license?.url ?? "",
+    highlights: [...(content.highlights ?? [])],
+    actions: (content.actions ?? []).map((action) =>
+      normalizeRootfsContentActionDraft({
+        ...action,
+        draft_id: nextRootfsContentActionDraftId(),
+      }),
+    ),
+  };
+}
+
+function rootfsContentDraftToInput(draft: RootfsContentDraft): unknown {
+  return {
+    version: 1,
+    title: draft.title,
+    subtitle: draft.subtitle,
+    description: draft.description,
+    publisher:
+      draft.publisher_name || draft.publisher_url
+        ? {
+            name: draft.publisher_name,
+            url: draft.publisher_url,
+          }
+        : undefined,
+    license:
+      draft.license_name || draft.license_url
+        ? {
+            name: draft.license_name,
+            url: draft.license_url,
+          }
+        : undefined,
+    highlights: draft.highlights,
+    actions: draft.actions.map(rootfsContentActionDraftToInput),
+  };
+}
+
+function rootfsContentInputForStorage(value: unknown): unknown {
+  const result = normalizeRootfsContentManifest(value);
+  return result.content ?? { version: 1 };
+}
+
+function rootfsContentCatalogPayload(
+  result: ReturnType<typeof normalizeRootfsContentManifest>,
+): {
+  content: RootfsContentManifest | null;
+  content_warnings: ReturnType<
+    typeof normalizeRootfsContentManifest
+  >["warnings"];
+} {
+  return {
+    content: result.content ?? null,
+    content_warnings: result.warnings,
+  };
+}
+
+function rootfsContentActionDraftToInput(
+  action: RootfsContentActionDraft,
+): RootfsContentAction {
+  const base = {
+    kind: action.kind,
+    label: action.label,
+    description: action.description,
+  };
+  switch (action.kind) {
+    case "external-link":
+      return { ...base, url: action.url ?? "" };
+    case "copy-to-home":
+      return {
+        ...base,
+        source_path: action.source_path ?? action.path ?? "",
+        target_path: action.target_path ?? "",
+      };
+    default:
+      return { ...base, path: action.path ?? "" };
+  }
+}
+
+function defaultRootfsContentActionDraft(
+  kind: RootfsContentAction["kind"],
+  draft_id: string = nextRootfsContentActionDraftId(),
+): RootfsContentActionDraft {
+  switch (kind) {
+    case "browse":
+      return {
+        draft_id,
+        kind,
+        label: "Browse content",
+        path: "/",
+      };
+    case "copy-to-home":
+      return {
+        draft_id,
+        kind,
+        label: "Copy to HOME",
+        source_path: "/",
+        target_path: "rootfs-content",
+      };
+    case "external-link":
+      return {
+        draft_id,
+        kind,
+        label: "Open link",
+        url: "",
+      };
+    case "open":
+    default:
+      return {
+        draft_id,
+        kind: "open",
+        label: "Open file",
+        path: "",
+      };
+  }
+}
+
+function normalizeRootfsContentActionDraft(
+  action: RootfsContentActionDraft,
+): RootfsContentActionDraft {
+  const base = defaultRootfsContentActionDraft(action.kind, action.draft_id);
+  return { ...base, ...action };
+}
+
+function nextRootfsContentActionDraftId(): string {
+  return `action-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
 }
 
 function RuntimePanel({
