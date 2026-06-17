@@ -87,6 +87,19 @@ behavior instead of making a new unsupported claim.
 
 ## Recommended Placement Strategy
 
+Decision update, 2026-06-17:
+
+- Add one low-density `Project notes and Markdown` docs link to the
+  notebook/writing group on `/features`.
+- Do not add a fifth visible card to that group because it risks an orphan card
+  row at common desktop widths and would repeat the card-density issue this
+  audit process has been removing.
+- Replace one `/features/ai` phrase so Markdown is visible as editable project
+  context, without exposing `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or internal
+  agent-instruction conventions in public copy.
+- Keep RootFS, operating-system, and broad open-format language out of public
+  route copy.
+
 ### High Confidence
 
 - Keep homepage copy unchanged for now unless a future hero/workflow pass needs
@@ -101,12 +114,11 @@ behavior instead of making a new unsupported claim.
 
 ### Candidate Public-Site Changes To Evaluate Later
 
-- Add one compact `Markdown and project notes` or `Project notes and Markdown`
-  route on `/features`, likely in the writing/visual work group, linking to
-  `/docs/files/markdown` rather than creating a new full feature page.
-- On `/features/ai`, replace one existing generic "review notes" phrase with a
-  more concrete "README files, task notes, and review notes" phrase if that
-  improves information scent without adding density.
+- Maintain the compact `Project notes and Markdown` route on `/features`,
+  linking to `/docs/files/markdown` rather than creating a new full feature
+  page.
+- Keep `/features/ai` Markdown language as a replacement phrase, not a new
+  section or proof block.
 - On `/features/terminal`, consider one concise mention that shell work can
   leave behind scripts, READMEs, task files, and logs in the same project. This
   should happen only if it replaces existing generic file language.

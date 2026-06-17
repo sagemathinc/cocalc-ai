@@ -99,6 +99,12 @@ const FEATURE_GROUPS = [
     description:
       "Find the page for notebooks, papers, boards, slides, and other technical artifacts.",
     icon: "jupyter",
+    links: [
+      {
+        href: appPath("docs/files/markdown"),
+        label: "Project notes and Markdown",
+      },
+    ],
     slugs: ["jupyter-notebook", "latex-editor", "whiteboard", "slides"],
     title: "Notebook, writing, and visual work",
     variant: "cards",
@@ -512,6 +518,23 @@ function FeatureGroupSection({
                 >
                   {group.description}
                 </Paragraph>
+                {"links" in group && group.links?.length ? (
+                  <Flex vertical gap={6} style={{ marginTop: 10 }}>
+                    {group.links.map((link) => (
+                      <a
+                        href={link.href}
+                        key={link.href}
+                        style={{
+                          color: PUBLIC_COLORS.link,
+                          fontWeight: 600,
+                          textDecoration: "none",
+                        }}
+                      >
+                        {link.label}
+                      </a>
+                    ))}
+                  </Flex>
+                ) : null}
               </div>
             </Flex>
           </div>

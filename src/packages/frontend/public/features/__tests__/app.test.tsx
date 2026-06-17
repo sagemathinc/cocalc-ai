@@ -240,6 +240,11 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Notebook, writing, and visual work"),
     ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Project notes and Markdown" })
+        .getAttribute("href"),
+    ).toBe("/docs/files/markdown");
     expect(screen.getByText("AI workflows and integration")).not.toBeNull();
     expect(screen.getByText("Runtime and hosted compute")).not.toBeNull();
     expect(screen.getByText("Languages and math")).not.toBeNull();
@@ -269,6 +274,9 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText(/^Compute and languages$/)).toBeNull();
     expect(screen.queryByText(/^Runtime and project hosts$/)).toBeNull();
     expect(screen.queryByText(/^AI and automation$/)).toBeNull();
+    expect(container.textContent ?? "").not.toMatch(
+      /all open format files|basically an operating system|RootFS architecture/i,
+    );
     expect(screen.queryByText("Open page")).toBeNull();
     expect(screen.queryByRole("link", { name: /Compare CoCalc/i })).toBeNull();
     expect(
@@ -348,6 +356,11 @@ describe("PublicFeaturesApp", () => {
       );
     }
     expect(screen.queryByText(/^Documents$/)).toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Project notes and Markdown" })
+        .closest(".cocalc-feature-link-card"),
+    ).toBeNull();
     const css = Array.from(container.querySelectorAll("style"))
       .map((style) => style.textContent ?? "")
       .join("\n");
@@ -386,6 +399,9 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText("Start from the project")).toBeNull();
     expect(screen.queryByText("Give inspectable context")).toBeNull();
     expect(screen.queryByText("Review before relying on it")).toBeNull();
+    expect(
+      screen.getByText(/edit Markdown notes or documentation/i),
+    ).not.toBeNull();
     expect(screen.getByText("Choose the AI path that fits")).not.toBeNull();
     expect(screen.getByText("Ready to use Codex in CoCalc?")).not.toBeNull();
     expect(screen.queryByText("Codex in chat")).toBeNull();

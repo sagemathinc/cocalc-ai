@@ -177,10 +177,11 @@ recommendations are evaluated, completed, or deliberately deferred.
 ## Markdown And Open-Format Discovery Pass
 
 - [x] Capture the current public-site state for Markdown, project files, open-format language, RootFS/runtime-image framing, and agent-workflow relevance in `docs/public-site-markdown-open-formats-audit.md`.
-- [ ] Decide whether Markdown/project notes should appear as a compact discovery route on `/features`, likely linking to existing docs instead of becoming a new feature page.
-- [ ] Decide whether `/features/ai` should replace a generic review-notes phrase with more concrete README/task-note/project-instruction language.
-- [ ] Keep RootFS and operating-system language out of high-level public marketing copy unless a technical-doc route is the explicit destination.
-- [ ] Avoid broad "all open formats" claims until the supported scope is defined and reviewed.
+- [x] Decide that Markdown/project notes should appear as a small docs-linked discovery surface on `/features`, not as a new feature page or full card.
+- [x] Add the `/features` surface as a low-density text link in the notebook/writing group so it does not create an orphan fifth card at common desktop widths.
+- [x] Decide that `/features/ai` should mention Markdown as editable project context, but should not mention `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or internal agent-instruction files in public copy.
+- [x] Keep RootFS and operating-system language out of high-level public marketing copy unless a technical-doc route is the explicit destination.
+- [x] Avoid broad "all open formats" claims until the supported scope is defined and reviewed.
 
 ## Workflow To Product Decision Handoff Pass
 

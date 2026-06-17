@@ -90,7 +90,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     title: "Slides",
     tagline: "Present from slide-sized technical whiteboards.",
     summary:
-      "Build decks from slide-sized whiteboard pages with markdown, math, diagrams, Jupyter cells, and collaboration.",
+      "Build decks from slide-sized whiteboard pages with text, math, diagrams, Jupyter cells, and collaboration.",
     image: "/public/features/whiteboard-sage.png",
     index: true,
   },

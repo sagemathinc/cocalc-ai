@@ -284,9 +284,9 @@ export default function AIFeaturePage({
                 collaborators involved in the work.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Ask it to inspect code, debug a notebook, edit documentation,
-                run a focused check, or summarize changes without copying
-                context into a separate tool.
+                Ask it to inspect code, debug a notebook, edit Markdown notes or
+                documentation, run a focused check, or summarize changes without
+                copying context into a separate tool.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
