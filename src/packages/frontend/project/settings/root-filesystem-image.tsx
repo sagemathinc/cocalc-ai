@@ -135,8 +135,6 @@ type RootfsContentDirectoryPicker = {
 
 type RootFilesystemImageMode = "inline" | "modal";
 
-const ROOTFS_CONTENT_MANIFEST_PATH = "/.cocalc/rootfs-content.json";
-
 interface RootFilesystemImageProps {
   mode?: RootFilesystemImageMode;
 }
@@ -183,8 +181,6 @@ export default function RootFilesystemImage({
     useState<boolean>(true);
   const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
   const [publishTab, setPublishTab] = useState<string>("metadata");
-  const [publishContentLoading, setPublishContentLoading] =
-    useState<boolean>(false);
   const [publishContentDraft, setPublishContentDraft] =
     useState<RootfsContentDraft>(() => emptyRootfsContentDraft());
   const [publishContentPicker, setPublishContentPicker] =
@@ -567,76 +563,6 @@ export default function RootFilesystemImage({
     setOpen(true);
   }
 
-  async function loadRootfsContentManifestFromProject(
-    fallback?: RootfsContentManifest,
-  ): Promise<void> {
-    setPublishContentDraft(rootfsContentManifestToDraft(fallback));
-    if (!actions?.fs) return;
-    setPublishContentLoading(true);
-    try {
-      const raw = await actions
-        .fs()
-        .readFile(ROOTFS_CONTENT_MANIFEST_PATH, "utf8");
-      const parsed = JSON.parse(`${raw}`);
-      const result = normalizeRootfsContentManifest(parsed);
-      if (result.content) {
-        setPublishContentDraft(rootfsContentManifestToDraft(result.content));
-      } else {
-        setPublishContentDraft(emptyRootfsContentDraft());
-      }
-      if (result.warnings.length > 0) {
-        message.warning(
-          "Loaded RootFS discovery manifest with validation warnings.",
-        );
-      }
-    } catch (err) {
-      const code = (err as any)?.code;
-      if (
-        code !== "ENOENT" &&
-        !`${err}`.includes("ENOENT") &&
-        !`${err}`.includes("no such file")
-      ) {
-        message.warning(`Unable to load RootFS discovery manifest: ${err}`);
-      }
-    } finally {
-      setPublishContentLoading(false);
-    }
-  }
-
-  async function writeRootfsContentManifestToProject(): Promise<{
-    content?: RootfsContentManifest;
-    warnings: ReturnType<typeof normalizeRootfsContentManifest>["warnings"];
-  }> {
-    if (!actions?.fs) {
-      throw Error("project filesystem is not available");
-    }
-    const result = normalizeRootfsContentManifest(publishContentInput);
-    await actions.fs().mkdir("/.cocalc", { recursive: true } as any);
-    await actions
-      .fs()
-      .writeFile(
-        ROOTFS_CONTENT_MANIFEST_PATH,
-        `${JSON.stringify(rootfsContentInputForStorage(publishContentInput), null, 2)}\n`,
-      );
-    return result;
-  }
-
-  async function saveRootfsContentManifestDraft(): Promise<void> {
-    try {
-      setPublishContentLoading(true);
-      const result = await writeRootfsContentManifestToProject();
-      if (result.warnings.length > 0) {
-        message.warning("Saved RootFS discovery manifest with warnings.");
-      } else {
-        message.success("Saved RootFS discovery manifest.");
-      }
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setPublishContentLoading(false);
-    }
-  }
-
   function openPublishDialog(opts?: {
     image?: string;
     entry?: RootfsImageEntry;
@@ -682,13 +608,7 @@ export default function RootFilesystemImage({
       prepull: currentEntry?.prepull ?? false,
       hidden: currentEntry?.hidden ?? false,
     });
-    if (defaultMode === "copy" && (opts?.copyMode ?? "project") === "project") {
-      void loadRootfsContentManifestFromProject(currentEntry?.content);
-    } else {
-      setPublishContentDraft(
-        rootfsContentManifestToDraft(currentEntry?.content),
-      );
-    }
+    setPublishContentDraft(rootfsContentManifestToDraft(currentEntry?.content));
     setPublishOpen(true);
   }
 
@@ -790,9 +710,7 @@ export default function RootFilesystemImage({
             .map((tag) => tag.trim())
             .filter(Boolean);
           const contentResult =
-            publishMode === "copy" && publishCopyMode === "project"
-              ? await writeRootfsContentManifestToProject()
-              : normalizeRootfsContentManifest(publishContentInput);
+            normalizeRootfsContentManifest(publishContentInput);
           const contentPayload = rootfsContentCatalogPayload(contentResult);
           if (publishMode === "copy" && publishCopyMode === "project") {
             setOpen(false);
@@ -846,6 +764,67 @@ export default function RootFilesystemImage({
             if (entry.image === rootfsDraft) {
               setRootfsDraftId(entry.id);
             }
+          }
+        } finally {
+          setPublishing(false);
+        }
+      });
+    } catch (err) {
+      setError(`${err}`);
+    }
+  }
+
+  async function saveRootfsDiscoveryConfig(): Promise<void> {
+    if (publishMode === "copy" && publishCopyMode === "project") {
+      message.info(
+        "Discovery config is saved into catalog metadata when you publish the live project RootFS.",
+      );
+      return;
+    }
+    try {
+      await runFreshAuthAction(async () => {
+        setPublishing(true);
+        try {
+          const tags = publishDraft.tags
+            .split(",")
+            .map((tag) => tag.trim())
+            .filter(Boolean);
+          const contentPayload = rootfsContentCatalogPayload(
+            normalizeRootfsContentManifest(publishContentInput),
+          );
+          const entry = await saveRootfsCatalogEntry({
+            image_id:
+              publishMode === "manage" && publishSourceEntry?.can_manage
+                ? publishSourceEntry.id
+                : undefined,
+            image: publishDraft.image,
+            label: publishDraft.label,
+            family: publishDraft.family.trim() || undefined,
+            version: publishDraft.version.trim() || undefined,
+            channel: publishDraft.channel.trim() || undefined,
+            supersedes_image_id:
+              publishDraft.supersedes_image_id.trim() || undefined,
+            description: publishDraft.description,
+            visibility: publishDraft.visibility,
+            tags,
+            theme: rootfsThemeFromPublishDraft(publishDraft),
+            ...contentPayload,
+            official: isAdmin ? publishDraft.official : undefined,
+            prepull: isAdmin ? publishDraft.prepull : undefined,
+            hidden: isAdmin ? publishDraft.hidden : undefined,
+          });
+          setPublishSourceEntry(entry);
+          setCatalogRefresh(Date.now());
+          if (entry.image === value) {
+            setImageId(entry.id);
+          }
+          if (entry.image === rootfsDraft) {
+            setRootfsDraftId(entry.id);
+          }
+          if (contentPayload.content_warnings.length > 0) {
+            message.warning("Saved discovery config with warnings.");
+          } else {
+            message.success("Saved discovery config.");
           }
         } finally {
           setPublishing(false);
@@ -2141,7 +2120,6 @@ export default function RootFilesystemImage({
                   children: (
                     <RootfsContentManifestBuilder
                       draft={publishContentDraft}
-                      loading={publishContentLoading}
                       onChange={setPublishContentDraft}
                       onPickDirectory={(actionIndex, field, currentPath) =>
                         setPublishContentPicker({
@@ -2150,7 +2128,11 @@ export default function RootFilesystemImage({
                           pendingPath: currentPath || "/",
                         })
                       }
-                      onSave={saveRootfsContentManifestDraft}
+                      onSave={
+                        publishMode === "copy" && publishCopyMode === "project"
+                          ? undefined
+                          : saveRootfsDiscoveryConfig
+                      }
                       previewEntry={publishContentPreviewEntry}
                       project_id={project_id}
                       validation={publishContentValidation}
@@ -2950,7 +2932,6 @@ function RootfsCatalogCard({
 
 function RootfsContentManifestBuilder({
   draft,
-  loading,
   onChange,
   onPickDirectory,
   onSave,
@@ -2959,7 +2940,6 @@ function RootfsContentManifestBuilder({
   validation,
 }: {
   draft: RootfsContentDraft;
-  loading: boolean;
   onChange: (
     value:
       | RootfsContentDraft
@@ -2970,7 +2950,7 @@ function RootfsContentManifestBuilder({
     field: "path" | "source_path",
     currentPath: string,
   ) => void;
-  onSave: () => Promise<void>;
+  onSave?: () => Promise<void>;
   previewEntry: RootfsImageEntry;
   project_id: string;
   validation: ReturnType<typeof normalizeRootfsContentManifest>;
@@ -3050,6 +3030,7 @@ function RootfsContentManifestBuilder({
   }
 
   async function save(): Promise<void> {
+    if (!onSave) return;
     setSaving(true);
     try {
       await onSave();
@@ -3061,10 +3042,9 @@ function RootfsContentManifestBuilder({
   return (
     <Space direction="vertical" size={14} style={{ width: "100%" }}>
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-        The discovery manifest adds browse, copy-to-HOME, open, and external
-        link actions, plus one-click project app launchers, to the RootFS
-        component so users can quickly find and use the files and services
-        bundled with this image.
+        The discovery config adds browse, copy-to-HOME, open, external link, and
+        one-click project app launch actions to the RootFS component so users
+        can quickly find and use the files and services bundled with this image.
       </Paragraph>
 
       <div style={{ position: "relative" }}>
@@ -3099,21 +3079,10 @@ function RootfsContentManifestBuilder({
 
       <RuntimePanel
         icon="book"
-        title="Edit discovery manifest"
-        subtitle={
-          <>
-            This writes <code>{ROOTFS_CONTENT_MANIFEST_PATH}</code>, which is
-            extracted into the RootFS catalog and public landing page.
-          </>
-        }
+        title="Edit discovery config"
+        subtitle="This saves to the RootFS catalog entry metadata. It is not written into the immutable image filesystem."
       >
         <Space direction="vertical" size={14} style={{ width: "100%" }}>
-          {loading ? (
-            <FlexCentered>
-              <Spin size="small" />
-              <span>Loading discovery manifest...</span>
-            </FlexCentered>
-          ) : null}
           <div
             style={{
               display: "grid",
@@ -3276,7 +3245,7 @@ function RootfsContentManifestBuilder({
             <Alert
               type="warning"
               showIcon
-              message="Manifest warnings"
+              message="Discovery config warnings"
               description={
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {validation.warnings.map((warning, index) => (
@@ -3291,15 +3260,19 @@ function RootfsContentManifestBuilder({
           ) : null}
 
           <Space wrap>
-            <Button
-              icon={<Icon name="save" />}
-              loading={saving || loading}
-              onClick={save}
-            >
-              Save manifest file now
-            </Button>
+            {onSave ? (
+              <Button
+                icon={<Icon name="save" />}
+                loading={saving}
+                onClick={save}
+              >
+                Save discovery config
+              </Button>
+            ) : null}
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              Publishing the live project RootFS also saves this file first.
+              {onSave
+                ? "This updates the catalog entry metadata used by the RootFS page and project RootFS panel."
+                : "This config is saved into catalog metadata when you publish the live project RootFS."}
             </Paragraph>
           </Space>
         </Space>
@@ -3464,7 +3437,7 @@ function RootfsContentActionEditor({
           />
           <Popconfirm
             title="Remove this action?"
-            description="This removes the action from the discovery manifest."
+            description="This removes the action from the discovery config."
             okText="Remove"
             okButtonProps={{ danger: true }}
             onConfirm={onRemove}
@@ -3541,14 +3514,6 @@ function RootfsContentPathInput({
   );
 }
 
-function FlexCentered({ children }: { children: ReactNode }) {
-  return (
-    <Space align="center" size="middle">
-      {children}
-    </Space>
-  );
-}
-
 function emptyRootfsContentDraft(): RootfsContentDraft {
   return {
     title: "",
@@ -3608,11 +3573,6 @@ function rootfsContentDraftToInput(draft: RootfsContentDraft): unknown {
     highlights: draft.highlights,
     actions: draft.actions.map(rootfsContentActionDraftToInput),
   };
-}
-
-function rootfsContentInputForStorage(value: unknown): unknown {
-  const result = normalizeRootfsContentManifest(value);
-  return result.content ?? { version: 1 };
 }
 
 function rootfsContentCatalogPayload(
