@@ -34,6 +34,7 @@ Terminal states:
 - `failed`
 - `interrupted`
 - `canceled`
+- `host_stopped`
 
 Non-terminal or money-risk states:
 
@@ -221,8 +222,8 @@ Suggested columns:
   - long-running operation id when available.
 - `state TEXT NOT NULL`
   - enum-like value: `queued`, `running`, `interrupting`, `completed`,
-    `failed`, `interrupted`, `canceled`, `possibly_active`, `orphaned`,
-    `unknown`.
+    `failed`, `interrupted`, `canceled`, `host_stopped`, `possibly_active`,
+    `orphaned`, `unknown`.
 - `terminal BOOLEAN NOT NULL DEFAULT false`
 - `payment_source_kind TEXT NOT NULL`
   - `user_api_key`, `account_plan`, `site_api_key`, `project_secret`,
@@ -343,8 +344,11 @@ Project-host ACP code should upsert lifecycle state at these points:
    - after a normal terminal response is committed.
 8. `failed`
    - after a terminal error is committed.
-9. `orphaned` or `possibly_active`
-   - by reconciliation when the backend cannot prove a terminal state.
+9. `host_stopped`
+   - after the owning bay has authoritative proof that the project host was
+     stopped, destroyed, or deprovisioned.
+10. `orphaned` or `possibly_active`
+    - by reconciliation when the backend cannot prove a terminal state.
 
 Important rule:
 
@@ -361,6 +365,11 @@ Recommended initial policy:
 
 - while running, update `last_heartbeat_at` every 15 seconds;
 - if no heartbeat for 2 minutes, show `possibly_active`;
+- if the owning bay's authoritative host lifecycle state says the project host
+  is stopped, destroyed, or deprovisioned, mark all non-terminal sessions on
+  that host `host_stopped` with a reason. No user process or Codex provider
+  subprocess can still be running on a host that no longer exists or is
+  definitely powered off, so this is a real terminal money-risk state;
 - if the owning bay confirms the host process/worker is gone and no matching
   live session exists, mark `orphaned` or `interrupted` depending on what can be
   proven;
@@ -376,6 +385,8 @@ Reconciliation jobs:
 - owning-bay periodic reconciliation:
   - find non-terminal rows with stale heartbeat;
   - query host liveness/session status where possible;
+  - use authoritative host lifecycle state to mark sessions `host_stopped` when
+    the host is definitely stopped or deprovisioned;
   - mark uncertain rows `possibly_active`;
   - mark proven-dead rows `orphaned` or `interrupted` with a reason.
 - admin repair:
@@ -384,6 +395,11 @@ Reconciliation jobs:
 
 Do not use a stale heartbeat alone as proof that spending stopped. It is only
 proof that visibility is degraded.
+
+Also do not confuse "temporarily unreachable" with "off". A network partition,
+Conat routing failure, or timed-out host-status RPC should keep sessions
+visible as `possibly_active`. Only authoritative host lifecycle state from the
+owning bay/host controller should produce `host_stopped`.
 
 ## Interrupt Semantics
 
