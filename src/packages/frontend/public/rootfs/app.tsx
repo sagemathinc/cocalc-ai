@@ -540,11 +540,16 @@ function RootfsNotFoundPage({
   loading: boolean;
 }) {
   useEffect(() => {
-    document.title = "Runtime image not found";
-  }, []);
+    document.title = loading
+      ? "Loading runtime image..."
+      : "Runtime image not found";
+  }, [loading]);
 
   return (
-    <PublicPage config={config} title="Runtime image not found">
+    <PublicPage
+      config={config}
+      title={loading ? "Loading runtime image..." : "Runtime image not found"}
+    >
       <PublicSection>
         {loading ? (
           <Flex align="center" gap="middle">
