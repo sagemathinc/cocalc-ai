@@ -44,6 +44,18 @@ turns.
 
 ## Prompt Backlog
 
+### Browser QA Route Registry Hardening
+
+Run the reusable public-site browser QA script against `feature-core`, `guides`,
+`conversion-spine`, and `product-details` on the rebuilt `blaec.cocalc.ai`
+preview, then audit whether the route groups and assertions should be adjusted.
+Use `PSL-2026-06-17-008` and the agentic public-site check matrix as the
+operating standard. Keep screenshots and JSON under `/tmp/cocalc-public-qa-*`,
+log findings first in `docs/public-site-cohesion-audit.md`, make only
+high-confidence script/docs/test changes, avoid broadening the script into
+subjective design approval, run validation, commit, and report residual risks
+plus the next recommended prompt.
+
 ### Reusable Browser QA Harness
 
 Convert the successful throwaway headless-Chrome public-site QA harness into a

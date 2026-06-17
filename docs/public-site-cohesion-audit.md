@@ -188,6 +188,40 @@ the entry in place as a decision record.
   reusable script only after deciding the stable assertion set and artifact
   location policy.
 
+### PSL-2026-06-17-008: Reusable Browser QA Harness
+
+- **Routes:** repo process for public-site browser QA across route groups.
+- **Trigger:** User asked to convert the successful throwaway headless-Chrome
+  public-site QA harness into a small reusable script for future public-site
+  passes.
+- **Operating standard:** Use `PSL-2026-06-17-007` and the
+  `Agentic Public-Site Check Matrix`: automate stable rendered checks, keep
+  visual rhythm as browser-QA/human review, and write generated artifacts only
+  under `/tmp/cocalc-public-qa-*`.
+- **Visitor/process question:** Can a future agent run the same public-site
+  visual QA without copying a one-off script from chat, rediscovering routes,
+  or committing screenshots by accident?
+- **Principle:** The script should check durable layout/route invariants:
+  horizontal overflow, expected section order, stale text, route-specific hrefs,
+  and selected visual classes. It should not pretend to approve subjective
+  visual design.
+- **Decision:** Add a frontend script with route groups, direct routes,
+  desktop/tablet/mobile defaults, cache-busting navigation, screenshots,
+  assertion JSON, and a `/tmp` artifact root. Add focused tests for CLI
+  discoverability, route groups, and artifact hygiene.
+- **Changed files:** `src/packages/frontend/scripts/public-site-browser-qa.mjs`,
+  `src/packages/frontend/public/__tests__/public-site-browser-qa-script.test.ts`,
+  `docs/public-site-cohesion-audit.md`,
+  `src/.agents/public-site-audit-prompt-log.md`
+- **Validation state:** Focused script/process Jest tests passed, frontend lint
+  passed, frontend typecheck passed, and the script passed a live
+  `feature-index` smoke against `https://blaec.cocalc.ai` on desktop/tablet/mobile
+  with 69 assertions and 0 failures. Smoke artifacts were written to
+  `/tmp/cocalc-public-qa-YPDUho`. No static rebuild was needed because no public
+  runtime source changed.
+- **Follow-up:** After a few more QA passes, decide whether to add the script to
+  package scripts or keep it as an explicit `node scripts/...` tool.
+
 ### Current Open Validation Tasks
 
 - [x] `PSL-2026-06-17-001` through `PSL-2026-06-17-004`: run static preview
@@ -204,6 +238,8 @@ the entry in place as a decision record.
       enter the repository.
 - [x] `PSL-2026-06-17-007`: run focused process-doc tests, update validation
       state, commit, and report the next recommended prompt.
+- [x] `PSL-2026-06-17-008`: add reusable browser-QA script, focused tests,
+      docs updates, validation, commit, and next recommended prompt.
 
 ## Agentic Public-Site Operating Model
 
@@ -343,7 +379,7 @@ feedback, so future agents can continue without losing the decision.
 - [x] Add a focused process-doc test that checks the audit doc and prompt log
       preserve the operating model, PSL references, next-prompt continuity, and
       artifact hygiene rules.
-- [ ] Convert the throwaway headless-Chrome QA harness into a reusable script
+- [x] Convert the throwaway headless-Chrome QA harness into a reusable script
       that writes screenshots and assertion JSON to `/tmp/cocalc-public-qa-*`.
       Keep it outside the normal Jest suite until its runtime and browser
       assumptions are stable.
@@ -355,6 +391,31 @@ feedback, so future agents can continue without losing the decision.
       claims, compliance language, or final public copy without human review.
 - [ ] Add a lightweight final-handoff checklist template that forces commit
       hash, validation, browser QA, residual risks, and next recommended prompt.
+
+### Current Browser QA Script
+
+Run from `src/packages/frontend`:
+
+```sh
+node scripts/public-site-browser-qa.mjs --base-url https://blaec.cocalc.ai --group feature-index
+```
+
+Useful groups:
+
+- `feature-index`: `/features`
+- `feature-core`: `/features` plus the high-traffic AI, Jupyter, terminal,
+  Linux, and teaching workflow pages
+- `feature-details`: audited feature detail pages
+- `guides`: `/guides`
+- `conversion-spine`: homepage, products, pricing, compare, support, and
+  support form
+- `product-details`: Plus, Star, Launchpad, and Rocket product pages
+
+The script writes screenshots and `results.json` only under
+`/tmp/cocalc-public-qa-*`. It checks durable rendered invariants such as
+horizontal overflow, known section order, stale text, route-specific hrefs, and
+selected visual classes. It does not approve subjective visual design; agents
+still need to inspect screenshots and log human-review residual risks.
 
 ## Conversion Spine Pass
 
