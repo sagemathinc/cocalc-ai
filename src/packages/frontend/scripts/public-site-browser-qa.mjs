@@ -269,7 +269,9 @@ const ROUTE_RULES = {
       "Keep the working tree together",
       "What stays with the paper",
       "Use computation as part of the writing process",
+      "A practical writing loop",
     ],
+    requireSelectors: [".cocalc-latex-computation-list"],
     forbidText: ["PDF build"],
   },
   "/features/sage": {

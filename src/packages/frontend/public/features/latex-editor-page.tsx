@@ -203,74 +203,25 @@ function PaperProjectContext() {
   );
 }
 
-function EvidenceFlowDiagram() {
-  const nodes = [
-    { icon: "jupyter" as const, label: "notebook", x: "7%", y: "22%" },
-    { icon: "terminal" as const, label: "script", x: "33%", y: "10%" },
-    { icon: "database" as const, label: "figure", x: "58%", y: "36%" },
-    { icon: "tex" as const, label: "paper.tex", x: "28%", y: "66%" },
-    { icon: "file-pdf" as const, label: "PDF", x: "72%", y: "68%" },
-  ];
+function ComputationWritingLoop() {
   return (
     <div
+      className="cocalc-latex-computation-list"
       style={{
-        background: "#fbfdff",
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 8,
-        minHeight: 320,
-        overflow: "hidden",
-        position: "relative",
+        borderLeft: `3px solid ${PUBLIC_COLORS.brandSubtle}`,
+        paddingLeft: 18,
       }}
     >
-      <svg
-        aria-hidden="true"
-        height="100%"
-        preserveAspectRatio="none"
-        style={{ inset: 0, position: "absolute", width: "100%" }}
-        viewBox="0 0 100 100"
-      >
-        <path
-          d="M20 31 C36 16, 45 22, 50 18 C56 22, 60 34, 66 45"
-          fill="none"
-          stroke="#8bb8ff"
-          strokeDasharray="4 4"
-          strokeWidth="1.5"
+      <Flex vertical gap={10}>
+        <Text strong>A practical writing loop</Text>
+        <BulletList
+          items={[
+            "Regenerate a table, figure, or result in the same project.",
+            "Rebuild the PDF without separating the paper from its evidence.",
+            "Let collaborators review the claim, source, and computation together.",
+          ]}
         />
-        <path
-          d="M63 48 C54 62, 47 71, 42 75"
-          fill="none"
-          stroke="#8bb8ff"
-          strokeDasharray="4 4"
-          strokeWidth="1.5"
-        />
-        <path
-          d="M48 78 C60 79, 72 79, 80 76"
-          fill="none"
-          stroke="#8bb8ff"
-          strokeDasharray="4 4"
-          strokeWidth="1.5"
-        />
-      </svg>
-      {nodes.map((node) => (
-        <Flex
-          align="center"
-          gap={8}
-          key={node.label}
-          style={{
-            background: "#fff",
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 8,
-            boxShadow: "0 10px 28px rgba(33, 49, 57, 0.08)",
-            left: node.x,
-            padding: "10px 12px",
-            position: "absolute",
-            top: node.y,
-          }}
-        >
-          <Icon name={node.icon} style={{ color: PUBLIC_COLORS.brand }} />
-          <Text strong>{node.label}</Text>
-        </Flex>
-      ))}
+      </Flex>
     </div>
   );
 }
@@ -305,7 +256,7 @@ export default function LatexEditorFeaturePage({
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 Keep the draft, bibliography, figures, notebooks, terminal
-                commands, Codex review thread, TimeTravel history, and
+                commands, AI review thread, TimeTravel history, and
                 collaborators in one durable project.
               </Paragraph>
               <Flex wrap gap={12}>
@@ -390,8 +341,8 @@ export default function LatexEditorFeaturePage({
               </Button>
             </Flex>
           </Col>
-          <Col xs={24} lg={12}>
-            <EvidenceFlowDiagram />
+          <Col xs={24} lg={10}>
+            <ComputationWritingLoop />
           </Col>
         </Row>
       </PublicSection>

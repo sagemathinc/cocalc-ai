@@ -47,6 +47,23 @@ turns.
 
 ## Prompt Backlog
 
+### Teaching Lower-Half Dogfood Pass
+
+Use `.agents/skills/public-site-landing-page/SKILL.md` and continue from
+`PSL-2026-06-17-012`, `KI-2026-06-17-A`, and
+`src/.agents/landing-page-agent-operating-audit.md`. Dogfood the same bounded
+workflow on `/features/teaching`, focusing only on the lower half of the page.
+Before editing, state the visitor question, classify the route, set a small
+change budget, and update one ledger item in
+`docs/public-site-cohesion-audit.md` with deterministic checks versus human
+judgment. Run current-preview browser QA, inspect desktop/tablet/mobile
+screenshots, then make only high-confidence changes if the final teaching
+sections still repeat the same next-step question. Preserve teaching as a
+secondary workflow destination beside the LMS, not a top-level product path or
+LMS replacement. Run focused validation, rebuild the static public bundle and
+restart the preview if source changes, rerun browser QA, commit, and report
+residual risks plus the next recommended prompt.
+
 ### Dogfood Landing Page Agent Workflow
 
 Use `.agents/skills/public-site-landing-page/SKILL.md` and continue from

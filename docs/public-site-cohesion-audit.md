@@ -148,6 +148,77 @@ the entry in place as a decision record.
   - [x] Run focused process-doc tests.
   - [x] Commit the process docs and report residual risks.
 
+### PSL-2026-06-17-012: LaTeX Feature Workflow Dogfood Pass
+
+- **Routes:** `/features/latex-editor`
+- **Linked issue:** `KI-2026-06-17-F` and `LPA-001` through `LPA-007`.
+- **Trigger:** User asked to dogfood the new Landing Page Agent workflow on one
+  concrete route after noting that the LaTeX feature page still needs careful
+  visual-density review.
+- **Route class:** feature detail.
+- **Visitor question:** Can a researcher, instructor, or technical writer use
+  CoCalc as the place where a LaTeX paper, source files, generated figures,
+  computations, review history, collaborators, and AI assistance stay together
+  without turning the page into a generic feature catalog?
+- **Current visual/design problems to verify before editing:** The page still
+  has several explanatory surfaces after the hero: a working-tree section with a
+  side list, a computation-flow visual, and a final task-fit comparison card.
+  Each can be useful, but together they risk making the route feel longer and
+  more visually busy than the decision requires, especially on tablet/mobile.
+- **Change budget:** At most one section-compression change, one CTA hierarchy
+  adjustment, and one deterministic test/QA rule update. No product-framing
+  rewrite, no new proof assets, and no broad shared feature-page changes.
+- **Human product judgment:** Whether the remaining LaTeX-specific visual
+  evidence feels clarifying or heavy; whether the neutral task-fit comparison is
+  psychologically helpful; whether AI assistance should be visible in hero copy
+  or only as a route link.
+- **Deterministic checks:** Browser QA can catch horizontal overflow, required
+  route text, forbidden stale/internal phrases, required CTA destinations, and
+  selected route-specific selectors. Jest can catch duplicate stale headings,
+  public-copy leakage, and whether the final section remains route-owned.
+- **Open sub-actions:**
+  - [x] Read the public-site skill, operating audit, prompt log, existing LaTeX
+        ledger items, route source, tests, and browser-QA rules before editing.
+  - [x] Run current-preview browser QA for `/features/latex-editor` at desktop,
+        tablet, and mobile widths.
+  - [x] Inspect screenshots manually and decide keep, omit, combine, move, or
+        redesign for each candidate lower-page component.
+  - [x] Make only high-confidence LaTeX source/test changes if the screenshots
+        confirm unnecessary density.
+  - [x] Rebuild `blaec.cocalc.ai` if public source changes.
+  - [x] Rerun focused validation and browser QA after changes.
+  - [x] Update the prompt log with the next recommended prompt before final
+        handoff.
+- **Component decision:** Keep the hero LaTeX editor mock because it answers the
+  route's primary "what is this workflow?" question. Keep the working-tree
+  context list because it explains why CoCalc differs from a paper-only editor.
+  Compress the computation-flow diagram into a quiet writing-loop list because
+  tablet/mobile screenshots showed the large diagram repeating the same
+  project-context point with too much visual weight. Keep the final task-fit
+  comparison because it answers a distinct evaluator question: when is CoCalc
+  the right writing environment?
+- **Changed files:** `src/packages/frontend/public/features/latex-editor-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`,
+  `docs/public-site-cohesion-audit.md`, and
+  `src/.agents/public-site-audit-prompt-log.md`.
+- **Validation state:** Initial browser QA against the current preview passed
+  before edits: 45 assertions, 0 failures at
+  `/tmp/cocalc-public-qa-vSNt0U`. Screenshot review identified the oversized
+  computation-flow diagram as the high-confidence density issue. Focused
+  feature and browser-QA script Jest tests passed with existing React/Ant
+  Design jsdom warnings. `node --check` for the browser-QA script passed.
+  Frontend lint passed. Frontend package typecheck passed. The full dev build
+  completed with existing MkDocs/griffe warnings from the Python API docs
+  build. The preview did not pick up the route change until
+  `pnpm -C src static:dev` rebuilt the static public bundle and
+  `pnpm -C src dev:hub:restart` restarted the hub. Post-rebuild browser QA
+  passed: 51 assertions, 0 failures at `/tmp/cocalc-public-qa-EcFnkN`.
+- **Deliberately left alone:** The final task-fit comparison, LaTeX guide links,
+  contextual support route, and product comparison CTA stayed in place because
+  they answer separate buyer/evaluator questions. The remaining ordinary text
+  length is a future copy-density judgment, not a deterministic regression.
+
 ### PSL-2026-06-17-001: Feature Index Starter Cards
 
 - **Routes:** `/features`
@@ -423,6 +494,14 @@ entry, or by explicitly recording why the issue was deliberately left alone.
       plus `src/.agents/landing-page-agent-operating-audit.md`, state the
       visitor question and change budget before source edits, and close or
       carry forward `LPA-*` issues explicitly.
+- [x] `KI-2026-06-17-G`: `/features/latex-editor` lower-page visual density.
+      Earlier passes removed repeated LaTeX recovery/collaboration panels and
+      compressed the working-tree diagram, but this route still needs one
+      dogfood pass to decide whether the computation visual and final task-fit
+      comparison are both necessary at desktop, tablet, and mobile widths.
+      Closed by `PSL-2026-06-17-012`: the computation visual was compressed,
+      and the final task-fit comparison was retained because it answers a
+      separate decision question.
 
 ## Agentic Public-Site Operating Model
 
