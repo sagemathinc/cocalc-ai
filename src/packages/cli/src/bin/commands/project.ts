@@ -114,11 +114,18 @@ export type ProjectCommandDeps = {
   projectJupyterCellsData: any;
   projectJupyterKernelData: any;
   projectJupyterRestartData: any;
+  projectJupyterInterruptData: any;
+  projectJupyterStatusData: any;
+  projectJupyterSaveData: any;
   projectJupyterSetKernelData: any;
   projectJupyterSetCellData: any;
   projectJupyterInsertCellData: any;
   projectJupyterDeleteCellsData: any;
   projectJupyterMoveCellData: any;
+  projectJupyterOutputsData: any;
+  projectJupyterClearOutputsData: any;
+  projectJupyterMetadataData: any;
+  projectJupyterTrustData: any;
   projectJupyterRunSession: any;
   projectJupyterLiveRunSession: any;
 };

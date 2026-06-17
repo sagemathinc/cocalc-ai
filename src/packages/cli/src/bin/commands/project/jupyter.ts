@@ -76,6 +76,67 @@ const PROJECT_JUPYTER_EXEC_API_DECLARATION = `declare const api: {
       path: string;
       restarted: true;
     }>;
+    interrupt(): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      interrupted: true;
+    }>;
+    status(): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      backendState: string;
+      kernelState: string;
+    }>;
+    save(): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      saved: true;
+    }>;
+    outputs(options?: {
+      cellIds?: string[];
+      cellIndices?: number[];
+      all?: boolean;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cells: Array<{
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+        output?: unknown;
+        exec_count?: unknown;
+        metadata?: unknown;
+        has_output: boolean;
+      }>;
+    }>;
+    clearOutputs(options?: {
+      cellIds?: string[];
+      cellIndices?: number[];
+      all?: boolean;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cleared: string[];
+    }>;
+    metadata(options?: {
+      cellId?: string;
+      metadata?: unknown;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      scope: "notebook" | "cell";
+      cell?: unknown;
+      metadata: unknown;
+    }>;
+    trust(options?: { trust?: boolean }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      trust: boolean | null;
+    }>;
     listCells(options?: { codeOnly?: boolean }): Promise<{
       project: { project_id: string; title: string; host_id: string | null };
       path: string;
@@ -254,6 +315,19 @@ async function resolveOptionalNotebookInput(
   return `${opts.input}`;
 }
 
+async function resolveOptionalJsonInput(
+  opts: { setJson?: string; stdin?: boolean },
+  readAllStdin: () => Promise<string>,
+): Promise<unknown | undefined> {
+  if (opts.stdin) {
+    return JSON.parse(await readAllStdin());
+  }
+  if (opts.setJson == null) {
+    return undefined;
+  }
+  return JSON.parse(`${opts.setJson}`);
+}
+
 type JupyterExecCliOptions = {
   file?: string;
   stdin?: boolean;
@@ -352,11 +426,18 @@ export function registerProjectJupyterCommands(
     projectJupyterCellsData,
     projectJupyterKernelData,
     projectJupyterRestartData,
+    projectJupyterInterruptData,
+    projectJupyterStatusData,
+    projectJupyterSaveData,
     projectJupyterSetKernelData,
     projectJupyterSetCellData,
     projectJupyterInsertCellData,
     projectJupyterDeleteCellsData,
     projectJupyterMoveCellData,
+    projectJupyterOutputsData,
+    projectJupyterClearOutputsData,
+    projectJupyterMetadataData,
+    projectJupyterTrustData,
     projectJupyterRunSession,
     projectJupyterLiveRunSession,
     durationToMs,
@@ -439,6 +520,57 @@ export function registerProjectJupyterCommands(
       async (opts: { path: string; project?: string }, command: Command) => {
         await withContext(command, "project jupyter restart", async (ctx) => {
           return await projectJupyterRestartData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("interrupt")
+    .description("interrupt the live notebook kernel")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (opts: { path: string; project?: string }, command: Command) => {
+        await withContext(command, "project jupyter interrupt", async (ctx) => {
+          return await projectJupyterInterruptData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("status")
+    .description("show live notebook kernel status")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (opts: { path: string; project?: string }, command: Command) => {
+        await withContext(command, "project jupyter status", async (ctx) => {
+          return await projectJupyterStatusData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("save")
+    .description("save the live notebook state to disk")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (opts: { path: string; project?: string }, command: Command) => {
+        await withContext(command, "project jupyter save", async (ctx) => {
+          return await projectJupyterSaveData({
             ctx,
             projectIdentifier: opts.project,
             path: normalizePath(opts.path),
@@ -618,6 +750,146 @@ export function registerProjectJupyterCommands(
     );
 
   jupyter
+    .command("outputs")
+    .description("inspect live notebook cell outputs")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--cell-id <id>", "cell id to inspect", collectString, [])
+    .option(
+      "--cell-index <n>",
+      "0-based cell index from `project jupyter cells`",
+      collectPositiveInteger,
+      [],
+    )
+    .option("--all", "include all cells; this is the default")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          cellId?: string[];
+          cellIndex?: number[];
+          all?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter outputs", async (ctx) => {
+          return await projectJupyterOutputsData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            cellIds: opts.cellId,
+            cellIndices: opts.cellIndex,
+            all: opts.all,
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("clear-output")
+    .description("clear live notebook cell outputs")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--cell-id <id>", "cell id to clear", collectString, [])
+    .option(
+      "--cell-index <n>",
+      "0-based cell index from `project jupyter cells`",
+      collectPositiveInteger,
+      [],
+    )
+    .option("--all", "clear all cells; this is the default")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          cellId?: string[];
+          cellIndex?: number[];
+          all?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "project jupyter clear-output",
+          async (ctx) => {
+            return await projectJupyterClearOutputsData({
+              ctx,
+              projectIdentifier: opts.project,
+              path: normalizePath(opts.path),
+              cellIds: opts.cellId,
+              cellIndices: opts.cellIndex,
+              all: opts.all,
+            });
+          },
+        );
+      },
+    );
+
+  jupyter
+    .command("metadata")
+    .description("show or update notebook or cell metadata")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--cell-id <id>", "target a cell instead of notebook metadata")
+    .option("--set-json <json>", "replace metadata with this JSON value")
+    .option("--stdin", "read replacement metadata JSON from stdin")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          cellId?: string;
+          setJson?: string;
+          stdin?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter metadata", async (ctx) => {
+          return await projectJupyterMetadataData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            cellId: opts.cellId,
+            metadata: await resolveOptionalJsonInput(opts, readAllStdin),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("trust")
+    .description("show or update notebook trust metadata")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--trusted", "mark the notebook trusted")
+    .option("--untrusted", "mark the notebook untrusted")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          trusted?: boolean;
+          untrusted?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter trust", async (ctx) => {
+          if (opts.trusted && opts.untrusted) {
+            throw new Error("choose at most one of --trusted or --untrusted");
+          }
+          return await projectJupyterTrustData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            trust: opts.trusted ? true : opts.untrusted ? false : undefined,
+          });
+        });
+      },
+    );
+
+  jupyter
     .command("exec [code...]")
     .description(
       "execute javascript against the ambient notebook api; provide code inline, with --file, or with --stdin",
@@ -719,6 +991,13 @@ Saved script example:
                 getKernel: notebook.getKernel.bind(notebook),
                 setKernel: notebook.setKernel.bind(notebook),
                 restart: notebook.restart.bind(notebook),
+                interrupt: notebook.interrupt.bind(notebook),
+                status: notebook.status.bind(notebook),
+                save: notebook.save.bind(notebook),
+                outputs: notebook.outputs.bind(notebook),
+                clearOutputs: notebook.clearOutputs.bind(notebook),
+                metadata: notebook.metadata.bind(notebook),
+                trust: notebook.trust.bind(notebook),
                 listCells: notebook.listCells.bind(notebook),
                 setCell: notebook.setCell.bind(notebook),
                 insertCell: notebook.insertCell.bind(notebook),
