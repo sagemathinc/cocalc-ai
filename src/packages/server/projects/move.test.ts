@@ -124,7 +124,7 @@ describe("moveProjectToHost", () => {
   const SOURCE_HOST_NAME = "Source Host";
   const DEST_HOST_NAME = "Destination Host";
   const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
-  const MOVE_SENTINEL_DIR = ".cocalc/move-sentinels";
+  const MOVE_SENTINEL_DIR = ".move-sentinels";
 
   const hasMoveSentinel = (files: Map<string, string> | undefined) =>
     !!files &&
@@ -350,7 +350,15 @@ describe("moveProjectToHost", () => {
           }),
           rm: jest.fn(async (path: string) => {
             maybeThrowNotInitialized();
-            routedFsByHost.get(currentRoutedHostId)?.delete(path);
+            const files = routedFsByHost.get(currentRoutedHostId);
+            files?.delete(path);
+            if (path.endsWith("move-sentinels")) {
+              for (const file of [...(files?.keys() ?? [])]) {
+                if (file.startsWith(`${path}/`)) {
+                  files?.delete(file);
+                }
+              }
+            }
           }),
         };
       }),
@@ -1174,7 +1182,7 @@ describe("moveProjectToHost", () => {
     );
   });
 
-  it("fails and preserves the source when destination sentinel verification fails", async () => {
+  it("fails but preserves the started destination when destination sentinel verification fails", async () => {
     process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS = "25";
     process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS = "5";
     const consts = await import("@cocalc/util/consts");
@@ -1290,18 +1298,13 @@ describe("moveProjectToHost", () => {
       delete process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS;
     }
 
+    expect(savePlacementMock).toHaveBeenCalledTimes(1);
     expect(savePlacementMock).toHaveBeenNthCalledWith(1, PROJECT_ID, {
       host_id: DEST_HOST_ID,
     });
-    expect(savePlacementMock).toHaveBeenNthCalledWith(2, PROJECT_ID, {
-      host_id: SOURCE_HOST_ID,
-    });
-    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
-      project_id: PROJECT_ID,
-      host_id: DEST_HOST_ID,
-    });
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
     expect(purgeProjectBackupsForRepoMock).not.toHaveBeenCalled();
-    expect(hasMoveSentinel(routedFsByHost.get(SOURCE_HOST_ID))).toBe(false);
+    expect(hasMoveSentinel(routedFsByHost.get(DEST_HOST_ID))).toBe(false);
   });
 
   it("fails sentinel verification cleanly if the destination read hangs", async () => {
@@ -1416,9 +1419,8 @@ describe("moveProjectToHost", () => {
     expect(savePlacementMock).toHaveBeenNthCalledWith(1, PROJECT_ID, {
       host_id: DEST_HOST_ID,
     });
-    expect(savePlacementMock).toHaveBeenNthCalledWith(2, PROJECT_ID, {
-      host_id: SOURCE_HOST_ID,
-    });
+    expect(savePlacementMock).toHaveBeenCalledTimes(1);
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
   });
 
   it("keeps a remote current host as the source placement", async () => {

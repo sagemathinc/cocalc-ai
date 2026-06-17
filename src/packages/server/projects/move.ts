@@ -67,7 +67,7 @@ const RESTORE_BACKUP_NOT_FOUND_RETRIES = Math.max(
   Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRIES) || 3,
 );
 const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
-const MOVE_SENTINEL_DIR = ".cocalc/move-sentinels";
+const MOVE_SENTINEL_DIR = ".move-sentinels";
 const MOVE_SENTINEL_VERIFY_TIMEOUT_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS) || 30 * 1000,
@@ -113,6 +113,13 @@ class MoveCanceledError extends Error {
     super(`move canceled (${stage})`);
     this.name = "MoveCanceledError";
     this.stage = stage;
+  }
+}
+
+class MoveDestinationVerificationError extends Error {
+  constructor(err: unknown) {
+    super(`${err}`);
+    this.name = "MoveDestinationVerificationError";
   }
 }
 
@@ -407,6 +414,12 @@ async function deleteMoveSentinelBestEffort({
     await fs.rm(path, { force: true });
     if (path !== LEGACY_MOVE_SENTINEL_PATH) {
       await fs.rm(LEGACY_MOVE_SENTINEL_PATH, { force: true }).catch(() => {});
+      await fs
+        .rm(".cocalc/move-sentinels", {
+          force: true,
+          recursive: true,
+        })
+        .catch(() => {});
     }
   } catch (err) {
     log.warn("moveProjectToHost sentinel cleanup failed", {
@@ -1891,10 +1904,14 @@ export async function moveProjectToHost(
             message: "verifying restored project content on destination host",
             detail: { dest_host_id: context.dest_host_id },
           });
-          await verifyMoveSentinel({
-            project_id: context.project_id,
-            sentinel: moveSentinel,
-          });
+          try {
+            await verifyMoveSentinel({
+              project_id: context.project_id,
+              sentinel: moveSentinel,
+            });
+          } catch (err) {
+            throw new MoveDestinationVerificationError(err);
+          }
           await deleteMoveSentinelBestEffort({
             project_id: context.project_id,
             path: moveSentinel.path,
@@ -1941,6 +1958,23 @@ export async function moveProjectToHost(
         }
       } catch (err) {
         if ((err as any)?.code === MOVE_CANCELED_CODE) {
+          throw err;
+        }
+        if (err instanceof MoveDestinationVerificationError) {
+          log.warn(
+            "moveProjectToHost destination verification failed after destination start",
+            {
+              project_id: context.project_id,
+              dest_host_id: context.dest_host_id,
+              err,
+            },
+          );
+          progress({
+            step: "verify-dest",
+            message:
+              "destination verification failed after workspace started; preserving destination placement",
+            detail: { dest_host_id: context.dest_host_id, error: `${err}` },
+          });
           throw err;
         }
         log.warn("moveProjectToHost start failed after placement update", {
