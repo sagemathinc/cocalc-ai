@@ -8,7 +8,7 @@ import { useMemo } from "react";
 import type { MouseEvent } from "react";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Tooltip } from "@cocalc/frontend/components";
+import { Icon, isIconName, Tooltip } from "@cocalc/frontend/components";
 import {
   ProjectContext,
   type ProjectContextState,
@@ -89,6 +89,30 @@ function findRootfsEntry({
   return images.find((entry) => entry.image === image);
 }
 
+function RootfsThemeIcon({ entry }: { entry?: RootfsImageEntry }) {
+  const icon = isIconName(entry?.theme?.icon) ? entry.theme.icon : "docker";
+  const background = entry?.theme?.accent_color?.trim();
+  const color = entry?.theme?.color?.trim();
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        alignItems: "center",
+        background: background || "transparent",
+        borderRadius: 5,
+        color: color || COLORS.GRAY,
+        display: "inline-flex",
+        flex: "0 0 auto",
+        height: 18,
+        justifyContent: "center",
+        width: 18,
+      }}
+    >
+      <Icon name={icon} style={{ fontSize: 13 }} />
+    </span>
+  );
+}
+
 export function ProjectRootfsBadge({
   rootfsImage,
   rootfsImageId,
@@ -164,6 +188,7 @@ export function ProjectRootfsBadge({
           minWidth: 0,
         }}
       >
+        <RootfsThemeIcon entry={entry} />
         <Text
           strong
           ellipsis
