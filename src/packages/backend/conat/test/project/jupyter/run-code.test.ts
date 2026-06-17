@@ -621,6 +621,7 @@ describe("disconnect still flushes final live replay batches", () => {
     const store = await openJupyterLiveRunStore({
       client: client1,
       project_id,
+      path,
     });
     await wait({
       until: () => {
@@ -738,6 +739,7 @@ describe("coalesces adjacent stream messages before applying limit", () => {
     const store = await openJupyterLiveRunStore({
       client: client1,
       project_id,
+      path: path2,
     });
     const snapshot = Object.values(store.getAll()).find(
       (x) => x.path === path2 && x.run_id === run_id,

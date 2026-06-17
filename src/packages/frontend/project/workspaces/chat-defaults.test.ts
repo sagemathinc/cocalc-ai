@@ -77,4 +77,19 @@ describe("defaultWorkingDirectoryForChat", () => {
       }),
     ).toBe("/home/user/project/repo");
   });
+
+  it("uses the containing directory for ordinary files inside a workspace", () => {
+    const chatPath = "/home/user/.local/share/cocalc/workspaces/acct/ws-1.chat";
+    expect(
+      workingDirectoryForProjectFile(
+        "/home/user/project/repo/notebooks/demo.ipynb",
+        {
+          projectHomeDirectory: "/home/user",
+          workspaceRecords: [
+            workspaceRecord("/home/user/project/repo", "ws-1", chatPath),
+          ],
+        },
+      ),
+    ).toBe("/home/user/project/repo/notebooks");
+  });
 });

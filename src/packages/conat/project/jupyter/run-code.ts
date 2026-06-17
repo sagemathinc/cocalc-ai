@@ -433,7 +433,11 @@ async function handleRequest({
     project_id,
     path: liveRunPath,
   });
-  const liveRunStore = await openJupyterLiveRunStore({ client, project_id });
+  const liveRunStore = await openJupyterLiveRunStore({
+    client,
+    project_id,
+    path: liveRunPath,
+  });
   const liveRunKey = jupyterLiveRunKey({ path: liveRunPath, run_id });
   const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
@@ -687,6 +691,8 @@ async function handleRequest({
         liveRunStore.delete(liveRunKey);
       } catch {
         // ignore cleanup failures for ephemeral replay state
+      } finally {
+        liveRunStore.close();
       }
     }, LIVE_RUN_REPLAY_GRACE_MS);
     cleanupTimer.unref?.();

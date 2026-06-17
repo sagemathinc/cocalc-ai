@@ -528,6 +528,7 @@ export class JupyterActions extends JupyterActions0 {
       this.liveRunStore = await openJupyterLiveRunStore({
         client: webapp_client.conat_client,
         project_id: this.project_id,
+        path: this.liveRunPath,
       });
     }
     return this.liveRunStore;
@@ -1498,9 +1499,7 @@ export class JupyterActions extends JupyterActions0 {
         clearTimeout(this.kernelStatusRefreshTimeout);
         this.kernelStatusRefreshTimeout = undefined;
       }
-      // The live-run store is cached per project and can be shared by other
-      // open notebooks. Closing it here can leave another notebook polling a
-      // closed DKV and break live Jupyter output replay.
+      this.liveRunStore?.close?.();
       this.liveRunStore = undefined;
       this.liveRunContexts.clear();
       this.liveRunSeenSeq.clear();
