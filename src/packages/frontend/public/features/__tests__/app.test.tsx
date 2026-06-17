@@ -143,11 +143,12 @@ describe("PublicFeaturesApp", () => {
       slug: "sage",
     },
     {
-      marker: "Use R when statistics is part of a larger workflow.",
+      marker: "Use R for statistics and reproducible reporting.",
       slug: "r-statistical-software",
     },
     {
-      marker: "Use Julia in notebooks, terminals, Pluto, and source files.",
+      marker:
+        "Use Julia with reactive Pluto notebooks, Jupyter, and terminals.",
       slug: "julia",
     },
     {
@@ -991,13 +992,13 @@ describe("PublicFeaturesApp", () => {
     {
       contextLabels: ["Project context"],
       slug: "julia",
-      title: "Use Julia in notebooks, terminals, Pluto, and source files.",
+      title: "Use Julia with reactive Pluto notebooks, Jupyter, and terminals.",
       section: "Julia works best in CoCalc when the project matters.",
     },
     {
       contextLabels: ["Project context"],
       slug: "r-statistical-software",
-      title: "Use R when statistics is part of a larger workflow.",
+      title: "Use R for statistics and reproducible reporting.",
       section: "Keep R close to the rest of the analysis.",
     },
     {

@@ -163,7 +163,7 @@ export default function JuliaFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Use Julia in notebooks, terminals, Pluto, and source files.
+                Use Julia with reactive Pluto notebooks, Jupyter, and terminals.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
                 CoCalc supports Julia as part of the same collaborative project

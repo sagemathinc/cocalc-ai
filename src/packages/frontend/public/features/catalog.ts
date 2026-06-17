@@ -143,7 +143,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "julia",
     title: "Julia",
-    tagline: "Use Julia in notebooks, terminals, Pluto, and source files.",
+    tagline: "Use Julia with reactive Pluto notebooks, Jupyter, and terminals.",
     summary:
       "Run Julia with Jupyter notebooks, Pluto, package environments, source files, terminals, and courses.",
     image: "/public/features/julia-jupyter.png",

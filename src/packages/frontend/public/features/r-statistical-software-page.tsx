@@ -164,7 +164,7 @@ export default function RStatisticalSoftwareFeaturePage({
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
               <Title level={2} style={{ margin: 0 }}>
-                Use R when statistics is part of a larger workflow.
+                Use R for statistics and reproducible reporting.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
                 CoCalc supports R through Jupyter notebooks, terminals, scripts,
