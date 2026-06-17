@@ -113,6 +113,7 @@ export type ProjectCommandDeps = {
   resolveProjectProjectApi: any;
   projectJupyterCellsData: any;
   projectJupyterKernelData: any;
+  projectJupyterRestartData: any;
   projectJupyterSetKernelData: any;
   projectJupyterSetCellData: any;
   projectJupyterInsertCellData: any;

@@ -79,6 +79,13 @@ export type ProjectJupyterKernelResult = {
   kernels: KernelSpec[];
 };
 
+export type ProjectJupyterRestartResult = {
+  project_id: string;
+  project_title: string;
+  path: string;
+  restarted: true;
+};
+
 export type ProjectJupyterRunSession = {
   project_id: string;
   project_title: string;
@@ -653,6 +660,37 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       kernel,
       kernel_spec: kernelSpec,
       kernels,
+    };
+  }
+
+  async function projectJupyterRestartData({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+  }): Promise<ProjectJupyterRestartResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    const api = projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter;
+    await api.stop(normalizedPath);
+    await api.start(normalizedPath);
+    return {
+      project_id: project.project_id,
+      project_title: project.title,
+      path: normalizedPath,
+      restarted: true,
     };
   }
 
@@ -1376,6 +1414,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     close,
     projectJupyterCellsData,
     projectJupyterKernelData,
+    projectJupyterRestartData,
     projectJupyterSetKernelData,
     projectJupyterSetCellData,
     projectJupyterInsertCellData,

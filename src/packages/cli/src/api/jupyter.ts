@@ -6,6 +6,7 @@ import {
   createProjectJupyterOps,
   type NotebookCellInfo,
   type ProjectJupyterKernelResult,
+  type ProjectJupyterRestartResult,
   type ProjectJupyterRunSession,
 } from "../bin/core/project-jupyter";
 
@@ -59,6 +60,12 @@ export interface BoundJupyterDocument<Project extends ProjectIdentity> {
     kernel: string | null;
     kernelSpec: ProjectJupyterKernelResult["kernel_spec"];
     kernels: ProjectJupyterKernelResult["kernels"];
+  }>;
+
+  restart(): Promise<{
+    project: Project;
+    path: string;
+    restarted: ProjectJupyterRestartResult["restarted"];
   }>;
 
   setCell(options: {
@@ -216,6 +223,25 @@ export function createJupyterApi<Ctx, Project extends ProjectIdentity>({
             kernel: result.kernel,
             kernelSpec: result.kernel_spec,
             kernels: result.kernels,
+          };
+        },
+        async restart() {
+          const result = await ops.projectJupyterRestartData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            restarted: result.restarted,
           };
         },
         async setCell(options) {

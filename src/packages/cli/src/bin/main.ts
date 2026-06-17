@@ -1930,6 +1930,7 @@ const {
 const {
   projectJupyterCellsData,
   projectJupyterKernelData,
+  projectJupyterRestartData,
   projectJupyterSetKernelData,
   projectJupyterSetCellData,
   projectJupyterInsertCellData,
@@ -2491,6 +2492,7 @@ const projectCommandDeps = {
   projectChatActivityData,
   projectJupyterCellsData,
   projectJupyterKernelData,
+  projectJupyterRestartData,
   projectJupyterSetKernelData,
   projectJupyterSetCellData,
   projectJupyterInsertCellData,

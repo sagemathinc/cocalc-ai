@@ -71,6 +71,11 @@ const PROJECT_JUPYTER_EXEC_API_DECLARATION = `declare const api: {
         argv: string[];
       }>;
     }>;
+    restart(): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      restarted: true;
+    }>;
     listCells(options?: { codeOnly?: boolean }): Promise<{
       project: { project_id: string; title: string; host_id: string | null };
       path: string;
@@ -346,6 +351,7 @@ export function registerProjectJupyterCommands(
     withContext,
     projectJupyterCellsData,
     projectJupyterKernelData,
+    projectJupyterRestartData,
     projectJupyterSetKernelData,
     projectJupyterSetCellData,
     projectJupyterInsertCellData,
@@ -419,6 +425,23 @@ export function registerProjectJupyterCommands(
             projectIdentifier: opts.project,
             path: normalizePath(opts.path),
             noCache: opts.noCache,
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("restart")
+    .description("restart the live notebook kernel")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (opts: { path: string; project?: string }, command: Command) => {
+        await withContext(command, "project jupyter restart", async (ctx) => {
+          return await projectJupyterRestartData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
           });
         });
       },
@@ -695,6 +718,7 @@ Saved script example:
                 path: bindingPath,
                 getKernel: notebook.getKernel.bind(notebook),
                 setKernel: notebook.setKernel.bind(notebook),
+                restart: notebook.restart.bind(notebook),
                 listCells: notebook.listCells.bind(notebook),
                 setCell: notebook.setCell.bind(notebook),
                 insertCell: notebook.insertCell.bind(notebook),
