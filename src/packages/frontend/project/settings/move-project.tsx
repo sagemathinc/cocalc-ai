@@ -1,9 +1,5 @@
 import { Button, Descriptions, Modal, Spin, Tag, Typography } from "antd";
-import {
-  useActions,
-  useProjectMapField,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { useActions, useProjectMapField } from "@cocalc/frontend/app-framework";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
@@ -22,6 +18,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
+import { loadProjectMoveSizeBytes } from "./move-project-size";
 
 interface Props {
   project_id: string;
@@ -49,12 +46,9 @@ export default function MoveProject({
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const actions = useActions("projects");
   const currentHostId = useProjectMapField<string>(project_id, "host_id");
-  const projectStatus = useTypedRedux({ project_id }, "status");
-  const diskMB = projectStatus?.get?.("disk_MB");
-  const projectSizeBytes =
-    typeof diskMB === "number" && Number.isFinite(diskMB) && diskMB >= 0
-      ? diskMB * 1_000_000
-      : undefined;
+  const [projectSizeBytes, setProjectSizeBytes] = useState<
+    number | undefined
+  >();
   const hostInfo = useHostInfo(currentHostId);
   const url = hostInfo?.get?.("connect_url");
   const hostName =
@@ -111,6 +105,11 @@ export default function MoveProject({
     try {
       setMoving(true);
       await refreshProjectRegion();
+      setProjectSizeBytes(
+        await loadProjectMoveSizeBytes({
+          project_id,
+        }),
+      );
       setPickerOpen(true);
     } catch (err) {
       setError(`${err}`);
