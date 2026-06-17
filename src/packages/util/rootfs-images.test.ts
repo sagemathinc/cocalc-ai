@@ -44,6 +44,37 @@ describe("normalizeRootfsContentManifest", () => {
           label: "Documentation",
           url: "https://example.com/docs",
         },
+        {
+          kind: "project-app",
+          label: "Launch Pluto",
+          description: "Start the bundled Pluto notebook server.",
+          app_spec: {
+            version: 1,
+            id: "pluto",
+            title: "Pluto",
+            kind: "service",
+            command: {
+              exec: "bash",
+              args: ["-lc", "pluto --host 127.0.0.1 --port ${PORT}"],
+            },
+            network: {
+              listen_host: "127.0.0.1",
+              protocol: "http",
+            },
+            proxy: {
+              base_path: "/apps/pluto",
+              strip_prefix: true,
+              websocket: true,
+              open_mode: "proxy",
+              readiness_timeout_s: 45,
+            },
+            wake: {
+              enabled: true,
+              keep_warm_s: 1800,
+              startup_timeout_s: 120,
+            },
+          },
+        },
       ],
     });
 
@@ -82,6 +113,37 @@ describe("normalizeRootfsContentManifest", () => {
           label: "Documentation",
           url: "https://example.com/docs",
         },
+        {
+          kind: "project-app",
+          label: "Launch Pluto",
+          description: "Start the bundled Pluto notebook server.",
+          app_spec: {
+            version: 1,
+            id: "pluto",
+            title: "Pluto",
+            kind: "service",
+            command: {
+              exec: "bash",
+              args: ["-lc", "pluto --host 127.0.0.1 --port ${PORT}"],
+            },
+            network: {
+              listen_host: "127.0.0.1",
+              protocol: "http",
+            },
+            proxy: {
+              base_path: "/apps/pluto",
+              strip_prefix: true,
+              websocket: true,
+              open_mode: "proxy",
+              readiness_timeout_s: 45,
+            },
+            wake: {
+              enabled: true,
+              keep_warm_s: 1800,
+              startup_timeout_s: 120,
+            },
+          },
+        },
       ],
     });
   });
@@ -112,6 +174,14 @@ describe("normalizeRootfsContentManifest", () => {
           kind: "unknown",
           label: "Future action",
         },
+        {
+          kind: "project-app",
+          label: "Bad app",
+          app_spec: {
+            id: "../bad",
+            kind: "service",
+          },
+        },
       ],
     });
 
@@ -126,6 +196,7 @@ describe("normalizeRootfsContentManifest", () => {
       "invalid-target-path",
       "invalid-url",
       "invalid-action-kind",
+      "invalid-app-spec-id",
     ]);
   });
 

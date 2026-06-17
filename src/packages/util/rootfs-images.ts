@@ -71,7 +71,8 @@ export type RootfsContentActionKind =
   | "open"
   | "browse"
   | "copy-to-home"
-  | "external-link";
+  | "external-link"
+  | "project-app";
 
 export type RootfsContentAction = {
   kind: RootfsContentActionKind;
@@ -80,6 +81,7 @@ export type RootfsContentAction = {
   source_path?: string;
   target_path?: string;
   url?: string;
+  app_spec?: Record<string, unknown>;
   description?: string;
 };
 
@@ -649,6 +651,10 @@ function isSafeHomeTargetPath(path: string): boolean {
   return path.length > 0 && !path.split("/").includes("..");
 }
 
+function isSafeProjectAppId(id: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9._-]{0,63})$/i.test(id);
+}
+
 function normalizeHttpsUrl(
   value: unknown,
   warnings: RootfsContentValidationWarning[],
@@ -697,7 +703,8 @@ function normalizeContentAction(
     kind !== "open" &&
     kind !== "browse" &&
     kind !== "copy-to-home" &&
-    kind !== "external-link"
+    kind !== "external-link" &&
+    kind !== "project-app"
   ) {
     warning(
       warnings,
@@ -716,6 +723,39 @@ function normalizeContentAction(
   if (kind === "external-link") {
     const url = normalizeHttpsUrl(value.url, warnings, `${path}.url`);
     return url ? { kind, label, url, description } : undefined;
+  }
+  if (kind === "project-app") {
+    const app_spec = value.app_spec;
+    if (!isPlainObject(app_spec)) {
+      warning(
+        warnings,
+        "invalid-app-spec",
+        "Project app action must include an app_spec object",
+        `${path}.app_spec`,
+      );
+      return undefined;
+    }
+    const appId = trimString(app_spec.id, 64);
+    if (!appId || !isSafeProjectAppId(appId)) {
+      warning(
+        warnings,
+        "invalid-app-spec-id",
+        "Project app spec must include a valid app id",
+        `${path}.app_spec.id`,
+      );
+      return undefined;
+    }
+    const appKind = trimString(app_spec.kind, 32);
+    if (appKind && appKind !== "service" && appKind !== "static") {
+      warning(
+        warnings,
+        "invalid-app-spec-kind",
+        "Project app spec kind must be service or static",
+        `${path}.app_spec.kind`,
+      );
+      return undefined;
+    }
+    return { kind, label, app_spec, description };
   }
   if (kind === "copy-to-home") {
     const source_path = trimString(value.source_path, 2048);

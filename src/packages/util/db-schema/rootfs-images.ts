@@ -172,11 +172,11 @@ Table({
     },
     content: {
       type: "map",
-      desc: "Optional sanitized content discovery manifest for this image.",
+      desc: "Optional sanitized RootFS discovery config stored as catalog metadata.",
     },
     content_warnings: {
       type: "map",
-      desc: "Non-fatal validation warnings from the most recent content manifest ingestion.",
+      desc: "Non-fatal validation warnings from the most recent discovery config save.",
     },
     created: {
       type: "timestamp",

@@ -61,22 +61,38 @@ import {
   type AppServiceOpenMode,
 } from "./app-template-catalog";
 import {
+  buildPublicHostnameFromExposure,
+  buildPublicUrlFromExposure,
+  openProjectAppStatus,
+  type PublicAppPolicy,
+} from "./app-server-open";
+import {
   inferStaticSharingFromDirectory,
   suggestAppIdFromDirectory,
   suggestStaticDirectoryFromProjectPath,
   type StaticDirectoryInference,
   type StaticSharingSuggestionKey,
 } from "./static-sharing-inference";
-import { withProjectHostBase } from "./host-url";
 
 type AppKind = "service" | "static";
 type AppStatusFilter = "all" | "running" | "stopped" | "error" | "public";
 type AppRowAction = "expose" | "unexpose" | "audit" | "refresh";
+const APP_SERVER_PANEL_REFRESH_EVENT = "cocalc-project-apps-refresh";
 
-interface PublicAppPolicy {
-  enabled: boolean;
-  dns_domain?: string;
-  subdomain_suffix?: string;
+function notifyAppServerPanelRefresh(project_id: string, source: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent(APP_SERVER_PANEL_REFRESH_EVENT, {
+      detail: { project_id, source },
+    }),
+  );
+}
+
+function appServerPanelInstanceId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random()}`;
 }
 
 interface StartupFailureDetails {
@@ -433,47 +449,6 @@ function renderLogTailBlock({
 
 function isPublicExposure(status: ManagedAppStatus): boolean {
   return status.exposure?.mode === "public";
-}
-
-function normalizePublicSuffix(raw?: string): string {
-  const value = `${raw ?? ""}`.trim().toLowerCase();
-  return value || "app";
-}
-
-function currentPublicDnsDomain(): string | undefined {
-  if (typeof window === "undefined") return;
-  const host = `${window.location.hostname ?? ""}`.trim().toLowerCase();
-  if (!host || host === "localhost") return;
-  return host;
-}
-
-function buildPublicHostnameFromExposure(
-  status: ManagedAppStatus,
-  policy?: PublicAppPolicy,
-): string | undefined {
-  const exposure = status.exposure;
-  if (exposure?.public_hostname) return exposure.public_hostname;
-  const label = `${exposure?.random_subdomain ?? ""}`.trim().toLowerCase();
-  const dnsDomain =
-    `${policy?.dns_domain ?? ""}`.trim().toLowerCase() ||
-    currentPublicDnsDomain();
-  if (!label || !dnsDomain) return;
-  const suffix = normalizePublicSuffix(policy?.subdomain_suffix);
-  return suffix ? `${label}-${suffix}.${dnsDomain}` : `${label}.${dnsDomain}`;
-}
-
-function buildPublicUrlFromExposure(
-  status: ManagedAppStatus,
-  policy?: PublicAppPolicy,
-): string | undefined {
-  const exposure = status.exposure;
-  if (exposure?.public_url) return exposure.public_url;
-  const hostname = buildPublicHostnameFromExposure(status, policy);
-  return hostname ? `https://${hostname}` : undefined;
-}
-
-function ensureTrailingSlash(value: string): string {
-  return value.endsWith("/") ? value : `${value}/`;
 }
 
 function shellQuoteCliArg(value: string): string {
@@ -941,6 +916,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   >([]);
   const [detectingInstalledTemplates, setDetectingInstalledTemplates] =
     useState<boolean>(false);
+  const [installedTemplatesOpen, setInstalledTemplatesOpen] =
+    useState<boolean>(false);
   const [templateEntries, setTemplateEntries] = useState<
     AppTemplateCatalogEntry[]
   >([]);
@@ -989,6 +966,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   >(undefined);
   const [transferBusy, setTransferBusy] = useState<boolean>(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const instanceIdRef = useRef<string>(appServerPanelInstanceId());
   const presetSelectorContainerRef = useRef<HTMLDivElement | null>(null);
   const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
   const [presetSelectorOpen, setPresetSelectorOpen] = useState<boolean>(false);
@@ -1023,6 +1001,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     !activePresetTemplate.available
       ? activePreset
       : undefined;
+  const installedActivePreset =
+    activePreset && activePresetTemplate?.available ? activePreset : undefined;
   const installWithCodexPromptPreview = useMemo(() => {
     if (!installWithCodexTarget) return "";
     return buildInstallWithCodexPrompt({
@@ -1260,9 +1240,28 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }, [api]);
 
+  const refreshAfterMutation = useCallback(async () => {
+    await refresh();
+    notifyAppServerPanelRefresh(project_id, instanceIdRef.current);
+  }, [project_id, refresh]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail;
+      if (detail?.project_id !== project_id) return;
+      if (detail?.source === instanceIdRef.current) return;
+      void refresh();
+    };
+    window.addEventListener(APP_SERVER_PANEL_REFRESH_EVENT, handler);
+    return () => {
+      window.removeEventListener(APP_SERVER_PANEL_REFRESH_EVENT, handler);
+    };
+  }, [project_id, refresh]);
 
   const refreshMetricsForApp = useCallback(
     async (appId: string) => {
@@ -1287,7 +1286,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   useEffect(() => {
     if (detectingInstalledTemplates || installedTemplates.length > 0) return;
-    void onDetectInstalledTemplates();
+    void onDetectInstalledTemplates({ open: false });
   }, [detectingInstalledTemplates, installedTemplates.length]);
 
   function applyPreset(nextKey: string) {
@@ -1567,15 +1566,23 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }
 
-  async function resolveInstalledTemplateMap(): Promise<
+  async function detectInstalledTemplateMap(): Promise<
     Record<string, InstalledAppTemplate | undefined>
   > {
-    if (installedTemplates.length > 0) return installedTemplateMap;
     const next = await api.apps.detectInstalledTemplates();
     setInstalledTemplates(next);
     return Object.fromEntries(
       next.map((item) => [item.key, item] as const),
     ) as Record<string, InstalledAppTemplate | undefined>;
+  }
+
+  async function resolveInstalledTemplateMap({
+    force = false,
+  }: { force?: boolean } = {}): Promise<
+    Record<string, InstalledAppTemplate | undefined>
+  > {
+    if (!force && installedTemplates.length > 0) return installedTemplateMap;
+    return await detectInstalledTemplateMap();
   }
 
   async function getMissingInstallForSpec(spec: AppSpec | undefined): Promise<
@@ -1587,15 +1594,27 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   > {
     const preset = matchPresetForSpec(spec, presets);
     if (!preset || preset.kind !== "service") return;
+    const hadCachedDetection = installedTemplates.length > 0;
     const map = await resolveInstalledTemplateMap();
     const template = map[preset.key];
     if (template && template.status === "unknown") {
       return;
     }
-    if (!template?.available) {
+    if (template?.available) {
+      return;
+    }
+    if (!hadCachedDetection) {
       return { preset, template };
     }
-    return;
+    const refreshedMap = await resolveInstalledTemplateMap({ force: true });
+    const refreshedTemplate = refreshedMap[preset.key];
+    if (
+      refreshedTemplate?.available ||
+      refreshedTemplate?.status === "unknown"
+    ) {
+      return;
+    }
+    return { preset, template: refreshedTemplate ?? template };
   }
 
   function reportMissingInstall({
@@ -1627,58 +1646,17 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   }
 
   async function openStatus(status: ManagedAppStatus) {
-    const translateServiceOpenUrl = (
-      localUrl: string | undefined,
-      mode: AppServiceOpenMode,
-    ): string | undefined => {
-      if (!localUrl || mode !== "port") return localUrl;
-      if (localUrl.includes("/proxy/")) {
-        return localUrl.replace("/proxy/", "/port/");
-      }
-      return localUrl;
-    };
-
-    let url = buildPublicUrlFromExposure(status, publicAppPolicy);
-    if (!url) {
-      let spec = specById[status.id];
-      if (!spec) {
-        try {
-          spec = await api.apps.getAppSpec(status.id);
-          setSpecById((prev) => ({ ...prev, [status.id]: spec }));
-        } catch {
-          // fall back to status.url below
-        }
-      }
-      const declaredBasePath = `${spec?.proxy?.base_path ?? ""}`.trim();
-      const unmanagedBasePath =
-        status.lifecycle_mode === "unmanaged" ? `/apps/${status.id}/` : "";
-      let basePathLocal = declaredBasePath
-        ? declaredBasePath.startsWith(`/${project_id}/`) ||
-          declaredBasePath === `/${project_id}`
-          ? declaredBasePath
-          : `/${project_id}${declaredBasePath.startsWith("/") ? declaredBasePath : `/${declaredBasePath}`}`
-        : unmanagedBasePath
-          ? `/${project_id}${unmanagedBasePath}`
-          : undefined;
-      if (basePathLocal) {
-        basePathLocal = ensureTrailingSlash(basePathLocal);
-      }
-      const serviceOpenMode: AppServiceOpenMode =
-        spec?.kind === "service" && spec?.proxy?.open_mode === "port"
-          ? "port"
-          : "proxy";
-      const serviceLocal = translateServiceOpenUrl(status.url, serviceOpenMode);
-      const preferredLocal = basePathLocal || serviceLocal;
-      if (!preferredLocal) return;
-      const local =
-        withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;
-      url = await webapp_client.conat_client.addProjectHostAuthToUrl({
-        project_id,
-        url: local,
-      });
-    }
-    if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
+    await openProjectAppStatus({
+      getSpec: async (id) => {
+        const spec = await api.apps.getAppSpec(id);
+        setSpecById((prev) => ({ ...prev, [id]: spec }));
+        return spec;
+      },
+      project_id,
+      publicAppPolicy,
+      spec: specById[status.id],
+      status,
+    });
   }
 
   function buildSpec() {
@@ -1885,7 +1863,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       if (startNow && spec.kind === "service") {
         const missingInstall = await getMissingInstallForSpec(spec);
         if (missingInstall) {
-          await refresh();
+          await refreshAfterMutation();
           reportMissingInstall({
             appId: id,
             action: "start-after-save",
@@ -1899,7 +1877,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           interval: 1000,
         });
       }
-      await refresh();
+      await refreshAfterMutation();
       resetCreatorForm();
       setCreatorOpen(false);
       if (shouldOpenWhenReady && status.state === "running") {
@@ -1912,7 +1890,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           action: "start-after-save",
           err,
         });
-        await refresh();
+        await refreshAfterMutation();
       } else {
         setError(normalizeError(err));
       }
@@ -1927,7 +1905,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       const spec = buildUnmanagedSpecFromDetected(item);
       await api.apps.upsertAppSpec(spec);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1953,7 +1931,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         return;
       }
       await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       await reportStartupFailure({
         appId: id,
@@ -1971,7 +1949,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.stopApp(id);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1985,7 +1963,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.deleteApp(id);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2016,7 +1994,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           ? undefined
           : `${exposeSubdomainLabel ?? ""}`.trim() || undefined,
       });
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2031,7 +2009,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setRowAction({ appId: id, action: "unexpose" });
       setError(undefined);
       await api.apps.unexposeApp(id);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2047,7 +2025,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.refreshApp(id);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2094,12 +2072,16 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }
 
-  async function onDetectInstalledTemplates() {
+  async function onDetectInstalledTemplates({
+    open = true,
+  }: { open?: boolean } = {}) {
     try {
       setDetectingInstalledTemplates(true);
       setError(undefined);
-      const next = await api.apps.detectInstalledTemplates();
-      setInstalledTemplates(next);
+      await detectInstalledTemplateMap();
+      if (open) {
+        setInstalledTemplatesOpen(true);
+      }
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2132,7 +2114,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           await reportStartupFailure({ appId: id, action: "start", err });
         }
       }
-      await refresh();
+      await refreshAfterMutation();
     } finally {
       setSubmitting(false);
     }
@@ -2147,7 +2129,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
         await api.apps.stopApp(id);
       }
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2222,7 +2204,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       for (const spec of apps) {
         await api.apps.upsertAppSpec(spec);
       }
-      await refresh();
+      await refreshAfterMutation();
       Modal.success({
         title: `Imported ${apps.length} app${apps.length === 1 ? "" : "s"}`,
         content:
@@ -2352,7 +2334,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         );
       }
       await api.apps.upsertAppSpec(parsed);
-      await refresh();
+      await refreshAfterMutation();
       setEditSpecOpen(false);
       setEditSpecTargetId("");
       setEditSpecRaw("");
@@ -2492,6 +2474,39 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           allowAbsolutePaths
         />
       </Modal>
+      <Modal
+        open={installedTemplatesOpen}
+        title={`Installed templates (${installedTemplates.length})`}
+        footer={null}
+        onCancel={() => setInstalledTemplatesOpen(false)}
+        width={720}
+      >
+        <Paragraph style={{ color: "#666" }}>
+          These are template runtimes detected in this project. Missing
+          templates can still be configured, but may need installation before
+          they start.
+        </Paragraph>
+        <Space wrap style={{ width: "100%" }}>
+          {installedTemplates.map((item) => (
+            <Tag
+              key={item.key}
+              color={
+                item.available
+                  ? "green"
+                  : item.status === "unknown"
+                    ? "gold"
+                    : "default"
+              }
+              style={{ paddingInline: "10px", marginInlineEnd: 0 }}
+            >
+              {item.label}
+              {item.details ? (
+                <span style={{ opacity: 0.8 }}> · {item.details}</span>
+              ) : null}
+            </Tag>
+          ))}
+        </Space>
+      </Modal>
       <Card
         size="small"
         style={{ background: "#fafafa", borderColor: "#efefef" }}
@@ -2539,10 +2554,18 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               Detect running HTTP apps
             </Button>
             <Button
-              onClick={() => void onDetectInstalledTemplates()}
+              onClick={() => {
+                if (installedTemplates.length > 0) {
+                  setInstalledTemplatesOpen(true);
+                  return;
+                }
+                void onDetectInstalledTemplates();
+              }}
               loading={detectingInstalledTemplates}
             >
-              Detect installed templates
+              {installedTemplates.length > 0
+                ? `Installed templates (${installedTemplates.length})`
+                : "Detect installed templates"}
             </Button>
           </Space>
         </Space>
@@ -2646,6 +2669,18 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             {activePreset?.note ? (
               <Alert type="info" showIcon title={activePreset.note} />
             ) : null}
+            {installedActivePreset && activePresetTemplate ? (
+              <Alert
+                type="success"
+                showIcon
+                title={`${installedActivePreset.label} is installed`}
+                description={
+                  activePresetTemplate.details
+                    ? `Detected state: ${activePresetTemplate.details}`
+                    : "This runtime is available in the project."
+                }
+              />
+            ) : null}
             {unavailableActivePreset && activePresetTemplate ? (
               <Alert
                 type="warning"
@@ -2685,8 +2720,17 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         {unavailableActivePreset.installCommand}
                       </Typography.Paragraph>
                     ) : null}
-                    {canInstallWithCodex(unavailableActivePreset) ? (
-                      <div>
+                    <Space wrap>
+                      <Button
+                        size="small"
+                        loading={detectingInstalledTemplates}
+                        onClick={() =>
+                          void onDetectInstalledTemplates({ open: false })
+                        }
+                      >
+                        Recheck install
+                      </Button>
+                      {canInstallWithCodex(unavailableActivePreset) ? (
                         <Button
                           size="small"
                           onClick={() =>
@@ -2702,8 +2746,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         >
                           Install with Codex
                         </Button>
-                      </div>
-                    ) : null}
+                      ) : null}
+                    </Space>
                   </Space>
                 }
               />
@@ -3234,33 +3278,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           </Space>
         )}
       </Card>
-      {installedTemplates.length > 0 ? (
-        <Card
-          size="small"
-          title={`Installed templates (${installedTemplates.length})`}
-        >
-          <Space wrap style={{ width: "100%" }}>
-            {installedTemplates.map((item) => (
-              <Tag
-                key={item.key}
-                color={
-                  item.available
-                    ? "green"
-                    : item.status === "unknown"
-                      ? "gold"
-                      : "default"
-                }
-                style={{ paddingInline: "10px", marginInlineEnd: 0 }}
-              >
-                {item.label}
-                {item.details ? (
-                  <span style={{ opacity: 0.8 }}> · {item.details}</span>
-                ) : null}
-              </Tag>
-            ))}
-          </Space>
-        </Card>
-      ) : null}
       {detected.length > 0 ? (
         <Card
           size="small"
