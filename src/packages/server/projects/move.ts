@@ -1421,6 +1421,7 @@ export async function moveProjectToHost(
   let backupRegionCutoverResult: MoveBackupRegionCutoverResult | undefined;
   let moveSentinel: MoveSentinel | undefined;
   let finalBackupId: string | undefined;
+  let currentStage = "initializing";
   const moveLogExtraEvent = () => ({
     source_region: context.project_region,
     dest_region: context.dest_region,
@@ -1532,6 +1533,7 @@ export async function moveProjectToHost(
   };
 
   try {
+    currentStage = "validate";
     progress({
       step: "validate",
       message: "validated move request",
@@ -1543,6 +1545,7 @@ export async function moveProjectToHost(
     await checkCanceled("validate");
     const sourceAvailable = isSourceHostAvailable(context);
     if (sourceAvailable) {
+      currentStage = "write-project-move-request-log";
       await appendProjectMoveLogEntry({
         project_id: context.project_id,
         account_id: context.account_id,
@@ -1594,6 +1597,7 @@ export async function moveProjectToHost(
       });
     } else {
       if (context.provisioned !== false) {
+        currentStage = "write-move-sentinel";
         progress({
           step: "backup",
           message: "writing move verification sentinel",
@@ -1604,6 +1608,7 @@ export async function moveProjectToHost(
           op_id: opts?.op_id,
         });
       }
+      currentStage = "stop-source";
       progress({
         step: "stop-source",
         message: "stopping source project",
@@ -1634,6 +1639,7 @@ export async function moveProjectToHost(
       await checkCanceled("stop-source");
 
       if (context.provisioned === false) {
+        currentStage = "backup-skip-unprovisioned";
         progress({
           step: "backup",
           message: "project not provisioned; skipping final backup",
@@ -1646,6 +1652,7 @@ export async function moveProjectToHost(
           },
         );
       } else {
+        currentStage = "invalidate-source-backup-config";
         try {
           await invalidateProjectBackupConfigOnHost(context.project_host_id);
         } catch (err) {
@@ -1658,6 +1665,7 @@ export async function moveProjectToHost(
             },
           );
         }
+        currentStage = "backup-final";
         progress({
           step: "backup",
           message: "creating final backup (always)",
@@ -1736,6 +1744,7 @@ export async function moveProjectToHost(
       message: "updating project placement",
       detail: { dest_host_id: context.dest_host_id },
     });
+    currentStage = "placement";
     try {
       await savePlacement(context.project_id, {
         host_id: context.dest_host_id,
@@ -1755,6 +1764,7 @@ export async function moveProjectToHost(
     }
     await checkCanceled("placement");
     if (startDest) {
+      currentStage = "invalidate-destination-backup-config";
       try {
         await invalidateProjectBackupConfigOnHost(context.dest_host_id);
       } catch (err) {
@@ -1767,6 +1777,7 @@ export async function moveProjectToHost(
           },
         );
       }
+      currentStage = "start-destination";
       progress({
         step: "start-dest",
         message: "starting workspace on destination host",
@@ -2143,6 +2154,12 @@ export async function moveProjectToHost(
       await handleCancel((err as any).stage ?? "unknown");
       throw err;
     }
+    const stagedError =
+      err instanceof MoveDestinationVerificationError
+        ? err
+        : new Error(
+            `${currentStage} failed: ${err instanceof Error ? err.message : `${err}`}`,
+          );
     await appendProjectMoveLogEntry({
       project_id: context.project_id,
       account_id: context.account_id,
@@ -2166,12 +2183,12 @@ export async function moveProjectToHost(
       dest_host_id: context.dest_host_id,
       dest_host_name: context.dest_host_name,
       duration_ms: Date.now() - started_at_ms,
-      error: err instanceof Error ? err.message : `${err}`,
+      error: stagedError.message,
       op_id: opts?.op_id,
       extra_event: moveLogExtraEvent(),
       fresh: true,
     });
-    throw err;
+    throw stagedError;
   }
 }
 
