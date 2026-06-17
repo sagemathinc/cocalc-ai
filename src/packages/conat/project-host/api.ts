@@ -373,6 +373,9 @@ export interface HostControlApi {
     public_key: string;
   }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
   getBackupExecutionStatus: () => Promise<HostBackupExecutionStatus>;
+  invalidateBackupConfig: (opts?: { project_id?: string }) => Promise<{
+    ok: true;
+  }>;
   getManagedComponentStatus: () => Promise<HostManagedComponentStatus[]>;
   getInstalledRuntimeArtifacts: (
     opts?: HostInstalledRuntimeArtifactsRequest,

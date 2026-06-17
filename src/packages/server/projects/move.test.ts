@@ -24,7 +24,10 @@ let setProjectBackupRepoIdMock: jest.Mock;
 let setProjectBackupRegionMock: jest.Mock;
 let purgeProjectBackupsForRepoMock: jest.Mock;
 let conatPublishMock: jest.Mock;
+let getRoutedHostControlClientMock: jest.Mock;
+let invalidateBackupConfigMock: jest.Mock;
 let projectLogRows: any[];
+let moveCallOrder: string[];
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -60,6 +63,11 @@ jest.mock("../project-host/control", () => ({
     deleteProjectDataOnHostMock(...args),
   savePlacement: (...args: any[]) => savePlacementMock(...args),
   stopProjectOnHost: (...args: any[]) => stopProjectOnHostMock(...args),
+}));
+
+jest.mock("../project-host/client", () => ({
+  getRoutedHostControlClient: (...args: any[]) =>
+    getRoutedHostControlClientMock(...args),
 }));
 
 jest.mock("../conat/api/projects", () => ({
@@ -124,11 +132,12 @@ describe("moveProjectToHost", () => {
   const SOURCE_HOST_NAME = "Source Host";
   const DEST_HOST_NAME = "Destination Host";
   const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
-  const MOVE_SENTINEL_DIR = ".cocalc/move-sentinels";
+  const LEGACY_MOVE_SENTINEL_DIR = ".move-sentinels";
+  const MOVE_SENTINEL_PREFIX = ".move-sentinel-";
 
   const hasMoveSentinel = (files: Map<string, string> | undefined) =>
     !!files &&
-    [...files.keys()].some((path) => path.startsWith(`${MOVE_SENTINEL_DIR}/`));
+    [...files.keys()].some((path) => path.startsWith(MOVE_SENTINEL_PREFIX));
 
   let postTimeoutState: {
     host_id: string | null;
@@ -143,6 +152,7 @@ describe("moveProjectToHost", () => {
   beforeEach(() => {
     jest.resetModules();
     projectLogRows = [];
+    moveCallOrder = [];
     currentRoutedHostId = SOURCE_HOST_ID;
     const sharedFiles = new Map<string, string>();
     routedFsByHost = new Map([
@@ -233,7 +243,9 @@ describe("moveProjectToHost", () => {
     savePlacementMock = jest.fn(async (_project_id, { host_id }: any) => {
       currentRoutedHostId = host_id;
     });
-    stopProjectOnHostMock = jest.fn(async () => undefined);
+    stopProjectOnHostMock = jest.fn(async () => {
+      moveCallOrder.push("stop-source");
+    });
     startProjectLroMock = jest.fn(async () => ({
       op_id: "44444444-4444-4444-8444-444444444444",
       scope_type: "project",
@@ -325,6 +337,9 @@ describe("moveProjectToHost", () => {
           }),
           writeFile: jest.fn(async (path: string, data: any) => {
             maybeThrowNotInitialized();
+            if (path.startsWith(MOVE_SENTINEL_PREFIX)) {
+              moveCallOrder.push("write-sentinel");
+            }
             const files = routedFsByHost.get(currentRoutedHostId);
             if (!files) {
               throw new Error(`missing routed fs host ${currentRoutedHostId}`);
@@ -336,7 +351,7 @@ describe("moveProjectToHost", () => {
             if (
               hangMoveSentinelReadOnDest &&
               currentRoutedHostId === DEST_HOST_ID &&
-              path.startsWith(`${MOVE_SENTINEL_DIR}/`)
+              path.startsWith(MOVE_SENTINEL_PREFIX)
             ) {
               return await new Promise<string>(() => {});
             }
@@ -350,7 +365,15 @@ describe("moveProjectToHost", () => {
           }),
           rm: jest.fn(async (path: string) => {
             maybeThrowNotInitialized();
-            routedFsByHost.get(currentRoutedHostId)?.delete(path);
+            const files = routedFsByHost.get(currentRoutedHostId);
+            files?.delete(path);
+            if (path.endsWith(LEGACY_MOVE_SENTINEL_DIR)) {
+              for (const file of [...(files?.keys() ?? [])]) {
+                if (file.startsWith(`${path}/`)) {
+                  files?.delete(file);
+                }
+              }
+            }
           }),
         };
       }),
@@ -377,6 +400,10 @@ describe("moveProjectToHost", () => {
       deleted_index_snapshots: 1,
     }));
     conatPublishMock = jest.fn(async () => ({ bytes: 0, count: 1 }));
+    invalidateBackupConfigMock = jest.fn(async () => ({ ok: true }));
+    getRoutedHostControlClientMock = jest.fn(async () => ({
+      invalidateBackupConfig: invalidateBackupConfigMock,
+    }));
   });
 
   it("accepts a timed-out destination start wait if the project is already running on the destination host", async () => {
@@ -406,6 +433,168 @@ describe("moveProjectToHost", () => {
       host_id: DEST_HOST_ID,
     });
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("writes the move sentinel before stopping an online provisioned source", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(moveCallOrder.slice(0, 2)).toEqual([
+      "write-sentinel",
+      "stop-source",
+    ]);
+  });
+
+  it("clears stale destination data before restoring a final backup", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "55555555-5555-4555-8555-555555555555") {
+        return {
+          status: "succeeded",
+          result: {
+            id: "backup-1",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      if (op_id === "44444444-4444-4444-8444-444444444444") {
+        return { status: "succeeded" };
+      }
+      throw new Error(`unexpected op_id ${op_id}`);
+    });
+    createBackupLroMock = jest.fn(async () => {
+      moveCallOrder.push("backup");
+      return {
+        op_id: "55555555-5555-4555-8555-555555555555",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      };
+    });
+    deleteProjectDataOnHostMock = jest.fn(async () => {
+      moveCallOrder.push("clear-dest");
+    });
+    savePlacementMock = jest.fn(async (_project_id, { host_id }: any) => {
+      moveCallOrder.push("placement");
+      currentRoutedHostId = host_id;
+    });
+    startProjectLroMock = jest.fn(async () => {
+      moveCallOrder.push("start-dest");
+      return {
+        op_id: "44444444-4444-4444-8444-444444444444",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      };
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(moveCallOrder.indexOf("backup")).toBeGreaterThanOrEqual(0);
+    expect(moveCallOrder.indexOf("clear-dest")).toBeGreaterThan(
+      moveCallOrder.indexOf("backup"),
+    );
+    expect(moveCallOrder.indexOf("clear-dest")).toBeLessThan(
+      moveCallOrder.indexOf("placement"),
+    );
+    expect(moveCallOrder.indexOf("placement")).toBeLessThan(
+      moveCallOrder.indexOf("start-dest"),
+    );
   });
 
   it("retries when the source project file server is still initializing", async () => {
@@ -787,13 +976,13 @@ describe("moveProjectToHost", () => {
       project_id: PROJECT_ID,
       region: "weur",
     });
-    expect(conatPublishMock).toHaveBeenCalledWith(
-      `project-host.${DEST_HOST_ID}.backup.invalidate`,
-      null,
-      expect.objectContaining({
-        waitForInterest: true,
-      }),
-    );
+    expect(getRoutedHostControlClientMock).toHaveBeenCalledWith({
+      host_id: DEST_HOST_ID,
+      timeout: expect.any(Number),
+    });
+    expect(invalidateBackupConfigMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+    });
     expect(purgeProjectBackupsForRepoMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       backup_repo_id: "66666666-6666-4666-8666-666666666666",
@@ -1174,7 +1363,7 @@ describe("moveProjectToHost", () => {
     );
   });
 
-  it("fails and preserves the source when destination sentinel verification fails", async () => {
+  it("fails but preserves the started destination when destination sentinel verification fails", async () => {
     process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS = "25";
     process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS = "5";
     const consts = await import("@cocalc/util/consts");
@@ -1290,18 +1479,17 @@ describe("moveProjectToHost", () => {
       delete process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS;
     }
 
+    expect(savePlacementMock).toHaveBeenCalledTimes(1);
     expect(savePlacementMock).toHaveBeenNthCalledWith(1, PROJECT_ID, {
       host_id: DEST_HOST_ID,
     });
-    expect(savePlacementMock).toHaveBeenNthCalledWith(2, PROJECT_ID, {
-      host_id: SOURCE_HOST_ID,
-    });
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledTimes(1);
     expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       host_id: DEST_HOST_ID,
     });
     expect(purgeProjectBackupsForRepoMock).not.toHaveBeenCalled();
-    expect(hasMoveSentinel(routedFsByHost.get(SOURCE_HOST_ID))).toBe(false);
+    expect(hasMoveSentinel(routedFsByHost.get(DEST_HOST_ID))).toBe(false);
   });
 
   it("fails sentinel verification cleanly if the destination read hangs", async () => {
@@ -1416,8 +1604,11 @@ describe("moveProjectToHost", () => {
     expect(savePlacementMock).toHaveBeenNthCalledWith(1, PROJECT_ID, {
       host_id: DEST_HOST_ID,
     });
-    expect(savePlacementMock).toHaveBeenNthCalledWith(2, PROJECT_ID, {
-      host_id: SOURCE_HOST_ID,
+    expect(savePlacementMock).toHaveBeenCalledTimes(1);
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledTimes(1);
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      host_id: DEST_HOST_ID,
     });
   });
 

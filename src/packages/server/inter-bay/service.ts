@@ -2129,6 +2129,10 @@ async function startHostControlService(): Promise<void> {
       ).removeHostSshAuthorizedKey(remove),
     getBackupExecutionStatus: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).getBackupExecutionStatus(),
+    invalidateBackupConfig: async ({ host_id, invalidate }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).invalidateBackupConfig(invalidate),
     getManagedComponentStatus: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).getManagedComponentStatus(),
     getInstalledRuntimeArtifacts: async ({ host_id, get }) =>

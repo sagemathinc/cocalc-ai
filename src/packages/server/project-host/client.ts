@@ -88,6 +88,8 @@ export async function getRoutedHostControlClient({
         await bridge.removeHostSshAuthorizedKey({ host_id, remove }),
       getBackupExecutionStatus: async () =>
         await bridge.getBackupExecutionStatus({ host_id }),
+      invalidateBackupConfig: async (invalidate) =>
+        await bridge.invalidateBackupConfig({ host_id, invalidate }),
       getManagedComponentStatus: async () =>
         await bridge.getManagedComponentStatus({ host_id }),
       getInstalledRuntimeArtifacts: async (get) =>

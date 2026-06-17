@@ -24,7 +24,11 @@ import { setMasterStatusClient } from "./master-status";
 import { setSshpiperdPublicKey } from "./ssh/host-keys";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { updateAuthorizedKeys, updateProjectUsers } from "./hub/projects";
-import { deleteVolume, getBackupExecutionStatus } from "./file-server";
+import {
+  deleteVolume,
+  getBackupExecutionStatus,
+  invalidateBackupConfig,
+} from "./file-server";
 import { getInstalledRuntimeArtifacts, getSoftwareVersions } from "./software";
 import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
 import { upgradeSoftware } from "./upgrade";
@@ -1180,6 +1184,10 @@ export async function startMasterRegistration({
     },
     async getBackupExecutionStatus() {
       return await getBackupExecutionStatus();
+    },
+    async invalidateBackupConfig({ project_id } = {}) {
+      await invalidateBackupConfig(project_id);
+      return { ok: true };
     },
     async getManagedComponentStatus() {
       return getManagedComponentStatus();

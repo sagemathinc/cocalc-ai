@@ -22,6 +22,7 @@ import {
   R2_REGION_LABELS,
   type R2Region,
 } from "@cocalc/util/consts";
+import { human_readable_size, seconds2hm } from "@cocalc/util/misc";
 import {
   recommendProjectHosts,
   type ProjectHostRecommendation,
@@ -65,6 +66,45 @@ const SCOPE_ORDER: Record<string, number> = {
   shared: 3,
 };
 
+const SAME_BACKUP_REGION_GB_PER_MINUTE = 5;
+const CROSS_BACKUP_REGION_GB_PER_MINUTE = 1;
+const MOVE_ESTIMATE_SAFETY_FACTOR = 2;
+
+function moveEstimate({
+  bytes,
+  sourceProjectRegion,
+  selectedHostRegion,
+}: {
+  bytes?: number;
+  sourceProjectRegion?: string;
+  selectedHostRegion?: string;
+}): { duration: string; size: string; sameBackupRegion: boolean } | undefined {
+  if (
+    bytes == null ||
+    !Number.isFinite(bytes) ||
+    bytes < 0 ||
+    !sourceProjectRegion ||
+    !selectedHostRegion
+  ) {
+    return undefined;
+  }
+  const sameBackupRegion = selectedHostRegion === sourceProjectRegion;
+  const gbPerMinute = sameBackupRegion
+    ? SAME_BACKUP_REGION_GB_PER_MINUTE
+    : CROSS_BACKUP_REGION_GB_PER_MINUTE;
+  const seconds = Math.max(
+    60,
+    Math.ceil(
+      (bytes / 1_000_000_000 / gbPerMinute) * 60 * MOVE_ESTIMATE_SAFETY_FACTOR,
+    ),
+  );
+  return {
+    duration: seconds <= 90 ? "1-2 minutes" : seconds2hm(seconds),
+    size: human_readable_size(bytes),
+    sameBackupRegion,
+  };
+}
+
 function autoSelectCompare(a: Host, b: Host): number {
   const aStatus = STATUS_ORDER[a.status] ?? 99;
   const bStatus = STATUS_ORDER[b.status] ?? 99;
@@ -95,6 +135,7 @@ export function HostPickerModal({
   selectedHostId,
   regionFilter,
   sourceProjectRegion,
+  projectSizeBytes,
   lockRegion,
   showOfflineMoveWarning,
   wantsGpu,
@@ -107,6 +148,7 @@ export function HostPickerModal({
   onSelect: (host_id: string, host?: Host) => void;
   regionFilter?: string;
   sourceProjectRegion?: string;
+  projectSizeBytes?: number;
   lockRegion?: boolean;
   showOfflineMoveWarning?: boolean;
   wantsGpu?: boolean;
@@ -138,6 +180,7 @@ export function HostPickerModal({
         selectedHostId={selectedHostId}
         regionFilter={regionFilter}
         sourceProjectRegion={sourceProjectRegion}
+        projectSizeBytes={projectSizeBytes}
         lockRegion={lockRegion}
         showOfflineMoveWarning={showOfflineMoveWarning}
         wantsGpu={wantsGpu}
@@ -157,6 +200,7 @@ export function HostPickerPanel({
   selectedHostId,
   regionFilter,
   sourceProjectRegion,
+  projectSizeBytes,
   lockRegion,
   showOfflineMoveWarning,
   wantsGpu,
@@ -169,6 +213,7 @@ export function HostPickerPanel({
   onSelect: (host_id: string, host?: Host) => void;
   regionFilter?: string;
   sourceProjectRegion?: string;
+  projectSizeBytes?: number;
   lockRegion?: boolean;
   showOfflineMoveWarning?: boolean;
   wantsGpu?: boolean;
@@ -221,6 +266,11 @@ export function HostPickerPanel({
   const selectedHostRegionLabel = selectedHostRegion
     ? (R2_REGION_LABELS[selectedHostRegion] ?? selectedHostRegion)
     : undefined;
+  const selectedMoveEstimate = moveEstimate({
+    bytes: projectSizeBytes,
+    sourceProjectRegion,
+    selectedHostRegion,
+  });
 
   const filteredHosts = useMemo(() => {
     return hosts.filter((h) => {
@@ -474,6 +524,25 @@ export function HostPickerPanel({
           style={{ marginBottom: 12 }}
           title="This move will also change the project's backup region."
           description={`CoCalc will restore from the current ${sourceProjectRegionLabel} backups, create a new backup in ${selectedHostRegionLabel}, then switch the project's backup region after that backup succeeds. After the cutover, all previous backups from ${sourceProjectRegionLabel} will be discarded.`}
+        />
+      ) : null}
+      {isMove && selectedHost && selectedMoveEstimate ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title={`Estimated move time: about ${selectedMoveEstimate.duration}`}
+          description={
+            <>
+              Based on the last reported project size of{" "}
+              {selectedMoveEstimate.size}. This is a conservative estimate for{" "}
+              {selectedMoveEstimate.sameBackupRegion
+                ? "a move within the same backup region"
+                : "a move between backup regions"}
+              ; actual time can vary with file count, host load, and network
+              throughput.
+            </>
+          }
         />
       ) : null}
       {isInitialPlacement &&
