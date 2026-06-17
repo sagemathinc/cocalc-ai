@@ -35,14 +35,31 @@ user approves that exact public wording.
    lower, move to disclosure/modal, or redesign.
 7. Log findings in `docs/public-site-cohesion-audit.md` before source edits.
 8. Make only high-confidence source/test changes.
-9. Run focused tests, lint/typecheck when relevant, rebuild if public source
-   changed, and run `src/packages/frontend/scripts/public-site-browser-qa.mjs`
-   for the affected route group.
+9. Run focused tests, lint/typecheck when relevant, refresh the preview (see
+   **Preview Loop** below), and run
+   `src/packages/frontend/scripts/public-site-browser-qa.mjs` for the affected
+   route group.
 10. Store browser QA artifacts only under `/tmp/cocalc-public-qa-*`.
 11. Update the ledger and `src/.agents/public-site-audit-prompt-log.md` before
     final response.
 12. Commit completed work unless the user asked not to or the change is still
     exploratory.
+
+## Preview Loop
+
+The preview at `blaec.cocalc.ai` is served by the running hub from
+`src/packages/static/dist`. It only reflects source changes after that bundle is
+rebuilt. Do not report a public-site change as done without a refreshed preview.
+
+- **Keep a watch running** so every save auto-rebuilds the bundle. Once per
+  session, confirm it is up; if not, start it:
+  `pnpm static:watch` (from `src/`), logging to `/tmp/cocalc-static-watch.log`.
+- After editing public source, wait for `Rspack compiled successfully` in that
+  log, then verify the change at `blaec.cocalc.ai` before finishing.
+- **Fallback** (no watch running): one-shot rebuild with `pnpm static:dev`
+  (from `src/`).
+- The watch runs `clean-webpack-plugin` on (re)start, briefly clearing `dist`;
+  let the first build finish before testing the preview.
 
 ## Decision Rules
 
