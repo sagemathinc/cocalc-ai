@@ -140,6 +140,13 @@ Project-files-as-agent-context audit, 2026-06-17:
 - Treat Markdown as a project-continuity and AI-context support surface:
   README files, notes, task plans, instructions, code blocks, and collaborative
   documentation.
+- Product-context continuity follow-up: keep Markdown as the supporting
+  `/features` docs link. Product-detail pages should carry the broader shared
+  project model through compact copy about files, notebooks, terminals, chats,
+  and agent context staying with the project across operating paths.
+- Keep `/pricing` focused on buying and licensing, and keep
+  `/features/compare` focused on fit/comparison. Neither page should become a
+  file-format or project-artifact explainer.
 
 ### Candidate Public-Site Changes To Evaluate Later
 

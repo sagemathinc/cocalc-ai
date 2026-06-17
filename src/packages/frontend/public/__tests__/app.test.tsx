@@ -102,9 +102,26 @@ function expectNoProductDetailStalePhrasing() {
     /managed private cloud/i,
     /sovereign cloud/i,
     /air-gapped/i,
+    /basically an operating system/i,
+    /all open format/i,
+    /\bRootFS\b/i,
   ]) {
     expect(screen.queryByText(phrase)).toBeNull();
   }
+}
+
+function expectSharedProjectContextNote() {
+  const note = screen.getByRole("note", {
+    name: "Shared CoCalc project context",
+  });
+  expect(
+    within(note).getByText("Same project, different operating path."),
+  ).not.toBeNull();
+  expect(
+    within(note).getByText(
+      /files, notebooks, terminals, chats, and agent context still stay with the project/i,
+    ),
+  ).not.toBeNull();
 }
 
 describe("section route parsers", () => {
@@ -1136,6 +1153,7 @@ describe("PublicApp", () => {
         name: "Need local CoCalc before choosing a shared path?",
       }),
     ).not.toBeNull();
+    expectSharedProjectContextNote();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Plus positioning",
     });
@@ -1382,6 +1400,7 @@ describe("PublicApp", () => {
         name: "Need a bounded private CoCalc deployment?",
       }),
     ).not.toBeNull();
+    expectSharedProjectContextNote();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Launchpad positioning",
     });
@@ -1470,6 +1489,7 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Is one public Ubuntu VM enough?" }),
     ).not.toBeNull();
+    expectSharedProjectContextNote();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Star positioning",
     });
@@ -1513,6 +1533,7 @@ describe("PublicApp", () => {
         name: "Planning an institutional private CoCalc deployment?",
       }),
     ).not.toBeNull();
+    expectSharedProjectContextNote();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Rocket positioning",
     });

@@ -446,6 +446,28 @@ function ProductLeadSection({
   );
 }
 
+function ProductSharedProjectNote() {
+  return (
+    <div
+      aria-label="Shared CoCalc project context"
+      role="note"
+      style={{
+        background: PUBLIC_COLORS.surfaceMuted,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 8,
+        padding: "14px 18px",
+      }}
+    >
+      <Text strong>Same project, different operating path.</Text>{" "}
+      <Text>
+        The product choice changes where CoCalc runs and who operates it; files,
+        notebooks, terminals, chats, and agent context still stay with the
+        project.
+      </Text>
+    </div>
+  );
+}
+
 function ProductDetailCard({
   children,
   icon,
@@ -572,6 +594,7 @@ function CocalcRocketPage() {
         title="Planning an institutional private CoCalc deployment?"
         body="CoCalc Rocket is the broader customer-operated private-cloud path for organizations that need CoCalc to fit infrastructure, governance, procurement, and support requirements."
       />
+      <ProductSharedProjectNote />
       <ProductDetailGrid
         items={detailItems}
         label="CoCalc Rocket positioning"
@@ -660,6 +683,7 @@ function CocalcStarPage() {
         title="Is one public Ubuntu VM enough?"
         body="CoCalc Star is the path for a small shared CoCalc instance on a single public Ubuntu VM. It sits between local CoCalc Plus and customer-operated private deployment."
       />
+      <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />
       <PublicGrid columns={2}>
         <ProductDetailCard icon="star" title="Install CoCalc Star">
@@ -764,6 +788,7 @@ function CocalcLaunchpadPage() {
         title="Need a bounded private CoCalc deployment?"
         body="CoCalc Launchpad is the customer-operated private deployment path for pilots, labs, workshops, departments, and platform teams that need more control than hosted CoCalc.ai or a single-VM Star appliance."
       />
+      <ProductSharedProjectNote />
       <ProductDetailGrid
         items={detailItems}
         label="CoCalc Launchpad positioning"
@@ -877,6 +902,7 @@ function CocalcPlusPage() {
         title="Need local CoCalc before choosing a shared path?"
         body="CoCalc Plus is the local source-available runtime for one user on Linux or macOS. It is the right starting point when you want to evaluate CoCalc or work on your own machine before choosing a shared path."
       />
+      <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Plus positioning" />
       <PublicGrid columns={2}>
         <ProductDetailCard icon="laptop" title="Install CoCalc Plus locally">

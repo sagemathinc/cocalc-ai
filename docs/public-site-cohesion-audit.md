@@ -187,6 +187,17 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Keep RootFS and operating-system language out of high-level public marketing copy unless a technical-doc route is the explicit destination.
 - [x] Avoid broad "all open formats" claims until the supported scope is defined and reviewed.
 
+## Project Context Continuity Pass
+
+- [x] Audit `/features`, `/features/ai`, `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`, `/products`, `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, `/products/cocalc-rocket`, `/pricing`, and `/features/compare` for whether project files, notebooks, terminals, chats, and agent context carry from workflow discovery into product decision.
+- [x] Finding: workflow pages already convey project context through route-owned examples; adding a new "project files" feature group would create taxonomy noise and repeat the Markdown/open-format pass.
+- [x] Finding: `/pricing` should stay focused on hosted plans, site licensing, dedicated hosted compute, and quotes; adding project-context explanation there would dilute the buying task.
+- [x] Finding: `/features/compare` already explains the project-context advantage as a comparison point; do not turn it into another product-detail summary.
+- [x] Change: add one compact shared-project note to product-detail pages so visitors understand that product choice changes where CoCalc runs and who operates it, while files, notebooks, terminals, chats, and agent context still stay with the project.
+- [x] Preserve Markdown as a supporting `/features` docs link and `/features/ai` hero mention; do not add Markdown to product-detail or pricing pages.
+- [x] Add focused product-detail tests for shared project-context continuity and blocked RootFS/open-format/operating-system marketing language.
+- [x] Run focused tests, lint, browser QA, rebuild, and commit.
+
 ## Workflow To Product Decision Handoff Pass
 
 - [x] Audit `/features`, `/features/ai`, `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`, `/features/teaching`, `/products`, `/pricing`, `/features/compare`, and `/support/new` as one path from workflow fit to operating-model decision.
