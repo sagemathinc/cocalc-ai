@@ -165,6 +165,16 @@ describe("moveProjectToHost", () => {
           },
         },
       ],
+      [
+        "44444444-4444-4444-8444-444444444444",
+        {
+          op_id: "44444444-4444-4444-8444-444444444444",
+          scope_type: "project",
+          scope_id: PROJECT_ID,
+          status: "succeeded",
+          result: {},
+        },
+      ],
     ]);
     postTimeoutState = {
       host_id: DEST_HOST_ID,
@@ -249,7 +259,22 @@ describe("moveProjectToHost", () => {
       }
       throw new Error("timeout waiting for lro completion");
     });
-    getLroMock = jest.fn(async (op_id: string) => lroSummaryByOpId.get(op_id));
+    getLroMock = jest.fn(async (op_id: string) => {
+      const summary = lroSummaryByOpId.get(op_id);
+      if (summary != null) {
+        return summary;
+      }
+      if (op_id.startsWith("start-op-")) {
+        return {
+          op_id,
+          scope_type: "project",
+          scope_id: PROJECT_ID,
+          status: "succeeded",
+          result: {},
+        };
+      }
+      return undefined;
+    });
     updateLroMock = jest.fn(async ({ op_id, status, error }: any) => ({
       op_id,
       scope_type: "project",
@@ -355,21 +380,27 @@ describe("moveProjectToHost", () => {
   });
 
   it("accepts a timed-out destination start wait if the project is already running on the destination host", async () => {
-    const { moveProjectToHost } = await import("./move");
-    await expect(
-      moveProjectToHost({
-        project_id: PROJECT_ID,
-        dest_host_id: DEST_HOST_ID,
-        account_id: "account-id",
-        allow_offline: true,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(waitForLroCompletionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        timeout_ms: 2 * 60 * 60 * 1000,
-      }),
-    );
+    process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS = "1";
+    lroSummaryByOpId.set("44444444-4444-4444-8444-444444444444", {
+      op_id: "44444444-4444-4444-8444-444444444444",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "running",
+      result: {},
+    });
+    try {
+      const { moveProjectToHost } = await import("./move");
+      await expect(
+        moveProjectToHost({
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+          allow_offline: true,
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      delete process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS;
+    }
     expect(savePlacementMock).toHaveBeenCalledTimes(1);
     expect(savePlacementMock).toHaveBeenCalledWith(PROJECT_ID, {
       host_id: DEST_HOST_ID,
@@ -507,19 +538,31 @@ describe("moveProjectToHost", () => {
   });
 
   it("reverts placement and cleans destination data if the destination never reaches running", async () => {
+    process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS = "1";
     postTimeoutState = {
       host_id: DEST_HOST_ID,
       project_state: "starting",
     };
-    const { moveProjectToHost } = await import("./move");
-    await expect(
-      moveProjectToHost({
-        project_id: PROJECT_ID,
-        dest_host_id: DEST_HOST_ID,
-        account_id: "account-id",
-        allow_offline: true,
-      }),
-    ).rejects.toThrow(/destination start wait failed/);
+    lroSummaryByOpId.set("44444444-4444-4444-8444-444444444444", {
+      op_id: "44444444-4444-4444-8444-444444444444",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "running",
+      result: {},
+    });
+    try {
+      const { moveProjectToHost } = await import("./move");
+      await expect(
+        moveProjectToHost({
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+          allow_offline: true,
+        }),
+      ).rejects.toThrow(/destination start wait failed/);
+    } finally {
+      delete process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS;
+    }
 
     expect(savePlacementMock).toHaveBeenNthCalledWith(1, PROJECT_ID, {
       host_id: DEST_HOST_ID,
@@ -1831,6 +1874,20 @@ describe("moveProjectToHost", () => {
         scope_type: "project",
         scope_id: PROJECT_ID,
       });
+    lroSummaryByOpId.set("start-op-1", {
+      op_id: "start-op-1",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "failed",
+      error: "Unexpected end of JSON input",
+    });
+    lroSummaryByOpId.set("start-op-2", {
+      op_id: "start-op-2",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {},
+    });
     waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
       if (op_id === "55555555-5555-4555-8555-555555555555") {
         return {
@@ -1949,6 +2006,106 @@ describe("moveProjectToHost", () => {
     );
   });
 
+  it("continues destination start wait via db polling after child lro stream closes", async () => {
+    process.env.COCALC_MOVE_CHILD_LRO_POLL_INTERVAL_MS = "1";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    startProjectLroMock = jest.fn(async () => ({
+      op_id: "start-op-stream-closed",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+    }));
+    lroSummaryByOpId.set("start-op-stream-closed", {
+      op_id: "start-op-stream-closed",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "running",
+    });
+    let startPolls = 0;
+    getLroMock = jest.fn(async (op_id: string) => {
+      if (op_id === "start-op-stream-closed") {
+        startPolls += 1;
+        if (startPolls >= 2) {
+          return {
+            op_id,
+            scope_type: "project",
+            scope_id: PROJECT_ID,
+            status: "succeeded",
+            result: {},
+          };
+        }
+      }
+      return lroSummaryByOpId.get(op_id);
+    });
+    getLroStreamMock = jest.fn(async ({ op_id }: any) => {
+      const stream = new EventEmitter() as EventEmitter & {
+        getAll: () => any[];
+        close: () => void;
+      };
+      stream.getAll = () => [];
+      stream.close = () => {};
+      if (op_id === "start-op-stream-closed") {
+        setImmediate(() => stream.emit("closed"));
+      }
+      return stream;
+    });
+
+    try {
+      const { moveProjectToHost } = await import("./move");
+      await expect(
+        moveProjectToHost({
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      delete process.env.COCALC_MOVE_CHILD_LRO_POLL_INTERVAL_MS;
+    }
+
+    expect(startPolls).toBeGreaterThanOrEqual(2);
+    expect(savePlacementMock).toHaveBeenCalledWith(PROJECT_ID, {
+      host_id: DEST_HOST_ID,
+    });
+  });
+
   it("bubbles child backup and destination-start progress into the parent move progress", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (
@@ -2028,7 +2185,28 @@ describe("moveProjectToHost", () => {
                 summary: lroSummaryByOpId.get("backup-op-progress"),
               },
             ]
-          : [];
+          : op_id === "start-op-progress"
+            ? [
+                {
+                  type: "progress",
+                  ts: Date.now(),
+                  phase: "cache_rootfs",
+                  message: "restoring RootFS image from rustic",
+                  progress: 42,
+                  detail: { bytes_done: 42, bytes_total: 100, speed: 8 },
+                },
+                {
+                  type: "summary",
+                  summary: {
+                    op_id: "start-op-progress",
+                    scope_type: "project",
+                    scope_id: PROJECT_ID,
+                    status: "succeeded",
+                    result: {},
+                  },
+                },
+              ]
+            : [];
       stream.getAll = () => events;
       stream.close = () => {};
       return stream;
@@ -2038,37 +2216,6 @@ describe("moveProjectToHost", () => {
       scope_type: "project",
       scope_id: PROJECT_ID,
     }));
-    waitForLroCompletionMock = jest.fn(async ({ op_id, onProgress }: any) => {
-      if (op_id === "backup-op-progress") {
-        onProgress?.({
-          type: "progress",
-          ts: Date.now(),
-          phase: "backup",
-          message: "copying backup chunks",
-          progress: 37,
-          detail: { bytes_done: 37, bytes_total: 100, speed: 12 },
-        });
-        return {
-          status: "succeeded",
-          result: {
-            id: "backup-3",
-            time: new Date("2026-04-26T16:00:00.000Z"),
-          },
-        };
-      }
-      if (op_id === "start-op-progress") {
-        onProgress?.({
-          type: "progress",
-          ts: Date.now(),
-          phase: "cache_rootfs",
-          message: "restoring RootFS image from rustic",
-          progress: 42,
-          detail: { bytes_done: 42, bytes_total: 100, speed: 8 },
-        });
-        return { status: "succeeded" };
-      }
-      throw new Error(`unexpected op_id ${op_id}`);
-    });
     const progressUpdates: any[] = [];
 
     const { moveProjectToHost } = await import("./move");
@@ -2247,6 +2394,14 @@ describe("moveProjectToHost", () => {
   });
 
   it("writes project log entries for move start and failure", async () => {
+    process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS = "1";
+    lroSummaryByOpId.set("44444444-4444-4444-8444-444444444444", {
+      op_id: "44444444-4444-4444-8444-444444444444",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "running",
+      result: {},
+    });
     queryMock = jest.fn(async (sql: string) => {
       if (
         sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
@@ -2292,17 +2447,21 @@ describe("moveProjectToHost", () => {
       throw new Error(`unexpected query: ${sql}`);
     });
 
-    const { moveProjectToHost } = await import("./move");
-    await expect(
-      moveProjectToHost(
-        {
-          project_id: PROJECT_ID,
-          dest_host_id: DEST_HOST_ID,
-          account_id: "account-id",
-        },
-        { op_id: "move-op-2" },
-      ),
-    ).rejects.toThrow(/destination start wait failed/);
+    try {
+      const { moveProjectToHost } = await import("./move");
+      await expect(
+        moveProjectToHost(
+          {
+            project_id: PROJECT_ID,
+            dest_host_id: DEST_HOST_ID,
+            account_id: "account-id",
+          },
+          { op_id: "move-op-2" },
+        ),
+      ).rejects.toThrow(/destination start wait failed/);
+    } finally {
+      delete process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS;
+    }
 
     expect(projectLogRows).toEqual(
       expect.arrayContaining([

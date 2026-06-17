@@ -29,10 +29,7 @@ import { createBackup as createBackupLro } from "../conat/api/project-backups";
 import type { ManagedBackupEgressOverride } from "@cocalc/conat/files/file-server";
 import { resolveHostConnection } from "../conat/api/hosts";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
-import {
-  get as getLroStream,
-  waitForCompletion as waitForLroCompletion,
-} from "@cocalc/conat/lro/client";
+import { get as getLroStream } from "@cocalc/conat/lro/client";
 import {
   getProjectBackupAssignmentState,
   resolveProjectBackupRepoAssignment,
@@ -1088,77 +1085,6 @@ async function cancelChildLro({
   }
 }
 
-async function waitForExternalChildLroCompletion({
-  op_id,
-  scope_type,
-  scope_id,
-  client,
-  timeout_ms,
-  onProgress,
-  shouldCancel,
-  cancelStage,
-}: {
-  op_id: string;
-  scope_type: "project" | "account" | "host" | "hub";
-  scope_id?: string;
-  client: ReturnType<typeof conat>;
-  timeout_ms?: number;
-  onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
-  shouldCancel?: () => Promise<boolean>;
-  cancelStage: string;
-}): Promise<LroSummary> {
-  if (!shouldCancel) {
-    return await waitForLroCompletion({
-      op_id,
-      scope_type,
-      scope_id,
-      client,
-      timeout_ms,
-      onProgress,
-      getSummary: async () => await getLro(op_id),
-      poll_ms: CHILD_LRO_POLL_INTERVAL_MS,
-    });
-  }
-  let cancelPoll: ReturnType<typeof setInterval> | undefined;
-  const cancelPromise = new Promise<never>((_resolve, reject) => {
-    cancelPoll = setInterval(() => {
-      void (async () => {
-        try {
-          if (await shouldCancel()) {
-            await cancelChildLro({
-              op_id,
-              error: `parent move canceled during ${cancelStage}`,
-            });
-            reject(new MoveCanceledError(cancelStage));
-          }
-        } catch (err) {
-          reject(err);
-        }
-      })();
-    }, CHILD_LRO_POLL_INTERVAL_MS);
-    cancelPoll.unref?.();
-  });
-  try {
-    return await Promise.race([
-      waitForLroCompletion({
-        op_id,
-        scope_type,
-        scope_id,
-        client,
-        timeout_ms,
-        onProgress,
-        getSummary: async () => await getLro(op_id),
-        poll_ms: CHILD_LRO_POLL_INTERVAL_MS,
-      }),
-      cancelPromise,
-    ]);
-  } finally {
-    if (cancelPoll) {
-      clearInterval(cancelPoll);
-    }
-  }
-}
-
 async function performBackupRegionCutover({
   context,
   progress,
@@ -1864,11 +1790,10 @@ export async function moveProjectToHost(
             });
             let summary: LroSummary | undefined;
             try {
-              summary = await waitForExternalChildLroCompletion({
+              summary = await waitForChildLroCompletion({
                 op_id: startOp.op_id,
                 scope_type: startOp.scope_type,
                 scope_id: startOp.scope_id,
-                client: conat(),
                 timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
                 onProgress: (event) => {
                   progress({
