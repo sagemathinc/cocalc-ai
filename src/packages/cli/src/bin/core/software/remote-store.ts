@@ -343,13 +343,11 @@ export async function uploadSoftwareArtifact({
   });
   if (
     current.artifacts.some(
-      (entry) =>
-        entry.artifact_id === manifest.artifact_id ||
-        entry.tag === manifest.tag,
+      (entry) => entry.artifact_id === manifest.artifact_id,
     )
   ) {
     throw new Error(
-      `remote software artifact already exists for ${manifest.component}: ${manifest.tag}`,
+      `remote software artifact already exists for ${manifest.component}: ${manifest.artifact_id}`,
     );
   }
   const prefix = artifactPrefix(manifest);

@@ -58,6 +58,13 @@ export type NotebookCellInfo = {
   generated_id: boolean;
 };
 
+export type NotebookCellDetailInfo = NotebookCellInfo & {
+  output?: unknown;
+  exec_count?: unknown;
+  metadata?: unknown;
+  has_output: boolean;
+};
+
 export type ProjectJupyterCellsResult = {
   project_id: string;
   path: string;
@@ -77,6 +84,61 @@ export type ProjectJupyterKernelResult = {
   kernel: string | null;
   kernel_spec: KernelSpec | null;
   kernels: KernelSpec[];
+};
+
+export type ProjectJupyterRestartResult = {
+  project_id: string;
+  project_title: string;
+  path: string;
+  restarted: true;
+};
+
+export type ProjectJupyterInterruptResult = {
+  project_id: string;
+  project_title: string;
+  path: string;
+  interrupted: true;
+};
+
+export type ProjectJupyterStatusResult = {
+  project_id: string;
+  project_title: string;
+  path: string;
+  backend_state: string;
+  kernel_state: string;
+};
+
+export type ProjectJupyterSaveResult = {
+  project_id: string;
+  project_title: string;
+  path: string;
+  saved: true;
+};
+
+export type ProjectJupyterOutputsResult = {
+  project_id: string;
+  path: string;
+  cells: NotebookCellDetailInfo[];
+};
+
+export type ProjectJupyterClearOutputsResult = {
+  project_id: string;
+  path: string;
+  cleared: string[];
+};
+
+export type ProjectJupyterMetadataResult = {
+  project_id: string;
+  path: string;
+  scope: "notebook" | "cell";
+  cell?: NotebookCellDetailInfo;
+  metadata: unknown;
+};
+
+export type ProjectJupyterTrustResult = {
+  project_id: string;
+  path: string;
+  trust: boolean | null;
 };
 
 export type ProjectJupyterRunSession = {
@@ -213,6 +275,64 @@ export function mapSyncDbNotebookCells(rows: any[]): NotebookCellInfo[] {
 function getLiveNotebookCells(syncdb: any): NotebookCellInfo[] {
   const rows = toPlainValue(syncdb.get({ type: "cell" })) ?? [];
   return mapSyncDbNotebookCells(Array.isArray(rows) ? rows : []);
+}
+
+export function mapNotebookCellDetails(rows: any[]): NotebookCellDetailInfo[] {
+  return mapSyncDbNotebookCells(rows).map((cell) => {
+    const row = rows
+      .map((candidate) => toPlainValue(candidate))
+      .find((candidate) => candidate?.id === cell.id);
+    const output = row?.output;
+    return {
+      ...cell,
+      ...(output !== undefined ? { output } : {}),
+      ...(row?.exec_count !== undefined ? { exec_count: row.exec_count } : {}),
+      ...(row?.metadata !== undefined ? { metadata: row.metadata } : {}),
+      has_output: output != null,
+    };
+  });
+}
+
+function getLiveNotebookCellDetails(syncdb: any): NotebookCellDetailInfo[] {
+  const rows = toPlainValue(syncdb.get({ type: "cell" })) ?? [];
+  return mapNotebookCellDetails(Array.isArray(rows) ? rows : []);
+}
+
+export function selectNotebookCellsOptional(
+  cells: NotebookCellDetailInfo[],
+  selector: NotebookCellSelector & { all?: boolean },
+): NotebookCellDetailInfo[] {
+  if (
+    selector.all === true ||
+    ((selector.cellIds ?? []).length === 0 &&
+      (selector.cellIndices ?? []).length === 0)
+  ) {
+    return cells;
+  }
+  const cellIds = (selector.cellIds ?? [])
+    .map((value) => `${value ?? ""}`.trim())
+    .filter(Boolean);
+  const cellIndices = (selector.cellIndices ?? []).filter((value) =>
+    Number.isInteger(value),
+  );
+  const byId = new Map(cells.map((cell) => [cell.id, cell]));
+  const byIndex = new Map(cells.map((cell) => [cell.index, cell]));
+  const selected = new Set<string>();
+  for (const cellId of cellIds) {
+    const cell = byId.get(cellId);
+    if (cell == null) {
+      throw new Error(`unknown cell id '${cellId}'`);
+    }
+    selected.add(cell.id);
+  }
+  for (const cellIndex of cellIndices) {
+    const cell = byIndex.get(cellIndex);
+    if (cell == null) {
+      throw new Error(`unknown cell index '${cellIndex}'`);
+    }
+    selected.add(cell.id);
+  }
+  return cells.filter((cell) => selected.has(cell.id));
 }
 
 export function selectNotebookCells(
@@ -653,6 +773,125 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       kernel,
       kernel_spec: kernelSpec,
       kernels,
+    };
+  }
+
+  async function projectJupyterRestartData({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+  }): Promise<ProjectJupyterRestartResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    const api = projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter;
+    await api.stop(normalizedPath);
+    await api.start(normalizedPath);
+    return {
+      project_id: project.project_id,
+      project_title: project.title,
+      path: normalizedPath,
+      restarted: true,
+    };
+  }
+
+  async function projectJupyterInterruptData({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+  }): Promise<ProjectJupyterInterruptResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    await projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter.signal({ path: normalizedPath, signal: "SIGINT" });
+    return {
+      project_id: project.project_id,
+      project_title: project.title,
+      path: normalizedPath,
+      interrupted: true,
+    };
+  }
+
+  async function projectJupyterStatusData({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+  }): Promise<ProjectJupyterStatusResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    const status = await projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter.getKernelStatus({ path: normalizedPath });
+    return {
+      project_id: project.project_id,
+      project_title: project.title,
+      path: normalizedPath,
+      backend_state: `${status.backend_state}`,
+      kernel_state: `${status.kernel_state}`,
+    };
+  }
+
+  async function projectJupyterSaveData({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+  }): Promise<ProjectJupyterSaveResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    await projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter.save({ path: normalizedPath });
+    return {
+      project_id: project.project_id,
+      project_title: project.title,
+      path: normalizedPath,
+      saved: true,
     };
   }
 
@@ -1201,6 +1440,184 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     });
   }
 
+  async function projectJupyterOutputsData({
+    ctx,
+    projectIdentifier,
+    path,
+    cellIds,
+    cellIndices,
+    all,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cellIds?: string[];
+    cellIndices?: number[];
+    all?: boolean;
+    cwd?: string;
+  }): Promise<ProjectJupyterOutputsResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, syncdb, release } = await acquireProjectJupyterSession0({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+    });
+    try {
+      const cells = selectNotebookCellsOptional(
+        getLiveNotebookCellDetails(syncdb),
+        { cellIds, cellIndices, all },
+      );
+      return {
+        project_id: project.project_id,
+        path: normalizedPath,
+        cells,
+      };
+    } finally {
+      await release();
+    }
+  }
+
+  async function projectJupyterClearOutputsData({
+    ctx,
+    projectIdentifier,
+    path,
+    cellIds,
+    cellIndices,
+    all,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cellIds?: string[];
+    cellIndices?: number[];
+    all?: boolean;
+    cwd?: string;
+  }): Promise<ProjectJupyterClearOutputsResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        const cells = selectNotebookCellsOptional(
+          (await session.listCells()).map((cell, index) => ({
+            ...mapNotebookCellDetails([cell])[0],
+            index,
+          })),
+          { cellIds, cellIndices, all },
+        );
+        await session.clearCellOutputs(cells.map((cell) => cell.id));
+        const { client } = await deps.resolveProjectConatClient(
+          ctx,
+          projectIdentifier,
+          cwd,
+        );
+        await saveNotebookCellsToDisk({
+          project,
+          client,
+          path,
+          expectedCellCount: (await session.listCells()).length,
+        });
+        return {
+          project_id: project.project_id,
+          path,
+          cleared: cells.map((cell) => cell.id),
+        };
+      },
+    });
+  }
+
+  async function projectJupyterMetadataData({
+    ctx,
+    projectIdentifier,
+    path,
+    cellId,
+    metadata,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cellId?: string;
+    metadata?: unknown;
+    cwd?: string;
+  }): Promise<ProjectJupyterMetadataResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        if (cellId != null && cellId.trim() !== "") {
+          const id = cellId.trim();
+          const cell =
+            metadata === undefined
+              ? await session.getCell(id)
+              : await session.setCellMetadata(id, metadata);
+          if (cell == null) {
+            throw new Error(`Notebook cell \"${id}\" not found`);
+          }
+          const details = mapNotebookCellDetails([cell])[0];
+          return {
+            project_id: project.project_id,
+            path,
+            scope: "cell",
+            cell: details,
+            metadata: details.metadata ?? null,
+          };
+        }
+        if (metadata !== undefined) {
+          await session.setNotebookMetadata(metadata);
+        }
+        const settings = await session.getSettings();
+        return {
+          project_id: project.project_id,
+          path,
+          scope: "notebook",
+          metadata: settings?.metadata ?? null,
+        };
+      },
+    });
+  }
+
+  async function projectJupyterTrustData({
+    ctx,
+    projectIdentifier,
+    path,
+    trust,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    trust?: boolean;
+    cwd?: string;
+  }): Promise<ProjectJupyterTrustResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        if (trust !== undefined) {
+          await session.setTrust(trust);
+        }
+        const settings = await session.getSettings();
+        return {
+          project_id: project.project_id,
+          path,
+          trust: typeof settings?.trust === "boolean" ? settings.trust : null,
+        };
+      },
+    });
+  }
+
   async function projectJupyterRunSession({
     ctx,
     projectIdentifier,
@@ -1376,11 +1793,19 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     close,
     projectJupyterCellsData,
     projectJupyterKernelData,
+    projectJupyterRestartData,
+    projectJupyterInterruptData,
+    projectJupyterStatusData,
+    projectJupyterSaveData,
     projectJupyterSetKernelData,
     projectJupyterSetCellData,
     projectJupyterInsertCellData,
     projectJupyterDeleteCellsData,
     projectJupyterMoveCellData,
+    projectJupyterOutputsData,
+    projectJupyterClearOutputsData,
+    projectJupyterMetadataData,
+    projectJupyterTrustData,
     projectJupyterRunSession,
     projectJupyterLiveRunSession,
   };

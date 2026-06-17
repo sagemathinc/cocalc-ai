@@ -35,6 +35,16 @@ describe("page-routing", () => {
     expect(parsePageTarget("ssh")).toEqual({ page: "ssh" });
   });
 
+  it("parses site-license claim routes explicitly", () => {
+    const parsed = parsePageTarget("claim/site-license?token=abc");
+    expect(parsed).toEqual({
+      page: "claim",
+      kind: "site-license",
+    });
+    expect(getPageTopTab(parsed)).toBe("claim");
+    expect(getPageUrlPath(parsed)).toBe("/claim/site-license");
+  });
+
   it("parses global docs routes", () => {
     expect(parsePageTarget("app-docs")).toEqual({ page: "docs" });
     expect(parsePageTarget("app-docs/admin/users")).toEqual({

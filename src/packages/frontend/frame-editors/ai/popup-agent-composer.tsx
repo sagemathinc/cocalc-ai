@@ -13,6 +13,8 @@ interface PopupAgentComposerProps {
   cacheId: string;
   autoFocus?: boolean;
   sessionToken?: number;
+  fontSize?: number;
+  onFontSizeChange?: (delta: -1 | 1) => void;
 }
 
 export function PopupAgentComposer({
@@ -23,10 +25,13 @@ export function PopupAgentComposer({
   cacheId,
   autoFocus = false,
   sessionToken = 1,
+  fontSize,
+  onFontSizeChange,
 }: PopupAgentComposerProps) {
   return (
     <ChatInput
       on_send={onSubmit}
+      on_font_size_change={onFontSizeChange}
       onChange={(next) => onChange(next)}
       syncdb={undefined}
       date={-1}
@@ -36,6 +41,7 @@ export function PopupAgentComposer({
       placeholder={placeholder}
       cacheId={cacheId}
       sessionToken={sessionToken}
+      fontSize={fontSize}
     />
   );
 }

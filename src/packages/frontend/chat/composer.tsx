@@ -30,6 +30,7 @@ import {
   findChatComposerFocusTarget,
   refocusChatComposerInput,
 } from "./composer-focus";
+import { AcpPromptModal } from "./acp-prompt-modal";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -40,6 +41,8 @@ export interface ChatRoomComposerProps {
   composerSession: number;
   input: string;
   setInput: (value: string, sessionToken?: number) => void;
+  acpPrompt?: string;
+  setAcpPrompt?: (value: string) => void;
   on_send: (value?: string) => void;
   on_send_immediately?: (value?: string) => void;
   onIncreaseFontSize?: () => void;
@@ -70,6 +73,8 @@ export function ChatRoomComposer({
   composerSession,
   input,
   setInput,
+  acpPrompt = "",
+  setAcpPrompt,
   on_send,
   on_send_immediately,
   onIncreaseFontSize,
@@ -132,6 +137,7 @@ export function ChatRoomComposer({
     () => selectedThread?.key ?? null,
     [selectedThread?.key],
   );
+  const hasAcpPrompt = acpPrompt.trim().length > 0;
 
   const [viewportHeight, setViewportHeight] = useState<number>(() => {
     if (typeof window === "undefined") return 900;
@@ -149,6 +155,7 @@ export function ChatRoomComposer({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isInputFocused, setIsInputFocused] = useState<boolean>(false);
+  const [acpPromptModalOpen, setAcpPromptModalOpen] = useState<boolean>(false);
   const zenContainerRef = useRef<HTMLDivElement | null>(null);
   const inputContainerRef = useRef<HTMLDivElement | null>(null);
   const chatInputControlRef = useRef<ChatInputControl | null>(null);
@@ -520,6 +527,17 @@ export function ChatRoomComposer({
                 {isZenMode ? "Exit Zen" : "Zen"}
               </Button>
             </Tooltip>
+            {hasAcpPrompt ? (
+              <Tooltip title="View or edit the full prompt that will be sent to the agent">
+                <Button
+                  size="small"
+                  onClick={() => setAcpPromptModalOpen(true)}
+                  style={{ marginBottom: "5px" }}
+                >
+                  Agent Prompt
+                </Button>
+              </Tooltip>
+            ) : null}
             {hasActiveAcpTurn && isSelectedThreadAI ? (
               <Tooltip
                 title={
@@ -590,6 +608,13 @@ export function ChatRoomComposer({
           </>
         )}
       </div>
+      <AcpPromptModal
+        open={acpPromptModalOpen}
+        value={acpPrompt}
+        fontSize={fontSize}
+        onChange={(value) => setAcpPrompt?.(value)}
+        onClose={() => setAcpPromptModalOpen(false)}
+      />
     </div>
   );
 }

@@ -28,6 +28,7 @@ import { SshPage } from "@cocalc/frontend/ssh";
 import { KioskModeBanner } from "./kiosk-mode-banner";
 import { HostsPage } from "@cocalc/frontend/hosts/hosts-page";
 import { AuthPage } from "@cocalc/frontend/auth";
+import SiteLicenseClaimPage from "@cocalc/frontend/claim/site-license-page";
 import { ManagedEgressBlockedScreen } from "./managed-egress-blocked-screen";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
@@ -210,6 +211,9 @@ export const ActiveContent: React.FC = React.memo(() => {
         break;
       case "auth":
         overlay = renderLayer("auth", true, <AuthPage />);
+        break;
+      case "claim":
+        overlay = renderLayer("claim", true, <SiteLicenseClaimPage />);
         break;
       case "notifications":
         overlay = renderLayer("notifications", true, <NotificationPage />);

@@ -1621,6 +1621,7 @@ export class ConatClient extends EventEmitter {
     for (const host_id of [source_host_id, dest_host_id]) {
       if (!host_id) continue;
       this.invalidateProjectHostToken(host_id, { resetFailureState: true });
+      this.invalidateProjectHostBrowserSession(host_id);
       this.removeRoutedHubClient(host_id, {
         reason: "refresh_project_host_routing",
         details: { source_host_id, dest_host_id },
@@ -2253,6 +2254,11 @@ export class ConatClient extends EventEmitter {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
       }
+      this.reconnectCoordinator.requestResourceReconnects({
+        includeBackground: true,
+        reason: "routed_host_connected",
+        resetBackoff: true,
+      });
     });
     state.client.on("info", (info) => {
       const error = `${info?.user?.error ?? ""}`.trim();
@@ -3019,7 +3025,7 @@ export class ConatClient extends EventEmitter {
   };
 
   interruptAcp = async (request) => {
-    await acp.interruptAcp(
+    return await acp.interruptAcp(
       { account_id: this.client.account_id, ...request },
       this.conat(),
     );

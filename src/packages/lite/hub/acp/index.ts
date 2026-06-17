@@ -39,6 +39,7 @@ import type {
   AcpChatContext,
   AcpForkSessionRequest,
   AcpInterruptRequest,
+  AcpInterruptResponse,
   AcpTruncateSessionRequest,
 } from "@cocalc/conat/ai/acp/types";
 import {
@@ -8311,7 +8312,7 @@ async function uploadGeneratedImageBlobToRemoteHub({
 
 async function handleInterruptRequest(
   request: AcpInterruptRequest,
-): Promise<void> {
+): Promise<AcpInterruptResponse> {
   const project_id =
     `${request.project_id ?? request.chat?.project_id ?? ""}`.trim();
   const path = `${request.chat?.path ?? ""}`.trim();
@@ -8337,7 +8338,7 @@ async function handleInterruptRequest(
         thread_id: threadId,
       });
     }
-    return;
+    return { ok: true, state: "interrupted", threadId };
   }
   if (
     conatClient &&
@@ -8380,7 +8381,7 @@ async function handleInterruptRequest(
           path,
           thread_id: threadId,
         });
-        return;
+        return { ok: true, state: "repaired", threadId };
       }
     } catch (err) {
       logger.warn("failed to repair stuck chat turn during interrupt", {
@@ -8413,6 +8414,7 @@ async function handleInterruptRequest(
       });
     }
   }
+  return { ok: true, state: "queued", threadId };
 }
 
 async function handleForkSessionRequest(

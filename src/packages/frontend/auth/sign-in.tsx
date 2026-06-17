@@ -14,14 +14,10 @@ import {
   type SecondFactorMethod,
 } from "./api";
 import { signInWithPasskey } from "./passkeys";
-import { appUrl } from "./util";
+import { signedInRedirectUrl } from "./util";
 
 interface SignInProps {
   onNavigate: (view: AuthView) => void;
-}
-
-function signedInRedirectUrl(): string {
-  return appUrl("projects");
 }
 
 export default function SignInForm({ onNavigate }: SignInProps) {

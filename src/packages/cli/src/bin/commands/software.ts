@@ -122,6 +122,7 @@ type DeployOptions = {
   remote?: string;
   api?: string;
   toolsMinimal?: string;
+  build?: boolean;
 };
 
 type HistoryOptions = {
@@ -192,6 +193,167 @@ function parseSoftwareInfoComponent(value: string): SoftwareInfoComponent {
     return value as SoftwareInfoComponent;
   }
   throw new Error(`unknown software component: ${value}`);
+}
+
+function parseDeployComponentSelector({
+  componentSelectorArg,
+  targetArg,
+  legacyTargetArg,
+}: {
+  componentSelectorArg: string;
+  targetArg: string | undefined;
+  legacyTargetArg: string | undefined;
+}): {
+  component: SoftwareDeployComponent;
+  selector: string;
+  profileOrChannel: string;
+  selectorExplicit: boolean;
+} {
+  const componentSelector = `${componentSelectorArg ?? ""}`.trim();
+  const target = `${targetArg ?? ""}`.trim();
+  const legacyTarget = `${legacyTargetArg ?? ""}`.trim();
+  if (!componentSelector) {
+    throw new Error("software deploy requires <component[:tag]>");
+  }
+  if (legacyTarget) {
+    return {
+      component: parseSoftwareDeployComponent(componentSelector),
+      selector: validateSoftwareDeploySelector(target),
+      profileOrChannel: legacyTarget,
+      selectorExplicit: true,
+    };
+  }
+  if (!target) {
+    throw new Error("software deploy requires <profile-or-channel>");
+  }
+  const [componentRaw, selectorRaw, ...extra] = componentSelector.split(":");
+  if (extra.length > 0) {
+    throw new Error("software deploy component selector has too many ':'");
+  }
+  const component = parseSoftwareDeployComponent(componentRaw);
+  if (selectorRaw != null) {
+    return {
+      component,
+      selector: validateSoftwareDeploySelector(selectorRaw),
+      profileOrChannel: target,
+      selectorExplicit: true,
+    };
+  }
+  return {
+    component,
+    selector: "latest",
+    profileOrChannel: target,
+    selectorExplicit: false,
+  };
+}
+
+function parseBuildComponentSelector({
+  componentSelectorArg,
+  legacyTagArg,
+}: {
+  componentSelectorArg: string;
+  legacyTagArg?: string;
+}): {
+  component: SoftwareBuildComponent;
+  tagArg: string | undefined;
+} {
+  const { componentRaw, selectorRaw } = splitSoftwareComponentSelector({
+    value: componentSelectorArg,
+    command: "build",
+  });
+  return {
+    component: parseSoftwareBuildComponent(componentRaw),
+    tagArg:
+      legacyTagArg != null && `${legacyTagArg}`.trim() !== ""
+        ? validateSoftwareTag(legacyTagArg)
+        : selectorRaw == null
+          ? undefined
+          : validateSoftwareTag(selectorRaw),
+  };
+}
+
+function parsePushComponentSelector({
+  componentSelectorArg,
+  legacySelectorArg,
+}: {
+  componentSelectorArg: string;
+  legacySelectorArg?: string;
+}): {
+  component: SoftwareBuildComponent;
+  selector: string;
+} {
+  const { componentRaw, selectorRaw } = splitSoftwareComponentSelector({
+    value: componentSelectorArg,
+    command: "push",
+  });
+  const selector =
+    legacySelectorArg != null && `${legacySelectorArg}`.trim() !== ""
+      ? legacySelectorArg
+      : selectorRaw;
+  if (selector == null || `${selector}`.trim() === "") {
+    throw new Error("software push requires <component:tag-or-id>");
+  }
+  return {
+    component: parseSoftwareBuildComponent(componentRaw),
+    selector: validateSoftwareDeploySelector(selector),
+  };
+}
+
+function splitSoftwareComponentSelector({
+  value,
+  command,
+}: {
+  value: string;
+  command: string;
+}): { componentRaw: string; selectorRaw: string | undefined } {
+  const componentSelector = `${value ?? ""}`.trim();
+  if (!componentSelector) {
+    throw new Error(`software ${command} requires <component[:tag]>`);
+  }
+  const [componentRaw, selectorRaw, ...extra] = componentSelector.split(":");
+  if (extra.length > 0) {
+    throw new Error(`software ${command} component selector has too many ':'`);
+  }
+  return { componentRaw, selectorRaw };
+}
+
+function validateSoftwareDeploySelector(selector: string): string {
+  const trimmed = `${selector ?? ""}`.trim();
+  if (!trimmed) {
+    throw new Error("software deploy artifact selector must not be empty");
+  }
+  return isSoftwareLatestSelector(trimmed)
+    ? trimmed
+    : validateSoftwareTag(trimmed);
+}
+
+function splitDeployTargets(value: string): string[] {
+  const targets = `${value ?? ""}`
+    .split(",")
+    .map((target) => target.trim())
+    .filter(Boolean);
+  if (targets.length === 0) {
+    throw new Error("software deploy requires <profile-or-channel>");
+  }
+  return [...new Set(targets)];
+}
+
+function assertSingleReleaseDeployTarget({
+  component,
+  targets,
+}: {
+  component: SoftwareDeployComponent;
+  targets: string[];
+}): void {
+  if (targets.length <= 1) return;
+  if (
+    releaseDeployTargetForComponent(component) ||
+    starDeployTargetForComponent(component)
+  ) {
+    throw new Error(
+      `software deploy ${component} accepts exactly one release channel`,
+    );
+  }
 }
 
 function softwareInfoPayload(componentArg: string | undefined): {
@@ -298,9 +460,9 @@ function rawSoftwareComponentInfo(
         "Use history and rollback against this deploy component name, not against bay.",
       ],
       commands: {
-        build: ["cocalc software build bay <tag>"],
-        push: ["cocalc software push bay <tag-or-id>"],
-        deploy: [`cocalc software deploy ${component} <tag-or-id> <profile>`],
+        build: ["cocalc software build bay:<tag>"],
+        push: ["cocalc software push bay:<tag-or-id>"],
+        deploy: [`cocalc software deploy ${component}:<tag-or-id> <profile>`],
         smoke: ["cocalc software smoke bay <profile>"],
         history: [`cocalc software history ${component} <profile>`],
         rollback: [
@@ -339,9 +501,9 @@ function rawSoftwareComponentInfo(
         "Reconcile online project hosts and wait for convergence.",
       ],
       commands: {
-        build: ["cocalc software build project-host <tag>"],
-        push: ["cocalc software push project-host <tag-or-id>"],
-        deploy: [`cocalc software deploy ${component} <tag-or-id> <profile>`],
+        build: ["cocalc software build project-host:<tag>"],
+        push: ["cocalc software push project-host:<tag-or-id>"],
+        deploy: [`cocalc software deploy ${component}:<tag-or-id> <profile>`],
         smoke: ["cocalc software smoke project-host <profile>"],
         history: [`cocalc software history ${component} <profile>`],
         rollback: [
@@ -381,9 +543,9 @@ function rawSoftwareComponentInfo(
           "Smoke HTTP bootstrap and static asset endpoints.",
         ],
         commands: {
-          build: ["cocalc software build static <tag>"],
-          push: ["cocalc software push static <tag-or-id>"],
-          deploy: ["cocalc software deploy static <tag-or-id> <profile>"],
+          build: ["cocalc software build static:<tag>"],
+          push: ["cocalc software push static:<tag-or-id>"],
+          deploy: ["cocalc software deploy static:<tag-or-id> <profile>"],
           smoke: ["cocalc software smoke static <profile>"],
           history: ["cocalc software history static <profile>"],
           rollback: ["cocalc software rollback static <profile> <artifact-id>"],
@@ -417,9 +579,9 @@ function rawSoftwareComponentInfo(
           "Smoke API endpoints and Rocket host-route health.",
         ],
         commands: {
-          build: ["cocalc software build hub <tag>"],
-          push: ["cocalc software push hub <tag-or-id>"],
-          deploy: ["cocalc software deploy hub <tag-or-id> <profile>"],
+          build: ["cocalc software build hub:<tag>"],
+          push: ["cocalc software push hub:<tag-or-id>"],
+          deploy: ["cocalc software deploy hub:<tag-or-id> <profile>"],
           smoke: ["cocalc software smoke hub <profile>"],
           history: ["cocalc software history hub <profile>"],
           rollback: ["cocalc software rollback hub <profile> <artifact-id>"],
@@ -454,9 +616,9 @@ function rawSoftwareComponentInfo(
           "Smoke bay HTTP and health checks.",
         ],
         commands: {
-          build: ["cocalc software build bay <tag>"],
-          push: ["cocalc software push bay <tag-or-id>"],
-          deploy: ["cocalc software deploy bay <tag-or-id> <profile>"],
+          build: ["cocalc software build bay:<tag>"],
+          push: ["cocalc software push bay:<tag-or-id>"],
+          deploy: ["cocalc software deploy bay:<tag-or-id> <profile>"],
           smoke: ["cocalc software smoke bay <profile>"],
           history: ["cocalc software history bay <profile>"],
           rollback: ["cocalc software rollback bay <profile> <artifact-id>"],
@@ -527,13 +689,13 @@ function rawSoftwareComponentInfo(
         lifecycle: [
           "Build tools-minimal artifacts.",
           "Push them to the R2 artifact store.",
-          "Coordinate promotion with plus using cocalc software deploy plus --tools-minimal.",
+          "Coordinate promotion with plus using cocalc software deploy plus:<tag-or-id> <channel> --tools-minimal.",
         ],
         commands: {
-          build: ["cocalc software build tools-minimal <tag>"],
-          push: ["cocalc software push tools-minimal <tag-or-id>"],
+          build: ["cocalc software build tools-minimal:<tag>"],
+          push: ["cocalc software push tools-minimal:<tag-or-id>"],
           deploy: [
-            "cocalc software deploy plus <tag-or-id> <channel> --tools-minimal <tools-tag-or-id>",
+            "cocalc software deploy plus:<tag-or-id> <channel> --tools-minimal <tools-tag-or-id>",
           ],
         },
         related_components: ["plus"],
@@ -570,9 +732,9 @@ function rawSoftwareComponentInfo(
           "Smoke the selected release channel with the Star smoke script.",
         ],
         commands: {
-          build: ["cocalc software build star <tag>"],
-          push: ["cocalc software push star <tag-or-id>"],
-          deploy: ["cocalc software deploy star <tag-or-id> <channel>"],
+          build: ["cocalc software build star:<tag>"],
+          push: ["cocalc software push star:<tag-or-id>"],
+          deploy: ["cocalc software deploy star:<tag-or-id> <channel>"],
           smoke: ["cocalc software smoke star <channel>"],
           history: ["cocalc software history star <channel>"],
           rollback: ["cocalc software rollback star <channel> <artifact-id>"],
@@ -666,7 +828,7 @@ function projectHostArtifactInfo({
     commands: {
       build: [`cocalc software build ${component} <tag>`],
       push: [`cocalc software push ${component} <tag-or-id>`],
-      deploy: [`cocalc software deploy ${component} <tag-or-id> <profile>`],
+      deploy: [`cocalc software deploy ${component}:<tag-or-id> <profile>`],
       smoke: [`cocalc software smoke ${component} <profile>`],
       history: [`cocalc software history ${component} <profile>`],
       rollback: [
@@ -724,9 +886,9 @@ function releaseComponentInfo(
       deploy:
         component === "plus"
           ? [
-              "cocalc software deploy plus <tag-or-id> <channel> --tools-minimal <tools-tag-or-id>",
+              "cocalc software deploy plus:<tag-or-id> <channel> --tools-minimal <tools-tag-or-id>",
             ]
-          : [`cocalc software deploy ${component} <tag-or-id> <channel>`],
+          : [`cocalc software deploy ${component}:<tag-or-id> <channel>`],
       smoke: [`cocalc software smoke ${component} <channel>`],
       history: [`cocalc software history ${component} <channel>`],
       rollback: [
@@ -798,8 +960,8 @@ function formatSoftwareInfoPayload(
     "",
     "Examples:",
     "  cocalc software info hub",
-    "  cocalc software build hub <tag>",
-    "  cocalc software deploy hub <tag-or-id> <profile>",
+    "  cocalc software build hub:<tag>",
+    "  cocalc software deploy hub:<tag-or-id> <profile>",
     "  cocalc software smoke hub <profile>",
     "  cocalc software history hub <profile>",
     "  cocalc software rollback hub <profile> <artifact-id>",
@@ -2019,6 +2181,16 @@ async function localTagExists({
   return manifests.some(({ manifest }) => manifest.tag === tag);
 }
 
+function localArtifactIdExists({
+  manifests,
+  artifactId,
+}: {
+  manifests: Awaited<ReturnType<typeof listLocalManifests>>;
+  artifactId: string;
+}): boolean {
+  return manifests.some(({ manifest }) => manifest.artifact_id === artifactId);
+}
+
 async function buildFromFile({
   component,
   tagArg,
@@ -2052,14 +2224,6 @@ async function buildFromFile({
       })
     : validateSoftwareTag(tagArg);
   if (
-    !tagGenerated &&
-    (await localTagExists({ manifests: existingManifests, tag }))
-  ) {
-    throw new Error(
-      `software tag already exists locally for ${component}: ${tag}`,
-    );
-  }
-  if (
     tagGenerated &&
     (await localTagExists({ manifests: existingManifests, tag }))
   ) {
@@ -2071,6 +2235,16 @@ async function buildFromFile({
     git,
     tag,
   });
+  if (
+    localArtifactIdExists({
+      manifests: existingManifests,
+      artifactId,
+    })
+  ) {
+    throw new Error(
+      `software artifact id already exists locally for ${component}: ${artifactId}`,
+    );
+  }
   let buildTempDir: string | undefined;
   let sourceFile = opts.fromFile;
   let artifactName = opts.artifactName;
@@ -2081,7 +2255,7 @@ async function buildFromFile({
       }>
     | undefined;
   let commandText = `cocalc software build ${component}${
-    tagArg ? ` ${tagArg}` : ""
+    tagArg ? `:${tagArg}` : ""
   }`;
   if (sourceFile) {
     sourceFiles = [{ source: sourceFile, name: artifactName }];
@@ -2283,11 +2457,6 @@ async function resolveLocalManifestBySelector({
       `local software artifact not found for ${component}: ${selector}`,
     );
   }
-  if (matches.length > 1) {
-    throw new Error(
-      `local software artifact selector is ambiguous for ${component}: ${selector}`,
-    );
-  }
   return matches[0];
 }
 
@@ -2301,28 +2470,13 @@ function findLocalManifestMatches({
   if (isSoftwareLatestSelector(selector)) {
     return manifests.slice(0, 1);
   }
-  return manifests.filter(
-    ({ manifest }) =>
-      manifest.tag === selector || manifest.artifact_id === selector,
+  const exactArtifactIdMatches = manifests.filter(
+    ({ manifest }) => manifest.artifact_id === selector,
   );
-}
-
-function resolveSingleMatch<T>({
-  matches,
-  selector,
-  label,
-}: {
-  matches: T[];
-  selector: string;
-  label: string;
-}): T | undefined {
-  if (matches.length === 0) {
-    return undefined;
+  if (exactArtifactIdMatches.length > 0) {
+    return exactArtifactIdMatches;
   }
-  if (matches.length > 1) {
-    throw new Error(`${label} selector is ambiguous: ${selector}`);
-  }
-  return matches[0];
+  return manifests.filter(({ manifest }) => manifest.tag === selector);
 }
 
 function softwareR2Client(deps: SoftwareCommandDeps): SoftwareR2Client {
@@ -2410,7 +2564,15 @@ function findRemoteEntryMatches({
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       .slice(0, 1);
   }
-  return entries.filter((entry) => remoteEntryMatchesSelector(entry, selector));
+  const exactArtifactIdMatches = entries.filter(
+    (entry) => entry.artifact_id === selector,
+  );
+  if (exactArtifactIdMatches.length > 0) {
+    return exactArtifactIdMatches;
+  }
+  return entries
+    .filter((entry) => remoteEntryMatchesSelector(entry, selector))
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
 function rocketDeployTargetForComponent(component: SoftwareDeployComponent):
@@ -2562,32 +2724,52 @@ function deployedBy({
   };
 }
 
-function latestDeploySelector({
-  selector,
-  localManifests,
-  remoteEntries,
+type DeployArtifactCandidate =
+  | {
+      source: "local";
+      created: string;
+      artifact_id: string;
+      tag: string;
+      local: Awaited<ReturnType<typeof listLocalManifests>>[number];
+    }
+  | {
+      source: "remote";
+      created: string;
+      artifact_id: string;
+      tag: string;
+      remote: SoftwareRemoteIndexEntry;
+    };
+
+function newestDeployArtifactCandidate({
+  localMatches,
+  remoteMatches,
 }: {
-  selector: string;
-  localManifests: Awaited<ReturnType<typeof listLocalManifests>>;
-  remoteEntries: SoftwareRemoteIndexEntry[];
-}): string {
-  if (!isSoftwareLatestSelector(selector)) {
-    return selector;
-  }
-  const local = localManifests[0];
-  const remote = [...remoteEntries].sort((a, b) =>
-    b.timestamp.localeCompare(a.timestamp),
-  )[0];
-  if (!local && !remote) {
-    return selector;
-  }
-  if (
-    local &&
-    (!remote || local.manifest.created_at.localeCompare(remote.timestamp) >= 0)
-  ) {
-    return local.manifest.artifact_id;
-  }
-  return remote.artifact_id;
+  localMatches: Awaited<ReturnType<typeof listLocalManifests>>;
+  remoteMatches: SoftwareRemoteIndexEntry[];
+}): DeployArtifactCandidate | undefined {
+  const candidates: DeployArtifactCandidate[] = [
+    ...localMatches.map((local) => ({
+      source: "local" as const,
+      created: local.manifest.created_at,
+      artifact_id: local.manifest.artifact_id,
+      tag: local.manifest.tag,
+      local,
+    })),
+    ...remoteMatches.map((remote) => ({
+      source: "remote" as const,
+      created: remote.timestamp,
+      artifact_id: remote.artifact_id,
+      tag: remote.tag,
+      remote,
+    })),
+  ];
+  candidates.sort((a, b) => {
+    const byCreated = b.created.localeCompare(a.created);
+    if (byCreated !== 0) return byCreated;
+    if (a.source !== b.source) return a.source === "local" ? -1 : 1;
+    return a.artifact_id.localeCompare(b.artifact_id);
+  });
+  return candidates[0];
 }
 
 function remoteBundleFile(entry: SoftwareRemoteIndexEntry) {
@@ -2634,27 +2816,37 @@ async function resolveDeployArtifact({
     auth: config.auth,
     component,
   });
-  const effectiveSelector = latestDeploySelector({
+  const localMatches = findLocalManifestMatches({
+    manifests: localManifests,
     selector,
-    localManifests,
-    remoteEntries: remoteIndex.artifacts,
   });
-  const localMatch = resolveSingleMatch({
-    matches: findLocalManifestMatches({
-      manifests: localManifests,
-      selector: effectiveSelector,
-    }),
-    selector: effectiveSelector,
-    label: `local software artifact for ${component}`,
+  const remoteMatches = findRemoteEntryMatches({
+    entries: remoteIndex.artifacts,
+    selector,
   });
-  let remoteEntry = resolveSingleMatch({
-    matches: findRemoteEntryMatches({
-      entries: remoteIndex.artifacts,
-      selector: effectiveSelector,
-    }),
-    selector: effectiveSelector,
-    label: `remote software artifact for ${component}`,
+  const candidate = newestDeployArtifactCandidate({
+    localMatches,
+    remoteMatches,
   });
+
+  if (!candidate) {
+    throw new Error(
+      `software artifact not found for ${component}: ${selector}`,
+    );
+  }
+
+  const localMatch =
+    candidate.source === "local"
+      ? candidate.local
+      : localManifests.find(
+          ({ manifest }) => manifest.artifact_id === candidate.artifact_id,
+        );
+  let remoteEntry =
+    candidate.source === "remote"
+      ? candidate.remote
+      : remoteIndex.artifacts.find(
+          (entry) => entry.artifact_id === candidate.artifact_id,
+        );
 
   if (localMatch && !remoteEntry) {
     await uploadSoftwareArtifact({
@@ -2700,9 +2892,7 @@ async function resolveDeployArtifact({
     };
   }
 
-  throw new Error(
-    `software artifact not found for ${component}: ${effectiveSelector}`,
-  );
+  throw new Error(`software artifact not found for ${component}: ${selector}`);
 }
 
 function hostDeployTargetForComponent(component: SoftwareDeployComponent):
@@ -3035,8 +3225,11 @@ Supported deploy/smoke components:
   software
     .command("build")
     .description("build or record a local immutable software artifact")
-    .argument("<component>", BUILD_COMPONENT_ARGUMENT)
-    .argument("[tag]", "optional human tag; generated if omitted")
+    .argument(
+      "<component[:tag]>",
+      `${BUILD_COMPONENT_ARGUMENT}; tag is generated if omitted`,
+    )
+    .allowExcessArguments(true)
     .option("--local-store <path>", "local artifact store")
     .option(
       "--from-file <path>",
@@ -3046,12 +3239,17 @@ Supported deploy/smoke components:
     .option("--keep-build-dir", "keep temporary component build directory")
     .action(
       async (
-        componentArg: string,
-        tagArg: string | undefined,
+        componentSelectorArg: string,
         opts: BuildOptions,
         command: Command,
       ) => {
-        const component = parseSoftwareBuildComponent(componentArg);
+        if (command.args.length > 2) {
+          throw new Error("software build accepts <component[:tag]>");
+        }
+        const { component, tagArg } = parseBuildComponentSelector({
+          componentSelectorArg,
+          legacyTagArg: command.args[1],
+        });
         const manifest = await buildFromFile({
           component,
           tagArg,
@@ -3118,8 +3316,11 @@ Supported deploy/smoke components:
   software
     .command("push")
     .description("push a local software artifact to the remote software store")
-    .argument("<component>", BUILD_COMPONENT_ARGUMENT)
-    .argument("<tag-or-id>", "artifact tag or id")
+    .argument(
+      "<component:tag-or-id>",
+      `${BUILD_COMPONENT_ARGUMENT}; artifact tag or id`,
+    )
+    .allowExcessArguments(true)
     .option("--local-store <path>", "local artifact store")
     .option(
       "--env-file <path>",
@@ -3128,12 +3329,17 @@ Supported deploy/smoke components:
     )
     .action(
       async (
-        componentArg: string,
-        selector: string,
+        componentSelectorArg: string,
         opts: PushOptions,
         command: Command,
       ) => {
-        const component = parseSoftwareBuildComponent(componentArg);
+        if (command.args.length > 2) {
+          throw new Error("software push accepts <component:tag-or-id>");
+        }
+        const { component, selector } = parsePushComponentSelector({
+          componentSelectorArg,
+          legacySelectorArg: command.args[1],
+        });
         const startedAt = deps.now?.() ?? new Date();
         const localStore = resolveSoftwareLocalStore({
           option: opts.localStore,
@@ -3176,9 +3382,16 @@ Supported deploy/smoke components:
   software
     .command("deploy")
     .description("deploy or promote a software artifact")
-    .argument("<component>", DEPLOY_COMPONENT_ARGUMENT)
-    .argument("<tag-or-id>", "artifact tag or id")
-    .argument("<profile-or-channel>", PROFILE_OR_CHANNEL_ARGUMENT)
+    .argument(
+      "<component[:tag]>",
+      `${DEPLOY_COMPONENT_ARGUMENT}; tag defaults to latest`,
+    )
+    .argument("[profile-or-channel]", PROFILE_OR_CHANNEL_ARGUMENT)
+    .allowExcessArguments(true)
+    .option(
+      "--build",
+      "build the component tag before deploying; deploy-only service components build their underlying artifact component",
+    )
     .option("--local-store <path>", "local artifact store")
     .option("--config <path>", "rocket config path")
     .option("--remote <ssh-target>", "bay SSH target")
@@ -3194,25 +3407,38 @@ Supported deploy/smoke components:
     )
     .action(
       async (
-        componentArg: string,
-        selector: string,
-        profileOrChannel: string | undefined,
+        componentSelectorArg: string,
+        targetArg: string | undefined,
         opts: DeployOptions,
         command: Command,
       ) => {
-        const component = parseSoftwareDeployComponent(componentArg);
-        const deployTarget = `${profileOrChannel ?? ""}`.trim();
-        if (!deployTarget) {
-          throw new Error("software deploy requires <profile-or-channel>");
+        if (command.args.length > 3) {
+          throw new Error(
+            "software deploy accepts <component[:tag]> <profile-or-channel>",
+          );
         }
+        const {
+          component,
+          selector: requestedSelector,
+          profileOrChannel: deployTarget,
+          selectorExplicit,
+        } = parseDeployComponentSelector({
+          componentSelectorArg,
+          targetArg,
+          legacyTargetArg: command.args[2],
+        });
+        const deployTargets = splitDeployTargets(deployTarget);
+        let selector = requestedSelector;
         const startedAt = deps.now?.() ?? new Date();
         const rocketTarget = rocketDeployTargetForComponent(component);
         const hostTarget = hostDeployTargetForComponent(component);
         const releaseTarget = releaseDeployTargetForComponent(component);
         const starTarget = starDeployTargetForComponent(component);
+        assertSingleReleaseDeployTarget({ component, targets: deployTargets });
+        const firstDeployTarget = deployTargets[0];
         const releaseChannel =
           releaseTarget || starTarget
-            ? validateSoftwareReleaseChannel(deployTarget)
+            ? validateSoftwareReleaseChannel(firstDeployTarget)
             : undefined;
         const artifactComponent =
           rocketTarget?.artifactComponent ??
@@ -3227,357 +3453,389 @@ Supported deploy/smoke components:
         if (!releaseTarget && !deps.runCommand) {
           throw new Error("software deploy requires runCommand dependency");
         }
+        let builtArtifact:
+          | (SoftwareArtifactManifest & { local_dir: string })
+          | undefined;
+        if (opts.build) {
+          builtArtifact = await buildFromFile({
+            component: artifactComponent,
+            tagArg: selectorExplicit ? selector : undefined,
+            opts: {
+              localStore: opts.localStore,
+            },
+            deps: {
+              cwd: deps.cwd,
+              env: deps.env ?? process.env,
+              now: deps.now ?? (() => new Date()),
+              gitMetadata: deps.gitMetadata,
+              repoRoot: deps.repoRoot,
+              runCommand: deps.runCommand,
+            },
+          });
+          selector = builtArtifact.artifact_id;
+        }
         const artifact = await resolveDeployArtifact({
           component: artifactComponent,
           selector,
           opts,
           deps,
         });
-        const target =
-          releaseTarget || starTarget
-            ? {
-                profileName: releaseChannel!,
-                api: undefined,
-                remote: undefined,
-                account_id: undefined,
-                email_address: undefined,
-              }
-            : resolveDeploySite({
-                profile: deployTarget,
-                opts,
-                deps,
-              });
         const config = await resolveSoftwareRemoteConfig({
           env: deps.env ?? process.env,
           envFile: opts.envFile,
         });
         const client = softwareR2Client(deps);
         const cli = currentCliInvocation();
-        let commandArgsList: string[][] = [];
-        let rocketScope: string | undefined;
-        let hostBaseUrl: string | undefined;
-        let hostCompatUrl: string | undefined;
-        let hostManagedComponent: string | undefined;
-        let releaseProduct: string | undefined;
-        let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
-        let releaseChannelManifestUrls: string[] | undefined;
-        let toolsMinimalArtifact:
-          | Awaited<ReturnType<typeof resolveDeployArtifact>>
-          | undefined;
-        let toolsMinimalSelector: string | undefined;
-        let toolsMinimalChannelManifestUrls: string[] | undefined;
-        let starInstall: ReturnType<typeof starInstallInfo> | undefined;
-        let starPromoteScript: string | undefined;
-        let targetKind: SoftwareDeploymentRecord["target"]["kind"];
-        if (rocketTarget) {
-          const remoteFile = remoteBundleFile(artifact.remote_entry);
-          artifact.bundle_url = remoteFile.url;
-          artifact.bundle_sha256 = remoteFile.sha256;
-          rocketScope = rocketTarget.scope;
-          targetKind = "rocket-bay";
-          commandArgsList = [
-            [
-              ...cli.args,
-              "rocket",
-              "deploy",
-              deployTarget,
-              "--scope",
-              rocketScope,
-              "--bundle-url",
-              artifact.bundle_url,
-              "--bundle-sha256",
-              artifact.bundle_sha256,
-              ...(opts.config ? ["--config", opts.config] : []),
-              ...(target.remote ? ["--remote", target.remote] : []),
-              ...(target.api ? ["--api", target.api] : []),
-              ...(rocketTarget.extraArgs ?? []),
-              "--yes",
-            ],
-          ];
-        } else if (hostTarget) {
-          const compat = await publishHostCompatibilityArtifact({
-            client,
-            config,
-            entry: artifact.remote_entry,
-          });
-          hostBaseUrl = compat.base_url;
-          hostCompatUrl = compat.urls.join("\n");
-          hostManagedComponent = hostTarget.managedComponent;
-          targetKind = "project-host-fleet";
-          commandArgsList = [
-            [
-              ...cli.args,
-              "--profile",
-              deployTarget,
-              "host",
-              "upgrade",
-              "--all-online",
-              "--artifact",
-              hostTarget.upgradeArtifact,
-              "--artifact-version",
-              artifact.artifact_id,
-              "--base-url",
-              hostBaseUrl,
-              "--wait",
-            ],
-          ];
-          if (hostManagedComponent) {
-            const reason = `software-deploy-${component}`;
-            commandArgsList.push(
+        const globals = command.optsWithGlobals() as any;
+        const deploymentSummaries: Array<Record<string, unknown>> = [];
+        for (const deployTarget of deployTargets) {
+          const targetStartedAt = deps.now?.() ?? new Date();
+          const target =
+            releaseTarget || starTarget
+              ? {
+                  profileName: releaseChannel!,
+                  api: undefined,
+                  remote: undefined,
+                  account_id: undefined,
+                  email_address: undefined,
+                }
+              : resolveDeploySite({
+                  profile: deployTarget,
+                  opts,
+                  deps,
+                });
+          let commandArgsList: string[][] = [];
+          let rocketScope: string | undefined;
+          let hostBaseUrl: string | undefined;
+          let hostCompatUrl: string | undefined;
+          let hostManagedComponent: string | undefined;
+          let releaseProduct: string | undefined;
+          let releaseInstall: ReturnType<typeof releaseInstallInfo> | undefined;
+          let releaseChannelManifestUrls: string[] | undefined;
+          let toolsMinimalArtifact:
+            | Awaited<ReturnType<typeof resolveDeployArtifact>>
+            | undefined;
+          let toolsMinimalSelector: string | undefined;
+          let toolsMinimalChannelManifestUrls: string[] | undefined;
+          let starInstall: ReturnType<typeof starInstallInfo> | undefined;
+          let starPromoteScript: string | undefined;
+          let targetKind: SoftwareDeploymentRecord["target"]["kind"];
+          if (rocketTarget) {
+            const remoteFile = remoteBundleFile(artifact.remote_entry);
+            artifact.bundle_url = remoteFile.url;
+            artifact.bundle_sha256 = remoteFile.sha256;
+            rocketScope = rocketTarget.scope;
+            targetKind = "rocket-bay";
+            commandArgsList = [
               [
                 ...cli.args,
-                "--profile",
-                deployTarget,
-                "host",
+                "rocket",
                 "deploy",
-                "set",
-                "--global",
-                "--component",
-                hostManagedComponent,
-                "--desired-version",
-                artifact.artifact_id,
-                "--policy",
-                "restart_now",
-                "--reason",
-                reason,
+                deployTarget,
+                "--scope",
+                rocketScope,
+                "--bundle-url",
+                artifact.bundle_url,
+                "--bundle-sha256",
+                artifact.bundle_sha256,
+                ...(opts.config ? ["--config", opts.config] : []),
+                ...(target.remote ? ["--remote", target.remote] : []),
+                ...(target.api ? ["--api", target.api] : []),
+                ...(rocketTarget.extraArgs ?? []),
+                "--yes",
               ],
+            ];
+          } else if (hostTarget) {
+            const compat = await publishHostCompatibilityArtifact({
+              client,
+              config,
+              entry: artifact.remote_entry,
+            });
+            hostBaseUrl = compat.base_url;
+            hostCompatUrl = compat.urls.join("\n");
+            hostManagedComponent = hostTarget.managedComponent;
+            targetKind = "project-host-fleet";
+            commandArgsList = [
               [
                 ...cli.args,
                 "--profile",
                 deployTarget,
                 "host",
-                "deploy",
-                "reconcile",
+                "upgrade",
                 "--all-online",
-                "--component",
-                hostManagedComponent,
-                "--reason",
-                reason,
+                "--artifact",
+                hostTarget.upgradeArtifact,
+                "--artifact-version",
+                artifact.artifact_id,
+                "--base-url",
+                hostBaseUrl,
                 "--wait",
               ],
-            );
-          }
-        } else if (releaseTarget) {
-          releaseProduct = releaseProductForArtifactComponent(
-            releaseTarget.artifactComponent,
-          );
-          releaseInstall = releaseInstallInfo({
-            component: releaseTarget.artifactComponent,
-            channel: releaseChannel!,
-            publicBaseUrl: config.publicBaseUrl,
-          });
-          if (releaseTarget.artifactComponent === "plus") {
-            toolsMinimalSelector = `${opts.toolsMinimal ?? selector}`.trim();
-            try {
-              toolsMinimalArtifact = await resolveDeployArtifact({
-                component: "tools-minimal",
-                selector: toolsMinimalSelector,
-                opts,
-                deps,
-              });
-            } catch (err) {
-              if (opts.toolsMinimal) {
-                throw err;
-              }
-              throw new Error(
-                `software deploy plus requires a matching tools-minimal artifact; build/push tools-minimal with tag '${selector}' or pass --tools-minimal <tag-or-id>`,
+            ];
+            if (hostManagedComponent) {
+              const reason = `software-deploy-${component}`;
+              commandArgsList.push(
+                [
+                  ...cli.args,
+                  "--profile",
+                  deployTarget,
+                  "host",
+                  "deploy",
+                  "set",
+                  "--global",
+                  "--component",
+                  hostManagedComponent,
+                  "--desired-version",
+                  artifact.artifact_id,
+                  "--policy",
+                  "restart_now",
+                  "--reason",
+                  reason,
+                ],
+                [
+                  ...cli.args,
+                  "--profile",
+                  deployTarget,
+                  "host",
+                  "deploy",
+                  "reconcile",
+                  "--all-online",
+                  "--component",
+                  hostManagedComponent,
+                  "--reason",
+                  reason,
+                  "--wait",
+                ],
               );
             }
+          } else if (releaseTarget) {
+            releaseProduct = releaseProductForArtifactComponent(
+              releaseTarget.artifactComponent,
+            );
+            releaseInstall = releaseInstallInfo({
+              component: releaseTarget.artifactComponent,
+              channel: releaseChannel!,
+              publicBaseUrl: config.publicBaseUrl,
+            });
+            if (releaseTarget.artifactComponent === "plus") {
+              toolsMinimalSelector = `${opts.toolsMinimal ?? selector}`.trim();
+              try {
+                toolsMinimalArtifact = await resolveDeployArtifact({
+                  component: "tools-minimal",
+                  selector: toolsMinimalSelector,
+                  opts,
+                  deps,
+                });
+              } catch (err) {
+                if (opts.toolsMinimal) {
+                  throw err;
+                }
+                throw new Error(
+                  `software deploy plus requires a matching tools-minimal artifact; build/push tools-minimal with tag '${selector}' or pass --tools-minimal <tag-or-id>`,
+                );
+              }
+            }
+            targetKind = "release-channel";
+          } else if (starTarget) {
+            const cwd = resolve(deps.cwd ?? process.cwd());
+            const { srcRoot } = resolveRepoLayout({ cwd, deps });
+            const repo = starGithubRepo(deps);
+            const channelTag = starChannelTag({
+              channel: releaseChannel!,
+              deps,
+            });
+            releaseProduct = "cocalc-star";
+            starPromoteScript = join(
+              srcRoot,
+              "scripts",
+              "star",
+              "promote-github-release-channel.sh",
+            );
+            starInstall = starInstallInfo({ repo, channelTag });
+            targetKind = "release-channel";
+          } else {
+            throw new Error(`software deploy ${component} is not wired yet`);
           }
-          targetKind = "release-channel";
-        } else if (starTarget) {
-          const cwd = resolve(deps.cwd ?? process.cwd());
-          const { srcRoot } = resolveRepoLayout({ cwd, deps });
-          const repo = starGithubRepo(deps);
-          const channelTag = starChannelTag({
-            channel: releaseChannel!,
+          const record = deploymentRecordBase({
+            component,
+            artifactComponent,
+            profileOrChannel: deployTarget,
+            startedAt: targetStartedAt,
+            artifact,
+            target,
+            kind: targetKind,
+            details: {
+              source: artifact.source,
+              remote_manifest: artifact.remote_manifest,
+              files: artifact.files.map((file) => ({
+                name: file.name,
+                url: file.url,
+                sha256: file.sha256,
+                size_bytes: file.size_bytes,
+              })),
+              ...(artifact.bundle_url
+                ? { bundle_url: artifact.bundle_url }
+                : {}),
+              ...(artifact.bundle_sha256
+                ? { bundle_sha256: artifact.bundle_sha256 }
+                : {}),
+              ...(rocketScope ? { rocket_scope: rocketScope } : {}),
+              ...(rocketTarget?.bayService
+                ? { bay_service: rocketTarget.bayService }
+                : {}),
+              ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
+              ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
+              ...(hostCompatUrl ? { host_compat_url: hostCompatUrl } : {}),
+              ...(hostManagedComponent
+                ? { host_managed_component: hostManagedComponent }
+                : {}),
+              ...(releaseProduct ? { release_product: releaseProduct } : {}),
+              ...(releaseChannel ? { release_channel: releaseChannel } : {}),
+              ...(releaseInstall ?? {}),
+              ...(toolsMinimalArtifact
+                ? {
+                    tools_minimal: {
+                      selector: toolsMinimalSelector,
+                      artifact_id: toolsMinimalArtifact.artifact_id,
+                      tag: toolsMinimalArtifact.tag,
+                      source: toolsMinimalArtifact.source,
+                      remote_manifest: toolsMinimalArtifact.remote_manifest,
+                      files: toolsMinimalArtifact.files.map((file) => ({
+                        name: file.name,
+                        url: file.url,
+                        sha256: file.sha256,
+                        size_bytes: file.size_bytes,
+                      })),
+                    },
+                  }
+                : {}),
+              ...(starInstall ?? {}),
+            },
             deps,
           });
-          releaseProduct = "cocalc-star";
-          starPromoteScript = join(
-            srcRoot,
-            "scripts",
-            "star",
-            "promote-github-release-channel.sh",
-          );
-          starInstall = starInstallInfo({ repo, channelTag });
-          targetKind = "release-channel";
-        } else {
-          throw new Error(`software deploy ${component} is not wired yet`);
-        }
-        const record = deploymentRecordBase({
-          component,
-          artifactComponent,
-          profileOrChannel: deployTarget,
-          startedAt,
-          artifact,
-          target,
-          kind: targetKind,
-          details: {
-            source: artifact.source,
-            remote_manifest: artifact.remote_manifest,
-            files: artifact.files.map((file) => ({
-              name: file.name,
-              url: file.url,
-              sha256: file.sha256,
-              size_bytes: file.size_bytes,
-            })),
-            ...(artifact.bundle_url ? { bundle_url: artifact.bundle_url } : {}),
-            ...(artifact.bundle_sha256
-              ? { bundle_sha256: artifact.bundle_sha256 }
-              : {}),
-            ...(rocketScope ? { rocket_scope: rocketScope } : {}),
-            ...(rocketTarget?.bayService
-              ? { bay_service: rocketTarget.bayService }
-              : {}),
-            ...(rocketTarget?.scaffoldOnly ? { scaffold_only: true } : {}),
-            ...(hostBaseUrl ? { host_software_base_url: hostBaseUrl } : {}),
-            ...(hostCompatUrl ? { host_compat_url: hostCompatUrl } : {}),
-            ...(hostManagedComponent
-              ? { host_managed_component: hostManagedComponent }
-              : {}),
-            ...(releaseProduct ? { release_product: releaseProduct } : {}),
-            ...(releaseChannel ? { release_channel: releaseChannel } : {}),
-            ...(releaseInstall ?? {}),
-            ...(toolsMinimalArtifact
-              ? {
-                  tools_minimal: {
-                    selector: toolsMinimalSelector,
-                    artifact_id: toolsMinimalArtifact.artifact_id,
-                    tag: toolsMinimalArtifact.tag,
-                    source: toolsMinimalArtifact.source,
-                    remote_manifest: toolsMinimalArtifact.remote_manifest,
-                    files: toolsMinimalArtifact.files.map((file) => ({
-                      name: file.name,
-                      url: file.url,
-                      sha256: file.sha256,
-                      size_bytes: file.size_bytes,
-                    })),
-                  },
+          const finalRecord = await runWithDeploymentHistory({
+            record,
+            client,
+            config,
+            deps,
+            run: async () => {
+              if (releaseTarget) {
+                if (toolsMinimalArtifact) {
+                  const publishedToolsMinimal =
+                    await publishReleaseChannelArtifact({
+                      client,
+                      config,
+                      entry: toolsMinimalArtifact.remote_entry,
+                      channel: releaseChannel!,
+                      now: deps.now?.() ?? new Date(),
+                    });
+                  toolsMinimalChannelManifestUrls =
+                    publishedToolsMinimal.manifests.map(
+                      (manifest) => manifest.url,
+                    );
                 }
-              : {}),
-            ...(starInstall ?? {}),
-          },
-          deps,
-        });
-        const finalRecord = await runWithDeploymentHistory({
-          record,
-          client,
-          config,
-          deps,
-          run: async () => {
-            if (releaseTarget) {
-              if (toolsMinimalArtifact) {
-                const publishedToolsMinimal =
-                  await publishReleaseChannelArtifact({
-                    client,
-                    config,
-                    entry: toolsMinimalArtifact.remote_entry,
-                    channel: releaseChannel!,
-                    now: deps.now?.() ?? new Date(),
-                  });
-                toolsMinimalChannelManifestUrls =
-                  publishedToolsMinimal.manifests.map(
-                    (manifest) => manifest.url,
-                  );
+                const published = await publishReleaseChannelArtifact({
+                  client,
+                  config,
+                  entry: artifact.remote_entry,
+                  channel: releaseChannel!,
+                  now: deps.now?.() ?? new Date(),
+                });
+                releaseProduct = published.product;
+                releaseChannelManifestUrls = published.manifests.map(
+                  (manifest) => manifest.url,
+                );
+                record.details = {
+                  ...(record.details ?? {}),
+                  release_product: published.product,
+                  release_channel: published.channel,
+                  channel_manifests: releaseChannelManifestUrls,
+                  ...(toolsMinimalChannelManifestUrls
+                    ? {
+                        tools_minimal_channel_manifests:
+                          toolsMinimalChannelManifestUrls,
+                      }
+                    : {}),
+                  ...(published.channel === "stable"
+                    ? { latest_alias: "updated" }
+                    : {}),
+                  ...(releaseInstall ?? {}),
+                };
+                return;
               }
-              const published = await publishReleaseChannelArtifact({
-                client,
-                config,
-                entry: artifact.remote_entry,
-                channel: releaseChannel!,
-                now: deps.now?.() ?? new Date(),
-              });
-              releaseProduct = published.product;
-              releaseChannelManifestUrls = published.manifests.map(
-                (manifest) => manifest.url,
-              );
-              record.details = {
-                ...(record.details ?? {}),
-                release_product: published.product,
-                release_channel: published.channel,
-                channel_manifests: releaseChannelManifestUrls,
-                ...(toolsMinimalChannelManifestUrls
-                  ? {
-                      tools_minimal_channel_manifests:
-                        toolsMinimalChannelManifestUrls,
-                    }
-                  : {}),
-                ...(published.channel === "stable"
-                  ? { latest_alias: "updated" }
-                  : {}),
-                ...(releaseInstall ?? {}),
-              };
-              return;
-            }
-            if (starTarget) {
-              const repo = starInstall!.github_repo;
-              const viewCode = await deps.runCommand!(
-                "gh",
-                ["release", "view", artifact.artifact_id, "--repo", repo],
-                {
+              if (starTarget) {
+                const repo = starInstall!.github_repo;
+                const viewCode = await deps.runCommand!(
+                  "gh",
+                  ["release", "view", artifact.artifact_id, "--repo", repo],
+                  {
+                    stdio: "inherit",
+                    env: deps.env ?? process.env,
+                  },
+                );
+                if (viewCode !== 0) {
+                  throw new Error(
+                    `immutable Star GitHub release ${artifact.artifact_id} was not found in ${repo}; upload the release assets before promoting ${releaseChannel}`,
+                  );
+                }
+                const promoteCode = await deps.runCommand!(
+                  starPromoteScript!,
+                  ["--upload", artifact.artifact_id, releaseChannel!],
+                  {
+                    stdio: "inherit",
+                    env: {
+                      ...(deps.env ?? process.env),
+                      COCALC_STAR_GITHUB_REPO: repo,
+                      COCALC_STAR_GIT_REVISION:
+                        artifact.remote_entry.git.commit,
+                    },
+                  },
+                );
+                if (promoteCode !== 0) {
+                  throw new Error(
+                    `software deploy star failed with exit status ${promoteCode}`,
+                  );
+                }
+                record.details = {
+                  ...(record.details ?? {}),
+                  release_product: releaseProduct,
+                  release_channel: releaseChannel,
+                  github_release: artifact.artifact_id,
+                  ...(starInstall ?? {}),
+                };
+                return;
+              }
+              for (const args of commandArgsList) {
+                const code = await deps.runCommand!(cli.command, args, {
                   stdio: "inherit",
                   env: deps.env ?? process.env,
-                },
-              );
-              if (viewCode !== 0) {
-                throw new Error(
-                  `immutable Star GitHub release ${artifact.artifact_id} was not found in ${repo}; upload the release assets before promoting ${releaseChannel}`,
-                );
+                });
+                if (code !== 0) {
+                  throw new Error(
+                    `software deploy ${component} failed with exit status ${code}`,
+                  );
+                }
               }
-              const promoteCode = await deps.runCommand!(
-                starPromoteScript!,
-                ["--upload", artifact.artifact_id, releaseChannel!],
-                {
-                  stdio: "inherit",
-                  env: {
-                    ...(deps.env ?? process.env),
-                    COCALC_STAR_GITHUB_REPO: repo,
-                    COCALC_STAR_GIT_REVISION: artifact.remote_entry.git.commit,
-                  },
-                },
-              );
-              if (promoteCode !== 0) {
-                throw new Error(
-                  `software deploy star failed with exit status ${promoteCode}`,
-                );
-              }
-              record.details = {
-                ...(record.details ?? {}),
-                release_product: releaseProduct,
-                release_channel: releaseChannel,
-                github_release: artifact.artifact_id,
-                ...(starInstall ?? {}),
-              };
-              return;
-            }
-            for (const args of commandArgsList) {
-              const code = await deps.runCommand!(cli.command, args, {
-                stdio: "inherit",
-                env: deps.env ?? process.env,
-              });
-              if (code !== 0) {
-                throw new Error(
-                  `software deploy ${component} failed with exit status ${code}`,
-                );
-              }
-            }
-          },
-        });
-        const recordKey = deploymentRecordKey({
-          component,
-          profileOrChannel: deployTarget,
-          deploymentId: finalRecord.deployment_id,
-        });
-        emitSuccess(
-          { globals: command.optsWithGlobals() as any },
-          "software deploy",
-          {
+            },
+          });
+          const recordKey = deploymentRecordKey({
+            component,
+            profileOrChannel: deployTarget,
+            deploymentId: finalRecord.deployment_id,
+          });
+          const summary = {
             component,
             tag: artifact.tag,
             artifact_id: artifact.artifact_id,
-            duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+            duration: formatDurationMs(elapsedMsSince(targetStartedAt, deps)),
             source: artifact.source,
+            ...(builtArtifact
+              ? {
+                  built: true,
+                  built_component: builtArtifact.component,
+                  built_artifact_id: builtArtifact.artifact_id,
+                }
+              : {}),
             ...artifactSizeSummary(artifact.files),
             remote_manifest: artifact.remote_manifest,
             files: artifact.files.map((file) => file.url),
@@ -3625,8 +3883,24 @@ Supported deploy/smoke components:
             ...(releaseTarget ? {} : { profile: deployTarget }),
             deployment_id: finalRecord.deployment_id,
             deployment_record: `${config.publicBaseUrl}/${recordKey}`,
-          },
-        );
+          };
+          deploymentSummaries.push(summary);
+          if (deployTargets.length === 1) {
+            emitSuccess({ globals }, "software deploy", summary);
+          } else if (!globals.json && globals.output !== "json") {
+            emitSuccess({ globals }, "software deploy", summary);
+          }
+        }
+        if (deployTargets.length > 1) {
+          emitSuccess({ globals }, "software deploy", {
+            component,
+            tag: artifact.tag,
+            artifact_id: artifact.artifact_id,
+            duration: formatDurationMs(elapsedMsSince(startedAt, deps)),
+            targets: deployTargets,
+            deployments: deploymentSummaries,
+          });
+        }
       },
     );
 

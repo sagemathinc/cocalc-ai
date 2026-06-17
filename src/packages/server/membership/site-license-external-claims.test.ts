@@ -4,6 +4,7 @@
  */
 
 import dayjs from "dayjs";
+import { generateKeyPairSync, sign as signData } from "crypto";
 
 import getPool from "@cocalc/database/pool";
 import { after, before } from "@cocalc/server/test";
@@ -16,9 +17,17 @@ import { uuid } from "@cocalc/util/misc";
 import { resolveMembershipForAccount } from "./resolve";
 import { adminProvisionSiteLicense } from "./site-licenses";
 import {
+  addSiteLicenseExternalClaimKey,
+  consumeSiteLicenseExternalClaimToken,
   consumeVerifiedSiteLicenseExternalClaim,
   createSiteLicenseExternalClaimPool,
+  disableSiteLicenseExternalClaimPool,
   hashSiteLicenseExternalClaimToken,
+  listSiteLicenseExternalClaimConsumptions,
+  listSiteLicenseExternalClaimKeys,
+  listSiteLicenseExternalClaimPools,
+  revokeSiteLicenseExternalClaimKey,
+  runSiteLicenseExternalClaimRepairPass,
 } from "./site-license-external-claims";
 
 beforeAll(async () => {
@@ -97,6 +106,41 @@ describe("site license external claim tokens", () => {
       created_by_account_id: admin_account_id,
     });
     return { overview, claimPool };
+  }
+
+  function compactEdDsaToken({
+    privateKey,
+    kid,
+    payload,
+  }: {
+    privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"];
+    kid: string;
+    payload: Record<string, unknown>;
+  }): string {
+    const encodedHeader = Buffer.from(
+      JSON.stringify({ alg: "EdDSA", kid, typ: "JWT" }),
+    ).toString("base64url");
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
+      "base64url",
+    );
+    const signingInput = `${encodedHeader}.${encodedPayload}`;
+    const signature = signData(null, Buffer.from(signingInput), privateKey);
+    return `${signingInput}.${signature.toString("base64url")}`;
+  }
+
+  async function addEdDsaKey(pool_id: string) {
+    const kid = `kid-${uuid()}`;
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    await addSiteLicenseExternalClaimKey({
+      pool_id,
+      kid,
+      alg: "EdDSA",
+      public_key_jwk: publicKey.export({ format: "jwk" }) as Record<
+        string,
+        unknown
+      >,
+    });
+    return { kid, privateKey };
   }
 
   it("consumes a verified claim once and grants the backed membership", async () => {
@@ -238,5 +282,192 @@ describe("site license external claim tokens", () => {
     expect(dayjs(grant.rows[0]?.expires_at).toISOString()).toBe(
       dayjs(membership_expires_at).toISOString(),
     );
+  });
+
+  it("verifies and consumes a compact EdDSA claim token", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool({
+      default_membership_duration_days: 30,
+    });
+    const { kid, privateKey } = await addEdDsaKey(claimPool.id);
+    const jti = uuid();
+    const token = compactEdDsaToken({
+      privateKey,
+      kid,
+      payload: {
+        iss: claimPool.issuer,
+        aud: claimPool.audience,
+        site_license_id: claimPool.site_license_id,
+        pool_id: claimPool.id,
+        jti,
+        exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
+        subject: "reader-456",
+        label: "CUP sample",
+        metadata: { publication: "example" },
+      },
+    });
+
+    const consumption = await consumeSiteLicenseExternalClaimToken({
+      token,
+      account_id,
+    });
+
+    expect(consumption.status).toBe("granted");
+    expect(consumption.kid).toBe(kid);
+    expect(consumption.jti).toBe(jti);
+    expect(consumption.token_hash).toBe(
+      hashSiteLicenseExternalClaimToken({ token }),
+    );
+    expect(consumption.external_subject).toBe("reader-456");
+  });
+
+  it("rejects expired and tampered compact claim tokens before consumption", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool();
+    const { kid, privateKey } = await addEdDsaKey(claimPool.id);
+    const basePayload = {
+      iss: claimPool.issuer,
+      aud: claimPool.audience,
+      site_license_id: claimPool.site_license_id,
+      pool_id: claimPool.id,
+      jti: uuid(),
+    };
+    const expiredToken = compactEdDsaToken({
+      privateKey,
+      kid,
+      payload: {
+        ...basePayload,
+        exp: Math.floor(dayjs().subtract(1, "minute").valueOf() / 1000),
+      },
+    });
+    await expect(
+      consumeSiteLicenseExternalClaimToken({ token: expiredToken, account_id }),
+    ).rejects.toThrow("external claim token has expired");
+
+    const validToken = compactEdDsaToken({
+      privateKey,
+      kid,
+      payload: {
+        ...basePayload,
+        jti: uuid(),
+        exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
+      },
+    });
+    const parts = validToken.split(".");
+    const tamperedPayload = Buffer.from(
+      JSON.stringify({
+        ...basePayload,
+        jti: uuid(),
+        exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
+      }),
+    ).toString("base64url");
+    const tamperedToken = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
+    await expect(
+      consumeSiteLicenseExternalClaimToken({
+        token: tamperedToken,
+        account_id,
+      }),
+    ).rejects.toThrow("external claim token signature is invalid");
+  });
+
+  it("lists and disables pools, keys, and consumptions for operator visibility", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool();
+    const { kid } = await addEdDsaKey(claimPool.id);
+    const consumption = await consumeVerifiedSiteLicenseExternalClaim({
+      issuer: claimPool.issuer,
+      site_license_id: claimPool.site_license_id,
+      pool_id: claimPool.id,
+      jti: uuid(),
+      token_hash: hashSiteLicenseExternalClaimToken({
+        token: `visibility-token-${uuid()}`,
+      }),
+      account_id,
+    });
+
+    const pools = await listSiteLicenseExternalClaimPools({
+      site_license_id: claimPool.site_license_id,
+    });
+    expect(pools.some((pool) => pool.id === claimPool.id)).toBe(true);
+
+    const keys = await listSiteLicenseExternalClaimKeys({
+      pool_id: claimPool.id,
+    });
+    expect(keys.some((key) => key.kid === kid)).toBe(true);
+
+    const consumptions = await listSiteLicenseExternalClaimConsumptions({
+      pool_id: claimPool.id,
+      account_id,
+      status: "granted",
+    });
+    expect(consumptions.some((entry) => entry.id === consumption.id)).toBe(
+      true,
+    );
+
+    const revoked = await revokeSiteLicenseExternalClaimKey({
+      pool_id: claimPool.id,
+      kid,
+      revoked_at: "2026-06-17T00:00:00.000Z",
+    });
+    expect(revoked.revoked_at?.toISOString()).toBe("2026-06-17T00:00:00.000Z");
+
+    const disabled = await disableSiteLicenseExternalClaimPool({
+      pool_id: claimPool.id,
+      disabled_at: "2026-06-17T00:00:00.000Z",
+    });
+    expect(disabled.disabled_at?.toISOString()).toBe(
+      "2026-06-17T00:00:00.000Z",
+    );
+  });
+
+  it("repairs retryable consumed claims by replaying the idempotent side effect", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool();
+    const consumption = await consumeVerifiedSiteLicenseExternalClaim({
+      issuer: claimPool.issuer,
+      site_license_id: claimPool.site_license_id,
+      pool_id: claimPool.id,
+      jti: uuid(),
+      token_hash: hashSiteLicenseExternalClaimToken({
+        token: `repair-token-${uuid()}`,
+      }),
+      account_id,
+    });
+    await getPool().query(
+      `UPDATE site_license_external_claim_consumptions
+          SET status='failed-retryable',
+              assignment_id=NULL,
+              membership_grant_id=NULL,
+              error_code='Synthetic',
+              error_message='synthetic repair test',
+              updated=NOW()
+        WHERE id=$1`,
+      [consumption.id],
+    );
+
+    const result = await runSiteLicenseExternalClaimRepairPass({ limit: 10 });
+    expect(result.scanned).toBeGreaterThanOrEqual(1);
+    expect(result.granted).toBeGreaterThanOrEqual(1);
+    expect(result.failed).toBe(0);
+
+    const { rows } = await getPool().query<{
+      status: string;
+      assignment_id: string | null;
+      membership_grant_id: string | null;
+      error_message: string | null;
+    }>(
+      `SELECT status, assignment_id, membership_grant_id, error_message
+         FROM site_license_external_claim_consumptions
+        WHERE id=$1`,
+      [consumption.id],
+    );
+    expect(rows[0]?.status).toBe("granted");
+    expect(rows[0]?.assignment_id).toBeTruthy();
+    expect(rows[0]?.membership_grant_id).toBeTruthy();
+    expect(rows[0]?.error_message).toBeNull();
   });
 });
