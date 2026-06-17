@@ -370,14 +370,18 @@ export class NotebookFrameActions {
    ***/
 
   set_mode(mode: "escape" | "edit"): void {
-    if (this.jupyter_actions.store.get("read_only") && mode == "edit") {
+    const jupyterStore = this.jupyter_actions?.store;
+    if (mode == "edit" && jupyterStore == null) {
+      return;
+    }
+    if (jupyterStore?.get("read_only") && mode == "edit") {
       return;
     }
     if (mode == "edit") {
       // If we're changing to edit mode and current cell is a markdown
       // cell, switch it to the codemirror editor view.
       const cur_id = this.store.get("cur_id");
-      if (this.jupyter_actions.store.get_cell_type(cur_id) === "markdown") {
+      if (jupyterStore?.get_cell_type(cur_id) === "markdown") {
         this.set_md_cell_editing(cur_id);
       }
       if (this.input_editors[cur_id] != null) {
