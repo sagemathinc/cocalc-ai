@@ -31,6 +31,9 @@ const HOST_ID = "39d74365-65fe-4f13-8efc-ad6b6e58f3ee";
 const STAR_ROOTFS_IMAGE =
   "cocalc.local/rootfs/113f7173e66b81668ebf6f460485d38144e1026f50679d22241b272bcefb7e42";
 const STAR_ROOTFS_IMAGE_ID = "official-cocalc-star-rootfs";
+const CATALOG_ROOTFS_IMAGE =
+  "cocalc.local/rootfs/3b5851d22bb2e1cdf6dce416bd61c93227c56acfd54a2a3651632279e6e30fb7";
+const CATALOG_ROOTFS_IMAGE_ID = "493a9f2b-07df-4bfa-b98a-7122187d4027";
 
 function isRootfsScanSelectionQuery(sql: string): boolean {
   return (
@@ -119,6 +122,12 @@ jest.mock("@cocalc/server/conat/route-client", () => ({
   getExplicitHostRoutedClient: (...args: any[]) =>
     getExplicitHostRoutedClientMock(...args),
   getExplicitHostControlClient: (...args: any[]) =>
+    getExplicitHostRoutedClientMock(...args),
+}));
+
+jest.mock("@cocalc/server/project-host/client", () => ({
+  __esModule: true,
+  getRoutedHostControlClient: (...args: any[]) =>
     getExplicitHostRoutedClientMock(...args),
 }));
 
@@ -261,6 +270,14 @@ describe("projects.createProject clone routing", () => {
         return { rows: [] };
       }
       if (
+        sql.includes("SELECT runtime_image") &&
+        sql.includes("FROM rootfs_images") &&
+        sql.includes("WHERE image_id=$1")
+      ) {
+        expect(params).toEqual([CATALOG_ROOTFS_IMAGE_ID]);
+        return { rows: [{ runtime_image: CATALOG_ROOTFS_IMAGE }] };
+      }
+      if (
         sql.includes("SELECT COUNT(*)::BIGINT AS count") &&
         sql.includes("COALESCE(users -> $1::text ->> 'group', '') = 'owner'")
       ) {
@@ -319,6 +336,9 @@ describe("projects.createProject clone routing", () => {
       }
       if (sql.startsWith("INSERT INTO projects ")) {
         insertedProjectId = params[0];
+        if (params[5] === CATALOG_ROOTFS_IMAGE_ID) {
+          expect(params[4]).toBe(CATALOG_ROOTFS_IMAGE);
+        }
         expect(params[7]).toBe(HOST_ID);
         expect(params[8]).toBe("wnam");
         expect(params[9]).toBe("bay-0");
@@ -329,7 +349,11 @@ describe("projects.createProject clone routing", () => {
       }
       if (sql.includes("INSERT INTO project_rootfs_states")) {
         expect(params[0]).toBe(insertedProjectId);
-        expect(params[1]).toBe(SOURCE_PROJECT_ID);
+        if (params[2] === CATALOG_ROOTFS_IMAGE_ID) {
+          expect(params[1]).toBe(CATALOG_ROOTFS_IMAGE);
+        } else {
+          expect(params[1]).toBe(SOURCE_PROJECT_ID);
+        }
         return { rowCount: 1 };
       }
       if (
@@ -360,6 +384,38 @@ describe("projects.createProject clone routing", () => {
       query: queryMock,
       release: releaseMock,
     }));
+  });
+
+  it("resolves a managed rootfs image id to the runtime image during project creation", async () => {
+    const createProject = (await import("./create")).default;
+
+    const project_id = await createProject({
+      title: "Catalog image test",
+      description: "desc",
+      account_id: ACCOUNT_ID,
+      host_id: HOST_ID,
+      rootfs_image_id: CATALOG_ROOTFS_IMAGE_ID,
+      start: false,
+    });
+
+    expect(project_id).toBe(insertedProjectId);
+    expect(initializeProjectRootfsStatesMock).toHaveBeenCalledWith({
+      project_id,
+      image: CATALOG_ROOTFS_IMAGE,
+      image_id: CATALOG_ROOTFS_IMAGE_ID,
+      set_by_account_id: ACCOUNT_ID,
+    });
+    expect(hostControlCreateProjectMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      host_id: HOST_ID,
+      create: {
+        project_id,
+        title: "Catalog image test",
+        users: { [ACCOUNT_ID]: { group: "owner" } },
+        image: CATALOG_ROOTFS_IMAGE,
+        start: false,
+      },
+    });
   });
 
   it("uses the routed project file server client for src_project_id clones", async () => {
