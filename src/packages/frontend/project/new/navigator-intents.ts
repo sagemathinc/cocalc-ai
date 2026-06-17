@@ -1393,8 +1393,16 @@ export async function submitNavigatorPromptInWorkspaceChat(opts: {
   waitForAgent?: boolean;
   agentSession?: NavigatorAgentSessionTarget;
   createNewThread?: boolean;
+  submitToAgent?: boolean;
 }): Promise<boolean> {
-  return await writeNavigatorPromptInWorkspaceChat(opts, true);
+  const submitToAgent = opts.submitToAgent !== false;
+  return await writeNavigatorPromptInWorkspaceChat(
+    {
+      ...opts,
+      stageInComposer: !submitToAgent,
+    },
+    submitToAgent,
+  );
 }
 
 export async function submitNavigatorPromptToCurrentThread(opts: {

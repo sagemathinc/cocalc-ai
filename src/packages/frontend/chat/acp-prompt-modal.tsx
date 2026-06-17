@@ -66,7 +66,6 @@ export function AcpPromptModal({
         date={0}
         enableMentions={false}
         enableUpload={false}
-        fixedMode="editor"
         fontSize={fontSize}
         height="420px"
         input={draft}
