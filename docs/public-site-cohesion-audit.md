@@ -156,6 +156,38 @@ the entry in place as a decision record.
   executing against, list buyer questions before edits, and update the ledger
   as each sub-action closes.
 
+### PSL-2026-06-17-007: Agent Workflow Hardening
+
+- **Routes:** repo process for public-site agent workflow, tests, browser QA,
+  and human review boundaries.
+- **Trigger:** User asked to audit the public-site agent workflow itself after
+  the feature/guides pass and identify which checks should become automated,
+  which should remain browser QA, and which require human product judgment.
+- **External research checked:** Anthropic's agent guidance still supports
+  simple composable workflows before more autonomous loops; OpenAI eval guidance
+  supports criteria-based evaluation; Playwright visual-comparison docs warn
+  that screenshots vary by browser/platform; W3C reflow guidance supports
+  horizontal-overflow checks as a baseline mobile-readability guard.
+- **Visitor/process question:** Can future agents continue CoCalc.ai cleanup
+  without losing pitch framing, skipping QA, omitting next prompts, or
+  committing scratch/internal artifacts?
+- **Principle:** Automate deterministic regressions, browser-QA visual
+  judgments that need rendered layout, and reserve product positioning and
+  evidence approval for humans.
+- **Decision:** Add an explicit check matrix and automation backlog to this
+  audit doc, keep reusable prompts in `src/.agents/public-site-audit-prompt-log.md`,
+  and add focused tests that make the ledger/prompt-log operating standard
+  harder to accidentally drop.
+- **Changed files:** `docs/public-site-cohesion-audit.md`,
+  `src/.agents/public-site-audit-prompt-log.md`,
+  `src/packages/frontend/public/__tests__/public-site-agent-workflow.test.ts`
+- **Validation state:** Focused process-doc Jest test passed, frontend lint
+  passed, and frontend typecheck passed on 2026-06-17. No static rebuild was
+  needed because no public runtime source changed.
+- **Follow-up:** Convert the successful throwaway browser-QA harness into a
+  reusable script only after deciding the stable assertion set and artifact
+  location policy.
+
 ### Current Open Validation Tasks
 
 - [x] `PSL-2026-06-17-001` through `PSL-2026-06-17-004`: run static preview
@@ -170,6 +202,8 @@ the entry in place as a decision record.
 - [x] Final pre-commit hygiene: run `git status --short`, `git diff --name-only`,
       and `git ls-files --others --exclude-standard` so scratch QA artifacts do not
       enter the repository.
+- [x] `PSL-2026-06-17-007`: run focused process-doc tests, update validation
+      state, commit, and report the next recommended prompt.
 
 ## Agentic Public-Site Operating Model
 
@@ -224,6 +258,103 @@ The acceptance rubric for future agents:
 - Is the language natural, concise, and public-facing?
 - Are unapproved proof/compliance/competitor/internal claims absent?
 - Does mobile scanning work without horizontal scroll or crammed endings?
+
+## Agentic Public-Site Check Matrix
+
+Use this matrix when deciding what to automate, what to browser-QA, and what to
+escalate for human product review.
+
+### Automate
+
+Automate checks when the failure can be expressed as source text, route
+structure, DOM state, or stable browser measurement.
+
+- **Pitch and product-boundary guardrails:** reject stale/internal phrases,
+  direct competitor framing, unapproved proof language, broad open-format
+  promises, unapproved security/privacy claims, and product-path boundary drift
+  such as Star becoming more than single-VM or Launchpad/Rocket becoming
+  self-service product promises.
+- **CTA route discipline:** assert that route-owned endings point to the useful
+  next step for the page, such as product comparison, contextual support,
+  pricing, docs, or the relevant guide instead of looping every card to one
+  generic page.
+- **Duplicate-label and decorative-metadata regressions:** assert that audited
+  pages do not bring back duplicate card headings, tag rows, repeated metadata
+  chips, stale map labels, or component names that only make sense internally.
+- **Prompt and ledger continuity:** assert that the audit doc has the operating
+  model, the prompt log has a reusable next prompt, prompts cite `PSL-*` ledger
+  IDs, and both files warn against raw chat, scratch artifacts, compliance
+  interpretation, and unapproved public copy.
+- **Rendered layout baselines:** use browser automation for horizontal overflow,
+  expected section order, presence/absence of known visual classes, route
+  heading text, and specific href targets.
+- **Standard repo validation:** run focused Jest tests, frontend lint,
+  typecheck, prettier, and static rebuild when public source changes.
+
+Do not automate a test merely because a user disliked a screenshot once. Turn it
+into a test only when the underlying regression can be stated as a durable rule.
+
+### Manual Browser QA
+
+Keep checks manual, with screenshots under `/tmp/cocalc-public-qa-*`, when the
+question depends on visual rhythm or rendered perception rather than a stable
+source rule.
+
+- Does the page feel visually crowded or monotonous at desktop, tablet, and
+  mobile widths?
+- Do cards look clickable when they are links, and non-clickable when they are
+  explanatory panels?
+- Are tinted, dark, or high-emphasis panels reserved for sections that earn that
+  visual weight?
+- Does mobile scanning preserve information scent without hiding high-intent
+  routes behind unnecessary interaction?
+- Does the bottom-of-page ending feel like one clear next step instead of a
+  stack of competing CTA rows?
+- Are screenshots, mocks, and visual assets readable and properly cropped at
+  the tested widths?
+
+Browser QA can include deterministic assertions, but final visual judgment
+should remain a human review note unless the regression has a stable, testable
+shape.
+
+### Human Product Judgment
+
+Escalate or leave as human review when the question changes positioning,
+evidence posture, public claims, or the commercial hierarchy.
+
+- Whether AI is prominent enough without turning CoCalc into generic AI-tool
+  messaging.
+- Whether teaching is correctly weighted as a secondary workflow for courses,
+  labs, workshops, and training rather than a top-level product path.
+- Whether a feature deserves visible surface area or should stay as a docs link
+  or guide route.
+- Whether a page should omit, combine, move, or disclose content that is true
+  but not decision-critical.
+- Whether screenshots, proof, metrics, trust language, compliance language,
+  competitor framing, or deployment-boundary claims are approved for public use.
+- Whether public copy sounds natural and buyer-facing rather than agent-written,
+  stiff, internal, or over-claimed.
+
+Human review should produce a ledger entry or checklist update, not just chat
+feedback, so future agents can continue without losing the decision.
+
+## Agentic Public-Site Automation Backlog
+
+- [x] Add a focused process-doc test that checks the audit doc and prompt log
+      preserve the operating model, PSL references, next-prompt continuity, and
+      artifact hygiene rules.
+- [ ] Convert the throwaway headless-Chrome QA harness into a reusable script
+      that writes screenshots and assertion JSON to `/tmp/cocalc-public-qa-*`.
+      Keep it outside the normal Jest suite until its runtime and browser
+      assumptions are stable.
+- [ ] Add a route registry for public-site QA groups so agents can run
+      `conversion spine`, `feature index`, `feature detail`, `product detail`,
+      or `guides/docs bridge` checks without rediscovering routes from chat.
+- [ ] Consider criteria-based LLM review only as an advisory layer for tone and
+      repetition. Do not let an LLM judge approve product positioning, proof
+      claims, compliance language, or final public copy without human review.
+- [ ] Add a lightweight final-handoff checklist template that forces commit
+      hash, validation, browser QA, residual risks, and next recommended prompt.
 
 ## Conversion Spine Pass
 

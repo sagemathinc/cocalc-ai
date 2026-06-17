@@ -33,8 +33,28 @@ turns.
   by the pitch evidence docs.
 - Ask future agents to state the route's buyer/visitor question before editing
   and to update the relevant `PSL-*` ledger item as sub-actions close.
+- Use the check split in
+  `docs/public-site-cohesion-audit.md#agentic-public-site-check-matrix`:
+  automate deterministic route/copy/CTA/process regressions, browser-QA visual
+  rhythm and rendered layout, and escalate product positioning, proof posture,
+  and commercial hierarchy for human judgment.
+- Do not treat browser screenshots, terminal transcripts, raw prompt logs, or
+  competitor/compliance research as commit-ready artifacts. Commit only source,
+  tests, and intentional docs.
 
 ## Prompt Backlog
+
+### Reusable Browser QA Harness
+
+Convert the successful throwaway headless-Chrome public-site QA harness into a
+small reusable script for future public-site passes. Use `PSL-2026-06-17-007`
+and `docs/public-site-cohesion-audit.md#agentic-public-site-check-matrix` as the
+operating standard. The script should accept route groups, write screenshots and
+assertion JSON only under `/tmp/cocalc-public-qa-*`, check horizontal overflow,
+expected section order, stale text, route-specific hrefs, and selected visual
+classes, and never commit generated artifacts. Add focused tests or docs only
+where the rules are durable, run validation, commit, and report residual risks
+plus the next recommended prompt.
 
 ### Guides And Feature QA Completion
 
