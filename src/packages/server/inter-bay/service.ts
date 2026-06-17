@@ -119,6 +119,7 @@ import {
   updateClusterAccountHomeBay,
   upsertClusterAccountApiKeyDirectoryEntry,
 } from "@cocalc/server/inter-bay/accounts";
+import isAdmin from "@cocalc/server/accounts/is-admin";
 import {
   acceptAccountRehome,
   copyAccountRehomeState,
@@ -174,6 +175,11 @@ import {
   updateSiteLicense,
   updateSiteLicensePool,
 } from "@cocalc/server/membership/site-licenses";
+import {
+  addSiteLicenseExternalClaimKey,
+  consumeSiteLicenseExternalClaimToken,
+  createSiteLicenseExternalClaimPool,
+} from "@cocalc/server/membership/site-license-external-claims";
 import {
   createLicenseOnSeed,
   listLicensesOnSeed,
@@ -978,6 +984,55 @@ async function startAccountLocalService(): Promise<void> {
       isSeedSiteLicenseBay()
         ? await addSiteLicensePool(opts)
         : await getSeedSiteLicenseClient().addSiteLicensePool(opts),
+    createSiteLicenseExternalClaimPool: async ({
+      actor_account_id,
+      ...opts
+    }) => {
+      if (!isSeedSiteLicenseBay()) {
+        return await getSeedSiteLicenseClient().createSiteLicenseExternalClaimPool(
+          {
+            actor_account_id,
+            ...opts,
+          },
+        );
+      }
+      if (!(await isAdmin(actor_account_id))) {
+        throw Error("must be an admin");
+      }
+      return await createSiteLicenseExternalClaimPool({
+        ...opts,
+        created_by_account_id: actor_account_id,
+      });
+    },
+    addSiteLicenseExternalClaimKey: async ({ actor_account_id, ...opts }) => {
+      if (!isSeedSiteLicenseBay()) {
+        return await getSeedSiteLicenseClient().addSiteLicenseExternalClaimKey({
+          actor_account_id,
+          ...opts,
+        });
+      }
+      if (!(await isAdmin(actor_account_id))) {
+        throw Error("must be an admin");
+      }
+      return await addSiteLicenseExternalClaimKey({
+        ...opts,
+        created_by_account_id: actor_account_id,
+      });
+    },
+    consumeSiteLicenseExternalClaimToken: async ({ account_id, token }) => {
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "claim site-license external token",
+      );
+      return isSeedSiteLicenseBay()
+        ? await consumeSiteLicenseExternalClaimToken({ token, account_id })
+        : await getSeedSiteLicenseClient().consumeSiteLicenseExternalClaimToken(
+            {
+              account_id,
+              token,
+            },
+          );
+    },
     archiveSiteLicensePool: async (opts) =>
       isSeedSiteLicenseBay()
         ? await archiveSiteLicensePool(opts)
