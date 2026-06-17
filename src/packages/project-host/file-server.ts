@@ -1086,7 +1086,13 @@ function looksLikeMissingBackupBucketError(err: unknown): boolean {
   );
 }
 
-async function invalidateBackupConfig(project_id: string): Promise<void> {
+export async function invalidateBackupConfig(
+  project_id?: string,
+): Promise<void> {
+  if (!project_id) {
+    backupConfigCache.clear();
+    return;
+  }
   backupConfigCache.delete(project_id);
   const profilePath = join(secrets, "rustic", `project-${project_id}.toml`);
   try {
@@ -1141,9 +1147,8 @@ async function startBackupConfigInvalidation(client: ConatClient) {
   }
   (async () => {
     for await (const _msg of backupConfigInvalidationSub) {
-      backupConfigCache.clear();
       try {
-        // Refresh on demand; we only clear cache here.
+        await invalidateBackupConfig();
       } catch (err) {
         logger.warn("backup config refresh failed", err);
       }

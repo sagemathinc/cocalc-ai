@@ -24,6 +24,8 @@ let setProjectBackupRepoIdMock: jest.Mock;
 let setProjectBackupRegionMock: jest.Mock;
 let purgeProjectBackupsForRepoMock: jest.Mock;
 let conatPublishMock: jest.Mock;
+let getRoutedHostControlClientMock: jest.Mock;
+let invalidateBackupConfigMock: jest.Mock;
 let projectLogRows: any[];
 let moveCallOrder: string[];
 
@@ -61,6 +63,11 @@ jest.mock("../project-host/control", () => ({
     deleteProjectDataOnHostMock(...args),
   savePlacement: (...args: any[]) => savePlacementMock(...args),
   stopProjectOnHost: (...args: any[]) => stopProjectOnHostMock(...args),
+}));
+
+jest.mock("../project-host/client", () => ({
+  getRoutedHostControlClient: (...args: any[]) =>
+    getRoutedHostControlClientMock(...args),
 }));
 
 jest.mock("../conat/api/projects", () => ({
@@ -393,6 +400,10 @@ describe("moveProjectToHost", () => {
       deleted_index_snapshots: 1,
     }));
     conatPublishMock = jest.fn(async () => ({ bytes: 0, count: 1 }));
+    invalidateBackupConfigMock = jest.fn(async () => ({ ok: true }));
+    getRoutedHostControlClientMock = jest.fn(async () => ({
+      invalidateBackupConfig: invalidateBackupConfigMock,
+    }));
   });
 
   it("accepts a timed-out destination start wait if the project is already running on the destination host", async () => {
@@ -862,13 +873,13 @@ describe("moveProjectToHost", () => {
       project_id: PROJECT_ID,
       region: "weur",
     });
-    expect(conatPublishMock).toHaveBeenCalledWith(
-      `project-host.${DEST_HOST_ID}.backup.invalidate`,
-      null,
-      expect.objectContaining({
-        waitForInterest: true,
-      }),
-    );
+    expect(getRoutedHostControlClientMock).toHaveBeenCalledWith({
+      host_id: DEST_HOST_ID,
+      timeout: expect.any(Number),
+    });
+    expect(invalidateBackupConfigMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+    });
     expect(purgeProjectBackupsForRepoMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       backup_repo_id: "66666666-6666-4666-8666-666666666666",

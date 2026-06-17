@@ -20,6 +20,7 @@ import {
   savePlacement,
   stopProjectOnHost,
 } from "../project-host/control";
+import { getRoutedHostControlClient } from "../project-host/client";
 import { getConfiguredBayId } from "../bay-config";
 import {
   PROJECT_DANGEROUS_INTERNAL_AUTH,
@@ -57,6 +58,16 @@ const MOVE_START_DEST_TIMEOUT_MS = Math.max(
   Number(process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS) || 2 * 60 * 60 * 1000,
 );
 const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
+const BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 5000),
+);
+const BACKUP_CONFIG_INVALIDATION_RETRY_DELAY_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_BACKUP_CONFIG_INVALIDATION_RETRY_DELAY_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 500),
+);
 const RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS) ||
@@ -844,13 +855,50 @@ async function retryOnceOnTransientMoveError<T>({
 
 async function invalidateProjectBackupConfigOnHost(
   host_id: string | null | undefined,
+  project_id?: string,
 ): Promise<void> {
   const target = `${host_id ?? ""}`.trim();
   if (!target) return;
+  try {
+    const client = await getRoutedHostControlClient({
+      host_id: target,
+      timeout: BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS,
+    });
+    await client.invalidateBackupConfig({ project_id });
+    return;
+  } catch (err) {
+    log.warn(
+      "project-host backup config RPC invalidation failed; falling back to broadcast",
+      {
+        host_id: target,
+        project_id,
+        err,
+      },
+    );
+  }
   await conat().publish(`project-host.${target}.backup.invalidate`, null, {
     waitForInterest: true,
-    timeout: 10_000,
+    timeout: BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS,
   });
+}
+
+async function invalidateProjectBackupConfigOnHostWithRetry(
+  host_id: string | null | undefined,
+  project_id: string,
+): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await invalidateProjectBackupConfigOnHost(host_id, project_id);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) {
+        await delay(BACKUP_CONFIG_INVALIDATION_RETRY_DELAY_MS);
+      }
+    }
+  }
+  throw lastErr;
 }
 
 function mergeMoveProgressDetail({
@@ -1148,7 +1196,10 @@ async function performBackupRegionCutover({
 
   if (previous_backup_repo_id) {
     try {
-      await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+      await invalidateProjectBackupConfigOnHostWithRetry(
+        context.dest_host_id,
+        context.project_id,
+      );
     } catch (err) {
       log.warn("backup-region cutover invalidation publish failed", {
         project_id: context.project_id,
@@ -1224,7 +1275,10 @@ async function performBackupRegionCutover({
     });
     if (previous_backup_repo_id) {
       try {
-        await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+        await invalidateProjectBackupConfigOnHost(
+          context.dest_host_id,
+          context.project_id,
+        );
       } catch (invalidateErr) {
         log.warn("backup-region cutover rollback invalidation publish failed", {
           project_id: context.project_id,
@@ -1661,7 +1715,10 @@ export async function moveProjectToHost(
       } else {
         currentStage = "invalidate-source-backup-config";
         try {
-          await invalidateProjectBackupConfigOnHost(context.project_host_id);
+          await invalidateProjectBackupConfigOnHost(
+            context.project_host_id,
+            context.project_id,
+          );
         } catch (err) {
           log.warn(
             "moveProjectToHost source backup config invalidation failed",
@@ -1773,7 +1830,10 @@ export async function moveProjectToHost(
     if (startDest) {
       currentStage = "invalidate-destination-backup-config";
       try {
-        await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+        await invalidateProjectBackupConfigOnHost(
+          context.dest_host_id,
+          context.project_id,
+        );
       } catch (err) {
         log.warn(
           "moveProjectToHost destination backup config invalidation failed",
