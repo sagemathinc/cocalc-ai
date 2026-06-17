@@ -153,8 +153,8 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     noAnonymous: false,
   },
   rootfs: {
-    label: "Rootfs",
-    flyoutTitle: "Rootfs",
+    label: "RootFS",
+    flyoutTitle: "RootFS",
     icon: "docker",
     flyout: RootfsFlyout,
     noAnonymous: false,
