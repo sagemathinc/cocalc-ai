@@ -1262,6 +1262,35 @@ export class ChatActions extends Actions<ChatState> {
     return { date, prevHistory };
   };
 
+  saveAcpPrompt = (
+    message: {
+      date: string | Date;
+      history?: MessageHistory[];
+      sender_id?: string;
+      message_id?: string;
+      thread_id?: string;
+      parent_message_id?: string;
+    },
+    acp_prompt: string,
+  ): boolean => {
+    const date = toISOString(message.date);
+    if (!date || this.syncdb == null) {
+      return false;
+    }
+    this.setSyncdb({
+      event: "chat",
+      sender_id: message.sender_id,
+      message_id: message.message_id,
+      thread_id: message.thread_id,
+      parent_message_id: message.parent_message_id,
+      history: message.history ?? [],
+      acp_prompt: `${acp_prompt ?? ""}`.trim() || undefined,
+      date,
+    });
+    this.syncdb.commit();
+    return true;
+  };
+
   sendReply = ({
     message,
     reply,

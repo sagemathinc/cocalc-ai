@@ -2,7 +2,10 @@ import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-ind
 import { listAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
 import { redux } from "@cocalc/frontend/app-framework";
 import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
-import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
+import {
+  writeChatComposerAcpPromptDraft,
+  writeChatComposerDraft,
+} from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
@@ -755,6 +758,7 @@ async function writeNavigatorPromptInWorkspaceChat(
             actions.appendToComposerDraft({
               threadKey: createdThreadKey,
               text: composerText,
+              acpPrompt: basePrompt,
             });
           } else {
             await writeChatComposerDraft({
@@ -763,6 +767,14 @@ async function writeNavigatorPromptInWorkspaceChat(
               path: targetChatPath,
               composerDraftKey: stableDraftKeyFromThreadKey(createdThreadKey),
               text: composerText,
+              append: true,
+            });
+            await writeChatComposerAcpPromptDraft({
+              account_id,
+              project_id,
+              path: targetChatPath,
+              composerDraftKey: stableDraftKeyFromThreadKey(createdThreadKey),
+              text: basePrompt,
               append: true,
             });
           }
@@ -920,6 +932,7 @@ async function writeNavigatorPromptInWorkspaceChat(
             actions.appendToComposerDraft({
               threadKey: replyThreadKey,
               text: composerText,
+              acpPrompt: basePrompt,
             });
           } else {
             await writeChatComposerDraft({
@@ -928,6 +941,14 @@ async function writeNavigatorPromptInWorkspaceChat(
               path: targetChatPath,
               composerDraftKey: stableDraftKeyFromThreadKey(replyThreadKey),
               text: composerText,
+              append: true,
+            });
+            await writeChatComposerAcpPromptDraft({
+              account_id,
+              project_id,
+              path: targetChatPath,
+              composerDraftKey: stableDraftKeyFromThreadKey(replyThreadKey),
+              text: basePrompt,
               append: true,
             });
           }
@@ -1207,6 +1228,14 @@ async function writeNavigatorPromptInWorkspaceChat(
         path: targetChatPath,
         composerDraftKey: stableDraftKeyFromThreadKey(replyThreadKey),
         text: composerText,
+        append: true,
+      });
+      await writeChatComposerAcpPromptDraft({
+        account_id,
+        project_id,
+        path: targetChatPath,
+        composerDraftKey: stableDraftKeyFromThreadKey(replyThreadKey),
+        text: basePrompt,
         append: true,
       });
       const nextThreadKey = replyThreadKey

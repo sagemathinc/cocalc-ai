@@ -10,6 +10,7 @@ const mockEnsureWorkspaceChatForPath = jest.fn();
 const mockEnsureWorkspaceChatPath = jest.fn();
 const mockOpenFile = jest.fn();
 const mockWriteChatComposerDraft = jest.fn();
+const mockWriteChatComposerAcpPromptDraft = jest.fn();
 let mockAccountId = "00000000-1000-4000-8000-000000000001";
 let mockProjectStoreState: Record<string, any> = {};
 let mockOtherSettings: Record<string, any> = {};
@@ -28,6 +29,8 @@ jest.mock("@cocalc/frontend/chat/actions/ai", () => ({
 }));
 
 jest.mock("@cocalc/frontend/chat/use-chat-composer-draft", () => ({
+  writeChatComposerAcpPromptDraft: (...args: any[]) =>
+    mockWriteChatComposerAcpPromptDraft(...args),
   writeChatComposerDraft: (...args: any[]) =>
     mockWriteChatComposerDraft(...args),
 }));
@@ -100,6 +103,8 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     mockOpenFile.mockReset();
     mockWriteChatComposerDraft.mockReset();
     mockWriteChatComposerDraft.mockResolvedValue("draft text");
+    mockWriteChatComposerAcpPromptDraft.mockReset();
+    mockWriteChatComposerAcpPromptDraft.mockResolvedValue("acp draft text");
     mockLoadOpenedAgentSessionSelection.mockReset();
     mockLoadOpenedAgentSessionSelection.mockReturnValue(null);
     window.localStorage.clear();
@@ -997,6 +1002,14 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         append: true,
       }),
     );
+    expect(mockWriteChatComposerAcpPromptDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "00000000-1000-4000-8000-000000000000",
+        path: workspaceChatPath,
+        text: "Full visible agent prompt",
+        append: true,
+      }),
+    );
     expect(save).toHaveBeenCalled();
     expect(mockOpenFloating).toHaveBeenCalledWith(
       "00000000-1000-4000-8000-000000000000",
@@ -1647,6 +1660,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(openedActions.appendToComposerDraft).toHaveBeenCalledWith({
       threadKey: newThreadKey,
       text: "Full visible prompt",
+      acpPrompt: "Full visible prompt",
     });
     expect(mockWriteChatComposerDraft).not.toHaveBeenCalled();
     expect(save).toHaveBeenCalled();

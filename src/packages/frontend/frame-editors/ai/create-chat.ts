@@ -96,6 +96,7 @@ export default async function createChat({
     options,
     codexModel,
   });
+  const visiblePrompt = createAssistantVisiblePrompt(options.command);
   const title = createAssistantThreadTitle({
     command: options.command,
     path: actions.path,
@@ -111,7 +112,7 @@ export default async function createChat({
         project_id: actions.project_id,
         path: actions.path,
         prompt,
-        visiblePrompt: prompt,
+        visiblePrompt,
         title,
         tag: intent,
         forceCodex: true,
@@ -125,7 +126,7 @@ export default async function createChat({
         project_id: actions.project_id,
         path: actions.path,
         prompt,
-        visiblePrompt: prompt,
+        visiblePrompt,
         title,
         tag: intent,
         forceCodex: true,
@@ -139,7 +140,7 @@ export default async function createChat({
   if (!sent) {
     dispatchNavigatorPromptIntent({
       prompt,
-      visiblePrompt: prompt,
+      visiblePrompt,
       title,
       tag: intent,
       forceCodex: true,

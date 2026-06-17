@@ -44,7 +44,9 @@ import { markChatAsReadIfUnseen, stableDraftKeyFromThreadKey } from "./utils";
 import { useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
 import {
+  useChatComposerAcpPromptDraft,
   useChatComposerDraft,
+  writeChatComposerAcpPromptDraft,
   writeChatComposerDraft,
 } from "./use-chat-composer-draft";
 import * as immutable from "immutable";
@@ -831,6 +833,17 @@ export function ChatPanel({
       path,
       composerDraftKey,
     });
+  const {
+    input: acpPrompt,
+    setInput: setAcpPrompt,
+    clearInput: clearAcpPrompt,
+    clearComposerDraft: clearAcpPromptDraft,
+  } = useChatComposerAcpPromptDraft({
+    account_id,
+    project_id,
+    path,
+    composerDraftKey,
+  });
   useEffect(() => {
     setChatOverlayOpen(gitBrowserOverlayKey, gitBrowserOpen);
     return () => {
@@ -838,16 +851,21 @@ export function ChatPanel({
     };
   }, [gitBrowserOpen, gitBrowserOverlayKey]);
   const inputRef = useRef<string>(input);
+  const acpPromptRef = useRef<string>(acpPrompt);
   const composerSessionRef = useRef<number>(composerSession);
   const pendingThreadDraftTransferRef = useRef<{
     threadKey: string;
     text: string;
+    acpPrompt?: string;
     sourceDraftKey: number;
   } | null>(null);
   const recoveredPendingChatSendsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     inputRef.current = input;
   }, [input]);
+  useEffect(() => {
+    acpPromptRef.current = acpPrompt;
+  }, [acpPrompt]);
   useEffect(() => {
     composerSessionRef.current = composerSession;
   }, [composerSession]);
@@ -864,18 +882,34 @@ export function ChatPanel({
     },
     [setInput],
   );
+  const setComposerAcpPrompt = useCallback(
+    (value: string) => {
+      if (value === acpPromptRef.current) {
+        return;
+      }
+      acpPromptRef.current = value;
+      setAcpPrompt(value);
+    },
+    [setAcpPrompt],
+  );
   useEffect(() => {
     actions.appendToComposerDraft = (
       request: ChatComposerDraftAppendRequest,
     ) => {
       const text = `${request.text ?? ""}`.trim();
       if (!text) return;
+      const acpPromptText = `${request.acpPrompt ?? ""}`.trim();
       const targetThreadKey = request.threadKey?.trim() || null;
       const appendToExisting = (existing: string) =>
         existing.trim() ? `${existing.replace(/\s+$/g, "")}\n\n${text}` : text;
+      const appendAcpPromptToExisting = (existing: string) =>
+        acpPromptText && existing.trim()
+          ? `${existing.replace(/\s+$/g, "")}\n\n${acpPromptText}`
+          : acpPromptText || existing;
       if (targetThreadKey && targetThreadKey !== selectedThreadKey) {
         void (async () => {
           let nextText = appendToExisting("");
+          let nextAcpPrompt = acpPromptText;
           try {
             nextText =
               (await writeChatComposerDraft({
@@ -886,12 +920,25 @@ export function ChatPanel({
                 text,
                 append: true,
               })) || nextText;
+            if (acpPromptText) {
+              nextAcpPrompt =
+                (await writeChatComposerAcpPromptDraft({
+                  account_id,
+                  project_id,
+                  path,
+                  composerDraftKey:
+                    stableDraftKeyFromThreadKey(targetThreadKey),
+                  text: acpPromptText,
+                  append: true,
+                })) || nextAcpPrompt;
+            }
           } catch (err) {
             console.warn("failed to stage chat composer draft", err);
           }
           pendingThreadDraftTransferRef.current = {
             threadKey: targetThreadKey,
             text: nextText,
+            acpPrompt: nextAcpPrompt,
             sourceDraftKey: composerDraftKey,
           };
           setAllowAutoSelectThread(false);
@@ -900,6 +947,9 @@ export function ChatPanel({
         return;
       }
       setComposerInput(appendToExisting(inputRef.current ?? ""));
+      setComposerAcpPrompt(
+        appendAcpPromptToExisting(acpPromptRef.current ?? ""),
+      );
     };
     return () => {
       if (actions.appendToComposerDraft != null) {
@@ -914,6 +964,7 @@ export function ChatPanel({
     project_id,
     selectedThreadKey,
     setAllowAutoSelectThread,
+    setComposerAcpPrompt,
     setComposerInput,
     setSelectedThreadKey,
   ]);
@@ -927,10 +978,22 @@ export function ChatPanel({
       inputRef.current = pending.text;
       setInput(pending.text);
     }
+    if (pending.acpPrompt != null) {
+      acpPromptRef.current = pending.acpPrompt;
+      setAcpPrompt(pending.acpPrompt);
+    }
     if (pending.sourceDraftKey !== composerDraftKey) {
       void clearComposerDraft(pending.sourceDraftKey);
+      void clearAcpPromptDraft(pending.sourceDraftKey);
     }
-  }, [clearComposerDraft, composerDraftKey, selectedThreadKey, setInput]);
+  }, [
+    clearAcpPromptDraft,
+    clearComposerDraft,
+    composerDraftKey,
+    selectedThreadKey,
+    setAcpPrompt,
+    setInput,
+  ]);
   useEffect(() => {
     if (readOnly) return;
     if (!actions.syncdb || !actions.isSyncdbReady()) return;
@@ -968,6 +1031,7 @@ export function ChatPanel({
         }
         const sent = actions.sendChat({
           input: pending.input,
+          acp_prompt: pending.acp_prompt,
           sender_id: pending.sender_id,
           reply_thread_id: pending.reply_thread_id,
           parent_message_id: pending.parent_message_id,
@@ -1611,11 +1675,13 @@ export function ChatPanel({
     (draftKey: number) => {
       // Keep local guard state coherent immediately, before async state/render.
       inputRef.current = "";
+      acpPromptRef.current = "";
       // Clear current composer draft before send switches selected thread context.
       actions.deleteDraft(draftKey);
       void clearInput();
+      void clearAcpPrompt();
     },
-    [actions, clearInput],
+    [actions, clearAcpPrompt, clearInput],
   );
 
   function resolveReplyTarget(immediate = false): {
@@ -1660,6 +1726,7 @@ export function ChatPanel({
     opts?: { immediate?: boolean },
   ): Promise<void> {
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
+    const rawAcpPrompt = `${acpPromptRef.current ?? ""}`.trim();
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
     const target = resolveReplyTarget(opts?.immediate === true);
@@ -1788,6 +1855,7 @@ export function ChatPanel({
       account_id,
       sender_id: account_id,
       input: resolvedInput,
+      acp_prompt: rawAcpPrompt || undefined,
       date: chatIdentity.date,
       message_id: chatIdentity.message_id,
       thread_id: chatIdentity.thread_id,
@@ -1817,6 +1885,7 @@ export function ChatPanel({
       reply_thread_id,
       parent_message_id,
       input: resolvedInput,
+      acp_prompt: rawAcpPrompt || undefined,
       send_mode: sendMode,
       name: newThreadName,
       threadAgent,
@@ -1831,6 +1900,8 @@ export function ChatPanel({
       // reply-target metadata race), restore the typed input so nothing vanishes.
       inputRef.current = rawSendingText;
       setInput(rawSendingText);
+      acpPromptRef.current = rawAcpPrompt;
+      setAcpPrompt(rawAcpPrompt);
       return;
     }
     const threadKey =
@@ -1884,9 +1955,12 @@ export function ChatPanel({
     // Explicitly reset draft state for the global "new chat" composer bucket.
     advanceComposerSession();
     inputRef.current = "";
+    acpPromptRef.current = "";
     setInput("");
+    setAcpPrompt("");
     actions.deleteDraft(0);
     void clearComposerDraft(0);
+    void clearAcpPromptDraft(0);
     resetThreadSelectionForNewChat({
       actions,
       setAllowAutoSelectThread,
@@ -2341,6 +2415,8 @@ export function ChatPanel({
             composerSession={composerSession}
             input={input}
             setInput={setComposerInput}
+            acpPrompt={acpPrompt}
+            setAcpPrompt={setComposerAcpPrompt}
             on_send={on_send}
             on_send_immediately={on_send_immediately}
             onIncreaseFontSize={onIncreaseFontSize}
