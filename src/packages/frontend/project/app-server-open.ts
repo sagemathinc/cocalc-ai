@@ -109,7 +109,10 @@ export async function getProjectAppOpenUrl({
       ? "port"
       : "proxy";
   const serviceLocal = translateServiceOpenUrl(status.url, serviceOpenMode);
-  const preferredLocal = basePathLocal || serviceLocal;
+  const preferredLocal =
+    serviceOpenMode === "port"
+      ? (serviceLocal ?? basePathLocal)
+      : (basePathLocal ?? serviceLocal);
   if (!preferredLocal) return;
   const local =
     withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;

@@ -77,6 +77,23 @@ import {
 type AppKind = "service" | "static";
 type AppStatusFilter = "all" | "running" | "stopped" | "error" | "public";
 type AppRowAction = "expose" | "unexpose" | "audit" | "refresh";
+const APP_SERVER_PANEL_REFRESH_EVENT = "cocalc-project-apps-refresh";
+
+function notifyAppServerPanelRefresh(project_id: string, source: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent(APP_SERVER_PANEL_REFRESH_EVENT, {
+      detail: { project_id, source },
+    }),
+  );
+}
+
+function appServerPanelInstanceId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random()}`;
+}
 
 interface StartupFailureDetails {
   appId: string;
@@ -899,6 +916,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   >([]);
   const [detectingInstalledTemplates, setDetectingInstalledTemplates] =
     useState<boolean>(false);
+  const [installedTemplatesOpen, setInstalledTemplatesOpen] =
+    useState<boolean>(false);
   const [templateEntries, setTemplateEntries] = useState<
     AppTemplateCatalogEntry[]
   >([]);
@@ -947,6 +966,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   >(undefined);
   const [transferBusy, setTransferBusy] = useState<boolean>(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const instanceIdRef = useRef<string>(appServerPanelInstanceId());
   const presetSelectorContainerRef = useRef<HTMLDivElement | null>(null);
   const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
   const [presetSelectorOpen, setPresetSelectorOpen] = useState<boolean>(false);
@@ -1218,9 +1238,28 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }, [api]);
 
+  const refreshAfterMutation = useCallback(async () => {
+    await refresh();
+    notifyAppServerPanelRefresh(project_id, instanceIdRef.current);
+  }, [project_id, refresh]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail;
+      if (detail?.project_id !== project_id) return;
+      if (detail?.source === instanceIdRef.current) return;
+      void refresh();
+    };
+    window.addEventListener(APP_SERVER_PANEL_REFRESH_EVENT, handler);
+    return () => {
+      window.removeEventListener(APP_SERVER_PANEL_REFRESH_EVENT, handler);
+    };
+  }, [project_id, refresh]);
 
   const refreshMetricsForApp = useCallback(
     async (appId: string) => {
@@ -1245,7 +1284,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   useEffect(() => {
     if (detectingInstalledTemplates || installedTemplates.length > 0) return;
-    void onDetectInstalledTemplates();
+    void onDetectInstalledTemplates({ open: false });
   }, [detectingInstalledTemplates, installedTemplates.length]);
 
   function applyPreset(nextKey: string) {
@@ -1802,7 +1841,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       if (startNow && spec.kind === "service") {
         const missingInstall = await getMissingInstallForSpec(spec);
         if (missingInstall) {
-          await refresh();
+          await refreshAfterMutation();
           reportMissingInstall({
             appId: id,
             action: "start-after-save",
@@ -1816,7 +1855,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           interval: 1000,
         });
       }
-      await refresh();
+      await refreshAfterMutation();
       resetCreatorForm();
       setCreatorOpen(false);
       if (shouldOpenWhenReady && status.state === "running") {
@@ -1829,7 +1868,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           action: "start-after-save",
           err,
         });
-        await refresh();
+        await refreshAfterMutation();
       } else {
         setError(normalizeError(err));
       }
@@ -1844,7 +1883,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       const spec = buildUnmanagedSpecFromDetected(item);
       await api.apps.upsertAppSpec(spec);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1870,7 +1909,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         return;
       }
       await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       await reportStartupFailure({
         appId: id,
@@ -1888,7 +1927,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.stopApp(id);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1902,7 +1941,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.deleteApp(id);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1933,7 +1972,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           ? undefined
           : `${exposeSubdomainLabel ?? ""}`.trim() || undefined,
       });
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1948,7 +1987,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setRowAction({ appId: id, action: "unexpose" });
       setError(undefined);
       await api.apps.unexposeApp(id);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1964,7 +2003,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.refreshApp(id);
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2011,12 +2050,17 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }
 
-  async function onDetectInstalledTemplates() {
+  async function onDetectInstalledTemplates({
+    open = true,
+  }: { open?: boolean } = {}) {
     try {
       setDetectingInstalledTemplates(true);
       setError(undefined);
       const next = await api.apps.detectInstalledTemplates();
       setInstalledTemplates(next);
+      if (open) {
+        setInstalledTemplatesOpen(true);
+      }
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2049,7 +2093,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           await reportStartupFailure({ appId: id, action: "start", err });
         }
       }
-      await refresh();
+      await refreshAfterMutation();
     } finally {
       setSubmitting(false);
     }
@@ -2064,7 +2108,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
         await api.apps.stopApp(id);
       }
-      await refresh();
+      await refreshAfterMutation();
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2139,7 +2183,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       for (const spec of apps) {
         await api.apps.upsertAppSpec(spec);
       }
-      await refresh();
+      await refreshAfterMutation();
       Modal.success({
         title: `Imported ${apps.length} app${apps.length === 1 ? "" : "s"}`,
         content:
@@ -2269,7 +2313,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         );
       }
       await api.apps.upsertAppSpec(parsed);
-      await refresh();
+      await refreshAfterMutation();
       setEditSpecOpen(false);
       setEditSpecTargetId("");
       setEditSpecRaw("");
@@ -2409,6 +2453,39 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           allowAbsolutePaths
         />
       </Modal>
+      <Modal
+        open={installedTemplatesOpen}
+        title={`Installed templates (${installedTemplates.length})`}
+        footer={null}
+        onCancel={() => setInstalledTemplatesOpen(false)}
+        width={720}
+      >
+        <Paragraph style={{ color: "#666" }}>
+          These are template runtimes detected in this project. Missing
+          templates can still be configured, but may need installation before
+          they start.
+        </Paragraph>
+        <Space wrap style={{ width: "100%" }}>
+          {installedTemplates.map((item) => (
+            <Tag
+              key={item.key}
+              color={
+                item.available
+                  ? "green"
+                  : item.status === "unknown"
+                    ? "gold"
+                    : "default"
+              }
+              style={{ paddingInline: "10px", marginInlineEnd: 0 }}
+            >
+              {item.label}
+              {item.details ? (
+                <span style={{ opacity: 0.8 }}> · {item.details}</span>
+              ) : null}
+            </Tag>
+          ))}
+        </Space>
+      </Modal>
       <Card
         size="small"
         style={{ background: "#fafafa", borderColor: "#efefef" }}
@@ -2456,10 +2533,18 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               Detect running HTTP apps
             </Button>
             <Button
-              onClick={() => void onDetectInstalledTemplates()}
+              onClick={() => {
+                if (installedTemplates.length > 0) {
+                  setInstalledTemplatesOpen(true);
+                  return;
+                }
+                void onDetectInstalledTemplates();
+              }}
               loading={detectingInstalledTemplates}
             >
-              Detect installed templates
+              {installedTemplates.length > 0
+                ? `Installed templates (${installedTemplates.length})`
+                : "Detect installed templates"}
             </Button>
           </Space>
         </Space>
@@ -3151,33 +3236,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           </Space>
         )}
       </Card>
-      {installedTemplates.length > 0 ? (
-        <Card
-          size="small"
-          title={`Installed templates (${installedTemplates.length})`}
-        >
-          <Space wrap style={{ width: "100%" }}>
-            {installedTemplates.map((item) => (
-              <Tag
-                key={item.key}
-                color={
-                  item.available
-                    ? "green"
-                    : item.status === "unknown"
-                      ? "gold"
-                      : "default"
-                }
-                style={{ paddingInline: "10px", marginInlineEnd: 0 }}
-              >
-                {item.label}
-                {item.details ? (
-                  <span style={{ opacity: 0.8 }}> · {item.details}</span>
-                ) : null}
-              </Tag>
-            ))}
-          </Space>
-        </Card>
-      ) : null}
       {detected.length > 0 ? (
         <Card
           size="small"
