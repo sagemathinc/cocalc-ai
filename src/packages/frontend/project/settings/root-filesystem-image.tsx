@@ -4625,6 +4625,7 @@ function RootfsContentActionRow({
 }): React.JSX.Element {
   const [copying, setCopying] = useState<boolean>(false);
   const [launching, setLaunching] = useState<boolean>(false);
+  const [actionError, setActionError] = useState<string>("");
   const label = action.label.trim();
   const description = action.description?.trim();
   const openPath = rootfsContentActionOpenPath(action);
@@ -4634,11 +4635,16 @@ function RootfsContentActionRow({
 
   async function copyToHome(): Promise<void> {
     setCopying(true);
+    setActionError("");
     try {
       const targetPath = await onCopyToHome(action);
       if (targetPath) {
         onOpenPath(targetPath);
       }
+    } catch (err) {
+      const error = `Could not copy RootFS content: ${rootfsActionErrorMessage(err)}`;
+      setActionError(error);
+      message.error(error);
     } finally {
       setCopying(false);
     }
@@ -4646,8 +4652,13 @@ function RootfsContentActionRow({
 
   async function launchProjectApp(): Promise<void> {
     setLaunching(true);
+    setActionError("");
     try {
       await onLaunchProjectApp(action);
+    } catch (err) {
+      const error = `Could not launch app: ${rootfsActionErrorMessage(err)}`;
+      setActionError(error);
+      message.error(error);
     } finally {
       setLaunching(false);
     }
@@ -4670,6 +4681,14 @@ function RootfsContentActionRow({
             <code style={{ overflowWrap: "anywhere" }}>
               {rootfsContentActionPathLabel(action)}
             </code>
+          ) : null}
+          {actionError ? (
+            <Alert
+              message={actionError}
+              showIcon
+              style={{ marginTop: 4 }}
+              type="error"
+            />
           ) : null}
         </Space>
       }
@@ -4796,13 +4815,8 @@ async function launchRootfsProjectAppAction({
     return;
   }
   const api = webapp_client.conat_client.projectApi({ project_id });
-  let spec: AppSpec | undefined;
-  try {
-    spec = await api.apps.getAppSpec(appId);
-  } catch {
-    const saved = await api.apps.upsertAppSpec(embeddedSpec);
-    spec = saved.spec;
-  }
+  const saved = await api.apps.upsertAppSpec(embeddedSpec);
+  const spec = saved.spec;
   const status =
     spec.kind === "service"
       ? await api.apps.ensureRunning(appId, {
@@ -4816,6 +4830,10 @@ async function launchRootfsProjectAppAction({
     spec,
     status,
   });
+}
+
+function rootfsActionErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : `${err}`;
 }
 
 function renderRootfsScan(
