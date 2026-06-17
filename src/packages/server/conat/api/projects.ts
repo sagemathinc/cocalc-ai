@@ -2755,10 +2755,21 @@ async function runProjectStartLikeAction({
         context: `${kind}: running`,
       });
     }
-    const stopProgressMirror = await mirrorStartLroProgress({
+    let stopProgressMirror: (() => Promise<void>) | undefined;
+    void mirrorStartLroProgress({
       project_id,
       op_id: op.op_id,
-    });
+    })
+      .then((close) => {
+        stopProgressMirror = close;
+      })
+      .catch((err) => {
+        log.warn("unable to initialize project-start progress mirror", {
+          project_id,
+          op_id: op.op_id,
+          err: `${err}`,
+        });
+      });
     try {
       const ownership = await resolveProjectBay(project_id);
       if (ownership == null) {
@@ -2861,7 +2872,9 @@ async function runProjectStartLikeAction({
       }
       throw err;
     } finally {
-      await stopProgressMirror();
+      if (stopProgressMirror) {
+        await stopProgressMirror();
+      }
     }
   };
 
