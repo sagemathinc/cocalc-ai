@@ -4,6 +4,7 @@
  */
 
 import dayjs from "dayjs";
+import { generateKeyPairSync, sign as signData } from "crypto";
 
 import getPool from "@cocalc/database/pool";
 import { after, before } from "@cocalc/server/test";
@@ -16,6 +17,8 @@ import { uuid } from "@cocalc/util/misc";
 import { resolveMembershipForAccount } from "./resolve";
 import { adminProvisionSiteLicense } from "./site-licenses";
 import {
+  addSiteLicenseExternalClaimKey,
+  consumeSiteLicenseExternalClaimToken,
   consumeVerifiedSiteLicenseExternalClaim,
   createSiteLicenseExternalClaimPool,
   hashSiteLicenseExternalClaimToken,
@@ -97,6 +100,41 @@ describe("site license external claim tokens", () => {
       created_by_account_id: admin_account_id,
     });
     return { overview, claimPool };
+  }
+
+  function compactEdDsaToken({
+    privateKey,
+    kid,
+    payload,
+  }: {
+    privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"];
+    kid: string;
+    payload: Record<string, unknown>;
+  }): string {
+    const encodedHeader = Buffer.from(
+      JSON.stringify({ alg: "EdDSA", kid, typ: "JWT" }),
+    ).toString("base64url");
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
+      "base64url",
+    );
+    const signingInput = `${encodedHeader}.${encodedPayload}`;
+    const signature = signData(null, Buffer.from(signingInput), privateKey);
+    return `${signingInput}.${signature.toString("base64url")}`;
+  }
+
+  async function addEdDsaKey(pool_id: string) {
+    const kid = `kid-${uuid()}`;
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    await addSiteLicenseExternalClaimKey({
+      pool_id,
+      kid,
+      alg: "EdDSA",
+      public_key_jwk: publicKey.export({ format: "jwk" }) as Record<
+        string,
+        unknown
+      >,
+    });
+    return { kid, privateKey };
   }
 
   it("consumes a verified claim once and grants the backed membership", async () => {
@@ -238,5 +276,93 @@ describe("site license external claim tokens", () => {
     expect(dayjs(grant.rows[0]?.expires_at).toISOString()).toBe(
       dayjs(membership_expires_at).toISOString(),
     );
+  });
+
+  it("verifies and consumes a compact EdDSA claim token", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool({
+      default_membership_duration_days: 30,
+    });
+    const { kid, privateKey } = await addEdDsaKey(claimPool.id);
+    const jti = uuid();
+    const token = compactEdDsaToken({
+      privateKey,
+      kid,
+      payload: {
+        iss: claimPool.issuer,
+        aud: claimPool.audience,
+        site_license_id: claimPool.site_license_id,
+        pool_id: claimPool.id,
+        jti,
+        exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
+        subject: "reader-456",
+        label: "CUP sample",
+        metadata: { publication: "example" },
+      },
+    });
+
+    const consumption = await consumeSiteLicenseExternalClaimToken({
+      token,
+      account_id,
+    });
+
+    expect(consumption.status).toBe("granted");
+    expect(consumption.kid).toBe(kid);
+    expect(consumption.jti).toBe(jti);
+    expect(consumption.token_hash).toBe(
+      hashSiteLicenseExternalClaimToken({ token }),
+    );
+    expect(consumption.external_subject).toBe("reader-456");
+  });
+
+  it("rejects expired and tampered compact claim tokens before consumption", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { claimPool } = await provisionExternalClaimPool();
+    const { kid, privateKey } = await addEdDsaKey(claimPool.id);
+    const basePayload = {
+      iss: claimPool.issuer,
+      aud: claimPool.audience,
+      site_license_id: claimPool.site_license_id,
+      pool_id: claimPool.id,
+      jti: uuid(),
+    };
+    const expiredToken = compactEdDsaToken({
+      privateKey,
+      kid,
+      payload: {
+        ...basePayload,
+        exp: Math.floor(dayjs().subtract(1, "minute").valueOf() / 1000),
+      },
+    });
+    await expect(
+      consumeSiteLicenseExternalClaimToken({ token: expiredToken, account_id }),
+    ).rejects.toThrow("external claim token has expired");
+
+    const validToken = compactEdDsaToken({
+      privateKey,
+      kid,
+      payload: {
+        ...basePayload,
+        jti: uuid(),
+        exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
+      },
+    });
+    const parts = validToken.split(".");
+    const tamperedPayload = Buffer.from(
+      JSON.stringify({
+        ...basePayload,
+        jti: uuid(),
+        exp: Math.floor(dayjs().add(1, "day").valueOf() / 1000),
+      }),
+    ).toString("base64url");
+    const tamperedToken = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
+    await expect(
+      consumeSiteLicenseExternalClaimToken({
+        token: tamperedToken,
+        account_id,
+      }),
+    ).rejects.toThrow("external claim token signature is invalid");
   });
 });

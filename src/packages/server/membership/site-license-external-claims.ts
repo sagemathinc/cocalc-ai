@@ -3,7 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { createHash, createHmac } from "crypto";
+import {
+  createHash,
+  createHmac,
+  createPublicKey,
+  verify as verifySignature,
+} from "crypto";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import type { MembershipClass } from "@cocalc/conat/hub/api/purchases";
@@ -51,6 +56,22 @@ interface RawExternalClaimPool {
   disabled_at?: Date | string | null;
   metadata?: Record<string, unknown> | null;
   created_by_account_id?: string | null;
+  created?: Date | string;
+  updated?: Date | string;
+}
+
+interface RawExternalClaimKey {
+  id: string;
+  pool_id: string;
+  kid: string;
+  alg: string;
+  public_key_jwk?: Record<string, unknown> | null;
+  public_key_pem?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  revoked_at?: Date | string | null;
+  created_by_account_id?: string | null;
+  metadata?: Record<string, unknown> | null;
   created?: Date | string;
   updated?: Date | string;
 }
@@ -117,6 +138,22 @@ export interface SiteLicenseExternalClaimPool {
   updated?: Date;
 }
 
+export interface SiteLicenseExternalClaimKey {
+  id: string;
+  pool_id: string;
+  kid: string;
+  alg: "EdDSA" | "ES256";
+  public_key_jwk?: Record<string, unknown> | null;
+  public_key_pem?: string | null;
+  starts_at?: Date | null;
+  expires_at?: Date | null;
+  revoked_at?: Date | null;
+  created_by_account_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+  updated?: Date;
+}
+
 export interface SiteLicenseVerifiedExternalClaim {
   issuer: string;
   audience?: string;
@@ -133,6 +170,23 @@ export interface SiteLicenseVerifiedExternalClaim {
   token_expires_at?: Date | string | null;
   metadata?: Record<string, unknown> | null;
 }
+
+type SiteLicenseExternalClaimJwtPayload = {
+  iss?: unknown;
+  aud?: unknown;
+  site_license_id?: unknown;
+  pool_id?: unknown;
+  jti?: unknown;
+  exp?: unknown;
+  nbf?: unknown;
+  iat?: unknown;
+  membership_class?: unknown;
+  membership_expires_at?: unknown;
+  rootfs_id?: unknown;
+  label?: unknown;
+  subject?: unknown;
+  metadata?: unknown;
+};
 
 export interface SiteLicenseExternalClaimConsumption {
   id: string;
@@ -274,6 +328,23 @@ function normalizePoolRow(
   };
 }
 
+function normalizeKeyRow(
+  row: RawExternalClaimKey,
+): SiteLicenseExternalClaimKey {
+  const alg = normalizeAlg(row.alg);
+  return {
+    ...row,
+    alg,
+    public_key_jwk: normalizeMetadata(row.public_key_jwk),
+    starts_at: asDate(row.starts_at),
+    expires_at: asDate(row.expires_at),
+    revoked_at: asDate(row.revoked_at),
+    metadata: normalizeMetadata(row.metadata),
+    created: asDate(row.created) ?? undefined,
+    updated: asDate(row.updated) ?? undefined,
+  };
+}
+
 function normalizeConsumptionRow(
   row: RawExternalClaimConsumption,
 ): SiteLicenseExternalClaimConsumption {
@@ -294,6 +365,71 @@ function normalizeSlug(slug?: string | null): string | null {
   if (normalized == null) return null;
   checkAccountName(normalized);
   return normalized;
+}
+
+function normalizeAlg(alg: unknown): "EdDSA" | "ES256" {
+  const normalized = normalizeString(alg, "alg");
+  if (normalized !== "EdDSA" && normalized !== "ES256") {
+    throw Error(`unsupported external claim signing algorithm '${normalized}'`);
+  }
+  return normalized;
+}
+
+function decodeBase64UrlJson(value: string, field: string): any {
+  try {
+    return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    throw Error(`invalid external claim token ${field}`);
+  }
+}
+
+function decodeCompactJws(token: string): {
+  protectedHeader: Record<string, unknown>;
+  payload: SiteLicenseExternalClaimJwtPayload;
+  signingInput: Buffer;
+  signature: Buffer;
+} {
+  const parts = normalizeString(token, "token").split(".");
+  if (parts.length !== 3 || parts.some((part) => !part)) {
+    throw Error("external claim token must be a compact JWS");
+  }
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
+  return {
+    protectedHeader: decodeBase64UrlJson(encodedHeader, "header"),
+    payload: decodeBase64UrlJson(encodedPayload, "payload"),
+    signingInput: Buffer.from(`${encodedHeader}.${encodedPayload}`),
+    signature: Buffer.from(encodedSignature, "base64url"),
+  };
+}
+
+function normalizeJwtNumericDate(value: unknown, field: string): Date {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw Error(`${field} must be a numeric date`);
+  }
+  const date = new Date(value * 1000);
+  if (!Number.isFinite(date.valueOf())) {
+    throw Error(`${field} is invalid`);
+  }
+  return date;
+}
+
+function normalizeOptionalJwtDate(value: unknown, field: string): Date | null {
+  if (value == null) return null;
+  if (typeof value === "number") {
+    return normalizeJwtNumericDate(value, field);
+  }
+  return asDate(`${value}`);
+}
+
+function normalizeOptionalObject(
+  value: unknown,
+  field: string,
+): Record<string, unknown> | null {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw Error(`${field} must be an object`);
+  }
+  return { ...(value as Record<string, unknown>) };
 }
 
 function claimSideEffectKey(consumption_id: string): string {
@@ -544,6 +680,242 @@ export async function createSiteLicenseExternalClaimPool(
     ],
   );
   return normalizePoolRow(rows[0]!);
+}
+
+export async function addSiteLicenseExternalClaimKey(
+  {
+    id = uuid(),
+    pool_id,
+    kid,
+    alg,
+    public_key_jwk,
+    public_key_pem,
+    starts_at,
+    expires_at,
+    revoked_at,
+    created_by_account_id,
+    metadata,
+  }: {
+    id?: string;
+    pool_id: string;
+    kid: string;
+    alg: "EdDSA" | "ES256";
+    public_key_jwk?: Record<string, unknown> | null;
+    public_key_pem?: string | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+    revoked_at?: Date | string | null;
+    created_by_account_id?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
+  client?: PoolClient,
+): Promise<SiteLicenseExternalClaimKey> {
+  await ensureSiteLicenseSchema(client);
+  const normalizedPoolId = normalizeUUID(pool_id, "pool_id");
+  const normalizedKid = normalizeString(kid, "kid");
+  const normalizedAlg = normalizeAlg(alg);
+  const normalizedJwk = normalizeMetadata(public_key_jwk);
+  const normalizedPem = normalizeOptionalString(public_key_pem);
+  if (normalizedJwk == null && normalizedPem == null) {
+    throw Error("public_key_jwk or public_key_pem is required");
+  }
+  if (normalizedJwk != null && normalizedPem != null) {
+    throw Error("only one public key representation may be set");
+  }
+  const { rows } = await getQueryClient(client).query<RawExternalClaimKey>(
+    `INSERT INTO site_license_external_claim_keys
+       (id, pool_id, kid, alg, public_key_jwk, public_key_pem, starts_at,
+        expires_at, revoked_at, created_by_account_id, metadata, created,
+        updated)
+     VALUES
+       ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11::jsonb,NOW(),NOW())
+     ON CONFLICT (pool_id, kid) DO UPDATE SET
+       alg=EXCLUDED.alg,
+       public_key_jwk=EXCLUDED.public_key_jwk,
+       public_key_pem=EXCLUDED.public_key_pem,
+       starts_at=EXCLUDED.starts_at,
+       expires_at=EXCLUDED.expires_at,
+       revoked_at=EXCLUDED.revoked_at,
+       created_by_account_id=EXCLUDED.created_by_account_id,
+       metadata=EXCLUDED.metadata,
+       updated=NOW()
+     RETURNING *`,
+    [
+      normalizeUUID(id, "id"),
+      normalizedPoolId,
+      normalizedKid,
+      normalizedAlg,
+      normalizedJwk,
+      normalizedPem,
+      asDate(starts_at),
+      asDate(expires_at),
+      asDate(revoked_at),
+      normalizeOptionalString(created_by_account_id),
+      normalizeMetadata(metadata),
+    ],
+  );
+  return normalizeKeyRow(rows[0]!);
+}
+
+async function loadActiveClaimKey({
+  pool_id,
+  kid,
+  alg,
+}: {
+  pool_id: string;
+  kid: string;
+  alg: "EdDSA" | "ES256";
+}): Promise<SiteLicenseExternalClaimKey> {
+  await ensureSiteLicenseSchema();
+  const { rows } = await getPool().query<RawExternalClaimKey>(
+    `SELECT *
+       FROM site_license_external_claim_keys
+      WHERE pool_id=$1
+        AND kid=$2
+        AND alg=$3
+      LIMIT 1`,
+    [pool_id, kid, alg],
+  );
+  const key = rows[0] ? normalizeKeyRow(rows[0]) : undefined;
+  if (!key) {
+    throw Error("external claim public key not found");
+  }
+  requireActiveWindow({
+    starts_at: key.starts_at,
+    expires_at: key.expires_at,
+    disabled_at: key.revoked_at,
+    label: "external claim key",
+    now: new Date(),
+  });
+  return key;
+}
+
+function getPublicKeyForVerification(key: SiteLicenseExternalClaimKey) {
+  if (key.public_key_jwk != null) {
+    return createPublicKey({ key: key.public_key_jwk as any, format: "jwk" });
+  }
+  return createPublicKey(normalizeString(key.public_key_pem, "public_key_pem"));
+}
+
+function derLength(length: number): Buffer {
+  if (length < 0x80) {
+    return Buffer.from([length]);
+  }
+  const bytes: number[] = [];
+  let value = length;
+  while (value > 0) {
+    bytes.unshift(value & 0xff);
+    value >>= 8;
+  }
+  return Buffer.from([0x80 | bytes.length, ...bytes]);
+}
+
+function trimUnsignedInteger(buffer: Buffer): Buffer {
+  let offset = 0;
+  while (offset < buffer.length - 1 && buffer[offset] === 0) {
+    offset += 1;
+  }
+  const trimmed = buffer.subarray(offset);
+  if ((trimmed[0] & 0x80) !== 0) {
+    return Buffer.concat([Buffer.from([0]), trimmed]);
+  }
+  return trimmed;
+}
+
+function es256JoseSignatureToDer(signature: Buffer): Buffer {
+  if (signature.length !== 64) {
+    throw Error("invalid ES256 signature length");
+  }
+  const r = trimUnsignedInteger(signature.subarray(0, 32));
+  const s = trimUnsignedInteger(signature.subarray(32));
+  const body = Buffer.concat([
+    Buffer.from([0x02]),
+    derLength(r.length),
+    r,
+    Buffer.from([0x02]),
+    derLength(s.length),
+    s,
+  ]);
+  return Buffer.concat([Buffer.from([0x30]), derLength(body.length), body]);
+}
+
+function verifyCompactJwsSignature({
+  alg,
+  key,
+  signingInput,
+  signature,
+}: {
+  alg: "EdDSA" | "ES256";
+  key: SiteLicenseExternalClaimKey;
+  signingInput: Buffer;
+  signature: Buffer;
+}): void {
+  const publicKey = getPublicKeyForVerification(key);
+  const ok =
+    alg === "EdDSA"
+      ? verifySignature(null, signingInput, publicKey, signature)
+      : verifySignature(
+          "sha256",
+          signingInput,
+          publicKey,
+          es256JoseSignatureToDer(signature),
+        );
+  if (!ok) {
+    throw Error("external claim token signature is invalid");
+  }
+}
+
+export async function verifySiteLicenseExternalClaimToken({
+  token,
+  account_id,
+}: {
+  token: string;
+  account_id: string;
+}): Promise<SiteLicenseVerifiedExternalClaim> {
+  const { protectedHeader, payload, signingInput, signature } =
+    decodeCompactJws(token);
+  const alg = normalizeAlg(protectedHeader.alg);
+  const kid = normalizeString(protectedHeader.kid, "kid");
+  const pool_id = normalizeUUID(payload.pool_id, "pool_id");
+  const key = await loadActiveClaimKey({ pool_id, kid, alg });
+  verifyCompactJwsSignature({ alg, key, signingInput, signature });
+
+  const now = Date.now();
+  const expiresAt = normalizeJwtNumericDate(payload.exp, "exp");
+  if (expiresAt.getTime() <= now) {
+    throw Error("external claim token has expired");
+  }
+  const notBefore = normalizeOptionalJwtDate(payload.nbf, "nbf");
+  if (notBefore != null && notBefore.getTime() > now) {
+    throw Error("external claim token is not active yet");
+  }
+  return {
+    issuer: normalizeString(payload.iss, "iss"),
+    audience: normalizeString(payload.aud, "aud"),
+    site_license_id: normalizeUUID(payload.site_license_id, "site_license_id"),
+    pool_id,
+    jti: normalizeString(payload.jti, "jti"),
+    token_hash: hashSiteLicenseExternalClaimToken({ token }),
+    account_id: normalizeUUID(account_id, "account_id"),
+    kid,
+    membership_class: normalizeOptionalString(payload.membership_class),
+    membership_expires_at: normalizeOptionalJwtDate(
+      payload.membership_expires_at,
+      "membership_expires_at",
+    ),
+    rootfs_id: normalizeOptionalString(payload.rootfs_id),
+    external_subject: normalizeOptionalString(payload.subject),
+    token_expires_at: expiresAt,
+    metadata: {
+      ...(normalizeOptionalObject(payload.metadata, "metadata") ?? {}),
+      ...(payload.label == null
+        ? {}
+        : { label: normalizeOptionalString(payload.label) }),
+      ...(payload.iat == null
+        ? {}
+        : { iat: normalizeJwtNumericDate(payload.iat, "iat").toISOString() }),
+    },
+  };
 }
 
 async function loadClaimPoolForUpdate({
@@ -915,4 +1287,16 @@ export async function consumeVerifiedSiteLicenseExternalClaim(
 ): Promise<SiteLicenseExternalClaimConsumption> {
   const consumption = await seedConsumeVerifiedClaim(claim);
   return await applySiteLicenseExternalClaimSideEffect(consumption);
+}
+
+export async function consumeSiteLicenseExternalClaimToken({
+  token,
+  account_id,
+}: {
+  token: string;
+  account_id: string;
+}): Promise<SiteLicenseExternalClaimConsumption> {
+  return await consumeVerifiedSiteLicenseExternalClaim(
+    await verifySiteLicenseExternalClaimToken({ token, account_id }),
+  );
 }
