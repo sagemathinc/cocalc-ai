@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { Command } from "commander";
@@ -19,7 +22,9 @@ function rootfsDeps(overrides: Record<string, any> = {}) {
       captured = await fn(ctx);
       return captured;
     },
-    resolveProjectFromArgOrContext: async () => "project-id",
+    resolveProjectFromArgOrContext:
+      overrides.resolveProjectFromArgOrContext ??
+      (async () => ({ project_id: "project-id" })),
     waitForLro: async () => ({ status: "done" }),
     serializeLroSummary: (summary: any) => summary,
   };
@@ -28,6 +33,19 @@ function rootfsDeps(overrides: Record<string, any> = {}) {
     get captured() {
       return captured;
     },
+  };
+}
+
+function writeRootfsConfig(value: unknown): {
+  path: string;
+  cleanup: () => void;
+} {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-rootfs-config-"));
+  const path = join(dir, "rootfs-config.json");
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  return {
+    path,
+    cleanup: () => rmSync(dir, { force: true, recursive: true }),
   };
 }
 
@@ -221,4 +239,214 @@ test("rootfs prepull queues one host", async () => {
     limit: undefined,
   });
   assert.equal(harness.captured.enqueued, 1);
+});
+
+test("rootfs save accepts portable config json", async () => {
+  let capturedArgs: any;
+  const config = writeRootfsConfig({
+    kind: "cocalc-rootfs-config",
+    version: 1,
+    exported_at: "2026-06-17T00:00:00.000Z",
+    metadata: {
+      label: "Pluto notebooks",
+      description: "Julia and Pluto examples",
+      family: "julia",
+      version: "1.11",
+      channel: "stable",
+      visibility: "collaborators",
+      tags: ["julia", "pluto"],
+    },
+    theme: {
+      title: "Pluto",
+      icon: "notebook",
+      color: "#ffffff",
+      accent_color: "#3366cc",
+    },
+    content: {
+      version: 1,
+      title: "Pluto examples",
+      actions: [
+        {
+          kind: "copy-to-home",
+          label: "Copy examples",
+          source_path: "/opt/pluto/examples",
+          target_path: "pluto-examples",
+        },
+        {
+          kind: "project-app",
+          label: "Launch Pluto",
+          app_spec: {
+            id: "pluto",
+            kind: "service",
+            title: "Pluto",
+            command: { command: "julia" },
+          },
+        },
+      ],
+    },
+  });
+  const harness = rootfsDeps({
+    system: {
+      saveRootfsCatalogEntry: async (opts: any) => {
+        capturedArgs = opts;
+        return { id: "image-1", image: opts.image, label: opts.label };
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "save",
+      "--image",
+      "cocalc.local/rootfs/pluto",
+      "--config-file",
+      config.path,
+    ]);
+  } finally {
+    config.cleanup();
+  }
+
+  assert.deepEqual(capturedArgs, {
+    image_id: undefined,
+    image: "cocalc.local/rootfs/pluto",
+    label: "Pluto notebooks",
+    description: "Julia and Pluto examples",
+    family: "julia",
+    version: "1.11",
+    channel: "stable",
+    supersedes_image_id: undefined,
+    visibility: "collaborators",
+    tags: ["julia", "pluto"],
+    theme: {
+      title: "Pluto",
+      description: undefined,
+      color: "#ffffff",
+      accent_color: "#3366cc",
+      icon: "notebook",
+      image_blob: null,
+    },
+    content: {
+      version: 1,
+      title: "Pluto examples",
+      subtitle: undefined,
+      description: undefined,
+      publisher: undefined,
+      license: undefined,
+      actions: [
+        {
+          kind: "copy-to-home",
+          label: "Copy examples",
+          source_path: "/opt/pluto/examples",
+          target_path: "pluto-examples",
+          description: undefined,
+        },
+        {
+          kind: "project-app",
+          label: "Launch Pluto",
+          app_spec: {
+            id: "pluto",
+            kind: "service",
+            title: "Pluto",
+            command: { command: "julia" },
+          },
+          description: undefined,
+        },
+      ],
+    },
+    content_warnings: [],
+    official: undefined,
+    prepull: undefined,
+    hidden: undefined,
+  });
+});
+
+test("rootfs publish accepts config json and lets flags override it", async () => {
+  let capturedArgs: any;
+  const config = writeRootfsConfig({
+    kind: "cocalc-rootfs-config",
+    version: 1,
+    exported_at: "2026-06-17T00:00:00.000Z",
+    metadata: {
+      label: "Config label",
+      visibility: "private",
+      tags: ["from-config"],
+    },
+    content: {
+      version: 1,
+      title: "Config content",
+      actions: [{ kind: "browse", label: "Browse", path: "/" }],
+    },
+  });
+  const harness = rootfsDeps({
+    resolveProjectFromArgOrContext: async () => ({ project_id: "project-1" }),
+    system: {
+      publishProjectRootfsImage: async (opts: any) => {
+        capturedArgs = opts;
+        return { op_id: "op-1", scope_type: "project", scope_id: "project-1" };
+      },
+    },
+  });
+  const program = new Command();
+  registerRootfsCommand(program, harness.deps as any);
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "rootfs",
+      "publish",
+      "--project",
+      "project-1",
+      "--config-file",
+      config.path,
+      "--label",
+      "CLI label",
+      "--tags",
+      "cli,pluto",
+      "--visibility",
+      "public",
+      "--switch-project",
+    ]);
+  } finally {
+    config.cleanup();
+  }
+
+  assert.deepEqual(capturedArgs, {
+    project_id: "project-1",
+    label: "CLI label",
+    family: undefined,
+    version: undefined,
+    channel: undefined,
+    supersedes_image_id: undefined,
+    description: undefined,
+    visibility: "public",
+    tags: ["cli", "pluto"],
+    theme: undefined,
+    content: {
+      version: 1,
+      title: "Config content",
+      subtitle: undefined,
+      description: undefined,
+      publisher: undefined,
+      license: undefined,
+      actions: [
+        {
+          kind: "browse",
+          label: "Browse",
+          path: "/",
+          description: undefined,
+        },
+      ],
+    },
+    content_warnings: [],
+    official: undefined,
+    prepull: undefined,
+    hidden: undefined,
+    switch_project: true,
+  });
 });

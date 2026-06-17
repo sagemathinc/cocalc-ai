@@ -80,12 +80,17 @@ import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
+  ROOTFS_CONFIG_EXPORT_KIND,
+  ROOTFS_CONFIG_EXPORT_VERSION,
   isManagedRootfsImageName,
   normalizeRootfsContentManifest,
+  parseRootfsConfigExport,
 } from "@cocalc/util/rootfs-images";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import type {
+  RootfsConfigExport,
+  RootfsConfigExportMetadata,
   ProjectRootfsStateEntry,
   RootfsContentAction,
   RootfsContentManifest,
@@ -132,29 +137,6 @@ type RootfsContentDirectoryPicker = {
   field: "path" | "source_path";
   pendingPath: string;
 } | null;
-
-const ROOTFS_CONFIG_EXPORT_KIND = "cocalc-rootfs-config";
-const ROOTFS_CONFIG_EXPORT_VERSION = 1;
-
-type RootfsConfigExportMetadata = {
-  label?: string;
-  description?: string;
-  family?: string;
-  version?: string;
-  channel?: string;
-  supersedes_image_id?: string;
-  visibility?: RootfsImageVisibility;
-  tags?: string[];
-};
-
-type RootfsConfigExport = {
-  kind: typeof ROOTFS_CONFIG_EXPORT_KIND;
-  version: typeof ROOTFS_CONFIG_EXPORT_VERSION;
-  exported_at: string;
-  metadata?: RootfsConfigExportMetadata;
-  theme?: RootfsImageTheme;
-  content?: RootfsContentManifest;
-};
 
 type RootfsConfigImportOptions = {
   metadata: boolean;
@@ -2879,82 +2861,6 @@ function rootfsConfigMetadataFromPublishDraft(
   };
 }
 
-function parseRootfsConfigExport(input: unknown): RootfsConfigExport {
-  if (!isPlainObject(input)) {
-    throw new Error("expected a JSON object");
-  }
-  if (input.kind !== ROOTFS_CONFIG_EXPORT_KIND) {
-    throw new Error("expected a CoCalc RootFS config export");
-  }
-  if (input.version !== ROOTFS_CONFIG_EXPORT_VERSION) {
-    throw new Error(`unsupported RootFS config version ${input.version}`);
-  }
-  const metadata = parseRootfsConfigExportMetadata(input.metadata);
-  const theme = parseRootfsConfigExportTheme(input.theme);
-  const content = parseRootfsConfigExportContent(input.content);
-  if (!metadata && !theme && !content) {
-    throw new Error("config does not contain metadata, theme, or discovery");
-  }
-  return {
-    kind: ROOTFS_CONFIG_EXPORT_KIND,
-    version: ROOTFS_CONFIG_EXPORT_VERSION,
-    exported_at: `${input.exported_at ?? ""}`,
-    metadata,
-    theme,
-    content,
-  };
-}
-
-function parseRootfsConfigExportMetadata(
-  input: unknown,
-): RootfsConfigExportMetadata | undefined {
-  if (input == null) return undefined;
-  if (!isPlainObject(input)) {
-    throw new Error("metadata must be an object");
-  }
-  const visibility = `${input.visibility ?? ""}`.trim();
-  return {
-    label: optionalString(input.label),
-    description: optionalString(input.description),
-    family: optionalString(input.family),
-    version: optionalString(input.version),
-    channel: optionalString(input.channel),
-    supersedes_image_id: optionalString(input.supersedes_image_id),
-    visibility: isRootfsImageVisibility(visibility) ? visibility : undefined,
-    tags: Array.isArray(input.tags)
-      ? normalizeRootfsTags(input.tags.map((tag) => `${tag}`))
-      : undefined,
-  };
-}
-
-function parseRootfsConfigExportTheme(
-  input: unknown,
-): RootfsImageTheme | undefined {
-  if (input == null) return undefined;
-  if (!isPlainObject(input)) {
-    throw new Error("theme must be an object");
-  }
-  return {
-    title: optionalString(input.title) ?? "",
-    description: optionalString(input.description) ?? "",
-    color: optionalString(input.color) ?? null,
-    accent_color: optionalString(input.accent_color) ?? null,
-    icon: optionalString(input.icon) ?? null,
-    image_blob: optionalString(input.image_blob) ?? null,
-  };
-}
-
-function parseRootfsConfigExportContent(
-  input: unknown,
-): RootfsContentManifest | undefined {
-  if (input == null) return undefined;
-  const result = normalizeRootfsContentManifest(input);
-  if (!result.content) {
-    throw new Error("discovery config is invalid");
-  }
-  return result.content;
-}
-
 function rootfsConfigImportOptionsFor(
   config: RootfsConfigExport,
 ): RootfsConfigImportOptions {
@@ -2969,21 +2875,6 @@ function rootfsConfigImportOptionsHasSelection(
   options: RootfsConfigImportOptions,
 ): boolean {
   return options.metadata || options.theme || options.content;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value != null && typeof value === "object" && !Array.isArray(value);
-}
-
-function optionalString(value: unknown): string | undefined {
-  if (value == null) return undefined;
-  return `${value}`;
-}
-
-function isRootfsImageVisibility(
-  value: string,
-): value is RootfsImageVisibility {
-  return value === "private" || value === "collaborators" || value === "public";
 }
 
 function safeJsonFilenamePart(value: string): string {

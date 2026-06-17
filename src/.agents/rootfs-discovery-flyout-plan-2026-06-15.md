@@ -21,7 +21,7 @@ and give users safe one-click actions.
 ## Goals
 
 - Make published rootfs content discoverable before and after project creation.
-- Create a generic content manifest model for managed rootfs images.
+- Create a generic discovery config model for managed rootfs images.
 - Add a new in-project `Rootfs` flyout panel.
 - Move the project Runtime Image card from Settings > Environment into the new
   Rootfs flyout.
@@ -32,7 +32,7 @@ and give users safe one-click actions.
 
 ## Non-Goals
 
-- Do not execute commands from publisher-provided manifests.
+- Do not execute commands from publisher-provided discovery configs.
 - Do not auto-copy all publication content into `/home/user`.
 - Do not require a signed site-license token to use rootfs discovery. Claims are
   an optional entitlement step.
@@ -68,18 +68,20 @@ Purpose:
 
 This panel is for users after they have a project.
 
-## Rootfs Content Manifest
+## Rootfs Discovery Config
 
-Add a first-class manifest format. It can come from:
+Add a first-class discovery config format. The definitive copy lives in rootfs
+catalog metadata. Portable JSON files are import/export bundles for authors,
+publishers, CLI users, and agents; they are not authoritative after import.
 
-- A canonical file inside the rootfs, e.g. `/.cocalc/rootfs-content.json`.
 - Rootfs catalog metadata, edited by admins or publishers.
+- Portable RootFS config JSON exported from the UI or authored for the CLI.
 
-At publish/catalog-save time, CoCalc should extract, validate, sanitize, and
-store a normalized copy in the rootfs catalog. The browser should not need to
-start a project or inspect `/` just to render the landing page.
+At publish/catalog-save time, CoCalc validates and stores a normalized copy in
+the rootfs catalog. The browser should not need to start a project or inspect
+`/` just to render the landing page.
 
-### Suggested Manifest Shape
+### Suggested Discovery Shape
 
 ```json
 {
@@ -131,7 +133,7 @@ start a project or inspect `/` just to render the landing page.
 }
 ```
 
-### Manifest Rules
+### Discovery Config Rules
 
 - Plain JSON only.
 - Markdown description is allowed only if rendered through existing safe
@@ -170,19 +172,22 @@ metadata:
 Admin UI can initially expose this as JSON editing plus validation. A polished
 publisher editor can come later.
 
-## Rootfs Manifest Extraction
+## Rootfs Config Import / Export
 
-At rootfs publish time:
+The RootFS catalog entry is the single source of truth. JSON files are only a
+portable authoring format.
 
-1. Inspect the project/rootfs snapshot for `/.cocalc/rootfs-content.json`.
-2. Validate and normalize it.
-3. Store the normalized content metadata in the catalog entry.
-4. Store validation warnings in admin-only metadata.
-5. Do not fail the entire publish unless the publisher explicitly marks the
-   manifest as required.
+The portable config bundle should include:
 
-For catalog entries created around existing OCI images, allow admins to paste
-content metadata directly.
+- catalog metadata such as label, description, version, visibility, and tags;
+- theme metadata;
+- normalized discovery content, including open, browse, copy-to-HOME, external
+  link, and project app launch actions.
+
+The UI should support export/import of this bundle from catalog management. The
+CLI should support the same bundle for `rootfs save` and `rootfs publish`, with
+explicit CLI flags overriding config-file values. This lets an agent publish a
+fully described rootfs without browser-only steps.
 
 ## Public Landing Page
 
@@ -238,7 +243,7 @@ Admin-only content:
 - Trust/version/release details.
 - Raw image reference.
 - Release/artifact identifiers.
-- Manifest validation warnings.
+- Discovery config validation warnings.
 - Catalog management shortcuts.
 
 The existing Settings > Environment Runtime Image card should move into this
@@ -329,7 +334,7 @@ security and content subsystems.
 
 ## Implementation Phases
 
-### Phase 1: Manifest Types and Validation
+### Phase 1: Discovery Types and Validation
 
 - Define `RootfsContentManifest` in `@cocalc/util/rootfs-images`.
 - Add validation/sanitization helpers with tests.
@@ -342,7 +347,10 @@ security and content subsystems.
 - Extend rootfs save/publish APIs to accept content metadata.
 - Add schema/migration support for dedicated `rootfs_images.content`,
   admin-only validation warnings, and public slug storage.
-- Add JSON editor/preview in admin rootfs management.
+- Add a discovery config builder, preview, and JSON import/export in admin or
+  publisher rootfs management.
+- Add CLI support for the same portable config JSON on `rootfs save` and
+  `rootfs publish`.
 - Allow users with manage permission to accept an auto-generated slug or choose
   a valid unique slug.
 - Hide trust/scan/version UI from ordinary users for now.
@@ -378,12 +386,23 @@ security and content subsystems.
 
 ### Phase 6: CUP Pilot
 
-- Create one CUP sample rootfs content manifest.
+- Create one CUP sample rootfs discovery config.
 - Create or configure one CUP rootfs catalog entry.
 - Exercise landing page, claim, project creation, flyout content discovery, and
   copy-to-HOME.
-- Write publisher-facing instructions for authoring
-  `/.cocalc/rootfs-content.json`.
+- Write publisher-facing instructions for authoring and importing/exporting
+  RootFS config JSON.
+
+### Phase 7: CLI / Agent Parity Pilot
+
+- Ensure `cocalc rootfs publish --config-file ... --switch-project --wait` can
+  publish catalog metadata, theme, discovery actions, and project app launch
+  actions.
+- Use the CLI and project automation to create a Pluto/Julia rootfs with a
+  copyable example directory, a hello-world Pluto notebook, and a Pluto project
+  app action.
+- Create a new project from the public landing page and verify that copy,
+  browse/open, and app-launch actions work without browser-only catalog editing.
 
 ## Acceptance Criteria
 
@@ -425,8 +444,7 @@ security and content subsystems.
   - Current direction: auto-generate short random globally unique slugs, but
     optionally allow user-selected slugs if validation and uniqueness are
     straightforward.
-- Whether rootfs manifest extraction should run during all publishes or only
-  when requested.
-  - Current direction: run extraction on all publishes, non-fatally. Store
-    normalized content when valid and admin-visible warnings when invalid.
-    Only fail publish if a future explicit "manifest required" option is set.
+- Whether rootfs config should ever be embedded in the immutable rootfs.
+  - Current direction: no. Catalog metadata is the source of truth. Portable
+    JSON files are import/export bundles only.
+
