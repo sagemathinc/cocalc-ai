@@ -3004,184 +3004,18 @@ function RootfsContentManifestBuilder({
   }
 
   return (
-    <RuntimePanel
-      icon="book"
-      title="Discovery manifest"
-      subtitle={
-        <>
-          This writes <code>{ROOTFS_CONTENT_MANIFEST_PATH}</code>, which is
-          extracted into the RootFS catalog and public landing page.
-        </>
-      }
-    >
-      <Space direction="vertical" size={14} style={{ width: "100%" }}>
-        {loading ? (
-          <FlexCentered>
-            <Spin size="small" />
-            <span>Loading discovery manifest...</span>
-          </FlexCentered>
-        ) : null}
-        <div
-          style={{
-            display: "grid",
-            gap: 12,
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
-          }}
-        >
-          <RootfsContentField label="Title">
-            <Input
-              value={draft.title}
-              onChange={(e) => setField("title", e.target.value)}
-              placeholder="e.g. Computational Biology Workshop"
-            />
-          </RootfsContentField>
-          <RootfsContentField label="Subtitle">
-            <Input
-              value={draft.subtitle}
-              onChange={(e) => setField("subtitle", e.target.value)}
-              placeholder="A short one-line summary"
-            />
-          </RootfsContentField>
-        </div>
-        <RootfsContentField label="Description">
-          <Input.TextArea
-            rows={3}
-            value={draft.description}
-            onChange={(e) => setField("description", e.target.value)}
-            placeholder="Explain what is included and how the image should be used."
-          />
-        </RootfsContentField>
-        <div
-          style={{
-            display: "grid",
-            gap: 12,
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
-          }}
-        >
-          <RootfsContentField label="Publisher">
-            <Space direction="vertical" size={6} style={{ width: "100%" }}>
-              <Input
-                value={draft.publisher_name}
-                onChange={(e) => setField("publisher_name", e.target.value)}
-                placeholder="Publisher name"
-              />
-              <Input
-                value={draft.publisher_url}
-                onChange={(e) => setField("publisher_url", e.target.value)}
-                placeholder="https://..."
-              />
-            </Space>
-          </RootfsContentField>
-          <RootfsContentField label="License">
-            <Space direction="vertical" size={6} style={{ width: "100%" }}>
-              <Input
-                value={draft.license_name}
-                onChange={(e) => setField("license_name", e.target.value)}
-                placeholder="License name"
-              />
-              <Input
-                value={draft.license_url}
-                onChange={(e) => setField("license_url", e.target.value)}
-                placeholder="https://..."
-              />
-            </Space>
-          </RootfsContentField>
-        </div>
-        <RootfsContentField label="Highlights">
-          <Select
-            mode="tags"
-            value={draft.highlights}
-            onChange={(values) =>
-              setField(
-                "highlights",
-                values.map((value) => `${value}`.trim()).filter(Boolean),
-              )
-            }
-            tokenSeparators={[","]}
-            placeholder="Add short highlights users should notice"
-            style={{ width: "100%" }}
-          />
-        </RootfsContentField>
+    <Space direction="vertical" size={14} style={{ width: "100%" }}>
+      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+        The discovery manifest adds browse, copy-to-HOME, open, and external
+        link actions to the RootFS component so users can quickly find and use
+        the files bundled with this image.
+      </Paragraph>
 
-        <RootfsContentField
-          label={
-            <Space size={8}>
-              <span>Actions</span>
-              <Button size="small" onClick={() => addAction("browse")}>
-                Add browse
-              </Button>
-              <Button size="small" onClick={() => addAction("copy-to-home")}>
-                Add copy
-              </Button>
-              <Button size="small" onClick={() => addAction("open")}>
-                Add open
-              </Button>
-              <Button size="small" onClick={() => addAction("external-link")}>
-                Add link
-              </Button>
-            </Space>
-          }
-        >
-          <Space direction="vertical" size={10} style={{ width: "100%" }}>
-            {draft.actions.length === 0 ? (
-              <Alert
-                type="info"
-                showIcon
-                message="No actions yet."
-                description="Add a browse, copy, open, or external link action to help users find the bundled content."
-              />
-            ) : null}
-            {draft.actions.map((action, index) => (
-              <RootfsContentActionEditor
-                action={action}
-                index={index}
-                key={action.draft_id}
-                onPickDirectory={onPickDirectory}
-                onRemove={() =>
-                  onChange((cur) => ({
-                    ...cur,
-                    actions: cur.actions.filter((_, i) => i !== index),
-                  }))
-                }
-                onUpdate={(patch) => updateAction(index, patch)}
-              />
-            ))}
-          </Space>
-        </RootfsContentField>
-
-        {validation.warnings.length > 0 ? (
-          <Alert
-            type="warning"
-            showIcon
-            message="Manifest warnings"
-            description={
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {validation.warnings.map((warning, index) => (
-                  <li key={`${warning.code}-${index}`}>
-                    {warning.path ? <code>{warning.path}: </code> : null}
-                    {warning.message}
-                  </li>
-                ))}
-              </ul>
-            }
-          />
-        ) : null}
-
-        <Space wrap>
-          <Button
-            icon={<Icon name="save" />}
-            loading={saving || loading}
-            onClick={save}
-          >
-            Save manifest file now
-          </Button>
-          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Publishing the live project RootFS also saves this file first.
-          </Paragraph>
-        </Space>
-
+      <RuntimePanel
+        icon="eye"
+        title="Manifest preview"
+        subtitle="How the RootFS discovery component will appear to users."
+      >
         {validation.content ? (
           renderRootfsContentPanel({
             entry: previewEntry,
@@ -3196,8 +3030,188 @@ function RootfsContentManifestBuilder({
             description="Add a title, description, highlight, or action to create the discovery panel."
           />
         )}
-      </Space>
-    </RuntimePanel>
+      </RuntimePanel>
+
+      <RuntimePanel
+        icon="book"
+        title="Edit discovery manifest"
+        subtitle={
+          <>
+            This writes <code>{ROOTFS_CONTENT_MANIFEST_PATH}</code>, which is
+            extracted into the RootFS catalog and public landing page.
+          </>
+        }
+      >
+        <Space direction="vertical" size={14} style={{ width: "100%" }}>
+          {loading ? (
+            <FlexCentered>
+              <Spin size="small" />
+              <span>Loading discovery manifest...</span>
+            </FlexCentered>
+          ) : null}
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+            }}
+          >
+            <RootfsContentField label="Title">
+              <Input
+                value={draft.title}
+                onChange={(e) => setField("title", e.target.value)}
+                placeholder="e.g. Computational Biology Workshop"
+              />
+            </RootfsContentField>
+            <RootfsContentField label="Subtitle">
+              <Input
+                value={draft.subtitle}
+                onChange={(e) => setField("subtitle", e.target.value)}
+                placeholder="A short one-line summary"
+              />
+            </RootfsContentField>
+          </div>
+          <RootfsContentField label="Description">
+            <Input.TextArea
+              rows={3}
+              value={draft.description}
+              onChange={(e) => setField("description", e.target.value)}
+              placeholder="Explain what is included and how the image should be used."
+            />
+          </RootfsContentField>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+            }}
+          >
+            <RootfsContentField label="Publisher">
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Input
+                  value={draft.publisher_name}
+                  onChange={(e) => setField("publisher_name", e.target.value)}
+                  placeholder="Publisher name"
+                />
+                <Input
+                  value={draft.publisher_url}
+                  onChange={(e) => setField("publisher_url", e.target.value)}
+                  placeholder="https://..."
+                />
+              </Space>
+            </RootfsContentField>
+            <RootfsContentField label="License">
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Input
+                  value={draft.license_name}
+                  onChange={(e) => setField("license_name", e.target.value)}
+                  placeholder="License name"
+                />
+                <Input
+                  value={draft.license_url}
+                  onChange={(e) => setField("license_url", e.target.value)}
+                  placeholder="https://..."
+                />
+              </Space>
+            </RootfsContentField>
+          </div>
+          <RootfsContentField label="Highlights">
+            <Select
+              mode="tags"
+              value={draft.highlights}
+              onChange={(values) =>
+                setField(
+                  "highlights",
+                  values.map((value) => `${value}`.trim()).filter(Boolean),
+                )
+              }
+              tokenSeparators={[","]}
+              placeholder="Add short highlights users should notice"
+              style={{ width: "100%" }}
+            />
+          </RootfsContentField>
+
+          <RootfsContentField
+            label={
+              <Space size={8}>
+                <span>Actions</span>
+                <Button size="small" onClick={() => addAction("browse")}>
+                  Add browse
+                </Button>
+                <Button size="small" onClick={() => addAction("copy-to-home")}>
+                  Add copy
+                </Button>
+                <Button size="small" onClick={() => addAction("open")}>
+                  Add open
+                </Button>
+                <Button size="small" onClick={() => addAction("external-link")}>
+                  Add link
+                </Button>
+              </Space>
+            }
+          >
+            <Space direction="vertical" size={10} style={{ width: "100%" }}>
+              {draft.actions.length === 0 ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="No actions yet."
+                  description="Add a browse, copy, open, or external link action to help users find the bundled content."
+                />
+              ) : null}
+              {draft.actions.map((action, index) => (
+                <RootfsContentActionEditor
+                  action={action}
+                  index={index}
+                  key={action.draft_id}
+                  onPickDirectory={onPickDirectory}
+                  onRemove={() =>
+                    onChange((cur) => ({
+                      ...cur,
+                      actions: cur.actions.filter((_, i) => i !== index),
+                    }))
+                  }
+                  onUpdate={(patch) => updateAction(index, patch)}
+                />
+              ))}
+            </Space>
+          </RootfsContentField>
+
+          {validation.warnings.length > 0 ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="Manifest warnings"
+              description={
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {validation.warnings.map((warning, index) => (
+                    <li key={`${warning.code}-${index}`}>
+                      {warning.path ? <code>{warning.path}: </code> : null}
+                      {warning.message}
+                    </li>
+                  ))}
+                </ul>
+              }
+            />
+          ) : null}
+
+          <Space wrap>
+            <Button
+              icon={<Icon name="save" />}
+              loading={saving || loading}
+              onClick={save}
+            >
+              Save manifest file now
+            </Button>
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              Publishing the live project RootFS also saves this file first.
+            </Paragraph>
+          </Space>
+        </Space>
+      </RuntimePanel>
+    </Space>
   );
 }
 
