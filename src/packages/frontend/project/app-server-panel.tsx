@@ -1001,6 +1001,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     !activePresetTemplate.available
       ? activePreset
       : undefined;
+  const installedActivePreset =
+    activePreset && activePresetTemplate?.available ? activePreset : undefined;
   const installWithCodexPromptPreview = useMemo(() => {
     if (!installWithCodexTarget) return "";
     return buildInstallWithCodexPrompt({
@@ -1564,15 +1566,23 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }
 
-  async function resolveInstalledTemplateMap(): Promise<
+  async function detectInstalledTemplateMap(): Promise<
     Record<string, InstalledAppTemplate | undefined>
   > {
-    if (installedTemplates.length > 0) return installedTemplateMap;
     const next = await api.apps.detectInstalledTemplates();
     setInstalledTemplates(next);
     return Object.fromEntries(
       next.map((item) => [item.key, item] as const),
     ) as Record<string, InstalledAppTemplate | undefined>;
+  }
+
+  async function resolveInstalledTemplateMap({
+    force = false,
+  }: { force?: boolean } = {}): Promise<
+    Record<string, InstalledAppTemplate | undefined>
+  > {
+    if (!force && installedTemplates.length > 0) return installedTemplateMap;
+    return await detectInstalledTemplateMap();
   }
 
   async function getMissingInstallForSpec(spec: AppSpec | undefined): Promise<
@@ -1584,15 +1594,27 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   > {
     const preset = matchPresetForSpec(spec, presets);
     if (!preset || preset.kind !== "service") return;
+    const hadCachedDetection = installedTemplates.length > 0;
     const map = await resolveInstalledTemplateMap();
     const template = map[preset.key];
     if (template && template.status === "unknown") {
       return;
     }
-    if (!template?.available) {
+    if (template?.available) {
+      return;
+    }
+    if (!hadCachedDetection) {
       return { preset, template };
     }
-    return;
+    const refreshedMap = await resolveInstalledTemplateMap({ force: true });
+    const refreshedTemplate = refreshedMap[preset.key];
+    if (
+      refreshedTemplate?.available ||
+      refreshedTemplate?.status === "unknown"
+    ) {
+      return;
+    }
+    return { preset, template: refreshedTemplate ?? template };
   }
 
   function reportMissingInstall({
@@ -2056,8 +2078,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     try {
       setDetectingInstalledTemplates(true);
       setError(undefined);
-      const next = await api.apps.detectInstalledTemplates();
-      setInstalledTemplates(next);
+      await detectInstalledTemplateMap();
       if (open) {
         setInstalledTemplatesOpen(true);
       }
@@ -2648,6 +2669,18 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             {activePreset?.note ? (
               <Alert type="info" showIcon title={activePreset.note} />
             ) : null}
+            {installedActivePreset && activePresetTemplate ? (
+              <Alert
+                type="success"
+                showIcon
+                title={`${installedActivePreset.label} is installed`}
+                description={
+                  activePresetTemplate.details
+                    ? `Detected state: ${activePresetTemplate.details}`
+                    : "This runtime is available in the project."
+                }
+              />
+            ) : null}
             {unavailableActivePreset && activePresetTemplate ? (
               <Alert
                 type="warning"
@@ -2687,8 +2720,17 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         {unavailableActivePreset.installCommand}
                       </Typography.Paragraph>
                     ) : null}
-                    {canInstallWithCodex(unavailableActivePreset) ? (
-                      <div>
+                    <Space wrap>
+                      <Button
+                        size="small"
+                        loading={detectingInstalledTemplates}
+                        onClick={() =>
+                          void onDetectInstalledTemplates({ open: false })
+                        }
+                      >
+                        Recheck install
+                      </Button>
+                      {canInstallWithCodex(unavailableActivePreset) ? (
                         <Button
                           size="small"
                           onClick={() =>
@@ -2704,8 +2746,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         >
                           Install with Codex
                         </Button>
-                      </div>
-                    ) : null}
+                      ) : null}
+                    </Space>
                   </Space>
                 }
               />
