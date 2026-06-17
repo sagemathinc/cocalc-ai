@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Modal, Progress, Space } from "antd";
+import { Alert, Button, Checkbox, Modal, Progress, Space } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -17,12 +17,15 @@ import { BaseEditorActions as Actions } from "../base-editor/actions-base";
 import {
   AgentSessionError,
   AgentSessionSelect,
+  isNewAgentThreadSelection,
   usePersistentAgentSessionSelection,
 } from "./agent-session-selector";
 import { DEFAULT_ASSISTANT_CODEX_MODEL, Options } from "./create-chat";
 import { PopupAgentComposer } from "./popup-agent-composer";
+import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 
 const TITLE_BAR_AGENT_LABEL = "Agent";
+const AUTO_SUBMIT_LS_KEY = "AI-CODEX-ASSISTANT-AUTO-SUBMIT:v1";
 
 interface Props {
   id: string;
@@ -59,6 +62,17 @@ export default function AgentTitleBarButton({
   const [querying, setQuerying] = useState<boolean>(false);
   const [submitProgress, setSubmitProgress] = useState<number>(0);
   const [command, setCommand] = useState<string>("");
+  const [autoSubmit, setAutoSubmit] = useState<boolean>(() => {
+    const stored = LS.get<boolean>(AUTO_SUBMIT_LS_KEY);
+    return stored == null ? true : stored !== false;
+  });
+  const {
+    fontSize,
+    increaseFontSize,
+    decreaseFontSize,
+    canIncreaseFontSize,
+    canDecreaseFontSize,
+  } = useAgentChatFontSize(13);
 
   const promptLsKey = `AI-CODEX-ASSISTANT-PROMPT:v1:${project_id}:${path}:${type}`;
   const agentSessionSelection = usePersistentAgentSessionSelection({
@@ -73,14 +87,19 @@ export default function AgentTitleBarButton({
     [command, querying],
   );
   const selectedAgentSession = agentSessionSelection.selectedAgentSession;
+  const createNewThread = isNewAgentThreadSelection(agentSessionSelection);
   const helperText =
     type === "terminal"
-      ? selectedAgentSession
-        ? "The agent will continue in the selected session, and it can inspect and write to this live terminal session."
-        : "The agent will continue in the workspace agent thread, and it can inspect and write to this live terminal session."
-      : selectedAgentSession
-        ? "The agent will continue the work in the selected session."
-        : "The agent will continue the work in the workspace agent thread.";
+      ? createNewThread
+        ? "The agent will start a new workspace thread with fresh context, and it can inspect and write to this live terminal session."
+        : selectedAgentSession
+          ? "The agent will continue in the selected session, and it can inspect and write to this live terminal session."
+          : "The agent will continue in the workspace agent thread, and it can inspect and write to this live terminal session."
+      : createNewThread
+        ? "The agent will start a new workspace thread with fresh context."
+        : selectedAgentSession
+          ? "The agent will continue the work in the selected session."
+          : "The agent will continue the work in the workspace agent thread.";
 
   function closeDialog() {
     setShowDialog(false);
@@ -116,6 +135,10 @@ export default function AgentTitleBarButton({
     }
     LS.set(promptLsKey, command);
   }, [command, promptLsKey]);
+
+  useEffect(() => {
+    LS.set(AUTO_SUBMIT_LS_KEY, autoSubmit);
+  }, [autoSubmit]);
 
   const normalizedPath = `${path ?? ""}`.trim().toLowerCase();
   if (type === "chat" || normalizedPath.endsWith(".chat")) {
@@ -160,7 +183,9 @@ export default function AgentTitleBarButton({
         allowEmpty: true,
         model: DEFAULT_ASSISTANT_CODEX_MODEL,
         tag: "custom",
-        agentSession: selectedAgentSession,
+        agentSession: createNewThread ? undefined : selectedAgentSession,
+        createNewThread,
+        submitToAgent: autoSubmit,
       });
       closeDialog();
     } finally {
@@ -205,7 +230,7 @@ export default function AgentTitleBarButton({
         onCancel={closeDialog}
         footer={null}
         destroyOnHidden
-        width={560}
+        width={720}
         mask={{ closable: !querying }}
       >
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
@@ -228,12 +253,46 @@ export default function AgentTitleBarButton({
               />
               <div style={{ fontWeight: 500 }}>Submitting to Agent…</div>
               <div style={{ color: COLORS.GRAY_D, maxWidth: 360 }}>
-                The agent panel will open as soon as the request is attached to
-                the workspace thread.
+                {autoSubmit
+                  ? "The agent panel will open as soon as the request is attached to the workspace thread."
+                  : "The agent panel will open as soon as the request is copied into the thread composer."}
               </div>
             </div>
           ) : (
             <>
+              <div
+                style={{
+                  alignItems: "center",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
+                <span style={{ color: COLORS.GRAY_D }}>
+                  Describe what the agent should do.
+                </span>
+                <Space size={4}>
+                  <span style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+                    Font {fontSize}px
+                  </span>
+                  <Button
+                    size="small"
+                    onClick={decreaseFontSize}
+                    disabled={!canDecreaseFontSize}
+                    aria-label="Decrease agent prompt font size"
+                  >
+                    -
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={increaseFontSize}
+                    disabled={!canIncreaseFontSize}
+                    aria-label="Increase agent prompt font size"
+                  >
+                    +
+                  </Button>
+                </Space>
+              </div>
               <PopupAgentComposer
                 value={command}
                 onChange={setCommand}
@@ -241,31 +300,56 @@ export default function AgentTitleBarButton({
                 placeholder="What should the agent do..."
                 cacheId={`popup-agent:${project_id}:${path}:${type}`}
                 autoFocus
+                fontSize={fontSize}
+                onFontSizeChange={(delta) => {
+                  if (delta > 0) {
+                    increaseFontSize();
+                  } else {
+                    decreaseFontSize();
+                  }
+                }}
               />
               <AgentSessionSelect
                 selection={agentSessionSelection}
                 disabled={querying}
+                includeNewThreadOption
               />
               <AgentSessionError selection={agentSessionSelection} />
               <div style={{ color: COLORS.GRAY_D }}>{helperText}</div>
             </>
           )}
           {error ? <Alert type="error" title={error} /> : undefined}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <Button onClick={closeDialog} disabled={querying}>
-              {intl.formatMessage(labels.cancel)}
-            </Button>
-            <Button
-              type="primary"
-              onClick={() => void doIt()}
-              disabled={!canSubmit}
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <Checkbox
+              checked={autoSubmit}
+              disabled={querying}
+              onChange={(event) => setAutoSubmit(event.target.checked)}
             >
-              <Icon
-                name={querying ? "spinner" : "paper-plane"}
-                spin={querying}
-              />{" "}
-              Send to Agent
-            </Button>
+              Automatically submit to Agent
+            </Checkbox>
+            <Space>
+              <Button onClick={closeDialog} disabled={querying}>
+                {intl.formatMessage(labels.cancel)}
+              </Button>
+              <Button
+                type="primary"
+                onClick={() => void doIt()}
+                disabled={!canSubmit}
+              >
+                <Icon
+                  name={querying ? "spinner" : "paper-plane"}
+                  spin={querying}
+                />{" "}
+                {autoSubmit ? "Send to Agent" : "Add to Composer"}
+              </Button>
+            </Space>
           </div>
         </Space>
       </Modal>

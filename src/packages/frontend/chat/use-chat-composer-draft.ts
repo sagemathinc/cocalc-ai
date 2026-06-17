@@ -12,8 +12,8 @@ import {
 } from "@cocalc/frontend/misc";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-const CHAT_DRAFT_STORE = "chat-composer-drafts-v1";
-const CHAT_DRAFT_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
+export const CHAT_DRAFT_STORE = "chat-composer-drafts-v1";
+export const CHAT_DRAFT_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 const MAX_LOCAL_DRAFT_CHARS = 200_000;
 const MAX_SHADOW_ENTRIES = 500;
 const LOCAL_WRITE_DEBOUNCE_MS = 350;
@@ -47,6 +47,101 @@ function storeLocalDraftSnapshot(localStorageKey: string, text: string): void {
   set_local_storage(localStorageKey, text);
 }
 
+function composerDraftStorageKey({
+  project_id,
+  path,
+  composerDraftKey,
+}: {
+  project_id: string;
+  path: string;
+  composerDraftKey: number;
+}): string {
+  return `${project_id}:${path}:${composerDraftKey}`;
+}
+
+function composerDraftLocalStorageKey(storageKey: string): string {
+  return `chat-composer-draft:${storageKey}`;
+}
+
+export async function writeChatComposerDraft({
+  account_id,
+  project_id,
+  path,
+  composerDraftKey,
+  text,
+  append = false,
+}: {
+  account_id?: string;
+  project_id: string;
+  path: string;
+  composerDraftKey: number;
+  text: string;
+  append?: boolean;
+}): Promise<string> {
+  const storageKey = composerDraftStorageKey({
+    project_id,
+    path,
+    composerDraftKey,
+  });
+  const localStorageKey = composerDraftLocalStorageKey(storageKey);
+  const trimmedText = `${text ?? ""}`.trim();
+  if (!trimmedText) return "";
+
+  let existing = "";
+  const shadow = shadowDraftState.get(storageKey);
+  if (shadow) {
+    existing = shadow.text;
+  } else {
+    const local = get_local_storage(localStorageKey);
+    existing =
+      typeof local === "string"
+        ? local
+        : typeof local === "number"
+          ? `${local}`
+          : "";
+  }
+
+  let adapter: AkvDraftAdapter | null = null;
+  if (account_id) {
+    const cn = webapp_client.conat_client.conat();
+    const kv = cn.sync.akv<any>({
+      account_id,
+      name: CHAT_DRAFT_STORE,
+    });
+    adapter = new AkvDraftAdapter({
+      kv,
+      defaultTtlMs: CHAT_DRAFT_TTL_MS,
+    });
+    if (!existing.trim()) {
+      try {
+        existing = (await adapter.load(storageKey))?.text ?? "";
+      } catch (err) {
+        console.warn("chat draft load failed", err);
+      }
+    }
+  }
+
+  const next =
+    append && existing.trim()
+      ? `${existing.replace(/\s+$/g, "")}\n\n${trimmedText}`
+      : trimmedText;
+  const now = Date.now();
+  setShadow(storageKey, { text: next, updatedAt: now });
+  storeLocalDraftSnapshot(localStorageKey, next);
+  if (adapter) {
+    try {
+      await adapter.save(
+        storageKey,
+        { text: next, updatedAt: now, composing: next.trim().length > 0 },
+        { ttlMs: CHAT_DRAFT_TTL_MS },
+      );
+    } finally {
+      adapter.close();
+    }
+  }
+  return next;
+}
+
 interface UseChatComposerDraftOptions {
   account_id?: string;
   project_id: string;
@@ -77,11 +172,16 @@ export function useChatComposerDraft({
   }>({ value: "" });
 
   const storageKey = useMemo(
-    () => `${project_id}:${path}:${composerDraftKey}`,
+    () =>
+      composerDraftStorageKey({
+        project_id,
+        path,
+        composerDraftKey,
+      }),
     [project_id, path, composerDraftKey],
   );
   const localStorageKey = useMemo(
-    () => `chat-composer-draft:${storageKey}`,
+    () => composerDraftLocalStorageKey(storageKey),
     [storageKey],
   );
 

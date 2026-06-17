@@ -33,6 +33,7 @@ export interface AgentSessionRecord {
   mode?: "read-only" | "workspace-write" | "full-access";
   model?: string;
   reasoning?: string;
+  serviceTier?: string;
   thread_color?: string;
   thread_accent_color?: string;
   thread_icon?: string;

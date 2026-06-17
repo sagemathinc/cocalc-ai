@@ -85,6 +85,7 @@ import type {
   ChatArchiveImportResult,
   ChatExportOpenRequest,
 } from "./export-types";
+import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
@@ -440,6 +441,9 @@ export class ChatActions extends Actions<ChatState> {
   public frameTreeActions?: CodeEditorActions;
   public openExportModal?: (opts?: ChatExportOpenRequest) => void;
   public openImportModal?: () => void;
+  public appendToComposerDraft?: (
+    request: ChatComposerDraftAppendRequest,
+  ) => void;
   // Shared message cache for this actions instance; used by both React and actions.
   public messageCache?: ChatMessageCache;
   private chatStoreRegistrationAttempted: Set<string> = new Set();
