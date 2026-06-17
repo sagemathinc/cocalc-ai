@@ -771,7 +771,7 @@ function FeaturesIndex() {
       {FEATURE_GROUPS.map((group) => (
         <Fragment key={group.title}>
           <FeatureGroupSection group={group} pages={pages} />
-          {group.title === "Notebook, writing, and visual work" ? (
+          {group.title === "Runtime and hosted compute" ? (
             <TeachingWorkflowCallout />
           ) : null}
         </Fragment>

@@ -523,17 +523,17 @@ function CocalcRocketPage() {
     {
       body: "Institutions, enterprises, and platform teams planning a broader customer-operated CoCalc deployment with governance, procurement, support, and rollout requirements.",
       icon: "rocket",
-      title: "Audience",
+      title: "Who it fits",
     },
     {
       body: "Runs as a customer-operated private-cloud path. The preferred packaging is VM-first, with Kubernetes available for organizations that already operate that way.",
       icon: "servers",
-      title: "Deployment model",
+      title: "How it runs",
     },
     {
       body: "Use Rocket when the deployment decision includes private infrastructure, capacity planning, operational ownership, support expectations, and commercial terms.",
       icon: "cloud",
-      title: "Why choose it",
+      title: "When to choose it",
     },
   ] satisfies ProductDetailPoint[];
 
@@ -548,7 +548,7 @@ function CocalcRocketPage() {
           },
           { href: appPath("pricing"), label: "Pricing and licensing" },
         ]}
-        title="Private-cloud path for institutional deployment"
+        title="Planning an institutional private CoCalc deployment?"
         body="CoCalc Rocket is the broader customer-operated private-cloud path for organizations that need CoCalc to fit infrastructure, governance, procurement, and support requirements."
       />
       <ProductDetailGrid
@@ -556,12 +556,15 @@ function CocalcRocketPage() {
         label="CoCalc Rocket positioning"
       />
       <PublicGrid columns={2}>
-        <ProductDetailCard icon="rocket" title="Operational boundary">
+        <ProductDetailCard
+          icon="rocket"
+          title="Boundary: planned private cloud"
+        >
           <ProductNotesList
             items={[
-              "Rocket is not a self-service installer page; it starts with a deployment and commercial conversation.",
-              "Choose Launchpad for a smaller customer-operated private deployment.",
-              "Choose Star for one public Ubuntu VM, or Plus for a local one-user runtime.",
+              "Rocket starts with a deployment and commercial conversation, not a self-service installer.",
+              "It is for customer-operated private-cloud planning with infrastructure, governance, and support requirements.",
+              "Use Launchpad when the immediate need is a smaller bounded private deployment.",
             ]}
           />
         </ProductDetailCard>
@@ -600,17 +603,17 @@ function CocalcStarPage() {
     {
       body: "Users, instructors, labs, and small teams that want collaborators in one browser-based CoCalc instance on a public VM.",
       icon: "star",
-      title: "Audience",
+      title: "Who it fits",
     },
     {
       body: "Runs on one fresh public Ubuntu VM with ports 80 and 443 open. The installer sets up the CoCalc instance, HTTPS, onboarding, and the first admin flow.",
       icon: "servers",
-      title: "Deployment model",
+      title: "How it runs",
     },
     {
       body: "Use Star when you want a shared CoCalc site on your own VM without manually assembling DNS, TLS, port forwarding, and cloud-provider-specific setup.",
       icon: "cloud",
-      title: "Why choose it",
+      title: "When to choose it",
     },
   ] satisfies ProductDetailPoint[];
 
@@ -632,7 +635,7 @@ function CocalcStarPage() {
             label: "Compare with Rocket",
           },
         ]}
-        title="Shared CoCalc on a single VM"
+        title="Is one public Ubuntu VM enough?"
         body="CoCalc Star is the path for a small shared CoCalc instance on a single public Ubuntu VM. It sits between local CoCalc Plus and customer-operated private deployment."
       />
       <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />
@@ -658,12 +661,12 @@ function CocalcStarPage() {
             web onboarding page before continuing.
           </Paragraph>
         </ProductDetailCard>
-        <ProductDetailCard icon="servers" title="Operational boundary">
+        <ProductDetailCard icon="servers" title="Boundary: one public VM">
           <ProductNotesList
             items={[
               "Use Star for one public VM, one local project host, and a small shared site.",
               "Star is not a high-availability or scale-out private-cloud deployment.",
-              "Move to Launchpad for a lightweight private deployment, or Rocket for institutional private cloud.",
+              "Use Launchpad or Rocket when private deployment or institutional rollout is the real decision.",
             ]}
           />
         </ProductDetailCard>
@@ -700,17 +703,17 @@ function CocalcLaunchpadPage() {
     {
       body: "Academic IT, lab operators, platform teams, workshops, and departments that need a customer-operated CoCalc environment for a bounded group.",
       icon: "servers",
-      title: "Audience",
+      title: "Who it fits",
     },
     {
       body: "Runs as a lightweight private deployment operated by the customer. It gives operators more control over the environment than Star.",
       icon: "cloud",
-      title: "Deployment model",
+      title: "How it runs",
     },
     {
       body: "Use Launchpad when a hosted account is not the right fit and a single public-VM appliance is too constrained for the pilot or department.",
       icon: "star",
-      title: "Why choose it",
+      title: "When to choose it",
     },
   ] satisfies ProductDetailPoint[];
 
@@ -729,7 +732,7 @@ function CocalcLaunchpadPage() {
             label: "Compare with Star",
           },
         ]}
-        title="Lightweight private deployment for teams that operate CoCalc"
+        title="Need a bounded private CoCalc deployment?"
         body="CoCalc Launchpad is the customer-operated private deployment path for pilots, labs, workshops, departments, and platform teams that need more control than hosted CoCalc.ai or a single-VM Star appliance."
       />
       <ProductDetailGrid
@@ -758,12 +761,15 @@ function CocalcLaunchpadPage() {
             arm64.
           </Paragraph>
         </ProductDetailCard>
-        <ProductDetailCard icon="cloud" title="Operational boundary">
+        <ProductDetailCard
+          icon="cloud"
+          title="Boundary: bounded private deployment"
+        >
           <ProductNotesList
             items={[
-              "Choose Star when the need is simply one shared public Ubuntu VM.",
-              "Choose Launchpad when the team needs a customer-operated private environment for a bounded deployment.",
-              "Choose Rocket when institutional rollout, governance, support, and broader private-cloud planning become the main decision.",
+              "Launchpad is customer-operated and sized for a pilot, lab, workshop, department, or platform team.",
+              "Use Star if one public Ubuntu VM is enough.",
+              "Use Rocket when governance, support, and broader private-cloud planning are the main decision.",
             ]}
           />
         </ProductDetailCard>
@@ -807,17 +813,17 @@ function CocalcPlusPage() {
     {
       body: "Researchers, developers, instructors, and IT evaluators who want a local CoCalc workspace before choosing hosted collaboration or a shared deployment.",
       icon: "laptop",
-      title: "Audience",
+      title: "Who it fits",
     },
     {
       body: "Runs on one Linux or macOS machine and is operated by the user. It is the local, one-user runtime in the product family.",
       icon: "cloud",
-      title: "Deployment model",
+      title: "How it runs",
     },
     {
       body: "Use Plus for local evaluation, demos, personal projects, and learning the CoCalc workspace model without creating a hosted account.",
       icon: "star",
-      title: "Why choose it",
+      title: "When to choose it",
     },
   ] satisfies ProductDetailPoint[];
 
@@ -836,7 +842,7 @@ function CocalcPlusPage() {
             label: "Compare with Star",
           },
         ]}
-        title="Local CoCalc for evaluation and individual work"
+        title="Need local CoCalc before choosing a shared path?"
         body="CoCalc Plus is the local source-available runtime for one user on Linux or macOS. It is the right starting point when you want to evaluate CoCalc or work on your own machine before choosing a shared path."
       />
       <ProductDetailGrid items={detailItems} label="CoCalc Plus positioning" />
@@ -858,12 +864,15 @@ function CocalcPlusPage() {
             the runtime in a user-owned location and adds a launcher if needed.
           </Paragraph>
         </ProductDetailCard>
-        <ProductDetailCard icon="cloud" title="Operational boundary">
+        <ProductDetailCard
+          icon="cloud"
+          title="Boundary: local, one-user runtime"
+        >
           <ProductNotesList
             items={[
-              "Choose CoCalc.ai when you want managed hosted collaboration and shared projects.",
-              "Choose CoCalc Star when a small group needs one shared VM.",
-              "Choose Launchpad or Rocket when the organization needs a customer-operated environment.",
+              "Plus is for local evaluation or individual work on one machine.",
+              "Use hosted CoCalc.ai when collaborators need managed shared projects.",
+              "Use Star, Launchpad, or Rocket when the group needs a shared deployment.",
             ]}
           />
         </ProductDetailCard>

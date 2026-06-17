@@ -89,6 +89,9 @@ function expectNoProductDetailStalePhrasing() {
     /local Lima/i,
     /agent sandbox/i,
     /^Next action$/i,
+    /^Audience$/i,
+    /^Deployment model$/i,
+    /^Why choose it$/i,
   ]) {
     expect(screen.queryByText(phrase)).toBeNull();
   }
@@ -1120,13 +1123,13 @@ describe("PublicApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Local CoCalc for evaluation and individual work",
+        name: "Need local CoCalc before choosing a shared path?",
       }),
     ).not.toBeNull();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Plus positioning",
     });
-    for (const heading of ["Audience", "Deployment model", "Why choose it"]) {
+    for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
       expect(
         within(positioning).getByRole("heading", { name: heading }),
       ).not.toBeNull();
@@ -1135,7 +1138,9 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Install CoCalc Plus locally" }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Operational boundary" }),
+      screen.getByRole("heading", {
+        name: "Boundary: local, one-user runtime",
+      }),
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
@@ -1321,13 +1326,13 @@ describe("PublicApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Lightweight private deployment for teams that operate CoCalc",
+        name: "Need a bounded private CoCalc deployment?",
       }),
     ).not.toBeNull();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Launchpad positioning",
     });
-    for (const heading of ["Audience", "Deployment model", "Why choose it"]) {
+    for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
       expect(
         within(positioning).getByRole("heading", { name: heading }),
       ).not.toBeNull();
@@ -1341,7 +1346,12 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText(/customer-operated private environment/),
+      screen.getByText(/customer-operated CoCalc environment/),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Boundary: bounded private deployment",
+      }),
     ).not.toBeNull();
     expect(
       screen
@@ -1392,12 +1402,12 @@ describe("PublicApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Shared CoCalc on a single VM" }),
+      screen.getByRole("heading", { name: "Is one public Ubuntu VM enough?" }),
     ).not.toBeNull();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Star positioning",
     });
-    for (const heading of ["Audience", "Deployment model", "Why choose it"]) {
+    for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
       expect(
         within(positioning).getByRole("heading", { name: heading }),
       ).not.toBeNull();
@@ -1414,6 +1424,9 @@ describe("PublicApp", () => {
     expect(
       screen.getByText(/not a high-availability or scale-out/),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Boundary: one public VM" }),
+    ).not.toBeNull();
     expectNoProductDetailStalePhrasing();
   });
 
@@ -1427,13 +1440,13 @@ describe("PublicApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Private-cloud path for institutional deployment",
+        name: "Planning an institutional private CoCalc deployment?",
       }),
     ).not.toBeNull();
     const positioning = screen.getByRole("group", {
       name: "CoCalc Rocket positioning",
     });
-    for (const heading of ["Audience", "Deployment model", "Why choose it"]) {
+    for (const heading of ["Who it fits", "How it runs", "When to choose it"]) {
       expect(
         within(positioning).getByRole("heading", { name: heading }),
       ).not.toBeNull();
@@ -1444,6 +1457,11 @@ describe("PublicApp", () => {
     expect(screen.getByText(/governance, support/i)).not.toBeNull();
     expect(
       screen.getByRole("heading", { name: "Plan Rocket with CoCalc" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Boundary: planned private cloud",
+      }),
     ).not.toBeNull();
     expect(
       screen.getAllByRole("link", {

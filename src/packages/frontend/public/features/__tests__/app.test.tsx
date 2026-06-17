@@ -251,8 +251,11 @@ describe("PublicFeaturesApp", () => {
     expect(indexText.indexOf("Teaching and workshops")).toBeGreaterThan(
       indexText.indexOf("Notebook, writing, and visual work"),
     );
-    expect(indexText.indexOf("Teaching and workshops")).toBeLessThan(
+    expect(indexText.indexOf("Teaching and workshops")).toBeGreaterThan(
       indexText.indexOf("Runtime and hosted compute"),
+    );
+    expect(indexText.indexOf("Teaching and workshops")).toBeLessThan(
+      indexText.indexOf("Languages and math"),
     );
     expect(screen.queryByText("AI and integration")).toBeNull();
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);

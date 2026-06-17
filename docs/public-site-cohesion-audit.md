@@ -203,6 +203,16 @@ recommendations are evaluated, completed, or deliberately deferred.
 - [x] Change: focus Launchpad's ending on Launchpad requirements, pricing, and neighboring Star/Rocket decisions rather than a low-value comparison back to Plus.
 - [x] Browser QA: validate `/products`, all four self-directed/customer-operated product-detail pages, `/pricing`, and `/features/compare` on desktop, tablet, and mobile with zero horizontal overflow; confirm Plus hosted evaluation routes to `/pricing`, Launchpad support uses `context=product-cocalc-launchpad`, and stale `Next action`, `local Lima`, and `agent sandbox` language is absent. The known `CoCalc Crashed` overlay remains present in the DOM and was ignored per user instruction.
 
+## Product Detail Visual Decision Pass
+
+- [x] Active: audit `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` as buyer decision pages after the CTA cleanup.
+- [x] Change: move the feature-index teaching callout below `Runtime and hosted compute` so AI, notebooks, and runtime/hosted capacity remain the primary technical discovery path while teaching stays visible as a secondary workflow route.
+- [x] Change: replace repeated `Audience`, `Deployment model`, and `Why choose it` product-detail labels with `Who it fits`, `How it runs`, and `When to choose it` so the cards read more like buyer decision support.
+- [x] Change: make each product page lead with the buyer question: local evaluation, one public VM, bounded private deployment, or institutional private-cloud planning.
+- [x] Change: make generic `Operational boundary` cards route-specific so the visitor can quickly tell what is bounded on that product page.
+- [x] Finding: keep the overview, pricing, and compare pages structurally unchanged during this pass; this is a product-detail visual hierarchy pass, not a product taxonomy redesign.
+- [x] Browser QA: validate `/features`, `/products/cocalc-plus`, `/products/cocalc-star`, `/products/cocalc-launchpad`, and `/products/cocalc-rocket` on desktop, tablet, and mobile with zero horizontal overflow; confirm teaching now follows runtime/hosted compute and precedes languages/math, product pages use buyer-question headings, generic taxonomy labels are absent, and Launchpad support retains `context=product-cocalc-launchpad`. The known `CoCalc Crashed` overlay remains present in the DOM and was ignored per user instruction.
+
 ## Agent Workspace And Public-Site Artifact Standards
 
 - [x] Store browser-QA screenshots, scratch reports, and generated inspection files outside the repository, e.g. `/tmp/cocalc-public-qa-*`, unless the user explicitly approves them as public assets.
