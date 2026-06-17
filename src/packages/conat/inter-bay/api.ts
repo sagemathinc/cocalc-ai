@@ -1781,6 +1781,7 @@ export type HostControlMethod =
   | "add-host-ssh-authorized-key"
   | "remove-host-ssh-authorized-key"
   | "get-backup-execution-status"
+  | "invalidate-backup-config"
   | "get-managed-component-status"
   | "get-installed-runtime-artifacts"
   | "get-host-agent-status"
@@ -2652,6 +2653,10 @@ export interface InterBayHostControlApi {
   getBackupExecutionStatus: (opts: {
     host_id: string;
   }) => Promise<HostBackupExecutionStatus>;
+  invalidateBackupConfig: (opts: {
+    host_id: string;
+    invalidate?: HostControlArg<"invalidateBackupConfig">;
+  }) => Promise<Awaited<ReturnType<HostControlApi["invalidateBackupConfig"]>>>;
   getManagedComponentStatus: (opts: {
     host_id: string;
   }) => Promise<HostManagedComponentStatus[]>;
@@ -3207,6 +3212,10 @@ const HOST_CONTROL_METHOD_SPECS = [
   {
     name: "getBackupExecutionStatus",
     method: "get-backup-execution-status",
+  },
+  {
+    name: "invalidateBackupConfig",
+    method: "invalidate-backup-config",
   },
   {
     name: "getManagedComponentStatus",

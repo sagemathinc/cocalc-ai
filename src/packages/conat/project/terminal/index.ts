@@ -99,6 +99,16 @@ const MAX_SESSIONS = parsePositiveInt(
   32,
 );
 
+const SOCKET_KEEP_ALIVE = parsePositiveInt(
+  process.env.COCALC_TERMINAL_SOCKET_KEEP_ALIVE,
+  45_000,
+);
+
+const SOCKET_KEEP_ALIVE_TIMEOUT = parsePositiveInt(
+  process.env.COCALC_TERMINAL_SOCKET_KEEP_ALIVE_TIMEOUT,
+  30_000,
+);
+
 const DEFAULT_SIZE_WAIT = 2000;
 
 import { EventEmitter } from "events";
@@ -363,8 +373,8 @@ export function terminalServer({
 }) {
   const subject = getSubject({ project_id });
   const server: ConatSocketServer = client.socket.listen(subject, {
-    keepAlive: 5000,
-    keepAliveTimeout: 5000,
+    keepAlive: SOCKET_KEEP_ALIVE,
+    keepAliveTimeout: SOCKET_KEEP_ALIVE_TIMEOUT,
   });
   logger.debug("server: listening on ", { subject });
   let activeSockets = 0;

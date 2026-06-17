@@ -20,6 +20,7 @@ import {
   savePlacement,
   stopProjectOnHost,
 } from "../project-host/control";
+import { getRoutedHostControlClient } from "../project-host/client";
 import { getConfiguredBayId } from "../bay-config";
 import {
   PROJECT_DANGEROUS_INTERNAL_AUTH,
@@ -57,6 +58,16 @@ const MOVE_START_DEST_TIMEOUT_MS = Math.max(
   Number(process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS) || 2 * 60 * 60 * 1000,
 );
 const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
+const BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 5000),
+);
+const BACKUP_CONFIG_INVALIDATION_RETRY_DELAY_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_BACKUP_CONFIG_INVALIDATION_RETRY_DELAY_MS) ||
+    (process.env.NODE_ENV === "test" ? 1 : 500),
+);
 const RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRY_DELAY_MS) ||
@@ -67,7 +78,8 @@ const RESTORE_BACKUP_NOT_FOUND_RETRIES = Math.max(
   Number(process.env.COCALC_MOVE_RESTORE_BACKUP_NOT_FOUND_RETRIES) || 3,
 );
 const LEGACY_MOVE_SENTINEL_PATH = ".move-sentinel.json";
-const MOVE_SENTINEL_DIR = ".cocalc/move-sentinels";
+const LEGACY_MOVE_SENTINEL_DIR = ".move-sentinels";
+const MOVE_SENTINEL_PREFIX = ".move-sentinel-";
 const MOVE_SENTINEL_VERIFY_TIMEOUT_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS) || 30 * 1000,
@@ -113,6 +125,13 @@ class MoveCanceledError extends Error {
     super(`move canceled (${stage})`);
     this.name = "MoveCanceledError";
     this.stage = stage;
+  }
+}
+
+class MoveDestinationVerificationError extends Error {
+  constructor(err: unknown) {
+    super(`${err}`);
+    this.name = "MoveDestinationVerificationError";
   }
 }
 
@@ -185,7 +204,7 @@ type MoveSentinel = {
 };
 
 function moveSentinelPath(move_log_id: string): string {
-  return pathPosix.join(MOVE_SENTINEL_DIR, `${move_log_id}.json`);
+  return `${MOVE_SENTINEL_PREFIX}${move_log_id}.json`;
 }
 
 function summarizeMoveSentinelContent(content: string): Record<string, string> {
@@ -407,6 +426,18 @@ async function deleteMoveSentinelBestEffort({
     await fs.rm(path, { force: true });
     if (path !== LEGACY_MOVE_SENTINEL_PATH) {
       await fs.rm(LEGACY_MOVE_SENTINEL_PATH, { force: true }).catch(() => {});
+      await fs
+        .rm(LEGACY_MOVE_SENTINEL_DIR, {
+          force: true,
+          recursive: true,
+        })
+        .catch(() => {});
+      await fs
+        .rm(".cocalc/move-sentinels", {
+          force: true,
+          recursive: true,
+        })
+        .catch(() => {});
     }
   } catch (err) {
     log.warn("moveProjectToHost sentinel cleanup failed", {
@@ -824,13 +855,50 @@ async function retryOnceOnTransientMoveError<T>({
 
 async function invalidateProjectBackupConfigOnHost(
   host_id: string | null | undefined,
+  project_id?: string,
 ): Promise<void> {
   const target = `${host_id ?? ""}`.trim();
   if (!target) return;
+  try {
+    const client = await getRoutedHostControlClient({
+      host_id: target,
+      timeout: BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS,
+    });
+    await client.invalidateBackupConfig({ project_id });
+    return;
+  } catch (err) {
+    log.warn(
+      "project-host backup config RPC invalidation failed; falling back to broadcast",
+      {
+        host_id: target,
+        project_id,
+        err,
+      },
+    );
+  }
   await conat().publish(`project-host.${target}.backup.invalidate`, null, {
     waitForInterest: true,
-    timeout: 10_000,
+    timeout: BACKUP_CONFIG_INVALIDATION_TIMEOUT_MS,
   });
+}
+
+async function invalidateProjectBackupConfigOnHostWithRetry(
+  host_id: string | null | undefined,
+  project_id: string,
+): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await invalidateProjectBackupConfigOnHost(host_id, project_id);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) {
+        await delay(BACKUP_CONFIG_INVALIDATION_RETRY_DELAY_MS);
+      }
+    }
+  }
+  throw lastErr;
 }
 
 function mergeMoveProgressDetail({
@@ -1128,7 +1196,10 @@ async function performBackupRegionCutover({
 
   if (previous_backup_repo_id) {
     try {
-      await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+      await invalidateProjectBackupConfigOnHostWithRetry(
+        context.dest_host_id,
+        context.project_id,
+      );
     } catch (err) {
       log.warn("backup-region cutover invalidation publish failed", {
         project_id: context.project_id,
@@ -1204,7 +1275,10 @@ async function performBackupRegionCutover({
     });
     if (previous_backup_repo_id) {
       try {
-        await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+        await invalidateProjectBackupConfigOnHost(
+          context.dest_host_id,
+          context.project_id,
+        );
       } catch (invalidateErr) {
         log.warn("backup-region cutover rollback invalidation publish failed", {
           project_id: context.project_id,
@@ -1408,6 +1482,7 @@ export async function moveProjectToHost(
   let backupRegionCutoverResult: MoveBackupRegionCutoverResult | undefined;
   let moveSentinel: MoveSentinel | undefined;
   let finalBackupId: string | undefined;
+  let currentStage = "initializing";
   const moveLogExtraEvent = () => ({
     source_region: context.project_region,
     dest_region: context.dest_region,
@@ -1519,6 +1594,7 @@ export async function moveProjectToHost(
   };
 
   try {
+    currentStage = "validate";
     progress({
       step: "validate",
       message: "validated move request",
@@ -1530,6 +1606,7 @@ export async function moveProjectToHost(
     await checkCanceled("validate");
     const sourceAvailable = isSourceHostAvailable(context);
     if (sourceAvailable) {
+      currentStage = "write-project-move-request-log";
       await appendProjectMoveLogEntry({
         project_id: context.project_id,
         account_id: context.account_id,
@@ -1580,6 +1657,19 @@ export async function moveProjectToHost(
         },
       });
     } else {
+      if (context.provisioned !== false) {
+        currentStage = "write-move-sentinel";
+        progress({
+          step: "backup",
+          message: "writing move verification sentinel",
+        });
+        moveSentinel = await createMoveSentinel({
+          context,
+          move_log_id,
+          op_id: opts?.op_id,
+        });
+      }
+      currentStage = "stop-source";
       progress({
         step: "stop-source",
         message: "stopping source project",
@@ -1610,6 +1700,7 @@ export async function moveProjectToHost(
       await checkCanceled("stop-source");
 
       if (context.provisioned === false) {
+        currentStage = "backup-skip-unprovisioned";
         progress({
           step: "backup",
           message: "project not provisioned; skipping final backup",
@@ -1622,8 +1713,12 @@ export async function moveProjectToHost(
           },
         );
       } else {
+        currentStage = "invalidate-source-backup-config";
         try {
-          await invalidateProjectBackupConfigOnHost(context.project_host_id);
+          await invalidateProjectBackupConfigOnHost(
+            context.project_host_id,
+            context.project_id,
+          );
         } catch (err) {
           log.warn(
             "moveProjectToHost source backup config invalidation failed",
@@ -1634,15 +1729,7 @@ export async function moveProjectToHost(
             },
           );
         }
-        progress({
-          step: "backup",
-          message: "writing move verification sentinel",
-        });
-        moveSentinel = await createMoveSentinel({
-          context,
-          move_log_id,
-          op_id: opts?.op_id,
-        });
+        currentStage = "backup-final";
         progress({
           step: "backup",
           message: "creating final backup (always)",
@@ -1716,11 +1803,38 @@ export async function moveProjectToHost(
       }
       await checkCanceled("backup");
     }
+    if (startDest && finalBackupId && context.provisioned !== false) {
+      currentStage = "prepare-destination-restore";
+      progress({
+        step: "prepare-dest",
+        message: "clearing stale destination project data before restore",
+        detail: { dest_host_id: context.dest_host_id },
+      });
+      try {
+        await deleteProjectDataOnHost({
+          project_id: context.project_id,
+          host_id: context.dest_host_id,
+        });
+      } catch (err) {
+        log.error("moveProjectToHost destination pre-restore cleanup failed", {
+          project_id: context.project_id,
+          dest_host_id: context.dest_host_id,
+          err,
+        });
+        throw err;
+      }
+      progress({
+        step: "prepare-dest",
+        message: "stale destination project data cleared",
+        detail: { dest_host_id: context.dest_host_id },
+      });
+    }
     progress({
       step: "placement",
       message: "updating project placement",
       detail: { dest_host_id: context.dest_host_id },
     });
+    currentStage = "placement";
     try {
       await savePlacement(context.project_id, {
         host_id: context.dest_host_id,
@@ -1740,8 +1854,12 @@ export async function moveProjectToHost(
     }
     await checkCanceled("placement");
     if (startDest) {
+      currentStage = "invalidate-destination-backup-config";
       try {
-        await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+        await invalidateProjectBackupConfigOnHost(
+          context.dest_host_id,
+          context.project_id,
+        );
       } catch (err) {
         log.warn(
           "moveProjectToHost destination backup config invalidation failed",
@@ -1752,6 +1870,7 @@ export async function moveProjectToHost(
           },
         );
       }
+      currentStage = "start-destination";
       progress({
         step: "start-dest",
         message: "starting workspace on destination host",
@@ -1891,10 +2010,14 @@ export async function moveProjectToHost(
             message: "verifying restored project content on destination host",
             detail: { dest_host_id: context.dest_host_id },
           });
-          await verifyMoveSentinel({
-            project_id: context.project_id,
-            sentinel: moveSentinel,
-          });
+          try {
+            await verifyMoveSentinel({
+              project_id: context.project_id,
+              sentinel: moveSentinel,
+            });
+          } catch (err) {
+            throw new MoveDestinationVerificationError(err);
+          }
           await deleteMoveSentinelBestEffort({
             project_id: context.project_id,
             path: moveSentinel.path,
@@ -1941,6 +2064,23 @@ export async function moveProjectToHost(
         }
       } catch (err) {
         if ((err as any)?.code === MOVE_CANCELED_CODE) {
+          throw err;
+        }
+        if (err instanceof MoveDestinationVerificationError) {
+          log.warn(
+            "moveProjectToHost destination verification failed after destination start",
+            {
+              project_id: context.project_id,
+              dest_host_id: context.dest_host_id,
+              err,
+            },
+          );
+          progress({
+            step: "verify-dest",
+            message:
+              "destination verification failed after workspace started; preserving destination placement",
+            detail: { dest_host_id: context.dest_host_id, error: `${err}` },
+          });
           throw err;
         }
         log.warn("moveProjectToHost start failed after placement update", {
@@ -2107,6 +2247,12 @@ export async function moveProjectToHost(
       await handleCancel((err as any).stage ?? "unknown");
       throw err;
     }
+    const stagedError =
+      err instanceof MoveDestinationVerificationError
+        ? err
+        : new Error(
+            `${currentStage} failed: ${err instanceof Error ? err.message : `${err}`}`,
+          );
     await appendProjectMoveLogEntry({
       project_id: context.project_id,
       account_id: context.account_id,
@@ -2130,12 +2276,12 @@ export async function moveProjectToHost(
       dest_host_id: context.dest_host_id,
       dest_host_name: context.dest_host_name,
       duration_ms: Date.now() - started_at_ms,
-      error: err instanceof Error ? err.message : `${err}`,
+      error: stagedError.message,
       op_id: opts?.op_id,
       extra_event: moveLogExtraEvent(),
       fresh: true,
     });
-    throw err;
+    throw stagedError;
   }
 }
 

@@ -1,5 +1,9 @@
 import { Button, Descriptions, Modal, Spin, Tag, Typography } from "antd";
-import { useActions, useProjectMapField } from "@cocalc/frontend/app-framework";
+import {
+  useActions,
+  useProjectMapField,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
@@ -45,6 +49,12 @@ export default function MoveProject({
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const actions = useActions("projects");
   const currentHostId = useProjectMapField<string>(project_id, "host_id");
+  const projectStatus = useTypedRedux({ project_id }, "status");
+  const diskMB = projectStatus?.get?.("disk_MB");
+  const projectSizeBytes =
+    typeof diskMB === "number" && Number.isFinite(diskMB) && diskMB >= 0
+      ? diskMB * 1_000_000
+      : undefined;
   const hostInfo = useHostInfo(currentHostId);
   const url = hostInfo?.get?.("connect_url");
   const hostName =
@@ -237,6 +247,7 @@ export default function MoveProject({
         currentHostId={currentHostId}
         regionFilter={projectRegion}
         sourceProjectRegion={projectRegion}
+        projectSizeBytes={projectSizeBytes}
         showOfflineMoveWarning={Boolean(currentHostId)}
         mode={currentHostId ? "move" : "assign"}
         onCancel={() => setPickerOpen(false)}
