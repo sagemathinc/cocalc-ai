@@ -171,7 +171,7 @@ export const CellButtonBar: React.FC<Props> = React.memo(
             }}
           >
             <Tooltip placement="top" title={tooltip}>
-              <span style={CODE_BAR_BTN_STYLE}>
+              <span style={{ ...CODE_BAR_BTN_STYLE, height: "auto" }}>
                 {isIconName(icon) && <Icon name={icon} />} {label}
               </span>
             </Tooltip>
