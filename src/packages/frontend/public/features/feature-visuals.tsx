@@ -186,18 +186,25 @@ export function StartCard({
 }) {
   return (
     <div
+      className="cocalc-feature-final-panel"
       style={{
-        background: "#10213f",
+        background: PUBLIC_COLORS.surfaceMuted,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: 8,
         boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
-        color: "#fff",
+        color: PUBLIC_COLORS.heading,
         padding: 26,
       }}
     >
-      <Title level={4} style={{ color: "#fff", margin: "0 0 10px" }}>
+      <Title
+        level={4}
+        style={{ color: PUBLIC_COLORS.heading, margin: "0 0 10px" }}
+      >
         {title}
       </Title>
-      <Paragraph style={{ color: "#dbeafe", margin: 0 }}>{body}</Paragraph>
+      <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+        {body}
+      </Paragraph>
       <Button
         href={href}
         size="large"

@@ -73,6 +73,19 @@ const GLOBAL_FORBIDDEN_TEXT = [
   "CoCalc-AI",
 ];
 
+const DARK_CARD_BACKGROUND_COLORS = [
+  "rgb(11, 21, 34)",
+  "rgb(11, 31, 71)",
+  "rgb(16, 33, 63)",
+  "rgb(17, 24, 39)",
+];
+
+const LIGHT_FEATURE_FINAL_PANEL_CHECK = {
+  selector: ".cocalc-feature-final-panel",
+  property: "backgroundColor",
+  not: DARK_CARD_BACKGROUND_COLORS,
+};
+
 const ROUTE_RULES = {
   "/": {
     requireText: [
@@ -264,6 +277,76 @@ const ROUTE_RULES = {
       { text: "Terminal workflows", hrefIncludes: "/features/terminal" },
     ],
   },
+  "/features/jupyter-notebook": {
+    requireText: [
+      "When the notebook depends on more than cells",
+      "Choose the notebook path that fits",
+      "Ready to use Jupyter in CoCalc?",
+    ],
+    requireSelectors: [".cocalc-feature-final-panel"],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+    requireLinks: [
+      { text: "Compatibility guide", hrefIncludes: "/cocalc-for-jupyter/" },
+      { text: "Compare operating models", hrefIncludes: "/products" },
+    ],
+  },
+  "/features/teaching": {
+    requireText: [
+      "Keep administration in the LMS. Run coursework in CoCalc.",
+      "Run the assignment loop in student projects",
+      "Choose the teaching path that fits",
+      "Useful planning guides",
+    ],
+    forbidText: [
+      "Ready to plan a course?",
+      "Feature operating model next steps",
+    ],
+    requireSelectors: [
+      ".cocalc-teaching-assignment-panel",
+      ".cocalc-teaching-final-plan",
+    ],
+    styleChecks: [
+      {
+        selector: ".cocalc-teaching-assignment-panel",
+        property: "backgroundColor",
+        not: DARK_CARD_BACKGROUND_COLORS,
+      },
+    ],
+    requireLinks: [
+      { text: "Compare product paths", hrefIncludes: "/products" },
+      {
+        text: "Ask about teaching workflows",
+        hrefIncludes: "context=feature-teaching",
+      },
+    ],
+  },
+  "/features/terminal": {
+    requireText: [
+      "A terminal is a live project document.",
+      "Choose the terminal path that fits",
+      "Ready to use terminals in CoCalc?",
+    ],
+    requireSelectors: [".cocalc-feature-final-panel"],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+  },
+  "/features/linux": {
+    requireText: [
+      "A Linux workspace you can actually administer.",
+      "Choose the Linux path that fits",
+      "Ready to use Linux in CoCalc?",
+    ],
+    requireSelectors: [".cocalc-feature-final-panel"],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+  },
+  "/features/python": {
+    requireText: [
+      "Python that moves from notebook to script to paper.",
+      "Use Python as part of the whole project",
+      "Start using Python",
+    ],
+    requireSelectors: [".cocalc-feature-final-panel"],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+  },
   "/features/latex-editor": {
     requireText: [
       "Keep the working tree together",
@@ -279,29 +362,65 @@ const ROUTE_RULES = {
       "Use Sage with the surrounding project.",
       "Course context",
       "Project context",
+      "Start using SageMath",
     ],
-    requireSelectors: [".cocalc-feature-context-list"],
+    requireSelectors: [
+      ".cocalc-feature-context-list",
+      ".cocalc-feature-final-panel",
+    ],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
   "/features/r-statistical-software": {
     requireText: [
       "Keep R close to the rest of the analysis.",
       "Project context",
+      "Start in a project",
     ],
-    requireSelectors: [".cocalc-feature-context-list"],
+    requireSelectors: [
+      ".cocalc-feature-context-list",
+      ".cocalc-feature-final-panel",
+    ],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
   "/features/julia": {
     requireText: [
       "Julia works best in CoCalc when the project matters.",
       "Project context",
+      "Start in a project",
     ],
-    requireSelectors: [".cocalc-feature-context-list"],
+    requireSelectors: [
+      ".cocalc-feature-context-list",
+      ".cocalc-feature-final-panel",
+    ],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
   "/features/octave": {
     requireText: [
       "Teach and run Octave without local setup drift.",
       "Project context",
+      "Start in a project",
     ],
-    requireSelectors: [".cocalc-feature-context-list"],
+    requireSelectors: [
+      ".cocalc-feature-context-list",
+      ".cocalc-feature-final-panel",
+    ],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+  },
+  "/features/whiteboard": {
+    requireText: [
+      "A technical whiteboard for math, code, and collaboration.",
+      "Start with a board",
+    ],
+    requireSelectors: [".cocalc-feature-final-panel"],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
+  },
+  "/features/slides": {
+    requireText: [
+      "Present from the same canvas where technical ideas are built.",
+      "Start with a deck",
+    ],
+    requireSelectors: [".cocalc-feature-final-panel"],
+    styleChecks: [LIGHT_FEATURE_FINAL_PANEL_CHECK],
   },
   "/guides": {
     requireText: [

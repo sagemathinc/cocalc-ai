@@ -94,16 +94,18 @@ function CourseDashboardMock() {
         <Row gutter={[12, 12]}>
           <Col xs={24} md={11}>
             <div
+              className="cocalc-teaching-assignment-panel"
               style={{
-                background: PUBLIC_COLORS.heading,
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
                 borderRadius: PANEL_RADIUS,
-                color: PUBLIC_COLORS.footerText,
+                color: PUBLIC_COLORS.heading,
                 minHeight: 270,
                 padding: 16,
               }}
             >
               <Flex vertical gap={12}>
-                <Text style={{ color: PUBLIC_COLORS.footerText }}>
+                <Text style={{ color: PUBLIC_COLORS.heading }}>
                   Assignments
                 </Text>
                 {[
@@ -149,9 +151,10 @@ function CourseDashboardMock() {
                 ))}
                 <div
                   style={{
-                    background: alpha(PUBLIC_COLORS.surface, 0.11),
+                    background: PUBLIC_COLORS.warningTint,
+                    border: `1px solid ${alpha(PUBLIC_COLORS.warning, 0.18)}`,
                     borderRadius: PANEL_RADIUS,
-                    color: PUBLIC_COLORS.footerText,
+                    color: PUBLIC_COLORS.heading,
                     padding: "10px 12px",
                   }}
                 >
@@ -453,70 +456,57 @@ export default function TeachingFeaturePage({
 
       <div style={{ marginBottom: 44 }}>
         <PublicSection>
-          <Row gutter={[24, 24]} align="middle">
+          <Row
+            className="cocalc-teaching-final-plan"
+            gutter={[28, 24]}
+            align="top"
+          >
             <Col xs={24} lg={13}>
               <Title level={3} style={{ margin: 0 }}>
                 Choose the teaching path that fits
               </Title>
               <Paragraph style={{ margin: "8px 0 0" }}>
-                Start hosted for a course on CoCalc.ai. Use the guides when you
-                are planning assignments or a reusable course environment.
-                Compare product paths or talk to CoCalc when procurement,
-                licensing, or deployment questions matter.
+                Start hosted for a course on CoCalc.ai. Use the guides when
+                planning assignments or shared course software. Compare product
+                paths or talk to CoCalc when procurement, licensing, or
+                deployment questions matter.
               </Paragraph>
-              <BulletList
-                items={[
-                  "Start students in a browser with course software and data already available.",
-                  "Use student projects when instructors or TAs need to inspect the same files, notebooks, and terminal state.",
-                  "Use snapshots and project history as a safety net around coursework.",
-                ]}
-              />
               <Flex wrap gap={12}>
-                <LinkButton href={`${GUIDE_BASE}/teaching/`}>
-                  Teaching guide
-                </LinkButton>
-                <Button href={`${GUIDE_BASE}/rootfs-management/`}>
-                  Environment guide
+                <Button type="primary" href={primaryCtaHref}>
+                  {finalCtaLabel}
                 </Button>
-                <Button href={appPath("features/jupyter-notebook")}>
-                  Jupyter notebooks
+                <Button href={appPath("products")}>
+                  Compare product paths
                 </Button>
+                <Button href={supportHref}>Ask about teaching workflows</Button>
               </Flex>
             </Col>
             <Col xs={24} lg={11}>
               <Flex
                 vertical
-                gap={14}
+                gap={10}
                 style={{
-                  background: PUBLIC_COLORS.heading,
-                  borderRadius: PANEL_RADIUS,
-                  boxShadow: `0 18px 52px ${alpha(PUBLIC_COLORS.heading, 0.12)}`,
-                  color: PUBLIC_COLORS.surface,
-                  padding: 26,
+                  borderLeft: `3px solid ${PUBLIC_COLORS.brandSubtle}`,
+                  paddingLeft: 18,
                 }}
               >
-                <Title
-                  level={4}
-                  style={{ color: PUBLIC_COLORS.surface, margin: 0 }}
-                >
-                  Ready to plan a course?
-                </Title>
-                <Paragraph
-                  style={{ color: PUBLIC_COLORS.footerText, margin: 0 }}
-                >
-                  Open a hosted course, compare operating models, or send
-                  context about course size, grading, shared environments, and
-                  institutional requirements.
-                </Paragraph>
+                <Text strong>Useful planning guides</Text>
+                <BulletList
+                  items={[
+                    "Teaching guide for assignments, collection, and grading.",
+                    "Environment guide for shared course software and data.",
+                    "Jupyter page when notebooks are the main course medium.",
+                  ]}
+                />
                 <Flex wrap gap={12}>
-                  <Button type="primary" href={primaryCtaHref}>
-                    {finalCtaLabel}
+                  <LinkButton href={`${GUIDE_BASE}/teaching/`}>
+                    Teaching guide
+                  </LinkButton>
+                  <Button href={`${GUIDE_BASE}/rootfs-management/`}>
+                    Environment guide
                   </Button>
-                  <Button href={appPath("products")}>
-                    Compare product paths
-                  </Button>
-                  <Button href={supportHref}>
-                    Ask about teaching workflows
+                  <Button href={appPath("features/jupyter-notebook")}>
+                    Jupyter notebooks
                   </Button>
                 </Flex>
               </Flex>

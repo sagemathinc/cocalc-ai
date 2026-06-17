@@ -47,6 +47,26 @@ turns.
 
 ## Prompt Backlog
 
+### Non-Feature Card Contrast And Visual-System Pass
+
+Use `.agents/skills/public-site-landing-page/SKILL.md` and continue from
+`PSL-2026-06-17-014`, `KI-2026-06-17-B`, and the agentic public-site check
+matrix. Audit non-feature public pages for the same card contrast and
+component-necessity standard after the feature-detail dark-card cleanup:
+homepage, `/products`, product detail pages, `/pricing`, `/features/compare`,
+`/guides`, `/support`, and `/support/new`.
+
+Before editing, update one ledger item in
+`docs/public-site-cohesion-audit.md` with the visitor decision, route class,
+change budget, deterministic checks, and human judgment boundaries. Identify
+dark or high-contrast surfaces that are generic CTA/info cards versus surfaces
+that are authentic product evidence, code, terminal, editor, footer, or brand
+structure. Make only high-confidence light-surface, spacing, copy, CTA, or test
+changes that improve visual rhythm without flattening useful route-specific
+evidence. Keep compliance/legal substance out of scope. Run focused validation,
+desktop/tablet/mobile browser QA, rebuild `blaec.cocalc.ai` if public source
+changes, commit, and report residual risks plus the next recommended prompt.
+
 ### Teaching Lower-Half Dogfood Pass
 
 Use `.agents/skills/public-site-landing-page/SKILL.md` and continue from

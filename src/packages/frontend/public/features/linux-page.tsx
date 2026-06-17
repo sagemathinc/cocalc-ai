@@ -437,18 +437,23 @@ PY`}</code>
           </Col>
           <Col xs={24} lg={10}>
             <div
+              className="cocalc-feature-final-panel"
               style={{
-                background: "#10213f",
+                background: PUBLIC_COLORS.surfaceMuted,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
                 borderRadius: 8,
                 boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
-                color: "#fff",
+                color: PUBLIC_COLORS.heading,
                 padding: 26,
               }}
             >
-              <Title level={4} style={{ color: "#fff", margin: "0 0 10px" }}>
+              <Title
+                level={4}
+                style={{ color: PUBLIC_COLORS.heading, margin: "0 0 10px" }}
+              >
                 Ready to use Linux in CoCalc?
               </Title>
-              <Paragraph style={{ color: "rgba(255,255,255,0.78)" }}>
+              <Paragraph style={{ color: PUBLIC_COLORS.mutedText }}>
                 Open a project, launch a terminal, and install the software your
                 work actually needs.
               </Paragraph>

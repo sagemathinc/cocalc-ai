@@ -219,6 +219,149 @@ the entry in place as a decision record.
   they answer separate buyer/evaluator questions. The remaining ordinary text
   length is a future copy-density judgment, not a deterministic regression.
 
+### PSL-2026-06-17-013: Teaching Lower-Half Dogfood Pass
+
+- **Routes:** `/features/teaching`
+- **Linked issue:** `KI-2026-06-17-A`, `KI-2026-06-17-F`, and `LPA-001`
+  through `LPA-007`.
+- **Trigger:** User asked to dogfood the same bounded workflow on the lower half
+  of the teaching page after prior feedback that the final teaching sections
+  felt overloaded and partially redundant.
+- **Route class:** feature detail.
+- **Visitor question:** Can an instructor, workshop lead, or academic IT
+  reviewer understand that CoCalc sits beside the LMS for technical coursework,
+  see the assignment workflow, and choose the right next action without the
+  lower page repeating course setup, assignment flow, and planning CTAs?
+- **Current visual/design problems to verify before editing:** The LMS boundary
+  section appears necessary because it answers "is CoCalc replacing the LMS?"
+  The assignment-loop section appears necessary because it shows the route's
+  concrete workflow. The final planning area may be too heavy because it
+  combines a "Choose the teaching path" text column, bullets, guide links, and
+  a separate dark "Ready to plan a course?" CTA card that may answer the same
+  next-step question again.
+- **Change budget:** At most one final-section compression, one CTA hierarchy
+  adjustment, and one deterministic test/QA rule update. Do not change the hero,
+  LMS boundary, assignment-loop workflow, or teaching's secondary product
+  framing unless screenshots reveal a direct lower-half regression.
+- **Human product judgment:** Whether the final planning area still feels
+  credible and useful for instructors and academic IT after compression; whether
+  course-management visibility is sufficient without promoting teaching into a
+  top-level product path.
+- **Deterministic checks:** Browser QA can catch horizontal overflow, required
+  lower-page headings, stale repeated headings, contextual support links, and
+  selected selectors. Jest can catch duplicate/retired teaching labels,
+  LMS/product-boundary phrasing, route-owned CTA destinations, decorative tags,
+  and internal framing leakage.
+- **Open sub-actions:**
+  - [x] Read the public-site skill, operating audit, prompt log, teaching ledger
+        items, route source, tests, and current browser-QA rules before editing.
+  - [x] Run current-preview browser QA for `/features/teaching` at desktop,
+        tablet, and mobile widths.
+  - [x] Inspect lower-half screenshots and decide keep, omit, combine, move, or
+        redesign for the LMS boundary, assignment loop, and final planning
+        components.
+  - [x] Make only high-confidence lower-half source/test changes if screenshots
+        confirm redundant density.
+  - [x] Rebuild the static public bundle and restart the preview if source
+        changes.
+  - [x] Rerun focused validation and browser QA after changes.
+  - [x] Update the prompt log with the next recommended prompt before final
+        handoff.
+- **Component decision:** Keep the LMS boundary and assignment-loop sections
+  because they answer distinct lower-page visitor questions. Compress the final
+  teaching area into one route-owned next-step block because the separate dark
+  "Ready to plan a course?" card repeated the same planning question and made
+  the page end feel heavier than the workflow required.
+- **Changed files:** `src/packages/frontend/public/features/teaching-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, and
+  `docs/public-site-cohesion-audit.md`.
+- **Validation state:** Current-preview browser QA passed before edits:
+  `/features/teaching` 33 assertions, 0 failures at
+  `/tmp/cocalc-public-qa-KRP4NF`. Screenshot review showed the LMS boundary and
+  assignment loop still earned their space, while the final dark CTA card
+  duplicated the next-step ending. Post-change validation is recorded under
+  `PSL-2026-06-17-014` because the user expanded the same pass into a broader
+  feature-page dark-card cleanup before final handoff.
+
+### PSL-2026-06-17-014: Public Feature Dark Card Cleanup
+
+- **Routes:** public feature-detail pages, especially `/features/teaching`,
+  `/features/jupyter-notebook`, `/features/terminal`, `/features/linux`,
+  `/features/python`, `/features/sage`, `/features/whiteboard`,
+  `/features/slides`, `/features/r-statistical-software`, `/features/julia`,
+  and `/features/octave`.
+- **Linked issue:** `KI-2026-06-17-H` and `LPA-006`.
+- **Trigger:** User feedback that dark cards are visually off-putting now that
+  darker sections are no longer reserved for terminal-focused content.
+- **Route class:** feature detail visual-system cleanup.
+- **Visitor question:** Can feature pages end with a clear next step without
+  switching into heavy dark marketing cards that compete with the workflow
+  evidence above them?
+- **Current visual/design problems:** The remaining dark surfaces split into two
+  categories. Terminal/code/editor mocks use dark backgrounds to represent the
+  product surface and should stay dark. Route-ending CTA/info cards use dark
+  backgrounds only for emphasis and make unrelated pages feel visually heavier
+  than the content requires. The teaching dashboard also uses a dark assignment
+  panel that reads more like decoration than a necessary terminal/code surface.
+- **Change budget:** Convert dark CTA/info cards and the teaching assignment
+  dashboard panel to normal light surfaces. Do not change dark terminal, code,
+  or editor mocks in this pass. Add deterministic checks for the public
+  route-ending panel class and browser-QA style checks where durable.
+- **Human product judgment:** Whether the lighter endings still have enough
+  conversion weight without becoming visually flat; whether any remaining dark
+  product-evidence mock should be revisited in a later route-specific pass.
+- **Deterministic checks:** Jest can ensure route-ending CTA panels avoid dark
+  inline backgrounds. Browser QA can require the light final-panel selector on
+  routes where the ending is a durable public pattern and reject known dark RGB
+  backgrounds.
+- **Open sub-actions:**
+  - [x] Scan public feature routes for dark surfaces and classify them as
+        product evidence or generic CTA/info cards.
+  - [x] Convert high-confidence dark CTA/info cards to light surfaces.
+  - [x] Keep terminal/code/editor mocks dark and record that decision.
+  - [x] Add focused tests and browser-QA style checks for the changed pattern.
+  - [x] Run focused validation, rebuild static public bundle, restart preview,
+        and run desktop/tablet/mobile browser QA.
+  - [x] Update prompt log, commit, and report residual risks.
+- **Component decision:** Convert dark route-ending CTA/info cards on Jupyter,
+  Terminal, Linux, Python, Sage, and the shared `StartCard` routes to light
+  bordered panels. Convert the teaching assignment dashboard panel to a light
+  surface. Preserve dark terminal/code/editor mocks on Terminal, Linux,
+  Jupyter, Python, Sage, LaTeX, and shared terminal visuals because those
+  surfaces are product evidence, not generic visual emphasis.
+- **Changed files:** `src/packages/frontend/public/features/feature-visuals.tsx`,
+  `src/packages/frontend/public/features/jupyter-notebook-page.tsx`,
+  `src/packages/frontend/public/features/terminal-page.tsx`,
+  `src/packages/frontend/public/features/linux-page.tsx`,
+  `src/packages/frontend/public/features/python-page.tsx`,
+  `src/packages/frontend/public/features/sage-page.tsx`,
+  `src/packages/frontend/public/features/teaching-page.tsx`,
+  `src/packages/frontend/public/features/__tests__/app.test.tsx`,
+  `src/packages/frontend/scripts/public-site-browser-qa.mjs`, and
+  `docs/public-site-cohesion-audit.md`.
+- **Validation state:** Focused feature app, browser-QA script, and
+  agent-workflow Jest tests passed with existing React/Ant Design jsdom
+  warnings. Frontend lint passed. Frontend package typecheck passed. Browser-QA
+  script syntax check passed. `pnpm -C src build:dev` completed with existing
+  MkDocs/griffe warnings from the Python API docs build and a non-fatal cache
+  log permission warning. `pnpm -C src static:dev` completed and
+  `pnpm -C src dev:hub:restart` refreshed the preview. Initial post-rebuild
+  browser QA surfaced one route-rule mistake: the teaching support link uses
+  `context=feature-teaching`, not `context=teaching`. After fixing that rule,
+  `feature-details` browser QA passed: 741 assertions, 0 failures at
+  `/tmp/cocalc-public-qa-87JsWA`.
+- **Screenshot review:** Representative desktop/mobile screenshots confirmed
+  that Jupyter, Terminal, Linux, Python, Sage, and shared language/tool route
+  endings now use light panels. Teaching's assignment panel is light, and the
+  final teaching section no longer ends with a separate dark CTA card. The
+  global dark footer remains dark and is explicitly outside this card cleanup.
+- **Residual risk:** The light panels still use a subtle blue-tinted muted
+  background, which may need a future visual-system pass if the desired surface
+  should be completely neutral. Non-feature pages were not exhaustively changed
+  in this pass; a follow-up should audit product, pricing, compare, guides, and
+  support pages for the same card contrast standard.
+
 ### PSL-2026-06-17-001: Feature Index Starter Cards
 
 - **Routes:** `/features`
@@ -464,19 +607,23 @@ Use this queue for unresolved public-site observations that should survive
 across Codex turns. Close items only by linking them to a validated `PSL-*`
 entry, or by explicitly recording why the issue was deliberately left alone.
 
-- [ ] `KI-2026-06-17-A`: `/features/teaching` lower-half density. User feedback
+- [x] `KI-2026-06-17-A`: `/features/teaching` lower-half density. User feedback
       flagged the lower sections as overloaded and partially redundant. Earlier
       passes improved the page, but the remaining question is whether the final
       teaching sections should be shortened, combined, or reframed as one
       route-owned next step. Expected closure: a dedicated teaching/Jupyter
-      workflow pass or a future high-traffic feature-page pass.
+      workflow pass or a future high-traffic feature-page pass. Closed by
+      `PSL-2026-06-17-013`: the LMS boundary and assignment-loop workflow were
+      retained, while the duplicated dark planning CTA was compressed into one
+      route-owned ending.
 - [ ] `KI-2026-06-17-B`: language/math feature endings may still be long after
       `PSL-2026-06-17-010`. Current pass is reducing secondary visual panels,
       not rewriting every final section. After rebuild, inspect
       `/features/python`, `/features/sage`, `/features/r-statistical-software`,
       `/features/julia`, and `/features/octave` for whether "when it belongs"
-      content and dark route-owned endings can be combined without losing
-      decision value.
+      content can be combined without losing decision value. `PSL-2026-06-17-014`
+      removed the dark route-owned ending treatment, but did not fully solve
+      possible length/density in these pages.
 - [ ] `KI-2026-06-17-C`: `/features` index rhythm should continue to be
       checked after feature-detail changes. The current order should preserve
       AI first, notebooks/writing second, runtime before teaching, teaching as
@@ -502,6 +649,12 @@ entry, or by explicitly recording why the issue was deliberately left alone.
       Closed by `PSL-2026-06-17-012`: the computation visual was compressed,
       and the final task-fit comparison was retained because it answers a
       separate decision question.
+- [x] `KI-2026-06-17-H`: dark feature CTA/info cards. User feedback flagged
+      dark cards as visually off-putting once the dark treatment was no longer
+      tied specifically to terminal/runtime content. Closed by
+      `PSL-2026-06-17-014`: generic dark route-ending cards and the teaching
+      assignment panel were converted to light surfaces, while terminal,
+      code, and editor mocks remained dark as product evidence.
 
 ## Agentic Public-Site Operating Model
 

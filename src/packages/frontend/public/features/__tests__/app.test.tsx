@@ -35,6 +35,9 @@ function headingLabels(container: HTMLElement): string[] {
     .filter(Boolean);
 }
 
+const DARK_FEATURE_CARD_STYLE =
+  /#10213f|#0b1522|#0b1f47|#111827|rgb\(16,\s*33,\s*63\)|rgb\(11,\s*21,\s*34\)|rgb\(11,\s*31,\s*71\)|rgb\(17,\s*24,\s*39\)/i;
+
 const INTERNAL_CONTEXT_LEAKAGE =
   /Feature map|Workflow map|Positioning|Real collaborative Python|Collaborative Linux terminal|Real project Linux|LaTeX inside a technical project|Where CoCalc fits|Technical presentations|Collaborative technical canvas|serious technical work|serious Linux|strongest|workspace model|internal planning|multi-bay|control plane|project hosts|\bstale\b|CoCalc-AI|locked-down|launchpad-style|internal platform|narrow patch|install narrowly|narrower tool|Use CoCalc when|competitor comparison|proof packet|evidence register|pitch docs|AGENTS\.md|CLAUDE\.md|GEMINI\.md|public-site cohesion audit|agent operating/i;
 
@@ -703,6 +706,11 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText("Hand out and collect work")).toBeNull();
     expect(screen.queryByText("Keep the environment consistent")).toBeNull();
     expect(screen.getByText("nbgrader queue ready")).not.toBeNull();
+    expect(
+      container
+        .querySelector(".cocalc-teaching-assignment-panel")
+        ?.getAttribute("style") ?? "",
+    ).not.toMatch(DARK_FEATURE_CARD_STYLE);
     expect(screen.queryByText("nbgrader: 26 notebooks ready")).toBeNull();
     expect(
       screen.getByText("Run the assignment loop in student projects"),
@@ -711,10 +719,17 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Choose the teaching path that fits"),
     ).not.toBeNull();
-    expect(screen.getByText("Ready to plan a course?")).not.toBeNull();
+    expect(screen.queryByText("Ready to plan a course?")).toBeNull();
+    expect(screen.getByText("Useful planning guides")).not.toBeNull();
+    expect(screen.getByText("Use hosted CoCalc.ai")).not.toBeNull();
+    expect(
+      screen.queryByText(
+        "Start students in a browser with course software and data already available.",
+      ),
+    ).toBeNull();
     expect(
       screen.getByText(
-        "Start students in a browser with course software and data already available.",
+        "Teaching guide for assignments, collection, and grading.",
       ),
     ).not.toBeNull();
     expect(
@@ -1153,6 +1168,36 @@ describe("PublicFeaturesApp", () => {
       expect(screen.queryByText(finalCta)).toBeNull();
     },
   );
+
+  it.each([
+    "jupyter-notebook",
+    "terminal",
+    "linux",
+    "python",
+    "sage",
+    "whiteboard",
+    "slides",
+    "r-statistical-software",
+    "julia",
+    "octave",
+  ] as const)("keeps %s route-ending CTA panels light", (slug) => {
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug, view: "detail" }}
+      />,
+    );
+
+    const panels = Array.from(
+      container.querySelectorAll(".cocalc-feature-final-panel"),
+    );
+    expect(panels.length).toBeGreaterThan(0);
+    for (const panel of panels) {
+      expect(panel.getAttribute("style") ?? "").not.toMatch(
+        DARK_FEATURE_CARD_STYLE,
+      );
+    }
+  });
 
   it.each(auditedFeaturePages)(
     "keeps the audited $slug feature page route-specific and free of decorative tags",
